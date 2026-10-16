@@ -69,7 +69,9 @@ if unsupported:
 if any(path.stat().st_size > 256 * 1024 for path in manifest_files):
     raise ValueError('dependency manifest is too large')
 
-preparation_version = 'v3' if source_mode == 'controlled-http' else 'v2'
+# v4/v5 publish Python environments whose scripts name their final path;
+# earlier results are rebuilt rather than reused.
+preparation_version = 'v5' if source_mode == 'controlled-http' else 'v4'
 fingerprint_hash = hashlib.sha256()
 fingerprint_hash.update((('zgi-agent-dependencies-v3:' + source_mode + ':' if source_mode == 'controlled-http' else 'zgi-agent-dependencies-v2:') + digest + '\n').encode())
 for manifest in manifest_files:
@@ -219,6 +221,26 @@ def copy_regular_tree(source, destination):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, target)
 
+def relocate_virtualenv(prepared, published):
+    # pip and venv write the environment's own path into console_scripts
+    # shebangs and activation scripts; the environment is prepared in a
+    # temporary directory and published under its final one.
+    old, new = str(prepared).encode(), str(published).encode()
+    if old == new:
+        return
+    candidates = [prepared / 'pyvenv.cfg']
+    if (prepared / 'bin').is_dir():
+        candidates.extend(sorted((prepared / 'bin').iterdir()))
+    for candidate in candidates:
+        if candidate.is_symlink() or not candidate.is_file():
+            continue
+        content = candidate.read_bytes()
+        if old not in content or b'\0' in content:
+            continue
+        mode = stat.S_IMODE(candidate.stat().st_mode)
+        candidate.write_bytes(content.replace(old, new))
+        os.chmod(candidate, mode)
+
 def run_checked(command, cwd):
     try:
         result = subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, timeout=(180 if source_mode == 'controlled-http' else 45), check=False)
@@ -282,6 +304,7 @@ try:
             pip_command.extend(['--no-index', '--find-links', str(wheels)])
         pip_command.extend(['-r', str(package_root / 'requirements.txt')])
         run_checked(pip_command, package_root)
+        relocate_virtualenv(python_root, output_root / 'python')
         result['python_path'] = str((output_root / 'python' / 'bin' / 'python').relative_to(workspace))
         result['python_command'] = result['python_path']
     if node_dependencies:
@@ -374,9 +397,9 @@ func executeAgentExecutionDependencyPreparation(ctx context.Context, gateway age
 	}
 	controlled := dependencyMode == "controlled-http" && capabilities.NetworkMode == "controlled-http" && strings.TrimSpace(capabilities.EgressProxyAddress) != ""
 	offline := dependencyMode == "offline-bundled" && capabilities.NetworkMode == "disabled"
-	preparationVersion := "v2"
+	preparationVersion := "v4"
 	if controlled {
-		preparationVersion = "v3"
+		preparationVersion = "v5"
 	}
 	if !capabilities.Shell || !capabilities.FileTransfer || !capabilities.DependencyPreparation || (!offline && !controlled) {
 		return failed("dependency_preparation_denied", fmt.Errorf("the approved runtime does not permit the requested dependency source policy"), map[string]interface{}{"network_mode": capabilities.NetworkMode, "dependency_preparation_mode": dependencyMode})

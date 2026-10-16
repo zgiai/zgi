@@ -71,7 +71,7 @@ fail-closed，不会把依赖错误地当成可安装。
 
 旧声明式路径仍会返回 `no_dependencies`、`dependency_manifest_required`、`offline_dependency_source_missing` 等诊断。标准路径不因静态扫描结果阻止导入：模型先运行脚本，根据 `ModuleNotFoundError`、`Cannot find module` 或 `command not found` 判断缺失项，再在包安装模式中执行 `pip install`、`npm install` 或 `apt-get install -y`。pip/npm 安装写入会话 Home/Workspace；apt 请求由 Runtime Agent 的 root 进程校验后执行，Job 始终以 UID 65532 运行。APT 包名、操作和选项有独立校验；普通 pip/npm 目前依赖网络目的地限制及文件权限，不应宣称其所有 Git、URL、file 参数均经过统一包装器拒绝。本地文件依赖只能使用沙箱中当前 Job 可读取的文件。
 
-准备结果写入会话 Home 的内容寻址目录，并以 Skill 摘要、依赖清单和来源模式计算的指纹复用。结果协议包含 `preparation_version`、`source_mode`、`fingerprint` 和 `cache_status`：离线仍为 v2，受控在线为 v3；首次成功准备为 `cache_status=created`，完整且仍存在的结果再次调用为 `status=reused`、`cache_status=reused`。复用前会校验 `prepare.json`、指纹以及 Python/Node 产物路径；缓存目录损坏或产物缺失时会自动重建，而不会把损坏结果报告为已复用。环境暂停、重建或重新连接后，只要 Home/Workspace 恢复，后续调用会返回 `reused`，不会重复安装。指纹改变或来源模式改变会生成新的目录，不覆盖旧结果。
+准备结果写入会话 Home 的内容寻址目录，并以 Skill 摘要、依赖清单和来源模式计算的指纹复用。结果协议包含 `preparation_version`、`source_mode`、`fingerprint` 和 `cache_status`：离线为 v4，受控在线为 v5（v4/v5 发布的 Python 环境中，console_scripts 和激活脚本指向最终路径；更早版本的结果会重建而不复用）；首次成功准备为 `cache_status=created`，完整且仍存在的结果再次调用为 `status=reused`、`cache_status=reused`。复用前会校验 `prepare.json`、指纹以及 Python/Node 产物路径；缓存目录损坏或产物缺失时会自动重建，而不会把损坏结果报告为已复用。环境暂停、重建或重新连接后，只要 Home/Workspace 恢复，后续调用会返回 `reused`，不会重复安装。指纹改变或来源模式改变会生成新的目录，不覆盖旧结果。
 
 当前准备协议版本为离线 `v2`、受控在线为 `v3`。标准按需安装中，Python/Node 安装目录和缓存随 Workspace/Home 检查点恢复；系统包 ledger 当前只记录经校验的 APT 参数和安装时间，计算重建后自动重放。恢复失败会阻止用户 Job 启动，后续请求可重试，不会把一次失败标记为永久恢复成功。它尚不是覆盖三个包管理器的完整版本账本：Profile digest 指纹、实际解析版本、跨会话依赖集缓存和 rootfs 增量层仍需后续实现。APT 重放可能获取当前包源版本，不能宣传为版本锁定恢复。
 
