@@ -78,6 +78,15 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 
 ## Writing Migrations
 
+### Connector retirement inventory
+
+The retirement checkpoint precedes `20260904160000_connector_pending_setups`.
+Plan, Apply, and Verify omit `connector_pending_setups` from the native inventory
+only while both the table and its creating migration marker are absent. Once
+created, the table is required and its rows are protected by the usual proofs.
+A mismatch between the table and marker fails validation, as does any other
+missing inventory table. Published migration IDs and ordering remain unchanged.
+
 ### Connector decision identity repair
 
 `202609070512481192_fix_connector_decision_identity` separates operation audit

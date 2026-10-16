@@ -150,7 +150,11 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 	if r.Source, err = readTables(db, RetiredTables(), data, &bytesRead); err != nil {
 		return r, nil, err
 	}
-	if r.Native, err = readTables(db, NativeTables(), data, &bytesRead); err != nil {
+	native, err := nativeTablesAtCheckpoint(db)
+	if err != nil {
+		return r, nil, err
+	}
+	if r.Native, err = readTables(db, native, data, &bytesRead); err != nil {
 		return r, nil, err
 	}
 	if r.Hosts, err = readTables(db, hostTables(), data, &bytesRead); err != nil {

@@ -46,8 +46,11 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 	if remaining != 0 {
 		return r, fmt.Errorf("schema2 still contains retired relations")
 	}
-	var err error
-	if r.Native, err = readTables(db, NativeTables(), data, &size); err != nil {
+	native, err := nativeTablesAtCheckpoint(db)
+	if err != nil {
+		return r, err
+	}
+	if r.Native, err = readTables(db, native, data, &size); err != nil {
 		return r, err
 	}
 	if r.Hosts, err = readTables(db, hostTables(), data, &size); err != nil {
