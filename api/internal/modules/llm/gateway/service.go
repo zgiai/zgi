@@ -225,6 +225,12 @@ func NewLLMGatewayServiceWithCrypto(
 			Console: pconsole.NewStandalone(),
 		}
 	}
+	// Every gateway instance, including the workspace chat runtime, needs the
+	// same live channel projection. HTTP route registration is not invoked for
+	// internally constructed services and cannot be the sole injection point.
+	if channelRouter != nil && cloudMode {
+		channelRouter.SetChannelProvider(platformContainer.Channel)
+	}
 	logger.Info("llm gateway console provider initialized", "mode", platformContainer.Console.GetMode())
 
 	// Create local billing service (always needed for CalculateCreditsFromTokens)

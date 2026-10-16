@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
@@ -63,10 +64,20 @@ func HydrateOfficialRoutes(
 				// Protocol capability remains model-scoped even if a legacy Console
 				// response omitted the supplier label.
 			} else {
-				pair := channelmodel.ProviderModel{Provider: channelProvider, Model: modelName}
-				if _, ok := seenProviderModels[pair]; !ok {
-					seenProviderModels[pair] = struct{}{}
-					providerModels = append(providerModels, pair)
+				providers := []string{channelProvider}
+				// A multi-vendor channel supplier need not own a separate price
+				// row for every advertised model. Resolve its explicit model
+				// capability through the synchronized catalog only when the
+				// owner is unambiguous. Keep exact supplier mappings authoritative.
+				if catalogvendor.Lookup(channelProvider, modelName) == "" {
+					providers = append(providers, catalogvendor.UnambiguousModelProviders(modelName)...)
+				}
+				for _, modelProvider := range providers {
+					pair := channelmodel.ProviderModel{Provider: modelProvider, Model: modelName}
+					if _, ok := seenProviderModels[pair]; !ok {
+						seenProviderModels[pair] = struct{}{}
+						providerModels = append(providerModels, pair)
+					}
 				}
 			}
 			// An explicitly published per-model list is authoritative even when it
