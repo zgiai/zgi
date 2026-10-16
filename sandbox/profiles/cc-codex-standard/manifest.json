@@ -8,7 +8,7 @@
   "base_runtime": "debian-bookworm",
   "checksum": "profile-source:cc-codex-standard:2026.10.07",
   "estimated_size_bytes": 1073741824,
-  "description": "Prebuilt Python, Node.js, office, PDF, media, and native-build runtime for standard Claude Code and Codex Skills.",
+  "description": "Prebuilt Python, Node.js, office, PDF, media, and native-build runtime for portable agent Skills.",
   "runtime_dependency_installation": true,
   "package_network_mode": "package-install",
   "packages": [

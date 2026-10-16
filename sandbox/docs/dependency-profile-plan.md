@@ -4,7 +4,7 @@
 
 `zgi-sandbox` uses prebuilt dependency profiles with lockfiles for the common
 case, plus a separately approved `cc-codex-standard` profile for standard
-Claude Code/Codex Skills. Those Skills may install missing Python, Node, or
+portable Skills. Those Skills may install missing Python, Node, or
 approved Debian packages on demand through a package-only network policy;
 legacy manifest and declaration-based Skills keep the original offline flow.
 
