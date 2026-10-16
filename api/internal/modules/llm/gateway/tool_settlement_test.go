@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func t4Fixture(t *testing.T) (*t9BillingFixture, *BillingContext) {
 	if err := f.db.AutoMigrate(&toolusage.Event{}); err != nil {
 		t.Fatal(err)
 	}
-	bc := f.billingContext("t4-"+uuid.NewString(), 0)
+	bc := f.billingContext("t4-"+uuid.NewString(), 20)
 	bc.ToolPostpaid = true
 	bc.Status = "success"
 	raw := json.RawMessage(`{"schema_version":1,"billing_lane":"private","pricing_version":"old","tools":{"default":{"web_search":{"amount":"0.00003","currency":"USD","unit":"call","per_quantity":1},"code_interpreter":{"amount":"0.00004","currency":"USD","unit":"session","per_quantity":1}}}}`)
@@ -71,8 +72,8 @@ func TestT4PrivateMergedSettlementAndConcurrentReplay(t *testing.T) {
 	if err := f.service.PreDeduct(ctx, bc); err != nil {
 		t.Fatal(err)
 	}
-	if n := f.countWalletTransactions(t, bc.AttemptID, channelWalletTxTypePreDeduct); n != 0 {
-		t.Fatal("placeholder wrote a funds transaction")
+	if n := f.countWalletTransactions(t, bc.AttemptID, channelWalletTxTypePreDeduct); n != 1 {
+		t.Fatalf("token reservation transactions=%d, want 1", n)
 	}
 	t4Record(t, f, bc, toolusage.StatusSucceeded, 2)
 	bc.ActualCredits, bc.TotalUSD = 20, decimal.RequireFromString("0.00002")
@@ -136,21 +137,22 @@ func TestT4LateUsageKeepsFrozenPricesAndTokens(t *testing.T) {
 	if _, err := toolusage.NewRepository(f.db).ExpirePending(ctx, time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	_, state = t4Bill(t, f, bc)
 	if state.FreeReason != "usage_timeout" || state.TokenCredits != 20 {
 		t.Fatalf("%+v", state)
 	}
-	if _, err := toolusage.NewRepository(f.db).UpdateFact(ctx, f.orgID, "private", e.DedupeKey, 2, toolusage.StatusSucceeded, toolusage.UsageSourceProviderReported, nil); err != nil {
+	e.Quantity, e.Status, e.UsageSource = 2, toolusage.StatusSucceeded, toolusage.UsageSourceProviderReported
+	if _, err := toolusage.NewRepository(f.db).Record(ctx, e); err != nil {
 		t.Fatal(err)
 	}
 	// The worker has only the durable snapshot; no current model table exists.
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	f.assertWalletBalance(t, 120)
@@ -255,8 +257,10 @@ func TestT4AtomicFailureAndIdentityIsolation(t *testing.T) {
 	if err := f.service.Settle(ctx, bc); err == nil {
 		t.Fatal("expected rollback")
 	}
-	f.assertWalletBalance(t, 200)
-	f.assertAPIKeyQuota(t, 0, 100)
+	// The failed settlement transaction must leave the original token hold
+	// intact so recovery can finish without redispatching upstream work.
+	f.assertWalletBalance(t, 180)
+	f.assertAPIKeyQuota(t, 0, 0)
 	if err := f.db.Exec("DROP TRIGGER fail_t4_bill").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +271,7 @@ func TestT4AtomicFailureAndIdentityIsolation(t *testing.T) {
 	if !intent.TokenFinalized || intent.TokenCredits != 20 {
 		t.Fatal("completion intent was not preserved")
 	}
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	f.assertWalletBalance(t, 120)
@@ -304,6 +308,46 @@ func TestT4FailedReleaseKeepsSuccessfulFacts(t *testing.T) {
 	f.assertWalletBalance(t, 140)
 }
 
+func TestT4PrivateConcurrentRequestsReserveTokenFundsAndWholeSubjectQuota(t *testing.T) {
+	f, first := t4Fixture(t)
+	second := *first
+	second.AttemptID, second.RequestID = "t4-concurrent-second", "t4-concurrent-second"
+	secondState := *first.ToolSettlement
+	secondState.AttemptID, secondState.RequestID, secondState.SettlementID = second.AttemptID, second.RequestID, second.AttemptID
+	second.ToolSettlement = &secondState
+	putToolSettlement(&second, &secondState)
+
+	contexts := []*BillingContext{first, &second}
+	errs := make(chan error, len(contexts))
+	var wg sync.WaitGroup
+	for _, bc := range contexts {
+		bc := bc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- f.service.PreDeduct(context.Background(), bc)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	successes, rejected := 0, 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrInsufficientQuota):
+			rejected++
+		default:
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 || rejected != 1 {
+		t.Fatalf("successes=%d rejected=%d", successes, rejected)
+	}
+	f.assertAPIKeyQuota(t, 0, 0)
+	f.assertWalletBalance(t, 180)
+}
+
 func TestT4RecoveryLoadsDurableSnapshot(t *testing.T) {
 	for _, knownQuote := range []bool{false, true} {
 		t.Run(fmt.Sprint(knownQuote), func(t *testing.T) {
@@ -322,7 +366,7 @@ func TestT4RecoveryLoadsDurableSnapshot(t *testing.T) {
 			if err := f.service.recoverLocalPredeductAttempt(ctx, bc.AttemptID); err != nil {
 				t.Fatal(err)
 			}
-			want := int64(200)
+			want := int64(180)
 			if knownQuote {
 				want = 120
 			}
@@ -385,7 +429,7 @@ func TestT4CaptureBeforeDispatchUsesActualModelAndChannel(t *testing.T) {
 	if err := svc.prepareToolBilling(ctx, bc, selection); err != nil {
 		t.Fatal(err)
 	}
-	if !bc.ToolPostpaid || bc.EstimatedCredits != 0 || bc.ToolSettlement.Prices[f.channelID.String()].Mode != "charge" {
+	if !bc.ToolPostpaid || bc.EstimatedCredits != 99 || bc.ToolSettlement.Prices[f.channelID.String()].Mode != "charge" {
 		t.Fatalf("%+v", bc)
 	}
 	if err := f.service.PreDeduct(ctx, bc); err != nil {
@@ -403,43 +447,56 @@ func TestT4CaptureBeforeDispatchUsesActualModelAndChannel(t *testing.T) {
 	f.assertWalletBalance(t, 150)
 }
 
-func TestT4WorkerPaginationSkipsHistoricalBills(t *testing.T) {
-	f, bc := t4Fixture(t)
-	for i := 0; i < 205; i++ {
-		copy := *bc
-		copy.AttemptID = uuid.NewString()
-		bill, err := f.service.buildUsageBill(&copy, usageBillStatusPartial, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if i == 0 {
-			bill.PricingSnapshot = datatypes.JSON(`{}`)
-		}
-		if err := f.db.Create(bill).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	seen := 0
-	if err := eachToolBill(context.Background(), f.db, "private", func(UsageBill) error { seen++; return nil }); err != nil {
-		t.Fatal(err)
-	}
-	if seen != 204 {
-		t.Fatalf("visited=%d", seen)
-	}
-}
-
 type t4QuotaRPC struct{ recordingQuotaRPCClient }
 
 func (c *t4QuotaRPC) SettleQuota(context.Context, *pb.SettleQuotaRequest, ...grpc.CallOption) (*pb.SettleQuotaResponse, error) {
 	return &pb.SettleQuotaResponse{Success: true, ToolSettlementJson: `{"schema_version":1,"billing_lane":"platform"}`}, nil
 }
-func TestT4RPCProjectionAndZeroPlaceholder(t *testing.T) {
+
+type t4CapabilityQuotaClient struct {
+	failingSettleQuotaClient
+	supported bool
+	err       error
+}
+
+func (c t4CapabilityQuotaClient) GetBillingCapabilities(context.Context) (bool, error) {
+	return c.supported, c.err
+}
+
+func TestToolPostpaidRequiresConsoleCapabilityAndPreservesTokenQuote(t *testing.T) {
+	ctx := withRequestedBillingTools(context.Background(), []byte(`{"tools":[{"googleSearch":{}}]}`))
+	for _, supported := range []bool{false, true} {
+		bc := &BillingContext{UseSystemProvider: true, BillingLane: UsageBillingLanePlatform, EstimatedCredits: 73}
+		remote := &RemoteBilling{grpcClient: t4CapabilityQuotaClient{supported: supported}}
+		svc := &llmGatewayServiceImpl{billing: remote}
+		if err := svc.prepareToolBilling(ctx, bc, nil); err != nil {
+			t.Fatal(err)
+		}
+		if bc.ToolPostpaid != supported || bc.EstimatedCredits != 73 {
+			t.Fatalf("supported=%t context=%+v", supported, bc)
+		}
+	}
+	bc := &BillingContext{UseSystemProvider: true, BillingLane: UsageBillingLanePlatform, EstimatedCredits: 73}
+	remote := &RemoteBilling{grpcClient: t4CapabilityQuotaClient{err: errors.New("capability transport failed")}}
+	if err := (&llmGatewayServiceImpl{billing: remote}).prepareToolBilling(ctx, bc, nil); err == nil || bc.ToolPostpaid {
+		t.Fatalf("capability transport failure was treated as a compatible downgrade: context=%+v err=%v", bc, err)
+	}
+}
+
+func TestRequestedBillingToolsRecognizesGeminiNativeDeclarations(t *testing.T) {
+	ctx := withRequestedBillingTools(context.Background(), []byte(`{"tools":[{"googleSearch":{}},{"fileSearch":{}},{"codeExecution":{}}]}`))
+	got, _ := ctx.Value(requestedToolsKey{}).([]string)
+	if strings.Join(got, ",") != "code_interpreter,file_search,web_search" {
+		t.Fatalf("tools=%v", got)
+	}
+}
+func TestT4RPCProjectionPreservesTokenReservation(t *testing.T) {
 	rpc := &t4QuotaRPC{}
 	client := &QuotaClient{client: rpc}
-	if _, err := client.PreDeductQuota(context.Background(), &PreDeductQuotaRequest{ToolPostpaid: true, EstimatedCredits: 0}); err != nil {
+	if _, err := client.PreDeductQuota(context.Background(), &PreDeductQuotaRequest{ToolPostpaid: true, EstimatedCredits: 73}); err != nil {
 		t.Fatal(err)
 	}
-	if !rpc.request.ToolPostpaid || rpc.request.EstimatedCredits != 0 {
+	if !rpc.request.ToolPostpaid || rpc.request.EstimatedCredits != 73 {
 		t.Fatalf("%+v", rpc.request)
 	}
 	resp, err := client.SettleQuota(context.Background(), &SettleQuotaRequest{})
@@ -459,16 +516,17 @@ func TestT4PausePreservesPendingAndLateFacts(t *testing.T) {
 	if err := f.service.Settle(ctx, bc); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := toolusage.NewRepository(f.db).UpdateFact(ctx, f.orgID, "private", e.DedupeKey, 2, toolusage.StatusSucceeded, toolusage.UsageSourceProviderReported, nil); err != nil {
+	e.Quantity, e.Status, e.UsageSource = 2, toolusage.StatusSucceeded, toolusage.UsageSourceProviderReported
+	if _, err := toolusage.NewRepository(f.db).Record(ctx, e); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("LLM_TOOL_SETTLEMENT_RECONCILE_PAUSED", "1")
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	f.assertWalletBalance(t, 180)
 	t.Setenv("LLM_TOOL_SETTLEMENT_RECONCILE_PAUSED", "0")
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	f.assertWalletBalance(t, 120)
@@ -591,7 +649,16 @@ func TestT4PlatformMirrorRevisionsNeverDeductFunds(t *testing.T) {
 	ctx := context.Background()
 	bc.BillingLane, bc.UseSystemProvider, bc.ToolSettlement = UsageBillingLanePlatform, true, nil
 	bc.DeductionID = "console-deduction"
-	if err := f.db.Transaction(func(tx *gorm.DB) error { return f.service.upsertAttemptInit(ctx, tx, bc) }); err != nil {
+	if err := f.db.Transaction(func(tx *gorm.DB) error {
+		var key apikeymodel.TenantAPIKey
+		if err := tx.Where("id = ?", f.apiKeyID).First(&key).Error; err != nil {
+			return err
+		}
+		if err := f.service.preDeductSubjectQuota(ctx, tx, bc, &key); err != nil {
+			return err
+		}
+		return f.service.upsertAttemptInit(ctx, tx, bc)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	remote := &RemoteBilling{localService: f.service}

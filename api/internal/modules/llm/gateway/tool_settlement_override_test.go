@@ -114,10 +114,11 @@ func TestT4GlobalTenantOverrideFreezesOldRequest(t *testing.T) {
 	if err := f.db.Exec("UPDATE llm_model_configs SET pricing_override = ? WHERE organization_id = ? AND model_id = ?", override("tenant-v2", "0.002"), f.orgID, bc.ModelID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := toolusage.NewRepository(f.db).UpdateFact(ctx, f.orgID, "private", e.DedupeKey, 1, toolusage.StatusSucceeded, toolusage.UsageSourceProviderReported, nil); err != nil {
+	e.Quantity, e.Status, e.UsageSource = 1, toolusage.StatusSucceeded, toolusage.UsageSourceProviderReported
+	if _, err := toolusage.NewRepository(f.db).Record(ctx, e); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	_, old := t4Bill(t, f, bc)
@@ -158,7 +159,7 @@ func TestT4TenantOverrideFixDoesNotRepriceCompletedFreeBill(t *testing.T) {
 	if err := f.db.Exec("INSERT INTO llm_model_configs VALUES (?, ?, NULL, NULL, ?, NULL)", f.orgID, bc.ModelID, `{"schema_version":1,"billing_lane":"private","pricing_version":"fixed-v1","tools":{"default":{"web_search":{"amount":"0.001","currency":"USD","unit":"call","per_quantity":1}}}}`).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.ReconcilePrivateTools(ctx); err != nil {
+	if err := f.service.reconcilePrivateToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := t4Bill(t, f, bc)

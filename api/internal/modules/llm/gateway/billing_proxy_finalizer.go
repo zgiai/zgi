@@ -77,11 +77,18 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 			return s.mirrorPlatformTools(ctx, bc, projection, datatypes.JSON(result.PricingSnapshot))
 		}
 		if bc.ToolPostpaid {
-			if strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack) && result.SettledCredits == 0 && !result.Retryable {
-				bc.Status, bc.ActualCredits = "error", 0
-				return s.finalizeRemoteSettlement(ctx, bc)
+			supported, capabilityErr := s.SupportsToolPostpaid(ctx)
+			if capabilityErr != nil {
+				return fmt.Errorf("verify billing capability after missing tool projection: %w", capabilityErr)
 			}
-			return fmt.Errorf("authoritative tool settlement JSON is still pending")
+			if supported {
+				return fmt.Errorf("authoritative tool settlement JSON is still pending")
+			}
+			clearToolPostpaid(bc)
+		}
+		if strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack) && !result.Retryable {
+			bc.Status, bc.ActualCredits = "error", 0
+			return s.finalizeRemoteSettlement(ctx, bc)
 		}
 		if !strings.EqualFold(result.SettlementStatus, "SETTLED") {
 			return fmt.Errorf("console settlement is not terminal: status=%s retryable=%t", result.SettlementStatus, result.Retryable)

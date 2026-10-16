@@ -57,6 +57,7 @@ type Event struct {
 	ModelName         string         `gorm:"column:model_name;size:160;index" json:"model_name,omitempty"`
 	ProviderName      string         `gorm:"column:provider_name;size:160" json:"provider_name,omitempty"`
 	ChannelID         *uuid.UUID     `gorm:"column:channel_id;type:uuid;index" json:"channel_id,omitempty"`
+	UpstreamScope     string         `gorm:"column:upstream_scope;size:128;not null;default:''" json:"upstream_scope,omitempty"`
 	ProviderRequestID string         `gorm:"column:provider_request_id;size:255;index" json:"provider_request_id,omitempty"`
 	ProviderCallID    string         `gorm:"column:provider_call_id;size:255;index" json:"provider_call_id,omitempty"`
 	SessionID         string         `gorm:"column:session_id;size:255;index:idx_tool_events_session" json:"session_id,omitempty"`
@@ -151,7 +152,7 @@ func (e *Event) SetDetails(value any) error {
 	return nil
 }
 
-// Repository records facts idempotently and supports delayed provider updates.
+// Repository records synchronous provider facts idempotently.
 type Repository struct{ db *gorm.DB }
 
 func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
@@ -171,15 +172,15 @@ func (r *Repository) Record(ctx context.Context, event *Event) (*Event, error) {
 	}
 	var stored *Event
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Serialize session reuse across channels as well as across requests.
+		// Serialize reuse only within the same selected route and upstream account.
 		if tx.Dialector.Name() == "postgres" {
-			identity := event.OrganizationID.String() + ":" + event.BillingLane + ":" + event.ProviderName + ":" + event.SessionID
+			identity := event.OrganizationID.String() + ":" + event.BillingLane + ":" + event.ProviderName + ":" + event.ChannelID.String() + ":" + event.UpstreamScope + ":" + event.SessionID
 			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", identity).Error; err != nil {
 				return err
 			}
 		}
 		var existing Event
-		err := tx.Where("organization_id = ? AND billing_lane = ? AND provider_name = ? AND session_id = ? AND status = ?", event.OrganizationID, event.BillingLane, event.ProviderName, event.SessionID, StatusSucceeded).Take(&existing).Error
+		err := tx.Where("organization_id = ? AND billing_lane = ? AND provider_name = ? AND channel_id = ? AND upstream_scope = ? AND session_id = ? AND status = ?", event.OrganizationID, event.BillingLane, event.ProviderName, event.ChannelID, event.UpstreamScope, event.SessionID, StatusSucceeded).Take(&existing).Error
 		if err == nil {
 			stored = &existing
 			return nil
@@ -238,22 +239,6 @@ func (r *Repository) record(ctx context.Context, event *Event) (*Event, error) {
 	return &stored, nil
 }
 
-// UpdateFact resolves a pending observation without rewriting a confirmed fact.
-func (r *Repository) UpdateFact(ctx context.Context, organizationID uuid.UUID, lane, dedupeKey string, quantity int64, status, source string, details datatypes.JSON) (*Event, error) {
-	if lane != "private" {
-		return nil, ErrInvalidLane
-	}
-	var event Event
-	if err := r.db.WithContext(ctx).Where("organization_id = ? AND billing_lane = ? AND dedupe_key = ?", organizationID, lane, dedupeKey).First(&event).Error; err != nil {
-		return nil, err
-	}
-	event.Quantity, event.Status, event.UsageSource = quantity, status, source
-	if len(details) != 0 {
-		event.Details = details
-	}
-	return r.Record(ctx, &event)
-}
-
 func (r *Repository) ListByAttempt(ctx context.Context, organizationID uuid.UUID, lane, attemptID string) ([]Event, error) {
 	if lane != "private" {
 		return nil, ErrInvalidLane
@@ -265,7 +250,7 @@ func (r *Repository) ListByAttempt(ctx context.Context, organizationID uuid.UUID
 
 // DedupeKey is based only on trusted upstream identity, never client tool definitions.
 // Session identities exclude request/attempt so reuse cannot create another fact.
-func DedupeKey(provider, channel, tool, providerRequestID, providerCallID, sessionID string) (string, error) {
+func DedupeKey(provider, channel, upstreamScope, tool, providerRequestID, providerCallID, sessionID string) (string, error) {
 	var identity []string
 	if provider == "" || channel == "" {
 		return "", ErrInvalidEvent
@@ -275,12 +260,12 @@ func DedupeKey(provider, channel, tool, providerRequestID, providerCallID, sessi
 		if sessionID == "" {
 			return "", ErrInvalidEvent
 		}
-		identity = []string{provider, channel, tool, "session", sessionID}
+		identity = []string{provider, channel, upstreamScope, tool, "session", sessionID}
 	case ToolWebSearch, ToolFileSearch:
 		if providerRequestID == "" {
 			return "", ErrInvalidEvent
 		}
-		identity = []string{provider, channel, tool, "call", providerRequestID, providerCallID}
+		identity = []string{provider, channel, upstreamScope, tool, "call", providerRequestID, providerCallID}
 	default:
 		return "", ErrInvalidEvent
 	}

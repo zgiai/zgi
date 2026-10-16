@@ -96,14 +96,23 @@ type requestedToolsKey struct{}
 
 func withRequestedBillingTools(ctx context.Context, body []byte) context.Context {
 	var payload struct {
-		Tools []struct {
-			Type string `json:"type"`
-		} `json:"tools"`
+		Tools []map[string]json.RawMessage `json:"tools"`
 	}
 	_ = json.Unmarshal(body, &payload)
 	set := map[string]bool{}
 	for _, t := range payload.Tools {
-		name := t.Type
+		var name string
+		_ = json.Unmarshal(t["type"], &name)
+		for key := range t {
+			switch key {
+			case "googleSearch", "google_search":
+				name = toolusage.ToolWebSearch
+			case "fileSearch", "file_search":
+				name = toolusage.ToolFileSearch
+			case "codeExecution", "code_execution":
+				name = toolusage.ToolCodeInterpreter
+			}
+		}
 		if strings.HasPrefix(name, "web_search") {
 			name = toolusage.ToolWebSearch
 		}
@@ -186,13 +195,25 @@ func (s *llmGatewayServiceImpl) prepareToolBilling(ctx context.Context, bc *Bill
 	if len(requested) == 0 {
 		return nil
 	}
-	bc.ToolPostpaid = true
-	bc.EstimatedCredits = 0
-	bc.SubjectReservedCredits = 0
 	if bc.UseSystemProvider {
+		capabilities, ok := s.billing.(interface {
+			SupportsToolPostpaid(context.Context) (bool, error)
+		})
+		if !ok {
+			return nil
+		}
+		supported, err := capabilities.SupportsToolPostpaid(ctx)
+		if err != nil {
+			return fmt.Errorf("negotiate tool settlement capability: %w", err)
+		}
+		if !supported {
+			return nil
+		}
+		bc.ToolPostpaid = true
 		markToolPostpaid(bc)
 		return nil
 	}
+	bc.ToolPostpaid = true
 	if s.db == nil || bc.ChannelID == nil {
 		return fmt.Errorf("missing private tool billing database or channel")
 	}
@@ -603,23 +624,34 @@ func restoreToolBillContext(bc *BillingContext, bill *UsageBill, attempt *Billin
 	bc.DisplayCurrency = pricingSnapshotString(values, exchangeRateSnapshotDisplayCurrencyKey)
 }
 
-// ReconcilePrivateTools scans only T4 records. Historical token bills never
-// acquire a tool settlement or get repriced by this worker.
-func (b *BillingService) ReconcilePrivateTools(ctx context.Context) error {
+// reconcilePrivateToolAttempt is an explicit repair hook for one known T4
+// attempt. Production reconciliation discovers work from BillingAttempt's due
+// state; it must never sweep UsageBill history to find candidates.
+func (b *BillingService) reconcilePrivateToolAttempt(ctx context.Context, attemptID string) error {
 	if os.Getenv("LLM_TOOL_SETTLEMENT_RECONCILE_PAUSED") == "1" {
 		return nil
 	}
-	return eachToolBill(ctx, b.db, "private", func(bill UsageBill) error {
-		state, err := decodeToolSettlement(bill.PricingSnapshot)
-		if err != nil {
-			return err
-		}
-		if state == nil || state.Revision == 0 && !state.TokenFinalized {
-			return nil
-		}
-		bc := &BillingContext{OrganizationID: bill.OrganizationID, AttemptID: bill.AttemptID, RequestID: bill.RequestID, BillingLane: UsageBillingLanePrivate, ToolPostpaid: true, ToolSettlement: state}
-		return b.settlePrivateTools(ctx, bc)
-	})
+	var bill UsageBill
+	if err := b.db.WithContext(ctx).Where("attempt_id = ? AND billing_lane = ?", attemptID, "private").First(&bill).Error; err != nil {
+		return err
+	}
+	state, err := decodeToolSettlement(bill.PricingSnapshot)
+	if err != nil {
+		return err
+	}
+	if state == nil || state.Revision == 0 && !state.TokenFinalized {
+		return nil
+	}
+	bc, err := b.buildLocalRecoveryBillingContext(ctx, attemptID)
+	if err != nil {
+		return err
+	}
+	bc.ToolPostpaid, bc.ToolSettlement = true, state
+	bc.Status, bc.ActualCredits = "error", 0
+	if state.InvocationSucceeded {
+		bc.Status, bc.ActualCredits = "success", state.TokenCredits
+	}
+	return b.settlePrivateTools(ctx, bc)
 }
 
 // Persist the first completion quote before applying funds. If the funds
@@ -670,37 +702,6 @@ func (b *BillingService) freezeToolTokenIntent(ctx context.Context, bc *BillingC
 		}
 		return b.upsertUsageBill(ctx, tx, &copy, usageBillStatusPartial, nil, nil)
 	})
-}
-
-// Keyset pagination visits new rows even when the first page is all terminal.
-func eachToolBill(ctx context.Context, db *gorm.DB, lane string, visit func(UsageBill) error) error {
-	var failures []error
-	cursor := ""
-	for {
-		var bills []UsageBill
-		q := db.WithContext(ctx).Where("billing_lane = ?", lane)
-		if lane == "platform" {
-			q = q.Where("(CAST(pricing_snapshot AS TEXT) LIKE ? OR CAST(pricing_snapshot AS TEXT) LIKE ?)", "%tool_settlement%", "%tool_postpaid%")
-		} else {
-			q = q.Where("CAST(pricing_snapshot AS TEXT) LIKE ?", "%tool_settlement%")
-		}
-		if cursor != "" {
-			q = q.Where("id > ?", cursor)
-		}
-		if err := q.Order("id ASC").Limit(100).Find(&bills).Error; err != nil {
-			return err
-		}
-		for _, bill := range bills {
-			if err := visit(bill); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		if len(bills) < 100 {
-			break
-		}
-		cursor = bills[len(bills)-1].ID.String()
-	}
-	return errors.Join(failures...)
 }
 
 // Preserve cumulative hard-limited grant charges in the subject ledger while

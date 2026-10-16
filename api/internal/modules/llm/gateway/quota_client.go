@@ -16,6 +16,7 @@ import (
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -125,6 +126,17 @@ func (c *QuotaClient) Close() error {
 		return c.conn.Close()
 	}
 	return nil
+}
+
+func (c *QuotaClient) GetBillingCapabilities(ctx context.Context) (bool, error) {
+	resp, err := c.client.GetBillingCapabilities(ctx, &pb.GetBillingCapabilitiesRequest{})
+	if status.Code(err) == codes.Unimplemented {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get billing capabilities: %w", newBillingRPCError(err))
+	}
+	return resp.GetProtocolVersion() >= 2 && resp.GetToolPostpaidV2(), nil
 }
 
 func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {

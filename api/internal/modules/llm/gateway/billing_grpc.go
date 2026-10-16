@@ -44,6 +44,27 @@ type authoritativeTokenCostClient interface {
 	CalculateDualCost(ctx context.Context, modelID, provider, model string, promptTokens, completionTokens int) (*DualCostQuotaResponse, error)
 }
 
+type billingCapabilityClient interface {
+	GetBillingCapabilities(context.Context) (bool, error)
+}
+
+func (s *RemoteBilling) SupportsToolPostpaid(ctx context.Context) (bool, error) {
+	client, ok := s.grpcClient.(billingCapabilityClient)
+	if !ok {
+		logger.Warn("billing capability downgrade", zap.String("capability", "tool_postpaid_v2"), zap.String("reason", "client_method_unavailable"))
+		return false, nil
+	}
+	supported, err := client.GetBillingCapabilities(ctx)
+	if err != nil {
+		logger.Warn("billing capability negotiation failed", zap.String("capability", "tool_postpaid_v2"), zap.Error(err))
+		return false, err
+	}
+	if !supported {
+		logger.Warn("billing capability downgrade", zap.String("capability", "tool_postpaid_v2"), zap.String("reason", "console_unsupported"))
+	}
+	return supported, nil
+}
+
 const (
 	defaultReconcileSweepEvery            = 30 * time.Second
 	defaultReconcileBatchSize             = 50
@@ -475,6 +496,17 @@ func (s *RemoteBilling) settleViaGRPC(ctx context.Context, bc *BillingContext) e
 		}
 		return nil
 	}
+	if bc.ToolPostpaid || isToolPostpaidSnapshot(bc.PricingSnapshot) {
+		supported, capabilityErr := s.SupportsToolPostpaid(ctx)
+		if capabilityErr != nil {
+			return fmt.Errorf("verify billing capability after missing tool projection: %w", capabilityErr)
+		}
+		if supported {
+			return fmt.Errorf("tool settlement response omitted authoritative projection")
+		}
+		logger.Warn("billing settlement downgraded to legacy token contract", zap.String("attempt_id", bc.AttemptID))
+		clearToolPostpaid(bc)
+	}
 	if err := applyRemoteSettlementResult(bc, resp); err != nil {
 		if markErr := s.markAttemptSettleFailed(ctx, bc, "SETTLE_INVALID_RESPONSE", err.Error()); markErr != nil {
 			return fmt.Errorf("settle invalid response: %v (additionally failed to mark partial: %w)", err, markErr)
@@ -616,10 +648,6 @@ func (s *RemoteBilling) startPartialSettleReconcileWorker(ctx context.Context) {
 			logger.InfoContext(ctx, "remote billing reconcile worker stopped")
 			return
 		case <-ticker.C:
-			if err := s.reconcilePlatformTools(ctx); err != nil {
-				logger.ErrorContext(ctx, "platform tool mirror sweep failed", err)
-			}
-
 			if err := s.reconcilePendingSettlementQueries(ctx); err != nil {
 				logger.ErrorContext(ctx, "remote billing settlement query sweep failed", err)
 			}

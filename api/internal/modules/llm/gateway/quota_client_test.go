@@ -2,10 +2,13 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type recordingQuotaRPCClient struct {
@@ -13,6 +16,12 @@ type recordingQuotaRPCClient struct {
 	request         *pb.PreDeductQuotaRequest
 	meteredRequest  *pb.PreDeductMeteredUsageRequest
 	dualCostRequest *pb.CalculateDualCostRequest
+	capabilities    *pb.GetBillingCapabilitiesResponse
+	capabilityErr   error
+}
+
+func (c *recordingQuotaRPCClient) GetBillingCapabilities(_ context.Context, _ *pb.GetBillingCapabilitiesRequest, _ ...grpc.CallOption) (*pb.GetBillingCapabilitiesResponse, error) {
+	return c.capabilities, c.capabilityErr
 }
 
 func (c *recordingQuotaRPCClient) PreDeductMeteredUsage(_ context.Context, req *pb.PreDeductMeteredUsageRequest, _ ...grpc.CallOption) (*pb.PreDeductMeteredUsageResponse, error) {
@@ -46,6 +55,31 @@ func TestQuotaClientPropagatesReservationPolicy(t *testing.T) {
 	}
 	if rpcClient.request == nil || rpcClient.request.GetReservationPolicy() != reservationPolicyAuthoritativeQuoteV1 {
 		t.Fatalf("reservation policy request = %#v", rpcClient.request)
+	}
+}
+
+func TestQuotaClientNegotiatesToolSettlementAndDowngradesOldConsole(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		response  *pb.GetBillingCapabilitiesResponse
+		err       error
+		supported bool
+	}{
+		{name: "new console", response: &pb.GetBillingCapabilitiesResponse{ProtocolVersion: 2, ToolPostpaidV2: true}, supported: true},
+		{name: "old console", err: status.Error(codes.Unimplemented, "unknown method")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rpcClient := &recordingQuotaRPCClient{capabilities: tc.response, capabilityErr: tc.err}
+			client := &QuotaClient{client: rpcClient}
+			supported, err := client.GetBillingCapabilities(context.Background())
+			if err != nil || supported != tc.supported {
+				t.Fatalf("supported=%t err=%v", supported, err)
+			}
+		})
+	}
+	rpcClient := &recordingQuotaRPCClient{capabilityErr: errors.New("transport failed")}
+	if _, err := (&QuotaClient{client: rpcClient}).GetBillingCapabilities(context.Background()); err == nil {
+		t.Fatal("transport failure was treated as a compatible downgrade")
 	}
 }
 

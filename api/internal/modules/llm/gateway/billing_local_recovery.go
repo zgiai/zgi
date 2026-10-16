@@ -43,10 +43,6 @@ func (b *BillingService) runLocalPredeductRecoveryWorker(ctx context.Context) {
 			logger.InfoContext(ctx, "local pre-deduct recovery worker stopped")
 			return
 		case <-ticker.C:
-			if err := b.ReconcilePrivateTools(ctx); err != nil {
-				logger.ErrorContext(ctx, "private tool settlement sweep failed", err)
-			}
-
 			if err := b.recoverStaleLocalPredeductAttempts(ctx); err != nil {
 				logger.ErrorContext(ctx, "local pre-deduct recovery sweep failed", err)
 			}
@@ -187,12 +183,6 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		First(&fundEntry).Error; err != nil {
 		return nil, fmt.Errorf("load local fund entry: %w", err)
 	}
-	if subjectEntry.ReservedAmount != fundEntry.ReservedAmount {
-		return nil, fmt.Errorf(
-			"reserved amount mismatch for local recovery: attempt_id=%s subject_reserved=%d fund_reserved=%d",
-			attemptID, subjectEntry.ReservedAmount, fundEntry.ReservedAmount,
-		)
-	}
 	channelID, err := uuid.Parse(fundEntry.LedgerRefID)
 	if err != nil {
 		return nil, fmt.Errorf("parse local fund ledger_ref_id as channel_id: %w", err)
@@ -205,7 +195,7 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		InvocationSource:       normalizeInvocationSource(attempt.InvocationSource),
 		QuotaSubjectType:       attempt.QuotaSubjectType,
 		QuotaSubjectID:         attempt.QuotaSubjectID,
-		EstimatedCredits:       subjectEntry.ReservedAmount.Int64(),
+		EstimatedCredits:       fundEntry.ReservedAmount.Int64(),
 		SubjectReservedCredits: subjectEntry.ReservedAmount.Int64(),
 		ActualCredits:          0,
 		ChannelID:              &channelIDCopy,
@@ -214,6 +204,7 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		Status:                 "error",
 		ErrorMessage:           "stale local pre-deduct auto rollback",
 	}
+	bc.ToolPostpaid = subjectEntry.ReservedAmount != fundEntry.ReservedAmount
 	restoreBillingContextAttribution(bc, &attempt)
 	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey {
 		bc.APIKeyID = attempt.QuotaSubjectID

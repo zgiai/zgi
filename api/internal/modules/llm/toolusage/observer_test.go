@@ -47,7 +47,7 @@ func TestObserverCountsUniqueCompletedSearchesAndFailures(t *testing.T) {
 		t.Fatalf("calls: %+v %v", events, err)
 	}
 }
-func TestObserverDelayedMissingFactCanBeConfirmed(t *testing.T) {
+func TestObserverConfirmedProviderCounterReplacesMissingObservation(t *testing.T) {
 	r := newTestRepo(t)
 	o := NewObserver(observerIdentity(), []byte(`{"tools":[{"type":"web_search"}]}`))
 	o.Observe([]byte(`{"id":"resp_1","type":"response"}`))
@@ -98,7 +98,7 @@ func TestStreamObserverPreservesBytesAndRecordsFinalFacts(t *testing.T) {
 	}
 }
 
-func TestPendingExpiryAndLateFact(t *testing.T) {
+func TestCompletedResponseWithoutTrustedFactIsFinalFree(t *testing.T) {
 	r := newTestRepo(t)
 	ctx := context.Background()
 	o := NewObserver(observerIdentity(), []byte(`{"tools":[{"type":"web_search"}]}`))
@@ -107,20 +107,12 @@ func TestPendingExpiryAndLateFact(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, err := r.ExpirePending(ctx, time.Now().Add(time.Second))
-	if err != nil || n != 1 {
+	if err != nil || n != 0 {
 		t.Fatalf("expire: %d %v", n, err)
 	}
 	events, _ := r.ListByAttempt(ctx, testOrganizationID, ownedLane, "attempt")
 	if events[0].Status != StatusFailed || events[0].Quantity != 0 {
-		t.Fatalf("expired: %+v", events)
-	}
-	o.Observe([]byte(`{"id":"resp_expire","type":"response","tool_usage":{"web_search":{"num_requests":2}}}`))
-	if err := o.Record(ctx, r, true, false); err != nil {
-		t.Fatal(err)
-	}
-	events, _ = r.ListByAttempt(ctx, testOrganizationID, ownedLane, "attempt")
-	if len(events) != 1 || events[0].Quantity != 2 || events[0].Status != StatusSucceeded {
-		t.Fatalf("late fact: %+v", events)
+		t.Fatalf("missing fact was not finalized free: %+v", events)
 	}
 }
 
@@ -133,7 +125,7 @@ func TestFailedCodeSessionIsFinalAndFree(t *testing.T) {
 	}
 }
 
-func TestSameSessionAcrossChannelsDoesNotCreateSecondFact(t *testing.T) {
+func TestSameSessionAcrossChannelsCreatesIndependentFacts(t *testing.T) {
 	r := newTestRepo(t)
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
@@ -147,7 +139,26 @@ func TestSameSessionAcrossChannelsDoesNotCreateSecondFact(t *testing.T) {
 		}
 	}
 	var count int64
-	if err := r.db.Model(&Event{}).Where("session_id = ?", "shared_session").Count(&count).Error; err != nil || count != 1 {
+	if err := r.db.Model(&Event{}).Where("session_id = ?", "shared_session").Count(&count).Error; err != nil || count != 2 {
 		t.Fatalf("cross-channel session: %d %v", count, err)
+	}
+}
+
+func TestGeminiNativeSearchFactsAreCountedOnceAcrossChunks(t *testing.T) {
+	o := NewObserver(observerIdentity(), []byte(`{"tools":[{"googleSearch":{}},{"codeExecution":{}}]}`))
+	chunk := []byte(`{"responseId":"gemini-response","candidates":[{"groundingMetadata":{"webSearchQueries":["same query","same query","second query"]}}]}`)
+	o.Observe(chunk)
+	o.Observe(chunk)
+	events, err := o.Events(true, false)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events: %+v %v", events, err)
+	}
+	for _, event := range events {
+		if event.Tool == ToolWebSearch && (event.Quantity != 3 || event.Status != StatusSucceeded || event.UsageSource != UsageSourceProviderReported) {
+			t.Fatalf("gemini search fact: %+v", event)
+		}
+		if event.Tool == ToolCodeInterpreter && (event.Quantity != 0 || event.UsageSource != UsageSourceMissing) {
+			t.Fatalf("gemini code execution must remain free without a trusted session id: %+v", event)
+		}
 	}
 }

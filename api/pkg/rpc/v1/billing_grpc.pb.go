@@ -26,6 +26,7 @@ const (
 	BillingService_GetBillingMode_FullMethodName           = "/zgi.rpc.v1.BillingService/GetBillingMode"
 	BillingService_CheckCreditBalance_FullMethodName       = "/zgi.rpc.v1.BillingService/CheckCreditBalance"
 	BillingService_PreDeductMeteredUsage_FullMethodName    = "/zgi.rpc.v1.BillingService/PreDeductMeteredUsage"
+	BillingService_GetBillingCapabilities_FullMethodName   = "/zgi.rpc.v1.BillingService/GetBillingCapabilities"
 )
 
 // BillingServiceClient is the client API for BillingService service.
@@ -39,6 +40,7 @@ type BillingServiceClient interface {
 	GetBillingMode(ctx context.Context, in *GetBillingModeRequest, opts ...grpc.CallOption) (*BillingModeResponse, error)
 	CheckCreditBalance(ctx context.Context, in *CheckCreditBalanceRequest, opts ...grpc.CallOption) (*CheckCreditBalanceResponse, error)
 	PreDeductMeteredUsage(ctx context.Context, in *PreDeductMeteredUsageRequest, opts ...grpc.CallOption) (*PreDeductMeteredUsageResponse, error)
+	GetBillingCapabilities(ctx context.Context, in *GetBillingCapabilitiesRequest, opts ...grpc.CallOption) (*GetBillingCapabilitiesResponse, error)
 }
 
 type billingServiceClient struct {
@@ -119,6 +121,16 @@ func (c *billingServiceClient) PreDeductMeteredUsage(ctx context.Context, in *Pr
 	return out, nil
 }
 
+func (c *billingServiceClient) GetBillingCapabilities(ctx context.Context, in *GetBillingCapabilitiesRequest, opts ...grpc.CallOption) (*GetBillingCapabilitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetBillingCapabilitiesResponse)
+	err := c.cc.Invoke(ctx, BillingService_GetBillingCapabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BillingServiceServer is the server API for BillingService service.
 // All implementations must embed UnimplementedBillingServiceServer
 // for forward compatibility.
@@ -130,6 +142,7 @@ type BillingServiceServer interface {
 	GetBillingMode(context.Context, *GetBillingModeRequest) (*BillingModeResponse, error)
 	CheckCreditBalance(context.Context, *CheckCreditBalanceRequest) (*CheckCreditBalanceResponse, error)
 	PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error)
+	GetBillingCapabilities(context.Context, *GetBillingCapabilitiesRequest) (*GetBillingCapabilitiesResponse, error)
 	mustEmbedUnimplementedBillingServiceServer()
 }
 
@@ -160,6 +173,9 @@ func (UnimplementedBillingServiceServer) CheckCreditBalance(context.Context, *Ch
 }
 func (UnimplementedBillingServiceServer) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreDeductMeteredUsage not implemented")
+}
+func (UnimplementedBillingServiceServer) GetBillingCapabilities(context.Context, *GetBillingCapabilitiesRequest) (*GetBillingCapabilitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBillingCapabilities not implemented")
 }
 func (UnimplementedBillingServiceServer) mustEmbedUnimplementedBillingServiceServer() {}
 func (UnimplementedBillingServiceServer) testEmbeddedByValue()                        {}
@@ -308,6 +324,24 @@ func _BillingService_PreDeductMeteredUsage_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BillingService_GetBillingCapabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBillingCapabilitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BillingServiceServer).GetBillingCapabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BillingService_GetBillingCapabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BillingServiceServer).GetBillingCapabilities(ctx, req.(*GetBillingCapabilitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BillingService_ServiceDesc is the grpc.ServiceDesc for BillingService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +376,10 @@ var BillingService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PreDeductMeteredUsage",
 			Handler:    _BillingService_PreDeductMeteredUsage_Handler,
+		},
+		{
+			MethodName: "GetBillingCapabilities",
+			Handler:    _BillingService_GetBillingCapabilities_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

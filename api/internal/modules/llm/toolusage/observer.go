@@ -14,6 +14,7 @@ import (
 type Identity struct {
 	OrganizationID                                  uuid.UUID
 	RequestID, AttemptID, Lane, ModelName, Provider string
+	UpstreamScope                                   string
 	ChannelID                                       uuid.UUID
 	ModelID                                         *uuid.UUID
 }
@@ -27,14 +28,29 @@ type Observer struct {
 	calls             map[string]callFact
 	counts            map[string]int64
 	seen              map[string]bool
+	geminiQueries     map[string]bool
 }
 
 func NewObserver(identity Identity, request []byte) *Observer {
-	o := &Observer{identity: identity, requested: map[string]bool{}, calls: map[string]callFact{}, counts: map[string]int64{}, seen: map[string]bool{}}
-	var body struct{ Tools []struct{ Type, Name string } }
+	o := &Observer{identity: identity, requested: map[string]bool{}, calls: map[string]callFact{}, counts: map[string]int64{}, seen: map[string]bool{}, geminiQueries: map[string]bool{}}
+	var body struct{ Tools []map[string]json.RawMessage }
 	_ = json.Unmarshal(request, &body)
 	for _, t := range body.Tools {
-		name := t.Type
+		var name string
+		_ = json.Unmarshal(t["type"], &name)
+		if name == "" {
+			_ = json.Unmarshal(t["name"], &name)
+		}
+		for key := range t {
+			switch key {
+			case "googleSearch", "google_search":
+				name = ToolWebSearch
+			case "fileSearch", "file_search":
+				name = ToolFileSearch
+			case "codeExecution", "code_execution":
+				name = ToolCodeInterpreter
+			}
+		}
 		if strings.HasPrefix(name, "web_search") {
 			name = ToolWebSearch
 		}
@@ -62,6 +78,12 @@ func (o *Observer) Observe(data []byte) {
 				WebSearchRequests *int64 `json:"web_search_requests"`
 			} `json:"server_tool_use"`
 		}
+		ResponseID string `json:"responseId"`
+		Candidates []struct {
+			GroundingMetadata struct {
+				WebSearchQueries []string `json:"webSearchQueries"`
+			} `json:"groundingMetadata"`
+		} `json:"candidates"`
 	}
 	if json.Unmarshal(data, &payload) != nil {
 		return
@@ -75,6 +97,22 @@ func (o *Observer) Observe(data []byte) {
 	}
 	if payload.ID != "" && (payload.Type == "response" || payload.Type == "message" || len(payload.Output) > 0 || payload.ToolUsage != nil) {
 		o.providerRequestID = payload.ID
+	}
+	if payload.ResponseID != "" {
+		o.providerRequestID = payload.ResponseID
+	}
+	for candidateIndex, candidate := range payload.Candidates {
+		for queryIndex, query := range candidate.GroundingMetadata.WebSearchQueries {
+			query = strings.TrimSpace(query)
+			if query != "" {
+				key := fmt.Sprintf("%s:%d:%d:%s", o.providerRequestID, candidateIndex, queryIndex, query)
+				o.geminiQueries[key] = true
+			}
+		}
+	}
+	if len(o.geminiQueries) > 0 {
+		o.counts[ToolWebSearch] = int64(len(o.geminiQueries))
+		o.seen[ToolWebSearch] = true
 	}
 	for tool, v := range payload.ToolUsage {
 		if (tool == ToolWebSearch || tool == ToolFileSearch) && v.NumRequests != nil && *v.NumRequests >= 0 {
@@ -147,7 +185,7 @@ func (o *Observer) Events(ended bool, failed bool) ([]Event, error) {
 	sort.Strings(tools)
 	result := []Event{}
 	base := func(tool, key, callID, session string) Event {
-		return Event{SchemaVersion: 1, OrganizationID: o.identity.OrganizationID, RequestID: o.identity.RequestID, AttemptID: o.identity.AttemptID, EventID: key, BillingLane: o.identity.Lane, Tool: tool, ModelID: o.identity.ModelID, ModelName: o.identity.ModelName, ProviderName: o.identity.Provider, ChannelID: &o.identity.ChannelID, ProviderRequestID: o.providerRequestID, ProviderCallID: callID, SessionID: session, DedupeKey: key, Unit: "call", Status: StatusPending, UsageSource: UsageSourceMissing}
+		return Event{SchemaVersion: 1, OrganizationID: o.identity.OrganizationID, RequestID: o.identity.RequestID, AttemptID: o.identity.AttemptID, EventID: key, BillingLane: o.identity.Lane, Tool: tool, ModelID: o.identity.ModelID, ModelName: o.identity.ModelName, ProviderName: o.identity.Provider, ChannelID: &o.identity.ChannelID, UpstreamScope: o.identity.UpstreamScope, ProviderRequestID: o.providerRequestID, ProviderCallID: callID, SessionID: session, DedupeKey: key, Unit: "call", Status: StatusPending, UsageSource: UsageSourceMissing}
 	}
 	for _, tool := range tools {
 		if tool == ToolCodeInterpreter {
@@ -162,7 +200,7 @@ func (o *Observer) Events(ended bool, failed bool) ([]Event, error) {
 				if f.Tool != tool || f.SessionID == "" || f.Status != StatusSucceeded {
 					continue
 				}
-				key, err := DedupeKey(o.identity.Provider, o.identity.ChannelID.String(), tool, o.providerRequestID, f.ID, f.SessionID)
+				key, err := DedupeKey(o.identity.Provider, o.identity.ChannelID.String(), o.identity.UpstreamScope, tool, o.providerRequestID, f.ID, f.SessionID)
 				if err != nil {
 					return nil, err
 				}
@@ -180,12 +218,12 @@ func (o *Observer) Events(ended bool, failed bool) ([]Event, error) {
 				continue
 			}
 		}
-		key, err := DedupeKey(o.identity.Provider, o.identity.ChannelID.String(), ToolWebSearch, "attempt:"+o.identity.AttemptID, tool, "")
+		key, err := DedupeKey(o.identity.Provider, o.identity.ChannelID.String(), o.identity.UpstreamScope, ToolWebSearch, "attempt:"+o.identity.AttemptID, tool, "")
 		if err != nil {
 			return nil, err
 		}
 		if o.providerRequestID != "" && tool != ToolCodeInterpreter {
-			key, err = DedupeKey(o.identity.Provider, o.identity.ChannelID.String(), tool, o.providerRequestID, "summary", "")
+			key, err = DedupeKey(o.identity.Provider, o.identity.ChannelID.String(), o.identity.UpstreamScope, tool, o.providerRequestID, "summary", "")
 			if err != nil {
 				return nil, err
 			}
@@ -239,6 +277,10 @@ func (o *Observer) Events(ended bool, failed bool) ([]Event, error) {
 			}
 		}
 		if e.Status == StatusPending && failed {
+			e.Status = StatusFailed
+			e.UsageSource = UsageSourceMissing
+		}
+		if e.Status == StatusPending && ended {
 			e.Status = StatusFailed
 			e.UsageSource = UsageSourceMissing
 		}

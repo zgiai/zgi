@@ -295,9 +295,6 @@ func (s *llmGatewayServiceImpl) beginBillingAttempt(
 	if err := s.prepareToolBilling(ctx, billingCtx, providerSelection); err != nil {
 		return nil, err
 	}
-	if billingCtx.ToolPostpaid {
-		estimatedCredits = 0
-	}
 	decision, err := s.resolveBillingDecision(providerSelection, billingCtx)
 	if err != nil {
 		return nil, wrapBillingLaneMismatchError(err)
@@ -358,7 +355,7 @@ func (s *llmGatewayServiceImpl) checkBalanceAndPreDeduct(
 	billingProvider := s.billingProviderForDecision(decision)
 
 	// Check balance if using system provider
-	if useSystemProvider && !billingCtx.ToolPostpaid {
+	if useSystemProvider {
 		canSpend, err := s.billing.CheckBalance(ctx, shadowOrganizationID, ownerID, estimatedCredits)
 		if err != nil {
 			wrappedErr := wrapBillingPreDeductError(

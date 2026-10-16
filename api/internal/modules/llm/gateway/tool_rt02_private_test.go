@@ -142,8 +142,8 @@ func TestRT02PrivateLateFactKeepsFrozenPriceAndChargesOnlyDelta(t *testing.T) {
 		t.Fatalf("expected one or two legitimate adjustments (token, then delta), got %d", adjustments)
 	}
 	beforeDeduct := f.countWalletTransactions(t, attempt, channelWalletTxTypePreDeduct)
-	if beforeDeduct != 0 {
-		t.Fatalf("a postpaid placeholder must not write a pre-deduct funds transaction, got %d", beforeDeduct)
+	if beforeDeduct != 1 {
+		t.Fatalf("token reservation transactions=%d, want 1", beforeDeduct)
 	}
 	if got := rt02PrivateWallet(t, f); got != walletAfterToken-final.ToolCredits {
 		t.Fatalf("private wallet %d, want %d (token already paid, plus tool %d)",

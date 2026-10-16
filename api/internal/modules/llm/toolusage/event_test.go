@@ -56,7 +56,7 @@ func TestDeduplicationAndImmutableFacts(t *testing.T) {
 		t.Fatalf("rows: %v %v", rows, err)
 	}
 }
-func TestDelayedFactAndLaneOwnership(t *testing.T) {
+func TestPendingFactCanBeCompletedByAProviderObservation(t *testing.T) {
 	r := newTestRepo(t)
 	ctx := context.Background()
 	pending := testEvent()
@@ -66,7 +66,8 @@ func TestDelayedFactAndLaneOwnership(t *testing.T) {
 	if _, err := r.Record(ctx, pending); err != nil {
 		t.Fatal(err)
 	}
-	result, err := r.UpdateFact(ctx, testOrganizationID, "private", "trusted-key", 2, StatusSucceeded, UsageSourceProviderReported, nil)
+	completed := testEvent()
+	result, err := r.Record(ctx, completed)
 	if err != nil || result.Quantity != 2 {
 		t.Fatalf("delayed: %v %v", result, err)
 	}
@@ -96,13 +97,18 @@ func TestTenantIsolation(t *testing.T) {
 	}
 }
 func TestSessionReuseAndRetryKeys(t *testing.T) {
-	first, _ := DedupeKey("provider", "channel", ToolCodeInterpreter, "request1", "call1", "session")
-	reuse, _ := DedupeKey("provider", "channel", ToolCodeInterpreter, "request2", "call2", "session")
+	first, _ := DedupeKey("provider", "channel", "credential", ToolCodeInterpreter, "request1", "call1", "session")
+	reuse, _ := DedupeKey("provider", "channel", "credential", ToolCodeInterpreter, "request2", "call2", "session")
 	if first != reuse {
 		t.Fatal("session reuse changed identity")
 	}
-	first, _ = DedupeKey("provider", "channel", ToolWebSearch, "request1", "call1", "")
-	retry, _ := DedupeKey("provider", "channel", ToolWebSearch, "request2", "call2", "")
+	otherChannel, _ := DedupeKey("provider", "other-channel", "credential", ToolCodeInterpreter, "request2", "call2", "session")
+	otherCredential, _ := DedupeKey("provider", "channel", "other-credential", ToolCodeInterpreter, "request2", "call2", "session")
+	if first == otherChannel || first == otherCredential {
+		t.Fatal("session identity crossed channel or upstream account scope")
+	}
+	first, _ = DedupeKey("provider", "channel", "credential", ToolWebSearch, "request1", "call1", "")
+	retry, _ := DedupeKey("provider", "channel", "credential", ToolWebSearch, "request2", "call2", "")
 	if first == retry {
 		t.Fatal("new upstream call deduplicated")
 	}

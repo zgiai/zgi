@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -169,44 +168,6 @@ func (s *RemoteBilling) mirrorPlatformTools(ctx context.Context, bc *BillingCont
 	})
 }
 
-func (s *RemoteBilling) reconcilePlatformTools(ctx context.Context) error {
-	if os.Getenv("LLM_TOOL_SETTLEMENT_RECONCILE_PAUSED") == "1" {
-		return nil
-	}
-	var failures []error
-	// Explicit repair IDs are for audited T4 rows written by an older faulty
-	// mirror without its marker. No historical private pricing is recomputed.
-	for _, id := range strings.Split(os.Getenv("LLM_TOOL_SETTLEMENT_REPAIR_ATTEMPTS"), ",") {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if err := s.reconcilePlatformToolAttempt(ctx, id); err != nil {
-			failures = append(failures, err)
-		}
-	}
-	if err := eachToolBill(ctx, s.localService.db, "platform", func(bill UsageBill) error {
-		if !isToolPostpaidSnapshot(bill.PricingSnapshot) {
-			return nil
-		}
-		result, err := queryConsoleSettlement(ctx, strings.TrimRight(s.consoleAPIBaseURL, "/")+"/billing/settlements/by-attempt", bill.OrganizationID, bill.AttemptID)
-		if err != nil {
-			return err
-		}
-		if !result.Found {
-			return nil
-		}
-		var attempt BillingAttempt
-		if err := s.localService.db.WithContext(ctx).Where("attempt_id = ?", bill.AttemptID).First(&attempt).Error; err != nil {
-			return err
-		}
-		return s.mirrorQueriedSettlement(ctx, &attempt, result)
-	}); err != nil {
-		failures = append(failures, err)
-	}
-	return errors.Join(failures...)
-}
-
 func settlementFromToolSnapshot(state *toolSettlement, raw datatypes.JSON) *adapter.SettlementResult {
 	values := pricingSnapshotMap(raw)
 	rate := firstNonEmptyString(pricingSnapshotString(values, "cny_per_usd"), pricingSnapshotString(values, exchangeRateSnapshotRateKey))
@@ -279,7 +240,17 @@ func normalizeToolJSONNumbers(value interface{}) (interface{}, bool) {
 func markToolPostpaid(bc *BillingContext) {
 	values := pricingSnapshotMap(bc.PricingSnapshot)
 	values["tool_postpaid"] = true
+	values["tool_protocol_version"] = 2
 	bc.PricingSnapshot = buildPricingSnapshot(values)
+}
+
+func clearToolPostpaid(bc *BillingContext) {
+	values := pricingSnapshotMap(bc.PricingSnapshot)
+	delete(values, "tool_postpaid")
+	delete(values, "tool_protocol_version")
+	delete(values, "tool_settlement")
+	bc.PricingSnapshot = buildPricingSnapshot(values)
+	bc.ToolPostpaid = false
 }
 
 func isToolPostpaidSnapshot(raw datatypes.JSON) bool {

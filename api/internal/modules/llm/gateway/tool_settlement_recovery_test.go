@@ -77,7 +77,7 @@ func TestT4PlatformFailureRecoveryWithoutFirstToolJSON(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 	// The Console money outcome alone is insufficient to finalize the tool bill.
-	if err := remote.reconcilePlatformTools(ctx); err == nil {
+	if err := remote.reconcilePlatformToolAttempt(ctx, bc.AttemptID); err == nil {
 		t.Fatal("missing first tool JSON was accepted")
 	}
 	if err := f.db.First(&bill, "attempt_id = ?", bc.AttemptID).Error; err != nil {
@@ -88,15 +88,15 @@ func TestT4PlatformFailureRecoveryWithoutFirstToolJSON(t *testing.T) {
 	}
 	f.assertAPIKeyQuota(t, 0, 100)
 	mode.Store(1)
-	if err := remote.reconcilePlatformTools(ctx); err != nil {
+	if err := remote.reconcilePlatformToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	f.assertAPIKeyQuota(t, 4100, 100)
 	mode.Store(2)
-	if err := remote.reconcilePlatformTools(ctx); err != nil {
+	if err := remote.reconcilePlatformToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
-	if err := remote.reconcilePlatformTools(ctx); err != nil {
+	if err := remote.reconcilePlatformToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	f.assertAPIKeyQuota(t, 5100, 100)
@@ -117,6 +117,33 @@ func TestT4PlatformFailureRecoveryWithoutFirstToolJSON(t *testing.T) {
 	}
 	if err := f.db.Model(&toolusage.Event{}).Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("tool events=%d %v", count, err)
+	}
+}
+
+func TestT4InFlightRequestDowngradesAfterConsoleRollback(t *testing.T) {
+	f, bc, remote, client := t4RemoteRecoveryFixture(t)
+	result := &settlementQueryResponse{
+		Found: true, OrganizationID: bc.OrganizationID, RequestID: bc.RequestID,
+		AttemptID: bc.AttemptID, SettlementID: bc.DeductionID, DeductionID: bc.DeductionID,
+		SettlementStatus: "SETTLED", ReservedCredits: 100, SettledCredits: 100,
+		PromptTokens: 80, CompletionTokens: 20, TotalTokens: 100,
+		PricingSnapshot: json.RawMessage(`{"cny_per_usd":"7.2"}`),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(result)
+	}))
+	defer server.Close()
+	remote.consoleAPIBaseURL = server.URL
+
+	if err := remote.FinalizePlatformProxySettlement(context.Background(), bc, nil); err != nil {
+		t.Fatal(err)
+	}
+	if bc.ToolPostpaid || isToolPostpaidSnapshot(bc.PricingSnapshot) {
+		t.Fatal("rolled-back Console left the in-flight request on the v2 contract")
+	}
+	f.assertAPIKeyQuota(t, 100, 100)
+	if client.settleCalls != 0 {
+		t.Fatal("legacy downgrade repeated the Console funds settlement RPC")
 	}
 }
 
@@ -146,11 +173,10 @@ func TestT4AuditedLegacyMirrorRepairDoesNotRechargeQuota(t *testing.T) {
 	}))
 	defer server.Close()
 	remote.consoleAPIBaseURL = server.URL
-	t.Setenv("LLM_TOOL_SETTLEMENT_REPAIR_ATTEMPTS", bc.AttemptID)
-	if err := remote.reconcilePlatformTools(ctx); err != nil {
+	if err := remote.reconcilePlatformToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
-	if err := remote.reconcilePlatformTools(ctx); err != nil {
+	if err := remote.reconcilePlatformToolAttempt(ctx, bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	f.assertAPIKeyQuota(t, 4100, 100)
@@ -202,7 +228,7 @@ func TestT4ExpiredZeroToolHoldIsMirroredWithoutSettlementRPC(t *testing.T) {
 	f, bc, remote, client := t4RemoteRecoveryFixture(t)
 	initial := &toolSettlement{SchemaVersion: 1, BillingLane: "platform", AttemptID: bc.AttemptID, RequestID: bc.RequestID, SettlementID: bc.DeductionID, UsageState: "pending", Prices: map[string]toolPriceCapture{"console-channel": {PricingVersion: "frozen-before-failure"}}}
 	raw, _ := json.Marshal(initial)
-	result := &settlementQueryResponse{Found: true, OrganizationID: bc.OrganizationID, RequestID: bc.RequestID, AttemptID: bc.AttemptID, SettlementID: bc.DeductionID, DeductionID: bc.DeductionID, SettlementStatus: billingAttemptStatusRolledBack, ToolSettlement: raw, PricingSnapshot: json.RawMessage(buildPricingSnapshot(map[string]interface{}{"tool_settlement": json.RawMessage(raw)}))}
+	result := &settlementQueryResponse{Found: true, OrganizationID: bc.OrganizationID, RequestID: bc.RequestID, AttemptID: bc.AttemptID, SettlementID: bc.DeductionID, DeductionID: bc.DeductionID, SettlementStatus: billingAttemptStatusRolledBack, ReservedCredits: bc.EstimatedCredits, RefundedCredits: bc.EstimatedCredits, ToolSettlement: raw, PricingSnapshot: json.RawMessage(buildPricingSnapshot(map[string]interface{}{"tool_settlement": json.RawMessage(raw)}))}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Error("release must only query authority")
@@ -218,7 +244,7 @@ func TestT4ExpiredZeroToolHoldIsMirroredWithoutSettlementRPC(t *testing.T) {
 	if err := remote.FinalizePlatformProxySettlement(context.Background(), bc, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := remote.reconcilePlatformTools(context.Background()); err != nil {
+	if err := remote.reconcilePlatformToolAttempt(context.Background(), bc.AttemptID); err != nil {
 		t.Fatal(err)
 	}
 	var attempt BillingAttempt

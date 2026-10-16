@@ -9,14 +9,14 @@ import (
 	"gorm.io/datatypes"
 )
 
-// mirrorReleasedToolHold closes only an authoritative, unquoted zero hold.
+// mirrorReleasedToolHold closes only an authoritative, unquoted hold.
 // The original tool JSON remains audit evidence; it is not a successful use.
 func (s *RemoteBilling) mirrorReleasedToolHold(ctx context.Context, attempt *BillingAttempt, result *settlementQueryResponse, raw json.RawMessage) error {
 	if !result.Found || !strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack) {
 		return fmt.Errorf("tool hold release requires authoritative rollback")
 	}
-	if result.Retryable || result.SettledCredits != 0 || result.ReservedCredits != 0 || result.RefundedCredits != 0 {
-		return fmt.Errorf("tool hold release is not a terminal zero hold")
+	if result.Retryable || result.SettledCredits != 0 || result.ReservedCredits < 0 || result.RefundedCredits != result.ReservedCredits {
+		return fmt.Errorf("tool hold release is not a terminal full refund")
 	}
 	var state toolSettlement
 	if err := json.Unmarshal(raw, &state); err != nil {
@@ -50,11 +50,17 @@ func (s *RemoteBilling) mirrorReleasedToolHold(ctx context.Context, attempt *Bil
 		return err
 	}
 	for _, entry := range entries {
-		if entry.ActualAmount != 0 || entry.ReservedAmount != 0 {
-			return fmt.Errorf("cannot release a locally charged or reserved tool hold")
+		if entry.ActualAmount != 0 {
+			return fmt.Errorf("cannot release a locally charged tool hold")
 		}
 		if entry.EntryType == billingEntryTypeFund && entry.IdempotencyKey != nil && *entry.IdempotencyKey != "" && *entry.IdempotencyKey != result.SettlementID {
 			return fmt.Errorf("released deduction id mismatch")
+		}
+		if entry.EntryType == billingEntryTypeSubject {
+			bc.SubjectReservedCredits = entry.ReservedAmount.Int64()
+		}
+		if entry.EntryType == billingEntryTypeFund {
+			bc.EstimatedCredits = entry.ReservedAmount.Int64()
 		}
 	}
 	bc.QuotaSubjectType, bc.QuotaSubjectID = attempt.QuotaSubjectType, attempt.QuotaSubjectID
@@ -77,8 +83,8 @@ func (s *RemoteBilling) mirrorReleasedToolHold(ctx context.Context, attempt *Bil
 	values := pricingSnapshotMap(bc.PricingSnapshot)
 	values["tool_settlement"] = json.RawMessage(raw)
 	bc.PricingSnapshot = buildPricingSnapshot(values)
-	bc.Status, bc.ActualCredits, bc.EstimatedCredits, bc.SubjectReservedCredits = "error", 0, 0, 0
-	bc.ErrorMessage = "Console released an unquoted zero tool hold"
+	bc.Status, bc.ActualCredits = "error", 0
+	bc.ErrorMessage = "Console released an unquoted tool hold"
 	bc.UseSystemProvider, bc.BillingLane, bc.ToolPostpaid = true, UsageBillingLanePlatform, true
 	return s.finalizeRemoteSettlement(ctx, bc)
 }

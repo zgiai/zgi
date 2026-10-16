@@ -24,7 +24,7 @@ func (s *llmGatewayServiceImpl) privateToolObserver(bc *BillingContext, selectio
 	if channel == nil {
 		return nil
 	}
-	return toolusage.NewObserver(toolusage.Identity{OrganizationID: org, RequestID: bc.RequestID, AttemptID: bc.AttemptID, Lane: toolusage.LanePrivate, ModelName: bc.ModelName, ModelID: &bc.ModelID, Provider: bc.ProviderName, ChannelID: *channel}, request)
+	return toolusage.NewObserver(toolusage.Identity{OrganizationID: org, RequestID: bc.RequestID, AttemptID: bc.AttemptID, Lane: toolusage.LanePrivate, ModelName: bc.ModelName, ModelID: &bc.ModelID, Provider: bc.ProviderName, ChannelID: *channel, UpstreamScope: bc.CredentialID.String()}, request)
 }
 func (s *llmGatewayServiceImpl) recordPrivateToolObserver(ctx context.Context, o *toolusage.Observer, failed bool, contexts ...*BillingContext) {
 	if o == nil {
