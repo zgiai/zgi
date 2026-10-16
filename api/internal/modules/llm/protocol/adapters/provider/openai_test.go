@@ -262,6 +262,45 @@ func TestOpenAIAdapterCreateResponseRaw_UsesResponsesEndpointAndRawBody(t *testi
 	}
 }
 
+// A relay can answer a Responses request with an HTTP 200 error envelope (for
+// example the agicto relay's container-reuse quota error). Returning it as a
+// success hides the provider message and reports a missing usage downstream.
+func TestOpenAIAdapterCreateResponseRaw_RejectsEmbeddedHTTP200Error(t *testing.T) {
+	const providerBody = `{"error":{"code":null,"message":"用户 [1846] 配额不足","param":null,"type":"invalid_request_error"}}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, providerBody)
+	}))
+	defer server.Close()
+
+	a, err := NewOpenAIAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAIAdapter() error = %v", err)
+	}
+
+	resp, err := a.CreateResponseRaw(context.Background(), &adapter.RawResponseRequest{
+		Model: "gpt-4o",
+		Body:  json.RawMessage(`{"model":"gpt-4o","input":"hello","tools":[{"type":"code_interpreter","container":"cntr_x"}]}`),
+	})
+	if err == nil {
+		t.Fatalf("CreateResponseRaw() error = nil, resp = %+v, want embedded provider error", resp)
+	}
+	var rawErr *adapter.RawProtocolError
+	if !errors.As(err, &rawErr) {
+		t.Fatalf("error = %T %v, want RawProtocolError", err, err)
+	}
+	if rawErr.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rawErr.StatusCode, http.StatusBadRequest)
+	}
+	if !strings.Contains(string(rawErr.Body), "配额不足") {
+		t.Fatalf("raw error body = %s, want the provider message", rawErr.Body)
+	}
+}
+
 func TestOpenAIAdapterCreateResponseStream_EmitsNativeResponsesEvents(t *testing.T) {
 	t.Helper()
 

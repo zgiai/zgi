@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,6 +69,15 @@ func (b *BillingService) recoverStaleLocalPredeductAttempts(ctx context.Context)
 		return fmt.Errorf("list stale local pre-deduct attempts: %w", err)
 	}
 	for _, attempt := range attempts {
+		if os.Getenv("LLM_TOOL_SETTLEMENT_RECONCILE_PAUSED") == "1" {
+			var count int64
+			if err := b.db.WithContext(ctx).Model(&UsageBill{}).Where("attempt_id = ? AND CAST(pricing_snapshot AS TEXT) LIKE ?", attempt.AttemptID, "%tool_settlement%").Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				continue
+			}
+		}
 		if err := b.recoverLocalPredeductAttempt(ctx, attempt.AttemptID); err != nil {
 			logger.ErrorContext(ctx, "local pre-deduct recovery failed",
 				err,
@@ -79,6 +89,22 @@ func (b *BillingService) recoverStaleLocalPredeductAttempts(ctx context.Context)
 }
 
 func (b *BillingService) recoverLocalPredeductAttempt(ctx context.Context, attemptID string) error {
+	// A crash before the completion quote was persisted is not evidence that
+	// token usage was zero. Tool requests hold no funds, so retain this identity
+	// for a trusted completion or audit instead of manufacturing a zero quote.
+	if b.db.Migrator().HasTable(&UsageBill{}) {
+		var bill UsageBill
+		if err := b.db.WithContext(ctx).Where("attempt_id = ? AND billing_lane = ?", attemptID, "private").Find(&bill).Error; err != nil {
+			return err
+		}
+		state, err := decodeToolSettlement(bill.PricingSnapshot)
+		if err != nil {
+			return err
+		}
+		if state != nil && state.Revision == 0 && !state.TokenFinalized {
+			return nil
+		}
+	}
 	claimed, err := b.claimLocalPredeductAttempt(ctx, attemptID)
 	if err != nil {
 		return err
@@ -157,12 +183,6 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		First(&fundEntry).Error; err != nil {
 		return nil, fmt.Errorf("load local fund entry: %w", err)
 	}
-	if subjectEntry.ReservedAmount != fundEntry.ReservedAmount {
-		return nil, fmt.Errorf(
-			"reserved amount mismatch for local recovery: attempt_id=%s subject_reserved=%d fund_reserved=%d",
-			attemptID, subjectEntry.ReservedAmount, fundEntry.ReservedAmount,
-		)
-	}
 	channelID, err := uuid.Parse(fundEntry.LedgerRefID)
 	if err != nil {
 		return nil, fmt.Errorf("parse local fund ledger_ref_id as channel_id: %w", err)
@@ -175,7 +195,7 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		InvocationSource:       normalizeInvocationSource(attempt.InvocationSource),
 		QuotaSubjectType:       attempt.QuotaSubjectType,
 		QuotaSubjectID:         attempt.QuotaSubjectID,
-		EstimatedCredits:       subjectEntry.ReservedAmount.Int64(),
+		EstimatedCredits:       fundEntry.ReservedAmount.Int64(),
 		SubjectReservedCredits: subjectEntry.ReservedAmount.Int64(),
 		ActualCredits:          0,
 		ChannelID:              &channelIDCopy,
@@ -184,6 +204,7 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 		Status:                 "error",
 		ErrorMessage:           "stale local pre-deduct auto rollback",
 	}
+	bc.ToolPostpaid = subjectEntry.ReservedAmount != fundEntry.ReservedAmount
 	restoreBillingContextAttribution(bc, &attempt)
 	if attempt.QuotaSubjectType == quotaSubjectTypeAPIKey {
 		bc.APIKeyID = attempt.QuotaSubjectID
@@ -211,6 +232,18 @@ func (b *BillingService) buildLocalRecoveryBillingContext(ctx context.Context, a
 			)
 		}
 		bc.ChannelID = &routeID
+	}
+	var bill UsageBill
+	if err := b.db.WithContext(ctx).Where("attempt_id = ? AND organization_id = ?", attemptID, bc.OrganizationID).First(&bill).Error; err == nil {
+		state, err := decodeToolSettlement(bill.PricingSnapshot)
+		if err != nil {
+			return nil, err
+		}
+		if state != nil {
+			restoreToolBillContext(bc, &bill, &attempt)
+			bc.Status, bc.ActualCredits = "error", 0
+			bc.ToolPostpaid, bc.ToolSettlement, bc.PricingSnapshot = true, state, bill.PricingSnapshot
+		}
 	}
 	return bc, nil
 }

@@ -12,6 +12,14 @@ service BillingService {
   rpc GetBillingMode(GetBillingModeRequest) returns (BillingModeResponse);
   rpc CheckCreditBalance(CheckCreditBalanceRequest) returns (CheckCreditBalanceResponse);
   rpc PreDeductMeteredUsage(PreDeductMeteredUsageRequest) returns (PreDeductMeteredUsageResponse);
+  rpc GetBillingCapabilities(GetBillingCapabilitiesRequest) returns (GetBillingCapabilitiesResponse);
+}
+
+message GetBillingCapabilitiesRequest {}
+
+message GetBillingCapabilitiesResponse {
+  int32 protocol_version = 1;
+  bool tool_postpaid_v2 = 2;
 }
 
 message MeteredUsageFact {
@@ -62,6 +70,8 @@ message PreDeductQuotaRequest {
   string resource_name = 11;
   string reservation_policy = 12;
   string pricing_snapshot = 13;
+  // T4: token reservation remains active; the tool delta settles afterward.
+  bool tool_postpaid = 14;
 }
 
 message PreDeductQuotaResponse {
@@ -106,6 +116,8 @@ message SettleQuotaRequest {
 }
 
 message SettleQuotaResponse {
+  // Additive authoritative result for platform mirror consumers.
+  string tool_settlement_json = 8;
   bool success = 1;
   string error_message = 2;
   int64 remaining_quota = 3;

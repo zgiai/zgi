@@ -676,7 +676,7 @@ func TestRouteBacksModelForUseCase_GlobalAgentKeepsAdapterWhitelist(t *testing.T
 	}
 }
 
-func TestAvailableModels_OfficialRouteAvailabilityIsIndependentOfSupplierProvider(t *testing.T) {
+func TestAvailableModels_OfficialRouteRejectsDifferentOwnerForSameName(t *testing.T) {
 	modelName := "same-name"
 	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
 		{
@@ -713,15 +713,15 @@ func TestAvailableModels_OfficialRouteAvailabilityIsIndependentOfSupplierProvide
 	if err != nil {
 		t.Fatalf("ListAvailable returned error: %v", err)
 	}
-	if len(models) != 2 {
-		t.Fatalf("available same-name models = %#v, want both catalog records for UI aggregation", models)
+	if len(models) != 1 {
+		t.Fatalf("available same-name models = %#v, want only the callable catalog identity", models)
 	}
 	gotProviders := map[string]bool{}
 	for _, item := range models {
 		gotProviders[item.Provider] = true
 	}
-	if !gotProviders["openai"] || !gotProviders["anthropic"] {
-		t.Fatalf("available providers = %#v, want logical model independent of supplier", gotProviders)
+	if !gotProviders["openai"] || gotProviders["anthropic"] {
+		t.Fatalf("available providers = %#v, want only openai as invocation would select", gotProviders)
 	}
 }
 

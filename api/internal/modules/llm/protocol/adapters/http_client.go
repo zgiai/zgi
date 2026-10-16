@@ -430,6 +430,10 @@ func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 	if statusCode < http.StatusInternalServerError {
 		return false
 	}
+	if sentinel, ok := ConsoleSentinelFromBody(body); ok && errors.Is(sentinel, ErrBillingSettleFailed) {
+		// Retryability describes settlement recovery, never replaying inference.
+		return true
+	}
 	var payload struct {
 		// Console's cataloged envelope: a stable code plus whether repeating
 		// the call can help. retryable:false (for example an upstream that

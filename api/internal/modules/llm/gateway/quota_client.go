@@ -16,6 +16,7 @@ import (
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -127,8 +128,20 @@ func (c *QuotaClient) Close() error {
 	return nil
 }
 
+func (c *QuotaClient) GetBillingCapabilities(ctx context.Context) (bool, error) {
+	resp, err := c.client.GetBillingCapabilities(ctx, &pb.GetBillingCapabilitiesRequest{})
+	if status.Code(err) == codes.Unimplemented {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get billing capabilities: %w", newBillingRPCError(err))
+	}
+	return resp.GetProtocolVersion() >= 2 && resp.GetToolPostpaidV2(), nil
+}
+
 func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	grpcReq := &pb.PreDeductQuotaRequest{
+		ToolPostpaid:      req.ToolPostpaid,
 		OrganizationId:    req.OrganizationID,
 		EstimatedCredits:  req.EstimatedCredits,
 		ModelId:           req.ModelID,
@@ -230,13 +243,14 @@ func (c *QuotaClient) SettleQuota(ctx context.Context, req *SettleQuotaRequest) 
 	}
 
 	return &SettleQuotaResponse{
-		Success:         resp.Success,
-		ErrorCode:       resp.ErrorCode,
-		ErrorMessage:    resp.ErrorMessage,
-		RemainingQuota:  resp.RemainingQuota,
-		UsedQuota:       resp.UsedQuota,
-		RefundedCredits: resp.RefundedCredits,
-		SettledCredits:  resp.SettledCredits,
+		ToolSettlementJSON: resp.ToolSettlementJson,
+		Success:            resp.Success,
+		ErrorCode:          resp.ErrorCode,
+		ErrorMessage:       resp.ErrorMessage,
+		RemainingQuota:     resp.RemainingQuota,
+		UsedQuota:          resp.UsedQuota,
+		RefundedCredits:    resp.RefundedCredits,
+		SettledCredits:     resp.SettledCredits,
 	}, nil
 }
 
@@ -300,6 +314,7 @@ func (c *QuotaClient) CalculateDualCost(ctx context.Context, modelID, provider, 
 }
 
 type PreDeductQuotaRequest struct {
+	ToolPostpaid      bool
 	OrganizationID    string
 	EstimatedCredits  int64
 	ModelID           string
@@ -386,13 +401,14 @@ type SettleQuotaRequest struct {
 }
 
 type SettleQuotaResponse struct {
-	Success         bool
-	ErrorCode       string
-	ErrorMessage    string
-	RemainingQuota  int64
-	UsedQuota       int64
-	RefundedCredits int64
-	SettledCredits  int64
+	ToolSettlementJSON string
+	Success            bool
+	ErrorCode          string
+	ErrorMessage       string
+	RemainingQuota     int64
+	UsedQuota          int64
+	RefundedCredits    int64
+	SettledCredits     int64
 }
 
 type DualCostQuotaResponse struct {

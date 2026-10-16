@@ -46,6 +46,8 @@ type BillingService struct {
 
 // BillingContext contains billing-related information for a request
 type BillingContext struct {
+	ToolPostpaid          bool
+	ToolSettlement        *toolSettlement
 	APIKeyID              string
 	OrganizationID        string
 	DeductionID           string
@@ -167,6 +169,7 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 	}
 	useSystemProvider := usageBillingLaneUsesSystemProvider(usageLane)
 
+	toolAttemptClaimed := false
 	err := b.db.Transaction(func(tx *gorm.DB) error {
 		if usageLane == UsageBillingLanePrivate {
 			if err := captureOrganizationBillingCurrency(ctx, tx, bc); err != nil {
@@ -176,6 +179,25 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 				return fmt.Errorf("apply pre-deduct billing currency snapshot: %w", err)
 			}
 		}
+		if bc.ToolSettlement != nil {
+			if err := validateToolIdentity(bc.ToolSettlement, bc, "private"); err != nil {
+				return err
+			}
+			org, err := uuid.Parse(bc.OrganizationID)
+			if err != nil {
+				return err
+			}
+			claim := &BillingAttempt{AttemptID: bc.AttemptID, RequestID: bc.RequestID, OrganizationID: org, Lane: billingAttemptLaneLocal, QuotaSubjectType: bc.QuotaSubjectType, QuotaSubjectID: bc.QuotaSubjectID, Status: billingAttemptStatusInit}
+			result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "attempt_id"}}, DoNothing: true}).Create(claim)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return fmt.Errorf("tool billing attempt already exists")
+			}
+			toolAttemptClaimed = true
+		}
+
 		if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return fmt.Errorf("failed to init billing attempt: %w", err)
 		}
@@ -225,6 +247,11 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 			}
 		}
 
+		if bc.ToolSettlement != nil {
+			if err := b.upsertUsageBill(ctx, tx, bc, usageBillStatusPartial, nil, nil); err != nil {
+				return err
+			}
+		}
 		if err := b.updateAttemptStatus(ctx, tx, bc, billingAttemptStatusPre, nil, nil, nil); err != nil {
 			return fmt.Errorf("failed to update billing attempt status: %w", err)
 		}
@@ -232,6 +259,14 @@ func (b *BillingService) PreDeduct(ctx context.Context, bc *BillingContext) erro
 		return nil
 	})
 	if err != nil {
+		if bc.ToolSettlement != nil {
+			if toolAttemptClaimed {
+				if markErr := b.recordToolPredeductFailure(ctx, bc, err); markErr != nil {
+					return fmt.Errorf("tool pre-deduct failed: %v; audit: %w", err, markErr)
+				}
+			}
+			return err
+		}
 		markErr := b.db.Transaction(func(tx *gorm.DB) error {
 			if err := b.upsertAttemptInit(ctx, tx, bc); err != nil {
 				return err
@@ -269,6 +304,12 @@ func (b *BillingService) CheckBalance(ctx context.Context, groupID uuid.UUID, ow
 
 // Settle settles the actual billing after request completion
 func (b *BillingService) Settle(ctx context.Context, bc *BillingContext) error {
+	if bc != nil && bc.ToolSettlement != nil && bc.BillingLane == UsageBillingLanePrivate {
+		if err := b.freezeToolTokenIntent(ctx, bc); err != nil {
+			return err
+		}
+		return b.settlePrivateTools(ctx, bc)
+	}
 	usageLane, laneErr := normalizeBillingContextUsageLane(bc)
 	if laneErr != nil {
 		return laneErr
@@ -417,8 +458,10 @@ func (b *BillingService) settleAPIKeyQuota(ctx context.Context, tx *gorm.DB, bc 
 		return tx.Save(&apiKey).Error
 	}
 
-	// Calculate difference (pre-deducted - actual) using credit count
-	diff := bc.EstimatedCredits - bc.ActualCredits
+	// Subject reservations can intentionally exceed the organization-fund
+	// reservation for postpaid tools, so refund against the subject hold rather
+	// than the independently quoted token estimate.
+	diff := subjectReservedCredits(bc) - bc.ActualCredits
 
 	// Subject quota must never go below zero.
 	apiKey.RemainQuota = clampQuotaRemainAtZero(apiKey.RemainQuota + diff)
@@ -546,11 +589,11 @@ func (b *BillingService) preDeductAccessGrantQuota(ctx context.Context, tx *gorm
 	if err != nil {
 		return err
 	}
-	// Platform-priced routes may not have a local token quote and therefore
-	// estimate zero credits. Reserve the bounded grant's remaining allowance so
-	// only one unknown-cost request can be in flight, while the organization fund
-	// reservation remains based on the original estimate.
-	if usageBillingLaneUsesSystemProvider(usageLane) && reservation <= 0 {
+	// Tool charges are known only after the upstream response. Reserve the
+	// bounded subject's remaining allowance while the request is in flight so
+	// concurrent requests cannot both consume the same hard quota. Organization
+	// funds still reserve only the independently quoted token amount.
+	if bc.ToolPostpaid || usageBillingLaneUsesSystemProvider(usageLane) && reservation <= 0 {
 		reservation = availableQuota
 	}
 	if availableQuota <= 0 || availableQuota < reservation {
@@ -573,10 +616,14 @@ func (b *BillingService) preDeductAPIKeyQuota(
 	}
 
 	estimatedQuota := bc.EstimatedCredits
-	if apiKey.RemainQuota < estimatedQuota {
+	if bc.ToolPostpaid {
+		estimatedQuota = apiKey.RemainQuota
+	}
+	if apiKey.RemainQuota <= 0 || apiKey.RemainQuota < estimatedQuota {
 		return ErrInsufficientQuota
 	}
 
+	bc.SubjectReservedCredits = estimatedQuota
 	apiKey.RemainQuota -= estimatedQuota
 	return tx.WithContext(ctx).Save(apiKey).Error
 }
@@ -602,11 +649,16 @@ func (b *BillingService) preDeductWorkspaceQuota(
 	if workspaceQuota.QuotaLimit == nil {
 		return nil
 	}
-	if workspaceQuota.RemainQuota < millipoints.MilliPoints(bc.EstimatedCredits) {
+	reservation := millipoints.MilliPoints(bc.EstimatedCredits)
+	if bc.ToolPostpaid {
+		reservation = workspaceQuota.RemainQuota
+	}
+	if workspaceQuota.RemainQuota <= 0 || workspaceQuota.RemainQuota < reservation {
 		return ErrInsufficientQuota
 	}
 
-	workspaceQuota.RemainQuota -= millipoints.MilliPoints(bc.EstimatedCredits)
+	bc.SubjectReservedCredits = reservation.Int64()
+	workspaceQuota.RemainQuota -= reservation
 	workspaceQuota.UpdatedAt = time.Now()
 	return tx.WithContext(ctx).Save(workspaceQuota).Error
 }
@@ -735,7 +787,7 @@ func (b *BillingService) settleWorkspaceQuota(
 		return tx.WithContext(ctx).Save(workspaceQuota).Error
 	}
 
-	diff := bc.EstimatedCredits - bc.ActualCredits
+	diff := subjectReservedCredits(bc) - bc.ActualCredits
 	// Subject quota must never go below zero.
 	workspaceQuota.RemainQuota = millipoints.MilliPoints(clampQuotaRemainAtZero(workspaceQuota.RemainQuota.Int64() + diff))
 	workspaceQuota.UsedQuota += millipoints.MilliPoints(bc.ActualCredits)

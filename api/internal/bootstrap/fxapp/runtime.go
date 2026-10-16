@@ -89,6 +89,7 @@ var runtimeModule = fx.Module("runtime",
 	fx.Invoke(
 		registerRoutes,
 		registerRuntime,
+		registerToolUsageLifecycle,
 	),
 )
 

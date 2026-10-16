@@ -2352,3 +2352,29 @@ func TestSelectChannelsForProviderUnknownModelMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectChannelsHydratesUnmappedSupplierAndPreservesCatalogPriceIdentity(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	org := uuid.New()
+	modelID := uuid.New()
+	const name = "qwen3.8-max"
+	insertGatewayCatalogModel(t, db, modelID, "qwen", name)
+	catalogvendor.Replace([]catalogvendor.Entry{{Provider: "qwen", Model: name, Vendor: "qwen"}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID: uuid.New(), OrganizationID: org, Type: shared.RouteTypeZGICloud,
+			ChannelProvider: "zgi-cloud", IsEnabled: true, IsOfficial: true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+		channelProvider: &fakeOfficialChannelProvider{channels: []*platformchannel.OfficialChannel{{Provider: "agicto 供应商", Models: []string{name}}}},
+	}
+	selected, err := router.SelectChannelsForProvider(t.Context(), org, "qwen", name, 1)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, modelID, selected[0].Model.ID)
+	require.Equal(t, "qwen", selected[0].Model.Provider)
+	require.Equal(t, UsageBillingLanePlatform, selected[0].BillingLane)
+}
