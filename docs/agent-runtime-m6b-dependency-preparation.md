@@ -1,6 +1,6 @@
 # M6B 依赖准备与标准 Skill 按需安装
 
-M6B 同时保留旧的声明式依赖准备，并增加标准 Claude Code/Codex Skill 的按需安装模式。默认 `cc-codex-standard` Profile 预装常见语言、办公、PDF、媒体和原生编译工具；缺少包时，模型可在同一隔离会话中使用 pip/npm，或调用受控 apt facade。网络只允许批准包源的 HTTPS，不提供任意外网。这个边界针对目的地，不区分调用它的是包管理器还是其他 HTTP 客户端。
+M6B 同时保留旧的声明式依赖准备，并增加可移植 Agent Skill 的按需安装模式。默认 `cc-codex-standard` Profile 预装常见语言、办公、PDF、媒体和原生编译工具；缺少包时，模型可在同一隔离会话中使用 pip/npm，或调用受控 apt facade。网络只允许批准包源的 HTTPS，不提供任意外网。这个边界针对目的地，不区分调用它的是包管理器还是其他 HTTP 客户端。
 
 标准 Skill 不要求 ZGI manifest、`requirements.txt` 或 `package.json`。声明式依赖工具和旧 `run_script` 继续工作，但不再是标准 Skill 的默认路径。
 

@@ -2,25 +2,28 @@ package migrations
 
 import (
 	"fmt"
-	"github.com/go-gormigrate/gormigrate/v2"
+	"time"
+
 	"github.com/google/uuid"
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
-	"time"
 )
 
 const migrationCreateLLMToolUsageEventsID = "20261014150000_create_llm_tool_usage_events"
 
+// The table is created from the frozen toolUsageEventV1 model, as when this
+// migration was first deployed, so fresh and upgraded databases match.
 func init() {
-	registerMigration(&gormigrate.Migration{
-		ID: migrationCreateLLMToolUsageEventsID,
-		Migrate: func(db *gorm.DB) error {
+	registerSchemaMigration(migrationCreateLLMToolUsageEventsID, func(schema *mschema.Builder) error {
+		return schema.DataFix("create llm tool usage events from the frozen v1 model", func(db *gorm.DB) error {
 			if db.Migrator().HasTable(&toolUsageEventV1{}) {
 				return nil
 			}
 			return db.AutoMigrate(&toolUsageEventV1{})
-		},
-		Rollback: func(db *gorm.DB) error {
+		})
+	}, func(schema *mschema.Builder) error {
+		return schema.DataFix("drop llm tool usage events when no audit facts exist", func(db *gorm.DB) error {
 			if !db.Migrator().HasTable(&toolUsageEventV1{}) {
 				return nil
 			}
@@ -32,7 +35,7 @@ func init() {
 				return fmt.Errorf("tool usage events contain %d audit facts; preserve them and roll back the application only", count)
 			}
 			return db.Migrator().DropTable(&toolUsageEventV1{})
-		},
+		})
 	})
 }
 

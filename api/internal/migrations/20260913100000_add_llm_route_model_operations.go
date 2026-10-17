@@ -1,17 +1,16 @@
 package migrations
 
 import (
-	"github.com/go-gormigrate/gormigrate/v2"
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 	"gorm.io/gorm"
 )
 
 const migrationAddLLMRouteModelOperationsID = "20260913100000_add_llm_route_model_operations"
 
 func init() {
-	registerMigration(&gormigrate.Migration{
-		ID:      migrationAddLLMRouteModelOperationsID,
-		Migrate: upAddLLMRouteModelOperations,
-	})
+	registerSchemaMigration(migrationAddLLMRouteModelOperationsID, func(schema *mschema.Builder) error {
+		return schema.DataFix("add llm route model operations", upAddLLMRouteModelOperations)
+	}, nil)
 }
 
 func upAddLLMRouteModelOperations(db *gorm.DB) error {

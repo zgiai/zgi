@@ -5,7 +5,7 @@ import "context"
 // Credentials attaches the Console-issued downstream API key to every RPC as
 // "authorization: Bearer <token>". Console validates it server-side and resolves
 // the downstream client, so the key is never trusted as caller-supplied identity
-// by itself. It is shared by every zgi-pre BillingService client so all billing
+// by itself. It is shared by every Pre BillingService client so all billing
 // calls carry the same credential.
 type Credentials struct {
 	Token string

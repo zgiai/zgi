@@ -69,9 +69,9 @@ func prePGStatePath(t *testing.T, env string) string {
 // prePGIdentity is one isolated organization with its own route, channel wallet
 // and API key, so no pre-existing wallet or key is touched by these cases.
 type prePGIdentity struct {
-	Label      string    `json:"label"`
-	OrgID      uuid.UUID `json:"org_id"`
-	RouteID    uuid.UUID `json:"route_id"`
+	Label        string    `json:"label"`
+	OrgID        uuid.UUID `json:"org_id"`
+	RouteID      uuid.UUID `json:"route_id"`
 	APIKeyID     uuid.UUID `json:"api_key_id"`
 	ModelID      uuid.UUID `json:"model_id"`
 	ProviderID   uuid.UUID `json:"provider_id"`
@@ -139,8 +139,8 @@ func prePGToolContext(t *testing.T, id prePGIdentity, attemptID, requestID, pric
 		EstimatedCredits: 0, SubjectReservedCredits: 0, ToolPostpaid: true,
 		ModelID: id.ModelID, ModelName: "gpt-4o", ProviderID: id.ProviderID, ProviderName: "openai",
 		PricingOperation: PricingOperationChat, PricingSource: PricingSourceUpstreamModelPrice,
-		UsageSource:     UsageSourceRequestParameters,
-		PricingSnapshot: datatypes.JSON([]byte(`{"operation":"chat","meter":"token","base_unit":"1k_tokens"}`)),
+		UsageSource:      UsageSourceRequestParameters,
+		PricingSnapshot:  datatypes.JSON([]byte(`{"operation":"chat","meter":"token","base_unit":"1k_tokens"}`)),
 		RequestCreatedAt: time.Now().Add(-time.Second),
 		Status:           billingContextStatusSuccess,
 	}
