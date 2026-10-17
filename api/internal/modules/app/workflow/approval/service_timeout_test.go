@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -233,5 +234,75 @@ func TestTimeoutScanHandlerDoesNotFailOnAFailingForm(t *testing.T) {
 	}
 	if len(resumed) != 1 || resumed[0] != timeoutGoodFormID {
 		t.Fatalf("resumed = %v, want the timed-out form of the workflow without a durable pause resumed", resumed)
+	}
+}
+
+// addFailingTimeoutForm adds an expired form of its own durable run whose
+// pause still waits on a question without a durable request event, so the
+// form cannot be timed out.
+func addFailingTimeoutForm(t *testing.T, db *gorm.DB, index int, expiresAt time.Time) string {
+	t.Helper()
+	suffix := fmt.Sprintf("%012d", index)
+	runID := "timeout-failing-run-" + suffix
+	pauseID := "aaaaaaaa-aaaa-aaaa-aaaa-" + suffix
+	formID := "bbbbbbbb-bbbb-bbbb-bbbb-" + suffix
+	records := []interface{}{
+		&approvalWorkflowRunScope{ID: runID, RuntimeProtocolVersion: 2, NextEventSequence: 1, ExecutionGeneration: 1},
+		&Form{
+			ID: formID, TenantID: timeoutTenantID, AppID: timeoutAppID, WorkflowRunID: runID,
+			NodeID: "approval-node", NodeTitle: "Approval", AccessToken: "timeout-failing-token-" + suffix,
+			FormDefinition: `{}`, RenderedContent: "Approve the request",
+			Status: FormStatusWaiting, ExpirationTime: expiresAt,
+		},
+		&workflowpause.RunPause{
+			ID: pauseID, TenantID: timeoutTenantID, AppID: timeoutAppID, WorkflowRunID: runID,
+			NodeID: "approval-node", Reason: "approval", StateJSON: `{}`, Generation: 1, Status: workflowpause.RunPauseStatusPaused,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "cccccccc-cccc-cccc-cccc-" + suffix, PauseID: pauseID, Type: workflowpause.ReasonTypeApprovalRequired,
+			NodeID: "approval-node", FormID: formID, Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: expiresAt,
+		},
+		&workflowpause.RunPauseReason{
+			ID: "dddddddd-dddd-dddd-dddd-" + suffix, PauseID: pauseID, Type: workflowpause.ReasonTypeQuestionAnswerRequired,
+			NodeID: "question-node", Status: workflowpause.RunPauseReasonStatusPending, CreatedAt: expiresAt.Add(time.Millisecond),
+		},
+	}
+	for _, record := range records {
+		if err := db.Create(record).Error; err != nil {
+			t.Fatalf("create failing timeout fixture %T: %v", record, err)
+		}
+	}
+	return formID
+}
+
+func TestTimeoutScansResumePastMoreFailingFormsThanOneScanTries(t *testing.T) {
+	db := newTimeoutFailingFormTestDB(t)
+	// With a batch of one a scan tries four forms; five failing forms (the
+	// fixture's own and four more) sort ahead of the good form.
+	base := time.Now().Add(-50 * time.Second)
+	for i := 0; i < timeoutScanAttemptFactor; i++ {
+		addFailingTimeoutForm(t, db, i, base.Add(time.Duration(i)*time.Second))
+	}
+	service := NewService(db)
+	var results []*TimeoutResult
+	for scan := 0; scan < 3 && len(results) == 0; scan++ {
+		var err error
+		results, err = service.TimeoutExpiredForms(context.Background(), 1)
+		if err != nil {
+			t.Fatalf("scan %d: TimeoutExpiredForms() error = %v", scan, err)
+		}
+		if scan == 0 && len(results) != 0 {
+			t.Fatalf("first scan = %#v, want it stopped at its attempt cap inside the failing prefix", results)
+		}
+	}
+	if len(results) != 1 || results[0].Form.ID != timeoutGoodFormID {
+		t.Fatalf("results = %#v, want a later scan to resume past the failing forms and time out the good one", results)
+	}
+	var waiting int64
+	if err := db.Model(&Form{}).Where("status = ?", FormStatusWaiting).Count(&waiting).Error; err != nil {
+		t.Fatal(err)
+	}
+	if waiting != timeoutScanAttemptFactor+1 {
+		t.Fatalf("waiting forms = %d, want the %d failing forms left waiting", waiting, timeoutScanAttemptFactor+1)
 	}
 }
