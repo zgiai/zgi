@@ -6,7 +6,7 @@ var historicalMigrationSourceDigests = map[string]string{
 	// This migration predates the Connector execution repair and already ships
 	// its narrowly scoped cleanup transition. Pin the exact source so the
 	// safety checker audits future edits instead of treating it as new SQL.
-	"20260906120000_messaging_auth_reliability":                   "b92996f68db0c5f7224605ad563a2a72b68913284f6c3b7d3fb4103883ee0743",
+	"20260906120000_messaging_auth_reliability":                     "b92996f68db0c5f7224605ad563a2a72b68913284f6c3b7d3fb4103883ee0743",
 	"20260714090000_add_chat_runtime_run_lease":                     "8c87ddcdff2f9ec07a45a57a7e5742aa8975474c910ac512e5496eac24a5d315",
 	"20260715100000_add_agent_published_version_name":               "69224ad7532769ff35dc0e18cf1aa354289167ca766d900d231ee87816b82edc",
 	"20260715110000_add_agent_memory_slot_name":                     "203adfe4a7f468a66b9064df9060b0466babc413b69458f8b7bb09ccc221964e",

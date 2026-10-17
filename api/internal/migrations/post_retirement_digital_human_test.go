@@ -49,9 +49,9 @@ func TestPostRetirementDigitalHumanPlanLeavesOrdinaryPathsUnchanged(t *testing.T
 
 // These feature migrations were not part of the deployment that retired the
 // legacy Connector tables. Freeze that supported history shape in the fixture.
+// lateDigitalHumanFixturePendingIDs are the migrations this branch adds before
+// Connector retirement that a main deployment predating DigitalHuman lacks.
 var lateDigitalHumanFixturePendingIDs = []string{
-	"20260813100000_add_data_source_access_policies",
-	"20260816204500_allow_standalone_llm_runtime_types",
 	"202608181104207370_create_digital_human_foundation",
 	"202608181129156409_create_digital_human_persona_templates_and_bindings",
 	"202608181152308612_create_digital_human_runs",
@@ -62,7 +62,6 @@ var lateDigitalHumanFixturePendingIDs = []string{
 	"202608201932016586_add_default_subject_to_channel_installations",
 	"202608210930000000_enable_digital_human_channel_progress",
 	"202608220900000000_isolate_digital_human_channel_conversations",
-	"20260822090000_create_text2sql_schema_indexes",
 	"202608221300000000_index_digital_human_channel_self_messages",
 	"202608231000000000_add_channel_event_preview",
 	"202608231300000000_add_channel_installation_credentials",
@@ -72,10 +71,9 @@ var lateDigitalHumanFixturePendingIDs = []string{
 	"202608261100000000_add_digital_human_direct_skill_credentials",
 	"202608270900000000_add_chat_runtime_inputs",
 	"202608291000000000_add_channel_delivery_dismissal",
-	"20260831090000_create_database_schema_index_settings",
-	"20260901090000_create_database_schema_index_runs",
-	"20260903183000_add_video_runtime_task_poster_url",
+	"202609011000000000_add_channel_processing_markers",
 	"20260904120000_digital_human_connector_host",
+	"20260904130000_allow_digital_human_connector_resources",
 }
 
 func retiredDatabaseWithoutDigitalHuman(t *testing.T) *gorm.DB {
@@ -98,8 +96,7 @@ func retiredDatabaseWithoutDigitalHuman(t *testing.T) *gorm.DB {
 		public.channel_bindings, public.channel_inbound_events, public.channel_delivery_outbox,
 		public.channel_installation_credentials, public.automation_task_activities,
 		public.digital_human_channel_task_policies, public.digital_human_direct_skill_credentials,
-		public.chat_runtime_inputs, public.data_source_access_grants, public.data_source_access_policy_events,
-		public.text2sql_schema_indexes, public.database_schema_index_settings, public.database_schema_index_runs RESTRICT`).Error; err != nil {
+		public.chat_runtime_inputs, public.channel_processing_markers RESTRICT`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec("DELETE FROM public.migrations WHERE id IN ?", lateDigitalHumanFixturePendingIDs).Error; err != nil {
