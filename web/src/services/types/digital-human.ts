@@ -106,6 +106,8 @@ export interface DigitalHumanDetail {
   definition: DigitalHumanDefinition;
   draft: DigitalHumanVersion;
   published?: DigitalHumanVersion | null;
+  /** Draft configuration or resource bindings differ from the publication. */
+  has_unpublished_changes?: boolean;
   execution_runtime_capability?: DigitalHumanExecutionRuntimeCapability | null;
 }
 

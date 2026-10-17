@@ -32,6 +32,7 @@ import {
   useDigitalHumanDraftStore,
   useRegisterDigitalHumanDraftEditor,
 } from '@/components/digital-human/digital-human-draft-store';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -360,6 +361,35 @@ function ConfigurationEditor({
                 ) : null}
               </section>
 
+              <section id="configuration-runtime" className="border-b p-4 md:p-5">
+                <h2 className="text-sm font-semibold">{t('preferences.runtimeTitle')}</h2>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t('preferences.runtimeDescription')}
+                </p>
+                <div className="mt-3 space-y-3">
+                  <div className="rounded-md border px-3">
+                    <PreferenceSwitch
+                      title={t('preferences.linuxEnvironment')}
+                      description={t('preferences.linuxEnvironmentDescription')}
+                      checked={displayedExecutionEnabled}
+                      onCheckedChange={setExecutionEnabled}
+                      disabled={!editingEnabled || (!executionEnabled && !canEnableExecution)}
+                      compact
+                    />
+                    {executionUnavailable ? (
+                      <p className="-mt-1 pb-3 text-xs text-muted-foreground">
+                        {t('preferences.linuxEnvironmentUnavailable')}
+                      </p>
+                    ) : null}
+                  </div>
+                  <PolicyFileUploadSettings
+                    value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy}
+                    onChange={setFileUploadPolicy}
+                    disabled={!editingEnabled}
+                  />
+                </div>
+              </section>
+
               <section id="configuration-identity" className="space-y-5 border-b p-4 md:p-5">
                 <div>
                   <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -524,26 +554,21 @@ function ConfigurationEditor({
           id="configuration-capabilities"
           className="min-h-0 min-w-0 scroll-mt-14 bg-muted/[0.08] lg:h-full lg:overflow-y-auto"
         >
-          <div className="flex h-12 items-center border-b bg-background px-4 md:px-5">
-            <h2 className="text-sm font-semibold">{t('capabilities.title')}</h2>
+          <div className="flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b bg-background px-4 py-2 md:px-5">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">{t('capabilities.title')}</h2>
+              {editingEnabled ? (
+                <p className="text-xs text-muted-foreground">{t('capabilities.draftHint')}</p>
+              ) : null}
+            </div>
+            {editingEnabled && detail.published && detail.has_unpublished_changes ? (
+              <Badge variant="info" className="shrink-0">
+                {t('capabilities.pendingPublish')}
+              </Badge>
+            ) : null}
           </div>
           <div className="p-4 md:p-5">
-            <PreferenceSwitch
-              title={t('preferences.linuxEnvironment')}
-              description={t('preferences.linuxEnvironmentDescription')}
-              checked={displayedExecutionEnabled}
-              onCheckedChange={setExecutionEnabled}
-              disabled={
-                !editingEnabled || (!executionEnabled && !canEnableExecution)
-              }
-            />
-            {executionUnavailable ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {t('preferences.linuxEnvironmentUnavailable')}
-              </p>
-            ) : null}
             <DigitalHumanResourceBindings id={id} />
-            <div className="my-4"><PolicyFileUploadSettings value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy} onChange={setFileUploadPolicy} disabled={!editingEnabled} /></div>
           </div>
         </section>
       </div>
@@ -741,15 +766,17 @@ function PreferenceSwitch({
   checked,
   onCheckedChange,
   disabled,
+  compact = false,
 }: {
   title: string;
   description: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled: boolean;
+  compact?: boolean;
 }) {
   return (
-    <div className="flex items-start justify-between gap-6 py-5">
+    <div className={cn('flex items-start justify-between gap-6', compact ? 'py-3' : 'py-5')}>
       <div className="max-w-3xl space-y-1">
         <div className="text-sm font-medium">{title}</div>
         <p className="text-xs leading-5 text-muted-foreground">{description}</p>

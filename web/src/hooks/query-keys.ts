@@ -129,6 +129,9 @@ export const DIGITAL_HUMAN_KEYS = {
       ? ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates'] as const)
       : ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates', params] as const),
   draftBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-bindings'] as const,
+  /** Mutation key for saving draft resource bindings, so the header can show progress. */
+  replaceDraftBindings: (id: string) =>
+    [...DIGITAL_HUMAN_KEYS.draftBindings(id), 'replace'] as const,
   bindingCandidates: (id: string, params: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
   /** Workspace skills a new digital human may bind, available before creation. */

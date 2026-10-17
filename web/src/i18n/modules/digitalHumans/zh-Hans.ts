@@ -438,6 +438,8 @@ const messages: DigitalHumansMessages = {
     saveHint: '保存后的修改仍处于草稿中，需要发布后才会用于运行。',
   },
   preferences: {
+    runtimeTitle: '运行环境与文件',
+    runtimeDescription: '控制数字人能否使用 Linux 执行环境，以及用户可以上传哪些文件。修改自动保存到草稿，发布后生效。',
     linuxEnvironment: '启用 Linux 执行环境',
     linuxEnvironmentDescription:
       '运行脚本、处理文件，环境由平台管理。',
@@ -493,6 +495,8 @@ const messages: DigitalHumansMessages = {
   capabilities: {
     title: '能力与资源',
     description: '管理这个数字人被允许使用的技能、知识、数据、工作流和外部应用。',
+    draftHint: '修改会立即保存到草稿，发布后对线上生效。',
+    pendingPublish: '有未发布的变更',
   },
   configurationHub: {
     title: '配置',
