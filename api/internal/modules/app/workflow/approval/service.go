@@ -812,6 +812,18 @@ func approvalExpiredEventData(form *Form) map[string]interface{} {
 	}
 }
 
+// timeoutScanAttemptFactor bounds how many expired forms one timeout scan may
+// try, as a multiple of its batch size, when some of them keep failing.
+const timeoutScanAttemptFactor = 4
+
+// TimeoutExpiredForms times out up to limit expired waiting forms. A form that
+// fails to time out (for example a legacy pause without a durable interaction
+// request event) is logged and left waiting for the next scan, and the scan
+// pages past it by (expiration_time, id) instead of stopping. Paging rather
+// than marking the form failed keeps an unrecoverable form from changing
+// state on a guess, while forms that keep failing at the head of the queue can
+// no longer fill every batch and starve the expired forms behind them. Only an
+// error that is not specific to one form fails the scan.
 func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*TimeoutResult, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("approval service is not initialized")
@@ -820,23 +832,39 @@ func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*Timeou
 		limit = 100
 	}
 
-	var forms []Form
-	if err := s.db.WithContext(ctx).
-		Where("status = ? AND expiration_time <= ?", FormStatusWaiting, time.Now()).
-		Order("expiration_time ASC").
-		Limit(limit).
-		Find(&forms).Error; err != nil {
-		return nil, fmt.Errorf("load expired approval forms: %w", err)
-	}
-
-	timedOut := make([]*TimeoutResult, 0, len(forms))
-	for i := range forms {
-		result, err := s.MarkTimedOut(ctx, forms[i].ID)
-		if err != nil {
-			return nil, err
+	now := time.Now()
+	maxAttempts := limit * timeoutScanAttemptFactor
+	attempts := 0
+	var after *Form
+	timedOut := make([]*TimeoutResult, 0, limit)
+	for len(timedOut) < limit && attempts < maxAttempts {
+		query := s.db.WithContext(ctx).
+			Where("status = ? AND expiration_time <= ?", FormStatusWaiting, now)
+		if after != nil {
+			query = query.Where("(expiration_time > ? OR (expiration_time = ? AND id > ?))",
+				after.ExpirationTime, after.ExpirationTime, after.ID)
 		}
-		if result.TimedOut {
-			timedOut = append(timedOut, result)
+		var forms []Form
+		if err := query.
+			Order("expiration_time ASC, id ASC").
+			Limit(min(limit-len(timedOut), maxAttempts-attempts)).
+			Find(&forms).Error; err != nil {
+			return nil, fmt.Errorf("load expired approval forms: %w", err)
+		}
+		if len(forms) == 0 {
+			break
+		}
+		for i := range forms {
+			attempts++
+			after = &forms[i]
+			result, err := s.MarkTimedOut(ctx, forms[i].ID)
+			if err != nil {
+				logger.WarnContext(ctx, "approval form timeout failed; skipping it until the next scan", "form_id", forms[i].ID, err)
+				continue
+			}
+			if result.TimedOut {
+				timedOut = append(timedOut, result)
+			}
 		}
 	}
 	return timedOut, nil

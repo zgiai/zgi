@@ -425,8 +425,10 @@ func (h *TimeoutScanHandler) Handle(ctx context.Context, task *asynq.Task) error
 				logger.WarnContext(ctx, "approval timeout resume queued for outbox retry", "form_id", result.Form.ID, err)
 			}
 		case result.LegacyResume && h.onTimeout != nil:
+			// The form is already timed out: a failed resume of one workflow
+			// must not drop the resumes of the other forms in this scan.
 			if err := h.onTimeout(ctx, result.Form); err != nil {
-				return err
+				logger.WarnContext(ctx, "approval timeout resume failed", "form_id", result.Form.ID, err)
 			}
 		}
 	}
