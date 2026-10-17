@@ -43,7 +43,7 @@ func validateCheckpoint(snapshot databaseSnapshot) error {
 		}
 		applied[id] = true
 	}
-	return requireAdditiveStages(snapshot, applied)
+	return requireAdditiveStages(snapshot, applied, false)
 }
 
 // validateAdvancedCheckpoint accepts a schema1 database whose migrations ran
@@ -76,7 +76,10 @@ func validateAdvancedCheckpoint(snapshot databaseSnapshot, head string) error {
 	if latest != head {
 		return errors.New("--advanced-checkpoint does not match the applied migration head; no data was changed")
 	}
-	return requireAdditiveStages(snapshot, applied)
+	// The native runtime keeps running while retirement is deferred, so its
+	// additive stages legitimately hold records. Conversion never writes them
+	// and their rows are part of the reviewed source digest.
+	return requireAdditiveStages(snapshot, applied, true)
 }
 
 func requireSchema1(snapshot databaseSnapshot) error {
@@ -89,9 +92,11 @@ func requireSchema1(snapshot databaseSnapshot) error {
 }
 
 // requireAdditiveStages checks the additive Connector stages after the detach
-// checkpoint: applied in order, their tables present exactly when applied, and
-// empty, because the converter does not understand their runtime records.
-func requireAdditiveStages(snapshot databaseSnapshot, applied map[string]bool) error {
+// checkpoint: applied in order and their tables present exactly when applied.
+// A failed historical up must leave them empty, because nothing legitimately
+// wrote them; a database running with retirement deferred keeps its native
+// runtime records (runtimeRecords).
+func requireAdditiveStages(snapshot databaseSnapshot, applied map[string]bool, runtimeRecords bool) error {
 	if !applied[detachCheckpoint] {
 		return errors.New("historical converter requires the detach Connector checkpoint")
 	}
@@ -105,7 +110,7 @@ func requireAdditiveStages(snapshot databaseSnapshot, applied map[string]bool) e
 			if exists != applied[stage.id] {
 				return errors.New("pre-retirement Connector tables and migration markers disagree")
 			}
-			if len(rows) != 0 {
+			if len(rows) != 0 && !runtimeRecords {
 				return errors.New("historical recovery requires empty additive Connector tables; stop writers and review native state")
 			}
 		}

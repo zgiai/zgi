@@ -112,8 +112,8 @@ func TestAdvancedCheckpointAcceptsOnlyTheNamedHeadOfAnUnretiredDatabase(t *testi
 			snapshot["connector_schema_readiness"] = []row{{"schema_version": 2, "state": "ready"}}
 			return head
 		},
-		"populated additive stage": func(snapshot databaseSnapshot) string {
-			snapshot[additiveCheckpoints[0].tables[0]] = []row{{"id": "native"}}
+		"additive stage table without its marker": func(snapshot databaseSnapshot) string {
+			snapshot["migrations"] = []row{{"id": detachCheckpoint}, {"id": head}}
 			return head
 		},
 		"missing detach checkpoint": func(snapshot databaseSnapshot) string {
@@ -127,5 +127,22 @@ func TestAdvancedCheckpointAcceptsOnlyTheNamedHeadOfAnUnretiredDatabase(t *testi
 				t.Fatal("advanced checkpoint accepted an unsupported database")
 			}
 		})
+	}
+}
+
+func TestAdvancedCheckpointKeepsNativeRuntimeRecordsOfADeferredDatabase(t *testing.T) {
+	const head = "20261016110000_add_tool_usage_upstream_scope"
+	snapshot := checkpointFixture(t, len(additiveCheckpoints))
+	snapshot["migrations"] = append(snapshot["migrations"], row{"id": head})
+	for _, stage := range additiveCheckpoints {
+		snapshot[stage.tables[0]] = []row{{"id": "native-runtime-record"}}
+	}
+	if err := validateAdvancedCheckpoint(snapshot, head); err != nil {
+		t.Fatalf("deferred database with native runtime records refused: %v", err)
+	}
+	recovery := checkpointFixture(t, len(additiveCheckpoints))
+	recovery[additiveCheckpoints[0].tables[0]] = []row{{"id": "unexpected"}}
+	if err := validateCheckpoint(recovery); err == nil {
+		t.Fatal("historical recovery accepted a populated additive stage")
 	}
 }
