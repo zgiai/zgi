@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { useIsMutating } from '@tanstack/react-query';
 import {
   CheckCircle2,
   History,
@@ -20,6 +21,7 @@ import {
   type DigitalHumanPublishVersionDetails,
 } from '@/components/digital-human/digital-human-publish-version-dialog';
 import { Badge } from '@/components/ui/badge';
+import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -83,10 +85,15 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
   const isDraftEditingPage =
     pathname.startsWith(`/console/digital-humans/${id}/configuration`) ||
     pathname.startsWith(`/console/digital-humans/${id}/external`);
+  // The server compares resource bindings too; the revision check is only a
+  // fallback for responses that predate the field.
   const hasUnpublishedChanges = Boolean(
-    detail && (!detail.published || detail.draft.revision !== detail.published.revision)
+    detail &&
+      (detail.has_unpublished_changes ??
+        (!detail.published || detail.draft.revision !== detail.published.revision))
   );
-  const saveState = draftEditor?.saveState ?? 'saved';
+  const savingBindings = useIsMutating({ mutationKey: DIGITAL_HUMAN_KEYS.replaceDraftBindings(id) }) > 0;
+  const saveState = savingBindings ? 'saving' : (draftEditor?.saveState ?? 'saved');
   const isDirty = Boolean(draftEditor?.isDirty);
   const isVersionPreviewing = Boolean(versionPreview);
   const saveDotClassName =
@@ -101,7 +108,7 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
     ? t('versionHistory.previewingVersion', {
         version: versionPreview.version.version_number ?? '',
       })
-    : draftEditor
+    : draftEditor && !(saveState === 'saved' && !isDirty && hasUnpublishedChanges)
       ? t(`draftPersistence.${saveState}`)
       : hasUnpublishedChanges
         ? t('header.draftSavedPending')

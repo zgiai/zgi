@@ -377,6 +377,7 @@ export function useDigitalHumanMutations(id?: string) {
     onError: error => mutationError(error, t('errors.role')),
   });
   const replaceBindings = useMutation({
+    mutationKey: id ? DIGITAL_HUMAN_KEYS.replaceDraftBindings(id) : undefined,
     onMutate: () => ({ scope: digitalHumanRequestScope() }),
     mutationFn: ({
       digitalHumanId,

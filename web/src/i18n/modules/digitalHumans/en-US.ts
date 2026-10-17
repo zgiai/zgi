@@ -472,6 +472,8 @@ const messages = {
     saveHint: 'Saved changes remain in the draft until you publish a new version.',
   },
   preferences: {
+    runtimeTitle: 'Runtime and files',
+    runtimeDescription: 'Choose whether this DigitalHuman can use a Linux execution environment and which files users can upload. Changes save to the draft automatically and take effect after publishing.',
     linuxEnvironment: 'Enable Linux execution environment',
     linuxEnvironmentDescription:
       'Run scripts and process files in a platform-managed environment.',
@@ -534,6 +536,8 @@ const messages = {
   capabilities: {
     title: 'Capabilities and resources',
     description: 'Control which approved skills, knowledge, data, workflows, and apps it may use.',
+    draftHint: 'Changes save to the draft immediately and go live after you publish.',
+    pendingPublish: 'Unpublished changes',
   },
   configurationHub: {
     title: 'Configuration',

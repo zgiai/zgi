@@ -105,7 +105,8 @@ func (s *Service) RestoreVersion(ctx context.Context, scope Scope, id uuid.UUID,
 			return err
 		}
 		result = Detail{Definition: definition, Draft: draft, Published: published}
-		return nil
+		result.HasUnpublishedChanges, err = s.hasUnpublishedChanges(ctx, tx, scope, definition.ID, draft, published)
+		return err
 	})
 	if err != nil {
 		return nil, applicationError(err, "digital_human.version.restore")

@@ -112,9 +112,12 @@ type ListResult struct {
 
 // Detail combines aggregate metadata with its draft and latest publication.
 type Detail struct {
-	Definition                 *Definition                 `json:"definition"`
-	Draft                      *Version                    `json:"draft"`
-	Published                  *Version                    `json:"published,omitempty"`
+	Definition *Definition `json:"definition"`
+	Draft      *Version    `json:"draft"`
+	Published  *Version    `json:"published,omitempty"`
+	// HasUnpublishedChanges compares the draft with the current publication,
+	// including resource bindings, which the configuration revision omits.
+	HasUnpublishedChanges      bool                        `json:"has_unpublished_changes"`
 	ExecutionRuntimeCapability *ExecutionRuntimeCapability `json:"execution_runtime_capability,omitempty"`
 }
 

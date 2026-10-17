@@ -137,7 +137,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	}
 	definition.DraftVersionID = &draftID
 	s.resolveDefinitionIcon(ctx, definition)
-	return &Detail{Definition: definition, Draft: draft}, nil
+	return &Detail{Definition: definition, Draft: draft, HasUnpublishedChanges: true}, nil
 }
 
 // Get returns scoped aggregate metadata with draft and current publication.
@@ -158,7 +158,29 @@ func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*Detail, 
 	if err != nil {
 		return nil, applicationError(err, "digital_human.get")
 	}
-	return &Detail{Definition: definition, Draft: draft, Published: published}, nil
+	detail := &Detail{Definition: definition, Draft: draft, Published: published}
+	if detail.HasUnpublishedChanges, err = s.hasUnpublishedChanges(ctx, s.repo, scope, definition.ID, draft, published); err != nil {
+		return nil, applicationError(err, "digital_human.get")
+	}
+	return detail, nil
+}
+
+// hasUnpublishedChanges reports whether publishing would change what runs:
+// either the draft configuration or its resource bindings differ from the
+// current publication.
+func (s *Service) hasUnpublishedChanges(ctx context.Context, repo *GormRepository, scope Scope, digitalHumanID uuid.UUID, draft, published *Version) (bool, error) {
+	if draft == nil || published == nil || draft.Revision != published.Revision {
+		return true, nil
+	}
+	draftBindings, err := repo.ListResourceBindingRows(ctx, scope, digitalHumanID, draft.ID)
+	if err != nil {
+		return false, err
+	}
+	publishedBindings, err := repo.ListResourceBindingRows(ctx, scope, digitalHumanID, published.ID)
+	if err != nil {
+		return false, err
+	}
+	return len(versionBindingChanges(publishedBindings, draftBindings)) > 0, nil
 }
 
 // List returns one workspace-scoped page.
@@ -316,6 +338,7 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 		if err := tx.AdvancePublicationCAS(ctx, scope, definition, request.ExpectedRevision); err != nil {
 			return err
 		}
+		// The next draft is a copy of the publication, so nothing is pending.
 		result = Detail{Definition: definition, Draft: nextDraft, Published: draft}
 		return nil
 	})
