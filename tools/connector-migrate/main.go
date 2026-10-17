@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,7 +22,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: connector-migrate inventory|dry-run|apply|verify --keys-file PATH [--expected-report SHA256] [--advanced-checkpoint ID]; DSN comes from CONNECTOR_MIGRATE_DSN")
+		return errors.New("usage: connector-migrate inventory|dry-run|apply|verify --keys-file PATH [--expected-report SHA256]; DSN comes from CONNECTOR_MIGRATE_DSN")
 	}
 	command := args[0]
 	if command != "inventory" && command != "dry-run" && command != "apply" && command != "verify" {
@@ -33,23 +32,12 @@ func run(args []string) error {
 	keyFile := flags.String("keys-file", "", "private JSON file containing active/native/previous keyrings")
 	expected := flags.String("expected-report", "", "source digest from dry-run (required by apply)")
 	skillsRoot := flags.String("skills-root", "", "explicit root for read-only verification of stored Skill manifests")
-	advancedCheckpoint := flags.String("advanced-checkpoint", "", "explicit applied migration head for a database already past the historical checkpoint")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if len(flags.Args()) != 0 {
 		return errors.New("unexpected positional arguments")
 	}
-	advancedSet := false
-	flags.Visit(func(f *flag.Flag) {
-		if f.Name == "advanced-checkpoint" {
-			advancedSet = true
-		}
-	})
-	if advancedSet && strings.TrimSpace(*advancedCheckpoint) == "" {
-		return errors.New("--advanced-checkpoint requires an explicit migration ID")
-	}
-	choice := checkpointChoice{advanced: advancedSet, id: *advancedCheckpoint}
 	var keys keyrings
 	if command != "inventory" {
 		bytes, err := os.ReadFile(*keyFile)
@@ -72,22 +60,14 @@ func run(args []string) error {
 		return errors.New("cannot connect to migration database")
 	}
 	defer conn.Close(ctx)
-	var schemaVersion int
-	var history []string
-	if schemaVersion, history, err = readCheckpointState(ctx, conn); err != nil {
-		return err
-	}
-	if err = choice.validate(schemaVersion, history); err != nil {
-		return err
-	}
-	return runOnConnection(ctx, conn, command, keys, choice, *expected, *skillsRoot, writeReport)
+	return runOnConnection(ctx, conn, command, keys, *expected, *skillsRoot, writeReport)
 }
 
 type transactionSource interface {
 	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
 }
 
-func runOnConnection(ctx context.Context, conn transactionSource, command string, keys keyrings, choice checkpointChoice, expected, skillsRoot string, output func(report) error) error {
+func runOnConnection(ctx context.Context, conn transactionSource, command string, keys keyrings, expected, skillsRoot string, output func(report) error) error {
 	options := pgx.TxOptions{IsoLevel: pgx.Serializable}
 	if command == "inventory" || command == "dry-run" || command == "verify" {
 		options.AccessMode = pgx.ReadOnly
@@ -97,18 +77,22 @@ func runOnConnection(ctx context.Context, conn transactionSource, command string
 		return errors.New("cannot begin migration transaction")
 	}
 	defer tx.Rollback(ctx)
+	// Source commitments must match the finalizer's UTC snapshots regardless
+	// of the database/session timezone. This changes only this transaction's
+	// timestamp rendering, not persisted values or database configuration.
+	if _, err = tx.Exec(ctx, "SET LOCAL TIME ZONE 'UTC'"); err != nil {
+		return errors.New("cannot configure migration snapshot timezone")
+	}
 	if command == "apply" {
 		if !digestPattern.MatchString(expected) {
 			return errors.New("apply requires --expected-report from a reviewed dry-run")
 		}
-		// Advanced apply locks the migration ledger before any SELECT and before
-		// the conversion advisory lock. This blocks a concurrent migration-marker
-		// insert, so the ledger read into the source digest below cannot race a
-		// new applied migration. Historical apply keeps its existing lock order.
-		if choice.advanced {
-			if _, err = tx.Exec(ctx, migrationLedgerLock); err != nil {
-				return errors.New("cannot acquire migration ledger lock")
-			}
+		var locked bool
+		if tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtext('zgi:migrations'))").Scan(&locked) != nil || !locked {
+			return errors.New("another migration owns the maintenance lock")
+		}
+		if _, err = tx.Exec(ctx, "SET LOCAL lock_timeout = '10s'"); err != nil {
+			return errors.New("cannot configure maintenance lock timeout")
 		}
 		if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(726914054)"); err != nil {
 			return errors.New("cannot acquire conversion lock")
@@ -121,17 +105,8 @@ func runOnConnection(ctx context.Context, conn transactionSource, command string
 	if err != nil {
 		return err
 	}
-	// Re-check the same checkpoint condition inside the transaction snapshot.
-	// Advanced apply already holds SHARE ROW EXCLUSIVE on public.migrations while
-	// both modes hold the advisory and table locks, so a migration ledger that
-	// changed while waiting is rejected before any write.
-	if err = choice.validate(snapshotSchemaVersion(snapshot), migrationHistory(snapshot)); err != nil {
+	if err = validateCheckpoint(snapshot); err != nil {
 		return err
-	}
-	if choice.advanced {
-		if err = checkAdvancedSchema(ctx, tx); err != nil {
-			return err
-		}
 	}
 	if err = inventorySkillFiles(snapshot, skillsRoot); err != nil {
 		return err
