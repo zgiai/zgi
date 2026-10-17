@@ -1,6 +1,10 @@
 package config
 
 import (
+	"crypto/x509"
+	"fmt"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -164,10 +168,11 @@ type AppConfig struct {
 }
 
 type ConsoleConfig struct {
-	APIURL         string `json:"api_url"`
-	GRPCAddr       string `json:"grpc_addr"`
-	InternalAPIKey string `json:"-"`
-	WebURL         string `json:"web_url"`
+	APIURL         string               `json:"api_url"`
+	GRPCAddr       string               `json:"grpc_addr"`
+	GRPCTLS        ConsoleGRPCTLSConfig `json:"grpc_tls"`
+	InternalAPIKey string               `json:"-"`
+	WebURL         string               `json:"web_url"`
 
 	// Per-instance control-plane credential issued by console (Cloud mode).
 	InstanceID     string `json:"instance_id,omitempty"`
@@ -179,6 +184,31 @@ type ConsoleConfig struct {
 	SyncStaleSec    int  `json:"sync_stale_sec"`
 	// Organization inventory report cadence (Cloud mode only). 0 disables the report.
 	SyncOrganizationReportInterval time.Duration `json:"sync_organization_report_interval"`
+}
+
+type ConsoleGRPCTLSConfig struct {
+	Enabled    bool   `json:"enabled"`
+	CAFile     string `json:"ca_file,omitempty"`
+	ServerName string `json:"server_name,omitempty"`
+}
+
+func ValidateConsoleGRPCTLS(cfg ConsoleGRPCTLSConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	caFile := strings.TrimSpace(cfg.CAFile)
+	if caFile == "" {
+		return nil
+	}
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return fmt.Errorf("read console gRPC TLS CA file %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return fmt.Errorf("no certificate found in console gRPC TLS CA file %q", caFile)
+	}
+	return nil
 }
 
 type LLMPolicyPromptConfig struct {

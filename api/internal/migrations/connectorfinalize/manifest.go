@@ -10,7 +10,7 @@ import (
 	"strconv"
 )
 
-const ReportVersion = 4
+const ReportVersion = 3
 
 // RetiredTables returns a copy: callers cannot enlarge the retirement capability.
 func RetiredTables() []string {
@@ -52,32 +52,25 @@ type Issue struct {
 }
 
 // Report contains counts and commitments, never rows, credentials or user text.
-// MigrationLedgerDigest commits the complete ordered migration ledger; the
-// ledger itself is never emitted, and the digest is sealed into Digest so a
-// reviewed plan cannot be replayed against a different history.
 type Report struct {
 	Version                 int          `json:"version"`
 	DatabaseFingerprint     string       `json:"database_fingerprint"`
 	SchemaVersion           int          `json:"schema_version"`
 	State                   string       `json:"state"`
 	Checkpoint              string       `json:"checkpoint"`
-	MigrationLedgerDigest   string       `json:"migration_ledger_digest"`
+	MigrationHistoryDigest  string       `json:"migration_history_digest"`
 	SchemaDigest            string       `json:"schema_digest"`
 	Source                  []TableProof `json:"source"`
 	Native                  []TableProof `json:"native"`
-	DeferredNativeTables    []string     `json:"deferred_native_tables"` // fixed native tables skipped before their creating migration is applied
 	Hosts                   []TableProof `json:"hosts"`
 	Issues                  []Issue      `json:"issues"`
 	DigestUnavailableClaims int          `json:"digest_unavailable_claims"`
 	VerifiedEnvelopes       int          `json:"verified_envelopes"`
 	CatalogTransitions      int          `json:"catalog_transitions"`
 	HostTransitions         int          `json:"host_transitions"`
-	// HostFunctionTransitions counts the one closed trigger-function transition
-	// (0 or 1) and HostFunctionDigest is its pinned post-transition prosrc
-	// commitment. Both are sealed into Digest.
-	HostFunctionTransitions int    `json:"host_function_transitions"`
-	HostFunctionDigest      string `json:"host_function_digest"`
-	Digest                  string `json:"digest"`
+	HostFunctionTransitions int          `json:"host_function_transitions"`
+	HostFunctionDigest      string       `json:"host_function_digest,omitempty"`
+	Digest                  string       `json:"digest"`
 }
 
 func (r *Report) seal() {

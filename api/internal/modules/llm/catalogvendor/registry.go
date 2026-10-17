@@ -124,6 +124,33 @@ func Lookup(provider, model string) string {
 	return vendor
 }
 
+// UnambiguousModelProviders returns catalog identities for a model only when
+// all its entries agree on one logical owner. It is used to project an explicit
+// Console channel capability whose commercial supplier has no catalog row;
+// it never creates pricing identities or resolves conflicting model owners.
+func UnambiguousModelProviders(model string) []string {
+	model = strings.TrimSpace(model)
+	if model == "" || model == "*" {
+		return nil
+	}
+	registry.RLock()
+	defer registry.RUnlock()
+	var owner string
+	var providers []string
+	for identity, vendor := range registry.values {
+		provider, name, ok := strings.Cut(identity, "\x00")
+		if !ok || name != model || provider == "" {
+			continue
+		}
+		if owner != "" && owner != vendor {
+			return nil
+		}
+		owner = vendor
+		providers = append(providers, provider)
+	}
+	return providers
+}
+
 func LookupMetadata(vendor string) (Metadata, bool) {
 	registry.RLock()
 	metadata, ok := registry.metadata[strings.ToLower(strings.TrimSpace(vendor))]

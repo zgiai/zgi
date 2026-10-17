@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"gorm.io/gorm"
@@ -27,17 +26,8 @@ func requiresArchive(data snapshot) bool {
 	return false
 }
 
-// migrationLedgerLock freezes the complete applied migration ledger for the rest
-// of the transaction. It is a closed statement: the relation is named literally
-// here and no caller-supplied table name or SQL fragment is ever accepted.
-// SHARE ROW EXCLUSIVE conflicts with every ledger INSERT/UPDATE/DELETE and with
-// another holder, so NOWAIT fails closed instead of validating a checkpoint
-// against a history a concurrent migration is still rewriting.
 const migrationLedgerLock = `LOCK TABLE public.migrations IN SHARE ROW EXCLUSIVE MODE NOWAIT`
 
-// errApplyReviewChanged is the original review rejection. It is returned for an
-// invalid or mismatched reviewed report digest and for an applied head that does
-// not match the checkpoint this Apply was authorized for.
 var errApplyReviewChanged = errors.New("reviewed report or supported checkpoint changed")
 
 func lockMigrationLedger(tx *gorm.DB) error {
@@ -47,17 +37,10 @@ func lockMigrationLedger(tx *gorm.DB) error {
 	return nil
 }
 
-// requiresAdvancedLedgerLock reports whether this Apply is the explicit
-// AdvancedCheckpoint opt-in that must freeze the applied migration ledger before
-// it reads readiness. The default schema1 conversion and the default schema2
-// repeat keep their original read/lock order and never take this lock.
 func requiresAdvancedLedgerLock(option Options) bool {
 	return option.AdvancedCheckpoint != ""
 }
 
-// requiredCheckpoint is the applied migration head Apply must observe. An empty
-// AdvancedCheckpoint keeps the original strict CheckpointID contract; an
-// explicit opt-in must match the exact reviewed migration ID.
 func requiredCheckpoint(option Options) string {
 	if option.AdvancedCheckpoint != "" {
 		return option.AdvancedCheckpoint
@@ -65,21 +48,13 @@ func requiredCheckpoint(option Options) string {
 	return CheckpointID
 }
 
-// validateApplyReview re-checks the reviewed plan digest and the observed
-// applied head before an archive, DDL or marker is written. ExpectedReport must
-// be a legal SHA256 commitment to the freshly inspected plan digest.
 func validateApplyReview(option Options, report Report, expectedReport string) error {
-	if !sha256Digest(expectedReport) || report.Digest != expectedReport {
-		return errApplyReviewChanged
-	}
-	if report.Checkpoint != requiredCheckpoint(option) {
+	if !sha256Digest(expectedReport) || report.Digest != expectedReport || report.Checkpoint != requiredCheckpoint(option) {
 		return errApplyReviewChanged
 	}
 	return nil
 }
 
-// validateApplyEntry rejects the explicit advanced checkpoint once the database
-// already reports schema2. The default repeat path keeps calling verify.
 func validateApplyEntry(option Options, schemaVersion int) error {
 	if schemaVersion == 2 && option.AdvancedCheckpoint != "" {
 		return errAdvancedAlreadyDone
@@ -89,19 +64,9 @@ func validateApplyEntry(option Options, schemaVersion int) error {
 
 // Apply commits the marker in the same transaction as conversion and DDL.
 // A repeat checks the complete schema2 shape and proofs without adding records.
-// An explicit AdvancedCheckpoint opts a schema1 database whose applied head has
-// advanced past CheckpointID into the same conversion, but only after inspect
-// re-validates the complete ordered ledger and the observed head equals that
-// exact migration ID.
 func Apply(ctx context.Context, db *gorm.DB, options ApplyOptions) (Report, error) {
 	var report Report
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Only the explicit AdvancedCheckpoint opt-in freezes the applied
-		// migration ledger, and that lock must be the first statement of the
-		// transaction, before any SELECT, so readiness, inventory and the
-		// advanced head are all read from one frozen migration generation. A
-		// failed lock fails closed. Both default paths keep their original
-		// read/lock order.
 		if requiresAdvancedLedgerLock(options.Options) {
 			if err := lockMigrationLedger(tx); err != nil {
 				return err
@@ -222,9 +187,6 @@ func applySnapshot(tx *gorm.DB, report Report, data snapshot, archive []byte) er
 			return err
 		}
 	}
-	if err := applyChannelScopeFunctionTransition(tx); err != nil {
-		return err
-	}
 	if err := retirementDDL(tx); err != nil {
 		return err
 	}
@@ -232,21 +194,14 @@ func applySnapshot(tx *gorm.DB, report Report, data snapshot, archive []byte) er
 	// target restrictions, claims, pending confirmations and provider state.
 	after := snapshot{}
 	size := 0
-	_, afterDeferred, err := readNativeTables(tx, after, &size)
+	native, err := nativeTablesAtCheckpoint(tx)
 	if err != nil {
 		return err
 	}
-	if !slices.Equal(afterDeferred, report.DeferredNativeTables) {
-		return fmt.Errorf("native deferred inventory changed during retirement")
+	if _, err := readTables(tx, native, after, &size); err != nil {
+		return err
 	}
-	deferred := make(map[string]bool, len(afterDeferred))
-	for _, table := range afterDeferred {
-		deferred[table] = true
-	}
-	for _, table := range NativeTables() {
-		if deferred[table] {
-			continue
-		}
+	for _, table := range native {
 		switch table {
 		case "connector_definitions", "connector_definition_versions", "connector_plugin_versions", "connector_schema_readiness", "connector_conversion_records":
 			continue

@@ -187,6 +187,29 @@ func TestHTTPClientDoesNotRetryBillingSettlementFailure(t *testing.T) {
 	}
 }
 
+func TestHTTPClientDoesNotReplayCatalogedSettlementPending(t *testing.T) {
+	for _, body := range []string{
+		`{"error_code":"billing.settle.failed","retryable":true,"error":{"code":"settlement_pending","type":"api_error","message":"pending"}}`,
+		`{"code":"billing.settle.failed","retryable":true,"error":{"code":"settlement_pending"}}`,
+		`{"error":{"code":"billing.settle.failed","message":"pending"}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+			response, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+			if err != nil || response.StatusCode != http.StatusInternalServerError || requests != 1 {
+				t.Fatalf("requests=%d response=%+v error=%v", requests, response, err)
+			}
+		})
+	}
+}
+
 func TestHTTPClientStreamRejectsDomainResolvingToPrivateIP(t *testing.T) {
 	client := NewHTTPClientWithOptions(0, 1, HTTPClientOptions{
 		GuardOutboundURL: true,

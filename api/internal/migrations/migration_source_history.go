@@ -53,4 +53,5 @@ var historicalMigrationSourceDigests = map[string]string{
 	"20260903120000_messaging_connector_protocol":                   "ed9b3d60b9d21a5b320a2391579762087544e826bcd46b542f4966b5c438bd52",
 }
 
-const retirementSchemaSourceDigest = "78934a074aa1e5f5a3da4fd22936eef26dc9e7ec6ffa9e9bc7678252649eb215"
+// Reviewed checkpoint-aware native locking; the fixed retirement DDL is unchanged.
+const retirementSchemaSourceDigest = "95da917ea96ee454f26f5fb98a8cbb889dfa0c237721e8c783575b070dec5bd7"

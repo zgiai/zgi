@@ -21,6 +21,94 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type GetBillingCapabilitiesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBillingCapabilitiesRequest) Reset() {
+	*x = GetBillingCapabilitiesRequest{}
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBillingCapabilitiesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBillingCapabilitiesRequest) ProtoMessage() {}
+
+func (x *GetBillingCapabilitiesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBillingCapabilitiesRequest.ProtoReflect.Descriptor instead.
+func (*GetBillingCapabilitiesRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{0}
+}
+
+type GetBillingCapabilitiesResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ProtocolVersion int32                  `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	ToolPostpaidV2  bool                   `protobuf:"varint,2,opt,name=tool_postpaid_v2,json=toolPostpaidV2,proto3" json:"tool_postpaid_v2,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *GetBillingCapabilitiesResponse) Reset() {
+	*x = GetBillingCapabilitiesResponse{}
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBillingCapabilitiesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBillingCapabilitiesResponse) ProtoMessage() {}
+
+func (x *GetBillingCapabilitiesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBillingCapabilitiesResponse.ProtoReflect.Descriptor instead.
+func (*GetBillingCapabilitiesResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *GetBillingCapabilitiesResponse) GetProtocolVersion() int32 {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return 0
+}
+
+func (x *GetBillingCapabilitiesResponse) GetToolPostpaidV2() bool {
+	if x != nil {
+		return x.ToolPostpaidV2
+	}
+	return false
+}
+
 type MeteredUsageFact struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Operation     string                 `protobuf:"bytes,1,opt,name=operation,proto3" json:"operation,omitempty"`
@@ -34,7 +122,7 @@ type MeteredUsageFact struct {
 
 func (x *MeteredUsageFact) Reset() {
 	*x = MeteredUsageFact{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[0]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +134,7 @@ func (x *MeteredUsageFact) String() string {
 func (*MeteredUsageFact) ProtoMessage() {}
 
 func (x *MeteredUsageFact) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[0]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +147,7 @@ func (x *MeteredUsageFact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MeteredUsageFact.ProtoReflect.Descriptor instead.
 func (*MeteredUsageFact) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{0}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *MeteredUsageFact) GetOperation() string {
@@ -116,7 +204,7 @@ type PreDeductMeteredUsageRequest struct {
 
 func (x *PreDeductMeteredUsageRequest) Reset() {
 	*x = PreDeductMeteredUsageRequest{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[1]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -128,7 +216,7 @@ func (x *PreDeductMeteredUsageRequest) String() string {
 func (*PreDeductMeteredUsageRequest) ProtoMessage() {}
 
 func (x *PreDeductMeteredUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[1]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -141,7 +229,7 @@ func (x *PreDeductMeteredUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreDeductMeteredUsageRequest.ProtoReflect.Descriptor instead.
 func (*PreDeductMeteredUsageRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{1}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *PreDeductMeteredUsageRequest) GetOrganizationId() string {
@@ -231,7 +319,7 @@ type PreDeductMeteredUsageResponse struct {
 
 func (x *PreDeductMeteredUsageResponse) Reset() {
 	*x = PreDeductMeteredUsageResponse{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[2]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -243,7 +331,7 @@ func (x *PreDeductMeteredUsageResponse) String() string {
 func (*PreDeductMeteredUsageResponse) ProtoMessage() {}
 
 func (x *PreDeductMeteredUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[2]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -256,7 +344,7 @@ func (x *PreDeductMeteredUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreDeductMeteredUsageResponse.ProtoReflect.Descriptor instead.
 func (*PreDeductMeteredUsageResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{2}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *PreDeductMeteredUsageResponse) GetSuccess() bool {
@@ -323,13 +411,15 @@ type PreDeductQuotaRequest struct {
 	ResourceName      string                 `protobuf:"bytes,11,opt,name=resource_name,json=resourceName,proto3" json:"resource_name,omitempty"`
 	ReservationPolicy string                 `protobuf:"bytes,12,opt,name=reservation_policy,json=reservationPolicy,proto3" json:"reservation_policy,omitempty"`
 	PricingSnapshot   string                 `protobuf:"bytes,13,opt,name=pricing_snapshot,json=pricingSnapshot,proto3" json:"pricing_snapshot,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// T4: token reservation remains active; the tool delta settles afterward.
+	ToolPostpaid  bool `protobuf:"varint,14,opt,name=tool_postpaid,json=toolPostpaid,proto3" json:"tool_postpaid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PreDeductQuotaRequest) Reset() {
 	*x = PreDeductQuotaRequest{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[3]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -341,7 +431,7 @@ func (x *PreDeductQuotaRequest) String() string {
 func (*PreDeductQuotaRequest) ProtoMessage() {}
 
 func (x *PreDeductQuotaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[3]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -354,7 +444,7 @@ func (x *PreDeductQuotaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreDeductQuotaRequest.ProtoReflect.Descriptor instead.
 func (*PreDeductQuotaRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{3}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PreDeductQuotaRequest) GetOrganizationId() string {
@@ -448,6 +538,13 @@ func (x *PreDeductQuotaRequest) GetPricingSnapshot() string {
 	return ""
 }
 
+func (x *PreDeductQuotaRequest) GetToolPostpaid() bool {
+	if x != nil {
+		return x.ToolPostpaid
+	}
+	return false
+}
+
 type PreDeductQuotaResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Success        bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -461,7 +558,7 @@ type PreDeductQuotaResponse struct {
 
 func (x *PreDeductQuotaResponse) Reset() {
 	*x = PreDeductQuotaResponse{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[4]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -473,7 +570,7 @@ func (x *PreDeductQuotaResponse) String() string {
 func (*PreDeductQuotaResponse) ProtoMessage() {}
 
 func (x *PreDeductQuotaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[4]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -486,7 +583,7 @@ func (x *PreDeductQuotaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreDeductQuotaResponse.ProtoReflect.Descriptor instead.
 func (*PreDeductQuotaResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{4}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PreDeductQuotaResponse) GetSuccess() bool {
@@ -562,7 +659,7 @@ type SettleQuotaRequest struct {
 
 func (x *SettleQuotaRequest) Reset() {
 	*x = SettleQuotaRequest{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[5]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -574,7 +671,7 @@ func (x *SettleQuotaRequest) String() string {
 func (*SettleQuotaRequest) ProtoMessage() {}
 
 func (x *SettleQuotaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[5]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -587,7 +684,7 @@ func (x *SettleQuotaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettleQuotaRequest.ProtoReflect.Descriptor instead.
 func (*SettleQuotaRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{5}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *SettleQuotaRequest) GetOrganizationId() string {
@@ -801,21 +898,23 @@ func (x *SettleQuotaRequest) GetResourceName() string {
 }
 
 type SettleQuotaResponse struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Success         bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	ErrorMessage    string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
-	RemainingQuota  int64                  `protobuf:"varint,3,opt,name=remaining_quota,json=remainingQuota,proto3" json:"remaining_quota,omitempty"`
-	UsedQuota       int64                  `protobuf:"varint,4,opt,name=used_quota,json=usedQuota,proto3" json:"used_quota,omitempty"`
-	RefundedCredits int64                  `protobuf:"varint,5,opt,name=refunded_credits,json=refundedCredits,proto3" json:"refunded_credits,omitempty"`
-	SettledCredits  int64                  `protobuf:"varint,6,opt,name=settled_credits,json=settledCredits,proto3" json:"settled_credits,omitempty"`
-	ErrorCode       string                 `protobuf:"bytes,7,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Additive authoritative result for platform mirror consumers.
+	ToolSettlementJson string `protobuf:"bytes,8,opt,name=tool_settlement_json,json=toolSettlementJson,proto3" json:"tool_settlement_json,omitempty"`
+	Success            bool   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	ErrorMessage       string `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	RemainingQuota     int64  `protobuf:"varint,3,opt,name=remaining_quota,json=remainingQuota,proto3" json:"remaining_quota,omitempty"`
+	UsedQuota          int64  `protobuf:"varint,4,opt,name=used_quota,json=usedQuota,proto3" json:"used_quota,omitempty"`
+	RefundedCredits    int64  `protobuf:"varint,5,opt,name=refunded_credits,json=refundedCredits,proto3" json:"refunded_credits,omitempty"`
+	SettledCredits     int64  `protobuf:"varint,6,opt,name=settled_credits,json=settledCredits,proto3" json:"settled_credits,omitempty"`
+	ErrorCode          string `protobuf:"bytes,7,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SettleQuotaResponse) Reset() {
 	*x = SettleQuotaResponse{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[6]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -827,7 +926,7 @@ func (x *SettleQuotaResponse) String() string {
 func (*SettleQuotaResponse) ProtoMessage() {}
 
 func (x *SettleQuotaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[6]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -840,7 +939,14 @@ func (x *SettleQuotaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettleQuotaResponse.ProtoReflect.Descriptor instead.
 func (*SettleQuotaResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{6}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SettleQuotaResponse) GetToolSettlementJson() string {
+	if x != nil {
+		return x.ToolSettlementJson
+	}
+	return ""
 }
 
 func (x *SettleQuotaResponse) GetSuccess() bool {
@@ -906,7 +1012,7 @@ type CalculateDualCostRequest struct {
 
 func (x *CalculateDualCostRequest) Reset() {
 	*x = CalculateDualCostRequest{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[7]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -918,7 +1024,7 @@ func (x *CalculateDualCostRequest) String() string {
 func (*CalculateDualCostRequest) ProtoMessage() {}
 
 func (x *CalculateDualCostRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[7]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -931,7 +1037,7 @@ func (x *CalculateDualCostRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CalculateDualCostRequest.ProtoReflect.Descriptor instead.
 func (*CalculateDualCostRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{7}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CalculateDualCostRequest) GetPromptTokens() int32 {
@@ -994,7 +1100,7 @@ type DualCostResponse struct {
 
 func (x *DualCostResponse) Reset() {
 	*x = DualCostResponse{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[8]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1006,7 +1112,7 @@ func (x *DualCostResponse) String() string {
 func (*DualCostResponse) ProtoMessage() {}
 
 func (x *DualCostResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[8]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1125,7 @@ func (x *DualCostResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DualCostResponse.ProtoReflect.Descriptor instead.
 func (*DualCostResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{8}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DualCostResponse) GetSuccess() bool {
@@ -1120,7 +1226,7 @@ type SettleUsageRequest struct {
 
 func (x *SettleUsageRequest) Reset() {
 	*x = SettleUsageRequest{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[9]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1132,7 +1238,7 @@ func (x *SettleUsageRequest) String() string {
 func (*SettleUsageRequest) ProtoMessage() {}
 
 func (x *SettleUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[9]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1145,7 +1251,7 @@ func (x *SettleUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettleUsageRequest.ProtoReflect.Descriptor instead.
 func (*SettleUsageRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{9}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SettleUsageRequest) GetOrganizationId() string {
@@ -1303,7 +1409,7 @@ type SettleUsageResponse struct {
 
 func (x *SettleUsageResponse) Reset() {
 	*x = SettleUsageResponse{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[10]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1315,7 +1421,7 @@ func (x *SettleUsageResponse) String() string {
 func (*SettleUsageResponse) ProtoMessage() {}
 
 func (x *SettleUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[10]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1328,7 +1434,7 @@ func (x *SettleUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettleUsageResponse.ProtoReflect.Descriptor instead.
 func (*SettleUsageResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{10}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SettleUsageResponse) GetSuccess() bool {
@@ -1389,7 +1495,7 @@ type GetBillingModeRequest struct {
 
 func (x *GetBillingModeRequest) Reset() {
 	*x = GetBillingModeRequest{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[11]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1401,7 +1507,7 @@ func (x *GetBillingModeRequest) String() string {
 func (*GetBillingModeRequest) ProtoMessage() {}
 
 func (x *GetBillingModeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[11]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1414,7 +1520,7 @@ func (x *GetBillingModeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBillingModeRequest.ProtoReflect.Descriptor instead.
 func (*GetBillingModeRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{11}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetBillingModeRequest) GetOrganizationId() string {
@@ -1437,7 +1543,7 @@ type BillingModeResponse struct {
 
 func (x *BillingModeResponse) Reset() {
 	*x = BillingModeResponse{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[12]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1449,7 +1555,7 @@ func (x *BillingModeResponse) String() string {
 func (*BillingModeResponse) ProtoMessage() {}
 
 func (x *BillingModeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[12]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1462,7 +1568,7 @@ func (x *BillingModeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BillingModeResponse.ProtoReflect.Descriptor instead.
 func (*BillingModeResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{12}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *BillingModeResponse) GetSuccess() bool {
@@ -1510,7 +1616,7 @@ type CheckCreditBalanceRequest struct {
 
 func (x *CheckCreditBalanceRequest) Reset() {
 	*x = CheckCreditBalanceRequest{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[13]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1522,7 +1628,7 @@ func (x *CheckCreditBalanceRequest) String() string {
 func (*CheckCreditBalanceRequest) ProtoMessage() {}
 
 func (x *CheckCreditBalanceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[13]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1535,7 +1641,7 @@ func (x *CheckCreditBalanceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckCreditBalanceRequest.ProtoReflect.Descriptor instead.
 func (*CheckCreditBalanceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{13}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CheckCreditBalanceRequest) GetOrganizationId() string {
@@ -1565,7 +1671,7 @@ type CheckCreditBalanceResponse struct {
 
 func (x *CheckCreditBalanceResponse) Reset() {
 	*x = CheckCreditBalanceResponse{}
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[14]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1577,7 +1683,7 @@ func (x *CheckCreditBalanceResponse) String() string {
 func (*CheckCreditBalanceResponse) ProtoMessage() {}
 
 func (x *CheckCreditBalanceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[14]
+	mi := &file_pkg_rpc_v1_billing_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1590,7 +1696,7 @@ func (x *CheckCreditBalanceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckCreditBalanceResponse.ProtoReflect.Descriptor instead.
 func (*CheckCreditBalanceResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{14}
+	return file_pkg_rpc_v1_billing_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CheckCreditBalanceResponse) GetSuccess() bool {
@@ -1633,7 +1739,11 @@ var File_pkg_rpc_v1_billing_proto protoreflect.FileDescriptor
 const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\n" +
 	"\x18pkg/rpc/v1/billing.proto\x12\n" +
-	"zgi.rpc.v1\"\x8c\x02\n" +
+	"zgi.rpc.v1\"\x1f\n" +
+	"\x1dGetBillingCapabilitiesRequest\"u\n" +
+	"\x1eGetBillingCapabilitiesResponse\x12)\n" +
+	"\x10protocol_version\x18\x01 \x01(\x05R\x0fprotocolVersion\x12(\n" +
+	"\x10tool_postpaid_v2\x18\x02 \x01(\bR\x0etoolPostpaidV2\"\x8c\x02\n" +
 	"\x10MeteredUsageFact\x12\x1c\n" +
 	"\toperation\x18\x01 \x01(\tR\toperation\x12\x14\n" +
 	"\x05meter\x18\x02 \x01(\tR\x05meter\x12\x1b\n" +
@@ -1669,7 +1779,7 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\x10reserved_credits\x18\x05 \x01(\x03R\x0freservedCredits\x12+\n" +
 	"\x11remaining_credits\x18\x06 \x01(\x03R\x10remainingCredits\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\a \x01(\tR\terrorCode\"\xf0\x03\n" +
+	"error_code\x18\a \x01(\tR\terrorCode\"\x95\x04\n" +
 	"\x15PreDeductQuotaRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12+\n" +
 	"\x11estimated_credits\x18\x02 \x01(\x03R\x10estimatedCredits\x12\x19\n" +
@@ -1689,7 +1799,8 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"resourceId\x12#\n" +
 	"\rresource_name\x18\v \x01(\tR\fresourceName\x12-\n" +
 	"\x12reservation_policy\x18\f \x01(\tR\x11reservationPolicy\x12)\n" +
-	"\x10pricing_snapshot\x18\r \x01(\tR\x0fpricingSnapshot\"\xc2\x01\n" +
+	"\x10pricing_snapshot\x18\r \x01(\tR\x0fpricingSnapshot\x12#\n" +
+	"\rtool_postpaid\x18\x0e \x01(\bR\ftoolPostpaid\"\xc2\x01\n" +
 	"\x16PreDeductQuotaResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
@@ -1740,8 +1851,9 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\rresource_type\x18\x1c \x01(\tR\fresourceType\x12\x1f\n" +
 	"\vresource_id\x18\x1d \x01(\tR\n" +
 	"resourceId\x12#\n" +
-	"\rresource_name\x18\x1e \x01(\tR\fresourceName\"\x8f\x02\n" +
-	"\x13SettleQuotaResponse\x12\x18\n" +
+	"\rresource_name\x18\x1e \x01(\tR\fresourceName\"\xc1\x02\n" +
+	"\x13SettleQuotaResponse\x120\n" +
+	"\x14tool_settlement_json\x18\b \x01(\tR\x12toolSettlementJson\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12'\n" +
 	"\x0fremaining_quota\x18\x03 \x01(\x03R\x0eremainingQuota\x12\x1d\n" +
@@ -1832,7 +1944,7 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"sufficient\x12\x18\n" +
 	"\abalance\x18\x04 \x01(\x03R\abalance\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\x05 \x01(\tR\terrorCode2\x98\x05\n" +
+	"error_code\x18\x05 \x01(\tR\terrorCode2\x89\x06\n" +
 	"\x0eBillingService\x12W\n" +
 	"\x0ePreDeductQuota\x12!.zgi.rpc.v1.PreDeductQuotaRequest\x1a\".zgi.rpc.v1.PreDeductQuotaResponse\x12N\n" +
 	"\vSettleQuota\x12\x1e.zgi.rpc.v1.SettleQuotaRequest\x1a\x1f.zgi.rpc.v1.SettleQuotaResponse\x12W\n" +
@@ -1840,7 +1952,8 @@ const file_pkg_rpc_v1_billing_proto_rawDesc = "" +
 	"\x18SettleUsageWithDualTrack\x12\x1e.zgi.rpc.v1.SettleUsageRequest\x1a\x1f.zgi.rpc.v1.SettleUsageResponse\x12T\n" +
 	"\x0eGetBillingMode\x12!.zgi.rpc.v1.GetBillingModeRequest\x1a\x1f.zgi.rpc.v1.BillingModeResponse\x12c\n" +
 	"\x12CheckCreditBalance\x12%.zgi.rpc.v1.CheckCreditBalanceRequest\x1a&.zgi.rpc.v1.CheckCreditBalanceResponse\x12l\n" +
-	"\x15PreDeductMeteredUsage\x12(.zgi.rpc.v1.PreDeductMeteredUsageRequest\x1a).zgi.rpc.v1.PreDeductMeteredUsageResponseB(Z&github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
+	"\x15PreDeductMeteredUsage\x12(.zgi.rpc.v1.PreDeductMeteredUsageRequest\x1a).zgi.rpc.v1.PreDeductMeteredUsageResponse\x12o\n" +
+	"\x16GetBillingCapabilities\x12).zgi.rpc.v1.GetBillingCapabilitiesRequest\x1a*.zgi.rpc.v1.GetBillingCapabilitiesResponseB(Z&github.com/zgiai/zgi/api/pkg/rpc/v1;v1b\x06proto3"
 
 var (
 	file_pkg_rpc_v1_billing_proto_rawDescOnce sync.Once
@@ -1854,44 +1967,48 @@ func file_pkg_rpc_v1_billing_proto_rawDescGZIP() []byte {
 	return file_pkg_rpc_v1_billing_proto_rawDescData
 }
 
-var file_pkg_rpc_v1_billing_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_pkg_rpc_v1_billing_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_pkg_rpc_v1_billing_proto_goTypes = []any{
-	(*MeteredUsageFact)(nil),              // 0: zgi.rpc.v1.MeteredUsageFact
-	(*PreDeductMeteredUsageRequest)(nil),  // 1: zgi.rpc.v1.PreDeductMeteredUsageRequest
-	(*PreDeductMeteredUsageResponse)(nil), // 2: zgi.rpc.v1.PreDeductMeteredUsageResponse
-	(*PreDeductQuotaRequest)(nil),         // 3: zgi.rpc.v1.PreDeductQuotaRequest
-	(*PreDeductQuotaResponse)(nil),        // 4: zgi.rpc.v1.PreDeductQuotaResponse
-	(*SettleQuotaRequest)(nil),            // 5: zgi.rpc.v1.SettleQuotaRequest
-	(*SettleQuotaResponse)(nil),           // 6: zgi.rpc.v1.SettleQuotaResponse
-	(*CalculateDualCostRequest)(nil),      // 7: zgi.rpc.v1.CalculateDualCostRequest
-	(*DualCostResponse)(nil),              // 8: zgi.rpc.v1.DualCostResponse
-	(*SettleUsageRequest)(nil),            // 9: zgi.rpc.v1.SettleUsageRequest
-	(*SettleUsageResponse)(nil),           // 10: zgi.rpc.v1.SettleUsageResponse
-	(*GetBillingModeRequest)(nil),         // 11: zgi.rpc.v1.GetBillingModeRequest
-	(*BillingModeResponse)(nil),           // 12: zgi.rpc.v1.BillingModeResponse
-	(*CheckCreditBalanceRequest)(nil),     // 13: zgi.rpc.v1.CheckCreditBalanceRequest
-	(*CheckCreditBalanceResponse)(nil),    // 14: zgi.rpc.v1.CheckCreditBalanceResponse
-	nil,                                   // 15: zgi.rpc.v1.MeteredUsageFact.DimensionsEntry
+	(*GetBillingCapabilitiesRequest)(nil),  // 0: zgi.rpc.v1.GetBillingCapabilitiesRequest
+	(*GetBillingCapabilitiesResponse)(nil), // 1: zgi.rpc.v1.GetBillingCapabilitiesResponse
+	(*MeteredUsageFact)(nil),               // 2: zgi.rpc.v1.MeteredUsageFact
+	(*PreDeductMeteredUsageRequest)(nil),   // 3: zgi.rpc.v1.PreDeductMeteredUsageRequest
+	(*PreDeductMeteredUsageResponse)(nil),  // 4: zgi.rpc.v1.PreDeductMeteredUsageResponse
+	(*PreDeductQuotaRequest)(nil),          // 5: zgi.rpc.v1.PreDeductQuotaRequest
+	(*PreDeductQuotaResponse)(nil),         // 6: zgi.rpc.v1.PreDeductQuotaResponse
+	(*SettleQuotaRequest)(nil),             // 7: zgi.rpc.v1.SettleQuotaRequest
+	(*SettleQuotaResponse)(nil),            // 8: zgi.rpc.v1.SettleQuotaResponse
+	(*CalculateDualCostRequest)(nil),       // 9: zgi.rpc.v1.CalculateDualCostRequest
+	(*DualCostResponse)(nil),               // 10: zgi.rpc.v1.DualCostResponse
+	(*SettleUsageRequest)(nil),             // 11: zgi.rpc.v1.SettleUsageRequest
+	(*SettleUsageResponse)(nil),            // 12: zgi.rpc.v1.SettleUsageResponse
+	(*GetBillingModeRequest)(nil),          // 13: zgi.rpc.v1.GetBillingModeRequest
+	(*BillingModeResponse)(nil),            // 14: zgi.rpc.v1.BillingModeResponse
+	(*CheckCreditBalanceRequest)(nil),      // 15: zgi.rpc.v1.CheckCreditBalanceRequest
+	(*CheckCreditBalanceResponse)(nil),     // 16: zgi.rpc.v1.CheckCreditBalanceResponse
+	nil,                                    // 17: zgi.rpc.v1.MeteredUsageFact.DimensionsEntry
 }
 var file_pkg_rpc_v1_billing_proto_depIdxs = []int32{
-	15, // 0: zgi.rpc.v1.MeteredUsageFact.dimensions:type_name -> zgi.rpc.v1.MeteredUsageFact.DimensionsEntry
-	0,  // 1: zgi.rpc.v1.PreDeductMeteredUsageRequest.usage:type_name -> zgi.rpc.v1.MeteredUsageFact
-	3,  // 2: zgi.rpc.v1.BillingService.PreDeductQuota:input_type -> zgi.rpc.v1.PreDeductQuotaRequest
-	5,  // 3: zgi.rpc.v1.BillingService.SettleQuota:input_type -> zgi.rpc.v1.SettleQuotaRequest
-	7,  // 4: zgi.rpc.v1.BillingService.CalculateDualCost:input_type -> zgi.rpc.v1.CalculateDualCostRequest
-	9,  // 5: zgi.rpc.v1.BillingService.SettleUsageWithDualTrack:input_type -> zgi.rpc.v1.SettleUsageRequest
-	11, // 6: zgi.rpc.v1.BillingService.GetBillingMode:input_type -> zgi.rpc.v1.GetBillingModeRequest
-	13, // 7: zgi.rpc.v1.BillingService.CheckCreditBalance:input_type -> zgi.rpc.v1.CheckCreditBalanceRequest
-	1,  // 8: zgi.rpc.v1.BillingService.PreDeductMeteredUsage:input_type -> zgi.rpc.v1.PreDeductMeteredUsageRequest
-	4,  // 9: zgi.rpc.v1.BillingService.PreDeductQuota:output_type -> zgi.rpc.v1.PreDeductQuotaResponse
-	6,  // 10: zgi.rpc.v1.BillingService.SettleQuota:output_type -> zgi.rpc.v1.SettleQuotaResponse
-	8,  // 11: zgi.rpc.v1.BillingService.CalculateDualCost:output_type -> zgi.rpc.v1.DualCostResponse
-	10, // 12: zgi.rpc.v1.BillingService.SettleUsageWithDualTrack:output_type -> zgi.rpc.v1.SettleUsageResponse
-	12, // 13: zgi.rpc.v1.BillingService.GetBillingMode:output_type -> zgi.rpc.v1.BillingModeResponse
-	14, // 14: zgi.rpc.v1.BillingService.CheckCreditBalance:output_type -> zgi.rpc.v1.CheckCreditBalanceResponse
-	2,  // 15: zgi.rpc.v1.BillingService.PreDeductMeteredUsage:output_type -> zgi.rpc.v1.PreDeductMeteredUsageResponse
-	9,  // [9:16] is the sub-list for method output_type
-	2,  // [2:9] is the sub-list for method input_type
+	17, // 0: zgi.rpc.v1.MeteredUsageFact.dimensions:type_name -> zgi.rpc.v1.MeteredUsageFact.DimensionsEntry
+	2,  // 1: zgi.rpc.v1.PreDeductMeteredUsageRequest.usage:type_name -> zgi.rpc.v1.MeteredUsageFact
+	5,  // 2: zgi.rpc.v1.BillingService.PreDeductQuota:input_type -> zgi.rpc.v1.PreDeductQuotaRequest
+	7,  // 3: zgi.rpc.v1.BillingService.SettleQuota:input_type -> zgi.rpc.v1.SettleQuotaRequest
+	9,  // 4: zgi.rpc.v1.BillingService.CalculateDualCost:input_type -> zgi.rpc.v1.CalculateDualCostRequest
+	11, // 5: zgi.rpc.v1.BillingService.SettleUsageWithDualTrack:input_type -> zgi.rpc.v1.SettleUsageRequest
+	13, // 6: zgi.rpc.v1.BillingService.GetBillingMode:input_type -> zgi.rpc.v1.GetBillingModeRequest
+	15, // 7: zgi.rpc.v1.BillingService.CheckCreditBalance:input_type -> zgi.rpc.v1.CheckCreditBalanceRequest
+	3,  // 8: zgi.rpc.v1.BillingService.PreDeductMeteredUsage:input_type -> zgi.rpc.v1.PreDeductMeteredUsageRequest
+	0,  // 9: zgi.rpc.v1.BillingService.GetBillingCapabilities:input_type -> zgi.rpc.v1.GetBillingCapabilitiesRequest
+	6,  // 10: zgi.rpc.v1.BillingService.PreDeductQuota:output_type -> zgi.rpc.v1.PreDeductQuotaResponse
+	8,  // 11: zgi.rpc.v1.BillingService.SettleQuota:output_type -> zgi.rpc.v1.SettleQuotaResponse
+	10, // 12: zgi.rpc.v1.BillingService.CalculateDualCost:output_type -> zgi.rpc.v1.DualCostResponse
+	12, // 13: zgi.rpc.v1.BillingService.SettleUsageWithDualTrack:output_type -> zgi.rpc.v1.SettleUsageResponse
+	14, // 14: zgi.rpc.v1.BillingService.GetBillingMode:output_type -> zgi.rpc.v1.BillingModeResponse
+	16, // 15: zgi.rpc.v1.BillingService.CheckCreditBalance:output_type -> zgi.rpc.v1.CheckCreditBalanceResponse
+	4,  // 16: zgi.rpc.v1.BillingService.PreDeductMeteredUsage:output_type -> zgi.rpc.v1.PreDeductMeteredUsageResponse
+	1,  // 17: zgi.rpc.v1.BillingService.GetBillingCapabilities:output_type -> zgi.rpc.v1.GetBillingCapabilitiesResponse
+	10, // [10:18] is the sub-list for method output_type
+	2,  // [2:10] is the sub-list for method input_type
 	2,  // [2:2] is the sub-list for extension type_name
 	2,  // [2:2] is the sub-list for extension extendee
 	0,  // [0:2] is the sub-list for field type_name
@@ -1908,7 +2025,7 @@ func file_pkg_rpc_v1_billing_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_rpc_v1_billing_proto_rawDesc), len(file_pkg_rpc_v1_billing_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -456,6 +456,10 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 func loadConsoleConfig(cfg *Config, source *envSource) error {
 	syncIntervalSec, _ := source.int(45, envConsoleSyncIntervalSec)
 	syncStaleSec, _ := source.int(300, envConsoleSyncStaleSec)
+	grpcTLS, err := source.bool(false, envConsoleAPIGRPCTLS)
+	if err != nil {
+		return err
+	}
 	organizationReportInterval, err := source.duration(
 		defaultOrganizationReportInterval, envConsoleSyncOrganizationReportInterval,
 	)
@@ -464,8 +468,13 @@ func loadConsoleConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.Console = ConsoleConfig{
-		APIURL:                         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
-		GRPCAddr:                       source.string("", envConsoleAPIGRPCAddr),
+		APIURL:   source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
+		GRPCAddr: source.string("", envConsoleAPIGRPCAddr),
+		GRPCTLS: ConsoleGRPCTLSConfig{
+			Enabled:    grpcTLS,
+			CAFile:     source.string("", envConsoleAPIGRPCTLSCAFile),
+			ServerName: source.string("", envConsoleAPIGRPCTLSServerName),
+		},
 		InternalAPIKey:                 source.string("", envConsoleInternalAPIKey),
 		WebURL:                         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
 		InstanceID:                     source.string("", envConsoleInstanceID),
@@ -474,6 +483,9 @@ func loadConsoleConfig(cfg *Config, source *envSource) error {
 		SyncIntervalSec:                syncIntervalSec,
 		SyncStaleSec:                   syncStaleSec,
 		SyncOrganizationReportInterval: organizationReportInterval,
+	}
+	if err := ValidateConsoleGRPCTLS(cfg.Console.GRPCTLS); err != nil {
+		return err
 	}
 	return nil
 }

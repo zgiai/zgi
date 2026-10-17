@@ -8,20 +8,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// migrationLedgerQuery reads the complete ordered applied-migration ledger. It
-// selects IDs only, is parameter-free and never accepts a caller-supplied table
-// or SQL fragment. The same constant is used by every caller.
+const DetachCheckpointID = "20260902190000_detach_connector_runtime"
+
 const migrationLedgerQuery = `SELECT id::text FROM public.migrations ORDER BY id`
 
-// migrationIDPattern matches the repository's timestamped migration ID shape:
-// fourteen digits, an optional two- or four-digit extended suffix, then a
-// lowercase name. tools/connector-migrate uses the same shape so both
-// maintenance paths agree on what an explicit migration ID may look like.
 var migrationIDPattern = regexp.MustCompile(`^\d{14}(\d{2}|\d{4})?_[a-z0-9_]+$`)
 
-// The explicit opt-in fails closed on every disagreement between the requested
-// ID and the applied ledger. Each condition keeps its own error so an operator
-// can tell a typo from an unapplied history or an already-finished retirement.
 var (
 	errAdvancedEmptyLedger   = errors.New("migration ledger is empty; cannot verify the advanced checkpoint")
 	errAdvancedIDShape       = errors.New("AdvancedCheckpoint requires an explicit migration ID")
@@ -31,9 +23,18 @@ var (
 	errAdvancedHeadMismatch  = errors.New("advanced checkpoint does not match the applied migration head")
 )
 
-// migrationLedgerDigest commits the complete ordered ledger, not only its head,
-// so a rewritten, removed or backfilled history cannot reuse a reviewed report
-// digest. A nil and an empty ledger deliberately produce the same commitment.
+// CompatibleCheckpointMigration is an explicit exception for an unrelated
+// migration already shipped on a legacy runtime. Unknown later IDs still fail
+// closed; a name/prefix alone is not evidence of schema compatibility.
+func CompatibleCheckpointMigration(id string) bool {
+	switch id {
+	case "20260903120000_add_chat_runtime_external_user", "20260903183000_add_video_runtime_task_poster_url":
+		return true
+	default:
+		return false
+	}
+}
+
 func migrationLedgerDigest(ledger []string) string {
 	if ledger == nil {
 		ledger = []string{}
@@ -41,10 +42,6 @@ func migrationLedgerDigest(ledger []string) string {
 	return digest(ledger)
 }
 
-// validateAdvancedCheckpoint re-evaluates the explicit opt-in against the full
-// ordered ledger read in the same snapshot as the inventory. An empty option
-// keeps the original Plan behavior: the ledger only supplies the head, and any
-// head acceptance remains the caller's existing review decision.
 func validateAdvancedCheckpoint(advanced string, ledger []string) error {
 	if advanced == "" {
 		return nil
@@ -79,9 +76,6 @@ func containsMigrationID(ledger []string, id string) bool {
 	return false
 }
 
-// readMigrationLedger returns the complete ordered ID list. The caller decides
-// whether an empty or surprising history is fatal; this function only reports
-// read failures.
 func readMigrationLedger(db *gorm.DB) ([]string, error) {
 	rows, err := db.Raw(migrationLedgerQuery).Rows()
 	if err != nil {
@@ -100,4 +94,35 @@ func readMigrationLedger(db *gorm.DB) ([]string, error) {
 		return nil, fmt.Errorf("read applied migration ledger: %w", err)
 	}
 	return ledger, nil
+}
+
+func preRetirementCheckpoint(ids []string) (string, error) {
+	stages := []string{DetachCheckpointID, "20260903100000_create_connector_chat_preferences", "20260903110000_create_connector_onboarding", CheckpointID}
+	allowed := map[string]bool{}
+	for _, id := range stages {
+		allowed[id] = true
+	}
+	applied := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || applied[id] || (id > DetachCheckpointID && !allowed[id] && !CompatibleCheckpointMigration(id)) {
+			return "", fmt.Errorf("unsupported pre-retirement migration history")
+		}
+		applied[id] = true
+	}
+	checkpoint := ""
+	missing := false
+	for _, id := range stages {
+		if !applied[id] {
+			missing = true
+			continue
+		}
+		if missing {
+			return "", fmt.Errorf("incomplete pre-retirement Connector migration history")
+		}
+		checkpoint = id
+	}
+	if checkpoint != CheckpointID {
+		return "", fmt.Errorf("Connector finalization requires the messaging checkpoint")
+	}
+	return checkpoint, nil
 }

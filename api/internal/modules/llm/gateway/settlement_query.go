@@ -15,6 +15,7 @@ import (
 )
 
 type settlementQueryResponse struct {
+	ToolSettlement        json.RawMessage `json:"tool_settlement"`
 	Found                 bool            `json:"found"`
 	SettlementID          string          `json:"settlement_id"`
 	DeductionID           string          `json:"deduction_id"`

@@ -84,6 +84,44 @@ func validateSource(data snapshot, report *Report) {
 	validateNative(data, report)
 }
 
+func validateDigitalHumanPreservation(data snapshot, report *Report) {
+	credentials := map[string]row{}
+	for _, credential := range data["channel_installation_credentials"] {
+		credentials[text(credential, "installation_id")] = credential
+	}
+	installations := map[string]row{}
+	for _, installation := range data["channel_installations"] {
+		id := text(installation, "id")
+		installations[id] = installation
+		if installation["deleted_at"] != nil {
+			continue
+		}
+		credential := credentials[id]
+		if text(installation, "connection_id") != id || credential == nil {
+			problem(report, "channel_installations", "installation_credential_preservation_required")
+			continue
+		}
+		if text(credential, "organization_id") != text(installation, "organization_id") ||
+			text(credential, "workspace_id") != text(installation, "workspace_id") ||
+			!strings.EqualFold(text(credential, "provider"), text(installation, "provider")) ||
+			number(credential, "credential_version") < 1 ||
+			(!strings.HasPrefix(text(credential, "encrypted_credentials"), "v1.") && !strings.HasPrefix(text(credential, "encrypted_credentials"), "v2.")) {
+			problem(report, "channel_installation_credentials", "installation_credential_scope_mismatch")
+		}
+	}
+	for _, delivery := range data["channel_delivery_outbox"] {
+		installation := installations[text(delivery, "installation_id")]
+		if installation == nil || text(installation, "organization_id") != text(delivery, "organization_id") ||
+			text(installation, "workspace_id") != text(delivery, "workspace_id") {
+			problem(report, "channel_delivery_outbox", "delivery_installation_missing")
+		}
+	}
+}
+
+func problem(report *Report, table, code string) {
+	addIssue(report, table, code)
+}
+
 func validateNative(data snapshot, report *Report) {
 	problem := func(table, code string) { report.Issues = append(report.Issues, Issue{Table: table, Code: code}) }
 	for _, connection := range data["connector_connections"] {
