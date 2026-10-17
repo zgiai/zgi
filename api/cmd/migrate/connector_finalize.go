@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
+	"github.com/zgiai/zgi/api/internal/migrations/digitalhumanpreserve"
 	"io"
 	"os"
 	"time"
@@ -209,4 +211,57 @@ func writeExclusive(path string, data []byte) error {
 		return err
 	}
 	return file.Close()
+}
+
+func runDigitalHumanPreserve(args []string) error {
+	if len(args) == 0 || (args[0] != "plan" && args[0] != "apply" && args[0] != "verify") {
+		return fmt.Errorf("usage: digital-human-preserve plan|apply|verify [--expected-report SHA256] [--report PATH]")
+	}
+	command := args[0]
+	flags := flag.NewFlagSet("digital-human-preserve", flag.ContinueOnError)
+	expected := flags.String("expected-report", "", "exact clean plan digest required by apply")
+	reportPath := flags.String("report", "", "safe JSON report output (stdout when omitted)")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || (command != "apply" && *expected != "") {
+		return fmt.Errorf("invalid DigitalHuman preservation arguments")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cipher, err := credentialcrypto.NewCredentialKeyring(cfg.DigitalHumanCredentials.ActiveKeyID, cfg.DigitalHumanCredentials.Keys)
+	if err != nil {
+		return fmt.Errorf("load DigitalHuman credential keyring: %w", err)
+	}
+	db, err := database.InitDB(cfg.Database)
+	if err != nil {
+		return fmt.Errorf("open configured preservation database: %w", err)
+	}
+	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	var report digitalhumanpreserve.Report
+	switch command {
+	case "plan":
+		report, err = digitalhumanpreserve.Plan(ctx, db, cipher)
+	case "apply":
+		report, err = digitalhumanpreserve.Apply(ctx, db, cipher, *expected)
+	case "verify":
+		report, err = digitalhumanpreserve.Verify(ctx, db, cipher)
+	}
+	if err != nil {
+		return err
+	}
+	encoded, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	if *reportPath != "" {
+		return os.WriteFile(*reportPath, encoded, 0600)
+	}
+	_, err = os.Stdout.Write(encoded)
+	return err
 }

@@ -56,6 +56,19 @@ func finalizationTestDatabase(t *testing.T) *gorm.DB {
 	return db
 }
 
+func applyCheckpointVideoMigration(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	for _, migration := range allMigrations() {
+		if migration.ID == "20260903183000_add_video_runtime_task_poster_url" {
+			if err := gormigrate.New(db, migrationOptions(false), []*gormigrate.Migration{migration}).Migrate(); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatal("missing video migration fixture")
+}
+
 func TestConnectorFinalizationPostgres(t *testing.T) {
 	ctx := context.Background()
 	t.Run("fresh_and_repeat", func(t *testing.T) {
@@ -68,6 +81,21 @@ func TestConnectorFinalizationPostgres(t *testing.T) {
 		}
 		if err := RunWithDB(db); err != nil {
 			t.Fatal(err)
+		}
+		for _, drift := range []string{
+			`ALTER TABLE public.connector_pending_setups RENAME TO unexpected_pending_setups`,
+			`DELETE FROM public.migrations WHERE id='20260904160000_connector_pending_setups'`,
+		} {
+			tx := db.Begin()
+			if err := tx.Exec(drift).Error; err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			_, err := connectorfinalize.Verify(ctx, tx, connectorfinalize.Options{})
+			tx.Rollback()
+			if err == nil || !strings.Contains(err.Error(), "creating migration marker disagree") {
+				t.Fatalf("future native table drift accepted: %v", err)
+			}
 		}
 	})
 	t.Run("ready_v1_proof_dependency_rollback_repeat", func(t *testing.T) {
@@ -106,6 +134,18 @@ func TestConnectorFinalizationPostgres(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		applyCheckpointVideoMigration(t, db)
+		if err := RunToConnectorCheckpoint(db, connectorfinalize.CheckpointID); err != nil {
+			t.Fatal("unrelated video migration blocked the messaging checkpoint", err)
+		}
+		if _, err := connectorfinalize.Apply(ctx, db, connectorfinalize.ApplyOptions{ExpectedReport: plan.Digest}); err == nil {
+			t.Fatal("changed migration history reused a reviewed retirement report")
+		}
+		updated, err := connectorfinalize.Plan(ctx, db)
+		if err != nil || updated.Checkpoint != connectorfinalize.CheckpointID || updated.Digest == plan.Digest || updated.MigrationHistoryDigest == plan.MigrationHistoryDigest {
+			t.Fatal("migration history was not bound to the retirement report", err)
+		}
+		plan = updated
 		if _, err := connectorfinalize.Apply(ctx, db, connectorfinalize.ApplyOptions{ExpectedReport: strings.Repeat("0", 64)}); err == nil {
 			t.Fatal("wrong report accepted")
 		}

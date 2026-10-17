@@ -10,6 +10,7 @@ import (
 
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/migrations/connectorfinalize"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
@@ -18,6 +19,8 @@ const advisoryLockKey = "zgi:migrations"
 type RunOptions struct {
 	DryRun bool
 	NoLock bool
+	// Required for late-install verification when native encrypted records exist.
+	ConnectorCredentials *credentials.Store
 }
 
 type RollbackOptions struct {
@@ -68,7 +71,11 @@ func Run() error {
 		return err
 	}
 
-	return RunWithDB(db)
+	secrets, err := credentials.NewStore(cfg.Connectors.CredentialActiveKeyID, cfg.Connectors.CredentialKeys)
+	if err != nil {
+		return fmt.Errorf("initialize Connector migration credentials: %w", err)
+	}
+	return RunWithOptions(db, RunOptions{ConnectorCredentials: secrets})
 }
 
 func RunWithDB(db *gorm.DB) error {
@@ -118,7 +125,7 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 		}
 	}
 
-	if err := runMigrationChain(db, plan); err != nil {
+	if err := runMigrationChain(db, plan, connectorfinalize.Options{Credentials: options.ConnectorCredentials}); err != nil {
 		log.Printf("migrations failed: %v", err)
 		return err
 	}
@@ -134,7 +141,11 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 	return nil
 }
 
-func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
+func runMigrationChain(db *gorm.DB, plan migrationPlan, verificationOptions ...connectorfinalize.Options) error {
+	verification := connectorfinalize.Options{}
+	if len(verificationOptions) > 0 {
+		verification = verificationOptions[0]
+	}
 	deferred := config.ConnectorRetirementDeferred()
 	if deferred && plan.validateUnknownMigrations {
 		applied, err := appliedMigrationIDs(db)
@@ -156,6 +167,29 @@ func runMigrationChain(db *gorm.DB, plan migrationPlan) error {
 	applied, err := appliedMigrationIDs(db)
 	if err != nil {
 		return err
+	}
+	latePlan, lateInstall, err := postRetirementDigitalHumanPlan(db, plan, applied, verification)
+	if err != nil {
+		return err
+	}
+	if lateInstall {
+		log.Println("applying late DigitalHuman migrations to verified retired schema atomically")
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("SET LOCAL lock_timeout = '10s'").Error; err != nil {
+				return err
+			}
+			if err := gormigrate.New(tx, options, latePlan.migrations).Migrate(); err != nil {
+				return err
+			}
+			if err := clearMigrationStatementCache(db); err != nil {
+				return fmt.Errorf("clear migration query cache: %w", err)
+			}
+			report, err := connectorfinalize.Verify(tx.Statement.Context, tx, verification)
+			if err != nil {
+				return fmt.Errorf("verify completed DigitalHuman install (issues: %v): %w", report.Issues, err)
+			}
+			return assertMilliPointSchema(tx)
+		})
 	}
 	if _, done := applied[connectorfinalize.MigrationID]; !done {
 		if deferred {
@@ -205,7 +239,7 @@ func validateDeferredMigrationHistoryForPlan(plan migrationPlan, applied map[str
 // RunToConnectorCheckpoint supports the two published maintenance boundaries.
 // It never skips unknown migrations or guesses a checkpoint from an ID prefix.
 func RunToConnectorCheckpoint(db *gorm.DB, id string) error {
-	if id != "20260902190000_detach_connector_runtime" && id != connectorfinalize.CheckpointID {
+	if id != connectorfinalize.DetachCheckpointID && id != connectorfinalize.CheckpointID {
 		return fmt.Errorf("unsupported Connector upgrade checkpoint")
 	}
 	return db.Connection(func(conn *gorm.DB) error {
@@ -224,7 +258,7 @@ func RunToConnectorCheckpoint(db *gorm.DB, id string) error {
 			return err
 		}
 		for appliedID := range applied {
-			if appliedID > id && migrationIDPattern.MatchString(appliedID) {
+			if appliedID > id && migrationIDPattern.MatchString(appliedID) && !connectorfinalize.CompatibleCheckpointMigration(appliedID) {
 				return fmt.Errorf("database has advanced beyond the requested checkpoint")
 			}
 		}
