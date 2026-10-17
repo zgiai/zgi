@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -192,9 +193,18 @@ func (r *GormRepository) Verify(ctx context.Context, ref resourcebindings.Snapsh
 		return resourcebindings.Decision{}, err
 	}
 	query := r.db.WithContext(ctx).Where(
-		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND digital_human_version_id = ? AND binding_type = ? AND resource_id = ? AND parent_resource_id = ?",
-		ref.Subject.OrganizationID, ref.Subject.WorkspaceID, ref.Subject.ID, version.ID, match.Type, match.ResourceID, match.ParentResourceID,
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND digital_human_version_id = ? AND binding_type = ? AND resource_id = ?",
+		ref.Subject.OrganizationID, ref.Subject.WorkspaceID, ref.Subject.ID, version.ID, match.Type, match.ResourceID,
 	)
+	legacyWorkflowParent := match.Type == resourcebindings.BindingTypeWorkflow && match.ParentResourceID != ""
+	if legacyWorkflowParent {
+		// Published workflow rows saved before the parent was keyed by the
+		// workflow Agent id keep an empty parent; their metadata must still name
+		// the same workflow Agent.
+		query = query.Where("parent_resource_id IN ?", []string{match.ParentResourceID, ""}).Order("parent_resource_id DESC")
+	} else {
+		query = query.Where("parent_resource_id = ?", match.ParentResourceID)
+	}
 	if match.AccessMode == resourcebindings.AccessModeRead {
 		query = query.Where("access_mode IN ?", []resourcebindings.AccessMode{resourcebindings.AccessModeRead, resourcebindings.AccessModeWrite})
 	} else {
@@ -208,6 +218,9 @@ func (r *GormRepository) Verify(ctx context.Context, ref resourcebindings.Snapsh
 		return resourcebindings.Decision{}, fmt.Errorf("verify DigitalHuman resource binding: %w", err)
 	}
 	binding := projectDigitalHumanBinding(ref, &row)
+	if legacyWorkflowParent && row.ParentResourceID == "" && !strings.EqualFold(stringMapValue(binding.Metadata, "workflow_agent_id"), match.ParentResourceID) {
+		return resourcebindings.Decision{Reason: "resource_not_bound"}, nil
+	}
 	if match.ActionID != "" && !resourcebindings.AllowsIntegrationAction(binding.Metadata, match.ActionID) {
 		return resourcebindings.Decision{Binding: &binding, Reason: "integration_action_not_allowed"}, nil
 	}
