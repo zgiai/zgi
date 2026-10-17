@@ -114,6 +114,11 @@ func Apply(ctx context.Context, db *gorm.DB, options ApplyOptions) (Report, erro
 	return report, err
 }
 
+// ErrMaintenanceRequired reports legacy Connector storage that cannot be
+// retired without losing data: it needs plan, archive, apply and verify (or an
+// explicit discard). FinalizeEmpty returns it before changing anything.
+var ErrMaintenanceRequired = errors.New("Connector maintenance required: run connector-finalize plan, archive, apply and verify before restarting")
+
 // FinalizeEmpty is only called by the registered migration inside its outer
 // transaction. Every source and host row must be empty; existing installations
 // must use Plan/CreateArchive/Apply. gormigrate writes its marker before commit.
@@ -129,7 +134,7 @@ func FinalizeEmpty(tx *gorm.DB) error {
 		return err
 	}
 	if r.Checkpoint != CheckpointID || len(r.Issues) > 0 || requiresArchive(data) || r.HostTransitions > 0 {
-		return fmt.Errorf("Connector maintenance required: run connector-finalize plan, archive, apply and verify before restarting")
+		return ErrMaintenanceRequired
 	}
 	if err := applySnapshot(tx, r, data, nil); err != nil {
 		return err

@@ -1,6 +1,7 @@
 package connectorfinalize
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -94,6 +95,36 @@ func readMigrationLedger(db *gorm.DB) ([]string, error) {
 		return nil, fmt.Errorf("read applied migration ledger: %w", err)
 	}
 	return ledger, nil
+}
+
+// DeferredByHistory reports a database that ran with retirement deferred and
+// has not retired legacy storage: its history holds migrations ordered after
+// the retirement migration (only a deferred run applies those first) and no
+// retirement marker. The compatible migrations a historical branch could
+// commit early do not count.
+func DeferredByHistory(applied map[string]struct{}) bool {
+	if _, retired := applied[MigrationID]; retired {
+		return false
+	}
+	for id := range applied {
+		if id > MigrationID && !CompatibleCheckpointMigration(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// DeferredInDatabase reads the migration ledger and applies DeferredByHistory.
+func DeferredInDatabase(ctx context.Context, db *gorm.DB) (bool, error) {
+	var ids []string
+	if err := db.WithContext(ctx).Table("migrations").Pluck("id", &ids).Error; err != nil {
+		return false, fmt.Errorf("read applied migration ledger: %w", err)
+	}
+	applied := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		applied[id] = struct{}{}
+	}
+	return DeferredByHistory(applied), nil
 }
 
 func preRetirementCheckpoint(ids []string) (string, error) {

@@ -52,6 +52,18 @@ func migrationsForRun() []*gormigrate.Migration {
 	return filtered
 }
 
+// withoutRetirementMigration returns the migrations without the destructive
+// retirement migration, which a deferred run never applies.
+func withoutRetirementMigration(migrations []*gormigrate.Migration) []*gormigrate.Migration {
+	filtered := make([]*gormigrate.Migration, 0, len(migrations))
+	for _, migration := range migrations {
+		if migration.ID != connectorfinalize.MigrationID {
+			filtered = append(filtered, migration)
+		}
+	}
+	return filtered
+}
+
 func migrationOptions(validateUnknownMigrations bool) *gormigrate.Options {
 	options := *gormigrate.DefaultOptions
 	options.ValidateUnknownMigrations = validateUnknownMigrations
@@ -116,15 +128,6 @@ func runOnConnection(db *gorm.DB, options RunOptions) error {
 			return err
 		}
 	}
-	if config.ConnectorRetirementDeferred() {
-		if err := db.Transaction(func(tx *gorm.DB) error {
-			return connectorfinalize.RepairPendingSetupsCompatibility(tx)
-		}); err != nil {
-			log.Printf("deferred Connector compatibility repair failed: %v", err)
-			return err
-		}
-	}
-
 	if err := runMigrationChain(db, plan, connectorfinalize.Options{Credentials: options.ConnectorCredentials}); err != nil {
 		log.Printf("migrations failed: %v", err)
 		return err
@@ -146,7 +149,48 @@ func runMigrationChain(db *gorm.DB, plan migrationPlan, verificationOptions ...c
 	if len(verificationOptions) > 0 {
 		verification = verificationOptions[0]
 	}
-	deferred := config.ConnectorRetirementDeferred()
+	applied, err := appliedMigrationIDs(db)
+	if err != nil {
+		return err
+	}
+	mode := config.ConnectorRetirementMode()
+	switch mode {
+	case config.ConnectorRetirementModeStrict:
+		if err := requireDeferredRetirementExit(applied); err != nil {
+			return err
+		}
+		return runMigrationChainOnce(db, plan, verification, false)
+	case config.ConnectorRetirementModeDeferred:
+		return runMigrationChainOnce(db, plan, verification, true)
+	}
+	// auto: a database that already ran deferred stays deferred until an
+	// operator retires it; otherwise retirement runs when it loses nothing.
+	if connectorfinalize.DeferredByHistory(applied) {
+		log.Printf("Connector retirement remains deferred: legacy Connector storage awaits connector-finalize")
+		return runMigrationChainOnce(db, plan, verification, true)
+	}
+	err = runMigrationChainOnce(db, plan, verification, false)
+	if !errors.Is(err, connectorfinalize.ErrMaintenanceRequired) {
+		return err
+	}
+	// The retirement migration refused before changing anything, and the
+	// migrations after the checkpoint ran in the same rolled-back transaction.
+	// Keep the native runtime available and leave retirement to the operator.
+	log.Printf("Connector retirement deferred: legacy Connector storage holds data that connector-finalize must archive and apply (or discard); continuing without retirement")
+	return runMigrationChainOnce(db, plan, verification, true)
+}
+
+// runMigrationChainOnce runs the plan with retirement deferred or not.
+func runMigrationChainOnce(db *gorm.DB, plan migrationPlan, verification connectorfinalize.Options, deferred bool) error {
+	if deferred {
+		plan.migrations = withoutRetirementMigration(plan.migrations)
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			return connectorfinalize.RepairPendingSetupsCompatibility(tx)
+		}); err != nil {
+			log.Printf("deferred Connector compatibility repair failed: %v", err)
+			return err
+		}
+	}
 	if deferred && plan.validateUnknownMigrations {
 		applied, err := appliedMigrationIDs(db)
 		if err != nil {
@@ -234,6 +278,20 @@ func validateDeferredMigrationHistoryForPlan(plan migrationPlan, applied map[str
 		}
 	}
 	return nil
+}
+
+// requireDeferredRetirementExit is the strict-mode check: it refuses to run on
+// a database that ran with Connector retirement deferred (explicitly or in
+// auto mode) and still has legacy storage. Retirement there is an explicit
+// connector-finalize operation, so nothing is migrated, no unrelated pending
+// migration either, until the operator finishes it or allows deferral.
+func requireDeferredRetirementExit(applied map[string]struct{}) error {
+	if !connectorfinalize.DeferredByHistory(applied) {
+		return nil
+	}
+	return fmt.Errorf("Connector maintenance required: this database ran with Connector retirement deferred and still has legacy Connector storage; "+
+		"retire it with connector-finalize (plan, archive, apply and verify, or discard), or unset %s=strict to keep deferring. No migrations were applied",
+		config.ConnectorRetirementModeEnv)
 }
 
 // RunToConnectorCheckpoint supports the two published maintenance boundaries.

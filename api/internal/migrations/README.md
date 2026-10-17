@@ -79,6 +79,26 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 
 ## Writing Migrations
 
+### Connector retirement mode
+
+Retirement deletes the legacy Connector tables, so it never removes data that
+has not been converted. `ZGI_CONNECTOR_RETIREMENT_MODE` selects how migrations
+and processes treat it; no process needs it set:
+
+- `auto` (default): retirement runs during migration when the legacy storage
+  is empty. When it holds data, the retirement migration refuses before changing
+  anything, the run continues with retirement deferred, and a warning is logged.
+  A database whose ledger already holds migrations after the retirement
+  migration without its marker stays deferred. API and worker startup read the
+  same ledger state, and `/health/status` reports `connector_retirement:
+  deferred`. An operator retires the storage with `connector-finalize` (plan,
+  archive, apply and verify, or discard), after `digital-human-preserve` for
+  channels that still use a legacy Connection.
+- `deferred`: always postpone retirement.
+- `strict`: refuse to migrate or start while retirement needs maintenance; a
+  database that ran deferred is refused before any migration runs. An
+  unrecognized value is treated as `strict`.
+
 ### Connector retirement inventory
 
 The retirement checkpoint precedes `20260904160000_connector_pending_setups`.
