@@ -153,7 +153,7 @@ func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing
 				db.tx.source = db.tx.converted
 				before = hash(db.tx.source)
 			}
-			err := runOnConnection(context.Background(), db, command, testKeys(), digest, "", func(report) error { return nil })
+			err := runOnConnection(context.Background(), db, command, testKeys(), digest, "", "", func(report) error { return nil })
 			if err != nil || db.options.AccessMode != pgx.ReadOnly || db.options.IsoLevel != pgx.Serializable || db.tx.writes != 0 || db.tx.committed || !db.tx.rolledBack || hash(db.tx.source) != before {
 				t.Fatal("read-only command mutated or committed", err)
 			}
@@ -181,7 +181,7 @@ func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing
 				db.tx.source["migrations"] = append(db.tx.source["migrations"], row{"id": "202609031410353961_finalize_connector_detachment"})
 			}
 			var output report
-			err := runOnConnection(context.Background(), db, "apply", testKeys(), digest, "", func(r report) error { output = r; return nil })
+			err := runOnConnection(context.Background(), db, "apply", testKeys(), digest, "", "", func(r report) error { output = r; return nil })
 			if db.options.IsoLevel != pgx.Serializable || db.options.AccessMode == pgx.ReadOnly {
 				t.Fatal("apply did not use a writable serializable transaction")
 			}

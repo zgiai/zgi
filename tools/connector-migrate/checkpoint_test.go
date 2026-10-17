@@ -34,7 +34,7 @@ func TestHistoricalCheckpointRecovery(t *testing.T) {
 			t.Fatal("invalid recovery fixture", err)
 		}
 		db := &commandDatabase{tx: &commandTransaction{source: snapshot, converted: applyMemory(t, snapshot, plan)}}
-		if err := runOnConnection(context.Background(), db, "apply", testKeys(), plan.Report.SourceDigest, "", func(report) error { return nil }); err != nil || !db.tx.committed || !db.tx.readyWritten {
+		if err := runOnConnection(context.Background(), db, "apply", testKeys(), plan.Report.SourceDigest, "", "", func(report) error { return nil }); err != nil || !db.tx.committed || !db.tx.readyWritten {
 			t.Fatal("recovery was not verified and committed", stages, err)
 		}
 		for _, mutation := range plan.Mutations {
@@ -80,6 +80,51 @@ func TestHistoricalCheckpointFailsClosed(t *testing.T) {
 			}
 			if err := validateCheckpoint(snapshot); err == nil {
 				t.Fatal("unsafe checkpoint accepted")
+			}
+		})
+	}
+}
+
+func TestAdvancedCheckpointAcceptsOnlyTheNamedHeadOfAnUnretiredDatabase(t *testing.T) {
+	const head = "20261016110000_add_tool_usage_upstream_scope"
+	deferred := func(t *testing.T) databaseSnapshot {
+		snapshot := checkpointFixture(t, len(additiveCheckpoints))
+		// A deferred run applies every later migration but never retirement.
+		snapshot["migrations"] = append(snapshot["migrations"],
+			row{"id": "20260904160000_connector_pending_setups"}, row{"id": head})
+		return snapshot
+	}
+	if err := validateCheckpoint(deferred(t)); err == nil {
+		t.Fatal("the default checkpoint accepted a database past the additive stages")
+	}
+	if err := validateAdvancedCheckpoint(deferred(t), head); err != nil {
+		t.Fatalf("advanced checkpoint refused the named head: %v", err)
+	}
+	for name, mutate := range map[string]func(databaseSnapshot) string{
+		"stale head":        func(databaseSnapshot) string { return "20261001000000_older_migration" },
+		"checkpoint itself": func(databaseSnapshot) string { return detachCheckpoint },
+		"malformed id":      func(databaseSnapshot) string { return "latest" },
+		"retirement applied": func(snapshot databaseSnapshot) string {
+			snapshot["migrations"] = append(snapshot["migrations"], row{"id": finalizeMigration})
+			return head
+		},
+		"schema2": func(snapshot databaseSnapshot) string {
+			snapshot["connector_schema_readiness"] = []row{{"schema_version": 2, "state": "ready"}}
+			return head
+		},
+		"populated additive stage": func(snapshot databaseSnapshot) string {
+			snapshot[additiveCheckpoints[0].tables[0]] = []row{{"id": "native"}}
+			return head
+		},
+		"missing detach checkpoint": func(snapshot databaseSnapshot) string {
+			snapshot["migrations"] = snapshot["migrations"][1:]
+			return head
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := deferred(t)
+			if err := validateAdvancedCheckpoint(snapshot, mutate(snapshot)); err == nil {
+				t.Fatal("advanced checkpoint accepted an unsupported database")
 			}
 		})
 	}

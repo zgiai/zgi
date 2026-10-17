@@ -80,6 +80,29 @@ The JSON report contains identifiers, counts, digests and bounded result codes. 
 does not contain Keys, decrypted payloads, SQL driver messages or Skill text. Treat
 reports as operational data and keep them outside source control.
 
+## Databases running with retirement deferred
+
+A database that ran with Connector retirement deferred (explicitly, or chosen by
+the default `auto` mode because legacy storage held data) has applied the
+migrations after the detach checkpoint without retiring legacy storage, so the
+default checkpoint check refuses it. Convert it with an explicit opt-in naming
+the exact applied migration head:
+
+1. Upgrade the API first (`go run ./cmd/migrate up` from `api/`); retirement
+   stays deferred and the database reaches the current schema.
+2. Stop API writers, workers and scheduled jobs, and take the backups above.
+3. Run the converter with `--advanced-checkpoint <applied-migration-head>` on
+   every command (`inventory`, `dry-run`, `apply`, `verify`).
+4. Preserve DigitalHuman channels that still use a legacy Connection, then run
+   `connector-finalize plan|apply|verify` from `api/` with the same
+   `--advanced-checkpoint` and the encrypted archive.
+
+The opt-in requires schema1, the detach checkpoint, an absent retirement
+migration, the complete retained Connector structure, and the same empty
+additive Connector stages as the default path; the named head must be exactly
+the latest applied migration. The ledger is part of the source digest, so apply
+refuses a reviewed dry-run whose history changed.
+
 ## Conversion behavior
 
 - Existing native UUIDs, credential versions, binding restrictions and tombstones remain.
