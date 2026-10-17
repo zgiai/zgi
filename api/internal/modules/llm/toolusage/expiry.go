@@ -14,6 +14,9 @@ import (
 // ExpirePending records the absence of facts, never a quantity or a charge.
 // A later trusted fact can still resolve the same dedupe identity.
 func (r *Repository) ExpirePending(ctx context.Context, cutoff time.Time) (int64, error) {
+	// Observations are stored in UTC; compare in UTC so a database that orders
+	// timestamps as text (SQLite) agrees with PostgreSQL in any local zone.
+	cutoff = cutoff.UTC()
 	var events []Event
 	if err := r.db.WithContext(ctx).Where("billing_lane = ? AND status = ? AND quantity = 0 AND first_observed_at < ?", ownedLane, StatusPending, cutoff).Limit(500).Find(&events).Error; err != nil {
 		return 0, err
