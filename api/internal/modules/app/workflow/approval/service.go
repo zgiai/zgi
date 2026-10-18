@@ -838,7 +838,10 @@ type timeoutScanCursor struct {
 // the queue therefore cannot starve the expired forms behind them, however
 // many there are. The position is kept in memory: after a restart the scan
 // crosses the failing prefix again within a few runs. Only an error that is
-// not specific to one form fails the scan.
+// not specific to one form fails the scan. Each timeout commits on its own, so
+// when a later page fails to load the forms already timed out are returned
+// with the error: the caller must still resume them, because a timed-out form
+// is never selected again.
 func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*TimeoutResult, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("approval service is not initialized")
@@ -868,7 +871,8 @@ func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*Timeou
 			Order("expiration_time ASC, id ASC").
 			Limit(min(limit-len(timedOut), maxAttempts-attempts)).
 			Find(&forms).Error; err != nil {
-			return nil, fmt.Errorf("load expired approval forms: %w", err)
+			s.timeoutScanAfter = after
+			return timedOut, fmt.Errorf("load expired approval forms: %w", err)
 		}
 		if len(forms) == 0 {
 			exhausted = true

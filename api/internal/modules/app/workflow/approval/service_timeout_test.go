@@ -3,7 +3,9 @@ package approval
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -304,5 +306,57 @@ func TestTimeoutScansResumePastMoreFailingFormsThanOneScanTries(t *testing.T) {
 	}
 	if waiting != timeoutScanAttemptFactor+1 {
 		t.Fatalf("waiting forms = %d, want the %d failing forms left waiting", waiting, timeoutScanAttemptFactor+1)
+	}
+}
+
+// failNextExpiredFormsPage makes the n-th expired-form page query of a scan
+// fail after it ran, as a transient database error would.
+func failNextExpiredFormsPage(t *testing.T, db *gorm.DB, n int) {
+	t.Helper()
+	pages := 0
+	if err := db.Callback().Query().After("gorm:query").Register("test:fail_expired_forms_page", func(tx *gorm.DB) {
+		if !strings.Contains(tx.Statement.SQL.String(), "expiration_time <=") {
+			return
+		}
+		pages++
+		if pages == n {
+			tx.AddError(errors.New("injected page failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Each timeout commits on its own. When a later page fails to load, the forms
+// already timed out must still be returned and resumed: a timed-out form is
+// never selected again, and a workflow without a durable pause has no outbox
+// to resume it later.
+func TestTimeoutScanResumesCommittedFormsWhenALaterPageFails(t *testing.T) {
+	db := newTimeoutTestDB(t, 1, false, false)
+	failNextExpiredFormsPage(t, db, 2)
+	results, err := NewService(db).TimeoutExpiredForms(context.Background(), 100)
+	if err == nil {
+		t.Fatal("TimeoutExpiredForms() error = nil, want the failed page reported")
+	}
+	if len(results) != 1 || results[0].Form.ID != timeoutFormID || !results[0].LegacyResume {
+		t.Fatalf("results = %#v, want the committed timeout returned with the error", results)
+	}
+
+	db = newTimeoutTestDB(t, 1, false, false)
+	failNextExpiredFormsPage(t, db, 2)
+	var resumed []string
+	handler := NewTimeoutScanHandler(NewService(db), nil, func(_ context.Context, form *Form) error {
+		resumed = append(resumed, form.ID)
+		return nil
+	}, 100)
+	if err := handler.Handle(context.Background(), nil); err == nil {
+		t.Fatal("Handle() error = nil, want the failed page reported")
+	}
+	if len(resumed) != 1 || resumed[0] != timeoutFormID {
+		t.Fatalf("resumed = %v, want the committed timeout resumed before the error is returned", resumed)
+	}
+	var form Form
+	if err := db.First(&form, "id = ?", timeoutFormID).Error; err != nil || form.Status != FormStatusTimeout {
+		t.Fatalf("form = %#v, err %v; want it timed out", form, err)
 	}
 }

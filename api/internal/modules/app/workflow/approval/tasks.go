@@ -412,10 +412,9 @@ func (h *TimeoutScanHandler) Handle(ctx context.Context, task *asynq.Task) error
 	if h == nil || h.service == nil {
 		return nil
 	}
-	results, err := h.service.TimeoutExpiredForms(ctx, h.batchSize)
-	if err != nil {
-		return err
-	}
+	// A scan error can arrive with forms that were already timed out; resume
+	// them before reporting it, because they will not be scanned again.
+	results, scanErr := h.service.TimeoutExpiredForms(ctx, h.batchSize)
 	for _, result := range results {
 		switch {
 		case result.Outbox != nil:
@@ -435,5 +434,5 @@ func (h *TimeoutScanHandler) Handle(ctx context.Context, task *asynq.Task) error
 	if len(results) > 0 {
 		logger.InfoContext(ctx, "approval timeout scan completed", "timed_out_count", len(results))
 	}
-	return nil
+	return scanErr
 }
