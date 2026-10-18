@@ -180,7 +180,33 @@ func (s *Service) hasUnpublishedChanges(ctx context.Context, repo *GormRepositor
 	if err != nil {
 		return false, err
 	}
-	return len(versionBindingChanges(publishedBindings, draftBindings)) > 0, nil
+	if len(versionBindingChanges(publishedBindings, draftBindings)) > 0 {
+		return true, nil
+	}
+	return bindingAuthorizersChanged(publishedBindings, draftBindings), nil
+}
+
+// bindingAuthorizersChanged reports a re-authorized binding. The binding
+// revision hashes only its content, but runtime tools act with the published
+// authorizer's permissions, so a new authorizer must be publishable.
+func bindingAuthorizersChanged(published, draft []*ResourceBinding) bool {
+	authorizers := make(map[string]string, len(published))
+	for _, item := range published {
+		authorizers[restoreBindingKey(item)] = bindingAuthorizer(item)
+	}
+	for _, item := range draft {
+		if authorizer, ok := authorizers[restoreBindingKey(item)]; ok && authorizer != bindingAuthorizer(item) {
+			return true
+		}
+	}
+	return false
+}
+
+func bindingAuthorizer(item *ResourceBinding) string {
+	if item == nil || item.AuthorizedBy == nil {
+		return ""
+	}
+	return item.AuthorizedBy.String()
 }
 
 // List returns one workspace-scoped page.
