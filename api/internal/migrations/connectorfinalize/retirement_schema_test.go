@@ -5,10 +5,11 @@ import (
 	"testing"
 )
 
-// The channel scope inventory is lock-only. Apply and FinalizeEmpty must hold
-// ACCESS EXCLUSIVE on both tables before inspect reads their row counts, while
-// the tables stay outside every Source, Native and Host snapshot manifest.
-func TestLockInventoryCoversChannelScopeTablesWithoutExpandingSnapshots(t *testing.T) {
+// Apply and FinalizeEmpty must hold ACCESS EXCLUSIVE on both channel scope
+// tables before inspect reads them. They are host tables: the preservation
+// proof reads them to refuse an installation that still resolves a retired
+// Connection, and the archive keeps them. They never join Source or Native.
+func TestLockInventoryCoversChannelScopeTablesAsHostSnapshots(t *testing.T) {
 	locked := lockInventoryTables()
 	for _, table := range []string{channelInstallationsTable, channelInstallationCredentialsTable} {
 		if !slices.Contains(locked, table) {
@@ -20,8 +21,8 @@ func TestLockInventoryCoversChannelScopeTablesWithoutExpandingSnapshots(t *testi
 		if slices.Contains(NativeTables(), table) {
 			t.Fatalf("%s leaked into the native snapshot manifest", table)
 		}
-		if slices.Contains(hostTables(), table) {
-			t.Fatalf("%s leaked into the host snapshot manifest", table)
+		if !slices.Contains(hostTables(), table) {
+			t.Fatalf("host snapshot manifest omits %s", table)
 		}
 	}
 	seen := make(map[string]struct{}, len(locked))

@@ -114,6 +114,12 @@ func validateDigitalHumanPreservation(data snapshot, report *Report) {
 		if installation == nil || text(installation, "organization_id") != text(delivery, "organization_id") ||
 			text(installation, "workspace_id") != text(delivery, "workspace_id") {
 			problem(report, "channel_delivery_outbox", "delivery_installation_missing")
+			continue
+		}
+		// A delivery keeps a copy of its installation's connection locator; a
+		// stale copy can no longer be claimed once the installation moved.
+		if text(delivery, "connection_id") != text(installation, "connection_id") {
+			problem(report, "channel_delivery_outbox", "delivery_connection_locator_stale")
 		}
 	}
 }

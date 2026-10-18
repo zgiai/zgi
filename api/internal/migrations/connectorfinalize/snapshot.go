@@ -46,11 +46,16 @@ var hostColumns = map[string]string{
 	"digital_human_action_ledger":             "to_jsonb(t)",
 	"digital_human_channel_task_policies":     "to_jsonb(t)",
 	"digital_human_direct_skill_credentials":  "to_jsonb(t)",
-	"external_conversation_mappings":          "to_jsonb(t)",
-	"channel_bindings":                        "to_jsonb(t)",
-	"channel_inbound_events":                  "to_jsonb(t)",
-	"channel_delivery_outbox":                 "to_jsonb(t)",
-	"automation_task_activities":              "to_jsonb(t)",
+	// Installations and their own credentials are read so the preservation
+	// proof can refuse an installation still resolving a retired Connection,
+	// and so the archive can restore them.
+	"channel_installations":            "to_jsonb(t)",
+	"channel_installation_credentials": "to_jsonb(t)",
+	"external_conversation_mappings":   "to_jsonb(t)",
+	"channel_bindings":                 "to_jsonb(t)",
+	"channel_inbound_events":           "to_jsonb(t)",
+	"channel_delivery_outbox":          "to_jsonb(t)",
+	"automation_task_activities":       "to_jsonb(t)",
 }
 
 func hostTables() []string {
