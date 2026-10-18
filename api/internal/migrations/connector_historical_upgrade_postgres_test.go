@@ -24,6 +24,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/migrations/connectorfinalize"
 	"github.com/zgiai/zgi/api/internal/migrations/digitalhumanpreserve"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
+	"gorm.io/gorm"
 )
 
 // This exercises the published, independent historical tool instead of making
@@ -47,6 +48,8 @@ func testConnectorHistoricalUpgradePostgres(t *testing.T, recovery bool) {
 	org, owner, workspace, connection := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	workspaceConnection, globalChat, workspaceChat := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	channelConnection, installation := uuid.NewString(), uuid.NewString()
+	digitalHuman, version, mapping, binding := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	dhRun, inbound, delivery, marker := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	oldKey, newKey := strings.Repeat("l", 32), strings.Repeat("n", 32)
 	mac := hmac.New(sha256.New, []byte(oldKey))
 	mac.Write([]byte("zgi/integration-credentials/aes-256-gcm/v1"))
@@ -85,6 +88,16 @@ func testConnectorHistoricalUpgradePostgres(t *testing.T, recovery bool) {
 		{`INSERT INTO public.chat_runtime_conversations(id,organization_id,account_id,workspace_id,caller_type,title) VALUES (?,?,?,?,'aichat','Workspace chat')`, []any{workspaceChat, org, owner, workspace}},
 		{`INSERT INTO public.integration_connections(id,organization_id,owner_account_id,integration_id,driver_id,name,credential_source,auth_type,auth_method_id,encrypted_credentials,status,health_status,auth_status,scope_status,last_health_checked_at) VALUES (?,?,NULL,'feishu','feishu-open-platform','Historical channel','organization','api_key','app_credentials',?,'active','healthy','valid','verified',now())`, []any{channelConnection, org, channelEnvelope}},
 		{`INSERT INTO public.channel_installations(id,organization_id,workspace_id,provider,connection_id,name,created_by,updated_by) VALUES (?,?,?,?,?,'Historical Feishu',?,?)`, []any{installation, org, workspace, "feishu", channelConnection, owner, owner}},
+		// A pending delivery and an active processing marker keep a copy of the
+		// installation's legacy connection locator.
+		{`INSERT INTO public.digital_humans(id,organization_id,workspace_id,name) VALUES (?,?,?,'Historical assistant')`, []any{digitalHuman, org, workspace}},
+		{`INSERT INTO public.digital_human_versions(id,digital_human_id,organization_id,workspace_id,state,revision) VALUES (?,?,?,?,'draft','sha256:historical')`, []any{version, digitalHuman, org, workspace}},
+		{`INSERT INTO public.external_conversation_mappings(id,organization_id,workspace_id,installation_id,external_conversation_id,conversation_type) VALUES (?,?,?,?,'oc_historical','group')`, []any{mapping, org, workspace, installation}},
+		{`INSERT INTO public.channel_bindings(id,organization_id,workspace_id,installation_id,conversation_mapping_id,subject_type,subject_id,created_by,updated_by) VALUES (?,?,?,?,?,'digital_human',?,?,?)`, []any{binding, org, workspace, installation, mapping, digitalHuman, owner, owner}},
+		{`INSERT INTO public.digital_human_runs(id,organization_id,workspace_id,digital_human_id,digital_human_version_id,idempotency_key,invocation_event,run_spec,run_spec_revision,execution_snapshot,execution_snapshot_revision,query) VALUES (?,?,?,?,?,'historical-run','{}','{}','sha256:spec','{}','sha256:snapshot','Hello')`, []any{dhRun, org, workspace, digitalHuman, version}},
+		{`INSERT INTO public.channel_inbound_events(id,organization_id,workspace_id,installation_id,binding_id,invocation_run_id,provider_event_id,event_type,payload_digest,received_at) VALUES (?,?,?,?,?,?,'evt_historical','message','sha256:inbound',now())`, []any{inbound, org, workspace, installation, binding, dhRun}},
+		{`INSERT INTO public.channel_delivery_outbox(id,organization_id,workspace_id,installation_id,binding_id,inbound_event_id,run_id,provider,connection_id,actor_id,subject_type,subject_id,external_conversation_id,payload,payload_digest) VALUES (?,?,?,?,?,?,?,'feishu',?,?,'digital_human',?,'oc_historical','{}','sha256:delivery')`, []any{delivery, org, workspace, installation, binding, inbound, dhRun, channelConnection, owner, digitalHuman}},
+		{`INSERT INTO public.channel_processing_markers(id,organization_id,workspace_id,installation_id,inbound_event_id,run_id,provider,connection_id,actor_id,subject_type,subject_id,provider_message_id,status,available_at,created_at,updated_at) VALUES (?,?,?,?,?,?,'feishu',?,?,'digital_human',?,'om_historical','active',now(),now(),now())`, []any{marker, org, workspace, installation, inbound, dhRun, channelConnection, owner, digitalHuman}},
 		{`UPDATE public.connector_schema_readiness SET state='conversion_required' WHERE id=1`, nil},
 	} {
 		if err := db.Exec(statement.sql, statement.args...).Error; err != nil {
@@ -175,6 +188,20 @@ func testConnectorHistoricalUpgradePostgres(t *testing.T, recovery bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store, err := credentials.NewStore("native", map[string]string{"native": newKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	option := connectorfinalize.Options{Credentials: store}
+	// Finalization must refuse while an installation still resolves the
+	// legacy organization Connection it is about to retire.
+	unpreserved, err := connectorfinalize.Plan(ctx, db, option)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !finalizeIssue(unpreserved, "channel_installations", "installation_credential_preservation_required") {
+		t.Fatalf("finalization accepted an unpreserved channel installation: %+v", unpreserved.Issues)
+	}
 	digitalHumanPlan, err := digitalhumanpreserve.Plan(ctx, db, digitalHumanCipher)
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +215,37 @@ func testConnectorHistoricalUpgradePostgres(t *testing.T, recovery bool) {
 	if _, err := digitalhumanpreserve.Verify(ctx, db, digitalHumanCipher); err != nil {
 		t.Fatal(err)
 	}
+	assertChannelLocators(t, db, installation, delivery, marker)
+	// A database preserved by an earlier release kept the legacy locators; the
+	// next preservation run reports and repairs them.
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("UPDATE public.channel_delivery_outbox SET connection_id = ? WHERE id = ?", channelConnection, delivery).Error; err != nil {
+			return err
+		}
+		return tx.Exec("UPDATE public.channel_processing_markers SET connection_id = ? WHERE id = ?", channelConnection, marker).Error
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := digitalhumanpreserve.Verify(ctx, db, digitalHumanCipher); err == nil {
+		t.Fatal("preservation verified stale delivery locators")
+	}
+	repairPlan, err := digitalhumanpreserve.Plan(ctx, db, digitalHumanCipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repairPlan.Items) != 0 || len(repairPlan.Repairs) != 1 || repairPlan.Repairs[0].Deliveries != 1 || repairPlan.Repairs[0].Markers != 1 {
+		t.Fatalf("stale locator repair plan: %+v", repairPlan)
+	}
+	if _, err := digitalhumanpreserve.Apply(ctx, db, digitalHumanCipher, repairPlan.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := digitalhumanpreserve.Verify(ctx, db, digitalHumanCipher); err != nil {
+		t.Fatal(err)
+	}
+	assertChannelLocators(t, db, installation, delivery, marker)
 	var channelCredential struct {
 		InstallationID       string
 		EncryptedCredentials string
@@ -205,11 +263,6 @@ func testConnectorHistoricalUpgradePostgres(t *testing.T, recovery bool) {
 		t.Fatalf("preserved DigitalHuman channel credential is unreadable: %v", err)
 	}
 	credentialcrypto.DestroyMap(preservedChannelValues)
-	store, err := credentials.NewStore("native", map[string]string{"native": newKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	option := connectorfinalize.Options{Credentials: store}
 	plan, err := connectorfinalize.Plan(ctx, db, option)
 	if err != nil {
 		t.Fatal(err)
@@ -251,5 +304,38 @@ func testConnectorHistoricalUpgradePostgres(t *testing.T, recovery bool) {
 	}
 	if _, err := connectorfinalize.Verify(ctx, db, option); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func finalizeIssue(report connectorfinalize.Report, table, code string) bool {
+	for _, issue := range report.Issues {
+		if issue.Table == table && issue.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// assertChannelLocators requires the delivery and marker to follow the
+// installation-owned locator, and the delivery to stay claimable: the channel
+// scope trigger checks the locator on every outbox update.
+func assertChannelLocators(t *testing.T, db *gorm.DB, installation, delivery, marker string) {
+	t.Helper()
+	for table, id := range map[string]string{"channel_delivery_outbox": delivery, "channel_processing_markers": marker} {
+		var connection string
+		if err := db.Table(table).Select("connection_id").Where("id = ?", id).Scan(&connection).Error; err != nil {
+			t.Fatal(err)
+		}
+		if connection != installation {
+			t.Fatalf("%s still carries connection locator %s", table, connection)
+		}
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("UPDATE public.channel_delivery_outbox SET status = 'processing', claimed_at = now() WHERE id = ? AND status = 'pending'", delivery).Error; err != nil {
+			return err
+		}
+		return fmt.Errorf("rollback claim probe")
+	}); err == nil || err.Error() != "rollback claim probe" {
+		t.Fatalf("preserved delivery cannot be claimed: %v", err)
 	}
 }

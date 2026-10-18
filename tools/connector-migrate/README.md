@@ -58,6 +58,11 @@ supported, empty additive stages described under recovery below.
    This step rebinds organization channel credentials to the stable installation UUID in
    one serializable transaction. It retains the old Connection row for the final archive
    and writes paired source/target commitments to `connector_conversion_records`.
+   Pending deliveries and processing markers carry a copy of the installation's
+   connection locator; the same transaction moves them too. When an installation already
+   owns its credential but older rows still carry the legacy locator, the report lists it
+   under `repairs` and apply moves those rows; verify requires both `items` and `repairs`
+   to be empty.
 8. Use the API-owned finalizer while all writers remain stopped. Keep all paths outside
    the repository:
 

@@ -33,12 +33,56 @@ type Item struct {
 	SourceDigest       string `json:"source_digest"`
 }
 
+// Repair names an installation that already owns its credential while
+// existing deliveries or processing markers still carry an older connection
+// locator, for example after preservation by an earlier release.
+type Repair struct {
+	InstallationID string `json:"installation_id"`
+	Deliveries     int64  `json:"deliveries"`
+	Markers        int64  `json:"markers"`
+}
+
 type Report struct {
-	Version int     `json:"version"`
-	State   string  `json:"state"`
-	Items   []Item  `json:"items"`
-	Issues  []Issue `json:"issues"`
-	Digest  string  `json:"digest"`
+	Version int      `json:"version"`
+	State   string   `json:"state"`
+	Items   []Item   `json:"items"`
+	Repairs []Repair `json:"repairs"`
+	Issues  []Issue  `json:"issues"`
+	Digest  string   `json:"digest"`
+}
+
+// locatorTables carry a copy of the installation connection locator. The
+// channel scope trigger requires an outbox row to match its installation on
+// every update, so the locator moves together with the installation.
+var locatorTables = []string{"channel_delivery_outbox", "channel_processing_markers"}
+
+func staleLocators(db *gorm.DB, installationID uuid.UUID) (Repair, error) {
+	repair := Repair{InstallationID: installationID.String()}
+	counts := []*int64{&repair.Deliveries, &repair.Markers}
+	for index, table := range locatorTables {
+		if !db.Migrator().HasTable(table) {
+			continue
+		}
+		if err := db.Table(table).Where("installation_id = ? AND connection_id <> ?", installationID, installationID).Count(counts[index]).Error; err != nil {
+			return repair, fmt.Errorf("inspect %s connection locators: %w", table, err)
+		}
+	}
+	return repair, nil
+}
+
+// relocateLocators points every delivery and processing marker of an
+// installation at the installation-owned credential locator.
+func relocateLocators(tx *gorm.DB, installationID uuid.UUID) error {
+	for _, table := range locatorTables {
+		if !tx.Migrator().HasTable(table) {
+			continue
+		}
+		if err := tx.Table(table).Where("installation_id = ? AND connection_id <> ?", installationID, installationID).
+			Update("connection_id", installationID).Error; err != nil {
+			return fmt.Errorf("move %s connection locators: %w", table, err)
+		}
+	}
+	return nil
 }
 
 type installation struct {
@@ -108,7 +152,7 @@ func loadCredentialJSON(db *gorm.DB, id uuid.UUID) (map[string]any, error) {
 }
 
 func inspect(ctx context.Context, db *gorm.DB, cipher credentialcrypto.CredentialCipher) (Report, []installation, error) {
-	report := Report{Version: Version, State: "ready", Items: []Item{}, Issues: []Issue{}}
+	report := Report{Version: Version, State: "ready", Items: []Item{}, Repairs: []Repair{}, Issues: []Issue{}}
 	if cipher == nil {
 		return report, nil, fmt.Errorf("DigitalHuman credential keyring is required")
 	}
@@ -140,6 +184,14 @@ func inspect(ctx context.Context, db *gorm.DB, cipher credentialcrypto.Credentia
 			credentialcrypto.DestroyMap(values)
 			if decryptErr != nil {
 				report.Issues = append(report.Issues, Issue{InstallationID: item.ID.String(), Code: "owned_credential_unreadable"})
+				continue
+			}
+			repair, err := staleLocators(db.WithContext(ctx), item.ID)
+			if err != nil {
+				return report, nil, err
+			}
+			if repair.Deliveries > 0 || repair.Markers > 0 {
+				report.Repairs = append(report.Repairs, repair)
 			}
 			continue
 		}
@@ -197,6 +249,14 @@ func Apply(ctx context.Context, db *gorm.DB, cipher credentialcrypto.CredentialC
 		if err := tx.Exec("LOCK TABLE public.channel_installations, public.channel_installation_credentials, public.integration_connections, public.connector_conversion_records IN ACCESS EXCLUSIVE MODE").Error; err != nil {
 			return fmt.Errorf("freeze DigitalHuman channel inventory: %w", err)
 		}
+		for _, table := range locatorTables {
+			if !tx.Migrator().HasTable(table) {
+				continue
+			}
+			if err := tx.Exec("LOCK TABLE public." + table + " IN ACCESS EXCLUSIVE MODE").Error; err != nil {
+				return fmt.Errorf("freeze DigitalHuman channel locators: %w", err)
+			}
+		}
 		report, legacy, err := inspect(ctx, tx, cipher)
 		if err != nil {
 			return err
@@ -235,6 +295,9 @@ func Apply(ctx context.Context, db *gorm.DB, cipher credentialcrypto.CredentialC
 			if updated.Error != nil || updated.RowsAffected != 1 {
 				return fmt.Errorf("channel installation changed during preservation")
 			}
+			if err := relocateLocators(tx, item.ID); err != nil {
+				return err
+			}
 			sourceItem := report.Items[index]
 			if err := tx.Table("connector_conversion_records").Create(map[string]any{
 				"source_kind": "dh_channel_source", "source_id": item.ID.String() + ":" + source.ID.String(),
@@ -253,7 +316,19 @@ func Apply(ctx context.Context, db *gorm.DB, cipher credentialcrypto.CredentialC
 				return fmt.Errorf("record channel target proof")
 			}
 		}
+		for _, repair := range report.Repairs {
+			installationID, err := uuid.Parse(repair.InstallationID)
+			if err != nil {
+				return fmt.Errorf("invalid installation in reviewed repair")
+			}
+			if err := relocateLocators(tx, installationID); err != nil {
+				return err
+			}
+		}
 		result, _, err = inspect(ctx, tx, cipher)
+		if err == nil && (len(result.Items) != 0 || len(result.Repairs) != 0 || len(result.Issues) != 0) {
+			err = fmt.Errorf("DigitalHuman channel preservation left work behind")
+		}
 		result.State = "applied"
 		result.Digest = ""
 		result.Digest = digest(result)
@@ -268,7 +343,7 @@ func Verify(ctx context.Context, db *gorm.DB, cipher credentialcrypto.Credential
 		return report, err
 	}
 	report.State = "verified"
-	if len(report.Items) != 0 || len(report.Issues) != 0 {
+	if len(report.Items) != 0 || len(report.Repairs) != 0 || len(report.Issues) != 0 {
 		return report, fmt.Errorf("DigitalHuman channel preservation is incomplete")
 	}
 	var targets []struct {
