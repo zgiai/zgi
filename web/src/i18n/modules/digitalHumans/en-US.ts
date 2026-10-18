@@ -478,6 +478,12 @@ const messages = {
     linuxEnvironmentDescription:
       'Run scripts and process files in a platform-managed environment.',
     linuxEnvironmentUnavailable: 'The Linux environment is not available for this organization.',
+    linuxEnvironmentUnavailableReasons: {
+      disabled: 'The Linux execution environment is turned off for this deployment. Ask an administrator to enable it.',
+      organization_not_enabled: 'This organization is not approved for the Linux execution environment. Ask an administrator to grant access.',
+      entry_not_enabled: 'This deployment does not open the Linux execution environment to DigitalHumans. Ask an administrator to configure entry admission.',
+      runtime_unavailable: 'The Linux execution environment is unavailable. Ask an administrator to check the runtime configuration.',
+    },
     title: 'Settings',
     description:
       'Control channel feedback and other runtime preferences without changing this digital human’s identity.',

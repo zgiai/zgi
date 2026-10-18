@@ -13,6 +13,17 @@ import (
 type EntryAdmission struct {
 	configured bool
 	allowed    map[string]map[string]bool
+	// allOrganizations admits every supported entry for any non-empty
+	// organization; see AllOrganizationsEntryAdmission.
+	allOrganizations bool
+}
+
+// AllOrganizationsEntryAdmission is used when the deployment admits every
+// authenticated organization to the Linux runtime. The entry allowlist exists
+// to name organizations per entry, so in that mode it is not consulted; an
+// empty organization and unsupported entries are still refused.
+func AllOrganizationsEntryAdmission() EntryAdmission {
+	return EntryAdmission{configured: true, allOrganizations: true}
 }
 
 // ParseEntryAdmission accepts application:entry -> organization IDs. No
@@ -51,6 +62,9 @@ func ParseEntryAdmission(raw string) (EntryAdmission, error) {
 func (policy EntryAdmission) Allows(organization, application, entry string) bool {
 	if organization == "" || !validEntry(application, entry) {
 		return false
+	}
+	if policy.allOrganizations {
+		return true
 	}
 	if !policy.configured {
 		return application == "agent" && entry == "console"

@@ -444,6 +444,12 @@ const messages: DigitalHumansMessages = {
     linuxEnvironmentDescription:
       '运行脚本、处理文件，环境由平台管理。',
     linuxEnvironmentUnavailable: '当前组织暂未开放 Linux 环境。',
+    linuxEnvironmentUnavailableReasons: {
+      disabled: '部署未启用 Linux 执行环境，请联系管理员开启。',
+      organization_not_enabled: '当前组织未获准使用 Linux 执行环境，请联系管理员开通。',
+      entry_not_enabled: '部署未向数字人开放 Linux 执行环境，请联系管理员配置入口准入。',
+      runtime_unavailable: 'Linux 执行环境当前不可用，请联系管理员检查运行时配置。',
+    },
     title: '设置',
     description: '单独管理渠道反馈等运行偏好，不改变数字人的身份与人设。',
     channelResponseTitle: '渠道回复体验',

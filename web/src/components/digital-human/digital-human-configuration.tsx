@@ -378,7 +378,7 @@ function ConfigurationEditor({
                     />
                     {executionUnavailable ? (
                       <p className="-mt-1 pb-3 text-xs text-muted-foreground">
-                        {t('preferences.linuxEnvironmentUnavailable')}
+                        {t(linuxEnvironmentUnavailableKey(executionRuntimeCapability?.reason))}
                       </p>
                     ) : null}
                   </div>
@@ -758,6 +758,23 @@ function RulesEditor({
 
 function serializeEditorPart(value: unknown) {
   return JSON.stringify(value);
+}
+
+// The server reports why the Linux environment cannot be enabled; each reason
+// needs a different administrator action, so it is shown instead of one
+// generic sentence.
+const linuxEnvironmentUnavailableReasons = [
+  'disabled',
+  'organization_not_enabled',
+  'entry_not_enabled',
+  'runtime_unavailable',
+] as const;
+
+function linuxEnvironmentUnavailableKey(reason?: string) {
+  const known = linuxEnvironmentUnavailableReasons.find(item => item === reason);
+  return known
+    ? (`preferences.linuxEnvironmentUnavailableReasons.${known}` as const)
+    : ('preferences.linuxEnvironmentUnavailable' as const);
 }
 
 function PreferenceSwitch({

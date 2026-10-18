@@ -51,7 +51,9 @@ profile and Home Snapshot must list the organization UUID explicitly. A private
 deployment can set `ZGI_AGENT_RUNTIME_ORG_MODE=all_authenticated` to admit any
 non-empty authenticated organization to the same operator-selected profile and
 policy; this is a deployment choice, not a user-facing configuration and does
-not admit anonymous requests. Unknown values fall back to `allowlist`.
+not admit anonymous requests. In this mode every supported execution entry is
+admitted as well, and `ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON` is not consulted.
+Unknown values fall back to `allowlist`.
 
 The approved profile map must contain an explicit `offline` policy, for example:
 

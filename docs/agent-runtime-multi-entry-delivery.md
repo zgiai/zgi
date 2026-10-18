@@ -118,8 +118,11 @@ and background reclamation preserve the full execution identity.
 `application:entry` to organization UUIDs, for example
 `{"agent:webapp":["00000000-0000-4000-8000-000000000001"]}`. An absent setting
 allows only the existing console Agent path; an explicit empty object denies
-all entries. Wildcards and malformed mappings are rejected. This is an admission
-gate, not a substitute for application permissions or final-user authentication.
+all entries. Wildcards and malformed mappings are rejected. When
+`ZGI_AGENT_RUNTIME_ORG_MODE=all_authenticated` admits every authenticated
+organization, every supported entry is admitted and this mapping is not
+consulted. This is an admission gate, not a substitute for application
+permissions or final-user authentication.
 
 New identity-scoped callers require an explicitly supplied protected artifact
 persister. Without it the factory returns no tools; it never falls back to public
