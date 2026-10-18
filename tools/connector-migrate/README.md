@@ -75,7 +75,10 @@ supported, empty additive stages described under recovery below.
    The finalizer inventory and encrypted archive include DigitalHuman definitions,
    published versions, runs, resource bindings, memories, channel rows, outbox rows and
    installation credential envelopes. It refuses any non-deleted installation that still
-   resolves through a retired Connection. The plan digest is the top-level `digest` in
+   resolves through a retired Connection, and any delivery or processing marker whose
+   connection locator differs from its installation. A PersonalConnection channel owns no
+   envelope; it must reference a native connection of the same organization, owner and
+   Connector, and preservation leaves it unchanged. The plan digest is the top-level `digest` in
    the reviewed report. Confirm the API
    uses the same native keyring, start only the schema2 runtime, and verify it before
    restoring traffic. The database backup, encrypted archive and its separately

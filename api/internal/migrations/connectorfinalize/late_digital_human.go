@@ -29,6 +29,7 @@ var digitalHumanHostCreationMigrations = map[string]string{
 	"channel_inbound_events":                 "202608191032439914_create_digital_human_channels",
 	"channel_delivery_outbox":                "202608191032439914_create_digital_human_channels",
 	"channel_installation_credentials":       "202608231300000000_add_channel_installation_credentials",
+	"channel_processing_markers":             "202609011000000000_add_channel_processing_markers",
 	"automation_task_activities":             "202608251000000000_add_digital_human_tasks",
 	"digital_human_channel_task_policies":    "202608251000000000_add_digital_human_tasks",
 	"digital_human_direct_skill_credentials": "202608261100000000_add_digital_human_direct_skill_credentials",

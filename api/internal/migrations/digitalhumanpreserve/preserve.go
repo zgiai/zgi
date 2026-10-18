@@ -86,17 +86,20 @@ func relocateLocators(tx *gorm.DB, installationID uuid.UUID) error {
 }
 
 type installation struct {
-	ID             uuid.UUID  `gorm:"column:id"`
-	OrganizationID uuid.UUID  `gorm:"column:organization_id"`
-	WorkspaceID    uuid.UUID  `gorm:"column:workspace_id"`
-	Provider       string     `gorm:"column:provider"`
-	ConnectionID   uuid.UUID  `gorm:"column:connection_id"`
-	Revision       int64      `gorm:"column:revision"`
-	CreatedBy      uuid.UUID  `gorm:"column:created_by"`
-	UpdatedBy      uuid.UUID  `gorm:"column:updated_by"`
-	CreatedAt      time.Time  `gorm:"column:created_at"`
-	UpdatedAt      time.Time  `gorm:"column:updated_at"`
-	DeletedAt      *time.Time `gorm:"column:deleted_at"`
+	ID             uuid.UUID `gorm:"column:id"`
+	OrganizationID uuid.UUID `gorm:"column:organization_id"`
+	WorkspaceID    uuid.UUID `gorm:"column:workspace_id"`
+	Provider       string    `gorm:"column:provider"`
+	ConnectionID   uuid.UUID `gorm:"column:connection_id"`
+	// CredentialSource is absent before PersonalConnection channels existed;
+	// SELECT * then leaves it empty, which means a legacy installation.
+	CredentialSource string     `gorm:"column:credential_source"`
+	Revision         int64      `gorm:"column:revision"`
+	CreatedBy        uuid.UUID  `gorm:"column:created_by"`
+	UpdatedBy        uuid.UUID  `gorm:"column:updated_by"`
+	CreatedAt        time.Time  `gorm:"column:created_at"`
+	UpdatedAt        time.Time  `gorm:"column:updated_at"`
+	DeletedAt        *time.Time `gorm:"column:deleted_at"`
 }
 
 type sourceConnection struct {
@@ -169,6 +172,11 @@ func inspect(ctx context.Context, db *gorm.DB, cipher credentialcrypto.Credentia
 	}
 	legacy := make([]installation, 0)
 	for _, item := range installations {
+		if item.CredentialSource == "personal_connection" {
+			// A native Connector connection is not a retired source and the
+			// finalizer validates its scope; nothing here is preserved.
+			continue
+		}
 		if item.ConnectionID == item.ID {
 			var stored credential
 			err := db.WithContext(ctx).Table("channel_installation_credentials").Where("installation_id = ?", item.ID).Take(&stored).Error

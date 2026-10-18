@@ -16,6 +16,14 @@ func TestDigitalHumanPreservationProof(t *testing.T) {
 	delivery := func(connection string) row {
 		return row{"installation_id": installation, "organization_id": org, "workspace_id": workspace, "connection_id": connection}
 	}
+	personal := func(owner string) row {
+		return row{"id": installation, "organization_id": org, "workspace_id": workspace, "provider": "feishu", "connection_id": "native-1",
+			"credential_source": "personal_connection", "connection_owner_id": owner, "connector_id": "feishu", "deleted_at": nil}
+	}
+	native := row{"id": "native-1", "organization_id": org, "owner_account_id": "owner-1", "connector_id": "feishu", "deleted_at": nil}
+	marker := func(connection string) row {
+		return row{"installation_id": installation, "organization_id": org, "workspace_id": workspace, "connection_id": connection}
+	}
 	codes := func(data snapshot) []string {
 		var report Report
 		validateDigitalHumanPreservation(data, &report)
@@ -32,6 +40,10 @@ func TestDigitalHumanPreservationProof(t *testing.T) {
 	}{
 		{"preserved", snapshot{"channel_installations": {owned(installation)}, "channel_installation_credentials": {credential}, "channel_delivery_outbox": {delivery(installation)}}, []string{}},
 		{"not preserved", snapshot{"channel_installations": {owned(legacy)}, "channel_delivery_outbox": {delivery(legacy)}}, []string{"installation_credential_preservation_required"}},
+		{"stale marker locator", snapshot{"channel_installations": {owned(installation)}, "channel_installation_credentials": {credential}, "channel_processing_markers": {marker(legacy)}}, []string{"marker_connection_locator_stale"}},
+		{"personal connection", snapshot{"channel_installations": {personal("owner-1")}, "connector_connections": {native}, "channel_delivery_outbox": {delivery("native-1")}, "channel_processing_markers": {marker("native-1")}}, []string{}},
+		{"personal connection owner mismatch", snapshot{"channel_installations": {personal("owner-2")}, "connector_connections": {native}}, []string{"personal_connection_scope_mismatch"}},
+		{"personal connection missing", snapshot{"channel_installations": {personal("owner-1")}}, []string{"personal_connection_scope_mismatch"}},
 		{"stale delivery locator", snapshot{"channel_installations": {owned(installation)}, "channel_installation_credentials": {credential}, "channel_delivery_outbox": {delivery(legacy)}}, []string{"delivery_connection_locator_stale"}},
 	}
 	for _, tt := range tests {

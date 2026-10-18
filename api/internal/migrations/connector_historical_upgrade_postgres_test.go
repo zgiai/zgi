@@ -218,17 +218,29 @@ func testConnectorHistoricalUpgradePostgres(t *testing.T, recovery bool) {
 	assertChannelLocators(t, db, installation, delivery, marker)
 	// A database preserved by an earlier release kept the legacy locators; the
 	// next preservation run reports and repairs them.
-	if err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
-			return err
+	staleLocator := func(table, id string) {
+		t.Helper()
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+				return err
+			}
+			return tx.Exec("UPDATE public."+table+" SET connection_id = ? WHERE id = ?", channelConnection, id).Error
+		}); err != nil {
+			t.Fatal(err)
 		}
-		if err := tx.Exec("UPDATE public.channel_delivery_outbox SET connection_id = ? WHERE id = ?", channelConnection, delivery).Error; err != nil {
-			return err
-		}
-		return tx.Exec("UPDATE public.channel_processing_markers SET connection_id = ? WHERE id = ?", channelConnection, marker).Error
-	}); err != nil {
+	}
+	// Even without a stale delivery, finalization must refuse a stale marker
+	// instead of dropping the Connection it still names.
+	staleLocator("channel_processing_markers", marker)
+	markerOnly, err := connectorfinalize.Plan(ctx, db, option)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !finalizeIssue(markerOnly, "channel_processing_markers", "marker_connection_locator_stale") ||
+		finalizeIssue(markerOnly, "channel_delivery_outbox", "delivery_connection_locator_stale") {
+		t.Fatalf("finalization proof missed a stale processing marker: %+v", markerOnly.Issues)
+	}
+	staleLocator("channel_delivery_outbox", delivery)
 	if _, err := digitalhumanpreserve.Verify(ctx, db, digitalHumanCipher); err == nil {
 		t.Fatal("preservation verified stale delivery locators")
 	}

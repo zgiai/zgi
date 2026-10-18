@@ -96,6 +96,14 @@ func validateDigitalHumanPreservation(data snapshot, report *Report) {
 		if installation["deleted_at"] != nil {
 			continue
 		}
+		// A PersonalConnection channel resolves a native Connector connection
+		// and never owns a credential envelope; it only needs a consistent scope.
+		if text(installation, "credential_source") == "personal_connection" {
+			if !personalConnectionInstallationValid(data, installation) {
+				problem(report, "channel_installations", "personal_connection_scope_mismatch")
+			}
+			continue
+		}
 		credential := credentials[id]
 		if text(installation, "connection_id") != id || credential == nil {
 			problem(report, "channel_installations", "installation_credential_preservation_required")
@@ -122,6 +130,36 @@ func validateDigitalHumanPreservation(data snapshot, report *Report) {
 			problem(report, "channel_delivery_outbox", "delivery_connection_locator_stale")
 		}
 	}
+	// Processing markers keep the same locator copy and resolve credentials
+	// with it when the marker is removed.
+	for _, marker := range data["channel_processing_markers"] {
+		installation := installations[text(marker, "installation_id")]
+		if installation == nil || text(installation, "organization_id") != text(marker, "organization_id") ||
+			text(installation, "workspace_id") != text(marker, "workspace_id") {
+			problem(report, "channel_processing_markers", "marker_installation_missing")
+			continue
+		}
+		if text(marker, "connection_id") != text(installation, "connection_id") {
+			problem(report, "channel_processing_markers", "marker_connection_locator_stale")
+		}
+	}
+}
+
+// personalConnectionInstallationValid requires the referenced native
+// connection to belong to the installation's organization, owner and
+// Connector. A deleted connection only makes the channel unready; it is not
+// retired data, so it does not block finalization.
+func personalConnectionInstallationValid(data snapshot, installation row) bool {
+	id, connectionID := text(installation, "id"), text(installation, "connection_id")
+	owner, connector := text(installation, "connection_owner_id"), text(installation, "connector_id")
+	if connectionID == "" || connectionID == id || owner == "" || connector == "" {
+		return false
+	}
+	connection := find(data["connector_connections"], "id", connectionID)
+	return connection != nil &&
+		text(connection, "organization_id") == text(installation, "organization_id") &&
+		text(connection, "owner_account_id") == owner &&
+		text(connection, "connector_id") == connector
 }
 
 func problem(report *Report, table, code string) {

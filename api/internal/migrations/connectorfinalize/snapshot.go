@@ -55,6 +55,7 @@ var hostColumns = map[string]string{
 	"channel_bindings":                 "to_jsonb(t)",
 	"channel_inbound_events":           "to_jsonb(t)",
 	"channel_delivery_outbox":          "to_jsonb(t)",
+	"channel_processing_markers":       "to_jsonb(t)",
 	"automation_task_activities":       "to_jsonb(t)",
 }
 
