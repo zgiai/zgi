@@ -778,6 +778,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	parts.BaseSkillIDs = nil
 	parts.BaseToolSkillIDs = nil
 	parts.ConnectorSkillIDs = nil
+	parts.MarketSkillIDs = nil
 	parts.ConnectorToolsEnabled = false
 	if s.skillRuntime == nil {
 		parts.SkillMode = skillModeDisabled
@@ -849,8 +850,9 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		enabled = skillIDsWithout(enabled, []string{skills.SkillConnectorRuntime})
 	}
 	parts.BaseSkillIDs, parts.BaseToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
-	parts.SkillIDs = mergeNormalizedSkillIDs(parts.BaseSkillIDs, parts.ConnectorSkillIDs)
-	parts.ToolSkillIDs = mergeNormalizedSkillIDs(parts.BaseToolSkillIDs, parts.ConnectorSkillIDs)
+	parts.MarketSkillIDs = s.marketSkillIDs(ctx, scope, caller)
+	parts.SkillIDs = mergeNormalizedSkillIDs(parts.BaseSkillIDs, parts.ConnectorSkillIDs, parts.MarketSkillIDs)
+	parts.ToolSkillIDs = mergeNormalizedSkillIDs(parts.BaseToolSkillIDs, parts.ConnectorSkillIDs, parts.MarketSkillIDs)
 	if len(parts.SkillIDs) == 0 {
 		parts.SkillMode = skillModeDisabled
 		return nil

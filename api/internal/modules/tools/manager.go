@@ -17,6 +17,23 @@ type ToolManager struct {
 
 	// Registered providers by type
 	providers map[ToolProviderType]map[string]ToolProvider
+
+	// marketTools resolves the ZGI Market tools of an organization; nil leaves them off.
+	marketTools MarketToolSource
+}
+
+// MarketToolSource resolves a ZGI Market tool provider of an organization by its provider name,
+// which names the bound subject and the market listing. Its tools are not registered: they
+// depend on the organization's bindings and are resolved on every use.
+type MarketToolSource interface {
+	MarketToolProvider(ctx context.Context, organizationID, providerName string) (ToolProvider, error)
+}
+
+// SetMarketToolSource lets the manager resolve ZGI Market tools.
+func (m *ToolManager) SetMarketToolSource(source MarketToolSource) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.marketTools = source
 }
 
 // PluginRunnerToolManagerInterface defines the interface for plugin runner tool manager
@@ -132,6 +149,13 @@ func (m *ToolManager) GetProvider(ctx context.Context, providerType ToolProvider
 			return nil, fmt.Errorf("failed to fetch plugin runner provider: %w", err)
 		}
 		return NewPluginRunnerProvider(*providerEntity, tenantID, m.pluginRunnerManager), nil
+	}
+
+	if providerType == ToolProviderTypeMarket {
+		if m.marketTools == nil {
+			return nil, fmt.Errorf("provider %s of type %s not found", providerName, providerType)
+		}
+		return m.marketTools.MarketToolProvider(ctx, tenantID, providerName)
 	}
 
 	// Check registered providers

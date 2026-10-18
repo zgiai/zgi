@@ -478,6 +478,8 @@ type Service interface {
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
 	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error)
 	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
+	ImportCustomSkillPackage(ctx context.Context, scope Scope, data []byte, filename string, origin SkillPackageOrigin, overwrite bool) (*SkillImportPreview, *skills.SkillDiscoveryMetadata, error)
+	ListInstalledSkillPackages(ctx context.Context, scope Scope, source string) ([]InstalledSkillPackage, error)
 	DeleteSkill(ctx context.Context, scope Scope, skillID, agentBindingAction, impactToken string) error
 	CleanupStaleActiveMessages(ctx context.Context) (int64, error)
 	CleanupExpiredCustomSkillImportPreviews(ctx context.Context) error
@@ -520,6 +522,7 @@ type service struct {
 	connectorConfirmationStore     connectorexecution.ConfirmationContinuationStore
 	connectorActionResolverFactory repository.ConnectorActionResolverFactory
 	runtimeInputDispatcher         RuntimeInputFollowUpDispatcher
+	marketTools                    MarketToolResolver
 	customSkillStorage             customSkillStorage
 	modelIdleTimeout               time.Duration
 	modelProgressSchedule          modelprogress.Schedule
@@ -578,7 +581,11 @@ func NewServiceWithSkillRuntime(
 		connectorActionResolverFactory = repository.NewConnectorActionResolverFactory(repos.DB)
 	}
 	var runtimeInputDispatcher RuntimeInputFollowUpDispatcher
+	var marketTools MarketToolResolver
 	for _, item := range optionalServices {
+		if typed, ok := item.(MarketToolResolver); ok && marketTools == nil {
+			marketTools = typed
+		}
 		// Optional services may intentionally implement more than one contract
 		// (the memory backend provides both context and extraction scheduling),
 		// so these assertions must not be mutually exclusive.
@@ -628,6 +635,7 @@ func NewServiceWithSkillRuntime(
 		connectorConfirmationStore:     connectorConfirmationStore,
 		connectorActionResolverFactory: connectorActionResolverFactory,
 		runtimeInputDispatcher:         runtimeInputDispatcher,
+		marketTools:                    marketTools,
 		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}
@@ -764,6 +772,7 @@ type chatRequestParts struct {
 	BaseSkillIDs                     []string
 	BaseToolSkillIDs                 []string
 	ConnectorSkillIDs                []string
+	MarketSkillIDs                   []string
 	RequiredInitialConnectorBindings []connectorbindings.InitialChatConnection
 	ConnectorToolsEnabled            bool
 	UseMemory                        bool

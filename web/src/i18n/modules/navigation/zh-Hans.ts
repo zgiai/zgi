@@ -18,6 +18,7 @@ const messages: NavigationMessages = {
   memory: '我的 AI 记忆',
   models: '模型',
   modelPlaza: '模型广场',
+  zgiMarket: 'ZGI 市场',
   apiKeys: 'API 密钥',
   usageAndQuota: '用量与额度',
   invocationLogs: '调用日志',

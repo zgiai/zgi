@@ -25,6 +25,10 @@ import type { AgentBindingHealth, AgentConnectorBinding } from '@/services/types
 import { agentService } from '@/services/agent.service';
 import type { ConnectorHostAudience } from '@/services/types/connector';
 import { getErrorMessage } from '@/utils/error-notifications';
+import {
+  useZgiMarketSelectedCount,
+  ZgiMarketSelectedServers,
+} from '@/components/zgi-market/zgi-market-selected-servers';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
 
@@ -90,6 +94,7 @@ export function AgentRuntimeConnectorSection({
   const connectorConnectionsByID = new Map(
     personalConnectionItems(connectorConnectionsQuery.data?.data).map(item => [item.id, item])
   );
+  const marketServerCount = useZgiMarketSelectedCount('agent', agentId);
   const connectorBindingsLoading =
     shouldLoadConnectorBindings &&
     (connectorCatalogQuery.isLoading || connectorConnectionsQuery.isLoading);
@@ -98,7 +103,7 @@ export function AgentRuntimeConnectorSection({
       title={connectorT('title')}
       section="connectors"
       open={open}
-      count={connectorBindings.length}
+      count={connectorBindings.length + marketServerCount}
       addLabel={connectorT('picker.title')}
       helpText={connectorT('sections.connectorsDescription')}
       emptyText={connectorT('sections.empty')}
@@ -277,6 +282,7 @@ export function AgentRuntimeConnectorSection({
             </AgentRuntimeResourceCard>
           );
         })}
+        <ZgiMarketSelectedServers subjectType="agent" subjectId={agentId} readOnly={readOnly} />
       </div>
     </AgentRuntimeResourceSection>
   );

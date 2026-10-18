@@ -10,6 +10,7 @@ import { localizeConnectorCatalogItem } from '@/components/connectors/connector-
 import { ConnectionAppDialog } from '@/components/connectors/connections/connection-app-dialog';
 import { ConnectionReconnectDialog } from '@/components/connectors/connections/connection-reconnect-dialog';
 import { ConnectorPickerDialog } from '@/components/connectors/picker';
+import { ZgiMarketConnectorPickerGroup } from '@/components/zgi-market/zgi-market-connector-picker-group';
 import type {
   ConnectorPickerActionRequest,
   ConnectorPickerBindingRef,
@@ -554,6 +555,14 @@ export function DigitalHumanConnectorDialog({
       groupByConnector
       bindings={pickerBindings}
       anchorElement={anchorElement}
+      extraGroups={filter => (
+        <ZgiMarketConnectorPickerGroup
+          subjectType="digital_human"
+          subjectId={id}
+          readOnly={readOnly}
+          filter={filter}
+        />
+      )}
       disabled={selection.status === 'saving' || refreshing}
       actionsDisabled={readOnly || selection.status === 'conflict'}
       hostEligibility={hostEligibility}

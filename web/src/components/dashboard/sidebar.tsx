@@ -23,6 +23,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  Store,
   Users,
   X,
 } from 'lucide-react';
@@ -96,6 +97,19 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           title: t('items.invocationLogs'),
           href: '/dashboard/usage/invocations',
           icon: ScrollText,
+        },
+      ],
+    },
+    {
+      key: 'market-calls',
+      title: t('items.marketCallLogs'),
+      icon: Store,
+      items: [
+        {
+          key: 'market-calls',
+          title: t('items.marketCallLogs'),
+          href: '/dashboard/usage/market-calls',
+          icon: Store,
         },
       ],
     },

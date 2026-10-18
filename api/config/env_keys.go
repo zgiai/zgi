@@ -205,6 +205,20 @@ const (
 	envConsoleAPIGRPCTLSServerName = "CONSOLE_API_GRPC_TLS_SERVER_NAME"
 	// envConsoleInternalAPIKey sets the internal API key shared with the console service. Default: empty.
 	envConsoleInternalAPIKey = "CONSOLE_INTERNAL_API_KEY"
+	// envZGIMarketGatewayURL sets the public origin of the ZGI Market gateway that market tools
+	// of agents and digital humans are called at. Default: empty (market tools off).
+	envZGIMarketGatewayURL = "ZGI_MARKET_GATEWAY_URL"
+	// envZGIMarketOAuthRedirectURL sets the callback address of this instance for connector
+	// authorizations of the ZGI Market: the web page /dashboard/market/oauth/callback at this
+	// instance's public web origin. Default: empty (the market uses its own default address).
+	envZGIMarketOAuthRedirectURL = "ZGI_MARKET_OAUTH_REDIRECT_URL"
+	// envZGIMarketConfirmAbovePoints sets the cost above which a ZGI Market tool asks before it
+	// runs: a tool whose one call can cost more points than this needs a person's approval, and
+	// is refused where nobody can approve. Default: 100. 0 never asks for cost.
+	envZGIMarketConfirmAbovePoints = "ZGI_MARKET_CONFIRM_ABOVE_POINTS"
+	// envZGIMarketAllowPrivateTargets lets the market gateway resolve to a private address, for
+	// local development only. Default: false.
+	envZGIMarketAllowPrivateTargets = "ZGI_MARKET_ALLOW_PRIVATE_TARGETS"
 	// envConsoleInstanceID selects the per-instance Console credential issued by the
 	// console control plane (Cloud mode). Default: empty.
 	envConsoleInstanceID = "CONSOLE_INSTANCE_ID"

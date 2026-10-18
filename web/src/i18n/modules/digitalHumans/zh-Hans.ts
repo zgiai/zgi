@@ -72,7 +72,8 @@ const messages: DigitalHumansMessages = {
       skillsHint: '选择创建时绑定的技能，之后可在「配置 → 能力」中调整。',
       skillsPending: '创建时会按工作区中实际可用的技能进行匹配。',
       connectorsHint: '选择要绑定的 Connector 连接，并为每条连接保留需要的操作。',
-      connectorsOptional: '可以先不绑定，创建后再补充。',
+      connectorsOptional:
+        '可以先不绑定，创建后再补充。ZGI 市场的 MCP 服务和 API 在创建后从「配置」里的连接器添加。',
       connectorsDialogDescription: '选择要使用的连接，并设置允许的操作。',
       invalidSelection: '创建前请检查所选的技能与 Connector 连接，当前选择已不可用。',
       advanced: '高级设置',
@@ -441,8 +442,7 @@ const messages: DigitalHumansMessages = {
     runtimeTitle: '运行环境与文件',
     runtimeDescription: '控制数字人能否使用 Linux 执行环境，以及用户可以上传哪些文件。修改自动保存到草稿，发布后生效。',
     linuxEnvironment: '启用 Linux 执行环境',
-    linuxEnvironmentDescription:
-      '运行脚本、处理文件，环境由平台管理。',
+    linuxEnvironmentDescription: '运行脚本、处理文件，环境由平台管理。',
     linuxEnvironmentUnavailable: '当前组织暂未开放 Linux 环境。',
     linuxEnvironmentUnavailableReasons: {
       disabled: '部署未启用 Linux 执行环境，请联系管理员开启。',

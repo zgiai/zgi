@@ -18,6 +18,7 @@ const messages = {
     usageGroup: 'Group Statistics',
     usageDetails: 'Usage Details',
     invocationLogs: 'LLM Invocation Log',
+    marketCallLogs: 'Market Call Log',
     modelChannels: 'Model Access',
     llmProviders: 'Model Management',
     channel: 'Channel Management',
@@ -33,6 +34,7 @@ const messages = {
     modelSettings: 'Default Models',
     parserSettings: 'Document Parsing',
     marketplace: 'Marketplace',
+    zgiMarket: 'ZGI Market',
   },
   modelChannels: {
     navigationLabel: 'Models and channels navigation',

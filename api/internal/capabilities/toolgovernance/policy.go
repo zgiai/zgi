@@ -86,7 +86,8 @@ func Decide(req Request, policy Policy) Decision {
 		return finalizeDecision(decision, tier, req)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyAlwaysAsk {
-		return finalizeDecision(base.needsApproval(tier, req, "tool manifest requires approval"), tier, req)
+		reason := firstNonEmptyString(manifest.ApprovalReason, "tool manifest requires approval")
+		return finalizeDecision(base.needsApproval(tier, req, reason), tier, req)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyNeverAsk && !policy.hardRequiresApproval(manifest) {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by manifest approval policy", false)

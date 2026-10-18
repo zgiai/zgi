@@ -13,6 +13,7 @@ func NormalizeManifest(manifest Manifest) Manifest {
 	manifest.DefaultApprovalPolicy = NormalizeApprovalPolicy(manifest.DefaultApprovalPolicy)
 	manifest.PermissionScopes = normalizeStringList(manifest.PermissionScopes)
 	manifest.AllowedPermissionTiers = normalizePermissionTierList(manifest.AllowedPermissionTiers)
+	manifest.ApprovalReason = strings.TrimSpace(manifest.ApprovalReason)
 	return manifest
 }
 

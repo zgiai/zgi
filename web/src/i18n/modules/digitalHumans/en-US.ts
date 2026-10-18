@@ -77,7 +77,8 @@ const messages = {
       skillsPending: 'Resolved against the skills available in this workspace when you create.',
       connectorsHint:
         'Choose the Connector connections to bind and keep only the needed operations.',
-      connectorsOptional: 'You can leave this empty and add connections after creation.',
+      connectorsOptional:
+        'You can leave this empty and add connections after creation. MCP servers and APIs of ZGI Market are added after creation, under Connectors in the configuration.',
       connectorsDialogDescription:
         'Choose connections and set the operations this digital human may use.',
       invalidSelection:
@@ -475,8 +476,7 @@ const messages = {
     runtimeTitle: 'Runtime and files',
     runtimeDescription: 'Choose whether this DigitalHuman can use a Linux execution environment and which files users can upload. Changes save to the draft automatically and take effect after publishing.',
     linuxEnvironment: 'Enable Linux execution environment',
-    linuxEnvironmentDescription:
-      'Run scripts and process files in a platform-managed environment.',
+    linuxEnvironmentDescription: 'Run scripts and process files in a platform-managed environment.',
     linuxEnvironmentUnavailable: 'The Linux environment is not available for this organization.',
     linuxEnvironmentUnavailableReasons: {
       disabled: 'The Linux execution environment is turned off for this deployment. Ask an administrator to enable it.',

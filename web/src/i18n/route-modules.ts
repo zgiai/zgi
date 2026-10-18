@@ -60,6 +60,8 @@ const CONSOLE_MODULES: ModuleName[] = [
   'connectors',
   'music',
   'digitalHumans',
+  // The ZGI Market tools section of the agent and digital human editors.
+  'market',
 ];
 
 const DASHBOARD_MODULES: ModuleName[] = [
@@ -75,6 +77,8 @@ const DASHBOARD_MODULES: ModuleName[] = [
   'apikeys',
   'market',
   'settings',
+  // The markdown viewer of a market listing's introduction reads its chat strings.
+  'webapp',
 ];
 
 const AUTH_SEGMENTS = new Set([

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
 const (
@@ -95,6 +96,11 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		if err != nil {
 			return toolgovernance.Decision{}, fmt.Errorf("resolve organization tool governance policy: %w", err)
 		}
+		// An organization policy decides whether a tool asks; why this tool asks is the tool's own
+		// to say, and a policy that rebuilds the manifest must not lose it.
+		if strings.TrimSpace(resolvedManifest.ApprovalReason) == "" {
+			resolvedManifest.ApprovalReason = manifest.ApprovalReason
+		}
 		manifest = resolvedManifest
 	}
 	approvalMode, preauthorization := governanceAgentAuthorization(params, governance, req.SkillID, req.ToolName, manifest, req.Arguments)
@@ -107,7 +113,14 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		preauthorization.Code == agentToolNotPreauthorizedCode {
 		approvalMode = toolgovernance.ApprovalModeInteractive
 	}
-	return toolgovernance.Decide(toolgovernance.Request{
+	// A ZGI Market tool is bound to its agent by an administrator, and the market Skill is built
+	// from that binding for each run, so what a write is missing is not a binding but a person's
+	// consent. The console chat of an agent has that person and the approval card, so the run
+	// asks there. Every other entry, and a digital human, has no way to answer yet and refuses.
+	if marketToolApprovalInteractive(req, params, governance, preauthorization) {
+		approvalMode = toolgovernance.ApprovalModeInteractive
+	}
+	decision := toolgovernance.Decide(toolgovernance.Request{
 		Manifest:         manifest,
 		PermissionTier:   governancePermissionTier(params, governance),
 		ApprovalMode:     approvalMode,
@@ -122,7 +135,19 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		ExpectedAssets:   governanceExpectedAssets(params, governance, manifest),
 		SessionGrants:    governanceSessionGrants(params, governance),
 		CorrelationID:    governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
-	}, g.policy), nil
+	}, g.policy)
+	return explainMarketToolRefusal(req, manifest, decision), nil
+}
+
+func marketToolApprovalInteractive(req ToolGovernanceRequest, params, governance map[string]interface{}, preauthorization *toolgovernance.Preauthorization) bool {
+	if normalizeSkillID(req.SkillID) != SkillZGIMarketTools || req.ProviderType != tools.ToolProviderTypeMarket {
+		return false
+	}
+	if preauthorization == nil || preauthorization.Required || preauthorization.Code != agentToolNotPreauthorizedCode {
+		return false
+	}
+	caller := governanceString(params, governance, "tool_governance_caller_type", "caller_type")
+	return strings.EqualFold(caller, SkillCallerAgent) && strings.TrimSpace(stringMapValue(params, "agent_runtime_source")) == "console"
 }
 
 func platformInteractiveGovernanceAllowed(execution ExecutionContext, params, governance map[string]interface{}) bool {

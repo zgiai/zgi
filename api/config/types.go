@@ -184,6 +184,22 @@ type ConsoleConfig struct {
 	SyncStaleSec    int  `json:"sync_stale_sec"`
 	// Organization inventory report cadence (Cloud mode only). 0 disables the report.
 	SyncOrganizationReportInterval time.Duration `json:"sync_organization_report_interval"`
+
+	// ZGIMarketGatewayURL is the public origin of the ZGI Market gateway. Market tools bound to
+	// an agent or a digital human are called there directly; everything else about the market
+	// goes through the console. Empty leaves market tools off.
+	ZGIMarketGatewayURL string `json:"zgi_market_gateway_url"`
+	// ZGIMarketOAuthRedirectURL is the callback address of this instance for connector
+	// authorizations of the ZGI Market: where a vendor sends the browser back. Each deployment in
+	// front of one market has its own, and the market has to list it. Empty leaves the market's
+	// default, which is the page of another deployment.
+	ZGIMarketOAuthRedirectURL string `json:"zgi_market_oauth_redirect_url"`
+	// ZGIMarketConfirmAbovePoints is the cost of one call, in points, above which a market tool
+	// asks for approval like a tool that writes. Zero never asks for cost.
+	ZGIMarketConfirmAbovePoints int `json:"zgi_market_confirm_above_points"`
+	// ZGIMarketAllowPrivateTargets lets the gateway address resolve to a private or loopback
+	// address. It is for local development only and is refused in production.
+	ZGIMarketAllowPrivateTargets bool `json:"zgi_market_allow_private_targets"`
 }
 
 type ConsoleGRPCTLSConfig struct {

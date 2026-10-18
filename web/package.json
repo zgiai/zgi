@@ -46,6 +46,7 @@
     "test:model-selector-platform-aggregation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/test/model-selector-platform-aggregation.test.ts",
     "test:model-pricing-configured": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/test/model-pricing-configured.test.ts",
     "test:build-custom-model-pricing": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/test/build-custom-model-pricing.test.ts",
+    "test:zgi-market-format": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/test/zgi-market-format.test.ts",
     "test:money-editor-roundtrip": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/test/money-editor-roundtrip.test.ts",
     "test:aichat-stream-error-code": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/test/aichat-stream-error-code.test.ts",
     "test:console-model-loading-policy": "node scripts/test-console-model-loading-policy.mjs",

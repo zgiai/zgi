@@ -83,6 +83,11 @@ export interface ConnectorPickerDialogProps extends ConnectorReferenceRepairProp
   renderConnectionDetails?: (row: ConnectorPickerRow) => ReactNode;
   /** Host-owned pending details share this dialog's scroll container and focus trap. */
   children?: ReactNode;
+  /**
+   * Host-owned groups listed after the connector rows, inside the same scrolling list. A function
+   * is given the dialog's search and status filter, so its rows follow them too.
+   */
+  extraGroups?: ReactNode | ((filter: ConnectorPickerFilter) => ReactNode);
   /** Replace the informational footer with the host's atomic save/cancel controls. */
   footer?: ReactNode;
   disabled?: boolean;
@@ -109,6 +114,12 @@ export interface ConnectorPickerDialogProps extends ConnectorReferenceRepairProp
 
 const FILTER_VALUES: readonly ConnectorCatalogStatus[] = ['all', 'connected', 'needs_attention'];
 
+/** The search text and the status filter of the picker. */
+export interface ConnectorPickerFilter {
+  query: string;
+  status: ConnectorCatalogStatus;
+}
+
 export function ConnectorPickerDialog({
   open,
   target,
@@ -122,6 +133,7 @@ export function ConnectorPickerDialog({
   hostEligibility,
   renderConnectionDetails,
   children,
+  extraGroups,
   footer,
   disabled = false,
   actionsDisabled = false,
@@ -566,6 +578,11 @@ export function ConnectorPickerDialog({
                     ))}
               </div>
             ) : null}
+            {!isLoading
+              ? typeof extraGroups === 'function'
+                ? extraGroups({ query, status })
+                : extraGroups
+              : null}
           </div>
 
           <p className="sr-only" role="status" aria-live="polite">

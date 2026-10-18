@@ -476,7 +476,10 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if err != nil {
 		return nil, true, err
 	}
-	if !organizationAllowsSkillID(frozen.SkillID, catalog, organizationEnabled) {
+	// A market tool belongs to the request-scoped market Skill, which the current binding of the
+	// subject supplies afresh below; it is not an organization catalog Skill.
+	marketInvocation := strings.EqualFold(strings.TrimSpace(frozen.ProviderType), string(tools.ToolProviderTypeMarket))
+	if !marketInvocation && !organizationAllowsSkillID(frozen.SkillID, catalog, organizationEnabled) {
 		return nil, true, fmt.Errorf("%w: skill %s is not enabled by organization", ErrInvalidInput, frozen.SkillID)
 	}
 	prepared.parts.SkillIDs = ensureFrozenInvocationSkillID(prepared.parts.SkillIDs, frozen.SkillID)
@@ -485,7 +488,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	// explicit base projection so the post-execution model pass can summarize the
 	// result. Do not copy arbitrary restored SkillIDs into BaseSkillIDs: Connector
 	// capabilities must continue to come only from a fresh Target Binding lookup.
-	if !strings.EqualFold(strings.TrimSpace(frozen.ProviderType), string(tools.ToolProviderTypeConnector)) {
+	if !marketInvocation && !strings.EqualFold(strings.TrimSpace(frozen.ProviderType), string(tools.ToolProviderTypeConnector)) {
 		prepared.parts.BaseSkillIDs = ensureFrozenInvocationSkillID(prepared.parts.BaseSkillIDs, frozen.SkillID)
 	}
 	if len(prepared.parts.SkillIDs) > 0 {
@@ -496,9 +499,14 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if err != nil {
 		return nil, true, err
 	}
-	resolved, err := s.skillRuntime.ResolveEnabledSkillsWithCustom(ctx, prepared.parts.SkillIDs, custom)
+	resolved, err := s.skillRuntime.ResolveEnabledSkillsWithCustom(ctx, skillIDsWithout(prepared.parts.SkillIDs, []string{skills.SkillZGIMarketTools}), custom)
 	if err != nil {
 		return nil, true, err
+	}
+	if marketInvocation {
+		if resolved, err = s.overlayMarketTools(ctx, prepared, resolved); err != nil {
+			return nil, true, err
+		}
 	}
 	if len(resolved.Skills) == 0 {
 		return nil, true, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
@@ -605,6 +613,11 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		}
 	}
 
+	if marketInvocation {
+		// The transcript of the turn still ends with the tool result that said the call was
+		// waiting for approval, and a model trusts that over the continuation note that follows.
+		replacePendingMarketToolResult(prepared.LLMRequest, frozen.CorrelationID, toolGovernanceModelVisibleToolResult(event, invocation, executionErr))
+	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	if frozen.ExecutionOrigin != nil {
 		// A CLI approval resumes one sealed business invocation, not its stopped

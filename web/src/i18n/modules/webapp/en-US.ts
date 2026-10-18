@@ -956,6 +956,8 @@ const messages = {
       submitFailed: 'Failed to submit approval decision',
       externalToolLabel: '{integration} · {action}',
       approvalPanel: {
+        withMarketCost:
+          '{sentence} One call can cost up to {max} points, above the confirmation threshold of {threshold} points.',
         title: 'Approval required',
         fileDeleteOne: 'Delete file {name}.',
         fileDeleteMany: 'Delete {count} files.',
@@ -1050,6 +1052,12 @@ const messages = {
         interactiveApprovalUnavailable: 'Interactive approval is unavailable in this runtime.',
         resourceNotBound: 'The requested resource is not bound to the current runtime.',
         externalSideEffect: 'This action affects an external system and requires confirmation.',
+        marketWriteUnattended:
+          'This tool writes data and needs a person’s confirmation, so it does not run unattended.',
+        marketCostUnattended:
+          'One call of this tool can cost up to {max} points, above the confirmation threshold of {threshold} points, so it does not run unattended.',
+        marketCost:
+          'one call can cost up to {max} points, above the confirmation threshold of {threshold} points',
         policyDecision: 'This result was determined by the current tool and organization policy.',
       },
       audit: {
@@ -1144,6 +1152,7 @@ const messages = {
         database: 'database',
         databaseTable: 'database table',
         workflow: 'workflow',
+        marketTool: 'market tool',
         workflowRun: 'workflow run',
         task: 'task',
         memory: 'memory',
