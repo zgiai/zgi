@@ -370,6 +370,13 @@ jobs:
       run:
         working-directory: api
     steps:
+      - name: Repair workspace ownership
+        working-directory: ${{ runner.temp }}
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            alpine:3.22 \
+            chown -R "$(id -u):$(id -g)" /workspace
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
