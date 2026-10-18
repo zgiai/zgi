@@ -25,6 +25,10 @@ import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 
 import { sanitizeTimelineDisplayString } from '@/components/chat/variants/aichat/timeline-display-safety';
+import {
+  agentExecutionDuration,
+  getAgentExecutionJobPresentation,
+} from './agent-execution-job-presentation';
 
 import {
   formatAIChatTimelineArgumentSummary,
@@ -63,6 +67,8 @@ interface AIChatSkillTracePanelProps {
 function getInvocationTone(invocation: AIChatSkillInvocation): SkillTraceTone {
   const nativeTone = connectorOperationTone(invocation);
   if (nativeTone) return nativeTone;
+  const job = getAgentExecutionJobPresentation(invocation);
+  if (job) return job.tone;
   if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
   if (invocation.status === 'error') return 'error';
   return 'success';
@@ -110,7 +116,10 @@ function skillTraceDebugRows(
     ['skillId', isConnector ? null : invocation.skill_id],
     ['toolName', externalToolName ?? fallbackToolName],
     ['path', isConnector ? null : invocation.path],
-    ['duration', getDurationText(invocation.duration_ms, t)],
+    ['duration', getDurationText(
+      invocation.skill_id === 'agent_execution' ? agentExecutionDuration(invocation) : invocation.duration_ms,
+      t
+    )],
     ['arguments', formatAIChatTimelineArgumentSummary(argumentSummary, t)],
     [
       'message',
@@ -182,6 +191,7 @@ export function AIChatSkillTracePanel({
           };
         }
         const resultDetail = getAIChatSkillResultDisplay(invocation, locale);
+        const job = getAgentExecutionJobPresentation(invocation);
         const reasonCode = invocation.arguments?.reason_code;
 
         if (invocation.kind === 'skill_load') {
@@ -250,8 +260,9 @@ export function AIChatSkillTracePanel({
           invocation,
           skill,
           tone,
-          title:
-            tone === 'running'
+          title: job
+            ? `${t(job.labelKey)} · ${t('consoleChat.skills.agentic.exitCode')} ${job.exitCode ?? t('consoleChat.skills.agentic.jobExitUnavailable')}`
+            : tone === 'running'
               ? t('consoleChat.skills.agentic.callingTool', { skill: skill.label, tool: toolName })
               : tone === 'error'
                 ? t('consoleChat.skills.agentic.toolFailed', { skill: skill.label, tool: toolName })
@@ -339,7 +350,12 @@ export function AIChatSkillTracePanel({
           <div className="max-h-56 overflow-y-auto pr-2">
             <div className="space-y-2">
               {events.map((event, index) => {
-                const duration = getDurationText(event.invocation.duration_ms, t);
+                const duration = getDurationText(
+                  event.invocation.skill_id === 'agent_execution'
+                    ? agentExecutionDuration(event.invocation)
+                    : event.invocation.duration_ms,
+                  t
+                );
                 const detail = event.detail
                   ? sanitizeTimelineDisplayString(
                       event.detail,

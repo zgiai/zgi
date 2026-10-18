@@ -1,0 +1,280 @@
+package runtimeworkspace
+
+import (
+	"errors"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+func TestCreateWorkspaceRejectsArchivedResourceWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceID, organizationID := uuid.New(), uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id, organization_id, status FROM "workspaces".*id = \$1.*FOR UPDATE`).
+		WithArgs(workspaceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "status"}).AddRow(workspaceID, organizationID, "archived"))
+	mock.ExpectRollback()
+	if _, err := NewService(db).CreateWorkspace(t.Context(), workspaceID, uuid.New()); !errors.Is(err, ErrWorkspaceDisabled) {
+		t.Fatalf("CreateWorkspace error = %v, want ErrWorkspaceDisabled", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeRequestLeaseAdmitsAndReleasesActiveWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests \+ 1 WHERE runtime_id = \$1 AND status = \$2`).
+		WithArgs(runtimeID, StatusActive).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests - 1 WHERE runtime_id = \$1 AND in_flight_requests > 0`).
+		WithArgs(runtimeID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	service := NewService(db)
+	if err := service.AcquireRequestLease(t.Context(), runtimeID); err != nil {
+		t.Fatalf("AcquireRequestLease() error = %v", err)
+	}
+	if err := service.ReleaseRequestLease(t.Context(), runtimeID); err != nil {
+		t.Fatalf("ReleaseRequestLease() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeRequestLeaseRejectsDisabledWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "runtime_workspaces" SET "in_flight_requests"=in_flight_requests \+ 1 WHERE runtime_id = \$1 AND status = \$2`).
+		WithArgs(runtimeID, StatusActive).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	if err := NewService(db).AcquireRequestLease(t.Context(), runtimeID); !errors.Is(err, ErrWorkspaceDisabled) {
+		t.Fatalf("AcquireRequestLease() error = %v, want ErrWorkspaceDisabled", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeRequestDrainReturnsWhenNoRequestsRemain(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID, workspaceID := uuid.New(), uuid.New()
+	mock.ExpectQuery(`SELECT \* FROM "runtime_workspaces" WHERE runtime_id = \$1 OR workspace_id = \$2.*LIMIT \$3`).
+		WithArgs(runtimeID, runtimeID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"runtime_id", "workspace_id", "in_flight_requests"}).AddRow(runtimeID, workspaceID, 0))
+
+	if err := NewService(db).WaitForRequestDrain(t.Context(), runtimeID); err != nil {
+		t.Fatalf("WaitForRequestDrain() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateWorkspaceRejectsActivationForArchivedResourceWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID, workspaceID, organizationID := uuid.New(), uuid.New(), uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT \* FROM "runtime_workspaces" WHERE runtime_id = \$1.*LIMIT \$2`).
+		WithArgs(runtimeID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"runtime_id", "workspace_id", "organization_id", "status", "mode"}).AddRow(runtimeID, workspaceID, organizationID, "disabled", "attached"))
+	mock.ExpectQuery(`(?s)SELECT id, organization_id, status FROM "workspaces".*id = \$1.*FOR UPDATE`).
+		WithArgs(workspaceID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "status"}).AddRow(workspaceID, organizationID, "archived"))
+	mock.ExpectRollback()
+	active := StatusActive
+	if _, err := NewService(db).UpdateWorkspace(t.Context(), runtimeID, &active, nil); !errors.Is(err, ErrWorkspaceDisabled) {
+		t.Fatalf("UpdateWorkspace error = %v, want ErrWorkspaceDisabled", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateCredentialRejectsExpiredAndOversizedInput(t *testing.T) {
+	service := NewService(&gorm.DB{})
+	expired := time.Now().Add(-time.Minute)
+	if _, err := service.CreateCredential(t.Context(), uuid.New(), uuid.New(), "expired", &expired, uuid.NewString()); !errors.Is(err, ErrInvalidCredential) {
+		t.Fatalf("expired credential error = %v, want ErrInvalidCredential", err)
+	}
+	if _, err := service.CreateCredential(t.Context(), uuid.New(), uuid.New(), strings.Repeat("界", 256), nil, uuid.NewString()); !errors.Is(err, ErrInvalidCredential) {
+		t.Fatalf("oversized credential name error = %v, want ErrInvalidCredential", err)
+	}
+}
+
+func TestBindAgentRejectsMissingScopeBeforeDatabaseAccess(t *testing.T) {
+	service := NewService(&gorm.DB{})
+	if _, err := service.BindAgent(t.Context(), uuid.Nil, uuid.New()); !errors.Is(err, ErrInvalidBinding) {
+		t.Fatalf("missing Runtime Workspace error = %v, want ErrInvalidBinding", err)
+	}
+	if _, err := service.BindAgent(t.Context(), uuid.New(), uuid.Nil); !errors.Is(err, ErrInvalidBinding) {
+		t.Fatalf("missing Agent error = %v, want ErrInvalidBinding", err)
+	}
+}
+
+func TestLoadBoundAgentsAllowsAuthorizedAgentFromAnotherWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeWorkspaceID, agentWorkspaceID, organizationID, agentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	mock.ExpectQuery(`(?s)SELECT agents\.id, agents\.tenant_id, workspaces\.organization_id.*FROM agents AS agents.*JOIN workspaces AS workspaces ON workspaces\.id = agents\.tenant_id.*agents\.id IN \(\$1\)`).
+		WithArgs(agentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "organization_id", "workspace_status", "name", "description", "enable_api", "web_app_status", "published"}).
+			AddRow(agentID, agentWorkspaceID, organizationID, "normal", "Shared Agent", "Cross-workspace published Agent", true, "active", true))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "published_runtime_surfaces" WHERE resource_type = $1 AND surface = $2 AND organization_id = $3 AND resource_id IN ($4) AND deleted_at IS NULL ORDER BY resource_id ASC`)).
+		WithArgs("agent", "api", organizationID, agentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "resource_id"}))
+	workspace := &RuntimeWorkspace{WorkspaceID: runtimeWorkspaceID, OrganizationID: organizationID}
+	agents, authorized, err := NewService(db).loadBoundAgents(t.Context(), workspace, []AgentBinding{{RuntimeWorkspaceID: runtimeWorkspaceID, AgentID: agentID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agents[agentID].TenantID != agentWorkspaceID {
+		t.Fatalf("agent workspace = %s, want %s", agents[agentID].TenantID, agentWorkspaceID)
+	}
+	if _, ok := authorized[agentID]; !ok {
+		t.Fatal("cross-workspace Agent was not authorized")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadBoundAgentsRejectsArchivedSourceWorkspace(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeWorkspaceID, sourceWorkspaceID, organizationID, agentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	mock.ExpectQuery(`(?s)SELECT agents\.id, agents\.tenant_id, workspaces\.organization_id.*FROM agents AS agents.*JOIN workspaces AS workspaces ON workspaces\.id = agents\.tenant_id.*agents\.id IN \(\$1\)`).
+		WithArgs(agentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "organization_id", "workspace_status", "name", "description", "enable_api", "web_app_status", "published"}).
+			AddRow(agentID, sourceWorkspaceID, organizationID, "archived", "Archived Agent", "Archived source", true, "active", true))
+	workspace := &RuntimeWorkspace{WorkspaceID: runtimeWorkspaceID, OrganizationID: organizationID}
+	_, authorized, err := NewService(db).loadBoundAgents(t.Context(), workspace, []AgentBinding{{RuntimeWorkspaceID: runtimeWorkspaceID, AgentID: agentID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := authorized[agentID]; ok {
+		t.Fatal("Agent from archived source Workspace was authorized")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCanReadRuntimeExternalFileScopesByWorkspaceAndSubject(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeWorkspaceID, subjectID := uuid.New(), uuid.New()
+	fileID := uuid.NewString()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "runtime_external_files" WHERE file_id = $1 AND runtime_workspace_id = $2 AND subject_id = $3`)).
+		WithArgs(fileID, runtimeWorkspaceID, subjectID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	allowed, err := NewService(db).CanReadRuntimeExternalFile(t.Context(), runtimeWorkspaceID, subjectID, fileID)
+	if err != nil || !allowed {
+		t.Fatalf("CanReadRuntimeExternalFile() = %v, %v, want true", allowed, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeAgentUnavailableReason(t *testing.T) {
+	active := runtimeAgentRecord{WorkspaceStatus: "normal", Published: true, EnableAPI: true, WebAppStatus: "active"}
+	for _, test := range []struct {
+		name       string
+		record     runtimeAgentRecord
+		found      bool
+		authorized bool
+		want       string
+	}{
+		{name: "missing", found: false, want: "agent_not_found"},
+		{name: "archived source", record: runtimeAgentRecord{WorkspaceStatus: "archived", Published: true, EnableAPI: true, WebAppStatus: "active"}, found: true, want: "source_workspace_archived"},
+		{name: "unpublished", record: runtimeAgentRecord{WorkspaceStatus: "normal", EnableAPI: true, WebAppStatus: "active"}, found: true, want: "agent_not_published"},
+		{name: "disabled", record: runtimeAgentRecord{WorkspaceStatus: "normal", Published: true, WebAppStatus: "active"}, found: true, want: "agent_disabled"},
+		{name: "unauthorized", record: active, found: true, want: "agent_not_authorized"},
+		{name: "available", record: active, found: true, authorized: true, want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := runtimeAgentUnavailableReason(test.record, test.found, test.authorized); got != test.want {
+				t.Fatalf("reason = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

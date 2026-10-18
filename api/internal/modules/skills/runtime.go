@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
@@ -63,25 +65,37 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	// PlatformExecutionOrigin is supplied only by the admitted runtime bridge.
+	PlatformExecutionOrigin *toolgovernance.ExecutionOrigin `json:"-"`
+	// PlatformInteractiveApproval is set only by a first-party console CLI
+	// bridge. It cannot be supplied through Skill arguments or runtime JSON.
+	PlatformInteractiveApproval bool `json:"-"`
 	// ScriptModel is server-owned and never serialized into tool arguments.
-	ScriptModel                *ScriptModelChannel `json:"-"`
-	scriptModelPath            string
-	PresentationLocale         string           `json:"-"`
-	ConnectorTargetScope       core.TargetScope `json:"-"`
-	ConnectorTargetVersionID   string           `json:"-"`
-	OrganizationID             string
-	UserID                     string
-	ConversationID             string
-	AppID                      string
-	MessageID                  string
-	InvokeFrom                 tools.ToolInvokeFrom
-	RuntimeParameters          map[string]interface{}
+	ScriptModel              *ScriptModelChannel `json:"-"`
+	scriptModelPath          string
+	PresentationLocale       string           `json:"-"`
+	ConnectorTargetScope     core.TargetScope `json:"-"`
+	ConnectorTargetVersionID string           `json:"-"`
+	// ConnectorTargetType selects the DigitalHuman host boundary. It is empty
+	// for Chat, Agent, and Workflow callers, whose target is derived from
+	// InvokeFrom.
+	ConnectorTargetType  core.TargetType `json:"-"`
+	ConnectorInteractive bool            `json:"-"`
+	// ConnectorRunID identifies the DigitalHuman run a confirmation belongs to.
+	ConnectorRunID    string `json:"-"`
+	OrganizationID    string
+	UserID            string
+	ConversationID    string
+	AppID             string
+	MessageID         string
+	InvokeFrom        tools.ToolInvokeFrom
+	RuntimeParameters map[string]interface{}
+	// ExternalUserID is the server-derived external caller identity. It is
+	// distinct from UserID, which remains the internal account/API-key identity.
+	ExternalUserID             string                                           `json:"-"`
 	ConnectorIdentityResolver  connectordispatch.IdentityResolver               `json:"-"`
 	ConnectorActionResolver    connectordispatch.ActionInstanceResolver         `json:"-"`
 	ConnectorConfirmationStore connectorexecution.ConfirmationContinuationStore `json:"-"`
-	// ExternalUserID is the server-derived external caller identity. It is
-	// distinct from UserID, which remains the internal account/API-key identity.
-	ExternalUserID string `json:"-"`
 }
 
 type ToolInvocationResult struct {
@@ -345,6 +359,12 @@ func (r *Runtime) ValidateCatalog(ctx context.Context) error {
 }
 
 func LoadCustomSkillDocument(root string) (SkillDocument, error) {
+	return LoadCustomSkillDocumentWithName(root, "")
+}
+
+// LoadCustomSkillDocumentWithName accepts the package directory name as a
+// fallback for skills whose frontmatter omits name.
+func LoadCustomSkillDocumentWithName(root, packageName string) (SkillDocument, error) {
 	raw, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("custom skill SKILL.md not found: %w", err)
@@ -353,8 +373,11 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse custom skill: %w", err)
 	}
+	if strings.TrimSpace(frontmatter.Name) == "" {
+		frontmatter.Name = strings.ToLower(strings.TrimSpace(packageName))
+	}
 	id := normalizeSkillID(frontmatter.Name)
-	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasScripts(root))
+	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasCustomScripts(root))
 	if err != nil {
 		return SkillDocument{}, err
 	}
@@ -364,8 +387,76 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	return doc, nil
 }
 
+// ValidateCustomSkillScriptPackage performs the structural checks required
+// before a custom script skill can be imported. It intentionally does not
+// grant execution-time dependency or model-call capabilities.
+func ValidateCustomSkillScriptPackage(root string, fallbackTimeoutSeconds int) error {
+	mode, err := CustomSkillScriptExecutionMode(root)
+	if err != nil {
+		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	if mode == SkillScriptExecutionSession {
+		raw, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
+		if err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+		frontmatter, _, err := parseSkillMarkdown(raw)
+		if err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+		if len(frontmatter.ScriptInputSchema) > 0 {
+			return fmt.Errorf("invalid custom skill script package: script_input_schema requires scripts/run.py or skill.manifest.json")
+		}
+		return nil
+	}
+	prepared, err := prepareSkillScriptManifest(root, fallbackTimeoutSeconds, true)
+	if err != nil {
+		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	if mode == SkillScriptExecutionManifest {
+		if err := validateSkillPackageUploadSize(root, prepared.Raw); err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+	}
+	return nil
+}
+
+const (
+	SkillScriptExecutionSession  = "session_script"
+	SkillScriptExecutionLegacy   = "legacy_script"
+	SkillScriptExecutionManifest = "zgi_script"
+)
+
+// CustomSkillScriptExecutionMode classifies the existing one-shot protocol
+// separately from portable scripts that run in an approved Agent workspace.
+func CustomSkillScriptExecutionMode(root string) (string, error) {
+	hasManifest, err := hasSkillManifest(root)
+	if err != nil {
+		return "", err
+	}
+	if hasManifest {
+		return SkillScriptExecutionManifest, nil
+	}
+	entrypoint := filepath.Join(root, "scripts", "run.py")
+	info, err := os.Lstat(entrypoint)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("scripts/run.py must be a regular file")
+		}
+		return SkillScriptExecutionLegacy, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	return SkillScriptExecutionSession, nil
+}
+
 func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
-	doc, err := LoadCustomSkillDocument(root)
+	return r.LoadCustomSkillDocumentWithName(root, "")
+}
+
+func (r *Runtime) LoadCustomSkillDocumentWithName(root, packageName string) (SkillDocument, error) {
+	doc, err := LoadCustomSkillDocumentWithName(root, packageName)
 	if err != nil {
 		return SkillDocument{}, err
 	}
@@ -564,6 +655,13 @@ func (r *Runtime) CallSkillTool(
 	timeout := docTimeoutSeconds(*doc)
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
+	if execCtx.PlatformExecutionOrigin != nil {
+		protected, err := tool_file.WithExecutionOrigin(runCtx, *execCtx.PlatformExecutionOrigin)
+		if err != nil {
+			return nil, err
+		}
+		runCtx = protected
+	}
 
 	start := time.Now()
 	result, err := r.engine.Invoke(runCtx, tools.InvokeRequest{
@@ -694,6 +792,9 @@ func resolveConnectorToolIdentity(
 	case tools.ToolInvokeFromAgent:
 		target = core.TargetRef{Type: core.TargetTypeAgent, ID: strings.TrimSpace(execCtx.AppID), Scope: execCtx.ConnectorTargetScope, VersionID: execCtx.ConnectorTargetVersionID}
 		interactive = connectorAgentRuntimeInteractive(execCtx.RuntimeParameters)
+	case tools.ToolInvokeFromDigitalHuman:
+		// The DigitalHuman target is resolved from the server-owned execution
+		// context below; an incomplete context fails target validation.
 	case tools.ToolInvokeFromWorkflow:
 		target = core.TargetRef{
 			Type:              core.TargetTypeWorkflow,
@@ -702,6 +803,19 @@ func resolveConnectorToolIdentity(
 		}
 	default:
 		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	if execCtx.ConnectorTargetType == core.TargetTypeDigitalHuman {
+		// A DigitalHuman host never borrows the Chat or Agent target implied by
+		// InvokeFrom. Its host identity, exact scope/version and persisted
+		// binding instance all come from the server-owned execution context.
+		target = core.TargetRef{
+			Type:              core.TargetTypeDigitalHuman,
+			ID:                strings.TrimSpace(execCtx.AppID),
+			Scope:             execCtx.ConnectorTargetScope,
+			VersionID:         strings.TrimSpace(execCtx.ConnectorTargetVersionID),
+			BindingInstanceID: strings.TrimSpace(toolDef.ConnectorBindingInstanceID),
+		}
+		interactive = execCtx.ConnectorInteractive
 	}
 	if err := target.Validate(); err != nil {
 		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)

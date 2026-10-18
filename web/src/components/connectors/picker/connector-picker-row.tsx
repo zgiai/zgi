@@ -14,12 +14,14 @@ import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 interface ConnectorPickerRowProps {
   row: ConnectorPickerRowModel;
   pending?: boolean;
+  disabled?: boolean;
   onAction: (row: ConnectorPickerRowModel) => void;
 }
 
 export function ConnectorPickerRow({
   row,
   pending = false,
+  disabled = false,
   onAction,
 }: ConnectorPickerRowProps) {
   const t = useT('connectors');
@@ -40,20 +42,22 @@ export function ConnectorPickerRow({
         .join(' · ')
     : row.connector.description;
   const isSwitch = row.state === 'ready' && Boolean(row.replacedBinding);
-  const canUpdateUnavailable = row.state === 'unavailable' && Boolean(row.connection);
+  const canDetach =
+    row.state === 'added' || (row.hostUnavailable && row.binding?.status === 'active');
+  const canUpdateUnavailable =
+    row.state === 'unavailable' && Boolean(row.connection) && !row.hostUnavailable;
 
-  const actionLabel =
-    row.state === 'added'
-      ? t('picker.actions.remove')
-      : isSwitch
-        ? t('picker.actions.switch')
-        : row.state === 'ready'
-          ? t('picker.actions.add')
-          : row.state === 'reconnect' || canUpdateUnavailable
-            ? t(isApp ? 'app.updateTitle' : 'picker.actions.updateKey')
-            : row.state === 'not_connected'
-              ? t('picker.actions.addConnection')
-              : t('picker.actions.viewReason');
+  const actionLabel = canDetach
+    ? t('picker.actions.remove')
+    : isSwitch
+      ? t('picker.actions.switch')
+      : row.state === 'ready'
+        ? t('picker.actions.add')
+        : row.state === 'reconnect' || canUpdateUnavailable
+          ? t(isApp ? 'app.updateTitle' : 'picker.actions.updateKey')
+          : row.state === 'not_connected'
+            ? t('picker.actions.addConnection')
+            : t('picker.actions.viewReason');
 
   return (
     <article className="grid min-w-0 gap-3 rounded-xl border bg-background p-3.5 shadow-xs sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:items-center">
@@ -91,12 +95,12 @@ export function ConnectorPickerRow({
           row.state === 'reconnect' &&
             'border-warning/50 text-warning hover:border-warning hover:bg-warning/10 hover:text-warning'
         )}
-        disabled={pending}
+        disabled={disabled || pending}
         loading={pending}
         aria-label={`${actionLabel}: ${rowTitle}`}
         onClick={() => onAction(row)}
       >
-        {row.state === 'added' ? <Minus aria-hidden="true" className="size-4" /> : null}
+        {canDetach ? <Minus aria-hidden="true" className="size-4" /> : null}
         {isSwitch ? <ArrowRightLeft aria-hidden="true" className="size-4" /> : null}
         {row.state === 'not_connected' ? <Plus aria-hidden="true" className="size-4" /> : null}
         {actionLabel}

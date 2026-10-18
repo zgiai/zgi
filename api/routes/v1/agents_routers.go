@@ -24,18 +24,20 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/middleware"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"gorm.io/gorm"
 )
 
-func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string, connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorDispatcher connectordispatch.Dispatcher, connectorCatalog connectorexecution.DefinitionCatalog, manifestResolvers ...skills.ToolGovernanceManifestResolver) app.AgentsService {
+func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string, connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorDispatcher connectordispatch.Dispatcher, connectorCatalog connectorexecution.DefinitionCatalog, errorCatalog *appcatalog.Catalog, manifestResolvers ...skills.ToolGovernanceManifestResolver) app.AgentsService {
 	repo := app.NewAgentsRepository(db)
 
 	// Initialize workflow service for agents with all required dependencies
@@ -63,6 +65,11 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	workflowService.SetConnectorCatalog(connectorCatalog)
 
 	agentMemoryService := agentmemory.NewService(db)
+	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
+	var runtimeAgentMemory any = agentMemoryService
+	if relationshipmemory.RuntimeEnabled() {
+		runtimeAgentMemory = userRelationshipMemory
+	}
 	var defaultModelResolver llmdefaultservice.DefaultModelResolver
 	var titleGenerator titlegen.Service
 	if graphFlowService != nil {
@@ -75,6 +82,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			)
 		}
 	}
+	runtimeInputDispatcher := app.NewRuntimeInputFollowUpDispatcher(taskManager)
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,
@@ -85,7 +93,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		enterpriseService,
 		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolvers...).WithConnectorDispatcher(connectorDispatcher),
 		memoryService,
-		agentMemoryService,
+		runtimeAgentMemory,
+		runtimeInputDispatcher,
 		connectorAgentRuntime,
 		connectorConfirmationStore,
 	)
@@ -104,13 +113,43 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			logger.Error("Failed to register chat runtime lease cleanup task", err)
 		}
 		extractionTask := agentmemoryworker.NewExtractionSweepTask()
-		extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, agentMemoryService, llmClient))
-		if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
-			logger.Error("Failed to register Agent memory extraction sweep", err)
+		if relationshipmemory.RuntimeEnabled() {
+			extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, userRelationshipMemory, llmClient))
+			if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
+				logger.Error("Failed to register Agent memory extraction sweep", err)
+			}
+		} else {
+			extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, agentMemoryService, llmClient))
+			if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
+				logger.Error("Failed to register Agent memory extraction sweep", err)
+			}
+		}
+		if runtimeInputDispatcher != nil {
+			recoveryTask := &app.RuntimeInputRecoveryTask{}
+			recoveryHandler := app.NewRuntimeInputRecoveryHandler(chatRuntimeService)
+			if err := scheduler.RegisterTask(recoveryTask, recoveryHandler); err != nil {
+				logger.Error("Failed to register Agent runtime input recovery task", err)
+			}
 		}
 	}
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
+	if err := appHandler.SetApplicationErrorCatalog(errorCatalog); err != nil {
+		panic(err)
+	}
+	if taskRegistry != nil && taskManager != nil {
+		app.RegisterRuntimeInputFollowUpTaskHandler(taskRegistry, taskManager, appHandler)
+	}
+	if runtimeInputDispatcher != nil {
+		recoveryContext, cancelRecovery := context.WithTimeout(context.Background(), 30*time.Second)
+		if _, err := chatRuntimeService.RecoverStaleRuntimeInputs(recoveryContext); err != nil {
+			logger.Error("Failed to recover stale Agent runtime inputs during startup", err)
+		}
+		if _, err := chatRuntimeService.EnqueuePendingRuntimeInputFollowUps(recoveryContext); err != nil {
+			logger.Error("Failed to enqueue pending Agent runtime input follow-ups during startup", err)
+		}
+		cancelRecovery()
+	}
 	appHandler.SetFileService(fileService)
 	if defaultModelResolver == nil {
 		panic("agent voice routes require default model resolver")
@@ -162,7 +201,9 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 
 	// Agent management endpoints
 	appsGroup.GET("", appHandler.GetAgentsList)
+	appsGroup.GET("/catalog-tags", appHandler.GetAgentCatalogTagFacets)
 	appsGroup.POST("/runtime/audio/transcriptions", appHandler.TranscribeWorkspaceVoice)
+	appsGroup.GET("/runnable-webapps/tags", appHandler.GetRunnableWebAppTagFacets)
 	appsGroup.GET("/runnable-webapps", appHandler.GetRunnableWebApps)
 	appsGroup.POST("", appHandler.CreateAgent)
 	appsGroup.GET("/:agent_id/candidates/skills", appHandler.ListAgentSkillBindingCandidates)
@@ -174,6 +215,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("/:agent_id/skills/candidates", appHandler.ListAgentSkillBindingCandidates)
 	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
+	appsGroup.GET("/:agent_id/tags", appHandler.GetAgentCatalogTags)
+	appsGroup.PUT("/:agent_id/tags", appHandler.ReplaceAgentCatalogTags)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)
 	appsGroup.GET("/:agent_id/runtime-surfaces", appHandler.GetAgentRuntimeSurfaces)
 	appsGroup.PATCH("/:agent_id/runtime-surfaces", appHandler.UpdateAgentRuntimeSurfaces)
@@ -192,9 +235,12 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.PATCH("/:agent_id/runtime/conversations/:conversation_id", appHandler.UpdateAgentRuntimeConversation)
 	appsGroup.DELETE("/:agent_id/runtime/conversations/:conversation_id", appHandler.DeleteAgentRuntimeConversation)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/messages", appHandler.ListAgentRuntimeMessages)
+	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/files/:file_id", appHandler.GetAgentRuntimeExecutionFile)
+	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", appHandler.SubmitAgentRuntimeInput)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/stop", appHandler.StopAgentRuntimeConversation)
 	appsGroup.GET("/:agent_id/runtime/conversations/:conversation_id/events", appHandler.StreamAgentRuntimeEvents)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueAgentRuntimeWorkflowApproval)
+	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", appHandler.ContinueAgentRuntimeToolGovernance)
 	appsGroup.POST("/:agent_id/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", appHandler.ContinueAgentRuntimeUserInput)
 	appsGroup.POST("/:agent_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateAgentRuntimeMessage)
 	appsGroup.PUT("/:agent_id", appHandler.UpdateAgent)
@@ -229,10 +275,13 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.PATCH("/:web_app_id/runtime/conversations/:conversation_id", appHandler.UpdateWebAppAgentRuntimeConversation)
 	protectedWebApps.DELETE("/:web_app_id/runtime/conversations/:conversation_id", appHandler.DeleteWebAppAgentRuntimeConversation)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/messages", appHandler.ListWebAppAgentRuntimeMessages)
+	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/files/:file_id", appHandler.GetWebAppAgentRuntimeExecutionFile)
+	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/runtime-inputs", appHandler.SubmitWebAppAgentRuntimeInput)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/stop", appHandler.StopWebAppAgentRuntimeConversation)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id/events", appHandler.StreamWebAppAgentRuntimeEvents)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", appHandler.ContinueWebAppAgentRuntimeWorkflowApproval)
 	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", appHandler.ContinueWebAppAgentRuntimeUserInput)
+	protectedWebApps.POST("/:web_app_id/runtime/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", appHandler.ContinueWebAppAgentRuntimeToolGovernance)
 	protectedWebApps.POST("/:web_app_id/runtime/messages/:message_id/regenerate", appHandler.RegenerateWebAppAgentRuntimeMessage)
 	protectedWebApps.GET("/:web_app_id/memory", appHandler.GetWebAppMemory)
 	protectedWebApps.PUT("/:web_app_id/memory/:key", appHandler.PutWebAppMemory)
@@ -240,6 +289,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.DELETE("/:web_app_id/memory", appHandler.DeleteAllWebAppMemory)
 	protectedWebApps.GET("/:web_app_id/memory/export", appHandler.ExportWebAppMemory)
 	protectedWebApps.POST("/:web_app_id/memory/operations/:operation_id/undo", appHandler.UndoWebAppMemoryOperation)
+	protectedWebApps.GET("/:web_app_id/memory/settings", appHandler.GetWebAppMemorySettings)
+	protectedWebApps.PATCH("/:web_app_id/memory/settings", appHandler.PatchWebAppMemorySettings)
 
 	workflowTests := appsGroup.Group("/:agent_id/workflow-tests")
 	workflowTests.GET("/settings", workflowTestHandler.GetSettings)

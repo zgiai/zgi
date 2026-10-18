@@ -292,8 +292,14 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		return ExecutionResult{}, err
 	}
 
-	if !connection.Constraint.Allows(request.OwnerAccountID, request.OperationID, request.Target, service.now().UTC()) ||
-		!binding.Constraint.Allows(request.OwnerAccountID, request.OperationID, request.Target, service.now().UTC()) {
+	// A DigitalHuman host has no historical Connection boundary for its own
+	// target type, so the exact owner-scoped Target Binding supplies that one
+	// boundary while every operation, owner, expiry, and deny restriction is
+	// still enforced by both layers.
+	if !core.ConstraintsAllow(
+		connection.Constraint, binding.Constraint,
+		request.OwnerAccountID, request.OperationID, request.Target, service.now().UTC(),
+	) {
 		return ExecutionResult{}, connectorError(core.ErrorCodeAccessDenied, false)
 	}
 	acceptedOperation, ok := acceptedCatalogOperation(service.catalog, request)
@@ -338,6 +344,36 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	if confirmation != nil && confirmation.RouteReceipt != pinned.Receipt {
 		return ExecutionResult{}, connectorError(core.ErrorCodeInvalidInput, false)
 	}
+
+	// DigitalHuman is governed by an explicit platform-owned decision that is
+	// stricter than the shared Chat/Agent/Workflow path. It is evaluated before
+	// session grants so a reusable grant can never preauthorize a DigitalHuman
+	// invocation, and before credentials so a trusted-low classification can
+	// never reach a provider.
+	digitalHuman := digitalHumanApproval(request.Target, risk, request.Interactive, confirmation, pinned.Receipt)
+	if digitalHuman.governs() {
+		// Rules 1 and 3: neither a reusable session grant nor a caller-supplied
+		// preauthorization flag is authority for a DigitalHuman invocation.
+		request.Preauthorized = false
+		pinned.Request.Preauthorized = false
+	}
+	if digitalHuman == digitalHumanApprovalFailClosed {
+		decisionID, decisionErr := service.recordExecutionDecision(ctx, pinned, risk, core.DecisionStatusDenied, false)
+		result := ExecutionResult{State: ExecutionStateBlocked, DecisionID: decisionID}
+		if decisionErr != nil {
+			return result, decisionErr
+		}
+		return result, connectorError(core.ErrorCodeAccessDenied, false)
+	}
+	if digitalHuman == digitalHumanApprovalNonInteractiveBlocked {
+		decisionID, decisionErr := service.recordExecutionDecision(ctx, pinned, risk, core.DecisionStatusBlocked, false)
+		result := ExecutionResult{State: ExecutionStateBlocked, DecisionID: decisionID}
+		if decisionErr != nil {
+			return result, decisionErr
+		}
+		return result, connectorError(core.ErrorCodeConfirmationRequired, false)
+	}
+
 	_, sessionGrantMatched := connectorSessionGrantMatches(request, definition, operation, risk)
 	// Binding-level direct authorization is explicit in the binding constraint.
 	// Legacy bindings have no mode and therefore remain ask_each_time.
@@ -345,7 +381,8 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		binding.Constraint.DirectlyAuthorized() &&
 		binding.Constraint.Allows(request.OwnerAccountID, request.OperationID, request.Target, service.now().UTC()) &&
 		bindingAuthorizationFresh(binding.Constraint, connection, acceptedOperation.ContractDigest)
-	preauthorized := confirmation == nil && (sessionGrantMatched || bindingDirectAuthorization)
+	preauthorized := confirmation == nil && digitalHuman.sessionGrantPreauthorizes() &&
+		(sessionGrantMatched || bindingDirectAuthorization)
 	request.Preauthorized = preauthorized
 	pinned.Request.Preauthorized = preauthorized
 	if risk != RiskTrustedLow && !preauthorized {
@@ -358,9 +395,16 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 			return result, connectorError(core.ErrorCodeConfirmationRequired, false)
 		}
 		if confirmation == nil {
+			confirmationResult := service.confirmationWithPreview(ctx, pinned, acceptedOperation, binding, connection, risk)
+			// A governed DigitalHuman approval is never presented without a
+			// complete, non-secret preview. Failing closed here keeps the
+			// decision ahead of every credential and provider access.
+			if !digitalHumanApprovalPreviewAllowed(digitalHuman, confirmationResult.Preview) {
+				return service.denyDigitalHumanIncompletePreview(ctx, pinned, risk)
+			}
 			return ExecutionResult{
 				State:        ExecutionStateRequiresConfirmation,
-				Confirmation: service.confirmationWithPreview(ctx, pinned, acceptedOperation, binding, connection, risk),
+				Confirmation: confirmationResult,
 			}, nil
 		}
 		if confirmation.Decision == ConfirmationDecisionCancelled {
@@ -371,6 +415,13 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 				return ExecutionResult{}, decisionErr
 			}
 			return ExecutionResult{State: ExecutionStateCancelled, DecisionID: decision.ID}, nil
+		}
+		// A confirmed DigitalHuman continuation is accepted only when the
+		// frozen request still rebuilds a complete preview from the current
+		// connection. This is re-checked before finalization and credentials.
+		if digitalHuman.governs() &&
+			!digitalHumanApprovalPreviewAllowed(digitalHuman, service.confirmationPreview(ctx, pinned, binding, connection)) {
+			return service.denyDigitalHumanIncompletePreview(ctx, pinned, risk)
 		}
 		requiresConfirmedFinalization = true
 	} else if confirmation != nil {
@@ -694,6 +745,24 @@ func (service *Service) recordExecutionDecision(
 	return decisionID, nil
 }
 
+// denyDigitalHumanIncompletePreview is the fail-closed DigitalHuman policy for
+// an approval that cannot be presented safely. It records a real, valid denial
+// with the acting identity before returning, and because it runs before
+// credential resolution and provider selection it never opens a secret or
+// invokes a remote action. No request input or preview value is persisted.
+func (service *Service) denyDigitalHumanIncompletePreview(
+	ctx context.Context,
+	pinned PinnedExecution,
+	risk RiskClassification,
+) (ExecutionResult, error) {
+	decisionID, decisionErr := service.recordExecutionDecision(ctx, pinned, risk, core.DecisionStatusDenied, false)
+	result := ExecutionResult{State: ExecutionStateBlocked, DecisionID: decisionID}
+	if decisionErr != nil {
+		return result, decisionErr
+	}
+	return result, connectorError(core.ErrorCodeAccessDenied, false)
+}
+
 func (service *Service) available() error {
 	if service == nil || service.catalog == nil || service.bindings == nil || service.connections == nil ||
 		service.targetAuthorizer == nil || service.risk == nil || service.credentials == nil ||
@@ -773,6 +842,8 @@ func surfaceForTarget(targetType core.TargetType) catalog.Surface {
 		return catalog.SurfaceAgent
 	case core.TargetTypeWorkflow:
 		return catalog.SurfaceWorkflow
+	case core.TargetTypeDigitalHuman:
+		return catalog.SurfaceDigitalHuman
 	default:
 		return ""
 	}

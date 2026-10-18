@@ -9,9 +9,11 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
 	"github.com/zgiai/zgi/api/internal/contracts"
+	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -39,6 +41,8 @@ import (
 	connectorgithubmcp "github.com/zgiai/zgi/api/internal/modules/connectors/providers/githubmcp"
 	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
 	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
+	connectorserveropsssh "github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	"github.com/zgiai/zgi/api/internal/modules/consolesync"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
@@ -49,6 +53,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/datasource/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/repository"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	file_repo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	file_service "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
@@ -162,6 +167,7 @@ type ServiceContainer struct {
 	db                       *gorm.DB
 	tokenMgr                 *helper.TokenManager
 	config                   *config.Config
+	storageClient            storage.Storage
 
 	// Repositories
 	workspaceRepo       workspace_repo.WorkspaceRepository
@@ -259,7 +265,11 @@ type ServiceContainer struct {
 	connectorBindingService              *connectorbindings.Service
 	connectorAuditRepo                   *connectoraudit.GormRepository
 	connectorCredentialCipher            *connectorcredentials.Store
+	connectorPersonalConnectionResolver  *connectorcredentials.PersonalConnectionResolver
+	digitalHumanCredentialCipher         credentialcrypto.CredentialCipher
 	connectorCandidateVerifier           *connectorproviders.Runtime
+	connectorServerOpsService            *serverops.Service
+	connectorServerOpsSSHClient          *connectorserveropsssh.Client
 	connectorRiskResolver                *connectorexecution.TrustedRiskResolver
 	connectorExecutionService            *connectorexecution.Service
 	connectorExecutionRouter             *connectorexecution.NativeRouter
@@ -299,11 +309,13 @@ type ServiceContainer struct {
 	graphRuntimeHealth     *system_service.GraphRuntimeHealthService
 
 	// Automation definition service
-	automationDefinitionService automationdefinition.Service
-	automationWorkflowRunner    automationaction.AutomationWorkflowRunner
-	workflowBindingBackfill     WorkflowConnectorBindingBackfillRunner
-	notificationSMSService      notificationsms.Service
-	shortLinkService            shortlinkcap.Service
+	automationDefinitionService  automationdefinition.Service
+	automationWorkflowRunner     automationaction.AutomationWorkflowRunner
+	workflowBindingBackfill      WorkflowConnectorBindingBackfillRunner
+	notificationSMSService       notificationsms.Service
+	shortLinkService             shortlinkcap.Service
+	digitalHumanService          *digitalhuman.Service
+	digitalHumanChannelReceivers *digitalhuman.ChannelReceiverManager
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
@@ -340,6 +352,16 @@ func (c *ServiceContainer) GetPaymentServices() *payment_service.PaymentServices
 
 func (c *ServiceContainer) GetDB() *gorm.DB {
 	return c.db
+}
+
+// GetStorage returns the storage instance initialized for this application.
+// Background consumers must use the same configured backend as request-scoped
+// services instead of constructing a separate storage client.
+func (c *ServiceContainer) GetStorage() storage.Storage {
+	if c.storageClient == nil {
+		c.storageClient = storage.GetStorage()
+	}
+	return c.storageClient
 }
 
 func (c *ServiceContainer) GetTaskManager() *queue.TaskManager {
@@ -587,6 +609,7 @@ func NewServiceContainer(
 		db:                       db,
 		tokenMgr:                 tokenMgr,
 		config:                   cfg,
+		storageClient:            storageClient,
 		workspaceRepo:            workspaceRepo,
 		workspaceMemberRepo:      workspaceMemberRepo,
 		platformContainer:        platformContainer,
@@ -1191,6 +1214,75 @@ func (c *ServiceContainer) GetConnectorCredentialSealer() *connectorcredentials.
 func (c *ServiceContainer) GetConnectorCredentialResolver() *connectorcredentials.Store {
 	return c.getConnectorCredentialCipher()
 }
+
+// GetConnectorPersonalConnectionResolver exposes only the owner-scoped,
+// request-time credential resolution boundary needed by DigitalHuman channels.
+// It never returns a public connection DTO or a persistent secret.
+func (c *ServiceContainer) GetConnectorPersonalConnectionResolver() *connectorcredentials.PersonalConnectionResolver {
+	if c.connectorPersonalConnectionResolver == nil {
+		c.connectorPersonalConnectionResolver = connectorcredentials.NewPersonalConnectionResolver(
+			c.GetConnectorConnectionRepository(), c.GetConnectorCredentialResolver(),
+		)
+	}
+	return c.connectorPersonalConnectionResolver
+}
+
+// GetWorkspaceMemberRepository exposes the workspace membership checker used to
+// revoke a stale credential lease once its owner leaves the workspace.
+func (c *ServiceContainer) GetWorkspaceMemberRepository() workspace_repo.WorkspaceMemberRepository {
+	return c.workspaceMemberRepo
+}
+
+// GetConnectorDigitalHumanRuntimeResolver returns the owner-scoped resolver that
+// projects only current DigitalHuman Target Bindings and ready Personal
+// Connections into a DigitalHuman run.
+func (c *ServiceContainer) GetConnectorDigitalHumanRuntimeResolver() *connectorruntimeauth.DigitalHumanResolver {
+	if c == nil || c.config == nil {
+		return nil
+	}
+	resolver, err := connectorruntimeauth.NewDigitalHumanResolver(
+		c.GetConnectorBindingService(), c.GetConnectorConnectionService(), c.GetConnectorPluginManager(),
+	)
+	if err != nil {
+		panic(fmt.Sprintf("initialize DigitalHuman Connector resolver: %v", err))
+	}
+	return resolver.WithDelegatedHostAccess(
+		c.GetConnectorBindingService(),
+		c.GetConnectorHostDelegationAuthorizer(),
+	)
+}
+
+// GetDigitalHumanCredentialCipher returns the purpose-separated cipher used for
+// installation-owned channel credentials. It is built from the dedicated
+// DigitalHuman keyring so historical v1/v2 channel envelopes stay readable and
+// never borrow the Connector c1 key material. Deployments without key material
+// get an unavailable cipher so every encrypt or decrypt fails closed instead of
+// silently storing plaintext.
+func (c *ServiceContainer) GetDigitalHumanCredentialCipher() credentialcrypto.CredentialCipher {
+	if c.digitalHumanCredentialCipher == nil {
+		if c.config == nil || len(c.config.DigitalHumanCredentials.Keys) == 0 {
+			return unavailableDigitalHumanCipher{}
+		}
+		cipher, err := credentialcrypto.NewCredentialKeyring(
+			c.config.DigitalHumanCredentials.ActiveKeyID, c.config.DigitalHumanCredentials.Keys,
+		)
+		if err != nil {
+			panic(fmt.Sprintf("initialize DigitalHuman credential cipher: %v", err))
+		}
+		c.digitalHumanCredentialCipher = cipher
+	}
+	return c.digitalHumanCredentialCipher
+}
+
+type unavailableDigitalHumanCipher struct{}
+
+func (unavailableDigitalHumanCipher) EncryptCredentials(map[string]string, credentialcrypto.CredentialAAD) (string, error) {
+	return "", credentialcrypto.ErrCredentialCipherUnavailable
+}
+func (unavailableDigitalHumanCipher) DecryptCredentials(string, credentialcrypto.CredentialAAD) (map[string]string, error) {
+	return nil, credentialcrypto.ErrCredentialCipherUnavailable
+}
+
 func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.Runtime {
 	if c.connectorCandidateVerifier == nil {
 		github, err := connectorgithub.New(nil)
@@ -1213,7 +1305,16 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		if err != nil {
 			panic("initialize Gmail Connector: invalid configuration")
 		}
-		drivers := append([]connectorproviders.Driver{github, githubMCP, exa, feishu, gmail}, c.messagingDrivers()...)
+		// The SSH Server Operations capability and its adapter are built once and
+		// cached so the same *serverops.Service serves both candidate
+		// verification and the read-only host-key probe. serverops.New is
+		// constructor-only: it normalizes limits and stores the production
+		// runner factory without parsing key material or dialing. The SSH
+		// adapter therefore opens no network connection during assembly, and no
+		// connection is attempted until a candidate verification, an approved
+		// invocation, or a host-key probe reaches the capability.
+		_, serverOpsSSH := c.getServerOpsSSHClient()
+		drivers := append([]connectorproviders.Driver{github, githubMCP, exa, feishu, gmail, serverOpsSSH}, c.messagingDrivers()...)
 		for _, id := range []string{"qqmail", "netease163"} {
 			driver, err := connectormail.New(connectormail.Options{Provider: id, HandleKey: c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID]})
 			if err != nil {
@@ -1228,6 +1329,39 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		c.connectorCandidateVerifier = runtime
 	}
 	return c.connectorCandidateVerifier
+}
+
+// getServerOpsSSHClient builds and caches the single SSH Server Operations
+// capability and its adapter. It is constructor-only and never dials, parses key
+// material, or stores a credential. The candidate verifier and the host-key
+// probe share the exact same *serverops.Service.
+func (c *ServiceContainer) getServerOpsSSHClient() (*serverops.Service, *connectorserveropsssh.Client) {
+	if c.connectorServerOpsService == nil {
+		service, err := serverops.New(serverops.Limits{})
+		if err != nil {
+			panic(fmt.Sprintf("initialize SSH Server Operations capability: %v", err))
+		}
+		c.connectorServerOpsService = service
+	}
+	if c.connectorServerOpsSSHClient == nil {
+		client, err := connectorserveropsssh.New(c.connectorServerOpsService)
+		if err != nil {
+			panic("initialize SSH Server Operations Connector: invalid definition")
+		}
+		c.connectorServerOpsSSHClient = client
+	}
+	return c.connectorServerOpsService, c.connectorServerOpsSSHClient
+}
+
+// GetServerOpsSSHHostKeyProbe returns the cached, read-only host-key probe seam
+// backed by the same Server Operations capability used to construct the
+// candidate verifier. It never instantiates a second capability.
+func (c *ServiceContainer) GetServerOpsSSHHostKeyProbe() connectorserveropsssh.HostKeyProbe {
+	if c == nil {
+		return nil
+	}
+	_, client := c.getServerOpsSSHClient()
+	return client
 }
 
 func (c *ServiceContainer) GetConnectorConnectionService() *connectorconnections.Service {
@@ -1494,6 +1628,23 @@ func (c *ServiceContainer) GetShortLinkService() shortlinkcap.Service {
 		c.shortLinkService = shortlinkcap.NewServiceWithDB(c.db)
 	}
 	return c.shortLinkService
+}
+
+// GetDigitalHumanService returns the workspace-scoped DigitalHuman service.
+func (c *ServiceContainer) GetDigitalHumanService() *digitalhuman.Service {
+	if c.digitalHumanService == nil {
+		c.digitalHumanService = digitalhuman.NewService(digitalhuman.NewRepository(c.db))
+		c.digitalHumanService.SetIconResolver(c.GetFileService())
+	}
+	return c.digitalHumanService
+}
+
+func (c *ServiceContainer) SetDigitalHumanChannelReceiverManager(manager *digitalhuman.ChannelReceiverManager) {
+	c.digitalHumanChannelReceivers = manager
+}
+
+func (c *ServiceContainer) GetDigitalHumanChannelReceiverManager() *digitalhuman.ChannelReceiverManager {
+	return c.digitalHumanChannelReceivers
 }
 
 func (c *ServiceContainer) SetAutomationWorkflowRunner(runner automationaction.AutomationWorkflowRunner) {

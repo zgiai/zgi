@@ -22,7 +22,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: connector-migrate inventory|dry-run|apply|verify --keys-file PATH [--expected-report SHA256]; DSN comes from CONNECTOR_MIGRATE_DSN")
+		return errors.New("usage: connector-migrate inventory|dry-run|apply|verify --keys-file PATH [--expected-report SHA256] [--advanced-checkpoint MIGRATION_ID]; DSN comes from CONNECTOR_MIGRATE_DSN")
 	}
 	command := args[0]
 	if command != "inventory" && command != "dry-run" && command != "apply" && command != "verify" {
@@ -32,6 +32,7 @@ func run(args []string) error {
 	keyFile := flags.String("keys-file", "", "private JSON file containing active/native/previous keyrings")
 	expected := flags.String("expected-report", "", "source digest from dry-run (required by apply)")
 	skillsRoot := flags.String("skills-root", "", "explicit root for read-only verification of stored Skill manifests")
+	advanced := flags.String("advanced-checkpoint", "", "exact applied migration head of a schema1 database past the detach checkpoint (retirement deferred)")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -60,22 +61,14 @@ func run(args []string) error {
 		return errors.New("cannot connect to migration database")
 	}
 	defer conn.Close(ctx)
-	var schemaVersion int
-	var checkpoint string
-	if conn.QueryRow(ctx, "SELECT schema_version FROM public.connector_schema_readiness WHERE id=1").Scan(&schemaVersion) != nil || schemaVersion != 1 {
-		return errors.New("historical converter requires schema1; use the native connector-finalize command after retirement")
-	}
-	if conn.QueryRow(ctx, "SELECT max(id) FROM public.migrations").Scan(&checkpoint) != nil || checkpoint != "20260902190000_detach_connector_runtime" {
-		return errors.New("historical converter requires checkpoint 20260902190000_detach_connector_runtime; ready current installations use connector-finalize")
-	}
-	return runOnConnection(ctx, conn, command, keys, *expected, *skillsRoot, writeReport)
+	return runOnConnection(ctx, conn, command, keys, *expected, *skillsRoot, *advanced, writeReport)
 }
 
 type transactionSource interface {
 	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
 }
 
-func runOnConnection(ctx context.Context, conn transactionSource, command string, keys keyrings, expected, skillsRoot string, output func(report) error) error {
+func runOnConnection(ctx context.Context, conn transactionSource, command string, keys keyrings, expected, skillsRoot, advanced string, output func(report) error) error {
 	options := pgx.TxOptions{IsoLevel: pgx.Serializable}
 	if command == "inventory" || command == "dry-run" || command == "verify" {
 		options.AccessMode = pgx.ReadOnly
@@ -85,9 +78,22 @@ func runOnConnection(ctx context.Context, conn transactionSource, command string
 		return errors.New("cannot begin migration transaction")
 	}
 	defer tx.Rollback(ctx)
+	// Source commitments must match the finalizer's UTC snapshots regardless
+	// of the database/session timezone. This changes only this transaction's
+	// timestamp rendering, not persisted values or database configuration.
+	if _, err = tx.Exec(ctx, "SET LOCAL TIME ZONE 'UTC'"); err != nil {
+		return errors.New("cannot configure migration snapshot timezone")
+	}
 	if command == "apply" {
 		if !digestPattern.MatchString(expected) {
 			return errors.New("apply requires --expected-report from a reviewed dry-run")
+		}
+		var locked bool
+		if tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtext('zgi:migrations'))").Scan(&locked) != nil || !locked {
+			return errors.New("another migration owns the maintenance lock")
+		}
+		if _, err = tx.Exec(ctx, "SET LOCAL lock_timeout = '10s'"); err != nil {
+			return errors.New("cannot configure maintenance lock timeout")
 		}
 		if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(726914054)"); err != nil {
 			return errors.New("cannot acquire conversion lock")
@@ -97,6 +103,14 @@ func runOnConnection(ctx context.Context, conn transactionSource, command string
 		}
 	}
 	snapshot, err := loadSnapshot(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if advanced == "" {
+		err = validateCheckpoint(snapshot)
+	} else if err = validateAdvancedCheckpoint(snapshot, advanced); err == nil {
+		err = checkAdvancedSchema(ctx, tx)
+	}
 	if err != nil {
 		return err
 	}

@@ -482,6 +482,9 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 		Version:     "20260526000000",
 		VersionUUID: "version-1",
 		Config: dto.AgentConfigResponse{
+			ExecutionRuntime: &dto.AgentExecutionRuntime{
+				Enabled: true, ProfileID: "internal-profile", PolicyID: "internal-policy",
+			},
 			SystemPrompt:        "secret prompt",
 			ModelProvider:       "secret-provider",
 			Model:               "secret-model",
@@ -506,6 +509,8 @@ func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "system_prompt")
 	require.NotContains(t, string(encoded), "secret prompt")
+	require.NotContains(t, string(encoded), "execution_runtime")
+	require.NotContains(t, string(encoded), "internal-profile")
 	require.NotContains(t, string(encoded), "secret-model")
 	require.NotContains(t, string(encoded), "secret-dataset")
 	require.NotContains(t, string(encoded), "database_bindings")
@@ -538,6 +543,28 @@ func TestRequireAuthenticatedWebAppAgentWhenMemoryEnabled(t *testing.T) {
 	c.Set("is_authenticated", true)
 
 	require.True(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+}
+
+func TestAgentWebAppRequiresLoginForLinuxAndFileUploads(t *testing.T) {
+	for name, config := range map[string]dto.AgentConfigResponse{
+		"linux":  {ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true}},
+		"files":  {FileUpload: true},
+		"memory": {AgentMemoryEnabled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+			published := &dto.AgentWebAppRuntimeConfigResponse{Config: config}
+			require.True(t, publicAgentWebAppConfig(published).LoginRequired)
+			require.False(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+			require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			c.Set("is_authenticated", true)
+			require.True(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+		})
+	}
+	require.False(t, agentWebAppRequiresLogin(dto.AgentConfigResponse{}))
+	require.False(t, agentWebAppRequiresLogin(dto.AgentConfigResponse{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: false}}))
 }
 
 func TestRequireAuthenticatedWebAppAgentFileAccess(t *testing.T) {
@@ -852,6 +879,22 @@ func (s *stubWebAppStatusHandlerService) GetAgentsListWithPermissions(context.Co
 
 func (s *stubWebAppStatusHandlerService) GetRunnableWebApps(context.Context, string, dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppsResponse, error) {
 	s.runnableWebAppsCalled = true
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetRunnableWebAppTagFacets(context.Context, string, dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppTagFacetsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentCatalogTagFacets(context.Context, string, dto.GetAgentCatalogTagFacetsRequest) (*dto.AgentCatalogTagFacetsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentCatalogTags(context.Context, string, string) (*dto.AgentCatalogTagsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ReplaceAgentCatalogTags(context.Context, string, string, dto.ReplaceAgentCatalogTagsRequest) (*dto.AgentCatalogTagsResponse, error) {
 	return nil, nil
 }
 

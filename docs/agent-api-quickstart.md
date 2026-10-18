@@ -311,6 +311,7 @@ Implement these routes in the same server-side proxy style:
 | Continue workflow question | `POST .../{message_id}/workflow-continuation` with `{ "type": "question_answer", "inputs": { ... } }` |
 | Continue workflow approval | The same workflow endpoint with `type`, top-level event `approval_token`, an `action` advertised by `approval_form.actions`, and `inputs` |
 | Answer a Skill prompt | `POST .../{message_id}/user-input/{request_id}/continue` with `{ "answers": { ... } }` |
+| Confirm/reject an admitted Linux platform CLI call | `POST .../{message_id}/tool-governance/{correlation_id}/continue` with `{ "action": "approve" }` or `{ "action": "reject" }`; retain the original final-user header/query identity |
 | Manage Agent Memory | `GET/PUT/DELETE /agents/memory...` |
 
 Send `X-External-User-ID` on every row above, including list/search/get/update/delete, stream recovery, continuations, Memory, and file upload. ZGI stores only a workspace-and-Agent-scoped derived UUID. The legacy chat JSON, query, and multipart `user` values remain temporarily accepted; responses include deprecation headers, and a mismatch with the canonical header returns `400`.

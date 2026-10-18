@@ -2,6 +2,8 @@ package connectorfinalize
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -9,9 +11,18 @@ import (
 )
 
 func TestRuntimeSkillTransitionPreservesAllOtherContractFields(t *testing.T) {
-	definitions, err := catalog.BuiltinDefinitions()
+	// The ownership migration applies to the two originally accepted native
+	// packages, not newer provider families with independent version contracts.
+	data, err := os.ReadFile("../../modules/connectors/catalog/testdata/builtin-contracts.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var definitions []catalog.Definition
+	if err := json.Unmarshal(data, &definitions); err != nil {
+		t.Fatal(err)
+	}
+	if len(definitions) != 2 {
+		t.Fatal("historical native package fixtures are incomplete")
 	}
 	for _, definition := range definitions {
 		for i := range definition.Operations {

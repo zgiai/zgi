@@ -2,10 +2,11 @@ package service
 
 import (
 	"fmt"
-	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -383,7 +384,7 @@ func operationPlanOutcomePhaseEvidence(plan, outcome map[string]interface{}, fin
 			refs = appendUniqueStrings(refs, "final_answer:main_model_final")
 			continue
 		}
-		// External actions require their stricter server-projected effect and
+		// Connector operations require their stricter server-projected effect and
 		// ledger-epoch binding, never the generic tool-success fallback.
 		if strings.EqualFold(stringFromAny(expected["skill_id"]), skills.SkillConnectorRuntime) {
 			return nil, false
@@ -661,6 +662,8 @@ func operationPlanPhasesFromOutcomeSnapshot(current []map[string]interface{}, ou
 		outcomeID := strings.TrimSpace(stringFromAny(outcome["id"]))
 		existing := byOutcomeID[outcomeID]
 		if len(existing) == 0 {
+			// A phase generated from a server Outcome carries server-outcome
+			// authority so a later model snapshot cannot demote it.
 			existing = []map[string]interface{}{{
 				"id":                        fmt.Sprintf("phase-%d", index+1),
 				"outcome_id":                outcomeID,

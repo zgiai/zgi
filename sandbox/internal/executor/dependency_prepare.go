@@ -86,15 +86,7 @@ func (s *Service) PrepareDependencies(req DependencyPrepareRequest) (DependencyP
 	if err != nil {
 		return DependencyPrepareResult{}, err
 	}
-	maxFileSize := int64(256 * 1024)
-	if s != nil && s.policy != nil {
-		maxFileSize = s.policy.MaxFileSizeBytes()
-	}
-	if _, err := validateArchiveEntriesWithinLimits(entries, archiveLimits{
-		maxFiles:     256,
-		maxFileSize:  maxFileSize,
-		maxTotalSize: maxFileSize * 256,
-	}); err != nil {
+	if _, err := validateArchiveEntriesWithinLimits(entries, skillPackageArchiveLimits()); err != nil {
 		return DependencyPrepareResult{}, err
 	}
 
@@ -463,7 +455,7 @@ func scanNodeImports(file *zip.File) ([]string, error) {
 	specSet := map[string]struct{}{}
 	for _, match := range matches {
 		name := strings.TrimSpace(match[1])
-		if name == "" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "/") || nodeBuiltinModules[name] {
+		if name == "" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "node:") {
 			continue
 		}
 		if strings.HasPrefix(name, "@") {
@@ -473,6 +465,9 @@ func scanNodeImports(file *zip.File) ([]string, error) {
 			}
 		} else {
 			name = strings.Split(name, "/")[0]
+		}
+		if nodeBuiltinModules[name] {
+			continue
 		}
 		specSet[normalizePackageName("nodejs", name)] = struct{}{}
 	}
@@ -587,8 +582,14 @@ var pythonStdlibModules = map[string]bool{
 }
 
 var nodeBuiltinModules = map[string]bool{
-	"assert": true, "buffer": true, "child_process": true, "crypto": true,
-	"events": true, "fs": true, "http": true, "https": true, "net": true,
-	"os": true, "path": true, "process": true, "stream": true, "url": true,
-	"util": true, "zlib": true,
+	"assert": true, "async_hooks": true, "buffer": true, "child_process": true, "cluster": true,
+	"console": true, "constants": true, "crypto": true, "dgram": true,
+	"diagnostics_channel": true, "dns": true, "domain": true, "events": true,
+	"fs": true, "http": true, "http2": true, "https": true, "inspector": true, "module": true,
+	"net": true, "os": true, "path": true, "perf_hooks": true,
+	"process": true, "punycode": true, "querystring": true, "readline": true,
+	"repl": true, "stream": true, "string_decoder": true, "sys": true,
+	"timers": true, "tls": true, "trace_events": true, "tty": true,
+	"url": true, "util": true, "v8": true, "vm": true, "wasi": true,
+	"worker_threads": true, "zlib": true,
 }

@@ -4,6 +4,7 @@ import {
   sanitizeModelOutputValue,
 } from '@/utils/model-output-filter';
 import type {
+  ExecutionFileReader,
   AIChatChatRequest,
   AIChatAgentProgressEventData,
   AIChatClientActionRequiredEventData,
@@ -19,11 +20,14 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenUsageUpdatedEventData,
+  AIChatTokenBudgetRequestedEventData,
   AIChatMemoryMutationEventData,
   AIChatIntermediateAnswerEventData,
   AIChatUserInputRequestedEventData,
   AIChatRegenerateMessageRequest,
   AIChatRuntimeSurface,
+  AIChatRuntimeInputAppliedEventData,
   AIChatSearchResult,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -33,6 +37,8 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
+  AIChatSubmitRuntimeInputRequest,
+  AIChatSubmitRuntimeInputResponseData,
   AIChatToolGovernanceDecisionRequest,
   AIChatUserInputContinuationRequest,
   AIChatToolGovernanceDecisionEventData,
@@ -182,6 +188,10 @@ export interface AIChatStreamCallbacks {
     eventId?: string | null
   ) => void;
   onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
+  onRuntimeInputApplied?: (
+    payload: AIChatRuntimeInputAppliedEventData,
+    eventId?: string | null
+  ) => void;
   onWorkflowStarted?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
   onWorkflowNodeStarted?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
   onWorkflowNodeFinished?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
@@ -195,6 +205,14 @@ export interface AIChatStreamCallbacks {
   onMessageChunk: (payload: AIChatMessageChunkEventData, eventId?: string | null) => void;
   onMessageRetract: (payload: AIChatMessageRetractEventData, eventId?: string | null) => void;
   onMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
+  onTokenUsageUpdated?: (
+    payload: AIChatTokenUsageUpdatedEventData,
+    eventId?: string | null
+  ) => void;
+  onTokenBudgetRequested?: (
+    payload: AIChatTokenBudgetRequestedEventData,
+    eventId?: string | null
+  ) => void;
   onErrorEvent: (payload: AIChatErrorEventData, eventId?: string | null) => void;
   onRequestError: (error: Error) => void;
   onClose: () => void;
@@ -207,6 +225,8 @@ export interface AIChatWorkflowApprovalContinuationPayload {
 }
 
 export interface AIChatRuntimeTransport {
+  readExecutionFile?: ExecutionFileReader;
+  readonly supportsRuntimeInput?: boolean;
   listConversations(params: {
     page: number;
     limit: number;
@@ -233,6 +253,11 @@ export interface AIChatRuntimeTransport {
     options?: { surface?: AIChatRuntimeSurface }
   ): Promise<ConversationSearchResult[]>;
   stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData>;
+  submitRuntimeInput?(
+    conversationId: string,
+    messageId: string,
+    payload: AIChatSubmitRuntimeInputRequest
+  ): Promise<AIChatSubmitRuntimeInputResponseData>;
   streamChat(
     payload: AIChatChatRequest,
     callbacks: AIChatStreamCallbacks,
@@ -412,6 +437,12 @@ export function dispatchAIChatStreamEvent(
     case 'memory_clear':
       callbacks.onMemoryMutation((data ?? {}) as AIChatMemoryMutationEventData, eventId);
       break;
+    case 'runtime_input_applied':
+      callbacks.onRuntimeInputApplied?.(
+        (data ?? {}) as AIChatRuntimeInputAppliedEventData,
+        eventId
+      );
+      break;
     case 'workflow_started':
       callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);
       break;
@@ -529,6 +560,18 @@ export function dispatchAIChatStreamEvent(
       break;
     case 'message_end':
       callbacks.onMessageEnd((data ?? {}) as AIChatMessageEndEventData, eventId);
+      break;
+    case 'token_usage_updated':
+      callbacks.onTokenUsageUpdated?.(
+        (data ?? {}) as AIChatTokenUsageUpdatedEventData,
+        eventId
+      );
+      break;
+    case 'token_budget_requested':
+      callbacks.onTokenBudgetRequested?.(
+        (data ?? {}) as AIChatTokenBudgetRequestedEventData,
+        eventId
+      );
       break;
     case 'error':
       callbacks.onErrorEvent((data ?? {}) as AIChatErrorEventData, eventId);

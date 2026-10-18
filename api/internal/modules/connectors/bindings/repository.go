@@ -50,6 +50,15 @@ type AuthorizationMutationRepository interface {
 	UpdateBindingAuthorizationWithLifecycle(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, *core.AccessConstraint, int, BindingLifecycleMutation) (core.TargetBinding, error)
 }
 
+// HostDelegationCandidateRepository reads active published bindings that have
+// explicitly delegated a target to one host audience. It is deliberately
+// separate from Repository because this lookup is organization-scoped rather
+// than owner-scoped and must only be exposed through the audited service
+// boundary.
+type HostDelegationCandidateRepository interface {
+	ListPublishedHostDelegations(context.Context, uuid.UUID, core.TargetRef, core.HostAudience) ([]core.TargetBinding, error)
+}
+
 type bindingLifecycleDecisionRecord struct {
 	TargetScope        string         `gorm:"column:target_scope"`
 	TargetVersionID    string         `gorm:"column:target_version_id"`
@@ -121,6 +130,10 @@ func (repository *GormRepository) UpsertBindingWithLifecycle(
 	expectedRevision int,
 	mutation BindingLifecycleMutation,
 ) (core.TargetBinding, bool, error) {
+	return repository.upsertBindingWithLifecycle(ctx, organizationID, ownerAccountID, binding, expectedRevision, mutation, false)
+}
+
+func (repository *GormRepository) upsertBindingWithLifecycle(ctx context.Context, organizationID, ownerAccountID uuid.UUID, binding core.TargetBinding, expectedRevision int, mutation BindingLifecycleMutation, replaceAuthorizedConstraint bool) (core.TargetBinding, bool, error) {
 	if err := repository.available(); err != nil {
 		return core.TargetBinding{}, false, err
 	}
@@ -164,9 +177,25 @@ func (repository *GormRepository) UpsertBindingWithLifecycle(
 		}
 
 		nested := &GormRepository{db: tx.Session(&gorm.Session{DisableNestedTransaction: true})}
+		if replaceAuthorizedConstraint {
+			if before == nil || before.ID != prepared.ID || before.ConnectionID != prepared.ConnectionID || before.Revision != expectedRevision {
+				return conflictError("replace DigitalHuman binding authority")
+			}
+			// Only the explicitly selected operation subset is replaceable. Existing
+			// expiry, deny reasons, owner and host boundaries remain restrictive.
+			constraint, err := core.IntersectConstraints(before.Constraint, prepared.Constraint)
+			if err != nil {
+				return err
+			}
+			constraint.AllowedOperationIDs = append([]core.Identifier{}, prepared.Constraint.AllowedOperationIDs...)
+			prepared.Constraint = constraint
+			if err := requireAuthorizedDigitalHumanConnection(ctx, tx, prepared); err != nil {
+				return err
+			}
+		}
 		var writeErr error
-		stored, created, writeErr = nested.UpsertBinding(
-			ctx, organizationID, ownerAccountID, prepared, expectedRevision,
+		stored, created, writeErr = nested.upsertBinding(
+			ctx, organizationID, ownerAccountID, prepared, expectedRevision, replaceAuthorizedConstraint,
 		)
 		if writeErr != nil {
 			return writeErr
@@ -323,6 +352,10 @@ func (repository *GormRepository) UpsertBinding(
 	binding core.TargetBinding,
 	expectedRevision int,
 ) (core.TargetBinding, bool, error) {
+	return repository.upsertBinding(ctx, organizationID, ownerAccountID, binding, expectedRevision, false)
+}
+
+func (repository *GormRepository) upsertBinding(ctx context.Context, organizationID, ownerAccountID uuid.UUID, binding core.TargetBinding, expectedRevision int, replaceAuthorizedConstraint bool) (core.TargetBinding, bool, error) {
 	if err := repository.available(); err != nil {
 		return core.TargetBinding{}, false, err
 	}
@@ -376,25 +409,29 @@ func (repository *GormRepository) UpsertBinding(
 		if constraintErr != nil {
 			return constraintErr
 		}
-		// The prepared binding is the current explicit authorization choice.
-		// Constraint intersection still narrows operations/targets, but the
-		// mode itself must support an intentional direct grant or revocation;
-		// otherwise a legacy ask_each_time row could never be changed.
-		narrowed.AuthorizationMode = prepared.Constraint.AuthorizationModeValue()
-		if narrowed.AuthorizationMode == core.AuthorizationModeDirect {
-			narrowed.AuthorizationConnectionRevision = prepared.Constraint.AuthorizationConnectionRevision
-			narrowed.AuthorizationCredentialVersion = prepared.Constraint.AuthorizationCredentialVersion
-			narrowed.AuthorizationContractDigest = prepared.Constraint.AuthorizationContractDigest
+		if replaceAuthorizedConstraint {
+			narrowed = prepared.Constraint
 		} else {
-			narrowed.AuthorizationConnectionRevision = 0
-			narrowed.AuthorizationCredentialVersion = 0
-			narrowed.AuthorizationContractDigest = ""
+			// The prepared binding is the current explicit authorization choice.
+			// Constraint intersection still narrows operations/targets, but the
+			// mode itself must support an intentional direct grant or revocation;
+			// otherwise a legacy ask_each_time row could never be changed.
+			narrowed.AuthorizationMode = prepared.Constraint.AuthorizationModeValue()
+			if narrowed.AuthorizationMode == core.AuthorizationModeDirect {
+				narrowed.AuthorizationConnectionRevision = prepared.Constraint.AuthorizationConnectionRevision
+				narrowed.AuthorizationCredentialVersion = prepared.Constraint.AuthorizationCredentialVersion
+				narrowed.AuthorizationContractDigest = prepared.Constraint.AuthorizationContractDigest
+			} else {
+				narrowed.AuthorizationConnectionRevision = 0
+				narrowed.AuthorizationCredentialVersion = 0
+				narrowed.AuthorizationContractDigest = ""
+			}
 		}
 		record.Constraint, constraintErr = json.Marshal(narrowed)
 		if constraintErr != nil {
 			return internalError("encode Connector restrictions")
 		}
-		if equivalentNativeBinding(existing, record) {
+		if equivalentNativeBinding(existing, record) && !replaceAuthorizedConstraint {
 			stored, lookupErr = existing.toDomain()
 			return lookupErr
 		}
@@ -487,6 +524,51 @@ func (repository *GormRepository) ListBindingsByTarget(
 	)
 	query = applyListOptions(query, options)
 	return findBindings(query.Order("connector_id ASC, binding_instance_id ASC NULLS FIRST, created_at ASC, id ASC"), "list connector target bindings by target")
+}
+
+func (repository *GormRepository) ListPublishedHostDelegations(ctx context.Context, organizationID uuid.UUID, target core.TargetRef, audience core.HostAudience) ([]core.TargetBinding, error) {
+	if err := repository.available(); err != nil {
+		return nil, err
+	}
+	if organizationID == uuid.Nil || (target.Type != core.TargetTypeAgent && target.Type != core.TargetTypeDigitalHuman) ||
+		target.EffectiveScope() != core.ScopePublished || target.Validate() != nil ||
+		(audience != core.HostAudienceWorkspace && audience != core.HostAudienceAPI && audience != core.HostAudienceChannel) {
+		return nil, invalidInputError("list published host delegations")
+	}
+	grant, err := json.Marshal(map[string]any{"host_delegation": map[string]any{"audiences": []core.HostAudience{audience}}})
+	if err != nil {
+		return nil, internalError("encode host delegation audience")
+	}
+	var records []bindingRecord
+	err = repository.db.WithContext(ctx).Where(
+		"organization_id = ? AND target_type = ? AND target_id = ? AND target_scope = ? AND target_version_id = ? AND status = ?",
+		organizationID, target.Type, target.ID, core.ScopePublished, target.VersionID, core.BindingStatusActive,
+	).Where("binding_constraint @> ?::jsonb", datatypes.JSON(grant)).
+		Order("connector_id ASC, binding_instance_id ASC NULLS FIRST, id ASC").Limit(51).Find(&records).Error
+	if err != nil || len(records) > 50 {
+		return nil, internalError("list published host delegations")
+	}
+	bindings := make([]core.TargetBinding, 0, len(records))
+	for _, record := range records {
+		binding, err := record.toDomain()
+		if err != nil || binding.OrganizationID != organizationID || binding.Target.Type != target.Type ||
+			binding.Target.ID != target.ID || binding.Target.EffectiveScope() != core.ScopePublished || binding.Target.VersionID != target.VersionID ||
+			binding.Status != core.BindingStatusActive || binding.Constraint == nil || binding.Constraint.HostDelegation == nil ||
+			binding.Constraint.HostDelegation.GrantedBy != binding.OwnerAccountID {
+			return nil, internalError("validate published host delegation")
+		}
+		allowed := false
+		for _, operation := range binding.Constraint.AllowedOperationIDs {
+			if binding.Constraint.AllowsHostAudience(binding.OwnerAccountID, operation, binding.Target, audience, time.Now().UTC()) {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			bindings = append(bindings, binding)
+		}
+	}
+	return bindings, nil
 }
 
 // ListBindingsByConnection supplies the complete owner-visible removal impact;
@@ -771,7 +853,7 @@ func equivalentBindingLifecycleJSON(left, right datatypes.JSON) bool {
 }
 
 func bindingLifecycleDetails(binding core.TargetBinding) map[string]any {
-		details := map[string]any{
+	details := map[string]any{
 		"binding_id": binding.ID.String(), "target_type": string(binding.Target.Type), "target_id": binding.Target.ID,
 		"binding_instance_id": binding.Target.BindingInstanceID, "status": string(binding.Status),
 		"authorization_mode": binding.Constraint.AuthorizationModeValue(),

@@ -644,6 +644,9 @@ func resolveDiagramFileLifecycle(raw string) (tool_file.ToolFileLifecycle, error
 }
 
 func appendDownloadQuery(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
 	if strings.Contains(rawURL, "?") {
 		return rawURL + "&download=1"
 	}

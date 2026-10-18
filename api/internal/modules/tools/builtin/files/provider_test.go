@@ -116,6 +116,38 @@ func TestReadFileToolReturnsAccessibleContent(t *testing.T) {
 	}
 }
 
+func TestReadFilePaginationPreservesUnicodeAndReachesTail(t *testing.T) {
+	organization, account := uuid.NewString(), uuid.NewString()
+	text := "  " + strings.Repeat("汉🙂", 7000) + "END\n"
+	files := &fakeFileService{files: map[string]*dto.UploadFile{"file-1": {
+		ID: "file-1", Name: "source.txt", OrganizationID: organization, CreatedBy: account,
+	}}}
+	extractor := &fakeContentExtractor{contents: map[string]*workflowfile.FileContent{"file-1": {FileID: "file-1", Content: text}}}
+	tool := readFileRuntimeTool(t, NewProvider(files, extractor, nil), organization)
+	var body strings.Builder
+	offset := 0
+	for {
+		messages, err := tool.Invoke(t.Context(), account, map[string]interface{}{"file_id": "file-1", "max_chars": 4000, "offset": offset}, nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := singleJSONPayload(t, messages)
+		body.WriteString(payload["content"].(string))
+		offset = payload["next_offset"].(int)
+		if payload["has_more"] == false {
+			break
+		}
+	}
+	if body.String() != text || offset <= 12000 {
+		t.Fatal("pagination changed source text or lost its tail")
+	}
+	for _, offset := range []interface{}{-1, 0.5, "1", 100000} {
+		if _, err := tool.Invoke(t.Context(), account, map[string]interface{}{"file_id": "file-1", "offset": offset}, nil, nil, nil); err == nil {
+			t.Fatalf("invalid offset accepted: %v", offset)
+		}
+	}
+}
+
 func TestListVisibleFilesToolReturnsRuntimeContextFiles(t *testing.T) {
 	workspaceID := "workspace-1"
 	listService := &fakeFileListService{files: []*filemodel.UploadFile{

@@ -109,6 +109,15 @@ func connectorConfirmationOrigin(
 		origin.ConversationID = strings.TrimSpace(execCtx.ConversationID)
 		origin.MessageID = strings.TrimSpace(execCtx.MessageID)
 		origin.AgentID = strings.TrimSpace(execCtx.AppID)
+	case core.TargetTypeDigitalHuman:
+		// A DigitalHuman confirmation stays on its own surface: the host run and
+		// the immutable target carry the identity, and the Agent/Workflow fields
+		// stay empty so the frozen invocation cannot resume as a Chat or Agent
+		// turn. The target binding instance is already pinned in the execution
+		// request the host freezes.
+		origin.RunID = strings.TrimSpace(execCtx.ConnectorRunID)
+		origin.ConversationID = strings.TrimSpace(execCtx.ConversationID)
+		origin.MessageID = strings.TrimSpace(execCtx.MessageID)
 	case core.TargetTypeWorkflow:
 		origin.WorkflowID = runtimeParameterString(execCtx.RuntimeParameters, "workflow_id")
 		origin.RunID = runtimeParameterString(execCtx.RuntimeParameters, "workflow_run_id")

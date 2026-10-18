@@ -4,11 +4,11 @@ Agent Memory stores up to five configured values per Agent and user. Existing va
 
 ## Write behavior
 
-- The conversation's main model receives a reserved `mutate_agent_memory` runtime tool. There is no keyword router or separate memory-planner model call. Explicit remember, correct, and forget requests are validated against exact text from the current user message before an atomic write.
+- The conversation's main model receives the unified `mutate_user_relationship_memory` runtime tool. There is no keyword router or separate memory-planner model call. Explicit remember, correct, and forget requests are validated against exact text from the current user message before an atomic write.
 - When the Agent's `auto_extraction_enabled` setting and the global automatic-write fuse are both enabled, the main model may proactively save direct, stable user facts, preferences, instructions, and ongoing context into any enabled slot. It cannot proactively clear memory.
 - Background extraction still runs after completed persisted turns become idle and supplements the main flow. It skips blocks already handled inline from the same messages and never scans messages older than the latest deletion cutoff or successful watermark.
 - `ZGI_AGENT_MEMORY_INLINE_TOOLS_ENABLED` defaults to `true` and is an immediate fuse for synchronous memory tools. Models without verified function-calling support continue chatting normally and cannot claim that a memory change succeeded.
-- `ZGI_AGENT_MEMORY_AUTO_EXTRACTION_ENABLED` defaults to `false` and gates both proactive inline writes and background extraction. Disabling it does not affect explicit tool operations, direct edits, chat, or existing memory reads.
+- `ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED` defaults to `false` and gates both proactive inline writes and background extraction. `ZGI_AGENT_MEMORY_AUTO_EXTRACTION_ENABLED` remains a one-release fallback during rolling upgrades. Disabling the fuse does not affect explicit tool operations, direct edits, chat, or existing memory reads.
 - Automatic writes can be undone for 24 hours if no later change has replaced their revision.
 
 Memory is injected as untrusted user context. It cannot elevate privileges, authorize tools, override Agent or platform rules, or supersede the current request.
@@ -27,4 +27,4 @@ Extraction jobs store message references rather than copied message text. Failed
 
 ## Release gate
 
-Keep the automatic-write fuse disabled until the bilingual evaluation reaches at least 95% automatic-write precision and 100% rejection for sensitive content, assistant-derived content, and illegal clear operations. The repository tests cover explicit remember/correct/forget operations, ordinary preferences, temporary and hypothetical statements, third-party facts, exact-evidence checks, prompt-injection boundaries, atomic rollback, idempotency, revision conflicts, deletion cutoffs, epoch invalidation, inline/background deduplication, and undo safety. Model-quality scoring must use the deployment's configured conversation and extraction models before enabling the fuse.
+`ZGI_RELATIONSHIP_MEMORY_ENABLED` is the fail-closed cutover switch between the legacy Agent value store and unified relationship memory. Keep the automatic-write fuse disabled until the bilingual evaluation reaches at least 95% automatic-write precision and 100% rejection for sensitive content, assistant-derived content, and illegal clear operations. The repository tests cover explicit remember/correct/forget operations, ordinary preferences, temporary and hypothetical statements, third-party facts, exact-evidence checks, prompt-injection boundaries, atomic rollback, idempotency, revision conflicts, deletion cutoffs, epoch invalidation, inline/background deduplication, and undo safety. Model-quality scoring must use the deployment's configured conversation and extraction models before enabling the fuse.

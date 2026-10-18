@@ -6,8 +6,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const pendingSetupsMigrationID = "20260904160000_connector_pending_setups"
-
 // RepairPendingSetupsCompatibility repairs a deployment that recorded the
 // pending-setups migration without actually applying its schema. It is a
 // no-op when the migration marker is absent so the normal migration runner can

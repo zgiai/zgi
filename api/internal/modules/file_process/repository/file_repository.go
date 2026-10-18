@@ -140,6 +140,13 @@ func (r *fileRepository) MarkAsUsed(ctx context.Context, id, usedBy string) erro
 		}).Error
 }
 
+func excludeRuntimeExternalFiles(query *gorm.DB) *gorm.DB {
+	return query.Where(`NOT EXISTS (
+		SELECT 1 FROM runtime_external_files runtime_file
+		WHERE runtime_file.file_id = upload_files.id
+	)`)
+}
+
 func applyVisibleFileAccessFilter(query *gorm.DB, workspaceIDs []string, accountID string, allowAllFolders bool) *gorm.DB {
 	if allowAllFolders || len(workspaceIDs) == 0 {
 		return query
@@ -191,7 +198,7 @@ func (r *fileRepository) ListByTenantIDs(ctx context.Context, tenantID, accountI
 	offset := (page - 1) * pageSize
 
 	// Build query
-	query := r.db.WithContext(ctx).Model(&file_model.UploadFile{}).Where("organization_id = ?", tenantID)
+	query := excludeRuntimeExternalFiles(r.db.WithContext(ctx).Model(&file_model.UploadFile{}).Where("organization_id = ?", tenantID))
 
 	if len(workspaceIDs) > 0 {
 		query = query.Where("workspace_id IN ?", workspaceIDs)
@@ -274,7 +281,7 @@ func (r *fileRepository) ListArchivedByTenantIDs(ctx context.Context, organizati
 	offset := (page - 1) * pageSize
 
 	// Build query for archived files
-	query := r.db.WithContext(ctx).Model(&file_model.UploadFile{}).Where("organization_id = ? AND is_archived = true", organizationID)
+	query := excludeRuntimeExternalFiles(r.db.WithContext(ctx).Model(&file_model.UploadFile{}).Where("organization_id = ? AND is_archived = true", organizationID))
 
 	if len(workspaceIDs) > 0 {
 		query = query.Where("workspace_id IN ?", workspaceIDs)

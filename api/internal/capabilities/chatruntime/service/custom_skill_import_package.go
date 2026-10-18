@@ -90,7 +90,7 @@ func extractSkillZip(data []byte, targetRoot string) (*extractedSkillPackage, er
 	}
 	sort.Strings(files)
 	sort.Slice(fileDetails, func(i, j int) bool { return fileDetails[i].Path < fileDetails[j].Path })
-	return &extractedSkillPackage{Root: targetRoot, FileCount: fileCount, TotalSize: totalSize, Files: files, FileDetails: fileDetails}, nil
+	return &extractedSkillPackage{Root: targetRoot, PackageName: strings.TrimSuffix(prefix, "/"), FileCount: fileCount, TotalSize: totalSize, Files: files, FileDetails: fileDetails}, nil
 }
 
 func detectSkillZipRoot(files []*zip.File) (string, error) {

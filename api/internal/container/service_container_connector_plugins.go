@@ -186,6 +186,21 @@ func (c *ServiceContainer) loadBuiltinConnectorPluginDefinitions(
 	}
 	grouped := make(map[string][]connectorcatalog.Definition)
 	for _, definition := range projected {
+		// Built-in connectors are admitted once for each runtime surface. The
+		// Digital-Human picker and target authority intentionally rely on the
+		// catalog contract rather than maintaining a second allow-list. Preserve
+		// the mail credential dialect (mail providers have their own versioned
+		// contract), and leave a connector that is already a V4 Digital-Human
+		// contract unchanged (for example serverops_ssh). All other built-ins
+		// get the reviewed additive projection used by the connector feature
+		// branch, so existing chat/agent/workflow connectors are also available
+		// to a Digital-Human binding.
+		if !definition.IsMailCredentials() && !definition.IsDigitalHumanContract() {
+			definition, err = connectorcatalog.WithDigitalHumanSurface(definition, definition.PluginVersion+"-digitalhuman.1")
+			if err != nil {
+				return nil, fmt.Errorf("project built-in Connector %s for Digital-Human surface: %w", definition.ID, err)
+			}
+		}
 		grouped[definition.PluginID] = append(grouped[definition.PluginID], definition)
 	}
 	pluginIDs := make([]string, 0, len(grouped))

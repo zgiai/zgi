@@ -28,6 +28,10 @@ func Verify(ctx context.Context, db *gorm.DB, options Options) (Report, error) {
 }
 
 func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
+	return verifyWithHosts(db, option, requireMarker, hostTables())
+}
+
+func verifyWithHosts(db *gorm.DB, option Options, requireMarker bool, hostsToRead []string) (Report, error) {
 	r := Report{Version: ReportVersion, Source: []TableProof{}, Issues: []Issue{}}
 	if err := db.Exec("SET LOCAL TIME ZONE 'UTC'").Error; err != nil {
 		return r, err
@@ -53,7 +57,7 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 	if r.Native, err = readTables(db, native, data, &size); err != nil {
 		return r, err
 	}
-	if r.Hosts, err = readTables(db, hostTables(), data, &size); err != nil {
+	if r.Hosts, err = readTables(db, hostsToRead, data, &size); err != nil {
 		return r, err
 	}
 	if len(data["connector_schema_readiness"]) != 1 {
@@ -64,9 +68,14 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 	if r.SchemaVersion != 2 || r.State != "ready" || ready["verified_at"] == nil {
 		return r, fmt.Errorf("schema2 is not ready")
 	}
-	if err = db.Raw("SELECT max(id) FROM public.migrations").Scan(&r.Checkpoint).Error; err != nil {
+	var migrationIDs []string
+	if err = db.Table("public.migrations").Order("id").Pluck("id", &migrationIDs).Error; err != nil {
 		return r, err
 	}
+	if len(migrationIDs) > 0 {
+		r.Checkpoint = migrationIDs[len(migrationIDs)-1]
+	}
+	r.MigrationHistoryDigest = digest(migrationIDs)
 	if requireMarker {
 		var marker int64
 		if err := db.Table("migrations").Where("id=?", MigrationID).Count(&marker).Error; err != nil {
@@ -147,6 +156,7 @@ func verify(db *gorm.DB, option Options, requireMarker bool) (Report, error) {
 	validateNativeCatalog(db, data, &r)
 	validateNativeClaims(data, &r)
 	validateNativeEnvelopes(db, data, &r, option.Credentials)
+	validateDigitalHumanPreservation(data, &r)
 	changes, err := catalogChanges(data)
 	if err != nil || len(changes) > 0 {
 		addIssue(&r, "connector_definitions", "retired_skill_reference")

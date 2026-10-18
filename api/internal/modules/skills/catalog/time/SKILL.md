@@ -11,6 +11,7 @@ tools:
 supported_callers:
   - aichat
   - agent
+  - digital_human
   - workflow
 max_calls_per_turn: 20
 timeout_seconds: 5

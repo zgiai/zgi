@@ -222,41 +222,41 @@ export default function WorkflowFeaturesModal({ open, onClose }: WorkflowFeature
                     {t('agents.workflow.features.allowedTypes')}
                   </Label>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {[
-                      { id: 'type-image', type: 'image' },
-                      { id: 'type-audio', type: 'audio' },
-                      { id: 'type-video', type: 'video' },
-                      { id: 'type-document', type: 'document' },
-                      { id: 'type-custom', type: 'custom' },
-                    ].map(item => (
+                    {(
+                      [
+                        { id: 'type-image', type: 'image' },
+                        { id: 'type-audio', type: 'audio' },
+                        { id: 'type-video', type: 'video' },
+                        { id: 'type-document', type: 'document' },
+                        { id: 'type-custom', type: 'custom' },
+                      ] as const
+                    ).map(item => (
                       <div
                         key={item.id}
                         className={cn(
                           'flex items-center gap-2.5 p-3 rounded-xl border transition-all cursor-pointer',
-                          (form.file_upload?.allowed_file_types ?? []).includes(item.type as any)
+                          (form.file_upload?.allowed_file_types ?? []).includes(item.type)
                             ? 'border-primary bg-primary/[0.03] shadow-sm'
                             : 'border-neutral-200 bg-white hover:border-neutral-300'
                         )}
                         onClick={() =>
                           toggleAllowedType(
-                            item.type as any,
-                            !(form.file_upload?.allowed_file_types ?? []).includes(item.type as any)
+                            item.type,
+                            !(form.file_upload?.allowed_file_types ?? []).includes(item.type)
                           )
                         }
                       >
                         <Checkbox
                           id={item.id}
-                          checked={(form.file_upload?.allowed_file_types ?? []).includes(
-                            item.type as any
-                          )}
-                          onCheckedChange={c => toggleAllowedType(item.type as any, Boolean(c))}
+                          checked={(form.file_upload?.allowed_file_types ?? []).includes(item.type)}
+                          onCheckedChange={c => toggleAllowedType(item.type, Boolean(c))}
                           className="data-[state=checked]:bg-primary border-neutral-300"
                         />
                         <Label
                           htmlFor={item.id}
                           className="text-sm font-semibold cursor-pointer select-none"
                         >
-                          {t(`agents.workflow.features.typeLabels.${item.type}` as any)}
+                          {t(`agents.workflow.features.typeLabels.${item.type}`)}
                         </Label>
                       </div>
                     ))}

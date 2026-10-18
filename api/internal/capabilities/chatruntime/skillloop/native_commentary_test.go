@@ -1,6 +1,7 @@
 package skillloop
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -8,6 +9,33 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+func TestNativeCommentaryRecognizesOnlyRegisteredRuntimeTools(t *testing.T) {
+	for _, name := range []string{"shell_exec", "workspace_export_file"} {
+		t.Run(name, func(t *testing.T) {
+			tool := RuntimeTool{SkillID: "agent_execution", Definition: adapter.Tool{Function: adapter.Function{Name: name}}, Handler: func(context.Context, adapter.ToolCall) RuntimeToolResult { return RuntimeToolResult{} }}
+			call := nativeCommentaryTestCall("runtime-1", name)
+			for _, test := range []struct {
+				content string
+				call    adapter.ToolCall
+				tool    RuntimeTool
+				want    string
+			}{
+				{"数据已经准备好，接下来将生成结果文件。", call, tool, ""},
+				{"I will call " + name + " next.", call, tool, nativeCommentaryRejectInternalIdentity},
+				{"The agent_execution runtime is ready.", call, tool, nativeCommentaryRejectInternalIdentity},
+				{"Preparing the result.", call, RuntimeTool{Definition: tool.Definition}, nativeCommentaryRejectNoBusinessTool},
+				{"Preparing the result.", nativeCommentaryTestCall("unknown-1", "unregistered"), tool, nativeCommentaryRejectNoBusinessTool},
+				{"Preparing the result.", adapter.ToolCall{Function: adapter.FunctionCall{Name: name, Arguments: "{"}}, tool, nativeCommentaryRejectNoBusinessTool},
+			} {
+				decision := newNativeCommentaryState("qwen-plus", nil).classify(test.content, []adapter.ToolCall{test.call}, nil, test.tool)
+				if decision.reason != test.want || (decision.disposition == nativeCommentaryDispositionProcess) != (test.want == "") {
+					t.Fatalf("content %q decision = %#v, want rejection %q", test.content, decision, test.want)
+				}
+			}
+		})
+	}
+}
 
 func TestNativeCommentaryClassifiesBusinessAndControlTurns(t *testing.T) {
 	toolSet := nativeCommentaryTestToolSet()

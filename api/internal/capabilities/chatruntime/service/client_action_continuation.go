@@ -201,6 +201,9 @@ func (s *service) runConfiguredClientActionContinuationStream(
 	if err := s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
 	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
+		return result, budgetErr
+	}
 	timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, onEvent)
 	if err := timeline.RecordEvent(streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req)); err != nil {
 		return nil, finalizedRuntimePersistenceError(err)
@@ -209,6 +212,9 @@ func (s *service) runConfiguredClientActionContinuationStream(
 	var usage *adapter.Usage
 	answer, usage, err = s.runPreparedToolStream(runCtx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
+		if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, onEvent); handled {
+			return result, budgetErr
+		}
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
 			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
@@ -262,6 +268,9 @@ func (s *service) runConfiguredClientActionContinuationStream(
 			return nil, finalizedRuntimePersistenceError(finalizeErr)
 		}
 		return nil, newFinalizedStreamError(err)
+	}
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, nil, onEvent); handled {
+		return result, budgetErr
 	}
 	if s.streams.IsStopped(message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
@@ -503,7 +512,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
@@ -514,6 +523,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 		Continuation:                   true,
 		ContinuationType:               "client_action",
 		SuppressInitialNaturalProgress: true,
+		taskTokenBudget:                taskTokenBudgetFromMetadata(message.Metadata),
 	}
 	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
 	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req, message.Metadata)

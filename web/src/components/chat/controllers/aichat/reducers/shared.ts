@@ -222,6 +222,9 @@ function visibleSkillInvocations(
 ): AIChatSkillInvocation[] {
   return (invocations ?? []).filter(invocation => {
     const status = String(invocation.status ?? '').toLowerCase();
+    if (invocation.presentation_visibility?.toLowerCase() === 'internal') {
+      return false;
+    }
     const record = invocation as unknown as Record<string, unknown>;
     const result =
       invocation.result &&
@@ -743,6 +746,7 @@ function skillInvocationStatusRank(status: string | undefined): number {
     case 'waiting_approval':
     case 'waiting_client_action':
     case 'waiting_question':
+    case 'waiting_budget':
       return 20;
     case 'running':
     case 'loading':

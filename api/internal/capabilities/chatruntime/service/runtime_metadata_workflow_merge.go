@@ -31,7 +31,7 @@ func mergeWorkflowRun(existing map[string]interface{}, incoming map[string]inter
 		case "nodes":
 			merged["nodes"] = mergeWorkflowNodes(workflowNodesFromMetadata(merged["nodes"]), workflowNodesFromMetadata(value))
 		case "approval":
-			merged["approval"] = mergeWorkflowMap(workflowRecordFromAny(merged["approval"]), workflowRecordFromAny(value))
+			merged["approval"] = mergeWorkflowApproval(workflowRecordFromAny(merged["approval"]), workflowRecordFromAny(value))
 		case "approval_result":
 			merged["approval_result"] = mergeWorkflowMap(workflowRecordFromAny(merged["approval_result"]), workflowRecordFromAny(value))
 			merged["approval"] = workflowApprovalWithStatus(merged["approval"], "submitted")
@@ -245,6 +245,24 @@ func workflowNodeIdentity(node map[string]interface{}) string {
 		"type:" + strings.TrimSpace(stringFromAny(node["node_type"])),
 		"title:" + strings.TrimSpace(stringFromAny(node["title"])),
 	}, ":")
+}
+
+// mergeWorkflowApproval merges updates of the same approval. A later approval
+// of the run (another form) replaces the record, so nothing of the earlier one,
+// its token in particular, is kept beside the new form.
+func mergeWorkflowApproval(existing map[string]interface{}, incoming map[string]interface{}) map[string]interface{} {
+	existingFormID, incomingFormID := workflowApprovalFormID(existing), workflowApprovalFormID(incoming)
+	if existingFormID != "" && incomingFormID != "" && existingFormID != incomingFormID {
+		return mergeWorkflowMap(nil, incoming)
+	}
+	return mergeWorkflowMap(existing, incoming)
+}
+
+func workflowApprovalFormID(approval map[string]interface{}) string {
+	if id := strings.TrimSpace(firstNonEmptyString(approval["approval_form_id"], approval["form_id"])); id != "" {
+		return id
+	}
+	return strings.TrimSpace(firstNonEmptyString(workflowRecordFromAny(approval["approval_form"])["id"]))
 }
 
 func mergeWorkflowMap(existing map[string]interface{}, incoming map[string]interface{}) map[string]interface{} {

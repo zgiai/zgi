@@ -15,6 +15,37 @@ func (authority *connectorTargetAuthority) verifyHostReference(ctx context.Conte
 	if b.Target.Type == core.TargetTypeChat {
 		return nil
 	}
+	if b.Target.Type == core.TargetTypeDigitalHuman {
+		var row struct {
+			ResourceID, ParentResourceID, AuthorizedBy string
+			Metadata                                   []byte
+		}
+		query := authority.container.db.WithContext(ctx).
+			Table("digital_human_resource_bindings AS r").
+			Select("r.resource_id, r.parent_resource_id, r.authorized_by, r.metadata").
+			Joins("JOIN digital_human_versions AS v ON v.id = r.digital_human_version_id").
+			Where("r.id = ? AND r.organization_id = ? AND r.digital_human_id = ? AND r.binding_type = ? AND r.access_mode = ?", b.Target.BindingInstanceID, b.OrganizationID, b.Target.ID, "connector", "execute")
+		if b.Target.EffectiveScope() == core.ScopePublished {
+			query = query.Where("v.id = ? AND v.state = ?", b.Target.VersionID, "published")
+		} else {
+			query = query.Where("v.state = ?", "draft")
+		}
+		if query.Take(&row).Error != nil || row.ResourceID != b.ConnectionID.String() || row.ParentResourceID != b.ConnectorID.String() || row.AuthorizedBy != b.OwnerAccountID.String() {
+			return targetDenied()
+		}
+		var metadata struct {
+			Operations []string `json:"allowed_operation_ids"`
+		}
+		if json.Unmarshal(row.Metadata, &metadata) != nil {
+			return targetDenied()
+		}
+		for _, op := range metadata.Operations {
+			if op == request.OperationID.String() {
+				return nil
+			}
+		}
+		return targetDenied()
+	}
 	var row struct{ Document string }
 	db := authority.container.db.WithContext(ctx)
 	switch b.Target.Type {

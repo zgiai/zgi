@@ -14,9 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
+	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
@@ -25,6 +28,8 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -44,6 +49,13 @@ type AgentsHandler struct {
 	workflowContinuationRunner workflowContinuationRunner
 	voiceService               *VoiceService
 	speechService              *SpeechService
+	executionApprovals         agentExecutionApprovals
+	executionGateway           agentExecutionGateway
+	executionArtifactPersister agentExecutionArtifactPersister
+	appErrorProjector          *apptransport.Projector
+	// Server wiring will supply this only with the corresponding P4 routes.
+	// It is never derived from request fields or the operator entry allowlist.
+	executionEntryReady func(applicationType, entry string) bool
 }
 
 type workflowContinuationRunner interface {
@@ -63,12 +75,16 @@ func NewAgentsHandler(appService AgentsService, tenantService interfaces.Workspa
 		chatRuntimeService = chatRuntimeServices[0]
 	}
 	return &AgentsHandler{
-		appService:          appService,
-		tenantService:       tenantService,
-		accountService:      accountService,
-		organizationService: organizationService,
-		db:                  db,
-		chatRuntimeService:  chatRuntimeService,
+		appService:                 appService,
+		tenantService:              tenantService,
+		accountService:             accountService,
+		organizationService:        organizationService,
+		db:                         db,
+		chatRuntimeService:         chatRuntimeService,
+		executionApprovals:         agentExecutionApprovalsFromEnv(),
+		executionGateway:           agentExecutionGatewayFromEnv(),
+		executionEntryReady:        executionruntime.InteractiveEntryImplemented,
+		executionArtifactPersister: defaultAgentExecutionArtifactPersister{},
 	}
 }
 
@@ -86,6 +102,15 @@ func (h *AgentsHandler) SetVoiceService(voiceService *VoiceService) {
 
 func (h *AgentsHandler) SetSpeechService(speechService *SpeechService) {
 	h.speechService = speechService
+}
+
+func (h *AgentsHandler) SetApplicationErrorCatalog(catalog *appcatalog.Catalog) error {
+	projector, err := apptransport.NewProjector(catalog)
+	if err != nil {
+		return err
+	}
+	h.appErrorProjector = projector
+	return nil
 }
 
 func (h *AgentsHandler) SetWorkflowContinuationRunner(runner interface {
@@ -161,6 +186,10 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
+	}
+	if _, err := parseRunnableWebAppTagIDs(req.TagIDs); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
 	}
 
 	// 4. Validate and normalize pagination parameters
@@ -248,6 +277,33 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) GetAgentCatalogTagFacets(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if _, err := uuid.Parse(accountID); err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.GetAgentCatalogTagFacetsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.GetAgentCatalogTagFacets(c.Request.Context(), accountID, req)
+	if err != nil {
+		if errors.Is(err, errInvalidAgentListAssetKind) {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		if errors.Is(err, errCurrentOrganizationNotFound) {
+			response.Fail(c, response.ErrOrganizationNotFound)
+			return
+		}
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) GetRunnableWebApps(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -277,11 +333,15 @@ func (h *AgentsHandler) GetRunnableWebApps(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if _, err := parseRunnableWebAppTagIDs(req.TagIDs); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	result, err := h.appService.GetRunnableWebApps(c.Request.Context(), accountID, req)
 	if err != nil {
 		switch {
-		case errors.Is(err, errInvalidRunnableWebAppIDs):
+		case errors.Is(err, errInvalidRunnableWebAppIDs), errors.Is(err, runtimeservice.ErrInvalidInput):
 			response.Fail(c, response.ErrInvalidParam)
 		case errors.Is(err, errCurrentOrganizationNotFound):
 			response.Fail(c, response.ErrOrganizationNotFound)
@@ -292,6 +352,73 @@ func (h *AgentsHandler) GetRunnableWebApps(c *gin.Context) {
 		return
 	}
 
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) GetRunnableWebAppTagFacets(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if _, err := uuid.Parse(accountID); err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.GetRunnableWebAppsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.WorkspaceID != "" {
+		if _, err := uuid.Parse(req.WorkspaceID); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+	}
+	result, err := h.appService.GetRunnableWebAppTagFacets(c.Request.Context(), accountID, req)
+	if err != nil {
+		if errors.Is(err, errCurrentOrganizationNotFound) {
+			response.Fail(c, response.ErrOrganizationNotFound)
+			return
+		}
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) GetAgentCatalogTags(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx := agentRuntimeRequestContext(c, accountID)
+	result, err := h.appService.GetAgentCatalogTags(ctx, c.Param("agent_id"), accountID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ReplaceAgentCatalogTags(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.ReplaceAgentCatalogTagsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.ReplaceAgentCatalogTags(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	response.Success(c, result)
 }
 
@@ -893,6 +1020,11 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	if err := h.attachConsoleAgentExecutionTools(&runConfig, scope, agentID, draft.Config); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
 		scope,
@@ -1109,7 +1241,9 @@ func (h *AgentsHandler) GetWebAppUploadConfig(c *gin.Context) {
 		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
-	response.Success(c, h.fileService.GetUploadConfig())
+	config := *h.fileService.GetUploadConfig()
+	config.ChatUploadPolicy = config.ChatPolicy(published.Config.FileUploadPolicy)
+	response.Success(c, config)
 }
 
 func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
@@ -1137,6 +1271,7 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, chatfile.MaxRequestBytes)
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		response.Fail(c, response.ErrNoFileUploaded)
@@ -1151,9 +1286,22 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		response.Fail(c, response.ErrFilenameRequired)
 		return
 	}
-	content, err := io.ReadAll(file)
+	policy := h.fileService.GetUploadConfig().ChatPolicy(published.Config.FileUploadPolicy)
+	if err := policy.ValidateFile(chatfile.Extension(header.Filename), header.Size); err != nil {
+		if errors.Is(err, chatfile.ErrUnsupportedType) {
+			response.Fail(c, response.ErrUnsupportedFileType)
+		} else {
+			response.Fail(c, response.ErrFileTooLarge)
+		}
+		return
+	}
+	content, err := io.ReadAll(io.LimitReader(file, chatfile.MaxTurnBytes+1))
 	if err != nil {
 		response.Fail(c, response.ErrFileReadFailed)
+		return
+	}
+	if policy.ValidateFile(chatfile.Extension(header.Filename), int64(len(content))) != nil {
+		response.Fail(c, response.ErrFileTooLarge)
 		return
 	}
 	mimeType := header.Header.Get("Content-Type")
@@ -1186,6 +1334,19 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		}
 		return
 	}
+	// Authenticated attachment reads need provenance even with Linux disabled.
+	if c.GetBool("is_authenticated") || (published.Config.ExecutionRuntime != nil && published.Config.ExecutionRuntime.Enabled) {
+		owner := execution.UploadOwner{OrganizationID: published.OrganizationID, WorkspaceID: published.WorkspaceID,
+			ApplicationType: "agent", ApplicationID: published.AgentID, Entry: "webapp", SubjectKind: "account", SubjectID: accountID}
+		if err := execution.BindUpload(c.Request.Context(), h.db, uploadFile.ID, owner); err != nil {
+			if cleanupErr := h.fileService.DeleteFiles(c.Request.Context(), []string{uploadFile.ID}); cleanupErr != nil {
+				logger.ErrorContext(c.Request.Context(), "failed to clean up unbound execution upload", cleanupErr)
+			}
+			logger.ErrorContext(c.Request.Context(), "failed to bind execution upload", err)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
 	response.Success(c, dto.NewFileUploadResponse(uploadFile))
 }
 
@@ -1211,6 +1372,7 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		return dto.AgentPublicWebAppConfigResponse{}
 	}
 	return dto.AgentPublicWebAppConfigResponse{
+		FileUploadPolicy:   chatfile.Clone(result.Config.FileUploadPolicy),
 		AgentID:            result.AgentID,
 		WebAppID:           result.WebAppID,
 		AgentType:          result.AgentType,
@@ -1226,17 +1388,22 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		FileUpload:         result.Config.FileUpload,
 		SupportsVision:     result.Config.SupportsVision,
 		AgentMemoryEnabled: result.Config.AgentMemoryEnabled,
+		LoginRequired:      agentWebAppRequiresLogin(result.Config),
 		Version:            result.Version,
 		VersionUUID:        result.VersionUUID,
 	}
 }
 
 func requireAuthenticatedWebAppAgentWhenMemoryEnabled(c *gin.Context, published *dto.AgentWebAppRuntimeConfigResponse) bool {
-	if published != nil && published.Config.AgentMemoryEnabled && !c.GetBool("is_authenticated") {
+	if published != nil && agentWebAppRequiresLogin(published.Config) && !c.GetBool("is_authenticated") {
 		response.Fail(c, response.ErrUnauthorized)
 		return false
 	}
 	return true
+}
+
+func agentWebAppRequiresLogin(config dto.AgentConfigResponse) bool {
+	return config.AgentMemoryEnabled || config.FileUpload || (config.ExecutionRuntime != nil && config.ExecutionRuntime.Enabled)
 }
 
 func requireAuthenticatedWebAppAgentFileAccess(c *gin.Context) bool {
@@ -1313,15 +1480,21 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
+	caller := runtimeservice.Caller{
+		Type:           runtimemodel.ConversationCallerAgent,
+		ID:             &agentID,
+		Source:         runtimemodel.ConversationSourceWebApp,
+		SourceWebAppID: &sourceWebAppID,
+	}
+	if err := h.attachPublishedAgentExecutionTools(c.Request.Context(), &runConfig, scope, caller, published, c.GetBool("is_authenticated"), uuid.Nil); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		c.Request.Context(),
 		scope,
-		runtimeservice.Caller{
-			Type:           runtimemodel.ConversationCallerAgent,
-			ID:             &agentID,
-			Source:         runtimemodel.ConversationSourceWebApp,
-			SourceWebAppID: &sourceWebAppID,
-		},
+		caller,
 		runConfig,
 		req,
 	)
@@ -1376,9 +1549,11 @@ func setupAgentSSE(c *gin.Context) {
 }
 
 const (
-	agentSSEConversationIDHeader = "X-ZGI-Conversation-ID"
-	agentSSEMessageIDHeader      = "X-ZGI-Message-ID"
-	externalAgentAPIContextKey   = "external_agent_api"
+	agentSSEConversationIDHeader          = "X-ZGI-Conversation-ID"
+	agentSSEMessageIDHeader               = "X-ZGI-Message-ID"
+	externalAgentAPIContextKey            = "external_agent_api"
+	ExternalAgentRuntimeOutcomeContextKey = "external_agent_runtime_outcome"
+	ExternalAgentRuntimeOutcomeFailure    = "failure"
 )
 
 func setupPreparedAgentSSE(c *gin.Context, prepared *runtimeservice.PreparedChat) {
@@ -1396,6 +1571,14 @@ func writeAgentSSE(c *gin.Context, event string, data interface{}) error {
 }
 
 func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
+	// Budget-pending turns already deliver a durable message_end through the
+	// runtime event callback immediately after token_budget_requested.  The
+	// regular handler tail must not write a second terminal event for the same
+	// message, otherwise external API clients observe duplicate message_end
+	// frames and may resume against an already-paused turn twice.
+	if result != nil && result.Status == runtimemodel.MessageStatusWaitingBudget {
+		return
+	}
 	status := runtimemodel.MessageStatusCompleted
 	metadata := map[string]interface{}{}
 	eventID := ""
@@ -1416,16 +1599,34 @@ func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, re
 	})
 }
 
+func markExternalAgentRuntimeFailure(c *gin.Context) {
+	if c != nil && c.GetBool(externalAgentAPIContextKey) {
+		c.Set(ExternalAgentRuntimeOutcomeContextKey, ExternalAgentRuntimeOutcomeFailure)
+	}
+}
+
 func writeAgentSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
 	if c.GetBool(externalAgentAPIContextKey) && isSidebarOnlyAgentEvent(event) {
 		return nil
 	}
+	if strings.TrimSpace(event) == "error" {
+		markExternalAgentRuntimeFailure(c)
+	}
+	var err error
+	wrote := false
 	if value, ok := c.Get(agentSSEWriterContextKey); ok {
 		if writer, writerOK := value.(*agentSSEWriter); writerOK && writer != nil {
-			return writer.WriteEvent(id, event, data)
+			wrote = true
+			err = writer.WriteEvent(id, event, data)
 		}
 	}
-	return writeAgentSSERaw(c, id, event, data)
+	if !wrote {
+		err = writeAgentSSERaw(c, id, event, data)
+	}
+	if err != nil {
+		markExternalAgentRuntimeFailure(c)
+	}
+	return err
 }
 
 func isSidebarOnlyAgentEvent(event string) bool {

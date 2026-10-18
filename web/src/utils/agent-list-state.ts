@@ -15,12 +15,14 @@ export type AgentListWorkflowTypeFilter = 'all' | 'CONVERSATIONAL_WORKFLOW' | 'W
 export interface AgentListFilters {
   publishFilter: AgentListPublishFilter;
   workflowTypeFilter: AgentListWorkflowTypeFilter;
+  tagFilter: string;
 }
 
 export interface AgentListNavigationState {
   keyword: string;
   publishFilter: AgentListPublishFilter;
   workflowTypeFilter: AgentListWorkflowTypeFilter;
+  tagFilter: string;
   loadedPageCount: number;
   scrollTop: number;
   workspaceId?: string;
@@ -42,6 +44,7 @@ interface AgentListPagesSnapshot {
   keyword: string;
   publishFilter: AgentListPublishFilter;
   workflowTypeFilter: AgentListWorkflowTypeFilter;
+  tagFilter: string;
   workspaceId?: string;
   pages: Array<ApiResponseData<AgentList>>;
   updatedAt: number;
@@ -61,6 +64,10 @@ function normalizePublishFilter(value: unknown): AgentListPublishFilter {
 
 function normalizeWorkflowTypeFilter(value: unknown): AgentListWorkflowTypeFilter {
   return value === 'CONVERSATIONAL_WORKFLOW' || value === 'WORKFLOW' ? value : 'all';
+}
+
+function normalizeTagFilter(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : 'all';
 }
 
 function getSessionStorage(): Storage | null {
@@ -92,6 +99,7 @@ function normalizeState(
     keyword: typeof candidate.keyword === 'string' ? candidate.keyword : '',
     publishFilter: normalizePublishFilter(candidate.publishFilter),
     workflowTypeFilter: normalizeWorkflowTypeFilter(candidate.workflowTypeFilter),
+    tagFilter: normalizeTagFilter(candidate.tagFilter),
     loadedPageCount,
     scrollTop,
     workspaceId: typeof candidate.workspaceId === 'string' ? candidate.workspaceId : undefined,
@@ -122,13 +130,14 @@ export function readAgentListInitialKeyword(scope: AgentListScope = 'agents'): s
 
 export function readAgentListInitialFilters(scope: AgentListScope = 'agents'): AgentListFilters {
   if (!hasAgentListRestoreIntent(scope)) {
-    return { publishFilter: 'all', workflowTypeFilter: 'all' };
+    return { publishFilter: 'all', workflowTypeFilter: 'all', tagFilter: 'all' };
   }
 
   const state = readAgentListNavigationState(scope);
   return {
     publishFilter: state?.publishFilter ?? 'all',
     workflowTypeFilter: state?.workflowTypeFilter ?? 'all',
+    tagFilter: state?.tagFilter ?? 'all',
   };
 }
 
@@ -254,6 +263,7 @@ function readAgentListPagesSnapshot(
     const stateKeyword = typeof state.keyword === 'string' ? state.keyword : '';
     const statePublishFilter = normalizePublishFilter(state.publishFilter);
     const stateWorkflowTypeFilter = normalizeWorkflowTypeFilter(state.workflowTypeFilter);
+    const stateTagFilter = normalizeTagFilter(state.tagFilter);
     const stateWorkspaceId = typeof state.workspaceId === 'string' ? state.workspaceId : undefined;
     if (
       !Number.isFinite(updatedAt) ||
@@ -261,6 +271,7 @@ function readAgentListPagesSnapshot(
       snapshot.keyword !== stateKeyword ||
       normalizePublishFilter(snapshot.publishFilter) !== statePublishFilter ||
       normalizeWorkflowTypeFilter(snapshot.workflowTypeFilter) !== stateWorkflowTypeFilter ||
+      normalizeTagFilter(snapshot.tagFilter) !== stateTagFilter ||
       snapshot.workspaceId !== stateWorkspaceId ||
       !Array.isArray(snapshot.pages)
     ) {
@@ -290,6 +301,7 @@ export function writeAgentListNavigationState(
         keyword: state.keyword,
         publishFilter: state.publishFilter,
         workflowTypeFilter: state.workflowTypeFilter,
+        tagFilter: state.tagFilter,
         loadedPageCount: Math.max(0, state.loadedPageCount),
         scrollTop: Math.max(0, state.scrollTop),
         workspaceId: state.workspaceId,
@@ -304,6 +316,7 @@ export function writeAgentListNavigationState(
           keyword: state.keyword,
           publishFilter: state.publishFilter,
           workflowTypeFilter: state.workflowTypeFilter,
+          tagFilter: state.tagFilter,
           workspaceId: state.workspaceId,
           pages: state.pages.slice(0, AGENT_LIST_MAX_SNAPSHOT_PAGES),
           updatedAt,

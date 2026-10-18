@@ -38,6 +38,21 @@ func TestParseDelimitedRowsAsDoc(t *testing.T) {
 	}
 }
 
+func TestParseDelimitedRowsAsDocStripsUTF8BOMFromFirstHeader(t *testing.T) {
+	data := append([]byte{0xEF, 0xBB, 0xBF}, []byte("姓名,年龄\n杨一,23")...)
+	doc, err := parseDelimitedRowsAsDoc("bom.csv", data, ',', "local:csv")
+	if err != nil {
+		t.Fatalf("parse CSV with UTF-8 BOM: %v", err)
+	}
+
+	if got, want := doc.Chunks[0].Text, `"姓名":"杨一";"年龄":"23"`; got != want {
+		t.Fatalf("chunk text=%q, want %q", got, want)
+	}
+	if strings.Contains(doc.Markdown, "\ufeff") {
+		t.Fatalf("markdown retained UTF-8 BOM: %q", doc.Markdown)
+	}
+}
+
 func TestParseXLSXRowsAsDoc(t *testing.T) {
 	buf := bytes.NewBuffer(nil)
 	f := excelize.NewFile()

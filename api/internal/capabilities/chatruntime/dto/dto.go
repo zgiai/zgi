@@ -1,5 +1,7 @@
 package dto
 
+import "github.com/google/uuid"
+
 const (
 	RuntimeSurfaceWorkChat          = "work_chat"
 	RuntimeSurfaceContextualSidebar = "contextual_sidebar"
@@ -35,6 +37,31 @@ type ChatRequest struct {
 	ResponseMode                     string                 `json:"response_mode,omitempty"`
 	Parameters                       map[string]interface{} `json:"parameters,omitempty"`
 	UseMemory                        bool                   `json:"use_memory,omitempty"`
+	// MaxTaskTokens caps the total provider-reported model tokens for this
+	// API-originated task. Zero keeps the legacy unlimited behaviour and is
+	// never populated by Workflow callers.
+	MaxTaskTokens int `json:"max_task_tokens,omitempty"`
+	// SourceMessageID is a server-owned idempotency link. HTTP decoders never populate it.
+	SourceMessageID *uuid.UUID `json:"-"`
+	// HistoryPolicy is supplied only by trusted subject adapters. It cannot be
+	// selected through the public Chat API and is not persisted in message
+	// metadata. It lets channel callers keep durable formal turns as bounded
+	// supplemental context while the provider conversation remains primary.
+	HistoryPolicy *ConversationHistoryPolicy `json:"-"`
+}
+
+const (
+	ConversationHistoryModeSupplemental = "supplemental"
+	ConversationHistoryModeIsolated     = "isolated"
+)
+
+// ConversationHistoryPolicy controls only the durable ChatRuntime branch used
+// to prepare one model turn. ExcludedTexts is transient and should contain
+// provider context already supplied elsewhere in the same request.
+type ConversationHistoryPolicy struct {
+	Mode          string
+	MaxTurns      int
+	ExcludedTexts []string
 }
 
 // InitialConnectorBinding is a first-turn selection, never a credential or an
@@ -83,7 +110,18 @@ type ClientActionResultRequest struct {
 }
 
 type UserInputContinuationRequest struct {
-	Answers          map[string]string      `json:"answers" binding:"required"`
+	Answers          map[string]string      `json:"answers,omitempty"`
+	Surface          string                 `json:"surface,omitempty"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+}
+
+// TaskTokenBudgetContinuationRequest is the independent API contract used to
+// resume a message paused by a task token budget. It intentionally has no
+// answers field so budget control cannot be confused with model questions.
+type TaskTokenBudgetContinuationRequest struct {
+	Action           string                 `json:"action"`
+	AdditionalTokens int                    `json:"additional_tokens,omitempty"`
 	Surface          string                 `json:"surface,omitempty"`
 	RuntimeContext   string                 `json:"runtime_context,omitempty"`
 	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
@@ -109,6 +147,7 @@ type SkillResponse struct {
 	HasReferences         bool                                `json:"has_references"`
 	HasScripts            bool                                `json:"has_scripts"`
 	ScriptsSupported      bool                                `json:"scripts_supported"`
+	ScriptExecutionMode   string                              `json:"script_execution_mode,omitempty"`
 	MaxCallsPerTurn       int                                 `json:"max_calls_per_turn"`
 	TimeoutSeconds        int                                 `json:"timeout_seconds"`
 	Status                string                              `json:"status"`
@@ -160,20 +199,21 @@ type ImportSkillPreviewFile struct {
 }
 
 type ImportSkillPreviewResponse struct {
-	ImportID         string                   `json:"import_id,omitempty"`
-	ExpiresAt        int64                    `json:"expires_at,omitempty"`
-	Skill            *SkillResponse           `json:"skill,omitempty"`
-	WillOverwrite    bool                     `json:"will_overwrite"`
-	ExistingSkill    *ExistingSkillResponse   `json:"existing_skill,omitempty"`
-	FileCount        int                      `json:"file_count"`
-	TotalSize        int64                    `json:"total_size"`
-	Files            []ImportSkillPreviewFile `json:"files"`
-	References       []string                 `json:"references"`
-	HasScripts       bool                     `json:"has_scripts"`
-	ScriptsSupported bool                     `json:"scripts_supported"`
-	Warnings         []string                 `json:"warnings"`
-	ValidationErrors []string                 `json:"validation_errors"`
-	CanImport        bool                     `json:"can_import"`
+	ImportID            string                   `json:"import_id,omitempty"`
+	ExpiresAt           int64                    `json:"expires_at,omitempty"`
+	Skill               *SkillResponse           `json:"skill,omitempty"`
+	WillOverwrite       bool                     `json:"will_overwrite"`
+	ExistingSkill       *ExistingSkillResponse   `json:"existing_skill,omitempty"`
+	FileCount           int                      `json:"file_count"`
+	TotalSize           int64                    `json:"total_size"`
+	Files               []ImportSkillPreviewFile `json:"files"`
+	References          []string                 `json:"references"`
+	HasScripts          bool                     `json:"has_scripts"`
+	ScriptsSupported    bool                     `json:"scripts_supported"`
+	ScriptExecutionMode string                   `json:"script_execution_mode,omitempty"`
+	Warnings            []string                 `json:"warnings"`
+	ValidationErrors    []string                 `json:"validation_errors"`
+	CanImport           bool                     `json:"can_import"`
 }
 
 type ConfirmImportSkillRequest struct {
@@ -231,8 +271,31 @@ type MessageResponse struct {
 	ModelParameters     map[string]interface{} `json:"model_parameters,omitempty"`
 	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 	SourceMessageID     *string                `json:"source_message_id,omitempty"`
+	RuntimeInputs       []RuntimeInputResponse `json:"runtime_inputs"`
 	CreatedAt           int64                  `json:"created_at"`
 	UpdatedAt           int64                  `json:"updated_at"`
+}
+
+type RuntimeInputResponse struct {
+	ID                string  `json:"id"`
+	ClientInputID     string  `json:"client_input_id"`
+	Content           string  `json:"content"`
+	Status            string  `json:"status"`
+	TargetMessageID   string  `json:"target_message_id"`
+	ConsumedMessageID *string `json:"consumed_message_id,omitempty"`
+	Sequence          int64   `json:"sequence"`
+	CreatedAt         int64   `json:"created_at"`
+}
+
+type SubmitRuntimeInputRequest struct {
+	ClientInputID string `json:"client_input_id" binding:"required"`
+	Content       string `json:"content" binding:"required"`
+}
+
+type SubmitRuntimeInputResponse struct {
+	Input       RuntimeInputResponse `json:"input"`
+	Disposition string               `json:"disposition"`
+	Created     bool                 `json:"created"`
 }
 
 type SearchResultResponse struct {

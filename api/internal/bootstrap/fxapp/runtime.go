@@ -18,6 +18,7 @@ import (
 	graphflowworker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
 	"github.com/zgiai/zgi/api/internal/observability"
@@ -141,12 +142,157 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 	RegisterConnectorOnboardingLifecycle(lc, params.ServiceContainer.GetConnectorOnboardingService(), params.ServiceContainer.EnsureConnectorOnboardingSchema)
 	RegisterTaskManagerLifecycle(lc, params.TaskManager, params.TaskHandlerRegistry, params.Logger)
 	RegisterSchedulerLifecycle(lc, params.Scheduler, params.Logger)
+	RegisterDigitalHumanChannelReceiverLifecycle(
+		lc,
+		params.ServiceContainer.GetDigitalHumanChannelReceiverManager(),
+		params.Logger,
+	)
+	RegisterRuntimeWorkspaceCredentialCleanupLifecycle(lc, runtimeworkspace.NewService(params.ServiceContainer.GetDB()), params.Logger)
+	RegisterRuntimeWorkspaceFileObjectDeletionLifecycle(
+		lc,
+		runtimeworkspace.NewFileObjectDeletionWorker(params.ServiceContainer.GetDB(), params.ServiceContainer.GetStorage()),
+		params.Logger,
+	)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
 	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
 	registerZGIReporterLifecycle(lc, params.ZGIReporter, params.Logger)
 
 	return nil
+}
+
+type runtimeWorkspaceCredentialCleaner interface {
+	CleanupExpiredCredentialOperations(context.Context) error
+}
+
+func RegisterRuntimeWorkspaceCredentialCleanupLifecycle(lc fx.Lifecycle, cleaner runtimeWorkspaceCredentialCleaner, log *zap.Logger) {
+	if !runtimeworkspace.RuntimeEnabled() || cleaner == nil {
+		return
+	}
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := cleaner.CleanupExpiredCredentialOperations(ctx); err != nil {
+				return err
+			}
+			workerContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			go func() {
+				ticker := time.NewTicker(5 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-workerContext.Done():
+						return
+					case <-ticker.C:
+						if err := cleaner.CleanupExpiredCredentialOperations(workerContext); err != nil && log != nil {
+							log.Warn("Runtime Workspace credential cleanup failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			return nil
+		},
+	})
+}
+
+type runtimeWorkspaceFileObjectDeletionRunner interface {
+	RunOnce(context.Context) error
+}
+
+// RegisterRuntimeWorkspaceFileObjectDeletionLifecycle keeps the deferred
+// object deletion table progressing after Runtime Workspace metadata is
+// removed. It deliberately runs regardless of the feature flag so disabling
+// new workspace creation cannot strand already-scheduled objects.
+func RegisterRuntimeWorkspaceFileObjectDeletionLifecycle(
+	lc fx.Lifecycle,
+	runner runtimeWorkspaceFileObjectDeletionRunner,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := runner.RunOnce(ctx); err != nil {
+				log.Warn("Initial Runtime Workspace file object deletion failed", zap.Error(err))
+			}
+			workerContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				ticker := time.NewTicker(5 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-workerContext.Done():
+						return
+					case <-ticker.C:
+						if err := runner.RunOnce(workerContext); err != nil {
+							log.Warn("Runtime Workspace file object deletion failed", zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			if done != nil {
+				select {
+				case <-done:
+				case <-ctx.Done():
+				}
+			}
+			return nil
+		},
+	})
+}
+
+type DigitalHumanChannelReceiverLifecycle interface {
+	Start(context.Context) error
+	Stop(context.Context) error
+}
+
+func RegisterDigitalHumanChannelReceiverLifecycle(
+	lc fx.Lifecycle,
+	manager DigitalHumanChannelReceiverLifecycle,
+	log *zap.Logger,
+) {
+	if manager == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := manager.Start(ctx); err != nil {
+				return err
+			}
+			log.Info("Started DigitalHuman channel receivers")
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			err := manager.Stop(ctx)
+			log.Info("Stopped DigitalHuman channel receivers")
+			return err
+		},
+	})
 }
 
 // IntegrationOAuthRecoveryRunner drains encrypted OAuth token recovery work.

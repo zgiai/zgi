@@ -96,14 +96,15 @@ func (state SetupState) Valid() bool {
 type TargetType string
 
 const (
-	TargetTypeChat     TargetType = "chat"
-	TargetTypeAgent    TargetType = "agent"
-	TargetTypeWorkflow TargetType = "workflow"
+	TargetTypeChat         TargetType = "chat"
+	TargetTypeAgent        TargetType = "agent"
+	TargetTypeWorkflow     TargetType = "workflow"
+	TargetTypeDigitalHuman TargetType = "digital_human"
 )
 
 func (targetType TargetType) Valid() bool {
 	switch targetType {
-	case TargetTypeChat, TargetTypeAgent, TargetTypeWorkflow:
+	case TargetTypeChat, TargetTypeAgent, TargetTypeWorkflow, TargetTypeDigitalHuman:
 		return true
 	default:
 		return false
@@ -285,7 +286,12 @@ func (target TargetRef) Validate() error {
 		}
 	}
 	instanceID := strings.TrimSpace(target.BindingInstanceID)
-	if target.Type == TargetTypeWorkflow {
+	if target.Type == TargetTypeDigitalHuman {
+		id, err := uuid.Parse(instanceID)
+		if err != nil || id == uuid.Nil || id.String() != instanceID {
+			return invalidModel()
+		}
+	} else if target.Type == TargetTypeWorkflow {
 		if instanceID == "" {
 			return invalidModel()
 		}

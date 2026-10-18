@@ -7,6 +7,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/testutil/testdb"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -140,57 +141,8 @@ func newDatasetPermissionTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 
-	statements := []string{
-		`CREATE TABLE datasets (
-			id text PRIMARY KEY,
-			organization_id text NOT NULL,
-			workspace_id text NOT NULL,
-			name text NOT NULL,
-			description text,
-			provider text NOT NULL,
-			permission text NOT NULL,
-			enable_graph_flow boolean,
-			created_by text NOT NULL,
-			created_at datetime,
-			updated_by text,
-			updated_at datetime,
-			owner text,
-			embedding_model text,
-			embedding_model_provider text,
-			entity_model text,
-			entity_model_provider text,
-			collection_binding_id text,
-			retrieval_config text,
-			icon_type text,
-			icon text,
-			icon_background text,
-			process_rule text
-		)`,
-		`CREATE TABLE workspace_members (
-			id text PRIMARY KEY,
-			workspace_id text NOT NULL,
-			account_id text NOT NULL,
-			role text NOT NULL,
-			role_id text,
-			current boolean,
-			created_at datetime,
-			updated_at datetime,
-			invited_by text,
-			extensions text
-		)`,
-		`CREATE TABLE dataset_folder_joins (
-			id text PRIMARY KEY,
-			dataset_id text NOT NULL,
-			folder_id text NOT NULL,
-			created_by text,
-			created_at datetime
-		)`,
-	}
-
-	for _, statement := range statements {
-		if err := db.Exec(statement).Error; err != nil {
-			t.Fatalf("create test table: %v", err)
-		}
+	if err := testdb.AutoMigrate(db, &model.Dataset{}, &workspace_model.WorkspaceMember{}, &model.DatasetFolderJoins{}); err != nil {
+		t.Fatalf("migrate permission fixtures: %v", err)
 	}
 
 	return db

@@ -1,0 +1,8 @@
+numpy
+pandas
+Pillow
+openpyxl
+pypdf
+reportlab
+lxml
+markitdown

@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
 
 func TestUserMemoryAccountIDFallsBackToConversation(t *testing.T) {
@@ -28,5 +29,25 @@ func TestUserMemoryAccountIDPrefersScope(t *testing.T) {
 
 	if got := userMemoryAccountID(prepared); got != scopeAccountID {
 		t.Fatalf("userMemoryAccountID() = %s, want scope account %s", got, scopeAccountID)
+	}
+}
+
+func TestCloneChatRequestPartsKeepsConnectorHostCoordinates(t *testing.T) {
+	parts := &chatRequestParts{
+		ConnectorTargetType:      connectorcore.TargetTypeDigitalHuman,
+		ConnectorTargetScope:     "published",
+		ConnectorTargetVersionID: uuid.NewString(),
+		ConnectorRunID:           uuid.NewString(),
+		ConnectorInteractive:     true,
+	}
+
+	clone := cloneChatRequestPartsForUserMemoryPreflight(parts)
+	if clone == nil {
+		t.Fatal("cloneChatRequestPartsForUserMemoryPreflight() = nil")
+	}
+	if clone.ConnectorTargetType != parts.ConnectorTargetType || clone.ConnectorTargetScope != parts.ConnectorTargetScope ||
+		clone.ConnectorTargetVersionID != parts.ConnectorTargetVersionID || clone.ConnectorRunID != parts.ConnectorRunID ||
+		clone.ConnectorInteractive != parts.ConnectorInteractive {
+		t.Fatalf("clone lost Connector host coordinates: %#v", clone)
 	}
 }

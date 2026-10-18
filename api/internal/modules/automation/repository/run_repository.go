@@ -22,6 +22,7 @@ type RunRepository interface {
 
 	CreateActionRun(ctx context.Context, tx *gorm.DB, run *automationmodel.AutomationActionRun) error
 	UpdateActionRun(ctx context.Context, tx *gorm.DB, run *automationmodel.AutomationActionRun) error
+	GetActionRunByTaskAction(ctx context.Context, db *gorm.DB, taskRunID, taskActionID string) (*automationmodel.AutomationActionRun, error)
 	ListActionRunsByTaskRunID(ctx context.Context, db *gorm.DB, taskRunID string) ([]*automationmodel.AutomationActionRun, error)
 }
 
@@ -134,6 +135,14 @@ func (r *runRepository) UpdateActionRun(ctx context.Context, tx *gorm.DB, run *a
 		return fmt.Errorf("update automation action run %s: %w", run.ID, err)
 	}
 	return nil
+}
+
+func (r *runRepository) GetActionRunByTaskAction(ctx context.Context, db *gorm.DB, taskRunID, taskActionID string) (*automationmodel.AutomationActionRun, error) {
+	var run automationmodel.AutomationActionRun
+	if err := r.session(db).WithContext(ctx).Where("task_run_id = ? AND task_action_id = ?", taskRunID, taskActionID).First(&run).Error; err != nil {
+		return nil, fmt.Errorf("get automation action run: %w", err)
+	}
+	return &run, nil
 }
 
 func (r *runRepository) ListActionRunsByTaskRunID(ctx context.Context, db *gorm.DB, taskRunID string) ([]*automationmodel.AutomationActionRun, error) {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
-const connectorNativeSkillInstructions = `Connector operations in this Skill are projected from the Personal Connections explicitly attached to the current chat or Agent.
+const connectorNativeSkillInstructions = `Connector operations in this Skill are projected from the Personal Connections explicitly attached to the current chat, Agent, or Digital Human.
 
 Call the named operation Tool directly with only its declared business arguments. Never request, display, infer, or pass API keys, tokens, credential envelopes, connection IDs, binding IDs, or authorization headers. The server resolves the current Connection and rechecks ownership, readiness, operation availability, and risk immediately before dispatch.
 
@@ -52,18 +53,102 @@ func (s *service) resolveConnectorCapabilities(
 			OwnerAccountID: scope.AccountID,
 			ConversationID: targetID,
 		})
+	case runtimemodel.ConversationCallerDigitalHuman:
+		// A DigitalHuman host is resolved by its own id plus the pinned
+		// scope/version. It never falls back to the Chat or Agent resolver, so
+		// bindings owned by another host, version or ordinary chat cannot leak in.
+		if s.connectorDigitalHumanRuntime == nil {
+			return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
+		}
+		request := connectorruntimeauth.DigitalHumanCapabilityRequest{
+			OrganizationID: scope.OrganizationID,
+			OwnerAccountID: scope.AccountID,
+			DigitalHumanID: targetID,
+			Scope:          targetScope,
+			VersionID:      versionID,
+		}
+		snapshot, err := s.connectorDigitalHumanRuntime.ResolveDigitalHumanCapabilities(ctx, request)
+		if snapshot.HasOperations() || targetScope != core.ScopePublished {
+			return snapshot, err
+		}
+		delegated, ok := s.connectorDigitalHumanRuntime.(connectorruntimeauth.DelegatedDigitalHumanRuntimeResolver)
+		if !ok {
+			return snapshot, nil
+		}
+		if err != nil && !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+			return snapshot, err
+		}
+		delegatedSnapshot, delegatedErr := delegated.ResolveDelegatedCapabilities(ctx, delegatedHostRequest(scope, caller, core.TargetTypeDigitalHuman, targetID, targetScope, versionID, hostAudienceForSource(caller.Source)))
+		if delegatedErr != nil {
+			return delegatedSnapshot, delegatedErr
+		}
+		return delegatedSnapshot, nil
 	case runtimemodel.ConversationCallerAgent:
 		if s.connectorAgentRuntime == nil {
 			return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
 		}
-		return s.connectorAgentRuntime.ResolveAgentCapabilities(ctx, connectorruntimeauth.AgentCapabilityRequest{
+		request := connectorruntimeauth.AgentCapabilityRequest{
 			OrganizationID: scope.OrganizationID,
 			OwnerAccountID: scope.AccountID,
 			AgentID:        targetID, Scope: targetScope, VersionID: versionID,
-		})
+		}
+		snapshot, err := s.connectorAgentRuntime.ResolveAgentCapabilities(ctx, request)
+		if snapshot.HasOperations() || targetScope != core.ScopePublished {
+			return snapshot, err
+		}
+		delegated, ok := s.connectorAgentRuntime.(connectorruntimeauth.DelegatedAgentRuntimeResolver)
+		if !ok {
+			return snapshot, nil
+		}
+		if err != nil && !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+			return snapshot, err
+		}
+		delegatedSnapshot, delegatedErr := delegated.ResolveDelegatedCapabilities(ctx, delegatedHostRequest(scope, caller, core.TargetTypeAgent, targetID, targetScope, versionID, hostAudienceForSource(caller.Source)))
+		if delegatedErr != nil {
+			return delegatedSnapshot, delegatedErr
+		}
+		return delegatedSnapshot, nil
 	default:
 		return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
 	}
+}
+
+func delegatedHostRequest(scope Scope, caller Caller, targetType core.TargetType, targetID string, targetScope core.TargetScope, versionID string, audience core.HostAudience) connectorruntimeauth.DelegatedHostRequest {
+	return connectorruntimeauth.DelegatedHostRequest{
+		OrganizationID: scope.OrganizationID,
+		RequesterID:    scope.AccountID,
+		RunID:          valueOrNil(caller.RunID),
+		Target: core.TargetRef{
+			Type: targetType, ID: targetID, Scope: targetScope, VersionID: versionID,
+			BindingInstanceID: delegatedBindingInstance(targetType),
+		},
+		Audience: audience,
+	}
+}
+
+func hostAudienceForSource(source string) core.HostAudience {
+	switch normalizeConversationSource(source) {
+	case runtimemodel.ConversationSourceExternalAPI:
+		return core.HostAudienceAPI
+	case runtimemodel.ConversationSourceChannel:
+		return core.HostAudienceChannel
+	default:
+		return core.HostAudienceWorkspace
+	}
+}
+
+func delegatedBindingInstance(targetType core.TargetType) string {
+	if targetType == core.TargetTypeDigitalHuman {
+		return "00000000-0000-0000-0000-000000000001"
+	}
+	return ""
+}
+
+func valueOrNil(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
 }
 
 // applyAIChatConnectorSkillConfig records the request-scoped native Skill IDs
@@ -81,6 +166,9 @@ func (s *service) applyConnectorSkillConfig(
 	}
 	parts.ConnectorSkillIDs = nil
 	parts.ConnectorToolsEnabled = false
+	if parts.ConnectorToolsDisabled {
+		return nil
+	}
 	targetID, surface, ok := connectorTargetForCaller(caller, parts)
 	if !ok {
 		return nil
@@ -189,6 +277,9 @@ func (s *service) resolvePreparedBusinessSkills(
 		}
 		resolved = baseResolved
 	}
+	if parts.ConnectorToolsDisabled {
+		return resolved, nil
+	}
 
 	targetID, surface, ok := connectorTargetForCaller(prepared.Caller, parts)
 	if !ok {
@@ -269,6 +360,9 @@ func projectConnectorOperations(
 	type operationProjection struct {
 		skillID     string
 		connectorID string
+		instanceID  string
+		ownerID     string
+		bindingID   string
 		operation   catalog.Operation
 		description string
 	}
@@ -286,9 +380,34 @@ func projectConnectorOperations(
 				strings.TrimSpace(operation.ToolName) == "" || len(operation.InputSchema) == 0 {
 				return nil, fmt.Errorf("%w: incomplete Connector operation projection", ErrInvalidInput)
 			}
+			// A DigitalHuman host may bind the same Connector operation more than
+			// once. Its model-visible description therefore carries a short opaque
+			// server target marker for the exact bound Connection, while Chat and
+			// Agent keep their unchanged description. A malformed or nil identity
+			// fails the whole projection closed rather than leaking a raw id.
+			description := connectortools.OperationRuntimeDescription(capability.Definition, operation)
+			if surface == catalog.SurfaceDigitalHuman {
+				projected, projectionErr := connectortools.DigitalHumanConnectionRuntimeDescription(
+					description,
+					capability.ConnectionID.String(),
+					capability.ConnectionLabel,
+				)
+				if projectionErr != nil {
+					return nil, fmt.Errorf("%w: %v", ErrInvalidInput, projectionErr)
+				}
+				description = projected
+			}
+			ownerID := ""
+			if capability.OwnerAccountID != uuid.Nil {
+				ownerID = capability.OwnerAccountID.String()
+			}
+			bindingID := ""
+			if capability.BindingID != uuid.Nil {
+				bindingID = capability.BindingID.String()
+			}
 			projections = append(projections, operationProjection{
-				skillID: skillID, connectorID: connectorID, operation: operation,
-				description: connectortools.OperationRuntimeDescription(capability.Definition, operation),
+				skillID: skillID, connectorID: connectorID, instanceID: strings.TrimSpace(capability.Target.BindingInstanceID), ownerID: ownerID, bindingID: bindingID, operation: operation,
+				description: description,
 			})
 		}
 	}
@@ -319,6 +438,20 @@ func projectConnectorOperations(
 			return nil, err
 		}
 		toolName := strings.TrimSpace(projection.operation.ToolName)
+		// Only a DigitalHuman host may bind the same Connector operation more
+		// than once. Each persisted binding instance must keep a distinct Tool
+		// name and instance identity so one connection can never stand in for
+		// another at the model boundary. Chat and Agent keep exactly one binding
+		// per Connector, so their public Tool names and surface identity are
+		// unchanged even if a capability unexpectedly carries an instance.
+		instanceID := ""
+		if surface == catalog.SurfaceDigitalHuman {
+			instanceID = projection.instanceID
+			if instanceID != "" {
+				digest := sha256.Sum256([]byte(instanceID))
+				toolName = fmt.Sprintf("%s_%x", toolName, digest[:6])
+			}
+		}
 		duplicate := false
 		for _, existing := range doc.Tools {
 			if !strings.EqualFold(strings.TrimSpace(existing.Name), toolName) {
@@ -326,7 +459,8 @@ func projectConnectorOperations(
 			}
 			if existing.ConnectorNative &&
 				strings.TrimSpace(existing.ProviderID) == projection.connectorID &&
-				strings.TrimSpace(existing.ConnectorOperationID) == strings.TrimSpace(projection.operation.ID) {
+				strings.TrimSpace(existing.ConnectorOperationID) == strings.TrimSpace(projection.operation.ID) &&
+				existing.ConnectorOwnerAccountID == projection.ownerID && existing.ConnectorBindingID == projection.bindingID {
 				duplicate = true
 				break
 			}
@@ -341,14 +475,17 @@ func projectConnectorOperations(
 			continue
 		}
 		doc.Tools = append(doc.Tools, skills.SkillToolDefinition{
-			Name:                 toolName,
-			ProviderType:         tools.ToolProviderTypeConnector,
-			ProviderID:           projection.connectorID,
-			InputSchema:          cloneConnectorSchema(projection.operation.InputSchema),
-			OutputSchema:         cloneConnectorSchema(projection.operation.OutputSchema),
-			RuntimeDescription:   projection.description,
-			ConnectorNative:      true,
-			ConnectorOperationID: strings.TrimSpace(projection.operation.ID),
+			Name:                       toolName,
+			ProviderType:               tools.ToolProviderTypeConnector,
+			ProviderID:                 projection.connectorID,
+			InputSchema:                cloneConnectorSchema(projection.operation.InputSchema),
+			OutputSchema:               cloneConnectorSchema(projection.operation.OutputSchema),
+			RuntimeDescription:         projection.description,
+			ConnectorNative:            true,
+			ConnectorOperationID:       strings.TrimSpace(projection.operation.ID),
+			ConnectorBindingInstanceID: instanceID,
+			ConnectorOwnerAccountID:    projection.ownerID,
+			ConnectorBindingID:         projection.bindingID,
 		})
 		doc.Metadata.Tools = appendUniqueStrings(doc.Metadata.Tools, toolName)
 		doc.Metadata.RuntimeType = skills.SkillRuntimeTypeTool
@@ -387,7 +524,9 @@ func prepareConnectorSkillDocument(doc *skills.SkillDocument, skillID string) er
 
 func connectorNativeSkillDocument(skillID string, surface catalog.Surface) skills.SkillDocument {
 	supportedCallers := []string{skills.SkillCallerAIChat}
-	if surface == catalog.SurfaceAgent {
+	if surface == catalog.SurfaceDigitalHuman {
+		supportedCallers = []string{skills.SkillCallerDigitalHuman}
+	} else if surface == catalog.SurfaceAgent {
 		supportedCallers = []string{skills.SkillCallerAgent}
 	}
 	return skills.SkillDocument{
@@ -410,6 +549,11 @@ func connectorTargetForCaller(caller Caller, parts *chatRequestParts) (string, c
 	switch normalizeCallerType(caller.Type) {
 	case runtimemodel.ConversationCallerAIChat:
 		return strings.TrimSpace(parts.ConversationID), catalog.SurfaceChat, true
+	case runtimemodel.ConversationCallerDigitalHuman:
+		if caller.ID != nil && *caller.ID != uuid.Nil {
+			return caller.ID.String(), catalog.SurfaceDigitalHuman, true
+		}
+		return "", "", false
 	case runtimemodel.ConversationCallerAgent:
 		if caller.ID != nil && *caller.ID != uuid.Nil {
 			return caller.ID.String(), catalog.SurfaceAgent, true

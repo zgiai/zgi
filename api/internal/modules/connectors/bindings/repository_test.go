@@ -163,6 +163,41 @@ func TestGetBindingNeverResolvesByGlobalUUIDAlone(t *testing.T) {
 	assertMock(t, mock)
 }
 
+func TestListPublishedHostDelegationsIsBoundedAndRequiresExplicitAudience(t *testing.T) {
+	repository, mock := openRepositoryMock(t)
+	binding := nativeBinding(core.TargetTypeDigitalHuman, uuid.NewString(), uuid.NewString())
+	binding.Target.Scope = core.ScopePublished
+	binding.Target.VersionID = uuid.NewString()
+	binding.Constraint = core.OwnerConstraint(binding.OwnerAccountID, []core.Identifier{"web.search"})
+	binding.Constraint.TargetBoundaries = []core.TargetBoundary{{Type: binding.Target.Type, ID: binding.Target.ID, Scope: string(core.ScopePublished), VersionID: binding.Target.VersionID}}
+	binding.Constraint.HostDelegation = &core.HostDelegation{GrantedBy: binding.OwnerAccountID, Audiences: []core.HostAudience{core.HostAudienceWorkspace}}
+	mock.ExpectQuery(`(?s)SELECT \* FROM "connector_target_bindings" WHERE .*organization_id.*target_type.*target_id.*target_scope.*target_version_id.*status.*binding_constraint @>.*LIMIT`).
+		WithArgs(binding.OrganizationID, binding.Target.Type, binding.Target.ID, string(core.ScopePublished), binding.Target.VersionID, core.BindingStatusActive, sqlmock.AnyArg(), 51).
+		WillReturnRows(bindingRows(binding))
+	items, err := repository.ListPublishedHostDelegations(context.Background(), binding.OrganizationID, binding.Target, core.HostAudienceWorkspace)
+	if err != nil || len(items) != 1 || items[0].ID != binding.ID || items[0].OwnerAccountID != binding.OwnerAccountID {
+		t.Fatalf("delegated binding list = %#v, error = %v", items, err)
+	}
+	if _, err := repository.ListPublishedHostDelegations(context.Background(), binding.OrganizationID, binding.Target, core.HostAudience("everyone")); !core.IsErrorCode(err, core.ErrorCodeInvalidInput) {
+		t.Fatalf("unknown audience list error = %v", err)
+	}
+	assertMock(t, mock)
+}
+
+func TestListPublishedHostDelegationsRejectsOwnerOnlyRowsIfReturned(t *testing.T) {
+	repository, mock := openRepositoryMock(t)
+	binding := nativeBinding(core.TargetTypeAgent, uuid.NewString(), "")
+	binding.Target.Scope, binding.Target.VersionID = core.ScopePublished, uuid.NewString()
+	binding.Constraint = core.OwnerConstraint(binding.OwnerAccountID, []core.Identifier{"web.search"})
+	mock.ExpectQuery(`(?s)SELECT \* FROM "connector_target_bindings" WHERE .*binding_constraint @>`).
+		WillReturnRows(bindingRows(binding))
+	items, err := repository.ListPublishedHostDelegations(context.Background(), binding.OrganizationID, binding.Target, core.HostAudienceWorkspace)
+	if len(items) != 0 || !core.IsErrorCode(err, core.ErrorCodeInternal) {
+		t.Fatalf("owner-only binding escaped delegated lookup: %#v, %v", items, err)
+	}
+	assertMock(t, mock)
+}
+
 func TestSetBindingStatusUsesRevisionCAS(t *testing.T) {
 	repository, mock := openRepositoryMock(t)
 	existing := nativeBinding(core.TargetTypeAgent, "agent-1", "")

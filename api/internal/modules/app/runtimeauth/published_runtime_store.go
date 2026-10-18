@@ -18,6 +18,7 @@ type PublishedRuntimeResourceType string
 const (
 	PublishedRuntimeResourceAgent           PublishedRuntimeResourceType = "agent"
 	PublishedRuntimeResourceBuiltinWorkflow PublishedRuntimeResourceType = "builtin_workflow"
+	PublishedRuntimeResourceDigitalHuman    PublishedRuntimeResourceType = "digital_human"
 )
 
 type PublishedRuntimeSubjectType string
@@ -587,6 +588,12 @@ func filterAuthorizedCandidates(resourceType PublishedRuntimeResourceType, surfa
 
 func defaultSurfaceAuthorizations(resourceType PublishedRuntimeResourceType, policy PublishedRuntimePolicy) []SurfaceAuthorization {
 	switch resourceType {
+	case PublishedRuntimeResourceDigitalHuman:
+		return []SurfaceAuthorization{
+			{Surface: PublishedRuntimeSurfaceWebApp, Enabled: policy.Allows(PublishedRuntimeSurfaceWebApp), CompatibilitySource: PublishedRuntimeSourceSystemDefault},
+			{Surface: PublishedRuntimeSurfaceAPI, Enabled: policy.Allows(PublishedRuntimeSurfaceAPI), CompatibilitySource: PublishedRuntimeSourceSystemDefault},
+			{Surface: PublishedRuntimeSurfaceInternal, Enabled: policy.Allows(PublishedRuntimeSurfaceInternal), CompatibilitySource: PublishedRuntimeSourceSystemDefault},
+		}
 	case PublishedRuntimeResourceBuiltinWorkflow:
 		return []SurfaceAuthorization{
 			{
@@ -673,6 +680,8 @@ func validateSurfaceAuthorization(resourceType PublishedRuntimeResourceType, sur
 
 func surfaceSupportedForResource(resourceType PublishedRuntimeResourceType, surface PublishedRuntimeSurface) bool {
 	switch resourceType {
+	case PublishedRuntimeResourceDigitalHuman:
+		return surface == PublishedRuntimeSurfaceWebApp || surface == PublishedRuntimeSurfaceAPI || surface == PublishedRuntimeSurfaceInternal
 	case PublishedRuntimeResourceBuiltinWorkflow:
 		return surface == PublishedRuntimeSurfaceBuiltinApp || surface == PublishedRuntimeSurfaceInternal
 	default:

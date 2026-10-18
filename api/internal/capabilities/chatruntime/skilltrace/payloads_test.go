@@ -386,6 +386,22 @@ func TestSkillArtifactsFromToolMessagesIncludesGovernanceOperation(t *testing.T)
 	}
 }
 
+func TestSkillArtifactsFromProtectedToolFileNeverPublishesURLs(t *testing.T) {
+	artifacts := SkillArtifactsFromToolMessages(PayloadIDs{ConversationID: "conversation-1", MessageID: "message-1"}, skills.SkillTrace{SkillID: "agent_execution", ToolName: "workspace_export_file"}, []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeFile, Text: "https://untrusted.invalid",
+		Meta: map[string]interface{}{"file": map[string]interface{}{"file_id": "file-1", "access_mode": "authenticated", "url": "https://untrusted.invalid", "download_url": "https://untrusted.invalid"}},
+	}})
+	if len(artifacts) != 1 || artifacts[0]["access_mode"] != "authenticated" {
+		t.Fatalf("artifacts = %#v", artifacts)
+	}
+	if _, exists := artifacts[0]["url"]; exists {
+		t.Fatal("protected URL exposed")
+	}
+	if _, exists := artifacts[0]["download_url"]; exists {
+		t.Fatal("protected download URL exposed")
+	}
+}
+
 func TestSkillArtifactsFromToolMessagesExcludesManagedFileCopy(t *testing.T) {
 	artifacts := SkillArtifactsFromToolMessages(PayloadIDs{
 		ConversationID: "conversation-1",

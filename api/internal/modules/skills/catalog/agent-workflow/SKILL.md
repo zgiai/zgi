@@ -1,7 +1,7 @@
 ---
 name: agent-workflow
-description: Call workflows explicitly bound to the current Agent as structured process tools.
-when_to_use: Use when the current Agent needs to run a configured workflow for approval-driven or process-driven handling.
+description: Call workflows explicitly bound to the current Agent or DigitalHuman as structured process tools.
+when_to_use: Use when the current Agent or DigitalHuman needs to run a configured workflow for approval-driven or process-driven handling.
 provider_type: builtin
 provider_id: workflow
 runtime_type: tool
@@ -9,6 +9,7 @@ max_calls_per_turn: 10
 timeout_seconds: 600
 supported_callers:
   - agent
+  - digital_human
 required_config:
   - agent_workflow
 tools:

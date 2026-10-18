@@ -41,10 +41,9 @@ export function FloatingToc({ rootRef }: { rootRef: React.RefObject<HTMLElement>
         className={cn(
           'mt-2 w-[280px] rounded-lg border bg-popover text-popover-foreground shadow-lg p-3',
           'transition-[opacity,transform,max-height] duration-250 ease-out transform-gpu will-change-[opacity,transform]',
-          'overflow-hidden',
           open
-            ? 'opacity-100 translate-y-0 scale-100 max-h-[60vh]'
-            : 'opacity-0 -translate-y-1 scale-95 max-h-0 pointer-events-none'
+            ? 'opacity-100 translate-y-0 scale-100 max-h-[60vh] overflow-y-auto overscroll-contain'
+            : 'opacity-0 -translate-y-1 scale-95 max-h-0 overflow-hidden pointer-events-none'
         )}
       >
         <Toc rootRef={rootRef} variant="floating" />

@@ -33,13 +33,14 @@ func customSkillManifest(doc skills.SkillDocument, extracted *extractedSkillPack
 		references = append(references, ref.Path)
 	}
 	manifest := map[string]interface{}{
-		"file_count":        0,
-		"total_size":        int64(0),
-		"files":             []string{},
-		"references":        references,
-		"has_scripts":       doc.Metadata.HasScripts,
-		"scripts_supported": doc.Metadata.ScriptsSupported,
-		"imported_at":       time.Now().Unix(),
+		"file_count":            0,
+		"total_size":            int64(0),
+		"files":                 []string{},
+		"references":            references,
+		"has_scripts":           doc.Metadata.HasScripts,
+		"scripts_supported":     doc.Metadata.ScriptsSupported,
+		"script_execution_mode": doc.Metadata.ScriptExecutionMode,
+		"imported_at":           time.Now().Unix(),
 	}
 	if digest, err := skills.SkillPackageSHA256(doc.Metadata.RootPath); err == nil {
 		manifest["package_sha256"] = digest
@@ -95,6 +96,7 @@ func extractedSkillPackageFromPreview(preview *storedSkillPreview) *extractedSki
 	sort.Strings(files)
 	return &extractedSkillPackage{
 		Root:        preview.Root,
+		PackageName: preview.PackageName,
 		FileCount:   preview.FileCount,
 		TotalSize:   preview.TotalSize,
 		Files:       files,
@@ -115,6 +117,7 @@ func skillDiscoveryMetadataPtr(doc skills.SkillDocument) *skills.SkillDiscoveryM
 		HasReferences:         len(doc.Metadata.References) > 0,
 		HasScripts:            doc.Metadata.HasScripts,
 		ScriptsSupported:      doc.Metadata.ScriptsSupported,
+		ScriptExecutionMode:   doc.Metadata.ScriptExecutionMode,
 		MaxCallsPerTurn:       doc.Metadata.MaxCallsPerTurn,
 		TimeoutSeconds:        doc.Metadata.TimeoutSeconds,
 		Status:                skills.SkillStatusActive,

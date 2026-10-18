@@ -27,6 +27,17 @@ func TestPublicInitialSchemaAppliesToPostgres(t *testing.T) {
 		t.Fatalf("run migrations: %v", err)
 	}
 
+	appliedBeforeRerun := migrationRecordCount(t, db)
+	if appliedBeforeRerun != int64(len(allMigrations())) {
+		t.Fatalf("expected %d migration records after first run, got %d", len(allMigrations()), appliedBeforeRerun)
+	}
+	if err := RunWithDB(db); err != nil {
+		t.Fatalf("run migrations a second time: %v", err)
+	}
+	if appliedAfterRerun := migrationRecordCount(t, db); appliedAfterRerun != appliedBeforeRerun {
+		t.Fatalf("migration rerun changed migration record count from %d to %d", appliedBeforeRerun, appliedAfterRerun)
+	}
+
 	var tableCount int64
 	if err := db.Raw(`
 		SELECT COUNT(*)
@@ -41,10 +52,39 @@ func TestPublicInitialSchemaAppliesToPostgres(t *testing.T) {
 		t.Fatalf("expected initial schema to create at least 140 public tables, got %d", tableCount)
 	}
 
-	assertBaselineRelationsExist(t, db, "BASE TABLE", baselineRelationNames(t, `(?i)^CREATE\s+TABLE\s+public\.([a-z0-9_]+)\s*\(`))
+	assertBaselineRelationsExist(t, db, "BASE TABLE", migratedBaselineTableNames(t))
 	assertBaselineRelationsExist(t, db, "VIEW", baselineRelationNames(t, `(?i)^CREATE\s+VIEW\s+public\.([a-z0-9_]+)\s+AS\s+`))
 	assertBaselineExtensionsExist(t, db, baselineRelationNames(t, `(?i)^CREATE\s+EXTENSION\s+IF\s+NOT\s+EXISTS\s+"?([a-z0-9_-]+)"?`))
 	assertMigrationRecorded(t, db, initialSchemaMigrationID)
+}
+
+func migratedBaselineTableNames(t *testing.T) []string {
+	t.Helper()
+
+	names := baselineRelationNames(t, `(?i)^CREATE\s+TABLE\s+public\.([a-z0-9_]+)\s*\(`)
+	renames := map[string]string{
+		"aichat_conversations":              "chat_runtime_conversations",
+		"aichat_custom_skills":              "chat_runtime_custom_skills",
+		"aichat_messages":                   "chat_runtime_messages",
+		"aichat_organization_skill_configs": "chat_runtime_organization_skill_configs",
+	}
+	for index, name := range names {
+		if renamed, ok := renames[name]; ok {
+			names[index] = renamed
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func migrationRecordCount(t *testing.T, db *gorm.DB) int64 {
+	t.Helper()
+
+	var count int64
+	if err := db.Table("migrations").Count(&count).Error; err != nil {
+		t.Fatalf("count migration records: %v", err)
+	}
+	return count
 }
 
 func baselineRelationNames(t *testing.T, pattern string) []string {

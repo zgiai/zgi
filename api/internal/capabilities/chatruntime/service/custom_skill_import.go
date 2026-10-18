@@ -19,9 +19,9 @@ import (
 
 const (
 	customSkillStorageRoot    = "storage/aichat/skills"
-	customSkillMaxPackageSize = 100 * 1024 * 1024
-	customSkillMaxFileSize    = 10 * 1024 * 1024
-	customSkillMaxFileCount   = 600
+	customSkillMaxPackageSize = skills.ScriptPackageMaxBytes
+	customSkillMaxFileSize    = skills.ScriptPackageMaxFileBytes
+	customSkillMaxFileCount   = skills.ScriptPackageMaxFiles
 )
 
 const customSkillSystemNameConflictMessage = "This skill name is reserved by a built-in system skill. Please rename your custom skill and try again."
@@ -35,6 +35,7 @@ type extractedSkillFile struct {
 
 type extractedSkillPackage struct {
 	Root        string
+	PackageName string
 	FileCount   int
 	TotalSize   int64
 	Files       []string
@@ -62,12 +63,15 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 		return nil, err
 	}
 	importID := uuid.New().String()
-	preview, err := s.customSkillStorage.SavePreviewPackage(ctx, scope.OrganizationID, importID, data)
+	preview, err := s.customSkillStorage.SavePreviewPackage(ctx, scope.OrganizationID, importID, data, fileHeader.Filename)
 	if err != nil {
 		return nil, err
 	}
 	result := skillImportPreviewFromStored(preview)
-	doc, err := s.skillRuntime.LoadCustomSkillDocument(preview.Root)
+	doc, err := s.skillRuntime.LoadCustomSkillDocumentWithName(preview.Root, preview.PackageName)
+	if err == nil && doc.Metadata.HasScripts {
+		err = skills.ValidateCustomSkillScriptPackage(preview.Root, doc.Metadata.TimeoutSeconds)
+	}
 	if err != nil {
 		_ = s.customSkillStorage.DeleteSkill(ctx, preview.Root)
 		result.ImportID = ""
@@ -89,6 +93,21 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 	result.References = skillReferencePaths(doc)
 	result.HasScripts = doc.Metadata.HasScripts
 	result.ScriptsSupported = doc.Metadata.ScriptsSupported
+	if doc.Metadata.HasScripts {
+		result.ScriptExecutionMode, err = skills.CustomSkillScriptExecutionMode(preview.Root)
+		if err != nil {
+			return nil, fmt.Errorf("classify custom skill scripts: %w", err)
+		}
+		if result.ScriptExecutionMode == skills.SkillScriptExecutionSession {
+			result.Warnings = append(result.Warnings, "session scripts require an approved console Agent execution runtime; third-party packages are not installed automatically")
+		}
+		if skills.CustomSkillHasDependencyHints(preview.Root) {
+			result.Warnings = append(result.Warnings, "package dependency hints were found; missing packages are not installed automatically")
+		}
+		if result.ScriptExecutionMode == skills.SkillScriptExecutionSession {
+			result.Warnings = append(result.Warnings, "product-specific dynamic context, tool permissions, and subagent declarations are not interpreted by ZGI")
+		}
+	}
 	if existing, err := s.existingCustomSkill(ctx, scope.OrganizationID, doc.Metadata.ID); err != nil {
 		_ = s.customSkillStorage.DeleteSkill(ctx, preview.Root)
 		return nil, err
@@ -96,7 +115,7 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 		result.WillOverwrite = true
 		result.ExistingSkill = existingSkillPreview(existing)
 	}
-	if doc.Metadata.HasScripts && !doc.Metadata.ScriptsSupported {
+	if doc.Metadata.HasScripts && !doc.Metadata.ScriptsSupported && result.ScriptExecutionMode != skills.SkillScriptExecutionSession {
 		result.Warnings = append(result.Warnings, "scripts are present but are not supported for custom skills")
 	}
 	result.CanImport = true
@@ -124,9 +143,14 @@ func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	if err != nil {
 		return nil, err
 	}
-	doc, err := s.skillRuntime.LoadCustomSkillDocument(preview.Root)
+	doc, err := s.skillRuntime.LoadCustomSkillDocumentWithName(preview.Root, preview.PackageName)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	if doc.Metadata.HasScripts {
+		if err := skills.ValidateCustomSkillScriptPackage(preview.Root, doc.Metadata.TimeoutSeconds); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		}
 	}
 	if s.customSkillIDConflictsWithSystem(ctx, doc.Metadata.ID) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, customSkillSystemNameConflictMessage)

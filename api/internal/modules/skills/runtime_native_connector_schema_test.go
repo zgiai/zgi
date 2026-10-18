@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	toolprovider "github.com/zgiai/zgi/api/internal/capabilities/connectortools"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
@@ -21,6 +22,13 @@ func TestNativeConnectorSchemasPreserveFirstReleaseOperationContracts(t *testing
 		t.Fatal(err)
 	}
 	for _, definition := range definitions {
+		// Only built-ins that support the Chat surface project through this
+		// Chat connector runtime. The DigitalHuman-only SSH contract carries
+		// the serverops Skill identity instead and is covered by the focused
+		// test below.
+		if !definition.Supports(catalog.SurfaceChat) {
+			continue
+		}
 		t.Run(definition.ID, func(t *testing.T) {
 			runtime, dispatcher := nativeConnectorSchemaRuntime(t, definition)
 			resolved := nativeConnectorSchemaSkills(definition)
@@ -49,6 +57,65 @@ func TestNativeConnectorSchemasPreserveFirstReleaseOperationContracts(t *testing
 				t.Fatalf("schema projection dispatched %d provider calls", dispatcher.calls)
 			}
 		})
+	}
+}
+
+// TestNativeConnectorSchemaDigitalHumanOnlySSHContract covers the built-in that
+// the first-release Chat loop intentionally skips: the SSH Server Operations
+// contract is DigitalHuman-only and owns the serverops Skill identity, not the
+// Chat connector-runtime Skill. Its admitted schemas must still project
+// unchanged under that Skill identity.
+func TestNativeConnectorSchemaDigitalHumanOnlySSHContract(t *testing.T) {
+	definitions, err := catalog.BuiltinDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ssh *catalog.Definition
+	for index := range definitions {
+		if definitions[index].ID == catalog.ServerOpsSSHConnectorID {
+			ssh = &definitions[index]
+			break
+		}
+	}
+	if ssh == nil {
+		t.Fatal("admitted SSH Server Operations contract is missing")
+	}
+	if ssh.Supports(catalog.SurfaceChat) || !ssh.Supports(catalog.SurfaceDigitalHuman) {
+		t.Fatalf("SSH surfaces = %v, want DigitalHuman-only", ssh.Surfaces)
+	}
+	if len(ssh.Operations) == 0 {
+		t.Fatal("SSH contract declares no operation")
+	}
+	for _, operation := range ssh.Operations {
+		if operation.SkillID != serverops.SkillID {
+			t.Fatalf("operation %s SkillID = %q, want %q", operation.ID, operation.SkillID, serverops.SkillID)
+		}
+	}
+
+	runtime, dispatcher := nativeConnectorSchemaRuntime(t, *ssh)
+	resolved := nativeConnectorSchemaSkillsForSkill(*ssh, serverops.SkillID)
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{})
+	if len(toolSet.SkippedSkills) != 0 || len(toolSet.ActiveSkillIDs) != 1 ||
+		toolSet.ActiveSkillIDs[0] != serverops.SkillID || len(toolSet.ProviderTools) != len(ssh.Operations) {
+		t.Fatalf("DigitalHuman SSH projection: active=%v skipped=%#v tools=%d want=%d", toolSet.ActiveSkillIDs, toolSet.SkippedSkills, len(toolSet.ProviderTools), len(ssh.Operations))
+	}
+	for _, operation := range ssh.Operations {
+		binding, exists := toolSet.ToolBindings[operation.ToolName]
+		if !exists || binding.ToolName != operation.ToolName || binding.SkillID != serverops.SkillID {
+			t.Fatalf("operation %s lost its SSH Skill binding: %#v", operation.ToolName, toolSet.ToolBindings)
+		}
+		var schema any
+		for _, projected := range toolSet.ProviderTools {
+			if projected.Function.Name == operation.ToolName {
+				schema = projected.Function.Parameters
+			}
+		}
+		if !reflect.DeepEqual(schema, tools.ModelVisibleJSONSchema(operation.InputSchema)) {
+			t.Fatalf("operation %s lost its authoritative input schema: %#v", operation.ToolName, schema)
+		}
+	}
+	if dispatcher.calls != 0 {
+		t.Fatalf("SSH schema projection dispatched %d provider calls", dispatcher.calls)
 	}
 }
 
@@ -194,7 +261,11 @@ func nativeConnectorSchemaDefinition(t *testing.T) catalog.Definition {
 }
 
 func nativeConnectorSchemaSkills(definition catalog.Definition) *skills.ResolvedSkills {
-	document := skills.SkillDocument{Metadata: skills.SkillMetadata{ID: skills.SkillConnectorRuntime}}
+	return nativeConnectorSchemaSkillsForSkill(definition, skills.SkillConnectorRuntime)
+}
+
+func nativeConnectorSchemaSkillsForSkill(definition catalog.Definition, skillID string) *skills.ResolvedSkills {
+	document := skills.SkillDocument{Metadata: skills.SkillMetadata{ID: skillID}}
 	for _, operation := range definition.Operations {
 		document.Tools = append(document.Tools, skills.SkillToolDefinition{
 			Name: operation.ToolName, ProviderType: tools.ToolProviderTypeConnector, ProviderID: definition.ID,

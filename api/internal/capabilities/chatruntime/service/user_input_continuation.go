@@ -63,6 +63,20 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 	req runtimedto.UserInputContinuationRequest,
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, error) {
+	return s.runConfiguredUserInputContinuationStream(ctx, scope, caller, config, conversationID, messageID, requestID, req, onEvent)
+}
+
+func (s *service) runConfiguredUserInputContinuationStream(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	config RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	requestID string,
+	req runtimedto.UserInputContinuationRequest,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
 	if onEvent == nil {
 		return nil, fmt.Errorf("%w: event callback is required", ErrInvalidInput)
 	}
@@ -98,7 +112,10 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(continuation.Conversation, continuation.Message, false), onEvent)
 	answer, usage, err := s.runPreparedToolLoop(runCtx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
-		return s.finishUserInputContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)
+		return s.finishContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)
+	}
+	if budgetErr := prepared.taskTokenBudget.exhausted(); budgetErr != nil {
+		return s.finishContinuationPendingOrError(persistCtx, prepared, answer, usage, budgetErr, onEvent)
 	}
 	if s.streams.IsStopped(messageID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
@@ -114,7 +131,7 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
-func (s *service) finishUserInputContinuationPendingOrError(
+func (s *service) finishContinuationPendingOrError(
 	persistCtx context.Context,
 	prepared *PreparedChat,
 	answer string,
@@ -123,6 +140,17 @@ func (s *service) finishUserInputContinuationPendingOrError(
 	onEvent func(StreamEvent) error,
 ) (*ChatResult, error) {
 	var pendingGovernance *skillloop.ToolGovernancePendingError
+	var budgetExceeded *TaskTokenBudgetExceededError
+	if prepared != nil && prepared.taskTokenBudget != nil {
+		budgetExceeded = prepared.taskTokenBudget.exhausted()
+	}
+	if budgetExceeded == nil && cause != nil {
+		errors.As(cause, &budgetExceeded)
+	}
+	if budgetExceeded != nil {
+		result, _, err := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, budgetExceeded, onEvent)
+		return result, err
+	}
 	if errors.As(cause, &pendingGovernance) {
 		metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
 		if persistErr != nil {
@@ -184,6 +212,20 @@ func (s *service) finishUserInputContinuationPendingOrError(
 		return nil, finalizedRuntimePersistenceError(finalizeErr)
 	}
 	return nil, newFinalizedStreamError(cause)
+}
+
+// finishUserInputContinuationPendingOrError is retained for workflow and
+// legacy internal callers; budget continuations use the independent entry
+// point but share the same pending-result projection.
+func (s *service) finishUserInputContinuationPendingOrError(
+	persistCtx context.Context,
+	prepared *PreparedChat,
+	answer string,
+	usage *adapter.Usage,
+	cause error,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	return s.finishContinuationPendingOrError(persistCtx, prepared, answer, usage, cause, onEvent)
 }
 
 func (s *service) beginUserInputContinuation(
@@ -500,7 +542,7 @@ func (s *service) prepareUserInputContinuationChat(
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
 	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
-	if normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAgent {
+	if !isAutonomousSubjectCaller(caller.Type) {
 		if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 			parts.ConfiguredSkillIDs = configured
 		}
@@ -509,7 +551,7 @@ func (s *service) prepareUserInputContinuationChat(
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyCallerMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
@@ -537,6 +579,7 @@ func (s *service) prepareUserInputContinuationChat(
 		ContinuationType: "user_input",
 		parts:            parts,
 		contextBudget:    contextResult,
+		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
 	}, nil
 }
 

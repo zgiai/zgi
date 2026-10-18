@@ -36,6 +36,7 @@ const AGENT_KNOWLEDGE_SKILL_ID = 'agent-knowledge';
 const AGENT_DATABASE_SKILL_ID = 'agent-database';
 const AGENT_WORKFLOW_SKILL_ID = 'agent-workflow';
 const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
+const DIGITAL_HUMAN_TASKS_SKILL_ID = 'digital-human-tasks';
 const CONNECTOR_RUNTIME_SKILL_ID = 'connector-runtime';
 const RETIRED_WEB_SEARCH_SKILL_ID = 'web-search';
 
@@ -75,6 +76,7 @@ export function isHiddenSystemSkill(skillId: unknown): boolean {
     normalized === AGENT_DATABASE_SKILL_ID ||
     normalized === AGENT_WORKFLOW_SKILL_ID ||
     normalized === AGENT_MANAGEMENT_SKILL_ID ||
+    normalized === DIGITAL_HUMAN_TASKS_SKILL_ID ||
     normalized === CONNECTOR_RUNTIME_SKILL_ID ||
     normalized === RETIRED_WEB_SEARCH_SKILL_ID
   );
@@ -482,6 +484,26 @@ const SYSTEM_SKILL_DISPLAY: Record<
     category: 'system',
     icon: 'brain',
   },
+  [DIGITAL_HUMAN_TASKS_SKILL_ID]: {
+    label: {
+      en_US: 'Digital Human Tasks',
+      zh_Hans: '数字人待办',
+    },
+    description: {
+      en_US: 'Creates and manages tasks that belong to the current digital human user.',
+      zh_Hans: '创建和管理当前数字人下属于用户的待办任务。',
+    },
+    whenToUse: {
+      en_US: 'Use when the user asks the digital human to create, update, or check a task.',
+      zh_Hans: '当用户要求数字人创建、更新或查询待办时使用。',
+    },
+    tags: {
+      en_US: ['Tasks', 'Digital Human'],
+      zh_Hans: ['待办', '数字人'],
+    },
+    category: 'productivity',
+    icon: 'list-todo',
+  },
 };
 
 const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, string>>> = {
@@ -757,6 +779,20 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
     list_temporary_memories: {
       en_US: 'List temporary memories',
       zh_Hans: '查看临时记忆',
+    },
+  },
+  [DIGITAL_HUMAN_TASKS_SKILL_ID]: {
+    list_digital_human_tasks: {
+      en_US: 'List tasks',
+      zh_Hans: '查看待办列表',
+    },
+    get_digital_human_task: {
+      en_US: 'View task',
+      zh_Hans: '查看待办',
+    },
+    manage_digital_human_task: {
+      en_US: 'Manage task',
+      zh_Hans: '管理待办',
     },
   },
 };

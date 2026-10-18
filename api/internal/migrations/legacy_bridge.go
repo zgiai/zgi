@@ -326,7 +326,7 @@ func validatePublicMigrationHistoryComplete(db *gorm.DB) error {
 
 func missingPublicMigrationIDs(appliedIDs map[string]struct{}) []string {
 	var missing []string
-	for _, id := range migrationIDsForHistoryCheck() {
+	for _, id := range migrationIDsForHistoryCheck(appliedIDs) {
 		if _, ok := appliedIDs[id]; !ok {
 			missing = append(missing, id)
 		}
@@ -334,9 +334,11 @@ func missingPublicMigrationIDs(appliedIDs map[string]struct{}) []string {
 	return missing
 }
 
-func migrationIDsForHistoryCheck() []string {
+// migrationIDsForHistoryCheck lists the migrations a complete history holds:
+// a deferred run, explicit or chosen in auto mode, never applies retirement.
+func migrationIDsForHistoryCheck(appliedIDs map[string]struct{}) []string {
 	ids := currentMigrationIDs()
-	if !config.ConnectorRetirementDeferred() {
+	if !config.ConnectorRetirementDeferred() && !connectorfinalize.DeferredByHistory(appliedIDs) {
 		return ids
 	}
 	filtered := make([]string, 0, len(ids))

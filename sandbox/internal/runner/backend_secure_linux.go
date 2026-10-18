@@ -20,7 +20,9 @@ type linuxSecureBackend struct {
 	dependencyRootFSDir string
 	bwrapBin            string
 	prlimitBin          string
+	shellBin            string
 	limits              secureRuntimeLimits
+	processCgroups      *processCgroupManager
 	allowShell          bool
 	profileCache        *dependencyProfileActivationCache
 }
@@ -51,13 +53,28 @@ func newLinuxSecureBackend(cfg config.Config) (backend, error) {
 		}
 		prlimitBin = resolvedPrlimitBin
 	}
+	shellBin := ""
+	var processCgroups *processCgroupManager
+	if limits.ProcessLimit > 0 {
+		resolvedShellBin, err := exec.LookPath("sh")
+		if err != nil {
+			return nil, fmt.Errorf("find shell for secure runtime cgroup launcher: %w", err)
+		}
+		shellBin = resolvedShellBin
+		processCgroups, err = newProcessCgroupManager(cfg.SecureRuntimeCgroupRootPath(), limits.ProcessLimit)
+		if err != nil {
+			return nil, fmt.Errorf("configure secure runtime process cgroups: %w", err)
+		}
+	}
 
 	return &linuxSecureBackend{
 		rootfs:              rootfs,
 		dependencyRootFSDir: strings.TrimSpace(cfg.DependencyRootFSDir),
 		bwrapBin:            bwrapBin,
 		prlimitBin:          prlimitBin,
+		shellBin:            shellBin,
 		limits:              limits,
+		processCgroups:      processCgroups,
 		allowShell:          true,
 		profileCache:        newDependencyProfileActivationCache(),
 	}, nil
@@ -128,7 +145,7 @@ func (b *linuxSecureBackend) ExecuteCommand(parent context.Context, spec Command
 	}, nil
 }
 
-func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, dependencyArtifactChecksum string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (Result, error) {
+func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependencyProfile string, dependencyArtifactChecksum string, binary string, args []string, enableNetwork bool, stdoutLimit int, stderrLimit int, stdin string, env map[string]string) (_ Result, returnErr error) {
 	activation, err := b.profileCache.resolve(b.rootfs, b.dependencyRootFSDir, dependencyProfile, dependencyArtifactChecksum)
 	if err != nil {
 		return Result{}, err
@@ -159,6 +176,22 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 		commandArgs = append(commandArgs, "--", b.bwrapBin)
 		commandArgs = append(commandArgs, bwrapArgs...)
 		bwrapArgIndex = len(limitArgs) + 2
+	}
+	if b.processCgroups != nil {
+		executionCgroup, err := b.processCgroups.Create()
+		if err != nil {
+			return Result{}, err
+		}
+		defer func() {
+			returnErr = errors.Join(returnErr, executionCgroup.Close())
+		}()
+		command, commandArgs, bwrapArgIndex = wrapSecureCommandInCgroup(
+			b.shellBin,
+			executionCgroup.path,
+			command,
+			commandArgs,
+			bwrapArgIndex,
+		)
 	}
 
 	cmd := exec.CommandContext(ctx, command, commandArgs...)

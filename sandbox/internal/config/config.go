@@ -8,9 +8,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/zgiai/zgi-sandbox/internal/agentexecution"
 )
 
+const defaultSecureRuntimeCgroupRoot = "/sys/fs/cgroup/zgi-sandbox-executions"
+
 type Config struct {
+	AgentRuntimeAdmission                      *agentexecution.AdmissionLimits
 	Port                                       string
 	APIKey                                     string
 	MaxWorkers                                 int
@@ -62,6 +67,7 @@ type Config struct {
 	SecureRuntimeCPUSeconds                    int
 	SecureRuntimeMemoryBytes                   int64
 	SecureRuntimeProcessLimit                  int
+	SecureRuntimeCgroupRoot                    string
 	SecureRuntimeOpenFileLimit                 int
 	ProxyTimeout                               int
 	EgressProxyMaxBodyBytes                    int64
@@ -124,6 +130,7 @@ func FromEnv() Config {
 		SecureRuntimeCPUSeconds:                    getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_CPU_SECONDS", 2),
 		SecureRuntimeMemoryBytes:                   getEnvInt64AllowZero("ZGI_SANDBOX_SECURE_RUNTIME_MEMORY_BYTES", 256*1024*1024),
 		SecureRuntimeProcessLimit:                  getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_PROCESS_LIMIT", 64),
+		SecureRuntimeCgroupRoot:                    getEnv("ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT", defaultSecureRuntimeCgroupRoot),
 		SecureRuntimeOpenFileLimit:                 getEnvIntAllowZero("ZGI_SANDBOX_SECURE_RUNTIME_OPEN_FILE_LIMIT", 128),
 		ProxyTimeout:                               getEnvInt("ZGI_SANDBOX_PROXY_TIMEOUT_SECONDS", 20),
 		EgressProxyMaxBodyBytes:                    getEnvInt64("ZGI_SANDBOX_EGRESS_PROXY_MAX_BODY_BYTES", 1024*1024),
@@ -205,6 +212,9 @@ func (c Config) ValidateStartup() error {
 		if strings.TrimSpace(c.BwrapBinary) == "" {
 			validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_BWRAP_BINARY is required when ZGI_SANDBOX_RUNTIME_BACKEND=linux-secure"))
 		}
+		if c.SecureRuntimeProcessLimit > 0 && !strings.HasPrefix(c.SecureRuntimeCgroupRootPath(), "/") {
+			validationErrors = append(validationErrors, errors.New("ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT must be an absolute path when the secure runtime process limit is enabled"))
+		}
 	}
 	if c.IsProduction() && strings.TrimSpace(c.APIKey) == "" {
 		validationErrors = append(validationErrors, errors.New("production sandbox deployments require ZGI_SANDBOX_API_KEY"))
@@ -236,6 +246,13 @@ func (c Config) RuntimeBackendName() string {
 	default:
 		return strings.ToLower(strings.TrimSpace(c.RuntimeBackend))
 	}
+}
+
+func (c Config) SecureRuntimeCgroupRootPath() string {
+	if root := strings.TrimSpace(c.SecureRuntimeCgroupRoot); root != "" {
+		return root
+	}
+	return defaultSecureRuntimeCgroupRoot
 }
 
 func (c Config) NetworkPolicyEnforced() bool {
@@ -435,6 +452,7 @@ func (c Config) PublicSnapshot() map[string]any {
 		"secure_runtime_cpu_seconds":                       c.SecureRuntimeCPUSeconds,
 		"secure_runtime_memory_bytes":                      c.SecureRuntimeMemoryBytes,
 		"secure_runtime_process_limit":                     c.SecureRuntimeProcessLimit,
+		"secure_runtime_cgroup_root":                       c.SecureRuntimeCgroupRootPath(),
 		"secure_runtime_open_file_limit":                   c.SecureRuntimeOpenFileLimit,
 		"proxy_timeout_seconds":                            c.ProxyTimeout,
 		"egress_proxy_max_body_bytes":                      c.EgressProxyMaxBodyBytes,

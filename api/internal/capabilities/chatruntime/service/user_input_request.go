@@ -41,6 +41,12 @@ func mergeUserInputRequestMetadata(source map[string]interface{}, payload map[st
 		"created_at": payload["created_at"],
 		"status":     "waiting_question",
 	}
+	if requestKind := strings.TrimSpace(stringFromAny(payload["request_kind"])); requestKind != "" {
+		request["request_kind"] = requestKind
+	}
+	if budget := mapFromOperationContext(payload["token_budget"]); len(budget) > 0 {
+		request["token_budget"] = budget
+	}
 	metadata["user_input_request"] = request
 	metadata = applyUserInputWaitingState(metadata)
 	return metadata

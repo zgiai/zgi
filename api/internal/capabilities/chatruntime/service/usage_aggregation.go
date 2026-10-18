@@ -18,6 +18,9 @@ func beginPreparedUsageExecution(prepared *PreparedChat) {
 
 func preparedResultMetadataForPrepared(prepared *PreparedChat, source map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
 	metadata := preparedResultMetadata(source, usage)
+	if prepared != nil && prepared.taskTokenBudget != nil {
+		metadata[taskTokenBudgetMetadataKey] = prepared.taskTokenBudget.metadata("completed")
+	}
 	return applyPreparedUsageMetadata(prepared, metadata, usage)
 }
 

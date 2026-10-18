@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { PERMISSION_MODULES } from '../src/constants/permissions.ts';
 import {
   getWorkspaceRoleDisplayDescription,
   getWorkspaceRoleDisplayName,
@@ -102,11 +103,40 @@ const errorCodeTranslationKeys = {
 const getMessage = (messages, key) =>
   key.split('.').reduce((value, segment) => value?.[segment], messages);
 
-for (const [code, translationKey] of Object.entries(errorCodeTranslationKeys)) {
+const digitalHumanModule = PERMISSION_MODULES.find(module => module.key === 'digital_human');
+assert.ok(digitalHumanModule, 'digital human permissions must be available in permission editors');
+assert.deepEqual(
+  digitalHumanModule.permissions.map(permission => permission.code),
+  [
+    'digital_human.view',
+    'digital_human.create',
+    'digital_human.update',
+    'digital_human.delete',
+    'digital_human.publish',
+    'digital_human.run',
+    'digital_human.logs.view',
+    'digital_human.memory.view',
+    'digital_human.memory.manage',
+  ]
+);
+
+for (const messages of [zhHansMessages, enUSMessages]) {
   assert.equal(
-    getWorkspaceRoleErrorTranslationKey({ businessError: { code } }),
-    translationKey
+    typeof getMessage(
+      messages,
+      'organization.permissions.config.permissions.modules.digital_human'
+    ),
+    'string'
   );
+  for (const permission of digitalHumanModule.permissions) {
+    const baseKey = `organization.permissions.config.permissions.${permission.code}`;
+    assert.equal(typeof getMessage(messages, `${baseKey}.name`), 'string');
+    assert.equal(typeof getMessage(messages, `${baseKey}.description`), 'string');
+  }
+}
+
+for (const [code, translationKey] of Object.entries(errorCodeTranslationKeys)) {
+  assert.equal(getWorkspaceRoleErrorTranslationKey({ businessError: { code } }), translationKey);
   assert.equal(
     getWorkspaceRoleErrorTranslationKey({ response: { data: { code: Number(code) } } }),
     translationKey

@@ -1,5 +1,10 @@
 # Script Skill Input Files
 
+新建 Skill 时建议从
+[`script-skill-development-guide.md`](script-skill-development-guide.md) 和其中的
+[Python](examples/zgi-script-skill-template/) 或
+[Node.js](examples/zgi-node-script-skill-template/) 可运行模板开始；本文只展开输入文件协议。
+
 Custom script skills can request uploaded files through `skill.manifest.json`.
 The API downloads declared files before execution, uploads them into the sandbox
 under `inputs/`, and passes their sandbox paths through stdin. The sandbox never
@@ -42,12 +47,30 @@ that contains the manifest `entrypoint`, matching `python3 <entrypoint>` runtime
 semantics. Code in nested packages should use package-qualified or relative
 imports. Dynamic `sys.path` changes do not expand the scanner's local import root.
 
+Bundled local modules may be documented explicitly without turning them into
+installable dependencies:
+
+```json
+{
+  "bundled_packages": [
+    {"name": "local_core", "path": "scripts/local_core"}
+  ]
+}
+```
+
+The declaration is optional and does not change `PYTHONPATH`, `NODE_PATH`, or the
+selected dependency profile. Python packages must resolve from the entrypoint
+directory. Node.js packages must still be imported by a relative specifier.
+
 Deployments with a fixed, prebuilt dependency set may set
-`CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED=false`. Default-profile skills then
-skip dependency discovery and managed builds and use
-`CODE_EXECUTION_SYSTEM_DATA_PROFILE` instead. The configured profile must already
-be present, enabled, and ready in the sandbox catalog; profile preflight and all
-archive, manifest, input, artifact, and organization-grant checks remain active.
+`CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED=false`. Default-profile Python
+skills then skip dependency discovery and managed builds and use
+`CODE_EXECUTION_SYSTEM_DATA_PROFILE` instead. Default-profile Node.js skills stay
+on `stdlib`; a deployment that needs Node.js third-party packages in this mode must
+provide a compatible prebuilt profile through a server-controlled runtime grant.
+The configured Python profile must already be present, enabled, and ready in the
+sandbox catalog; profile preflight and all archive, manifest, input, artifact, and
+organization-grant checks remain active.
 
 When `confirmation_file_id` is supplied, stdin keeps the original arguments and
 adds file metadata:

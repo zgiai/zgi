@@ -454,6 +454,9 @@ func sanitizeChartFilename(raw string) string {
 }
 
 func appendChartDownloadQuery(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
 	if strings.Contains(rawURL, "?") {
 		return rawURL + "&download=1"
 	}

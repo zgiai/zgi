@@ -733,6 +733,308 @@ func (router *runtimeConfirmationCASRouter) RecoverTerminal(
 	return terminalFromExecution(router.result, nil), nil
 }
 
+// runtimeConfirmationDigitalHumanHost is the durable waiting-run expectation a
+// test guard compares against the server-restored guard request.
+type runtimeConfirmationDigitalHumanHost struct {
+	organizationID uuid.UUID
+	ownerAccountID uuid.UUID
+	digitalHumanID uuid.UUID
+	versionID      uuid.UUID
+	runID          uuid.UUID
+	conversationID uuid.UUID
+	messageID      uuid.UUID
+	receipt        execution.RouteClaimReceipt
+	canceled       bool
+}
+
+type runtimeConfirmationDigitalHumanGuardSpy struct {
+	mu       sync.Mutex
+	host     runtimeConfirmationDigitalHumanHost
+	calls    int
+	requests []DigitalHumanContinuationGuardRequest
+}
+
+func (guard *runtimeConfirmationDigitalHumanGuardSpy) AuthorizeContinuation(
+	_ context.Context,
+	request DigitalHumanContinuationGuardRequest,
+) error {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	guard.calls++
+	guard.requests = append(guard.requests, request)
+	host := guard.host
+	if host.canceled || request.OrganizationID != host.organizationID ||
+		request.OwnerAccountID != host.ownerAccountID ||
+		request.DigitalHumanID != host.digitalHumanID ||
+		request.DigitalHumanVersionID != host.versionID ||
+		request.RunID != host.runID ||
+		request.ConversationID != host.conversationID ||
+		request.MessageID != host.messageID ||
+		request.RouteReceipt != host.receipt {
+		return core.NewError(core.ErrorCodeConflict, false, nil)
+	}
+	return nil
+}
+
+func newDigitalHumanRuntimeConfirmationMemoryStore() (
+	*runtimeConfirmationMemoryStore,
+	Command,
+	runtimeConfirmationDigitalHumanHost,
+) {
+	organizationID, ownerID := uuid.New(), uuid.New()
+	receipt := execution.RouteClaimReceipt(uuid.New().String())
+	digitalHumanID, versionID := uuid.New(), uuid.New()
+	conversationID, messageID, runID := uuid.New(), uuid.New(), uuid.New()
+	target := core.TargetRef{
+		Type: core.TargetTypeDigitalHuman, ID: digitalHumanID.String(),
+		Scope: core.ScopePublished, VersionID: versionID.String(),
+		BindingInstanceID: uuid.NewString(),
+	}
+	frozen := execution.FrozenConfirmationRequest{
+		RouteReceipt: receipt,
+		Request: execution.ExecutionRequest{
+			ConversationID: conversationID.String(),
+			OrganizationID: organizationID, OwnerAccountID: ownerID, ActingPrincipalID: ownerID,
+			BindingID: uuid.New(), ConnectionID: uuid.New(), ConnectorID: core.Identifier("github"),
+			Target: target, OperationID: core.Identifier("create_issue"),
+			LogicalOperationID: "logical-operation-1", CorrelationID: "connector-correlation-" + messageID.String(),
+			Interactive: true, Input: map[string]any{"query": runtimeConfirmationSecretSentinel},
+		},
+		Origin: execution.ConfirmationOrigin{
+			Surface: core.TargetTypeDigitalHuman, OriginVersion: 2,
+			DigitalHumanID: digitalHumanID.String(), ConversationID: conversationID.String(),
+			MessageID: messageID.String(), RunID: runID.String(),
+		},
+		AcceptedOperation: runtimeConfirmationAcceptedOperation(),
+	}
+	store := &runtimeConfirmationMemoryStore{
+		organizationID: organizationID, ownerAccountID: ownerID, receipt: receipt,
+		continuation: execution.ConfirmationContinuation{
+			Frozen: frozen, State: execution.ConfirmationContinuationPending,
+			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		},
+		initialLoadsReady: make(chan struct{}), terminalReady: make(chan struct{}),
+	}
+	return store, Command{
+			OrganizationID: organizationID, OwnerAccountID: ownerID, RouteReceipt: receipt,
+			Decision: execution.ConfirmationDecisionConfirmed,
+		}, runtimeConfirmationDigitalHumanHost{
+			organizationID: organizationID, ownerAccountID: ownerID,
+			digitalHumanID: digitalHumanID, versionID: versionID, runID: runID,
+			conversationID: conversationID, messageID: messageID, receipt: receipt,
+		}
+}
+
+func TestServiceContinueDigitalHumanGuardAllowsExactWaitingRun(t *testing.T) {
+	store, command, host := newDigitalHumanRuntimeConfirmationMemoryStore()
+	decisionID, outcomeID := uuid.New(), uuid.New()
+	router := &runtimeConfirmationRouterSpy{
+		result: completedExecutionResult(decisionID, outcomeID, "provider-value"),
+	}
+	guard := &runtimeConfirmationDigitalHumanGuardSpy{host: host}
+	service := mustRuntimeConfirmationService(t, store, router).
+		WithDigitalHumanContinuationGuard(guard)
+
+	result, err := service.Continue(context.Background(), command)
+	if err != nil {
+		t.Fatalf("Continue() error = %v", err)
+	}
+	if result.State != StateCompleted || result.DecisionID != decisionID {
+		t.Fatalf("Continue() = %#v", result)
+	}
+	if guard.calls != 1 || router.calls != 1 {
+		t.Fatalf("guard calls = %d, router calls = %d, want 1/1", guard.calls, router.calls)
+	}
+	request := guard.requests[0]
+	if request.OrganizationID != host.organizationID || request.OwnerAccountID != host.ownerAccountID ||
+		request.DigitalHumanID != host.digitalHumanID ||
+		request.DigitalHumanVersionID != host.versionID || request.RunID != host.runID ||
+		request.ConversationID != host.conversationID || request.MessageID != host.messageID ||
+		request.RouteReceipt != host.receipt {
+		t.Fatalf("guard request = %#v, want exact durable host identity", request)
+	}
+}
+
+func TestServiceContinueDigitalHumanGuardDeniesStaleStateBeforeRouter(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*runtimeConfirmationDigitalHumanHost)
+	}{
+		{"canceled run", func(host *runtimeConfirmationDigitalHumanHost) { host.canceled = true }},
+		{"wrong owner", func(host *runtimeConfirmationDigitalHumanHost) { host.ownerAccountID = uuid.New() }},
+		{"wrong version", func(host *runtimeConfirmationDigitalHumanHost) { host.versionID = uuid.New() }},
+		{"wrong receipt", func(host *runtimeConfirmationDigitalHumanHost) {
+			host.receipt = execution.RouteClaimReceipt(uuid.New().String())
+		}},
+		{"wrong host", func(host *runtimeConfirmationDigitalHumanHost) { host.digitalHumanID = uuid.New() }},
+		{"wrong message", func(host *runtimeConfirmationDigitalHumanHost) { host.messageID = uuid.New() }},
+		{"wrong conversation", func(host *runtimeConfirmationDigitalHumanHost) { host.conversationID = uuid.New() }},
+		{"wrong run", func(host *runtimeConfirmationDigitalHumanHost) { host.runID = uuid.New() }},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, command, host := newDigitalHumanRuntimeConfirmationMemoryStore()
+			testCase.mutate(&host)
+			router := &runtimeConfirmationRouterSpy{}
+			guard := &runtimeConfirmationDigitalHumanGuardSpy{host: host}
+			service := mustRuntimeConfirmationService(t, store, router).
+				WithDigitalHumanContinuationGuard(guard)
+
+			if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeConflict) {
+				t.Fatalf("Continue() error = %v, want conflict", err)
+			}
+			if router.calls != 0 || store.recordCalls != 0 {
+				t.Fatalf("%s routed=%d recorded=%d, want 0/0", testCase.name, router.calls, store.recordCalls)
+			}
+			if guard.calls != 1 {
+				t.Fatalf("guard calls = %d, want 1", guard.calls)
+			}
+		})
+	}
+}
+
+func TestServiceContinueDigitalHumanWithoutGuardFailsClosed(t *testing.T) {
+	store, command, _ := newDigitalHumanRuntimeConfirmationMemoryStore()
+	router := &runtimeConfirmationRouterSpy{}
+	service := mustRuntimeConfirmationService(t, store, router)
+
+	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeInternal) {
+		t.Fatalf("Continue(no guard) error = %v, want internal fail-closed", err)
+	}
+	if router.calls != 0 || store.recordCalls != 0 {
+		t.Fatalf("unguarded DigitalHuman continuation routed=%d recorded=%d", router.calls, store.recordCalls)
+	}
+}
+
+func TestServiceContinueDigitalHumanGuardDenialNeverWritesTerminal(t *testing.T) {
+	store, command, host := newDigitalHumanRuntimeConfirmationMemoryStore()
+	host.canceled = true
+	router := &runtimeConfirmationRouterSpy{}
+	guard := &runtimeConfirmationDigitalHumanGuardSpy{host: host}
+	service := mustRuntimeConfirmationService(t, store, router).
+		WithDigitalHumanContinuationGuard(guard)
+
+	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeConflict) {
+		t.Fatalf("Continue() error = %v, want conflict", err)
+	}
+	if store.continuation.State != execution.ConfirmationContinuationPending || store.recordCalls != 0 {
+		t.Fatalf("denied continuation was mutated: %#v", store.continuation)
+	}
+}
+
+func TestServiceContinueNonDigitalHumanOriginsNeverConsultGuard(t *testing.T) {
+	for _, surface := range []core.TargetType{
+		core.TargetTypeChat, core.TargetTypeAgent, core.TargetTypeWorkflow,
+	} {
+		t.Run(string(surface), func(t *testing.T) {
+			store, command := newRuntimeConfirmationMemoryStore()
+			store.continuation.Frozen.Origin.Surface = surface
+			decisionID, outcomeID := uuid.New(), uuid.New()
+			router := &runtimeConfirmationRouterSpy{
+				result: completedExecutionResult(decisionID, outcomeID, "provider-value"),
+			}
+			guard := &runtimeConfirmationDigitalHumanGuardSpy{}
+			service := mustRuntimeConfirmationService(t, store, router).
+				WithDigitalHumanContinuationGuard(guard)
+
+			result, err := service.Continue(context.Background(), command)
+			if err != nil || result.State != StateCompleted {
+				t.Fatalf("Continue(%s) = %#v, %v", surface, result, err)
+			}
+			if guard.calls != 0 {
+				t.Fatalf("%s origin consulted the DigitalHuman guard %d times", surface, guard.calls)
+			}
+			if router.calls != 1 {
+				t.Fatalf("%s origin router calls = %d, want 1", surface, router.calls)
+			}
+		})
+	}
+}
+
+func TestServiceContinueDigitalHumanRejectsRememberForSessionBeforeRouting(t *testing.T) {
+	store, command, host := newDigitalHumanRuntimeConfirmationMemoryStore()
+	command.RememberForSession = true
+	router := &runtimeConfirmationRouterSpy{}
+	guard := &runtimeConfirmationDigitalHumanGuardSpy{host: host}
+	service := mustRuntimeConfirmationService(t, store, router).
+		WithDigitalHumanContinuationGuard(guard)
+
+	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+		t.Fatalf("Continue(DigitalHuman remember) error = %v, want access denied", err)
+	}
+	if guard.calls != 0 || router.calls != 0 || store.recordCalls != 0 {
+		t.Fatalf(
+			"forged remember reached guard=%d router=%d record=%d, want 0/0/0",
+			guard.calls, router.calls, store.recordCalls,
+		)
+	}
+	if store.continuation.State != execution.ConfirmationContinuationPending {
+		t.Fatalf("forged remember mutated continuation: %#v", store.continuation)
+	}
+}
+
+func TestServiceContinueDigitalHumanRejectsRememberForSessionInTerminalState(t *testing.T) {
+	store, command, _ := newDigitalHumanRuntimeConfirmationMemoryStore()
+	store.continuation.State = execution.ConfirmationContinuationCompleted
+	store.continuation.DecisionID = uuid.New()
+	store.continuation.OutcomeID = uuid.New()
+	command.RememberForSession = true
+	router := &runtimeConfirmationRouterSpy{}
+	service := mustRuntimeConfirmationService(t, store, router)
+
+	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+		t.Fatalf("Continue(DigitalHuman terminal remember) error = %v, want access denied", err)
+	}
+	if router.calls != 0 || store.recordCalls != 0 {
+		t.Fatalf("terminal forged remember routed=%d recorded=%d, want 0/0", router.calls, store.recordCalls)
+	}
+}
+
+func TestServiceContinueDigitalHumanOneShotStillRoutes(t *testing.T) {
+	store, command, host := newDigitalHumanRuntimeConfirmationMemoryStore()
+	command.RememberForSession = false
+	decisionID, outcomeID := uuid.New(), uuid.New()
+	router := &runtimeConfirmationRouterSpy{
+		result: completedExecutionResult(decisionID, outcomeID, "provider-value"),
+	}
+	guard := &runtimeConfirmationDigitalHumanGuardSpy{host: host}
+	service := mustRuntimeConfirmationService(t, store, router).
+		WithDigitalHumanContinuationGuard(guard)
+
+	result, err := service.Continue(context.Background(), command)
+	if err != nil || result.State != StateCompleted || result.DecisionID != decisionID {
+		t.Fatalf("Continue(DigitalHuman one-shot) = %#v, %v", result, err)
+	}
+	if guard.calls != 1 || router.calls != 1 {
+		t.Fatalf("guard/router calls = %d/%d, want 1/1", guard.calls, router.calls)
+	}
+}
+
+func TestServiceContinueNonDigitalHumanRememberForSessionStillRoutes(t *testing.T) {
+	for _, surface := range []core.TargetType{
+		core.TargetTypeChat, core.TargetTypeAgent, core.TargetTypeWorkflow,
+	} {
+		t.Run(string(surface), func(t *testing.T) {
+			store, command := newRuntimeConfirmationMemoryStore()
+			store.continuation.Frozen.Origin.Surface = surface
+			command.RememberForSession = true
+			decisionID, outcomeID := uuid.New(), uuid.New()
+			router := &runtimeConfirmationRouterSpy{
+				result: completedExecutionResult(decisionID, outcomeID, "provider-value"),
+			}
+			service := mustRuntimeConfirmationService(t, store, router)
+
+			result, err := service.Continue(context.Background(), command)
+			if err != nil || result.State != StateCompleted || result.DecisionID != decisionID {
+				t.Fatalf("Continue(%s remember) = %#v, %v", surface, result, err)
+			}
+			if router.calls != 1 {
+				t.Fatalf("%s remember router calls = %d, want 1", surface, router.calls)
+			}
+		})
+	}
+}
+
 func TestFallbackPresentationIsSafeLocalizedAndNotRedacted(t *testing.T) {
 	request := execution.ExecutionRequest{
 		ConnectorID:        core.Identifier("github"),

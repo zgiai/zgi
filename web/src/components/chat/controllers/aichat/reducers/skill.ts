@@ -1,6 +1,7 @@
 import type {
   AIChatAgentProgressEventData,
   AIChatMemoryMutationEventData,
+  AIChatRuntimeInputAppliedEventData,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
   AIChatSkillCallStartEventData,
@@ -28,6 +29,8 @@ import {
   presentationPositionFromPayload,
 } from '../presentation-order';
 import { modelProcessingStateFromEvent } from '../model-processing';
+import { applyRuntimeInputApplication } from '@/components/chat/utils/runtime-input-reconcile';
+import { sanitizeTimelineForMessage } from '../selectors';
 import {
   connectorReceiptFromTimelineItem,
   isPendingConnectorSkillEvent,
@@ -1049,6 +1052,80 @@ export function applyMemoryMutationState(
   };
 }
 
+function upsertRuntimeInputTimelineItem(
+  timeline: AIChatAgenticTimelineItem[] | undefined,
+  payload: AIChatRuntimeInputAppliedEventData,
+  eventId?: string | null
+): AIChatAgenticTimelineItem[] {
+  const nextItem: Extract<AIChatAgenticTimelineItem, { type: 'runtime_input' }> = {
+    id: `runtime-input-${payload.input_id}`,
+    type: 'runtime_input',
+    input_id: payload.input_id,
+    content: payload.content,
+    checkpoint: payload.checkpoint,
+    model_round: payload.model_round,
+    created_at: payload.created_at,
+    event_id: eventId ?? null,
+    ...presentationPositionFromPayload(payload),
+  };
+  const items = timeline ?? [];
+  const index = items.findIndex(
+    item => item.type === 'runtime_input' && item.input_id === payload.input_id
+  );
+  if (index < 0) return [...items, nextItem];
+  return items.map((item, itemIndex) =>
+    itemIndex === index && item.type === 'runtime_input'
+      ? { ...item, ...nextItem, content: nextItem.content || item.content }
+      : item
+  );
+}
+
+export function applyRuntimeInputAppliedState(
+  current: AIChatControllerState,
+  payload: AIChatRuntimeInputAppliedEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  if (!payload.conversation_id || !payload.message_id || !payload.input_id) return current;
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (previousStreaming && isStaleAIChatStreamEvent(eventId, previousStreaming.last_event_id)) {
+    return current;
+  }
+  const conversationMessages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const nextMessages = applyRuntimeInputApplication(conversationMessages, {
+    id: payload.input_id,
+    client_input_id: payload.client_input_id,
+    status: payload.status ?? 'applied_current_run',
+    target_message_id: payload.target_message_id ?? payload.message_id,
+    consumed_message_id: payload.consumed_message_id,
+  });
+  if (!previousStreaming) {
+    if (nextMessages === conversationMessages) return current;
+    return {
+      ...current,
+      messagesByConversation: {
+        ...current.messagesByConversation,
+        [payload.conversation_id]: nextMessages,
+      },
+    };
+  }
+  return {
+    ...current,
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: nextMessages,
+    },
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...previousStreaming,
+        timeline: upsertRuntimeInputTimelineItem(previousStreaming.timeline, payload, eventId),
+        answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
+        last_event_id: eventId ?? previousStreaming.last_event_id,
+      },
+    },
+  };
+}
+
 export function applyToolGovernanceDecisionState(
   current: AIChatControllerState,
   payload: AIChatToolGovernanceDecisionEventData,
@@ -1129,11 +1206,15 @@ export function applyToolGovernanceDecisionState(
           [payload.message_id]: {
             ...previousStreaming,
             modelProcessing: undefined,
-            timeline: upsertToolGovernanceTimelineItem(
-              previousStreaming.timeline,
-              payload,
-              eventId
-            ),
+            timeline: (() => {
+              const timeline = upsertToolGovernanceTimelineItem(
+                previousStreaming.timeline,
+                payload,
+                eventId
+              );
+              const message = nextMessages.find(item => item.id === payload.message_id);
+              return message ? sanitizeTimelineForMessage(message, timeline) : timeline;
+            })(),
             answer_before_timeline_length: preserveLegacyAnswerBoundary(previousStreaming),
             last_event_id: eventId ?? previousStreaming.last_event_id,
           },

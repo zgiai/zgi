@@ -283,6 +283,11 @@ func submittedData(raw *string) (map[string]any, error) {
 	if err := json.Unmarshal([]byte(*raw), &result); err != nil {
 		return nil, fmt.Errorf("decode approval submitted data: %w", err)
 	}
+	if result == nil {
+		// A submission without inputs is stored as JSON null. The node adds the
+		// action outputs to this map, so it must never be nil.
+		return map[string]any{}, nil
+	}
 	return result, nil
 }
 

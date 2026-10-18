@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	"gorm.io/gorm"
 )
 
@@ -30,6 +31,10 @@ type ToolFile struct {
 	CreatedAt      time.Time  `gorm:"not null" json:"created_at"`
 	UpdatedAt      time.Time  `gorm:"not null" json:"updated_at"`
 	DeletedAt      *time.Time `gorm:"index" json:"deleted_at,omitempty"`
+	// Non-nil identity marks an authenticated execution artifact. These fields
+	// are persisted atomically with the file, never accepted from public DTOs.
+	ExecutionIdentity  *execution.Identity `gorm:"serializer:json;type:jsonb" json:"-"`
+	ExecutionMessageID *string             `json:"-"`
 }
 
 // TableName specifies the table name for GORM

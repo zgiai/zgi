@@ -13,7 +13,9 @@ import {
   type ConnectorPickerActionHandlers,
   type ConnectorPickerBindingRef,
   type ConnectorPickerFilters,
+  type ConnectorPickerOptions,
   type ConnectorPickerRow,
+  type ConnectorPickerSelectionMode,
 } from './connector-picker-model';
 
 export interface ConnectorPickerMenuGroup {
@@ -25,6 +27,8 @@ export interface ConnectorPickerMenuGroup {
   accounts: ConnectorPickerRow[];
   createRow?: ConnectorPickerRow;
   currentBinding?: ConnectorPickerBindingRef;
+  bindings: ConnectorPickerBindingRef[];
+  selectionMode: ConnectorPickerSelectionMode;
   count: number;
   canToggle: boolean;
   unavailable?: boolean;
@@ -40,8 +44,14 @@ export function connectorPickerGroupSummary(
     row => row.connection?.id === group.currentBinding?.connection_id
   );
   const selected = Boolean(group.currentBinding);
+  const selectedAccounts = group.accounts.filter(row => Boolean(row.binding));
+  const multiple = group.selectionMode === 'multiple-connections';
+  const allReady =
+    selectedAccounts.length === group.bindings.length &&
+    selectedAccounts.every(row => row.state === 'added');
   return {
     selected,
+    selectedCount: group.bindings.length,
     inUse: group.currentBinding?.status === 'active',
     bindingStatus: group.currentBinding?.status,
     currentAccount,
@@ -50,12 +60,19 @@ export function connectorPickerGroupSummary(
       : undefined,
     availability: !selected
       ? undefined
-      : currentAccount?.state === 'reconnect'
-        ? ('reconnect_required' as const)
-        : currentAccount?.state === 'added'
+      : multiple && group.bindings.length > 1
+        ? allReady
           ? ('ready' as const)
-          : ('unavailable' as const),
+          : selectedAccounts.some(row => row.state === 'reconnect')
+            ? ('reconnect_required' as const)
+            : ('unavailable' as const)
+        : currentAccount?.state === 'reconnect'
+          ? ('reconnect_required' as const)
+          : currentAccount?.state === 'added'
+            ? ('ready' as const)
+            : ('unavailable' as const),
     isDefault:
+      !multiple &&
       selected &&
       preference?.mode === 'selected' &&
       preference.connection_id === group.currentBinding?.connection_id,
@@ -65,14 +82,17 @@ export function connectorPickerGroupSummary(
 export function createConnectorPickerMenuGroups(
   catalog: readonly ConnectorCatalogItem[],
   connections: readonly PersonalConnection[],
-  bindings: readonly ConnectorPickerBindingRef[]
+  bindings: readonly ConnectorPickerBindingRef[],
+  options: ConnectorPickerOptions = {}
 ): ConnectorPickerMenuGroup[] {
-  const rows = createConnectorPickerRows(catalog, connections, bindings);
+  const rows = createConnectorPickerRows(catalog, connections, bindings, options);
+  const selectionMode = options.selectionMode ?? 'single-per-connector';
   const groups = new Map<string, ConnectorPickerMenuGroup>();
   for (const connector of catalog) {
     const connectorRows = rows.filter(row => row.connector.id === connector.id);
     const accounts = connectorRows.filter(row => row.connection);
     const currentBinding = bindings.find(binding => binding.connector_id === connector.id);
+    if (connectorRows.length === 0 && !currentBinding) continue;
     groups.set(connector.id, {
       id: connector.id,
       name: connector.name,
@@ -82,6 +102,8 @@ export function createConnectorPickerMenuGroups(
       accounts,
       createRow: connectorRows.find(row => !row.connection),
       currentBinding,
+      bindings: bindings.filter(binding => binding.connector_id === connector.id),
+      selectionMode,
       count: accounts.length,
       canToggle:
         Boolean(currentBinding) || accounts.filter(row => row.state === 'ready').length === 1,
@@ -94,6 +116,7 @@ export function createConnectorPickerMenuGroups(
     const saved = connections.filter(
       connection => connection.connector_id === binding.connector_id
     );
+    const savedBindings = bindings.filter(item => item.connector_id === binding.connector_id);
     const connector: ConnectorCatalogItem = {
       id: binding.connector_id,
       plugin_id: '',
@@ -108,10 +131,12 @@ export function createConnectorPickerMenuGroups(
       id: binding.connector_id,
       name: '',
       connector,
-      accounts: createConnectorPickerRows([connector], saved, [binding]).filter(
+      accounts: createConnectorPickerRows([connector], saved, savedBindings, options).filter(
         row => row.connection
       ),
       currentBinding: binding,
+      bindings: savedBindings,
+      selectionMode,
       count: saved.length,
       canToggle: true,
       unavailable: true,
@@ -134,17 +159,39 @@ export function filterConnectorPickerGroups(
         filters.status === 'needs_attention' && pendingConnectorIDs.has(group.id)
           ? { ...filters, status: 'all' }
           : filters
-      ).length > 0 || Boolean(group.unavailable && group.currentBinding && !filters.query.trim())
+      ).length > 0 ||
+      Boolean(
+        group.currentBinding &&
+          !filters.query.trim() &&
+          (group.unavailable ||
+            group.bindings.some(
+              binding => !group.accounts.some(row => row.connection?.id === binding.connection_id)
+            ))
+      )
   );
 }
 
-/** An account radio selects an account; clicking its current value never turns it off. */
+/** Default radio selection is stable; hosts with independent connections use checkboxes. */
 export async function requestConnectorPickerMenuAccount(
   row: ConnectorPickerRow,
   handlers: ConnectorPickerActionHandlers,
-  target: ConnectorTargetRef
+  target: ConnectorTargetRef,
+  selectionMode: ConnectorPickerSelectionMode = 'single-per-connector'
 ): Promise<void> {
-  if (row.state === 'added') return;
+  if (row.state === 'added' && selectionMode === 'single-per-connector') return;
+  if (
+    selectionMode === 'multiple-connections' &&
+    row.binding &&
+    (row.state === 'added' || row.state === 'ready')
+  ) {
+    await handlers.onRequestDetach?.({
+      connector: row.connector,
+      binding: row.binding,
+      connection: row.connection,
+      target,
+    });
+    return;
+  }
   await requestConnectorPickerAction(row, handlers, target);
 }
 
@@ -155,6 +202,8 @@ export async function requestConnectorPickerMenuToggle(
   target: ConnectorTargetRef
 ): Promise<void> {
   if (!group.connector || !group.canToggle) return;
+  // Multiple connections require an explicit per-binding removal, never a guessed service slot.
+  if (group.selectionMode === 'multiple-connections' && group.bindings.length > 1) return;
   if (group.currentBinding) {
     await handlers.onRequestDetach?.({
       connector: group.connector,

@@ -17,7 +17,7 @@ func TestProvideGinEngine_AllowsExternalAPIPreflightHeaders(t *testing.T) {
 		config.GlobalConfig = previousConfig
 	}()
 
-	const origin = "https://c-cloud.zgi.im"
+	const origin = "http://localhost:2880"
 	config.GlobalConfig = &config.Config{
 		Server: config.ServerConfig{
 			Mode:             gin.TestMode,
@@ -26,21 +26,40 @@ func TestProvideGinEngine_AllowsExternalAPIPreflightHeaders(t *testing.T) {
 	}
 
 	engine := provideGinEngine(config.GlobalConfig, observability.NewZGIReporter(), &OpenTelemetryResource{})
-	req := httptest.NewRequest(http.MethodOptions, "/console/api/aichat/chat", nil)
-	req.Header.Set("Origin", origin)
-	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
-	req.Header.Set("Access-Control-Request-Headers", "authorization,cache-control,connection,content-type,x-api-key,x-external-user-id")
+	for _, test := range []struct {
+		path    string
+		method  string
+		headers []string
+	}{
+		{path: "/console/api/runtime-workspaces", method: http.MethodGet, headers: []string{"authorization", "content-type", "x-workspace-id"}},
+		{path: "/console/api/runtime-workspaces/workspace-id", method: http.MethodPatch, headers: []string{"authorization", "content-type", "x-workspace-id"}},
+		{path: "/console/api/runtime-workspaces/workspace-id/agents/agent-id", method: http.MethodDelete, headers: []string{"authorization", "content-type", "x-workspace-id"}},
+		{path: "/api/connect/v1/apps/app-key/chat", method: http.MethodPost, headers: []string{"authorization", "content-type", "idempotency-key", "x-zgi-external-user-id"}},
+	} {
+		req := httptest.NewRequest(http.MethodOptions, test.path, nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", test.method)
+		req.Header.Set("Access-Control-Request-Headers", strings.Join(test.headers, ","))
 
-	recorder := httptest.NewRecorder()
-	engine.ServeHTTP(recorder, req)
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusNoContent {
-		t.Fatalf("preflight status = %d, want %d", recorder.Code, http.StatusNoContent)
-	}
-	allowHeaders := strings.ToLower(recorder.Header().Get("Access-Control-Allow-Headers"))
-	for _, header := range []string{"connection", "x-api-key", "x-external-user-id"} {
-		if !strings.Contains(allowHeaders, header) {
-			t.Fatalf("Access-Control-Allow-Headers = %q, want %q", allowHeaders, header)
+		if recorder.Code != http.StatusNoContent {
+			t.Fatalf("%s %s preflight status = %d, want %d", test.method, test.path, recorder.Code, http.StatusNoContent)
+		}
+		if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != origin {
+			t.Fatalf("%s %s allow origin = %q, want %q", test.method, test.path, got, origin)
+		}
+		if got := recorder.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+			t.Fatalf("%s %s allow credentials = %q, want true", test.method, test.path, got)
+		}
+		if !corsHeaderListContains(recorder.Header().Get("Access-Control-Allow-Methods"), test.method) {
+			t.Fatalf("%s %s did not allow method", test.method, test.path)
+		}
+		for _, header := range test.headers {
+			if !corsHeaderListContains(recorder.Header().Get("Access-Control-Allow-Headers"), header) {
+				t.Fatalf("%s %s did not allow header %q", test.method, test.path, header)
+			}
 		}
 	}
 }
@@ -72,7 +91,7 @@ func TestProvideGinEngine_ExposesAgentSSEIdentityHeaders(t *testing.T) {
 	engine.ServeHTTP(recorder, req)
 
 	exposed := strings.ToLower(recorder.Header().Get("Access-Control-Expose-Headers"))
-	for _, header := range []string{"x-request-id", "x-zgi-request-id", "x-zgi-app-error-code", "x-zgi-conversation-id", "x-zgi-message-id"} {
+	for _, header := range []string{"x-request-id", "x-zgi-request-id", "x-zgi-app-error-code", "x-zgi-conversation-id", "x-zgi-message-id", "idempotent-replayed"} {
 		if !strings.Contains(exposed, header) {
 			t.Fatalf("Access-Control-Expose-Headers = %q, want %q", exposed, header)
 		}

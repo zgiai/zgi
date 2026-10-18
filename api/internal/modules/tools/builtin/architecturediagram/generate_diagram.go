@@ -272,7 +272,7 @@ func createDiagramFile(
 	if err != nil {
 		return nil, tools.ToolInvokeMessage{}, fmt.Errorf("failed to create generated diagram: %w", err)
 	}
-	url, err := tool_file.SignToolFileGlobal(toolFile.ID, extension)
+	url, err := tool_file.PublicGeneratedFileURL(toolFile, extension)
 	if err != nil {
 		return nil, tools.ToolInvokeMessage{}, fmt.Errorf("failed to sign generated diagram: %w", err)
 	}
@@ -309,6 +309,7 @@ func createDiagramFile(
 	if toolFile.ExpiresAt != nil {
 		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
 	}
+	tool_file.ProtectGeneratedFileMetadata(toolFile, workflowMeta, fileMeta)
 	return fileMeta, tools.ToolInvokeMessage{
 		Type: tools.ToolInvokeMessageTypeFile,
 		Text: downloadURL,

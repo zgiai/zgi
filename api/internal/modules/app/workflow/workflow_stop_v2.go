@@ -175,7 +175,8 @@ func lockWorkflowStopRowsV2Tx(tx *gorm.DB, workflowRunID string) ([]WorkflowNode
 	var nodeLogs []WorkflowNodeRuntimeLog
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("workflow_run_id = ? AND deleted_at IS NULL AND status IN ?", workflowRunID, []string{"running", "paused"}).
-		Order("index ASC, created_at ASC").Find(&nodeLogs).Error; err != nil {
+		Order(clause.OrderByColumn{Column: clause.Column{Name: "index"}}).
+		Order(clause.OrderByColumn{Column: clause.Column{Name: "created_at"}}).Find(&nodeLogs).Error; err != nil {
 		return nil, fmt.Errorf("lock running workflow nodes for stop: %w", err)
 	}
 	return nodeLogs, nil

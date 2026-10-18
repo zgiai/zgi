@@ -470,18 +470,19 @@ const OpeningStatementDialog: React.FC<OpeningStatementDialogProps> = ({
                     </span>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      className="bg-background"
-                      loading={Boolean(generatingSuggestedQuestions)}
-                      disabled={!onGenerateSuggestedQuestions}
-                      onClick={handleGenerateSuggestedQuestions}
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      {t('workflow.features.suggestedQuestions.generate')}
-                    </Button>
+                    {onGenerateSuggestedQuestions ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        className="bg-background"
+                        loading={Boolean(generatingSuggestedQuestions)}
+                        onClick={handleGenerateSuggestedQuestions}
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        {t('workflow.features.suggestedQuestions.generate')}
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       variant="ghost"

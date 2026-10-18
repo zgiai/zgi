@@ -67,7 +67,10 @@ export function removeRunningStreamingStateByConversation(
   const nextStreamingByMessageId = { ...streamingByMessageId };
   Object.values(streamingByMessageId).forEach(streaming => {
     if (streaming.conversation_id !== conversationId) return;
-    if (streaming.status === 'streaming' || !streaming.timeline?.length) {
+    if (
+      streaming.status === 'streaming' ||
+      (!streaming.timeline?.length && !streaming.presentationItems?.length)
+    ) {
       delete nextStreamingByMessageId[streaming.message_id];
     }
   });

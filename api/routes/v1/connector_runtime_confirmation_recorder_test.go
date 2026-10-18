@@ -18,6 +18,7 @@ func TestConnectorRuntimeConfirmationSurfaceRecorderDispatchesFrozenOrigin(t *te
 	}{
 		{name: "chat", surface: connectorcore.TargetTypeChat, wantChatCalls: 1},
 		{name: "agent", surface: connectorcore.TargetTypeAgent, wantChatCalls: 1},
+		{name: "digital human", surface: connectorcore.TargetTypeDigitalHuman, wantChatCalls: 1},
 		{name: "workflow", surface: connectorcore.TargetTypeWorkflow, wantFlowCalls: 1},
 	}
 	for _, testCase := range tests {

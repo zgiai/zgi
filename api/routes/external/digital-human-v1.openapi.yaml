@@ -1,0 +1,1646 @@
+openapi: 3.0.3
+info:
+  title: ZGI DigitalHuman External API v1
+  version: 1.0.0
+  description: |
+    Public contract for invoking a published ZGI DigitalHuman.
+    Every stateful operation uses `user` as the stable end-user identity.
+    The value must be an opaque, non-PII business identifier; ZGI derives a
+    DigitalHuman-scoped subject and never returns the original value.
+servers:
+  - url: /api/v1
+    description: Current ZGI deployment
+security:
+  - bearerAuth: []
+tags:
+  - name: DigitalHumans
+    description: Published configuration and streamed chat entrypoint.
+  - name: DigitalHuman runs
+    description: Durable run inspection, recovery, cancellation, and runtime input.
+  - name: DigitalHuman conversations
+    description: End-user-scoped conversation and message history.
+  - name: DigitalHuman files
+    description: End-user-scoped chat file upload.
+  - name: DigitalHuman tasks
+    description: End-user-scoped task creation, lifecycle management, and result history.
+x-zgi-sse-event-data-schemas:
+  run_accepted: '#/components/schemas/RunAcceptedEvent'
+  message_start: '#/components/schemas/MessageStartEvent'
+  message: '#/components/schemas/MessageDeltaEvent'
+  message_retract: '#/components/schemas/MessageRetractEvent'
+  message_end: '#/components/schemas/MessageEndEvent'
+  error: '#/components/schemas/StreamErrorEvent'
+  agent_progress: '#/components/schemas/AgentProgressEvent'
+  agent_intermediate_answer: '#/components/schemas/IntermediateAnswerEvent'
+  user_input_requested: '#/components/schemas/UserInputRequestedEvent'
+  token_budget_requested: '#/components/schemas/TokenBudgetRequestedEvent'
+  token_usage_updated: '#/components/schemas/TokenUsageUpdatedEvent'
+  file_parse_start: '#/components/schemas/FileParseEvent'
+  file_parse_end: '#/components/schemas/FileParseEvent'
+  file_parse_error: '#/components/schemas/FileParseEvent'
+  skill_load_start: '#/components/schemas/SkillEvent'
+  skill_load_end: '#/components/schemas/SkillEvent'
+  skill_reference_read: '#/components/schemas/SkillEvent'
+  skill_call_start: '#/components/schemas/SkillEvent'
+  skill_call_end: '#/components/schemas/SkillEvent'
+  skill_call_error: '#/components/schemas/SkillEvent'
+  skill_artifact_created: '#/components/schemas/SkillArtifactEvent'
+  tool_governance_decision: '#/components/schemas/ToolGovernanceDecisionEvent'
+  client_action_required: '#/components/schemas/ClientActionRequiredEvent'
+  memory_create: '#/components/schemas/MemoryMutationEvent'
+  memory_update: '#/components/schemas/MemoryMutationEvent'
+  memory_delete: '#/components/schemas/MemoryMutationEvent'
+  memory_clear: '#/components/schemas/MemoryMutationEvent'
+  runtime_input_accepted: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_applied: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_follow_up_started: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_canceled: '#/components/schemas/RuntimeInputEvent'
+  runtime_input_failed: '#/components/schemas/RuntimeInputEvent'
+  workflow_started: '#/components/schemas/WorkflowEvent'
+  node_started: '#/components/schemas/WorkflowEvent'
+  node_finished: '#/components/schemas/WorkflowEvent'
+  workflow_paused: '#/components/schemas/WorkflowEvent'
+  workflow_resumed: '#/components/schemas/WorkflowEvent'
+  approval_requested: '#/components/schemas/ApprovalRequestedEvent'
+  approval_result_filled: '#/components/schemas/WorkflowEvent'
+  approval_expired: '#/components/schemas/WorkflowEvent'
+  question_answer_requested: '#/components/schemas/WorkflowEvent'
+  question_answer_submitted: '#/components/schemas/WorkflowEvent'
+  iteration_started: '#/components/schemas/WorkflowEvent'
+  iteration_next: '#/components/schemas/WorkflowEvent'
+  iteration_completed: '#/components/schemas/WorkflowEvent'
+  iteration_succeeded: '#/components/schemas/WorkflowEvent'
+  iteration_failed: '#/components/schemas/WorkflowEvent'
+  loop_started: '#/components/schemas/WorkflowEvent'
+  loop_next: '#/components/schemas/WorkflowEvent'
+  loop_completed: '#/components/schemas/WorkflowEvent'
+  loop_succeeded: '#/components/schemas/WorkflowEvent'
+  loop_failed: '#/components/schemas/WorkflowEvent'
+  workflow_finished: '#/components/schemas/WorkflowEvent'
+  workflow_failed: '#/components/schemas/WorkflowEvent'
+  workflow_stopped: '#/components/schemas/WorkflowEvent'
+  text_chunk: '#/components/schemas/WorkflowTextEvent'
+  text_replace: '#/components/schemas/WorkflowTextEvent'
+  run_end: '#/components/schemas/RunEndEvent'
+paths:
+  /digital-humans/config:
+    get:
+      tags: [DigitalHumans]
+      summary: Get the published DigitalHuman configuration
+      description: Returns the immutable published presentation and externally available capabilities.
+      operationId: getDigitalHumanConfig
+      responses:
+        '200':
+          description: Published configuration.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanConfigEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/chat:
+    post:
+      tags: [DigitalHumans]
+      summary: Create or continue a DigitalHuman conversation
+      description: Creates or reuses an idempotent durable run and streams recoverable SSE events.
+      operationId: chatWithDigitalHuman
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanChatRequest'}
+      responses:
+        '200':
+          description: Server-sent event stream.
+          headers:
+            X-ZGI-Run-ID:
+              description: Durable run identifier used by status, recovery, stop, and runtime-input endpoints.
+              required: true
+              schema: {type: string, format: uuid}
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                run_accepted: {$ref: '#/components/schemas/RunAcceptedEvent'}
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+                run_end: {$ref: '#/components/schemas/RunEndEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+      - $ref: '#/components/parameters/UserQuery'
+    get:
+      tags: [DigitalHuman runs]
+      summary: Get a durable DigitalHuman run
+      description: Returns durable status and linked conversation identifiers for the same end user.
+      operationId: getDigitalHumanRun
+      responses:
+        '200':
+          description: Current run state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanRunEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/runs/{run_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+      - $ref: '#/components/parameters/UserQuery'
+    get:
+      tags: [DigitalHuman runs]
+      summary: Resume a DigitalHuman run event stream
+      description: Replays persisted events after the last opaque SSE id, then follows the run to its terminal state.
+      operationId: streamDigitalHumanRunEvents
+      parameters:
+        - $ref: '#/components/parameters/LastEventID'
+      responses:
+        '200':
+          description: Recoverable event stream.
+          headers:
+            X-ZGI-Run-ID:
+              description: Durable run identifier for the recovered stream.
+              required: true
+              schema: {type: string, format: uuid}
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+                run_end: {$ref: '#/components/schemas/RunEndEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/runs/{run_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+    post:
+      tags: [DigitalHuman runs]
+      summary: Stop a durable DigitalHuman run
+      description: Requests cancellation of the durable run and its linked model execution for the supplied end user.
+      operationId: stopDigitalHumanRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UserBody'}
+      responses:
+        '200':
+          description: Updated run state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanRunEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/runs/{run_id}/runtime-input:
+    parameters:
+      - $ref: '#/components/parameters/RunID'
+    post:
+      tags: [DigitalHuman runs]
+      summary: Submit input to a running DigitalHuman
+      description: Applies input to the current checkpoint when possible or queues an idempotent durable follow-up.
+      operationId: submitDigitalHumanRuntimeInput
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RuntimeInputRequest'}
+      responses:
+        '200':
+          description: Runtime input acceptance and disposition.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeInputSubmissionEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations:
+    get:
+      tags: [DigitalHuman conversations]
+      summary: List DigitalHuman conversations
+      description: Lists conversations owned by the supplied end user for this DigitalHuman, newest first.
+      operationId: listDigitalHumanConversations
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/SearchLimit'
+      responses:
+        '200':
+          description: Paginated conversation list.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/search:
+    get:
+      tags: [DigitalHuman conversations]
+      summary: Search DigitalHuman conversations
+      description: Searches conversation titles and messages within the supplied end-user boundary.
+      operationId: searchDigitalHumanConversations
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - name: query
+          in: query
+          required: true
+          description: Text matched against conversation titles and message content.
+          schema: {type: string, minLength: 1, maxLength: 200}
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Matching conversations and message snippets.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationSearchEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+    get:
+      tags: [DigitalHuman conversations]
+      summary: Get a DigitalHuman conversation
+      description: Returns one conversation only when it belongs to the supplied end user.
+      operationId: getDigitalHumanConversation
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+      responses:
+        '200':
+          description: Conversation detail.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      tags: [DigitalHuman conversations]
+      summary: Rename a DigitalHuman conversation
+      description: Updates one caller-owned conversation title without changing message history.
+      operationId: updateDigitalHumanConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConversationUpdateRequest'}
+      responses:
+        '200':
+          description: Updated conversation detail.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [DigitalHuman conversations]
+      summary: Delete a DigitalHuman conversation
+      description: Permanently deletes one caller-owned conversation and its messages.
+      operationId: deleteDigitalHumanConversation
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+      responses:
+        '200':
+          description: Deletion result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeletionEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+    get:
+      tags: [DigitalHuman conversations]
+      summary: List DigitalHuman conversation messages
+      description: Returns message history and visible runtime inputs for a caller-owned conversation.
+      operationId: listDigitalHumanConversationMessages
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Paginated message list.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MessageListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/files/{file_id}:
+    get:
+      tags: [DigitalHuman conversations]
+      summary: Read a protected execution result file
+      operationId: readDigitalHumanExecutionFile
+      description: Returns file bytes after checking current DigitalHuman access and the original user and conversation ownership. Protected artifacts omit public URLs. Retained files remain readable when Linux execution is disabled, but not after access is revoked.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/UserQuery'
+        - name: file_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: download
+          in: query
+          description: Return an attachment instead of an inline preview.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Authenticated file bytes with private no-store caching.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '206':
+          description: Requested byte range of the authenticated file.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/regenerate:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Regenerate a root DigitalHuman answer
+      description: |
+        Replays the selected root user turn with an optional edited query. The
+        original message history is retained until ChatRuntime accepts the
+        root-replacement guard; the operation itself is durable and recoverable
+        through the same SSE event stream as chat. Non-root messages must be
+        replayed by submitting a new branch with `parent_message_id`.
+      operationId: regenerateDigitalHumanMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanRegenerateMessageRequest'}
+      responses:
+        '200':
+          description: Recoverable SSE stream for the regenerated message.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                run_accepted: {$ref: '#/components/schemas/RunAcceptedEvent'}
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+                run_end: {$ref: '#/components/schemas/RunEndEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/workflow-continuation:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Continue a paused DigitalHuman task approval
+      description: |
+        Resumes a paused task proposal or task mutation after the end user approves
+        or declines it. The `user` value must be the same opaque identity that owns
+        the conversation and pending approval. The response is a recoverable SSE
+        stream using the same message lifecycle as chat.
+      operationId: continueDigitalHumanTaskApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskApprovalRequest'}
+      responses:
+        '200':
+          description: Approval continuation event stream.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                approval_result: {$ref: '#/components/schemas/WorkflowEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - name: correlation_id
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Confirm or reject a paused platform CLI tool call
+      operationId: continueDigitalHumanPlatformToolGovernance
+      description: Uses the original sealed DigitalHuman run and explicit final user. Current application and publication authorization is checked again. Confirmation executes one frozen business invocation, not the stopped Shell. Rejection executes nothing and remains available after execution is disabled. Duplicate requests recover existing results. This is not a task or workflow approval endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, action]
+              properties:
+                user: {type: string, minLength: 1, maxLength: 250, description: Same opaque final-user identifier as the original conversation; not an independent authentication credential.}
+                action: {type: string, enum: [approve, reject]}
+      responses:
+        '200':
+          description: Recoverable SSE stream containing message_start, tool_governance_decision, result lifecycle, message_end or error events.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - name: request_id
+        in: path
+        required: true
+        description: Correlation identifier from the user_input_requested event.
+        schema: {type: string, minLength: 1, maxLength: 160}
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Answer a paused DigitalHuman question
+      description: |
+        Answers a `user_input_requested` question and resumes the same Agent
+        Loop. This is not a new chat turn and must not be sent to the task
+        approval or workflow-continuation endpoint. The `user` value must be
+        the same opaque identity that owns the conversation.
+      operationId: continueDigitalHumanUserInput
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanUserInputContinuationRequest'}
+      responses:
+        '200':
+          description: Recoverable SSE stream for the resumed user question.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                user_input_requested: {$ref: '#/components/schemas/UserInputRequestedEvent'}
+                message: {$ref: '#/components/schemas/MessageDeltaEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue:
+    parameters:
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - name: request_id
+        in: path
+        required: true
+        description: Correlation identifier from the token_budget_requested event.
+        schema: {type: string, minLength: 1, maxLength: 160}
+    post:
+      tags: [DigitalHuman conversations]
+      summary: Continue or stop a DigitalHuman task paused by its token budget
+      description: Continues the same message after token_budget_requested with an independent budget action. This endpoint does not accept question answers.
+      operationId: continueDigitalHumanTaskTokenBudget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskTokenBudgetContinuationRequest'}
+      responses:
+        '200':
+          description: Recoverable SSE stream for the resumed task.
+          content:
+            text/event-stream:
+              schema: {type: string, description: Native SSE frames containing JSON event envelopes.}
+              x-zgi-sse-event-data-schemas:
+                message_start: {$ref: '#/components/schemas/MessageStartEvent'}
+                token_usage_updated: {$ref: '#/components/schemas/TokenUsageUpdatedEvent'}
+                token_budget_requested: {$ref: '#/components/schemas/TokenBudgetRequestedEvent'}
+                message_end: {$ref: '#/components/schemas/MessageEndEvent'}
+                error: {$ref: '#/components/schemas/StreamErrorEvent'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/files/upload:
+    post:
+      tags: [DigitalHuman files]
+      summary: Upload a DigitalHuman chat file
+      description: Uploads a temporary file owned by this DigitalHuman and end-user subject, up to 100 MiB.
+      operationId: uploadDigitalHumanFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [user, file]
+              properties:
+                user:
+                  allOf: [{$ref: '#/components/schemas/User'}]
+                  description: Same end-user identifier used by chat and conversation requests.
+                file:
+                  type: string
+                  format: binary
+                  description: File accepted by the deployment's chat upload policy.
+      responses:
+        '201':
+          description: Uploaded file metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FileEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks:
+    get:
+      tags: [DigitalHuman tasks]
+      summary: List the current user's DigitalHuman tasks
+      description: Lists only tasks owned by the supplied API user. Shared and other-user tasks are never returned.
+      operationId: listDigitalHumanTasks
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/TaskPageSize'
+        - $ref: '#/components/parameters/TaskStatus'
+        - $ref: '#/components/parameters/TaskPriority'
+        - $ref: '#/components/parameters/TaskQuery'
+      responses:
+        '200':
+          description: User-owned task page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [DigitalHuman tasks]
+      summary: Create a task for the current API user
+      description: Creates a task in the supplied user's private namespace. Use `Idempotency-Key` for safe retries.
+      operationId: createDigitalHumanTask
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskCreateRequest'}
+      responses:
+        '201':
+          description: Created task.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      tags: [DigitalHuman tasks]
+      summary: Get one task owned by the current API user
+      description: Returns one task only when it belongs to the supplied API user and the DigitalHuman bound to the API key.
+      operationId: getDigitalHumanTask
+      parameters:
+        - $ref: '#/components/parameters/UserQuery'
+      responses:
+        '200':
+          description: Task details.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+    patch:
+      tags: [DigitalHuman tasks]
+      summary: Update a user-owned task
+      description: Replaces the supplied mutable task fields after validating the owning API user and current revision.
+      operationId: updateDigitalHumanTask
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskUpdateRequest'}
+      responses:
+        '200':
+          description: Updated task.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}/actions/{action}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+      - name: action
+        in: path
+        required: true
+        schema: {type: string, enum: [confirm, decline, run_now, pause, resume, retry, cancel, archive]}
+    post:
+      tags: [DigitalHuman tasks]
+      summary: Apply a lifecycle action to a user-owned task
+      description: Applies one supported lifecycle action after validating the owning API user and current revision.
+      operationId: actionDigitalHumanTask
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DigitalHumanTaskActionRequest'}
+      responses:
+        '200':
+          description: Updated task.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}/runs:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+      - $ref: '#/components/parameters/UserQuery'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/TaskPageSize'
+    get:
+      tags: [DigitalHuman tasks]
+      summary: List task executions and safe result summaries
+      description: Lists bounded execution metadata and safe result summaries for one task owned by the supplied API user.
+      operationId: listDigitalHumanTaskRuns
+      responses:
+        '200':
+          description: Task execution history.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskRunListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /digital-humans/tasks/{task_id}/activities:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+      - $ref: '#/components/parameters/UserQuery'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/TaskPageSize'
+    get:
+      tags: [DigitalHuman tasks]
+      summary: List task activity history
+      description: Lists the redacted activity history for one task owned by the supplied API user.
+      operationId: listDigitalHumanTaskActivities
+      responses:
+        '200':
+          description: Task activity history.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DigitalHumanTaskActivityListEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ZGI DigitalHuman API key
+      description: 'Send the key only from a trusted server with `Authorization: Bearer <key>`.'
+  parameters:
+    RunID:
+      name: run_id
+      in: path
+      required: true
+      description: Durable run UUID returned in `X-ZGI-Run-ID` and `run_accepted`.
+      schema: {type: string, format: uuid}
+    ConversationID:
+      name: conversation_id
+      in: path
+      required: true
+      description: Conversation UUID returned by `message_start` or a conversation endpoint.
+      schema: {type: string, format: uuid}
+    MessageID:
+      name: message_id
+      in: path
+      required: true
+      description: Message UUID containing the pending task approval continuation.
+      schema: {type: string, format: uuid}
+    UserQuery:
+      name: user
+      in: query
+      required: true
+      description: Stable opaque end-user identifier; trimmed, case-sensitive, and at most 128 characters.
+      schema: {$ref: '#/components/schemas/User'}
+    LastEventID:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: Last non-empty opaque SSE id processed by the client; omit it to replay from the beginning.
+      schema: {type: string}
+    Page:
+      name: page
+      in: query
+      description: One-based page number.
+      schema: {type: integer, minimum: 1, default: 1}
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of records returned in one page.
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    SearchLimit:
+      name: limit
+      in: query
+      description: Maximum number of search matches returned.
+      schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+    TaskID:
+      name: task_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    TaskPageSize:
+      name: page_size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    TaskStatus:
+      name: status
+      in: query
+      schema: {type: array, items: {type: string, enum: [proposed, pending, in_progress, waiting, blocked, completed, canceled]}}
+      style: form
+      explode: true
+    TaskPriority:
+      name: priority
+      in: query
+      schema: {type: array, items: {type: string, enum: [low, normal, high, urgent]}}
+      style: form
+      explode: true
+    TaskQuery:
+      name: query
+      in: query
+      schema: {type: string, maxLength: 200}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: UUID used to replay a mutation safely within the current user namespace.
+      schema: {type: string, format: uuid}
+  responses:
+    Error:
+      description: Safe public error without internal stacks, prompts, model responses, or credentials.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}
+  schemas:
+    User:
+      type: string
+      minLength: 1
+      maxLength: 128
+      description: Stable, opaque, non-PII business identifier; comparison is case-sensitive.
+      example: customer_123
+    UserBody:
+      type: object
+      additionalProperties: false
+      required: [user]
+      description: End-user scope for a state-changing request.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target run.
+    DigitalHumanChatRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, user, query]
+      description: Idempotent request for a streamed DigitalHuman message.
+      properties:
+        request_id: {type: string, format: uuid, description: Client-generated idempotency key scoped to this DigitalHuman and user.}
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the run, conversation, files, and relationship memory.
+        query: {type: string, minLength: 1, maxLength: 32000, description: User message for this turn.}
+        conversation_id: {type: string, format: uuid, description: Existing caller-owned conversation; omit to create one.}
+        parent_message_id: {type: string, format: uuid, description: Existing parent message for an explicit branch.}
+        file_ids:
+          type: array
+          description: Files uploaded by the same user for this DigitalHuman.
+          items: {type: string, format: uuid, description: Uploaded file identifier.}
+        max_task_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Optional per-task model token budget based on provider-reported usage. Enforcement occurs after an in-flight call is counted, so that call may cross the limit; the stream then emits token_budget_requested and waits for an add or stop continuation.
+        response_mode: {type: string, enum: [streaming], default: streaming, description: DigitalHuman v1 supports only `streaming`.}
+    DigitalHumanRegenerateMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [user]
+      description: Replays a root message for the supplied end user. Omit `query` to reuse the original question; set it to edit the historical question before replaying.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target conversation.
+        query: {type: string, minLength: 1, maxLength: 32000, description: Optional edited user question.}
+        surface: {type: string, description: Trusted runtime surface; normally omitted by API clients.}
+        runtime_context: {type: string, description: Optional trusted runtime context.}
+        operation_context: {type: object, additionalProperties: true, description: Optional operation metadata.}
+        model: {type: string, description: Optional model override subject to the published policy.}
+        provider: {type: string, description: Optional provider override subject to the published policy.}
+        parameters: {type: object, additionalProperties: true, description: Optional model parameters.}
+        use_memory: {type: boolean, description: Optional relationship-memory preference.}
+    RuntimeInputRequest:
+      type: object
+      additionalProperties: false
+      required: [user, client_input_id, content]
+      description: Idempotent input applied to the current checkpoint or queued as a follow-up.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target run.
+        client_input_id: {type: string, format: uuid, description: Client-generated idempotency key for one logical input.}
+        content: {type: string, minLength: 1, maxLength: 16000, description: Plain-text runtime input.}
+    ConversationUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [user, title]
+      description: Caller-owned conversation title update.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the conversation.
+        title: {type: string, minLength: 1, maxLength: 50, description: New display title.}
+    DigitalHumanTaskSchedule:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: {type: string, enum: [manual, once, cron], description: Scheduling mode for the task.}
+        run_at: {type: string, format: date-time, description: One-time execution timestamp when type is once.}
+        cron: {type: string, description: Cron expression when type is cron.}
+        timezone: {type: string, description: IANA timezone used to interpret the schedule.}
+    DigitalHumanTaskCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [user, name, goal, schedule]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        name: {type: string, minLength: 1, maxLength: 200, description: User-visible task name.}
+        goal: {type: string, minLength: 1, maxLength: 4000, description: Work the DigitalHuman should complete.}
+        success_criteria: {type: array, items: {type: string, maxLength: 500}, description: Optional verifiable completion criteria.}
+        priority: {type: string, enum: [low, normal, high, urgent], default: normal, description: Task priority.}
+        schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
+        delivery_mode: {type: string, enum: [task_only], default: task_only, description: Result storage mode for API-owned tasks.}
+        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800, description: Maximum duration of each execution attempt.}
+        max_attempts: {type: integer, minimum: 1, maximum: 3, description: Maximum execution attempts.}
+    DigitalHumanTaskUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [user, expected_revision]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        expected_revision: {type: integer, minimum: 1, description: Current revision used for optimistic concurrency control.}
+        name: {type: string, minLength: 1, maxLength: 200, description: Replacement task name.}
+        goal: {type: string, minLength: 1, maxLength: 4000, description: Replacement task goal.}
+        success_criteria: {type: array, items: {type: string, maxLength: 500}, description: Replacement completion criteria.}
+        priority: {type: string, enum: [low, normal, high, urgent], description: Replacement task priority.}
+        schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
+        delivery_mode: {type: string, enum: [task_only], description: Replacement result storage mode.}
+        delivery_target: {type: string, enum: [task_center], description: Primary result destination for API-owned tasks.}
+        delivery_fallback: {type: string, enum: [task_center], description: Result remains available in task details.}
+        execution_timeout_seconds: {type: integer, minimum: 30, maximum: 1800, description: Replacement execution timeout.}
+        max_attempts: {type: integer, minimum: 1, maximum: 3, description: Replacement maximum attempt count.}
+    DigitalHumanTaskActionRequest:
+      type: object
+      additionalProperties: false
+      required: [user, expected_revision]
+      properties:
+        user: {$ref: '#/components/schemas/User'}
+        expected_revision: {type: integer, minimum: 1, description: Current revision used for optimistic concurrency control.}
+    DigitalHumanTaskApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [type, user, approval_token, action]
+      description: |
+        Resumes a task approval created by a DigitalHuman conversation. The token
+        is returned only in the approval event and expires with the pending run.
+      properties:
+        type: {type: string, enum: [approval], description: Continuation payload discriminator.}
+        user: {$ref: '#/components/schemas/User'}
+        approval_token: {type: string, minLength: 1, description: Opaque token from the approval request event.}
+        action: {type: string, enum: [approve, decline], description: User decision for the pending task change.}
+        inputs:
+          type: object
+          description: Optional edited task fields submitted with approval.
+          additionalProperties: true
+    DigitalHumanUserInputContinuationRequest:
+      type: object
+      additionalProperties: false
+      required: [user, answers]
+      description: Answers a model-generated user question and resumes the same Agent Loop.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target conversation.
+        answers:
+          type: object
+          minProperties: 1
+          additionalProperties:
+            type: string
+            maxLength: 4000
+          description: Answers keyed by the question ids returned in user_input_requested.
+    DigitalHumanTaskTokenBudgetContinuationRequest:
+      type: object
+      additionalProperties: false
+      required: [user, action]
+      description: Continues a DigitalHuman task paused by its token budget. Use add with additional_tokens or stop without it.
+      properties:
+        user:
+          allOf: [{$ref: '#/components/schemas/User'}]
+          description: End user that owns the target conversation.
+        action:
+          type: string
+          enum: [add, stop]
+          description: Resolve the budget pause by adding tokens or stopping the task.
+        additional_tokens:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Number of tokens to add when action is add; the total limit cannot exceed 100000000.
+        runtime_context: {type: string, maxLength: 8000, description: Optional trusted runtime context.}
+        operation_context: {type: object, additionalProperties: true, description: Optional operation metadata.}
+    DigitalHumanTask:
+      type: object
+      required: [id, digital_human_id, owner_kind, name, goal, work_status, lifecycle_status, priority, schedule, revision]
+      properties:
+        id: {type: string, format: uuid, description: Task identifier.}
+        digital_human_id: {type: string, format: uuid, description: DigitalHuman that owns the task capability.}
+        owner_kind: {type: string, enum: [user_subject], description: Private task ownership model.}
+        name: {type: string, description: User-visible task name.}
+        goal: {type: string, description: Work assigned to the DigitalHuman.}
+        success_criteria: {type: array, items: {type: string}, description: Verifiable completion criteria.}
+        work_status: {type: string, enum: [proposed, pending, in_progress, waiting, blocked, completed, canceled], description: Current work state.}
+        lifecycle_status: {type: string, description: Current scheduling lifecycle state.}
+        priority: {type: string, description: Task priority.}
+        schedule: {$ref: '#/components/schemas/DigitalHumanTaskSchedule'}
+        delivery_mode: {type: string, enum: [task_only], description: Result storage mode.}
+        next_run_at: {type: string, format: date-time, description: Next scheduled execution timestamp.}
+        last_run_at: {type: string, format: date-time, description: Most recent execution timestamp.}
+        last_run_status: {type: string, description: Most recent execution state.}
+        revision: {type: integer, description: Monotonic task revision.}
+        created_at: {type: string, format: date-time, description: Task creation timestamp.}
+        updated_at: {type: string, format: date-time, description: Most recent task update timestamp.}
+    DigitalHumanTaskListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              description: Paginated private task collection.
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTask'}, description: Tasks in the current page.}
+                total: {type: integer, description: Total matching task count.}
+                page: {type: integer, description: One-based page number.}
+                page_size: {type: integer, description: Requested page size.}
+                has_more: {type: boolean, description: Whether another page is available.}
+                counts: {type: object, additionalProperties: {type: integer}, description: Status counters for the current filter scope.}
+    DigitalHumanTaskEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data: {$ref: '#/components/schemas/DigitalHumanTask'}
+    DigitalHumanTaskRun:
+      type: object
+      required: [id, task_id, status, scheduled_for, created_at]
+      properties:
+        id: {type: string, format: uuid, description: Task execution identifier.}
+        task_id: {type: string, format: uuid, description: Owning task identifier.}
+        digital_human_run_id: {type: string, format: uuid, description: Linked DigitalHuman durable run when present.}
+        trigger_source: {type: string, description: Source that started this execution.}
+        attempt: {type: integer, description: One-based execution attempt number.}
+        status: {type: string, description: Execution state.}
+        error_summary: {type: string, description: Safe bounded failure summary.}
+        result_summary: {type: string, description: Safe bounded result summary; execution trace is never exposed.}
+        result_delivery_status: {type: string, enum: [pending, processing, succeeded, failed, unknown, dismissed], description: Channel result delivery status when the task targets its source conversation.}
+        result_delivery_error: {type: string, description: Safe bounded delivery error; the task result remains available in the task center.}
+        scheduled_for: {type: string, format: date-time, description: Intended execution timestamp.}
+        started_at: {type: string, format: date-time, description: Actual execution start timestamp.}
+        finished_at: {type: string, format: date-time, description: Execution completion timestamp.}
+        created_at: {type: string, format: date-time, description: Run record creation timestamp.}
+    DigitalHumanTaskRunListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              description: Paginated task execution collection.
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/DigitalHumanTaskRun'}, description: Runs in the current page.}
+                total: {type: integer, description: Total matching run count.}
+                page: {type: integer, description: One-based page number.}
+                page_size: {type: integer, description: Requested page size.}
+                has_more: {type: boolean, description: Whether another page is available.}
+    DigitalHumanTaskActivityListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              description: Paginated task activity collection.
+              properties:
+                items: {type: array, items: {type: object}, description: Activity records in the current page.}
+                total: {type: integer, description: Total matching activity count.}
+                page: {type: integer, description: One-based page number.}
+                page_size: {type: integer, description: Requested page size.}
+                has_more: {type: boolean, description: Whether another page is available.}
+    SuccessEnvelope:
+      type: object
+      required: [code, message, data]
+      description: Standard successful JSON response envelope.
+      properties:
+        code: {type: string, enum: ['0'], description: Stable success code.}
+        message: {type: string, enum: [success], description: Stable success message.}
+        data: {description: Operation-specific response payload.}
+    ErrorResponse:
+      type: object
+      required: [code, message, retryable]
+      description: Safe public error returned before SSE starts or by a JSON endpoint.
+      properties:
+        code: {type: string, description: Stable machine-readable error code, example: digital_human.request.invalid}
+        message: {type: string, description: Safe user-facing English error message.}
+        retryable: {type: boolean, description: Whether retry may succeed without changing the request.}
+    DigitalHumanConfigEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Published configuration response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/DigitalHumanConfig'}]
+              description: Published presentation and capability snapshot.
+    DigitalHumanConfig:
+      type: object
+      required: [digital_human_id, web_app_id, name, suggested_questions, external_user_required, version, version_uuid]
+      description: Published data needed to render a branded external client.
+      properties:
+        digital_human_id: {type: string, format: uuid, description: Stable DigitalHuman identifier.}
+        web_app_id: {type: string, format: uuid, description: Stable hosted landing-page identifier.}
+        name: {type: string, description: Published display name.}
+        description: {type: string, description: Published short description.}
+        icon: {type: string, description: Published text icon payload or image reference.}
+        icon_type: {type: string, description: Icon rendering mode, normally `text` or `image`.}
+        icon_url: {type: string, description: Resolved image URL when configured.}
+        home_title: {type: string, description: Landing hero title; fall back to `name` when empty.}
+        opening_statement: {type: string, description: Markdown opening message.}
+        input_placeholder: {type: string, description: Suggested composer placeholder.}
+        suggested_questions:
+          type: array
+          maxItems: 6
+          description: Published starter prompts.
+          items: {type: string, description: One starter prompt.}
+        file_upload_enabled: {type: boolean, description: Whether chat file upload is available.}
+        file_upload_policy:
+          type: object
+          description: Published document/image selection, independent of model vision support. Missing policy defaults to both categories; an empty list disables both. Upload limits are returned by the authenticated upload configuration endpoint.
+          properties:
+            allowed_file_types:
+              type: array
+              description: Allowed document/image categories from the frozen published version; an empty list disables attachments.
+              uniqueItems: true
+              items: {type: string, enum: [document, image]}
+        relationship_memory_enabled: {type: boolean, description: Whether API users may use relationship memory.}
+        memory_requires_user: {type: boolean, description: Whether memory requires an explicit user identity.}
+        external_user_required: {type: boolean, enum: [true], description: DigitalHuman v1 requires `user` on stateful calls.}
+        runtime_input_enabled: {type: boolean, description: Whether runtime input is available.}
+        regenerate_enabled: {type: boolean, enum: [true], description: Root-message regeneration and editing are available through the conversation SSE endpoint.}
+        landing_page_enabled: {type: boolean, description: Whether the hosted landing page accepts new sessions.}
+        api_enabled: {type: boolean, description: Whether API access is enabled.}
+        version: {type: string, description: Human-readable published version.}
+        version_uuid: {type: string, format: uuid, description: Immutable published version identifier.}
+    DigitalHumanRunEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Durable run response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/DigitalHumanRun'}]
+              description: Current durable run state.
+    DigitalHumanRun:
+      type: object
+      required: [run_id, status, created_at, updated_at]
+      description: Durable lifecycle record for one idempotent chat request.
+      properties:
+        run_id: {type: string, format: uuid, description: Durable run identifier.}
+        status: {type: string, enum: [queued, running, waiting, canceling, succeeded, failed, canceled, unknown], description: Current durable execution status.}
+        waiting_reason: {type: string, enum: [waiting_approval, waiting_question, waiting_budget, waiting_client_action], description: Why a run with status waiting is parked.}
+        waiting_receipt: {type: string, format: uuid, nullable: true, description: Opaque approval receipt when waiting_reason is waiting_approval.}
+        conversation_id: {type: string, format: uuid, description: Linked conversation once available.}
+        message_id: {type: string, format: uuid, description: Linked assistant message once available.}
+        error_code: {type: string, description: Safe stable error code when failed.}
+        error_message: {type: string, description: Safe error message when failed.}
+        created_at: {type: integer, format: int64, description: Creation time as Unix seconds.}
+        updated_at: {type: integer, format: int64, description: Last update time as Unix seconds.}
+    RunAcceptedEvent:
+      type: object
+      required: [run_id, request_id, status, created]
+      description: First event emitted after chat acceptance.
+      properties:
+        run_id: {type: string, format: uuid, description: Durable run identifier.}
+        request_id: {type: string, format: uuid, description: Idempotency key from the request.}
+        status: {type: string, description: Initial run status.}
+        created: {type: boolean, description: False when an identical request reused a run.}
+    MessageStartEvent:
+      type: object
+      required: [conversation_id, message_id]
+      description: Chat message identity and display metadata.
+      properties:
+        conversation_id: {type: string, format: uuid, description: Conversation created or continued.}
+        message_id: {type: string, format: uuid, description: Assistant message receiving streamed text.}
+        parent_id: {type: string, format: uuid, nullable: true, description: Parent message for a branch.}
+        title: {type: string, description: Current conversation title.}
+        model: {type: string, description: Public model display identifier.}
+        replace: {type: boolean, description: Whether replay text replaces rendered historical text.}
+        created_at: {type: integer, format: int64, description: Creation time as Unix seconds.}
+    MessageDeltaEvent:
+      type: object
+      required: [conversation_id, message_id, answer]
+      description: Incremental assistant answer text.
+      properties:
+        conversation_id: {type: string, format: uuid, description: Conversation receiving the chunk.}
+        message_id: {type: string, format: uuid, description: Assistant message receiving the chunk.}
+        answer: {type: string, description: Text chunk to append.}
+    MessageEndEvent:
+      type: object
+      required: [conversation_id, message_id, status]
+      description: Terminal state for the current assistant-message phase.
+      properties:
+        conversation_id: {type: string, format: uuid, description: Conversation containing the message.}
+        message_id: {type: string, format: uuid, description: Assistant message that reached this state.}
+        status: {type: string, enum: [completed, stopped, error, waiting_approval, waiting_question, waiting_budget, waiting_client_action], description: Message phase status.}
+        metadata: {type: object, additionalProperties: true, description: Safe runtime metadata such as usage.}
+        answer: {type: string, description: Optional complete answer fallback.}
+    StreamErrorEvent:
+      type: object
+      required: [message]
+      description: Safe error emitted after SSE starts. Durable-run failures include `run_id` and `retryable`; shared ChatRuntime failures may instead include conversation and message ids.
+      properties:
+        run_id: {type: string, format: uuid, description: Associated durable run.}
+        conversation_id: {type: string, format: uuid, description: Associated conversation when the message runtime emitted the error.}
+        message_id: {type: string, format: uuid, description: Associated message when the message runtime emitted the error.}
+        code:
+          oneOf:
+            - {type: string, description: String-form stable error code.}
+            - {type: integer, description: Numeric-form stable error code.}
+          description: Stable machine-readable error code when available.
+        message: {type: string, description: Safe user-facing message.}
+        retryable: {type: boolean, description: Whether stream recovery may succeed.}
+        params: {type: object, additionalProperties: true, description: Safe structured localization parameters when available.}
+    RunEndEvent:
+      type: object
+      required: [run_id, status]
+      description: Ends the current run stream. A waiting status is resumable and is not a terminal run.
+      properties:
+        run_id: {type: string, format: uuid, description: Durable run identifier.}
+        status: {type: string, enum: [waiting, succeeded, failed, canceled, unknown], description: Current durable run status; waiting requires an explicit continuation.}
+        conversation_id: {type: string, format: uuid, description: Linked conversation when established.}
+        message_id: {type: string, format: uuid, description: Linked message when established.}
+    RuntimeEventIdentity:
+      type: object
+      description: Identity and replay metadata shared by persisted ChatRuntime events.
+      required: [conversation_id, message_id]
+      properties:
+        conversation_id: {type: string, format: uuid, description: Conversation that owns the event.}
+        message_id: {type: string, format: uuid, description: Assistant message whose execution emitted the event.}
+        event_id: {type: string, description: Recoverable opaque SSE id when copied into the payload.}
+        sequence: {type: integer, format: int64, description: Monotonic sequence when supplied by the runtime.}
+        created_at: {type: integer, format: int64, description: Creation time in Unix seconds.}
+        created_at_ms: {type: integer, format: int64, description: Creation time in Unix milliseconds when available.}
+    MessageRetractEvent:
+      description: Removes previously streamed candidate text from the final answer.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [presentation_disposition]
+          properties:
+            presentation_disposition: {type: string, enum: [process, discard], description: Move candidate text to process UI or discard it.}
+            answer: {type: string, description: Candidate text affected by the retraction when supplied.}
+    TokenUsageUpdatedEvent:
+      description: Provider-reported model token usage update emitted after each model invocation. When an API task supplies a token budget, task_token_budget is also included with the cumulative budget state.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [usage]
+          properties:
+            usage:
+              $ref: '#/components/schemas/TokenUsage'
+            task_token_budget:
+              $ref: '#/components/schemas/TaskTokenBudget'
+    TokenUsage:
+      type: object
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens: {type: integer, minimum: 0, description: Prompt tokens reported for the model invocation.}
+        completion_tokens: {type: integer, minimum: 0, description: Completion tokens reported for the model invocation.}
+        total_tokens: {type: integer, minimum: 0, description: Total tokens charged for the model invocation.}
+    TaskTokenBudget:
+      type: object
+      required: [used_tokens, max_tokens, remaining_tokens, status]
+      properties:
+        used_tokens: {type: integer, minimum: 0, description: Cumulative provider-reported tokens consumed by this task.}
+        max_tokens: {type: integer, minimum: 1, description: Maximum tokens configured for this task.}
+        remaining_tokens: {type: integer, minimum: 0, description: Remaining task budget after the latest usage update.}
+        status: {type: string, enum: [running, exhausted, waiting, stopped], description: Current task budget status.}
+    AgentProgressEvent:
+      description: Coarse processing progress that never contains hidden reasoning.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [phase, activity, status]
+          properties:
+            phase: {type: string, description: Stable progress family such as model_processing.}
+            progress_id: {type: string, description: Stable identifier grouping progress updates.}
+            activity: {type: string, description: User-safe high-level activity.}
+            stage: {type: string, description: Elapsed-time stage such as initial or long_running.}
+            source: {type: string, description: Runtime or provider source of the progress signal.}
+            status: {type: string, description: Current progress status.}
+            round: {type: integer, minimum: 1, description: One-based model round.}
+            elapsed_ms: {type: integer, format: int64, minimum: 0, description: Milliseconds elapsed in the current round.}
+    IntermediateAnswerEvent:
+      description: Structured interim answer rendered separately from the final answer.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [answer_id, content, delta, index, done, status]
+          properties:
+            answer_id: {type: string, description: Stable identifier grouping one intermediate answer.}
+            title: {type: string, description: Optional user-facing title.}
+            content: {type: string, description: Full content or a delta according to delta.}
+            delta: {type: boolean, description: Append content when true; replace when false.}
+            index: {type: integer, minimum: 0, description: Zero-based chunk or item index.}
+            done: {type: boolean, description: Whether this intermediate answer is complete.}
+            status: {type: string, description: Intermediate answer lifecycle status.}
+    UserInputRequestedEvent:
+      description: Pauses execution until runtime input is submitted.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [request_id, questions]
+          properties:
+            request_id: {type: string, description: Correlation identifier for the request.}
+            source: {type: string, description: Runtime source used to route the answer.}
+            message: {type: string, description: Optional user-facing instruction.}
+            questions:
+              type: array
+              description: Questions to present to the end user.
+              items:
+                type: object
+                additionalProperties: true
+    TokenBudgetRequestedEvent:
+      description: Pauses a DigitalHuman API task after its configured token budget is exhausted. This independent event never contains user-input questions.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [request_id, request_kind, message, token_budget, actions, created_at]
+          properties:
+            request_id: {type: string, description: Opaque continuation id for this budget pause.}
+            request_kind: {type: string, enum: [task_token_budget], description: Stable discriminator for the independent task-budget continuation protocol.}
+            message: {type: string, description: User-facing budget exhaustion message.}
+            token_budget: {$ref: '#/components/schemas/TaskTokenBudget'}
+            actions:
+              type: array
+              minItems: 1
+              description: Actions allowed for resolving the budget pause.
+              items:
+                type: object
+                required: [id, label]
+                properties:
+                  id: {type: string, enum: [add, stop]}
+                  label: {type: string}
+    FileParseEvent:
+      description: Start, completion, or failure while preparing one uploaded file.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [file_id, name, status]
+          properties:
+            file_id: {type: string, format: uuid, description: Uploaded file being parsed.}
+            name: {type: string, description: Original filename for progress display.}
+            kind: {type: string, description: File or content category selected by the parser.}
+            index: {type: integer, minimum: 1, description: One-based file position.}
+            total: {type: integer, minimum: 1, description: Total files being prepared.}
+            status: {type: string, description: Current parse status.}
+            content_status: {type: string, description: Extracted-content availability.}
+            content_chars: {type: integer, minimum: 0, description: Number of extracted text characters.}
+            from_cache: {type: boolean, description: Whether parsed content was reused.}
+            filtered_reason: {type: string, description: Why content was filtered or unavailable.}
+            message: {type: string, description: Safe parse error message.}
+    SkillEvent:
+      description: Common public payload for Skill loading, reference reads, and tool invocation lifecycle.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [skill_id]
+          properties:
+            skill_id: {type: string, description: Skill that owns the reference or tool.}
+            tool_name: {type: string, description: Invoked tool name when applicable.}
+            invocation_id: {type: string, description: Correlates start, end, error, and artifact events.}
+            kind: {type: string, description: Reference or invocation kind.}
+            path: {type: string, description: Skill reference path.}
+            arguments_summary: {type: object, additionalProperties: true, description: Redacted compact argument summary.}
+            status: {type: string, description: Skill or tool lifecycle status.}
+            duration_ms: {type: integer, format: int64, minimum: 0, description: Invocation duration in milliseconds.}
+            result: {type: object, additionalProperties: true, description: Public summarized result.}
+            message: {type: string, description: Client-safe status or failure message.}
+            error_code: {type: string, description: Stable invocation error code.}
+            governance: {type: object, additionalProperties: true, description: Public governance decision metadata.}
+    SkillArtifactEvent:
+      description: Public metadata for a file artifact created by a Skill invocation.
+      allOf:
+        - $ref: '#/components/schemas/SkillEvent'
+        - type: object
+          properties:
+            artifact_id: {type: string, description: Runtime artifact identifier.}
+            artifact_type: {type: string, description: Artifact category.}
+            file_id: {type: string, description: Public file identifier.}
+            filename: {type: string, description: Suggested download filename.}
+            extension: {type: string, description: Filename extension without a leading dot.}
+            mime_type: {type: string, description: Artifact media type.}
+            size: {type: integer, format: int64, minimum: 0, description: Artifact size in bytes.}
+            url: {type: string, description: Public or signed artifact URL when available.}
+            download_url: {type: string, description: Download-specific URL when available.}
+            access_mode: {type: string, enum: [authenticated], description: Protected files omit URLs and require the authenticated conversation file endpoint.}
+            lifecycle: {type: string, description: Retention or persistence state.}
+    ToolGovernanceDecisionEvent:
+      description: >-
+        Authorization decision for a published tool invocation. An admitted
+        platform CLI call may ask for approval through the tool-governance
+        continuation endpoint; approval cannot grant missing resource access.
+        For DigitalHuman task mutations this event is retained internally for
+        audit and replay, but is not emitted on the public DigitalHuman SSE
+        stream; clients should handle the corresponding approval and workflow
+        events instead. Ordinary tool approvals continue to use this event.
+      allOf:
+        - $ref: '#/components/schemas/SkillEvent'
+        - type: object
+          required: [correlation_id, decision]
+          properties:
+            correlation_id: {type: string, description: Correlates the decision with tool lifecycle events.}
+            decision: {type: string, description: Non-interactive authorization result.}
+            requires_approval: {type: boolean, description: Whether runtime policy requires approval.}
+            reason: {type: string, description: User-facing decision rationale.}
+            risk_level: {type: string, description: Public risk classification.}
+            effect: {type: string, description: Expected external side effect.}
+            asset_type: {type: string, description: Asset category affected by the tool.}
+            tool_id: {type: string, description: Governed runtime tool identifier.}
+    ClientActionRequiredEvent:
+      description: Requests a host-side action such as navigation or an asset observation.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [action_id, action_type, continuation_policy, blocking, status]
+          properties:
+            action_id: {type: string, description: Stable action correlation identifier.}
+            action_type: {type: string, description: Host action category.}
+            href: {type: string, description: Safe route requested for navigation actions.}
+            label: {type: string, description: User-facing action label.}
+            reason: {type: string, description: User-facing reason for the action.}
+            continuation_policy: {type: string, enum: [resume_model, record_only], description: Whether completion resumes the model.}
+            blocking: {type: boolean, description: Whether the run waits for this action.}
+            effect: {type: string, description: External effect associated with the action.}
+            asset_type: {type: string, description: Asset category associated with the action.}
+            assets: {type: array, description: Safe asset references, items: {type: object, additionalProperties: true}}
+            correlation_id: {type: string, description: Correlation id shared with governance events.}
+            status: {type: string, description: Current client-action status.}
+    MemoryMutationEvent:
+      description: User-relationship memory mutation notification for the current DigitalHuman user.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          required: [memory_scope, action, status]
+          properties:
+            memory_scope: {type: string, description: Runtime memory scope.}
+            action: {type: string, enum: [create, update, delete, clear], description: Mutation performed.}
+            key: {type: string, description: Memory key when the mutation targets one item.}
+            display_name: {type: string, description: User-facing memory label.}
+            entry_id: {type: string, description: Dynamic memory entry identifier.}
+            category: {type: string, description: Controlled memory category.}
+            memory_type: {type: string, description: Runtime memory type.}
+            status: {type: string, description: Overall mutation event status.}
+            mutation_status: {type: string, description: Mutation result.}
+            source_kind: {type: string, description: Mutation source.}
+            operation_id: {type: string, format: uuid, description: Operation identifier when available.}
+            revision: {type: integer, format: int64, minimum: 0, description: Revision after the mutation.}
+            undoable_until: {type: string, format: date-time, description: Undo deadline when available.}
+    RuntimeInputEvent:
+      description: Acceptance, application, follow-up, cancellation, or failure of runtime input.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          properties:
+            input_id: {type: string, format: uuid, description: Server runtime-input identifier.}
+            client_input_id: {type: string, format: uuid, description: Client idempotency identifier.}
+            target_message_id: {type: string, format: uuid, description: Message targeted by the input.}
+            consumed_message_id: {type: string, format: uuid, description: Message that consumed the input.}
+            batch_id: {type: string, format: uuid, description: Follow-up batch identifier.}
+            disposition: {type: string, description: Current-run or follow-up disposition.}
+            status: {type: string, description: Runtime-input lifecycle status.}
+            content: {type: string, description: Applied input content when the runtime exposes it.}
+            checkpoint: {type: string, description: Runtime checkpoint that applied the input.}
+            model_round: {type: integer, minimum: 1, description: Model round that consumed the input.}
+            applied_at: {type: integer, format: int64, description: Application time in Unix seconds.}
+    WorkflowEvent:
+      description: Workflow, node, iteration, or loop lifecycle payload. Preserve unknown fields.
+      allOf:
+        - $ref: '#/components/schemas/RuntimeEventIdentity'
+        - type: object
+          properties:
+            id: {type: string, description: Workflow run, node execution, or container identifier.}
+            workflow_run_id: {type: string, description: Stable workflow execution identifier.}
+            workflow_id: {type: string, description: Published workflow definition identifier.}
+            node_id: {type: string, description: Workflow graph node identifier.}
+            node_type: {type: string, description: Workflow node kind.}
+            title: {type: string, description: User-facing node or container title.}
+            status: {type: string, description: Runtime lifecycle status.}
+            index: {type: integer, minimum: 0, description: Zero-based iteration or loop index.}
+            inputs: {type: object, additionalProperties: true, description: Public runtime inputs.}
+            outputs: {type: object, additionalProperties: true, description: Public runtime outputs.}
+            metadata: {type: object, additionalProperties: true, description: Public workflow metadata.}
+            error: {description: Client-safe workflow error in runtime-provided form.}
+          additionalProperties: true
+    ApprovalRequestedEvent:
+      description: Workflow approval wait projected into the public stream.
+      allOf:
+        - $ref: '#/components/schemas/WorkflowEvent'
+        - type: object
+          required: [workflow_run_id, node_id, approval_form_id, ui_approval_allowed]
+          properties:
+            approval_form_id: {type: string, description: Stable approval form identifier.}
+            approval_token: {type: string, description: Opaque continuation credential when inline approval is allowed.}
+            approval_url: {type: string, description: Optional out-of-band approval URL.}
+            ui_approval_allowed: {type: boolean, description: Whether this client may render and submit approval.}
+            approval_form: {type: object, additionalProperties: true, description: Runtime-defined form and actions.}
+          additionalProperties: true
+    WorkflowTextEvent:
+      description: Incremental or replacement text emitted by a workflow.
+      allOf:
+        - $ref: '#/components/schemas/WorkflowEvent'
+        - type: object
+          properties:
+            text: {type: string, description: Workflow text chunk or replacement.}
+            answer: {type: string, description: Compatibility text field when supplied.}
+          additionalProperties: true
+    RuntimeInputSubmissionEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Runtime input response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/RuntimeInputSubmission'}]
+              description: Accepted input and disposition.
+    RuntimeInputSubmission:
+      type: object
+      required: [input, disposition, created]
+      description: Result of an idempotent runtime input.
+      properties:
+        input:
+          allOf: [{$ref: '#/components/schemas/RuntimeInput'}]
+          description: Persisted runtime input.
+        disposition: {type: string, description: Current-run or durable-follow-up placement.}
+        created: {type: boolean, description: False when the same client id reused an input.}
+    RuntimeInput:
+      type: object
+      required: [id, client_input_id, content, status, target_message_id, sequence, created_at]
+      description: User-visible input associated with a message.
+      properties:
+        id: {type: string, format: uuid, description: Server-generated identifier.}
+        client_input_id: {type: string, format: uuid, description: Client idempotency key.}
+        content: {type: string, description: Submitted text.}
+        status: {type: string, enum: [pending, applied_current_run, queued_follow_up, applied_follow_up, canceled, failed], description: User-facing consumption status.}
+        target_message_id: {type: string, format: uuid, description: Target message.}
+        consumed_message_id: {type: string, format: uuid, description: Follow-up message that consumed the input.}
+        sequence: {type: integer, format: int64, description: Stable ordering sequence.}
+        created_at: {type: integer, format: int64, description: Creation time as Unix seconds.}
+    ConversationEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Conversation detail response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/Conversation'}]
+              description: Caller-owned conversation.
+    ConversationListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Paginated conversation response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/ConversationList'}]
+              description: Conversation page.
+    ConversationList:
+      type: object
+      required: [data, page, limit, total, has_more]
+      description: One page of conversations.
+      properties:
+        data: {type: array, items: {$ref: '#/components/schemas/Conversation'}, description: Current-page conversations.}
+        page: {type: integer, description: Current one-based page.}
+        limit: {type: integer, description: Requested page size.}
+        total: {type: integer, format: int64, description: Total conversation count.}
+        has_more: {type: boolean, description: Whether a later page exists.}
+    Conversation:
+      type: object
+      required: [id, organization_id, account_id, title, status, runtime_status, conversation_type, dialogue_count, source, created_at, updated_at]
+      description: Caller-owned DigitalHuman conversation.
+      properties:
+        id: {type: string, format: uuid, description: Conversation identifier.}
+        organization_id: {type: string, format: uuid, description: Owning organization.}
+        workspace_id: {type: string, format: uuid, description: Owning workspace when present.}
+        account_id: {type: string, format: uuid, description: Derived subject UUID, never the original `user`.}
+        title: {type: string, description: Display title.}
+        status: {type: string, description: Persistent conversation status.}
+        runtime_status: {type: string, description: Current execution state.}
+        conversation_type: {type: string, description: Runtime conversation classification.}
+        current_leaf_message_id: {type: string, format: uuid, description: Current branch leaf.}
+        active_message_id: {type: string, format: uuid, description: Currently running message.}
+        dialogue_count: {type: integer, description: Dialogue-turn count.}
+        source: {type: string, description: Invocation surface.}
+        source_conversation_id: {type: string, description: Safe source conversation reference.}
+        source_web_app_id: {type: string, description: Safe source web-app reference.}
+        metadata: {type: object, additionalProperties: true, description: Safe redacted metadata.}
+        created_at: {type: integer, format: int64, description: Creation time as Unix seconds.}
+        updated_at: {type: integer, format: int64, description: Last update time as Unix seconds.}
+    ConversationSearchEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Conversation search response.
+          properties:
+            data: {type: array, items: {$ref: '#/components/schemas/ConversationSearchResult'}, description: Search matches.}
+    ConversationSearchResult:
+      type: object
+      required: [type, conversation_id, conversation_title, snippet, updated_at]
+      description: One title or message search match.
+      properties:
+        type: {type: string, description: Match kind.}
+        conversation_id: {type: string, format: uuid, description: Matching conversation.}
+        conversation_title: {type: string, description: Current title.}
+        message_id: {type: string, format: uuid, description: Matching message when applicable.}
+        snippet: {type: string, description: Contextual match text.}
+        updated_at: {type: integer, format: int64, description: Ordering timestamp as Unix seconds.}
+    MessageListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Paginated message response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/MessageList'}]
+              description: Message page.
+    MessageList:
+      type: object
+      required: [data, page, limit, total, has_more]
+      description: One page of messages.
+      properties:
+        data: {type: array, items: {$ref: '#/components/schemas/Message'}, description: Current-page messages.}
+        page: {type: integer, description: Current one-based page.}
+        limit: {type: integer, description: Requested page size.}
+        total: {type: integer, format: int64, description: Total message count.}
+        has_more: {type: boolean, description: Whether a later page exists.}
+    Message:
+      type: object
+      required: [id, conversation_id, query, answer, status, model_name, runtime_inputs, created_at, updated_at]
+      description: Persisted user query and assistant answer.
+      properties:
+        id: {type: string, format: uuid, description: Assistant message identifier.}
+        conversation_id: {type: string, format: uuid, description: Owning conversation.}
+        parent_id: {type: string, format: uuid, description: Parent message for a branch.}
+        query: {type: string, description: User input.}
+        answer: {type: string, description: Persisted assistant answer.}
+        status: {type: string, description: Current or terminal message status.}
+        error: {type: string, description: Safe error when failed.}
+        model_provider: {type: string, description: Public provider display id.}
+        model_name: {type: string, description: Public model display id.}
+        billing_reason_source: {type: string, description: Safe usage attribution.}
+        model_parameters: {type: object, additionalProperties: true, description: Safe redacted parameters.}
+        metadata: {type: object, additionalProperties: true, description: Safe redacted runtime metadata.}
+        source_message_id: {type: string, description: Safe source message reference.}
+        runtime_inputs: {type: array, items: {$ref: '#/components/schemas/RuntimeInput'}, description: Visible runtime inputs.}
+        created_at: {type: integer, format: int64, description: Creation time as Unix seconds.}
+        updated_at: {type: integer, format: int64, description: Last update time as Unix seconds.}
+    DeletionEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Successful deletion response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/DeletionResult'}]
+              description: Deletion result.
+    DeletionResult:
+      type: object
+      required: [result]
+      description: Stable deletion payload.
+      properties:
+        result: {type: string, enum: [success], description: Stable success value.}
+    FileEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          description: Uploaded file response.
+          properties:
+            data:
+              allOf: [{$ref: '#/components/schemas/UploadedFile'}]
+              description: Uploaded file metadata.
+    UploadedFile:
+      type: object
+      required: [id, name, size, extension, mime_type, created_at]
+      description: File accepted for a later chat request.
+      properties:
+        id: {type: string, format: uuid, description: File id passed in `file_ids`.}
+        name: {type: string, description: Sanitized display filename.}
+        size: {type: integer, format: int64, description: Size in bytes.}
+        extension: {type: string, description: Lowercase extension without a dot.}
+        mime_type: {type: string, description: Detected or supplied MIME type.}
+        created_at: {type: integer, format: int64, description: Creation time as Unix seconds.}

@@ -8,11 +8,20 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
-import type { AIChatConversation, AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
+import type {
+  AIChatConversation,
+  ExecutionFileReader,
+  AIChatMessage,
+  AIChatMessageFile,
+  AIChatTokenUsageUpdatedEventData,
+} from '@/services/types/aichat';
 import type { AIChatStreamingMessageState } from '@/components/chat/controllers/aichat';
 import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
-import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
+import type {
+  AIChatToolGovernanceDecisionSubmitPayload,
+  AITaskProposalActionPayload,
+} from '@/components/chat/variants/aichat/agentic-timeline';
 import { presentationProjectionFromMetadata } from '@/components/chat/controllers/aichat/presentation-order';
 import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
 import type {
@@ -21,6 +30,7 @@ import type {
 } from '@/services/types/connector';
 
 interface AIChatMessageListProps {
+  readExecutionFile?: ExecutionFileReader;
   messages: AIChatMessage[];
   activeConversation: AIChatConversation | null;
   activeMessageCount: number;
@@ -36,10 +46,12 @@ interface AIChatMessageListProps {
   scrollViewportRef: Ref<HTMLDivElement>;
   bottomSpacerHeight: number;
   onScroll: (event: UIEvent<HTMLDivElement>) => void;
-  onRegenerate: (message: AIChatMessage) => void;
+  onRegenerate?: (message: AIChatMessage) => void;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
   onConnectorRuntimeDecision?: (
     conversationId: string,
     messageId: string,
@@ -48,12 +60,13 @@ interface AIChatMessageListProps {
     rememberForSession?: boolean
   ) => Promise<ConnectorRuntimeDecisionResult>;
   onSwitchBranch: (messageId: string) => void;
-  onEditStart: (message: AIChatMessage) => void;
+  onEditStart?: (message: AIChatMessage) => void;
   onEditChange: (value: string) => void;
   onEditCancel: () => void;
   onEditSubmit: (message: AIChatMessage) => void;
   showAssistantModelMeta?: boolean;
   layout?: 'full' | 'embedded';
+  messageDensity?: 'default' | 'compact';
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   showWorkflowFailureDetails?: boolean;
@@ -107,6 +120,21 @@ function canReplaceRootMessage(
   );
 }
 
+function tokenUsageFromMessage(
+  message: AIChatMessage
+): AIChatTokenUsageUpdatedEventData | undefined {
+  const budget = message.metadata?.task_token_budget;
+  const usage = message.metadata?.usage;
+  if (!budget && !usage?.total_tokens) return undefined;
+  const total = Math.max(0, usage?.total_tokens ?? 0);
+  return {
+    conversation_id: message.conversation_id,
+    message_id: message.id,
+    usage: usage ?? { total_tokens: total },
+    ...(budget ? { task_token_budget: budget } : {}),
+  };
+}
+
 /**
  * @component AIChatMessageList
  * @category Feature
@@ -117,6 +145,7 @@ function canReplaceRootMessage(
  * <AIChatMessageList messages={messages} />
  */
 export function AIChatMessageList({
+  readExecutionFile,
   messages,
   activeConversation,
   activeMessageCount,
@@ -134,6 +163,8 @@ export function AIChatMessageList({
   onScroll,
   onRegenerate,
   onToolGovernanceDecision,
+  onTaskProposalAction,
+  onTaskMutation,
   onConnectorRuntimeDecision,
   onSwitchBranch,
   onEditStart,
@@ -142,6 +173,7 @@ export function AIChatMessageList({
   onEditSubmit,
   showAssistantModelMeta = true,
   layout = 'full',
+  messageDensity = 'default',
   showMemoryKey = true,
   showSkillEventDetails = true,
   showWorkflowFailureDetails = true,
@@ -166,7 +198,11 @@ export function AIChatMessageList({
       <div
         className={cn(
           'mx-auto flex min-h-full w-full min-w-0 flex-col pb-4',
-          layout === 'embedded' ? 'max-w-full px-4 pt-5' : 'max-w-5xl px-4 pt-20 sm:px-6 lg:px-8'
+          layout === 'embedded'
+            ? 'max-w-full px-4 pt-5'
+            : messageDensity === 'compact'
+              ? 'max-w-6xl px-4 pt-8 sm:px-6 lg:px-8'
+              : 'max-w-5xl px-4 pt-20 sm:px-6 lg:px-8'
         )}
       >
         {isLoadingMessages ? (
@@ -187,11 +223,15 @@ export function AIChatMessageList({
             ) : null}
             {messages.map((message, index) => (
               <AIChatMessageBubble
+                readExecutionFile={readExecutionFile}
                 key={message.id}
                 message={message}
                 isSending={isSending}
                 timeline={streamingByMessageId[message.id]?.timeline ?? []}
                 modelProcessing={streamingByMessageId[message.id]?.modelProcessing}
+                tokenUsage={
+                  streamingByMessageId[message.id]?.tokenUsage ?? tokenUsageFromMessage(message)
+                }
                 presentationItems={
                   streamingByMessageId[message.id]?.presentationItems ??
                   presentationProjectionFromMetadata(message.metadata)?.items
@@ -209,6 +249,8 @@ export function AIChatMessageList({
                 )}
                 onRegenerate={onRegenerate}
                 onToolGovernanceDecision={onToolGovernanceDecision}
+                onTaskProposalAction={onTaskProposalAction}
+                onTaskMutation={onTaskMutation}
                 onConnectorRuntimeDecision={
                   onConnectorRuntimeDecision
                     ? (command, scope, rememberForSession) =>

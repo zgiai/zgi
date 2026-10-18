@@ -7,6 +7,7 @@ import { useConnectorRuntimeReceipt } from './use-runtime-receipt';
 import { OperationConfirmationCard } from '@/components/aichat/operation-cards';
 import { localizeConnectorRuntimeConfirmation } from '@/components/connectors/connector-metadata';
 import type {
+  OperationCardMetaItem,
   OperationCardTextBlock,
   OperationConfirmationStatus,
 } from '@/components/aichat/operation-cards/types';
@@ -29,11 +30,35 @@ export type ConnectorRuntimeDecisionHandler = (
   scope?: string
 ) => Promise<ConnectorRuntimeDecisionResult>;
 
+/**
+ * Optional localized labels for the opt-in `showPreview` surface. Callers that
+ * enable preview rendering must supply their own locale strings so this shared
+ * Connector card never grows host-specific copy.
+ */
+export interface ConnectorRuntimeConfirmationPreviewLabels {
+  accountName: string;
+  accountIdentity: string;
+  unavailable: string;
+}
+
 interface ConnectorRuntimeConfirmationCardProps {
   result: ConnectorRuntimeRequiresConfirmationResult;
   onDecision: ConnectorRuntimeDecisionHandler;
   compact?: boolean;
   className?: string;
+  /**
+   * Opt-in. When true, show a warning until the owner-scoped receipt preview
+   * exists with `complete === true`. Confirm always requires a complete preview.
+   */
+  requireCompletePreview?: boolean;
+  /**
+   * Opt-in. When true, render the fetched account name/identity and every
+   * preview field (action, service, log range, …). Default false preserves
+   * Chat and Agent behavior.
+   */
+  showPreview?: boolean;
+  /** Opt-in labels used only while `showPreview` is enabled. */
+  previewLabels?: ConnectorRuntimeConfirmationPreviewLabels;
 }
 
 function effectLabel(effect: string, t: ReturnType<typeof useT<'connectors'>>): string {
@@ -76,6 +101,9 @@ export function ConnectorRuntimeConfirmationCard({
   onDecision,
   compact = false,
   className,
+  requireCompletePreview = false,
+  showPreview = false,
+  previewLabels,
 }: ConnectorRuntimeConfirmationCardProps) {
   const t = useT('connectors');
   const locale = useLocale();
@@ -149,9 +177,9 @@ export function ConnectorRuntimeConfirmationCard({
   const isSubmitting = visibleState.status === 'submitting';
   const resolvedDecision = visibleState.status === 'resolved' ? visibleState.decision : null;
   const canDecide =
-    verifiedIdentity === identity &&
-    Boolean(receipt.preview?.complete) &&
-    isConnectorRuntimeDecisionAvailable(visibleState, result);
+    verifiedIdentity === identity && isConnectorRuntimeDecisionAvailable(visibleState, result);
+  const previewReady = receipt.preview?.complete === true;
+  const canConfirm = canDecide && previewReady;
   const riskIsHigh = confirmation.risk_classification === 'high';
   const effect = effectLabel(confirmation.consequence.external_effect, t);
 
@@ -164,6 +192,9 @@ export function ConnectorRuntimeConfirmationCard({
 
   const submitDecision = async (decision: ConnectorRuntimeConfirmationDecision) => {
     if (!canDecide) return;
+    // A confirmation host must never approve while the owner-scoped
+    // preview is missing or incomplete.
+    if (decision === 'confirmed' && !previewReady) return;
     const current =
       decisionScope.current === receipt.scope
         ? effectiveDecisionState(decisionStateRef.current, confirmation.route_receipt)
@@ -204,7 +235,36 @@ export function ConnectorRuntimeConfirmationCard({
     statusLabel = t('runtime.confirmation.status.failed');
   }
 
+  const items: OperationCardMetaItem[] = [];
+  if (showPreview && receipt.preview) {
+    items.push({
+      id: 'preview-account-name',
+      label: previewLabels?.accountName ?? t('runtime.confirmation.previewAccount'),
+      value: receipt.preview.account_name,
+    });
+    items.push({
+      id: 'preview-account-identity',
+      label: previewLabels?.accountIdentity ?? t('runtime.confirmation.previewAccount'),
+      value: receipt.preview.account_identity,
+    });
+    receipt.preview.fields.forEach((field, index) => {
+      items.push({
+        id: `preview-field-${index}`,
+        label: field.label_i18n[locale] ?? field.label,
+        value: field.value,
+        ...(field.truncated ? { description: t('runtime.confirmation.previewTruncated') } : {}),
+      });
+    });
+  }
+
   const warnings: OperationCardTextBlock[] = [];
+  if (requireCompletePreview && !previewReady) {
+    warnings.push({
+      id: 'preview-required',
+      description: previewLabels?.unavailable ?? t('runtime.confirmation.previewUnavailable'),
+      tone: 'warning',
+    });
+  }
   if (confirmation.risk_classification === 'unclassified') {
     warnings.push({
       id: 'unclassified',
@@ -261,7 +321,7 @@ export function ConnectorRuntimeConfirmationCard({
       status={status}
       statusLabel={statusLabel}
       summary={riskIsHigh ? t('runtime.confirmation.consequenceFallback', { effect }) : undefined}
-      items={[]}
+      items={items}
       warnings={warnings}
       actions={
         visibleState.status === 'unknown' || showReadFailed
@@ -303,7 +363,7 @@ export function ConnectorRuntimeConfirmationCard({
               id: 'confirm-connector-operation',
               label: t('runtime.confirmation.confirm'),
               variant: riskIsHigh ? 'destructive' : 'default',
-              disabled: !canDecide,
+              disabled: !canConfirm,
               loading: isSubmitting && visibleState.decision === 'confirmed',
               onClick: () => void submitDecision('confirmed'),
             }

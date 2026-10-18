@@ -1369,37 +1369,6 @@ func TestAgentMemoryCapabilityEnableRequestPlansConfigMutation(t *testing.T) {
 	if !operationPlanCapabilityGoalsContainRequiredFieldForTest(semanticCapabilityGoals, "agent_memory_enabled") {
 		t.Fatalf("capability_goals = %#v, missing agent_memory_enabled", semanticCapabilityGoals)
 	}
-	return
-	if strategy.Intent != "continue_previous_task" {
-		t.Fatalf("strategy.Intent = %q, want continue_previous_task without synthesized capability continuation; strategy=%#v", strategy.Intent, strategy)
-	}
-	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
-		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
-	}
-	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
-		t.Fatalf("PlannedTools = %#v, missing update_agent_config", strategy.PlannedTools)
-	}
-	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
-	fields := operationPlanNormalizedAgentConfigFieldsFromAny(updateArgs[operationPlanExpectedUpdatedFieldsKey])
-	if !stringSliceContainsFold(fields, "agent_memory_enabled") {
-		t.Fatalf("update_agent_config expected fields = %#v, missing agent_memory_enabled; args=%#v", fields, updateArgs)
-	}
-	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") {
-		t.Fatalf("PlannedTools = %#v, want no skill candidate lookup for memory config setting", strategy.PlannedTools)
-	}
-
-	plan := operationPlanFromTurnStrategy("task-agent-memory-enable", parts, strategy)
-	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
-	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityMemory {
-		t.Fatalf("capability_goals = %#v, want one memory capability goal; plan=%#v", capabilityGoals, plan)
-	}
-	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionUpdate {
-		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionUpdate, capabilityGoals[0])
-	}
-	goalFields := stringSliceFromAny(capabilityGoals[0]["required_config_fields"])
-	if len(goalFields) != 1 || goalFields[0] != "agent_memory_enabled" {
-		t.Fatalf("capability required_config_fields = %#v, want agent_memory_enabled", goalFields)
-	}
 }
 
 func TestAgentCapabilityContinuationActionConfirmationUsesPriorCandidate(t *testing.T) {
@@ -1464,18 +1433,6 @@ func TestAgentCapabilityContinuationActionConfirmationUsesPriorCandidate(t *test
 			assertAgentManagementModelDecidesExecutionForTest(t, strategy)
 			if len(strategy.CapabilityGoals) != 0 {
 				t.Fatalf("strategy.CapabilityGoals = %#v, want no hard synthesized continuation goals", strategy.CapabilityGoals)
-			}
-			return
-			if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
-				t.Fatalf("PlannedTools = %#v, missing update_agent_config from action-confirmation continuation", strategy.PlannedTools)
-			}
-			updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
-			if got := stringFromAny(updateArgs["candidate_skill_id"]); got != "file-generator" {
-				t.Fatalf("update_agent_config args = %#v, want candidate_skill_id file-generator", updateArgs)
-			}
-			if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agent") ||
-				aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
-				t.Fatalf("PlannedTools = %#v, want no stale delete tools for action-confirmation continuation", strategy.PlannedTools)
 			}
 		})
 	}
@@ -1657,20 +1614,6 @@ func TestAgentResourceBindingCandidateContinuationUsesPriorCandidateResults(t *t
 	assertAgentManagementModelDecidesExecutionForTest(t, strategy)
 	if len(strategy.CapabilityGoals) != 0 {
 		t.Fatalf("strategy.CapabilityGoals = %#v, want no hard synthesized continuation goals", strategy.CapabilityGoals)
-	}
-	return
-	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
-		t.Fatalf("PlannedTools = %#v, missing update_agent_config from candidate-based continuation", strategy.PlannedTools)
-	}
-	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_database_tables") {
-		t.Fatalf("PlannedTools = %#v, want no repeated list_agent_database_tables after prior candidate results", strategy.PlannedTools)
-	}
-	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
-	strategyActions := operationPlanAgentConfigBindingActionsFromAny(updateArgs[operationPlanExpectedBindingActionsKey])
-	for _, field := range []string{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
-		if strategyActions[field] != "bind" {
-			t.Fatalf("strategy update_agent_config actions[%s] = %#v, want bind; args=%#v", field, strategyActions[field], updateArgs)
-		}
 	}
 }
 

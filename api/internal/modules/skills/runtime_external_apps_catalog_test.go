@@ -21,9 +21,10 @@ func TestExternalAppsCatalogIsHiddenConnectedAppsRuntimeCapability(t *testing.T)
 	if profile.Category != SkillExposureHiddenRuntime || profile.SystemAsset || profile.PageContextRequired || profile.GovernanceRisk != SkillGovernanceRiskMixed {
 		t.Fatalf("external apps profile = %#v", profile)
 	}
-	if len(metadata.SupportedCallers) != 2 ||
+	if len(metadata.SupportedCallers) != 3 ||
 		metadata.SupportedCallers[0] != SkillCallerAIChat ||
-		metadata.SupportedCallers[1] != SkillCallerAgent {
+		metadata.SupportedCallers[1] != SkillCallerAgent ||
+		metadata.SupportedCallers[2] != SkillCallerDigitalHuman {
 		t.Fatalf("supported callers = %#v", metadata.SupportedCallers)
 	}
 	if metadata.DependencyType != SkillDependencyStandalone || len(metadata.ConnectorRequirements) != 0 {

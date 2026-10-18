@@ -84,6 +84,88 @@ func validateSource(data snapshot, report *Report) {
 	validateNative(data, report)
 }
 
+func validateDigitalHumanPreservation(data snapshot, report *Report) {
+	credentials := map[string]row{}
+	for _, credential := range data["channel_installation_credentials"] {
+		credentials[text(credential, "installation_id")] = credential
+	}
+	installations := map[string]row{}
+	for _, installation := range data["channel_installations"] {
+		id := text(installation, "id")
+		installations[id] = installation
+		if installation["deleted_at"] != nil {
+			continue
+		}
+		// A PersonalConnection channel resolves a native Connector connection
+		// and never owns a credential envelope; it only needs a consistent scope.
+		if text(installation, "credential_source") == "personal_connection" {
+			if !personalConnectionInstallationValid(data, installation) {
+				problem(report, "channel_installations", "personal_connection_scope_mismatch")
+			}
+			continue
+		}
+		credential := credentials[id]
+		if text(installation, "connection_id") != id || credential == nil {
+			problem(report, "channel_installations", "installation_credential_preservation_required")
+			continue
+		}
+		if text(credential, "organization_id") != text(installation, "organization_id") ||
+			text(credential, "workspace_id") != text(installation, "workspace_id") ||
+			!strings.EqualFold(text(credential, "provider"), text(installation, "provider")) ||
+			number(credential, "credential_version") < 1 ||
+			(!strings.HasPrefix(text(credential, "encrypted_credentials"), "v1.") && !strings.HasPrefix(text(credential, "encrypted_credentials"), "v2.")) {
+			problem(report, "channel_installation_credentials", "installation_credential_scope_mismatch")
+		}
+	}
+	for _, delivery := range data["channel_delivery_outbox"] {
+		installation := installations[text(delivery, "installation_id")]
+		if installation == nil || text(installation, "organization_id") != text(delivery, "organization_id") ||
+			text(installation, "workspace_id") != text(delivery, "workspace_id") {
+			problem(report, "channel_delivery_outbox", "delivery_installation_missing")
+			continue
+		}
+		// A delivery keeps a copy of its installation's connection locator; a
+		// stale copy can no longer be claimed once the installation moved.
+		if text(delivery, "connection_id") != text(installation, "connection_id") {
+			problem(report, "channel_delivery_outbox", "delivery_connection_locator_stale")
+		}
+	}
+	// Processing markers keep the same locator copy and resolve credentials
+	// with it when the marker is removed.
+	for _, marker := range data["channel_processing_markers"] {
+		installation := installations[text(marker, "installation_id")]
+		if installation == nil || text(installation, "organization_id") != text(marker, "organization_id") ||
+			text(installation, "workspace_id") != text(marker, "workspace_id") {
+			problem(report, "channel_processing_markers", "marker_installation_missing")
+			continue
+		}
+		if text(marker, "connection_id") != text(installation, "connection_id") {
+			problem(report, "channel_processing_markers", "marker_connection_locator_stale")
+		}
+	}
+}
+
+// personalConnectionInstallationValid requires the referenced native
+// connection to belong to the installation's organization, owner and
+// Connector. A deleted connection only makes the channel unready; it is not
+// retired data, so it does not block finalization.
+func personalConnectionInstallationValid(data snapshot, installation row) bool {
+	id, connectionID := text(installation, "id"), text(installation, "connection_id")
+	owner, connector := text(installation, "connection_owner_id"), text(installation, "connector_id")
+	if connectionID == "" || connectionID == id || owner == "" || connector == "" {
+		return false
+	}
+	connection := find(data["connector_connections"], "id", connectionID)
+	return connection != nil &&
+		text(connection, "organization_id") == text(installation, "organization_id") &&
+		text(connection, "owner_account_id") == owner &&
+		text(connection, "connector_id") == connector
+}
+
+func problem(report *Report, table, code string) {
+	addIssue(report, table, code)
+}
+
 func validateNative(data snapshot, report *Report) {
 	problem := func(table, code string) { report.Issues = append(report.Issues, Issue{Table: table, Code: code}) }
 	for _, connection := range data["connector_connections"] {

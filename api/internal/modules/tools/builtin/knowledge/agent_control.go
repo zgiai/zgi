@@ -46,7 +46,7 @@ func (r knowledgeRuntime) agentKnowledgeExecutionState() agentKnowledgeExecution
 }
 
 func (r knowledgeRuntime) isAgentInvocation() bool {
-	return r.runtime != nil && r.runtime.InvokeFrom == tools.ToolInvokeFromAgent
+	return r.runtime != nil && tools.IsBoundRuntimeCaller(r.runtime.InvokeFrom)
 }
 
 func blockedAgentKnowledgeResponse(query string, state agentKnowledgeExecutionState, reason string, warning string) *dataset_service.KnowledgeRetrieveResponse {

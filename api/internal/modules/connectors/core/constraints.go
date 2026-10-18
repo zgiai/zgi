@@ -40,6 +40,19 @@ type TargetBoundary struct {
 	VersionID string     `json:"version_id"`
 }
 
+type HostAudience string
+
+const (
+	HostAudienceWorkspace HostAudience = "workspace"
+	HostAudienceAPI       HostAudience = "api"
+	HostAudienceChannel   HostAudience = "channel"
+)
+
+type HostDelegation struct {
+	GrantedBy uuid.UUID      `json:"granted_by"`
+	Audiences []HostAudience `json:"audiences"`
+}
+
 type AccessConstraint struct {
 	SchemaVersion       int              `json:"schema_version"`
 	AllowedOperationIDs []Identifier     `json:"allowed_operation_ids"`
@@ -49,12 +62,13 @@ type AccessConstraint struct {
 	DenyReasons         []string         `json:"deny_reasons"`
 	SourceDigest        string           `json:"source_digest,omitempty"`
 	AuthorizationMode   string           `json:"authorization_mode,omitempty"`
+	HostDelegation      *HostDelegation  `json:"host_delegation,omitempty"`
 	// These snapshots make a direct binding authorization stale after a
 	// credential rotation or any connection policy revision. Zero preserves
 	// compatibility for non-Chat projections that predate this field.
-	AuthorizationConnectionRevision int `json:"authorization_connection_revision,omitempty"`
-	AuthorizationCredentialVersion  int `json:"authorization_credential_version,omitempty"`
-	AuthorizationContractDigest      string `json:"authorization_contract_digest,omitempty"`
+	AuthorizationConnectionRevision int    `json:"authorization_connection_revision,omitempty"`
+	AuthorizationCredentialVersion  int    `json:"authorization_credential_version,omitempty"`
+	AuthorizationContractDigest     string `json:"authorization_contract_digest,omitempty"`
 }
 
 const (
@@ -67,6 +81,27 @@ func OwnerConstraint(owner uuid.UUID, operations []Identifier) *AccessConstraint
 		AllowedOperationIDs: append([]Identifier{}, operations...), DenyReasons: []string{}, AuthorizationMode: AuthorizationModeAsk,
 		TargetBoundaries: []TargetBoundary{{TargetTypeChat, "*", "live", "*"}, {TargetTypeAgent, "*", "*", "*"}, {TargetTypeWorkflow, "*", "*", "*"}},
 	}
+}
+
+// ConstraintsAllow preserves the historical Connection boundary while allowing
+// an owner-created, exact DigitalHuman Target Binding to supply the newly added
+// host boundary. All operation, expiry, deny and owner restrictions still come
+// from both layers; a persisted binding is therefore required before V4 access.
+func ConstraintsAllow(connection, binding *AccessConstraint, owner uuid.UUID, operation Identifier, target TargetRef, now time.Time) bool {
+	if connection == nil || binding == nil || !binding.Allows(owner, operation, target, now) {
+		return false
+	}
+	if connection.Allows(owner, operation, target, now) {
+		return true
+	}
+	if target.Type != TargetTypeDigitalHuman || connection.Validate() != nil {
+		return false
+	}
+	projected := *connection
+	projected.TargetBoundaries = append(append([]TargetBoundary{}, connection.TargetBoundaries...), TargetBoundary{
+		Type: target.Type, ID: target.ID, Scope: string(target.EffectiveScope()), VersionID: target.VersionID,
+	})
+	return projected.Allows(owner, operation, target, now)
 }
 
 func (constraint *AccessConstraint) Validate() error {
@@ -97,6 +132,26 @@ func (constraint *AccessConstraint) Validate() error {
 	}
 	if constraint.SourceDigest != "" && !hmacSHA256HexPattern.MatchString(constraint.SourceDigest) {
 		return invalidModel()
+	}
+	if grant := constraint.HostDelegation; grant != nil {
+		if grant.GrantedBy != constraint.AudienceOwner || len(grant.Audiences) == 0 || len(grant.Audiences) > 3 || len(constraint.TargetBoundaries) != 1 {
+			return invalidModel()
+		}
+		boundary := constraint.TargetBoundaries[0]
+		targetID, targetErr := uuid.Parse(boundary.ID)
+		versionID, versionErr := uuid.Parse(boundary.VersionID)
+		if (boundary.Type != TargetTypeAgent && boundary.Type != TargetTypeDigitalHuman) || boundary.Scope != string(ScopePublished) ||
+			targetErr != nil || targetID == uuid.Nil || targetID.String() != boundary.ID ||
+			versionErr != nil || versionID == uuid.Nil || versionID.String() != boundary.VersionID {
+			return invalidModel()
+		}
+		seenAudiences := make(map[HostAudience]bool, len(grant.Audiences))
+		for _, audience := range grant.Audiences {
+			if (audience != HostAudienceWorkspace && audience != HostAudienceAPI && audience != HostAudienceChannel) || seenAudiences[audience] {
+				return invalidModel()
+			}
+			seenAudiences[audience] = true
+		}
 	}
 	return nil
 }
@@ -132,6 +187,19 @@ func (constraint *AccessConstraint) Allows(owner uuid.UUID, operation Identifier
 	}
 	for _, boundary := range constraint.TargetBoundaries {
 		if boundary.Type == target.Type && matchesBoundary(boundary.ID, target.ID) && matchesBoundary(boundary.Scope, string(target.EffectiveScope())) && matchesBoundary(boundary.VersionID, target.VersionID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (constraint *AccessConstraint) AllowsHostAudience(owner uuid.UUID, operation Identifier, target TargetRef, audience HostAudience, now time.Time) bool {
+	if constraint == nil || constraint.HostDelegation == nil || target.EffectiveScope() != ScopePublished ||
+		!constraint.Allows(owner, operation, target, now) {
+		return false
+	}
+	for _, granted := range constraint.HostDelegation.Audiences {
+		if granted == audience {
 			return true
 		}
 	}

@@ -1216,7 +1216,8 @@ func (s *WorkflowService) GetWorkflowConfig(ctx context.Context, workspaceID, ag
 func (s *WorkflowService) RunAdvancedChatDraftWorkflow(ctx context.Context, workspaceID, agentID string, req interface{}, accountID string) (interface{}, error) {
 	if advancedReq, ok := req.(*dto.AdvancedChatDraftWorkflowRunRequest); ok {
 		draftReq := &dto.DraftWorkflowRunRequest{
-			Inputs: advancedReq.Inputs,
+			Inputs: chatInputsWithFiles(advancedReq.Inputs, advancedReq.Files),
+			Files:  advancedReq.Files,
 		}
 
 		if draftReq.Inputs == nil {
@@ -1247,7 +1248,8 @@ func (s *WorkflowService) RunAdvancedChatDraftWorkflow(ctx context.Context, work
 func (s *WorkflowService) RunAdvancedChatWorkflow(ctx context.Context, workspaceID, agentID string, req interface{}, accountID string) (interface{}, error) {
 	if advancedReq, ok := req.(*dto.AdvancedChatDraftWorkflowRunRequest); ok {
 		draftReq := &dto.DraftWorkflowRunRequest{
-			Inputs: advancedReq.Inputs,
+			Inputs: chatInputsWithFiles(advancedReq.Inputs, advancedReq.Files),
+			Files:  advancedReq.Files,
 		}
 
 		if draftReq.Inputs == nil {

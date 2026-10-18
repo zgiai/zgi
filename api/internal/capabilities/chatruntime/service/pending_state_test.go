@@ -234,12 +234,7 @@ func TestFinalizePreparedErrorOwnershipLossDoesNotClearOrEmit(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE .*id = .*status IN.*runtime_run_id = .*`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
-	// The message is still active in the database (owned by another run), so
-	// the status lookup must report a non-terminal status: the finalizer then
-	// treats this as ownership loss and does not clear or emit.
-	mock.ExpectQuery(`(?s)SELECT .* FROM "chat_runtime_messages" WHERE .*id = .* AND deleted_at IS NULL`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(messageID, "streaming"))
+	mock.ExpectRollback()
 
 	emitted := 0
 	err := svc.finalizePreparedError(

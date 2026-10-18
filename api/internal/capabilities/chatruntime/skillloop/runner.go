@@ -408,6 +408,7 @@ type skillStepResult struct {
 	trace               skills.SkillTrace
 	toolMessage         adapter.Message
 	toolResult          map[string]interface{}
+	artifacts           []map[string]interface{}
 	answer              string
 	answerStreamed      bool
 	usedSkill           bool
@@ -548,6 +549,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		if nativeToolSet != nil {
 			messages = append(messages, nativeToolSet.InstructionMessages...)
+			if sessionScripts, ok := nativeActiveSessionScriptsSystemMessage(resolved, nativeToolSet.ActiveSkillIDs, req.RuntimeTools); ok {
+				messages = append(messages, sessionScripts)
+			}
 		}
 		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 		messages = append(messages, nativeAgentLoopSystemMessage())
@@ -627,6 +631,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		continuationType: strings.TrimSpace(req.ContinuationType),
 		terminalOnly:     req.TerminalOnly,
 	}
+	platformServices := r.runtimePlatformServices(req, prepared, resolved, loadedSkills, func() *skills.NativeToolSet {
+		if req.NativeSkillSession != nil {
+			current := req.NativeSkillSession.ToolSet()
+			return &current
+		}
+		return nativeToolSet
+	}, &toolCallCount, skillToolCallCounts, &successfulToolCalls, &traces)
+	for _, tool := range req.RuntimeTools {
+		if tool.BindPlatform != nil {
+			tool.BindPlatform(platformServices)
+		}
+	}
 	completeRetryFailureLimit := func(class retryFailureClass, metrics *retryFailureBudgetMetrics, round int) (string, *adapter.Usage, error) {
 		limitErr := fmt.Errorf("%w: too many %s failures", ErrInvalidInput, class)
 		failure := skills.SkillTrace{}
@@ -681,6 +697,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		if eventErr := prepared.presentationEventError(); eventErr != nil {
 			return answerBuilder.String(), usage, eventErr
+		}
+		if req.BeforeModelRound != nil {
+			additional, err := req.BeforeModelRound(ctx, round)
+			if err != nil {
+				return answerBuilder.String(), usage, err
+			}
+			if len(additional) > 0 {
+				messages = append(messages, additional...)
+			}
 		}
 		roundRuntimeState := map[string]interface{}{}
 		terminalSubmissionAllowed := true
@@ -745,6 +770,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		} else {
 			planningResult, err = r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 		}
+		if req.AfterModelRound != nil {
+			if hookErr := req.AfterModelRound(ctx, round, err == nil); hookErr != nil {
+				if err != nil {
+					return answerBuilder.String(), usage, errors.Join(err, hookErr)
+				}
+				return answerBuilder.String(), usage, hookErr
+			}
+		}
 		usage = mergeUsage(usage, planningResult.usage)
 		if len(planningResult.contextMessages) > 0 {
 			messages = cloneMessagesForProvider(planningResult.contextMessages)
@@ -771,7 +804,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				candidateStreamed = true
 			}
 			if candidateStreamed && strings.TrimSpace(candidate) != "" {
-				decision := nativeCommentary.classify(candidate, toolCalls, nativeToolSet)
+				decision := nativeCommentary.classify(candidate, toolCalls, nativeToolSet, req.RuntimeTools...)
 				r.emitAnswerRetractWithDisposition(ctx, prepared, candidate, decision.disposition)
 				r.logNativeCommentaryDecision(ctx, prepared, round, decision, planningResult.reasoningObserved)
 				if eventErr := prepared.presentationEventError(); eventErr != nil {
@@ -977,6 +1010,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			executionCall := call
 			runtimeTool, runtimeCall := runtimeToolForCall(req.RuntimeTools, call)
+			if runtimeCall {
+				// Runtime tools bypass the regular progressive-skill handler. Emit
+				// the same lifecycle events so durable runs and the shared chat UI
+				// expose their progress consistently with Agent tools.
+				r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(
+					prepared,
+					call.ID,
+					runtimeTool.SkillID,
+					runtimeTool.Definition.Function.Name,
+					nil,
+				))
+			}
 			if req.NativeAgentLoop && !runtimeCall {
 				executionCall = nativeExecutionCall(call, nativeToolSet)
 			}
@@ -996,7 +1041,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			result := skillStepResult{}
 			if req.NativeAgentLoop && req.NativeSkillSession != nil {
-				if control, handled := r.handleNativeSessionControlCall(ctx, call, req.NativeSkillSession); handled {
+				if control, handled := r.handleNativeSessionControlCall(ctx, call, req.NativeSkillSession, resolved, req.RuntimeTools); handled {
 					result = control.step
 					if len(control.instructions) > 0 {
 						roundDeferredSystemMessages = append(roundDeferredSystemMessages, control.instructions...)
@@ -1014,6 +1059,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.trace.Kind == "" && runtimeCall {
 				result = handleRuntimeToolCall(ctx, call, runtimeTool)
+				if strings.TrimSpace(result.trace.InvocationID) == "" {
+					result.trace.InvocationID = call.ID
+				}
+				r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, result.trace))
+				for _, artifact := range result.artifacts {
+					r.recordArtifact(artifact)
+					r.emitEvent(prepared, EventSkillArtifactCreated, artifact)
+				}
 			}
 			if result.trace.Kind == "" && userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(executionCall.ID, callSkillID, callToolName, callToolArgs, resolved)
@@ -1435,11 +1488,14 @@ func invalidLoadedSkillDigests(metadata map[string]interface{}, resolved *skills
 			continue
 		}
 		digest := strings.TrimSpace(evidenceStringFromAny(record["instruction_digest"]))
-		if digest == "" {
+		version := strings.TrimSpace(evidenceStringFromAny(record["effective_version"]))
+		if digest == "" && version == "" {
 			continue
 		}
 		doc, ok := resolved.Get(skillID)
-		if !ok || doc == nil || digest != skillInstructionDigest(doc.Instructions) {
+		if !ok || doc == nil ||
+			(digest != "" && digest != skillInstructionDigest(doc.Instructions)) ||
+			(version != "" && version != skillEffectiveVersion(doc)) {
 			invalid[skillID] = struct{}{}
 		}
 	}
@@ -1466,7 +1522,7 @@ func validatedHistoricalLoadedSkillsForRun(ctx context.Context, req RunRequest, 
 			traces = append(traces, restoredSkillValidationTrace(canonical, "not_exposed_current_surface", record, "allowed", "not_applicable"))
 			continue
 		}
-		currentVersion := skillInstructionDigest(doc.Instructions)
+		currentVersion := skillEffectiveVersion(doc)
 		recordedVersion := strings.TrimSpace(firstNonEmptyString(record["effective_version"], record["instruction_digest"]))
 		if recordedVersion != "" && recordedVersion != currentVersion {
 			delete(loaded, canonical)
@@ -1536,7 +1592,7 @@ func restoredSkillAttemptTraces(metadata map[string]interface{}, resolved *skill
 		doc, _ := resolved.Get(skillID)
 		version := ""
 		if doc != nil {
-			version = skillInstructionDigest(doc.Instructions)
+			version = skillEffectiveVersion(doc)
 		}
 		return skills.SkillTrace{
 			Kind:     "skill_load_attempt",
@@ -1664,6 +1720,18 @@ func restoredLoadedSkillInstructionStateForRun(resolved *skills.ResolvedSkills, 
 func skillInstructionDigest(instructions string) string {
 	digest := sha256.Sum256([]byte(strings.TrimSpace(instructions)))
 	return fmt.Sprintf("sha256:%x", digest[:])
+}
+
+func skillEffectiveVersion(doc *skills.SkillDocument) string {
+	if doc == nil {
+		return ""
+	}
+	if doc.Metadata.Source == skills.SkillSourceCustom && doc.Metadata.HasScripts {
+		if digest, err := skills.SkillPackageSHA256(doc.Metadata.RootPath); err == nil {
+			return "sha256:" + digest
+		}
+	}
+	return skillInstructionDigest(doc.Instructions)
 }
 
 func activeSkillIDsForDiagnostics(resolved *skills.ResolvedSkills, loaded map[string]struct{}) []string {

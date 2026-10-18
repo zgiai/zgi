@@ -27,7 +27,7 @@ func RegisterHealthRoutes(v1 *gin.RouterGroup) {
 			if snapshot, ok := consolesync.StatusSnapshot(c.Request.Context()); ok {
 				payload["console_sync"] = snapshot
 			}
-			if config.ConnectorRetirementDeferred() {
+			if config.ConnectorRetirementDeferredActive() {
 				payload["connector_retirement"] = "deferred"
 			}
 			c.JSON(http.StatusOK, payload)

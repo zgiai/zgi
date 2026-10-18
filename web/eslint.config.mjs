@@ -10,6 +10,7 @@ const config = [
   {
     ignores: [
       '.next/**',
+      'next-env.d.ts', // Next.js owns and regenerates this declaration file.
       'node_modules/**',
       'out/**',
       '.env*',
@@ -66,6 +67,9 @@ const config = [
         __dirname: 'readonly',
         __filename: 'readonly',
         global: 'readonly',
+        URL: 'readonly',
+        File: 'readonly',
+        structuredClone: 'readonly',
       },
     },
     rules: {

@@ -2,14 +2,13 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -92,8 +91,7 @@ type APIKeyInfo struct {
 // validateAPIKey validates the API key and returns the associated information
 func validateAPIKey(db *gorm.DB, key string) (*APIKeyInfo, error) {
 	// Calculate hash of the provided key
-	hash := sha256.Sum256([]byte(key))
-	keyHash := hex.EncodeToString(hash[:])
+	keyHash := externalapikey.Hash(key)
 
 	// Query database for matching hash
 	var apiKey apiKeyModule.APIKey

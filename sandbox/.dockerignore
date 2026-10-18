@@ -14,4 +14,6 @@ coverage
 **/.venv/
 **/.env
 **/.env.local
+deploy/*.env
+deploy/settings.json
 **/*.log

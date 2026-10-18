@@ -387,19 +387,24 @@ func (t *TimeoutScanTask) Options() []asynq.Option {
 }
 
 type TimeoutScanHandler struct {
-	service   *Service
-	onTimeout ResumeCallback
-	batchSize int
+	service     *Service
+	taskManager *queue.TaskManager
+	onTimeout   ResumeCallback
+	batchSize   int
 }
 
-func NewTimeoutScanHandler(service *Service, onTimeout ResumeCallback, batchSize int) *TimeoutScanHandler {
+// NewTimeoutScanHandler times out expired approval forms. A timed-out form of
+// a durable pause resumes through the runtime outbox like a submission;
+// onTimeout only resumes a workflow without a durable pause.
+func NewTimeoutScanHandler(service *Service, taskManager *queue.TaskManager, onTimeout ResumeCallback, batchSize int) *TimeoutScanHandler {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
 	return &TimeoutScanHandler{
-		service:   service,
-		onTimeout: onTimeout,
-		batchSize: batchSize,
+		service:     service,
+		taskManager: taskManager,
+		onTimeout:   onTimeout,
+		batchSize:   batchSize,
 	}
 }
 
@@ -407,19 +412,27 @@ func (h *TimeoutScanHandler) Handle(ctx context.Context, task *asynq.Task) error
 	if h == nil || h.service == nil {
 		return nil
 	}
-	forms, err := h.service.TimeoutExpiredForms(ctx, h.batchSize)
-	if err != nil {
-		return err
-	}
-	for _, form := range forms {
-		if h.onTimeout != nil {
-			if err := h.onTimeout(ctx, form); err != nil {
-				return err
+	// A scan error can arrive with forms that were already timed out; resume
+	// them before reporting it, because they will not be scanned again.
+	results, scanErr := h.service.TimeoutExpiredForms(ctx, h.batchSize)
+	for _, result := range results {
+		switch {
+		case result.Outbox != nil:
+			// The outbox row is durable: the runtime outbox scan dispatches it
+			// again when this dispatch fails.
+			if err := DispatchResumeOutbox(ctx, h.service, h.taskManager, result.Outbox); err != nil {
+				logger.WarnContext(ctx, "approval timeout resume queued for outbox retry", "form_id", result.Form.ID, err)
+			}
+		case result.LegacyResume && h.onTimeout != nil:
+			// The form is already timed out: a failed resume of one workflow
+			// must not drop the resumes of the other forms in this scan.
+			if err := h.onTimeout(ctx, result.Form); err != nil {
+				logger.WarnContext(ctx, "approval timeout resume failed", "form_id", result.Form.ID, err)
 			}
 		}
 	}
-	if len(forms) > 0 {
-		logger.InfoContext(ctx, "approval timeout scan completed", "timed_out_count", len(forms))
+	if len(results) > 0 {
+		logger.InfoContext(ctx, "approval timeout scan completed", "timed_out_count", len(results))
 	}
-	return nil
+	return scanErr
 }

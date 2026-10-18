@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
+	"github.com/zgiai/zgi/api/internal/migrations/digitalhumanpreserve"
 	"io"
 	"os"
 	"time"
@@ -37,7 +39,7 @@ func runConnectorCheckpoint(args []string) error {
 
 func runConnectorFinalize(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: connector-finalize plan|apply|verify|discard [--report PATH] [--expected-report SHA256] [--archive PATH --archive-key-file PATH]")
+		return fmt.Errorf("usage: connector-finalize plan|apply|verify|discard [--report PATH] [--expected-report SHA256] [--advanced-checkpoint MIGRATION_ID] [--archive PATH --archive-key-file PATH] [--confirm-discard VALUE]")
 	}
 	command := args[0]
 	if command != "plan" && command != "apply" && command != "verify" && command != "discard" {
@@ -48,10 +50,19 @@ func runConnectorFinalize(args []string) error {
 	expected := flags.String("expected-report", "", "exact clean plan digest required by apply")
 	archivePath := flags.String("archive", "", "encrypted retirement archive outside the repository")
 	keyPath := flags.String("archive-key-file", "", "independent binary 32-byte archive key; plan creates it exclusively when absent")
+	advancedCheckpoint := flags.String("advanced-checkpoint", "", "exact applied migration ID for a schema1 head later than the registered checkpoint; valid for plan and apply only")
 	confirmDiscard := flags.String("confirm-discard", "", "required literal confirmation for permanent legacy Connector discard")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
+	// flags.Visit reports only the flags that actually appeared, so an explicit
+	// empty --advanced-checkpoint is distinguishable from the flag being absent.
+	advancedSet := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "advanced-checkpoint" {
+			advancedSet = true
+		}
+	})
 	if flags.NArg() != 0 || (*archivePath == "") != (*keyPath == "") {
 		return fmt.Errorf("archive and archive-key-file must be supplied together")
 	}
@@ -64,6 +75,11 @@ func runConnectorFinalize(args []string) error {
 	if command == "verify" && *archivePath != "" {
 		return fmt.Errorf("schema2 verification uses native data, not historical archives")
 	}
+	// Validate the command/flag contract before opening any database connection.
+	option, err := connectorFinalizeOptions(command, advancedSet, *advancedCheckpoint)
+	if err != nil {
+		return err
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -73,7 +89,6 @@ func runConnectorFinalize(args []string) error {
 		return fmt.Errorf("open configured finalization database: %w", err)
 	}
 	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
-	option := connectorfinalize.Options{}
 	if len(cfg.Connectors.CredentialKeys) > 0 {
 		option.Credentials, err = credentials.NewStore(cfg.Connectors.CredentialActiveKeyID, cfg.Connectors.CredentialKeys)
 		if err != nil {
@@ -146,6 +161,25 @@ func runConnectorFinalize(args []string) error {
 	return nil
 }
 
+// connectorFinalizeOptions validates the command against its flags before any
+// database connection is opened. advancedSet records whether
+// --advanced-checkpoint appeared at all, so an explicit empty value is rejected
+// instead of being silently treated as the default. The explicit advanced
+// checkpoint is a plan/apply opt-in: verify reads the applied schema2 state, so
+// it rejects the flag even when its value is empty.
+func connectorFinalizeOptions(command string, advancedSet bool, advancedCheckpoint string) (connectorfinalize.Options, error) {
+	if advancedSet && command == "verify" {
+		return connectorfinalize.Options{}, fmt.Errorf("verify reads the applied schema2 state; --advanced-checkpoint is valid for plan and apply only")
+	}
+	if advancedSet && command == "discard" {
+		return connectorfinalize.Options{}, fmt.Errorf("discard inspects the legacy schema directly; --advanced-checkpoint is valid for plan and apply only")
+	}
+	if advancedSet && advancedCheckpoint == "" {
+		return connectorfinalize.Options{}, fmt.Errorf("--advanced-checkpoint requires a non-empty migration ID")
+	}
+	return connectorfinalize.Options{AdvancedCheckpoint: advancedCheckpoint}, nil
+}
+
 func readBounded(path string, limit int64) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -177,4 +211,57 @@ func writeExclusive(path string, data []byte) error {
 		return err
 	}
 	return file.Close()
+}
+
+func runDigitalHumanPreserve(args []string) error {
+	if len(args) == 0 || (args[0] != "plan" && args[0] != "apply" && args[0] != "verify") {
+		return fmt.Errorf("usage: digital-human-preserve plan|apply|verify [--expected-report SHA256] [--report PATH]")
+	}
+	command := args[0]
+	flags := flag.NewFlagSet("digital-human-preserve", flag.ContinueOnError)
+	expected := flags.String("expected-report", "", "exact clean plan digest required by apply")
+	reportPath := flags.String("report", "", "safe JSON report output (stdout when omitted)")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || (command != "apply" && *expected != "") {
+		return fmt.Errorf("invalid DigitalHuman preservation arguments")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cipher, err := credentialcrypto.NewCredentialKeyring(cfg.DigitalHumanCredentials.ActiveKeyID, cfg.DigitalHumanCredentials.Keys)
+	if err != nil {
+		return fmt.Errorf("load DigitalHuman credential keyring: %w", err)
+	}
+	db, err := database.InitDB(cfg.Database)
+	if err != nil {
+		return fmt.Errorf("open configured preservation database: %w", err)
+	}
+	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	var report digitalhumanpreserve.Report
+	switch command {
+	case "plan":
+		report, err = digitalhumanpreserve.Plan(ctx, db, cipher)
+	case "apply":
+		report, err = digitalhumanpreserve.Apply(ctx, db, cipher, *expected)
+	case "verify":
+		report, err = digitalhumanpreserve.Verify(ctx, db, cipher)
+	}
+	if err != nil {
+		return err
+	}
+	encoded, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	if *reportPath != "" {
+		return os.WriteFile(*reportPath, encoded, 0600)
+	}
+	_, err = os.Stdout.Write(encoded)
+	return err
 }

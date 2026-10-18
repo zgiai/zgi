@@ -33,8 +33,14 @@ func TestBuildRepositoryStdlibSmoke(t *testing.T) {
 		t.Fatalf("parse built manifest: %v", err)
 	}
 	build, ok := manifest["build"].(map[string]any)
-	if !ok || build["verification_passed"] != true {
+	if !ok || build["verification_passed"] != true || build["rootfs_digest"] == "" {
 		t.Fatalf("expected built manifest verification metadata, got %s", string(raw))
+	}
+	if _, ok := build["sbom"].([]any); !ok {
+		t.Fatalf("expected SBOM metadata, got %s", string(raw))
+	}
+	if log, ok := build["build_log"].([]any); !ok || len(log) == 0 {
+		t.Fatalf("expected build log metadata, got %s", string(raw))
 	}
 }
 

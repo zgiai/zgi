@@ -22,7 +22,6 @@ import { cn } from '@/lib/utils';
 import { Plus, Trash2, Pencil } from 'lucide-react';
 import NodeValueSelector from '@/components/workflow/common/node-value-selector';
 import OutputVariablesView from '@/components/workflow/common/output-variables-view';
-import type { WorkflowVariable } from '../../../store/type';
 import { Badge } from '@/components/ui/badge';
 import { useNodeData, useNodeDataUpdate, useNodeOutputVariables } from '../../../hooks';
 import OutputSchemaEditorDialog from './output-schema-editor';

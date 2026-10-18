@@ -10,7 +10,7 @@ import (
 	"strconv"
 )
 
-const ReportVersion = 2
+const ReportVersion = 3
 
 // RetiredTables returns a copy: callers cannot enlarge the retirement capability.
 func RetiredTables() []string {
@@ -58,6 +58,7 @@ type Report struct {
 	SchemaVersion           int          `json:"schema_version"`
 	State                   string       `json:"state"`
 	Checkpoint              string       `json:"checkpoint"`
+	MigrationHistoryDigest  string       `json:"migration_history_digest"`
 	SchemaDigest            string       `json:"schema_digest"`
 	Source                  []TableProof `json:"source"`
 	Native                  []TableProof `json:"native"`
@@ -67,6 +68,8 @@ type Report struct {
 	VerifiedEnvelopes       int          `json:"verified_envelopes"`
 	CatalogTransitions      int          `json:"catalog_transitions"`
 	HostTransitions         int          `json:"host_transitions"`
+	HostFunctionTransitions int          `json:"host_function_transitions"`
+	HostFunctionDigest      string       `json:"host_function_digest,omitempty"`
 	Digest                  string       `json:"digest"`
 }
 

@@ -33,9 +33,16 @@ func splitConnectorNativeToolProjections(resolved *skills.ResolvedSkills) (*skil
 				strings.TrimSpace(definition.ProviderID) == "" || strings.TrimSpace(definition.ConnectorOperationID) == "" {
 				continue
 			}
+			// Chat and Agent have one binding per Connector, so their name scope
+			// stays unchanged. A DigitalHuman host may repeat a Connector, and its
+			// persisted binding instance must keep a distinct provider tool name.
+			nameScope := definition.ProviderID + "/" + definition.ConnectorOperationID
+			if instanceID := strings.TrimSpace(definition.ConnectorBindingInstanceID); instanceID != "" {
+				nameScope += "/" + instanceID
+			}
 			projections = append(projections, skills.NativeToolProjection{
 				Name:        strings.TrimSpace(definition.Name),
-				NameScope:   definition.ProviderID + "/" + definition.ConnectorOperationID,
+				NameScope:   nameScope,
 				Description: strings.TrimSpace(definition.RuntimeDescription),
 				InputSchema: cloneConnectorSchema(definition.InputSchema),
 				Binding: skills.NativeToolBinding{

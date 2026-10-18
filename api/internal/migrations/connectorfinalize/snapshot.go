@@ -32,6 +32,31 @@ var hostColumns = map[string]string{
 	"chat_runtime_organization_skill_configs": "to_jsonb(t)",
 	"chat_runtime_account_skill_preferences":  "to_jsonb(t)",
 	"chat_runtime_custom_skills":              "jsonb_build_object('id',id,'organization_id',organization_id,'skill_id',skill_id,'runtime_type',runtime_type,'manifest',manifest,'status',status,'validation_error',validation_error)",
+	"digital_humans":                          "to_jsonb(t)",
+	"digital_human_versions":                  "to_jsonb(t)",
+	"digital_human_persona_templates":         "to_jsonb(t)",
+	"digital_human_resource_bindings":         "to_jsonb(t)",
+	"digital_human_runs":                      "to_jsonb(t)",
+	"digital_human_run_outbox":                "to_jsonb(t)",
+	"digital_human_memory_states":             "to_jsonb(t)",
+	"digital_human_memories":                  "to_jsonb(t)",
+	"digital_human_memory_events":             "to_jsonb(t)",
+	"digital_human_memory_jobs":               "to_jsonb(t)",
+	"digital_human_memory_undo_records":       "to_jsonb(t)",
+	"digital_human_action_ledger":             "to_jsonb(t)",
+	"digital_human_channel_task_policies":     "to_jsonb(t)",
+	"digital_human_direct_skill_credentials":  "to_jsonb(t)",
+	// Installations and their own credentials are read so the preservation
+	// proof can refuse an installation still resolving a retired Connection,
+	// and so the archive can restore them.
+	"channel_installations":            "to_jsonb(t)",
+	"channel_installation_credentials": "to_jsonb(t)",
+	"external_conversation_mappings":   "to_jsonb(t)",
+	"channel_bindings":                 "to_jsonb(t)",
+	"channel_inbound_events":           "to_jsonb(t)",
+	"channel_delivery_outbox":          "to_jsonb(t)",
+	"channel_processing_markers":       "to_jsonb(t)",
+	"automation_task_activities":       "to_jsonb(t)",
 }
 
 func hostTables() []string {
@@ -97,13 +122,39 @@ func readRows(rows *sql.Rows, bytesRead *int) ([]row, error) {
 // Plan is read-only, repeatable and bounded. A partial schema fails; it is never
 // interpreted as a successful repeat. Verify handles an already-finalized schema.
 type Options struct {
-	Credentials *credentials.Store
+	Credentials        *credentials.Store
+	AdvancedCheckpoint string
 
 	// allowDiscardInspect is used only by the explicit discard maintenance
 	// command. It lets that command inventory a schema1 database whose
 	// readiness row is conversion_required without treating that state as a
 	// successful conversion.
 	allowDiscardInspect bool
+}
+
+// inspectionCheckpoint selects the migration head an inspection reports.
+// Plan and Apply require the exact pre-retirement history (or an explicit
+// advanced checkpoint). Discard is different: it records the pending-setups
+// compatibility marker itself and is meant for deferred installations that
+// have already run later migrations, so it reports the latest applied ID and
+// relies on Discard's own ensureCheckpointApplied guard instead.
+func inspectionCheckpoint(option Options, migrationIDs []string) (string, error) {
+	if option.AdvancedCheckpoint != "" {
+		if err := validateAdvancedCheckpoint(option.AdvancedCheckpoint, migrationIDs); err != nil {
+			return "", err
+		}
+		if len(migrationIDs) == 0 {
+			return "", errAdvancedEmptyLedger
+		}
+		return migrationIDs[len(migrationIDs)-1], nil
+	}
+	if option.allowDiscardInspect {
+		if len(migrationIDs) == 0 {
+			return "", fmt.Errorf("Connector discard requires an applied migration history")
+		}
+		return migrationIDs[len(migrationIDs)-1], nil
+	}
+	return preRetirementCheckpoint(migrationIDs)
 }
 
 func Plan(ctx context.Context, db *gorm.DB, options ...Options) (Report, error) {
@@ -131,9 +182,14 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 		return r, nil, err
 	}
 	r.DatabaseFingerprint = digest(identity)
-	if err := db.Raw("SELECT max(id) FROM public.migrations").Scan(&r.Checkpoint).Error; err != nil {
+	migrationIDs, err := readMigrationLedger(db)
+	if err != nil {
 		return r, nil, err
 	}
+	if r.Checkpoint, err = inspectionCheckpoint(option, migrationIDs); err != nil {
+		return r, nil, err
+	}
+	r.MigrationHistoryDigest = migrationLedgerDigest(migrationIDs)
 	var version struct {
 		SchemaVersion int
 		State         string
@@ -146,7 +202,6 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 		return r, nil, err
 	}
 	bytesRead := 0
-	var err error
 	if r.Source, err = readTables(db, RetiredTables(), data, &bytesRead); err != nil {
 		return r, nil, err
 	}
@@ -174,6 +229,12 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 		if text(object, "kind") != "function" && text(object, "kind") != "view" {
 			continue
 		}
+		// This known function is rewritten transactionally before the retired
+		// integration tables are dropped. Its legacy-only installation branch
+		// became unreachable when installation-owned credentials were added.
+		if text(object, "kind") == "function" && text(object, "name") == "enforce_channel_scope_consistency" {
+			continue
+		}
 		for _, table := range RetiredTables() {
 			if strings.Contains(text(object, "definition"), table) {
 				r.Issues = append(r.Issues, Issue{Table: table, Code: "dependent_" + text(object, "kind")})
@@ -184,6 +245,7 @@ func inspect(db *gorm.DB, option Options) (Report, snapshot, error) {
 	validateNativeCatalog(db, data, &r)
 	validateNativeClaims(data, &r)
 	validateNativeEnvelopes(db, data, &r, option.Credentials)
+	validateDigitalHumanPreservation(data, &r)
 	transitions, transitionErr := catalogChanges(data)
 	if transitionErr != nil {
 		addIssue(&r, "connector_definitions", "maintenance_contract_transition_unavailable")

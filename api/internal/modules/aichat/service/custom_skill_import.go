@@ -29,9 +29,9 @@ import (
 
 const (
 	customSkillStorageRoot    = "storage/aichat/skills"
-	customSkillMaxPackageSize = 100 * 1024 * 1024
-	customSkillMaxFileSize    = 10 * 1024 * 1024
-	customSkillMaxFileCount   = 600
+	customSkillMaxPackageSize = skills.ScriptPackageMaxBytes
+	customSkillMaxFileSize    = skills.ScriptPackageMaxFileBytes
+	customSkillMaxFileCount   = skills.ScriptPackageMaxFiles
 )
 
 const customSkillSystemNameConflictMessage = "This skill name is reserved by a built-in system skill. Please rename your custom skill and try again."
@@ -76,6 +76,9 @@ func (s *service) PreviewImportCustomSkill(ctx context.Context, scope Scope, fil
 	}
 	result := skillImportPreviewFromStored(preview)
 	doc, err := skills.LoadCustomSkillDocument(preview.Root)
+	if err == nil && doc.Metadata.HasScripts {
+		err = skills.ValidateCustomSkillScriptPackage(preview.Root, doc.Metadata.TimeoutSeconds)
+	}
 	if err != nil {
 		_ = s.customSkillStorage.DeleteSkill(ctx, preview.Root)
 		result.ImportID = ""
@@ -135,6 +138,11 @@ func (s *service) confirmCustomSkillImport(ctx context.Context, scope Scope, imp
 	doc, err := skills.LoadCustomSkillDocument(preview.Root)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	if doc.Metadata.HasScripts {
+		if err := skills.ValidateCustomSkillScriptPackage(preview.Root, doc.Metadata.TimeoutSeconds); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		}
 	}
 	if s.customSkillIDConflictsWithSystem(ctx, doc.Metadata.ID) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidInput, customSkillSystemNameConflictMessage)

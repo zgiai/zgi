@@ -635,7 +635,11 @@ type executionHarness struct {
 
 func newExecutionHarness(t *testing.T) *executionHarness {
 	t.Helper()
-	request := validExecutionRequest()
+	return newExecutionHarnessForRequest(t, validExecutionRequest())
+}
+
+func newExecutionHarnessForRequest(t *testing.T, request ExecutionRequest) *executionHarness {
+	t.Helper()
 	now := time.Date(2026, 9, 1, 13, 0, 0, 0, time.UTC)
 	definition := validDefinition()
 	binding := core.TargetBinding{

@@ -18,11 +18,12 @@ import { ConnectorKeyForm } from './connector-key-form';
 import { ConnectorSetupStatus } from './connector-setup-status';
 import { ConnectorAppSetupPanel } from './connector-app-setup-panel';
 import { useCreationDefault } from './use-creation-default';
-import { supportsAppSetup } from './app-setup-state';
+import { supportsAppSetup, supportsServerOpsSSHConnectorSetup } from './app-setup-state';
 import { supportsMessagingContract } from './messaging-setup-state';
 import { ConnectorMessagingSetupPanel } from './connector-messaging-setup-panel';
 import { supportsMailSetup } from './mail-setup-state';
 import { ConnectorMailSetupPanel } from './connector-mail-setup-panel';
+import { ServerOpsSSHSetupPanel } from './serverops-ssh-setup-panel';
 
 function errorText(t: ScopedTranslations<'connectors'>, code: string | undefined): string {
   if (
@@ -62,6 +63,11 @@ export interface ConnectorKeySetupPanelProps {
 }
 
 export function ConnectorKeySetupPanel(props: ConnectorKeySetupPanelProps) {
+  // Setup dispatch is connector-owned, so Connector Center, Agent, Digital
+  // Human, and future hosts all receive the same SSH credential experience.
+  if (supportsServerOpsSSHConnectorSetup(props.connector)) {
+    return <ServerOpsSSHSetupPanel {...props} />;
+  }
   if (supportsMailSetup(props.connector)) return <ConnectorMailSetupPanel {...props} />;
   if (supportsMessagingContract(props.connector)) {
     return <ConnectorMessagingSetupPanel {...props} />;

@@ -1,0 +1,358 @@
+# Runtime Workspace API
+
+通过一组可轮换的 Runtime Key，从业务服务端调用当前 Runtime Workspace 中已添加的多个 Agent。
+
+## 接入概览
+
+### Base URL
+
+<CodeGroup title="Base URL">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### 核心标识
+
+| 名称 | 用途 | 处理要求 |
+| --- | --- | --- |
+| Runtime Key | 鉴权当前 Runtime Workspace 的所有请求 | 必须保密 |
+| App ID | 标识要调用的 Agent，出现在接口路径中 | 可公开 |
+| External User ID | 标识业务系统中的最终用户，隔离文件、会话和记忆 | 使用不透明标识，不包含个人信息 |
+
+App ID 由系统生成并保持稳定。Agent 重新发布或 Runtime Key 轮换不会改变 App ID。
+
+### 通用请求头
+
+<Properties>
+  <Property name='Authorization' type='string' propKey='Authorization'>必填。格式为 `Bearer {'<runtime-key>'}`。</Property>
+  <Property name='X-ZGI-External-User-ID' type='string' propKey='X-ZGI-External-User-ID'>调用具体 App、文件、会话和记忆接口时必填。使用稳定、不透明、区分大小写的业务用户标识，长度 1–128 个 Unicode 字符。</Property>
+  <Property name='Content-Type' type='string' propKey='Content-Type'>JSON 请求固定为 `application/json`。</Property>
+  <Property name='Idempotency-Key' type='uuid' propKey='Idempotency-Key'>记忆写操作可选。重复请求使用相同值可避免重复写入。</Property>
+  <Property name='If-Match' type='integer' propKey='If-Match'>更新或删除记忆时可传当前 revision，避免并发覆盖。</Property>
+</Properties>
+
+Runtime Key 只应保存在业务服务端。浏览器或移动端应通过业务 BFF 调用 ZGI。
+
+Runtime Workspace 可以由管理员配置 `requests_per_minute` 限流策略。触发限流时返回 `429`，并携带 `Retry-After`、`X-RateLimit-Limit` 和 `X-RateLimit-Remaining`，客户端应按窗口退避重试。
+
+## 快速开始
+
+### 1. 获取 App 列表
+
+<CodeGroup title="curl">
+
+```bash
+curl '{apibase}/apps' \
+  --header 'Authorization: Bearer <runtime-key>'
+```
+
+</CodeGroup>
+
+响应中的 `app_key` 即 App ID：
+
+```json
+{
+  "code": "0",
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "app_key": "app_34ab5c8d91ef",
+        "name": "研究助手",
+        "description": "提供有依据的回答",
+        "icon_url": "https://example.com/icon.png",
+        "version": "v12",
+        "version_uuid": "7b0df140-fbc1-41ef-9234-611172283b23",
+        "status": "active",
+        "supports_stream": true,
+        "file_upload_enabled": true,
+        "supports_vision": true,
+        "agent_memory_enabled": true,
+        "capabilities": ["chat", "conversations", "files", "memory", "vision"]
+      }
+    ]
+  }
+}
+```
+
+### 2. 发送第一条消息
+
+<CodeGroup title="curl">
+
+```bash
+curl -N -X POST '{apibase}/apps/app_34ab5c8d91ef/chat' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'X-ZGI-External-User-ID: customer-42' \
+  --header 'Content-Type: application/json' \
+  --data '{"query":"总结这份报告"}'
+```
+
+</CodeGroup>
+
+保存 `message_start` 返回的 `conversation_id` 和 `message_id`，用于查询历史、恢复事件流或停止生成。
+
+---
+
+## Apps
+
+<Heading url="/apps" method="GET" title="获取 App 列表" name="#List-Apps" />
+
+返回当前 Runtime Workspace 中可调用的 Agent。该接口只需要 Runtime Key。
+
+<Heading url="/apps/{app_key}" method="GET" title="获取 App 详情" name="#Get-App" />
+
+只需要 Runtime Key，不需要 External User ID。返回 Agent 最新发布版本的公开展示信息和当前可用能力。
+
+<Properties>
+  <Property name='app_key' type='string' propKey='app_key'>稳定的 App ID。</Property>
+  <Property name='name / description' type='string' propKey='name'>Agent 的公开名称与描述。</Property>
+  <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>Agent 图标信息。</Property>
+  <Property name='version / version_uuid' type='string' propKey='version'>当前最新发布版本。</Property>
+  <Property name='opening_statement' type='string' propKey='opening_statement'>开场白。</Property>
+  <Property name='input_placeholder' type='string' propKey='input_placeholder'>输入提示。</Property>
+  <Property name='suggested_questions' type='array[string]' propKey='suggested_questions'>建议问题。</Property>
+  <Property name='capabilities' type='array[string]' propKey='capabilities'>当前实际可用能力。</Property>
+</Properties>
+
+<Heading url="/apps/{app_key}/config" method="GET" title="获取完整发布配置" name="#Get-App-Config" />
+
+只需要 Runtime Key。返回落地页标题、开场白、输入提示、主题色、建议问题、文件/视觉/记忆开关和发布版本。可直接使用这些字段构建外部聊天界面。
+
+<Heading url="/apps/{app_key}/parameters" method="GET" title="获取输入与上传参数" name="#Get-App-Parameters" />
+
+只需要 Runtime Key。返回 `features`、`file_upload`、`agent_memory` 和 `system_parameters`，包括允许文件类型、文档/图片/音频/视频大小限制、上传数量以及记忆是否要求 External User ID。
+
+---
+
+## Chat 与事件流
+
+<Heading url="/apps/{app_key}/chat" method="POST" title="发送聊天消息" name="#Chat" />
+
+### 请求体
+
+<Properties>
+  <Property name='query' type='string' propKey='query'>必填，本轮用户输入。</Property>
+  <Property name='conversation_id' type='uuid' propKey='conversation_id'>可选。继续已有会话时传入。</Property>
+  <Property name='parent_id' type='uuid' propKey='parent_id'>可选。指定父消息。</Property>
+  <Property name='file_ids' type='array[uuid]' propKey='file_ids'>可选。引用当前 External User ID 所拥有的文件；所选智能体未启用文件能力时，文件引用会被服务端过滤。</Property>
+  <Property name='response_mode' type='string' propKey='response_mode'>可选，仅支持 `streaming`。</Property>
+  <Property name='max_task_tokens' type='integer' propKey='max_task_tokens'>可选。为 Agent 任务设置 Token 预算；耗尽时可能进入 `token_budget_requested` 等待状态。</Property>
+</Properties>
+
+### SSE 事件
+
+| event | 说明 |
+| --- | --- |
+| `message_start` | 返回 conversation、message、模型和标题信息 |
+| `message` | 增量文本内容 |
+| `agent_progress` / `agent_intermediate_answer` | Agent 执行进度和中间回答 |
+| `file_parse_start` / `file_parse_end` / `file_parse_error` | 文件解析状态 |
+| `skill_load_start` / `skill_load_end` | Skill 加载状态 |
+| `skill_reference_read` | Skill 引用读取状态 |
+| `skill_call_start` / `skill_call_end` / `skill_call_error` | Skill 调用状态 |
+| `skill_artifact_created` | Skill 生成的产物 |
+| `user_input_requested` | Skill 或工作流要求补充输入；根据 `source` 选择对应继续接口 |
+| `token_budget_requested` | 任务 Token 预算耗尽；使用事件中的 `request_id` 增加预算或停止 |
+| `token_usage_updated` | Token 使用量更新 |
+| `message_end` | 消息最终状态和用量；也可能是等待状态 |
+| `error` | 安全投影后的错误信息 |
+
+SSE 的 `id` 是可恢复事件游标。断线后通过 events 接口和最后收到的事件 ID 恢复。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/events" method="GET" title="恢复事件流" name="#Resume-Events" />
+
+查询参数可传 `message_id`，请求头可传 `Last-Event-ID`。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/stop" method="POST" title="停止生成" name="#Stop-Conversation" />
+
+停止当前 External User ID 在该 Agent 会话中的活动生成。
+
+---
+
+## Conversations
+
+会话按 Runtime Workspace、External User ID 和 Agent 隔离。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/apps/{app_key}/conversations` | 分页列出会话 |
+| POST | `/apps/{app_key}/conversations` | 创建空会话 |
+| GET | `/apps/{app_key}/conversations/search` | 搜索会话和消息 |
+| GET | `/apps/{app_key}/conversations/{conversation_id}` | 获取会话 |
+| PATCH | `/apps/{app_key}/conversations/{conversation_id}` | 更新标题等字段 |
+| DELETE | `/apps/{app_key}/conversations/{conversation_id}` | 删除会话 |
+| GET | `/apps/{app_key}/conversations/{conversation_id}/messages` | 分页列出消息 |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | 继续审批或工作流问答 |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | 提交 Skill 补充输入并继续 |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue` | 增加任务 Token 预算或停止任务 |
+
+### 创建会话
+
+<CodeGroup title="curl">
+
+```bash
+curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'X-ZGI-External-User-ID: customer-42' \
+  --header 'Content-Type: application/json' \
+  --data '{"title":"季度报告分析"}'
+```
+
+</CodeGroup>
+
+会话类型由服务端固定为 `chat`，请求不需要传入 `conversation_type`。使用不同 External User ID 访问同一个会话 ID 时返回 404。
+
+<Heading url="/apps/{app_key}/conversations/search" method="GET" title="搜索会话与消息" name="#Search-Conversations" />
+
+使用 `query` 搜索当前 External User ID 和 App 范围内的会话标题、用户输入与 Agent 回答。支持 `limit`，不会返回其他用户或其他 App 的结果。
+
+<Heading url="/apps/{app_key}/messages/{message_id}/regenerate" method="POST" title="重新生成根消息" name="#Regenerate-Message" />
+
+按原消息使用的已发布模型和参数重新执行。请求体可选传入新的 `query`；响应为替换同一轮消息的 SSE 流。只允许当前 External User ID 拥有、且满足重新生成条件的消息。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue" method="POST" title="继续 Skill 补充输入" name="#Continue-User-Input" />
+
+请求体为 `{"answers":{"question_id":"answer"}}`。服务端校验 Runtime Subject、Agent、会话、消息和请求 ID 的归属后，以 SSE 继续同一轮消息。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation" method="POST" title="继续工作流交互" name="#Continue-Workflow" />
+
+审批使用 `{"type":"approval","approval_token":"...","action":"approve","inputs":{}}`；工作流问答使用 `{"type":"question_answer","inputs":{"query":"..."}}`。响应均为 SSE，且不能跨 External User ID 或 Agent 继续其他消息。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue" method="POST" title="继续任务 Token 预算" name="#Continue-Token-Budget" />
+
+从 `token_budget_requested` 事件读取 `request_id`。增加预算时发送 `{"action":"add","additional_tokens":2048}`；终止当前任务时发送 `{"action":"stop"}`。该接口返回同一条消息的 SSE，不使用 `answers` 字段。
+
+---
+
+## Files
+
+文件按 Runtime Workspace 和 External User ID 隔离，同一用户可以在多个已添加 Agent 中使用同一批文件。删除所属工作空间后，文件会立即停止访问，存储对象保留 30 天后由系统定期清理。
+
+<Heading url="/files" method="POST" title="上传文件" name="#Upload-File" />
+
+使用 `multipart/form-data`，文件字段名固定为 `file`。
+
+<CodeGroup title="curl">
+
+```bash
+curl -X POST '{apibase}/files' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'X-ZGI-External-User-ID: customer-42' \
+  --form 'file=@./report.pdf'
+```
+
+</CodeGroup>
+
+<Heading url="/files" method="GET" title="列出文件" name="#List-Files" />
+
+支持 `page` 和 `limit`，`limit` 最大为 100。
+
+<Heading url="/files/{file_id}" method="GET" title="获取文件元数据" name="#Get-File" />
+
+只返回公开文件元数据：id、name、size、extension、mime_type、created_at。
+
+<Heading url="/files/{file_id}/download-url" method="GET" title="获取下载地址" name="#Download-File" />
+
+授权通过后返回短期签名 URL。
+
+<Heading url="/files/{file_id}" method="DELETE" title="删除文件" name="#Delete-File" />
+
+删除只影响当前 External User ID 拥有的文件。
+
+---
+
+## Memory
+
+记忆按 Runtime Workspace、External User ID 和 Agent 隔离。不同 Agent 不共享记忆。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/apps/{app_key}/memory` | 获取全部记忆 |
+| GET | `/apps/{app_key}/memory/export` | 导出记忆 JSON |
+| PUT | `/apps/{app_key}/memory/{key}` | 创建或更新一个记忆值 |
+| DELETE | `/apps/{app_key}/memory/{key}` | 删除一个记忆值 |
+| DELETE | `/apps/{app_key}/memory` | 清空该用户在当前 Agent 中的记忆 |
+| GET | `/apps/{app_key}/memory/settings` | 获取记忆设置和配置 revision |
+| PATCH | `/apps/{app_key}/memory/settings` | 更新记忆和自动捕获设置 |
+| POST | `/apps/{app_key}/memory/operations/{operation_id}/undo` | 撤销一次可撤销记忆操作 |
+
+### 更新记忆
+
+<CodeGroup title="curl">
+
+```bash
+curl -X PUT '{apibase}/apps/app_34ab5c8d91ef/memory/preference' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'X-ZGI-External-User-ID: customer-42' \
+  --header 'Idempotency-Key: 9452d78a-089c-4b19-8aa8-c31ac8419816' \
+  --header 'If-Match: 3' \
+  --header 'Content-Type: application/json' \
+  --data '{"content":"偏好简洁回答"}'
+```
+
+</CodeGroup>
+
+`expected_revision` 也可以放在 JSON 请求体中。Revision 不匹配时返回 409，客户端应重新读取后再决定是否重试。
+
+<Heading url="/apps/{app_key}/memory/settings" method="GET / PATCH" title="读取或更新记忆设置" name="#Memory-Settings" />
+
+GET 返回当前记忆开关、自动捕获开关、可写槽位和配置 revision。PATCH 可以更新 `memory_enabled`、`auto_capture_enabled`，并使用 `expected_revision` 防止覆盖并发修改。设置只影响当前 External User ID 与当前 App 的记忆关系。
+
+<Heading url="/apps/{app_key}/memory/operations/{operation_id}/undo" method="POST" title="撤销记忆操作" name="#Undo-Memory" />
+
+`operation_id` 必须来自当前用户、当前 App 的记忆写入或删除响应，并且仍处于可撤销窗口。重复撤销、过期操作或其他用户的操作会返回安全错误，不会影响现有记忆。
+
+---
+
+## Key 轮换
+
+推荐顺序：
+
+1. 在控制台创建新 Runtime Key。
+2. 将新 Key 部署到业务服务端。
+3. 使用新 Key 验证 Apps、Chat、文件和记忆接口。
+4. 撤销旧 Key。
+
+Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、会话或记忆归属。
+
+---
+
+## 错误处理
+
+错误响应格式：
+
+```json
+{
+  "code": "401001",
+  "message": "Please login first"
+}
+```
+
+| HTTP 状态 | 处理建议 |
+| --- | --- |
+| 400 | 校验请求参数和请求体 |
+| 401 | 检查 Runtime Key 是否缺失、过期或已撤销 |
+| 403 | 检查 Runtime Workspace 或 App 状态 |
+| 404 | 资源不存在，或不属于当前 External User ID |
+| 409 | 重新读取 revision，或检查幂等请求 |
+| 413 | 根据上传限制缩小文件 |
+| 429 | 按 `Retry-After` 退避重试 |
+| 500 | 使用相同幂等键重试安全写操作，并记录 request ID |
+
+所有响应都会携带 `X-Request-ID`。向运维人员反馈问题时请提供该值，不要提供完整 Runtime Key。
+
+---
+
+## 隔离范围
+
+| 资源 | 隔离范围 |
+| --- | --- |
+| Runtime Key | Runtime Workspace |
+| App | Runtime Workspace + App ID |
+| External Subject | Runtime Workspace + External User ID |
+| File | Runtime Workspace + External Subject |
+| Conversation | Runtime Workspace + External Subject + Agent |
+| Memory | Runtime Workspace + External Subject + Agent |

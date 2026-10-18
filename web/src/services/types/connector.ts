@@ -23,7 +23,7 @@ export type ConnectorTag =
   | 'integration';
 export type ConnectorReadiness = 'ready' | 'reconnect_required' | 'unavailable';
 export type ConnectorCatalogStatus = 'all' | 'connected' | 'needs_attention';
-export type ConnectorTargetType = 'chat' | 'agent' | 'workflow';
+export type ConnectorTargetType = 'chat' | 'agent' | 'workflow' | 'digital_human';
 export type ConnectorMailUsage = 'read' | 'send' | 'read_send';
 export interface ConnectorMailVerification {
   usage: ConnectorMailUsage;
@@ -206,6 +206,7 @@ export interface ConnectorConnectionSummary {
 export interface ConnectorCatalogItem {
   id: string;
   plugin_id: string;
+  supported_surfaces?: ConnectorTargetType[];
   name: string;
   name_i18n?: ConnectorLocalizedText;
   description: string;
@@ -266,7 +267,10 @@ export interface ConnectorTargetBinding {
   status: 'active' | 'disabled' | 'needs_replacement';
   revision: number;
   authorization_mode?: 'ask_each_time' | 'direct';
+  host_audiences?: ConnectorHostAudience[];
 }
+
+export type ConnectorHostAudience = 'workspace' | 'api' | 'channel';
 
 export interface ConnectorTargetBindingListResponse {
   items: ConnectorTargetBinding[];
@@ -286,6 +290,11 @@ export interface DetachConnectorTargetBindingRequest {
 export interface UpdateConnectorTargetBindingAuthorizationRequest {
   revision: number;
   authorization_mode: 'ask_each_time' | 'direct';
+}
+
+export interface UpdateConnectorHostDelegationRequest {
+  revision: number;
+  audiences: ConnectorHostAudience[];
 }
 
 export interface PersonalConnectionDetail extends PersonalConnection {
@@ -351,6 +360,34 @@ export interface ReconnectKeyRequest {
   values: Record<string, string>;
   /** Explicit replacement consent only when the provider cannot return a stable identity. */
   confirm_unstable_identity?: boolean;
+}
+
+/**
+ * Read-only host-key probe body. It carries no Idempotency-Key and creates or
+ * mutates no setup attempt or Connection. The fingerprint is optional: when it
+ * is omitted the backend captures the observed host key instead of verifying a
+ * supplied pin.
+ */
+export interface ServerOpsSSHHostKeyTestRequest {
+  /** Write-only. Callers must destroy their local copy after submission. */
+  values: {
+    host: string;
+    port: string;
+    username: string;
+    password?: string;
+    private_key?: string;
+    /** Omitted for an unencrypted key. */
+    passphrase?: string;
+    /** Optional canonical pin; when omitted the backend captures the host key. */
+    host_key_sha256?: string;
+  };
+}
+
+/** Non-secret host-key observation; never carries credential material. */
+export interface ServerOpsSSHHostKeyTestResult {
+  host_key_sha256: string;
+  hostname: string;
+  request_id: string;
 }
 
 interface KeySetupResultBase {

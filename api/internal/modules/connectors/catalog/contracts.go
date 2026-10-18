@@ -255,8 +255,8 @@ func CheckCompatibleUpdate(current, candidate Definition) error {
 		return incompatible("classification", "")
 	}
 	if current.UsesCredentials() || candidate.UsesCredentials() {
-		left, leftErr := digestJSON(canonicalAuthentication(current))
-		right, rightErr := digestJSON(canonicalAuthentication(candidate))
+		left, leftErr := digestJSON(canonicalAuthentication(credentialBase(current)))
+		right, rightErr := digestJSON(canonicalAuthentication(credentialBase(candidate)))
 		if leftErr != nil || rightErr != nil || (left != right &&
 			!reviewedFeishuTemplateReduction(current, candidate) && !reviewedFeishuTemplateExpansion(current, candidate)) {
 			return incompatible("authentication_contract", "")
@@ -267,7 +267,7 @@ func CheckCompatibleUpdate(current, candidate Definition) error {
 		return incompatible("plugin_version_content", "")
 	}
 	if !isSubsetCapabilities(current.CapabilityTypes, candidate.CapabilityTypes) ||
-		!sameSurfaces(current.Surfaces, candidate.Surfaces) ||
+		(!sameSurfaces(current.Surfaces, candidate.Surfaces) && !additiveDigitalHumanSurface(current, candidate)) ||
 		!sameKeyFieldContract(current.KeyFields, candidate.KeyFields) {
 		return incompatible("connector_contract", "")
 	}

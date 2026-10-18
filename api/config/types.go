@@ -16,6 +16,13 @@ const (
 	MaxChunkSize     = 1000
 	TempFileTenantID = "00000000-0000-0000-0000-000000000000"
 
+	// DefaultChannelDeliveryFileTTLSeconds is the default lifetime of a
+	// channel-delivery bearer download link.
+	DefaultChannelDeliveryFileTTLSeconds = 30 * 24 * 60 * 60
+	// MaxChannelDeliveryFileTTLSeconds bounds channel-delivery links even when
+	// the deployment supplies an invalidly long value.
+	MaxChannelDeliveryFileTTLSeconds = 30 * 24 * 60 * 60
+
 	// DefaultOrgInviteDefaultPassword is the self-hosted fallback password used
 	// when ZGI_ORG_INVITE_DEFAULT_PASSWORD is not configured.
 	DefaultOrgInviteDefaultPassword = "ZGI@Welcome1"
@@ -29,45 +36,46 @@ const (
 )
 
 type Config struct {
-	Server                 ServerConfig
-	Database               DatabaseConfig
-	Redis                  RedisConfig
-	JWT                    JWTConfig
-	Log                    LogConfig
-	Email                  EmailConfig
-	App                    AppConfig
-	PluginRunner           PluginRunnerConfig
-	TaskQueue              TaskQueueConfig
-	VectorStore            VectorStoreConfig
-	Upload                 UploadConfig
-	ETL                    ETLConfig
-	CodeExec               CodeExecConfig
-	Console                ConsoleConfig
-	Feature                FeatureConfig
-	Workflow               WorkflowConfig
-	WorkflowFileExtraction WorkflowFileExtractionConfig
-	AnswerNodeStreaming    AnswerNodeStreamingConfig
-	Encryption             EncryptionConfig
-	Observability          ObservabilityConfig
-	OpenTelemetry          OpenTelemetryConfig
-	LLMInvocationContent   LLMInvocationContentConfig
-	ModelMeta              ModelMetaConfig
-	Neo4j                  Neo4jConfig
-	Sentry                 SentryConfig
-	Platform               PlatformConfig
-	Storage                StorageConfig
-	Marketplace            MarketplaceConfig
-	SQLBase                SQLBaseConfig
-	Auth                   AuthConfig
-	Knowledge              KnowledgeConfig
-	GraphFlow              GraphFlowConfig
-	ContentParse           ContentParseConfig
-	LLM                    LLMConfig
-	LLMPolicyPrompt        LLMPolicyPromptConfig
-	Automation             AutomationConfig
-	Tooling                ToolingConfig
-	ChatRuntime            ChatRuntimeConfig
-	Connectors             ConnectorsConfig
+	Server                  ServerConfig
+	Database                DatabaseConfig
+	Redis                   RedisConfig
+	JWT                     JWTConfig
+	Log                     LogConfig
+	Email                   EmailConfig
+	App                     AppConfig
+	PluginRunner            PluginRunnerConfig
+	TaskQueue               TaskQueueConfig
+	VectorStore             VectorStoreConfig
+	Upload                  UploadConfig
+	ETL                     ETLConfig
+	CodeExec                CodeExecConfig
+	Console                 ConsoleConfig
+	Feature                 FeatureConfig
+	Workflow                WorkflowConfig
+	WorkflowFileExtraction  WorkflowFileExtractionConfig
+	AnswerNodeStreaming     AnswerNodeStreamingConfig
+	Encryption              EncryptionConfig
+	Observability           ObservabilityConfig
+	OpenTelemetry           OpenTelemetryConfig
+	LLMInvocationContent    LLMInvocationContentConfig
+	ModelMeta               ModelMetaConfig
+	Neo4j                   Neo4jConfig
+	Sentry                  SentryConfig
+	Platform                PlatformConfig
+	Storage                 StorageConfig
+	Marketplace             MarketplaceConfig
+	SQLBase                 SQLBaseConfig
+	Auth                    AuthConfig
+	Knowledge               KnowledgeConfig
+	GraphFlow               GraphFlowConfig
+	ContentParse            ContentParseConfig
+	LLM                     LLMConfig
+	LLMPolicyPrompt         LLMPolicyPromptConfig
+	Automation              AutomationConfig
+	Tooling                 ToolingConfig
+	ChatRuntime             ChatRuntimeConfig
+	Connectors              ConnectorsConfig
+	DigitalHumanCredentials DigitalHumanCredentialsConfig
 
 	source *envSource
 }
@@ -154,6 +162,9 @@ type AppConfig struct {
 	FilesURL           string `json:"files_url"`
 	InternalFilesURL   string `json:"internal_files_url"`
 	FilesAccessTimeout int    `json:"files_access_timeout"`
+	// ChannelDeliveryFileTTL is server-controlled and intentionally omitted
+	// from public configuration responses.
+	ChannelDeliveryFileTTL int `json:"-"`
 }
 
 type ConsoleConfig struct {
@@ -376,7 +387,8 @@ type LLMInvocationContentConfig struct {
 }
 
 type ModelMetaConfig struct {
-	APIURL string `json:"api_url"`
+	APIURL          string `json:"api_url"`
+	AutoSyncEnabled bool   `json:"auto_sync_enabled"`
 }
 
 type Neo4jConfig struct {

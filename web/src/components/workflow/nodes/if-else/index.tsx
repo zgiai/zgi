@@ -5,8 +5,7 @@ import CustomHandle from '../../ui/custom-handle';
 import { Position } from '@xyflow/react';
 import ValueBadge from '../../ui/value-badge';
 import { operatorI18nKey } from './utils';
-import { useWorkflowStore } from '../../store';
-import { useT, type NodesSuffix } from '@/i18n';
+import { useT } from '@/i18n';
 
 export interface IfElseContentProps {
   nodeId: string;
@@ -25,10 +24,13 @@ const ConditionSummary: React.FC<{ c: Condition; currentNodeId?: string }> = ({
   const val = (() => {
     if (typeof c.value === 'boolean') return c.value ? 'True' : 'False';
     if (c.key === 'type' && (c.varType === 'file' || c.varType === 'string')) {
-      if (Array.isArray(c.value))
-        return c.value.map(v => t(`nodes.ifElse.fileTypes.${v}` as any)).join(', ');
+      if (Array.isArray(c.value)) {
+        return c.value
+          .map(v => t(`nodes.ifElse.fileTypes.${v}` as Parameters<typeof t>[0]))
+          .join(', ');
+      }
       if (typeof c.value === 'string' && !isTemplate(c.value)) {
-        return t(`nodes.ifElse.fileTypes.${c.value}` as any);
+        return t(`nodes.ifElse.fileTypes.${c.value}` as Parameters<typeof t>[0]);
       }
     }
     if (Array.isArray(c.value)) return c.value.join(', ');
@@ -49,7 +51,9 @@ const ConditionSummary: React.FC<{ c: Condition; currentNodeId?: string }> = ({
           {t('nodes.ifElse.fields.unconfigured')}
         </span>
       )}
-      <span className="mx-1">{t(`nodes.ifElse.operators.${operatorI18nKey(op)}` as any)}</span>
+      <span className="mx-1">
+        {t(`nodes.ifElse.operators.${operatorI18nKey(op)}` as Parameters<typeof t>[0])}
+      </span>
       {![
         ComparisonOperator.isNull,
         ComparisonOperator.isNotNull,

@@ -16,6 +16,7 @@ import (
 	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectorconnections "github.com/zgiai/zgi/api/internal/modules/connectors/connections"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectorserveropsssh "github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
@@ -43,6 +44,7 @@ type connectorBindingService interface {
 	ListTargetBindings(context.Context, uuid.UUID, uuid.UUID, connectorbindings.TargetIdentity) ([]connectorcore.TargetBinding, error)
 	UpsertBinding(context.Context, connectorbindings.UpsertBindingCommand) (connectorbindings.UpsertBindingResult, error)
 	UpdateBindingAuthorization(context.Context, connectorbindings.UpdateBindingAuthorizationCommand) (connectorcore.TargetBinding, error)
+	UpdateHostDelegation(context.Context, connectorbindings.UpdateHostDelegationCommand) (connectorcore.TargetBinding, error)
 	DetachBinding(context.Context, connectorbindings.DetachBindingCommand) (connectorcore.TargetBinding, error)
 	GetRemovalImpact(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (connectorbindings.RemovalImpact, error)
 }
@@ -73,6 +75,7 @@ type ConnectorRouteDeps struct {
 	References              connectorReferenceService
 	Maintenance             connectorMaintenanceService
 	Onboarding              connectorOnboardingService
+	HostKeyProbe            connectorserveropsssh.HostKeyProbe
 	AccountService          interfaces.AccountService
 	Preferences             connectorChatPreferenceService
 	ApplicationErrorCatalog *appcatalog.Catalog
@@ -86,6 +89,7 @@ type connectorHandler struct {
 	maintenance    connectorMaintenanceService
 	onboarding     connectorOnboardingService
 	preferences    connectorChatPreferenceService
+	hostKeyProbe   connectorserveropsssh.HostKeyProbe
 	errorProjector *apptransport.Projector
 }
 
@@ -100,7 +104,7 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 
 	handler := &connectorHandler{
 		references: deps.References, catalog: deps.Catalog, connections: deps.Connections, bindings: deps.Bindings, maintenance: deps.Maintenance,
-		preferences: deps.Preferences, onboarding: deps.Onboarding,
+		preferences: deps.Preferences, onboarding: deps.Onboarding, hostKeyProbe: deps.HostKeyProbe,
 	}
 	if deps.ApplicationErrorCatalog != nil {
 		handler.errorProjector, _ = apptransport.NewProjector(deps.ApplicationErrorCatalog)
@@ -114,6 +118,7 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 func (handler *connectorHandler) register(group *gin.RouterGroup) {
 	group.POST("/connectors/:connectorId/credential-setups", handler.startCredentialSetup)
 	group.POST("/connectors/:connectorId/app-credential-setups", handler.startAppCredentialSetup)
+	group.POST("/connectors/:connectorId/host-key-tests", handler.probeConnectorHostKey)
 	if handler.onboarding != nil {
 		handler.registerOnboarding(group)
 	}
@@ -139,6 +144,7 @@ func (handler *connectorHandler) register(group *gin.RouterGroup) {
 	group.GET("/connector-target-bindings", handler.listTargetBindings)
 	group.POST("/connector-target-bindings", handler.createTargetBinding)
 	group.PATCH("/connector-target-bindings/:bindingId/authorization", handler.updateTargetBindingAuthorization)
+	group.PATCH("/connector-target-bindings/:bindingId/host-delegation", handler.updateHostDelegation)
 	group.DELETE("/connector-target-bindings/:bindingId", handler.detachTargetBinding)
 }
 
@@ -157,6 +163,7 @@ type connectorCatalogItemResponse struct {
 	DescriptionI18n        connectorcatalog.LocalizedText          `json:"description_i18n,omitempty"`
 	Icon                   string                                  `json:"icon,omitempty"`
 	Classification         connectorcatalog.Classification         `json:"classification"`
+	SupportedSurfaces      []connectorcatalog.Surface              `json:"supported_surfaces"`
 	Category               connectorcatalog.ConnectorCategory      `json:"category"`
 	Tags                   []connectorcatalog.ConnectorTag         `json:"tags,omitempty"`
 	KeyFields              []connectorKeyFieldResponse             `json:"key_fields"`
@@ -233,14 +240,15 @@ type connectorPersonalConnectionDetailResponse struct {
 }
 
 type connectorTargetBindingResponse struct {
-	ID                uuid.UUID                   `json:"id"`
-	ConnectionID      uuid.UUID                   `json:"connection_id"`
-	ConnectorID       string                      `json:"connector_id"`
-	Target            connectorTargetResponse     `json:"target"`
-	TargetName        string                      `json:"target_name,omitempty"`
-	Status            connectorcore.BindingStatus `json:"status"`
-	Revision          int                         `json:"revision"`
-	AuthorizationMode string                      `json:"authorization_mode"`
+	ID                uuid.UUID                    `json:"id"`
+	ConnectionID      uuid.UUID                    `json:"connection_id"`
+	ConnectorID       string                       `json:"connector_id"`
+	Target            connectorTargetResponse      `json:"target"`
+	TargetName        string                       `json:"target_name,omitempty"`
+	Status            connectorcore.BindingStatus  `json:"status"`
+	Revision          int                          `json:"revision"`
+	AuthorizationMode string                       `json:"authorization_mode"`
+	HostAudiences     []connectorcore.HostAudience `json:"host_audiences,omitempty"`
 }
 
 type connectorTargetResponse struct {
@@ -273,6 +281,11 @@ type connectorDetachTargetBindingRequest struct {
 type connectorUpdateTargetBindingAuthorizationRequest struct {
 	Revision          int    `json:"revision"`
 	AuthorizationMode string `json:"authorization_mode"`
+}
+
+type connectorUpdateHostDelegationRequest struct {
+	Revision  int                          `json:"revision"`
+	Audiences []connectorcore.HostAudience `json:"audiences"`
 }
 
 type connectorTargetBindingListResponse struct {
@@ -820,6 +833,32 @@ func (handler *connectorHandler) updateTargetBindingAuthorization(c *gin.Context
 	response.Success(c, projectTargetBinding(updated))
 }
 
+func (handler *connectorHandler) updateHostDelegation(c *gin.Context) {
+	organizationID, accountID, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	bindingID, err := parseConnectorUUID(c.Param("bindingId"))
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	var request connectorUpdateHostDelegationRequest
+	if err := decodeConnectorJSON(c, &request); err != nil || request.Revision < 1 || request.Audiences == nil {
+		connectorRouteError(c, connectorcore.NewError(connectorcore.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	updated, err := handler.bindings.UpdateHostDelegation(c.Request.Context(), connectorbindings.UpdateHostDelegationCommand{
+		OrganizationID: organizationID, ActingPrincipalID: accountID, BindingID: bindingID,
+		ExpectedRevision: request.Revision, Audiences: request.Audiences,
+	})
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	response.Success(c, projectTargetBinding(updated))
+}
+
 func connectorActor(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
 	organizationID, organizationErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
 	accountID, accountErr := uuid.Parse(strings.TrimSpace(middleware.GetAccountID(c)))
@@ -997,7 +1036,8 @@ func projectCatalogItem(definition connectorcatalog.Definition, connections []co
 		ID:          definition.ID, PluginID: definition.PluginID, Name: definition.Name,
 		NameI18n: definition.NameI18n.Clone(), DescriptionI18n: definition.DescriptionI18n.Clone(),
 		Description: definition.Description, Icon: definition.Icon, Classification: definition.Classification,
-		KeyFields: keyFields, Capabilities: capabilities,
+		SupportedSurfaces: append([]connectorcatalog.Surface{}, definition.Surfaces...),
+		KeyFields:         keyFields, Capabilities: capabilities,
 		ExtensionSchemaVersion: definition.ExtensionSchemaVersion, CredentialFields: definition.CredentialFields, Setup: definition.Setup,
 		ConnectionSummary: connectorConnectionSummaryResponse{Count: len(connections)},
 	}
@@ -1150,6 +1190,10 @@ func projectPersonalConnection(connection connectorcore.PersonalConnection) conn
 }
 
 func projectTargetBinding(binding connectorcore.TargetBinding) connectorTargetBindingResponse {
+	var audiences []connectorcore.HostAudience
+	if binding.Constraint != nil && binding.Constraint.HostDelegation != nil {
+		audiences = append(audiences, binding.Constraint.HostDelegation.Audiences...)
+	}
 	return connectorTargetBindingResponse{
 		ID: binding.ID, ConnectionID: binding.ConnectionID, ConnectorID: binding.ConnectorID.String(),
 		Target: connectorTargetResponse{
@@ -1159,6 +1203,7 @@ func projectTargetBinding(binding connectorcore.TargetBinding) connectorTargetBi
 		Status:            binding.Status,
 		Revision:          binding.Revision,
 		AuthorizationMode: binding.Constraint.AuthorizationModeValue(),
+		HostAudiences:     audiences,
 	}
 }
 

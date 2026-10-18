@@ -103,6 +103,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				map[string]interface{}{
 					"file_id":   stringValueSchema("Required file ID from the current page context, attachment context, or governed asset resolution. Do not invent IDs."),
 					"max_chars": numberSchema("Optional maximum returned content characters. Defaults to 4000 and is capped at 12000."),
+					"offset":    numberSchema("Optional zero-based Unicode character offset. Defaults to 0; use next_offset to read subsequent pages."),
 				},
 				[]string{"file_id"},
 			),

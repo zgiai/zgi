@@ -18,7 +18,7 @@ type databaseBindings map[string]databaseBindingSet
 
 func (t *databaseTool) agentBindings() (databaseBindings, error) {
 	runtime := t.Runtime()
-	if runtime == nil || runtime.InvokeFrom != tools.ToolInvokeFromAgent {
+	if runtime == nil || !tools.IsBoundRuntimeCaller(runtime.InvokeFrom) {
 		return nil, nil
 	}
 	raw, ok := runtime.RuntimeParameters["database_bindings"]

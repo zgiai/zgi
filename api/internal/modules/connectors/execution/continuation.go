@@ -13,12 +13,19 @@ import (
 
 const maxContinuationPayloadEnvelopeBytes = 1 << 20
 
+// confirmationOriginVersionDigitalHuman is the origin schema version sealed
+// for a DigitalHuman host. It is persisted as a lookup column so a host run can
+// find its own pending continuation without opening the protected payload.
+const confirmationOriginVersionDigitalHuman = 2
+
 // ConfirmationOrigin identifies the durable host state that must be resumed
 // after a Connector confirmation. These references are non-secret and are
 // stored separately from the protected provider input so runtimes can find
 // their own paused work without opening the payload.
 type ConfirmationOrigin struct {
 	Surface        core.TargetType `json:"surface"`
+	OriginVersion  int             `json:"origin_version,omitempty"`
+	DigitalHumanID string          `json:"digital_human_id,omitempty"`
 	ConversationID string          `json:"conversation_id,omitempty"`
 	MessageID      string          `json:"message_id,omitempty"`
 	AgentID        string          `json:"agent_id,omitempty"`
@@ -146,6 +153,26 @@ type ConfirmationContinuationStore interface {
 	RecordTerminal(context.Context, uuid.UUID, uuid.UUID, RouteClaimReceipt, ConfirmationTerminal) (ConfirmationContinuation, error)
 }
 
+// bindConfirmationOrigin completes the non-secret host identity of a
+// DigitalHuman continuation from the immutable target before it is validated
+// and sealed. The target is the authority for the host id and the origin
+// schema version, so a caller that omits them is bound to the exact digital
+// human it dispatched for, while a caller-supplied value that disagrees with
+// the target is left untouched for validation to reject. Chat, Agent, and
+// Workflow origins are returned unchanged.
+func bindConfirmationOrigin(frozen FrozenConfirmationRequest) FrozenConfirmationRequest {
+	if frozen.Origin.Surface != core.TargetTypeDigitalHuman {
+		return frozen
+	}
+	if frozen.Origin.OriginVersion == 0 {
+		frozen.Origin.OriginVersion = confirmationOriginVersionDigitalHuman
+	}
+	if frozen.Origin.DigitalHumanID == "" {
+		frozen.Origin.DigitalHumanID = frozen.Request.Target.ID
+	}
+	return frozen
+}
+
 func validateFrozenConfirmationRequest(frozen FrozenConfirmationRequest) error {
 	request := frozen.Request
 	if !validUUIDReceipt(frozen.RouteReceipt) || request.Confirmation != nil || !request.Interactive ||
@@ -174,6 +201,9 @@ func validateConfirmationOrigin(origin ConfirmationOrigin, target core.TargetRef
 			return connectorError(core.ErrorCodeInvalidInput, false)
 		}
 	}
+	if origin.Surface != core.TargetTypeDigitalHuman && (origin.OriginVersion != 0 || origin.DigitalHumanID != "") {
+		return connectorError(core.ErrorCodeInvalidInput, false)
+	}
 	switch origin.Surface {
 	case core.TargetTypeChat:
 		if origin.ConversationID == "" || origin.MessageID == "" ||
@@ -184,6 +214,16 @@ func validateConfirmationOrigin(origin ConfirmationOrigin, target core.TargetRef
 	case core.TargetTypeAgent:
 		if origin.ConversationID == "" || origin.MessageID == "" || origin.AgentID == "" ||
 			origin.WorkflowID != "" || origin.NodeID != "" || origin.AgentID != target.ID || target.Type != core.TargetTypeAgent {
+			return connectorError(core.ErrorCodeInvalidInput, false)
+		}
+	case core.TargetTypeDigitalHuman:
+		id, err := uuid.Parse(origin.DigitalHumanID)
+		run, runErr := uuid.Parse(origin.RunID)
+		if origin.OriginVersion != confirmationOriginVersionDigitalHuman || err != nil || runErr != nil ||
+			id == uuid.Nil || run == uuid.Nil || id.String() != origin.DigitalHumanID || run.String() != origin.RunID ||
+			origin.DigitalHumanID != target.ID || target.Type != core.TargetTypeDigitalHuman ||
+			origin.ConversationID == "" || origin.MessageID == "" ||
+			origin.AgentID != "" || origin.WorkflowID != "" || origin.NodeID != "" {
 			return connectorError(core.ErrorCodeInvalidInput, false)
 		}
 	case core.TargetTypeWorkflow:

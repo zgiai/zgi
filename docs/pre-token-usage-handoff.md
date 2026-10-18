@@ -1,7 +1,7 @@
 # 新会话改造任务书：Pre 调用统计补齐真实 token + cloud 模式渠道展示
 
 > 交付对象：新会话的编码 agent。本文件是自包含任务书，直接按此执行。
-> 仓库：`/Users/du/wwwdata/zgi-pre`（运行时 Pre）、`/Users/du/wwwdata/zgi-console`（控制面/计费 Console）。
+> 仓库：本仓库（运行时 Pre）、控制面/计费 Console 仓库。
 
 ## 0. 现象
 
@@ -88,8 +88,8 @@ Console 自己的用量表是 `llm_tenant_usage_logs`（`zgi-console/api/interna
 ## 5. 建议验证命令
 
 - Console：`cd zgi-console/api && go test ./internal/modules/billing/... ./internal/modules/gateway/...`
-- Pre：`cd zgi-pre/api && go test ./internal/modules/llm/gateway/... ./internal/modules/llm/statistics/...`
-- Pre Web：`cd zgi-pre/web && node_modules/.bin/tsc --noEmit && node_modules/.bin/eslint <changed files>`
+- Pre：`cd api && go test ./internal/modules/llm/gateway/... ./internal/modules/llm/statistics/...`
+- Pre Web：`cd web && node_modules/.bin/tsc --noEmit && node_modules/.bin/eslint <changed files>`
 - 端到端：用 cloud 模式跑一次 chat、一次按 token 计费的图片，对照 Console 与 Pre 的调用详情 token。
 
 ## 6. 注意事项 / 易错点

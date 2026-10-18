@@ -210,7 +210,7 @@ func TestPersistApprovalResumeCompletionSkipsHostOwnedMessageProjectionV2(t *tes
 
 func TestResolveWorkflowConversationProjectionKeepsWorkflowOwnedMessage(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&workflowStopTestMessage{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &workflowStopTestMessage{}); err != nil {
 		t.Fatalf("migrate workflow message: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -621,7 +621,7 @@ func TestPostgresStoppedAnswerProjectionAcceptsOnlyImmediatelyRevokedGeneration(
 		t.Skip("TEST_POSTGRES_DSN is not configured")
 	}
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&conversation.AgentConversation{}, &conversation.AgentMessage{}, &WorkflowRunLog{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &conversation.AgentConversation{}, &conversation.AgentMessage{}, &WorkflowRunLog{}); err != nil {
 		t.Fatalf("migrate stopped projection tables: %v", err)
 	}
 	oldDB := database.GetDB()
@@ -691,7 +691,7 @@ func TestPostgresStoppedAnswerProjectionAcceptsOnlyImmediatelyRevokedGeneration(
 }
 
 func migrateWorkflowStopV2TestTables(db *gorm.DB) error {
-	return db.AutoMigrate(
+	return autoMigrateWorkflowTest(db,
 		&workflowStopTestRun{},
 		&workflowStopTestMessage{},
 		&workflowStopTestNode{},

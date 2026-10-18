@@ -88,4 +88,38 @@ assert.notEqual(
   'Changing a memory display name must mark the editor dirty.'
 );
 
+assert.notEqual(
+  buildAgentRuntimeSignature({ ...basePayload, execution_runtime: null }),
+  buildAgentRuntimeSignature({
+    ...basePayload,
+    execution_runtime: {
+      enabled: true,
+      profile_id: 'standard',
+      policy_id: 'offline',
+      home_snapshot_id: null,
+    },
+  }),
+  'Enabling the execution environment must mark the editor dirty.'
+);
+
+const executionRuntime = {
+  enabled: true,
+  profile_id: 'standard',
+  policy_id: 'offline',
+  home_snapshot_id: null,
+};
+assert.equal(
+  buildAgentRuntimeSignature({ ...basePayload, execution_runtime: executionRuntime }),
+  buildAgentRuntimeSignature({
+    execution_runtime: {
+      home_snapshot_id: null,
+      policy_id: 'offline',
+      profile_id: 'standard',
+      enabled: true,
+    },
+    ...basePayload,
+  }),
+  'Server and editor field order must not make an unchanged execution setting appear dirty.'
+);
+
 console.log('Agent runtime signature checks passed.');

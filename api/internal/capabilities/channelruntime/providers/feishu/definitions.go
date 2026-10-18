@@ -1,0 +1,56 @@
+package feishu
+
+const (
+	IntegrationID = "feishu"
+	// DriverID and TenantAppAuthMethodID are the canonical identifiers used by
+	// the Connector catalog. DigitalHuman channel installations resolve their
+	// credentials through Connector PersonalConnections, so these values must
+	// stay aligned with the persisted connection contract.
+	DriverID = "feishu-openapi-v1"
+
+	RegionCN     = "cn"
+	RegionGlobal = "global"
+
+	UserOAuthAuthMethodID         = "feishu_user_oauth"
+	OrganizationOAuthAuthMethodID = "organization_feishu_user_oauth"
+	TenantAppAuthMethodID         = "feishu.app_credentials"
+
+	ScopeOfflineAccess    = "offline_access"
+	ScopeTenantRead       = "tenant:tenant:readonly"
+	ScopeDriveRetrieve    = "space:document:retrieve"
+	ScopeDriveRead        = "drive:drive:readonly"
+	ScopeDriveWrite       = "drive:drive"
+	ScopeDocumentRead     = "docx:document:readonly"
+	ScopeDocumentWrite    = "docx:document"
+	ScopeMessage          = "im:message"
+	ScopeMessageRead      = "im:message:readonly"
+	ScopeMessageLegacy    = "im:message.history:readonly"
+	ScopeP2PMessageRead   = "im:message.p2p_msg:readonly"
+	ScopeGroupMessageRead = "im:message.group_msg"
+	ScopeSendAsUser       = "im:message.send_as_user"
+	ScopeSendAsBot        = "im:message:send_as_bot"
+	ScopeContactSearch    = "contact:user:search"
+	ScopeChatRead         = "im:chat:read"
+	ScopeChatReadOnly     = "im:chat:readonly"
+	ScopeChat             = "im:chat"
+	ScopeChatMembersRead  = "im:chat.members:read"
+	ScopeCalendarRead     = "calendar:calendar:read"
+	ScopeCalendarRO       = "calendar:calendar:readonly"
+	ScopeCalendarWrite    = "calendar:calendar"
+	ScopeEventRead        = "calendar:calendar.event:read"
+	ScopeEventCreate      = "calendar:calendar.event:create"
+
+	ActionGetAccount      = "feishu.account.get"
+	ActionListDriveFiles  = "feishu.drive.list"
+	ActionReadDocument    = "feishu.document.read"
+	ActionSearchContacts  = "feishu.contact.search"
+	ActionListChats       = "feishu.chat.list"
+	ActionListCalendars   = "feishu.calendar.list"
+	ActionListMessages    = "feishu.message.list"
+	ActionGetMessage      = "feishu.message.get"
+	ActionListChatMembers = "feishu.chat.members.list"
+	ActionListEvents      = "feishu.calendar.event.list"
+	ActionCreateEvent     = "feishu.calendar.event.create"
+	ActionSendUserMessage = "feishu.message.send_user"
+	ActionSendBotMessage  = "feishu.message.send_bot"
+)

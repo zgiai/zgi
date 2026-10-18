@@ -8,7 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/container"
+	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -18,7 +21,7 @@ import (
 )
 
 // RegisterRoutes registers all v1 version routes
-func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory, applicationErrorCatalog *appcatalog.Catalog) {
+func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *container.ServiceContainer, workflowEngineFactory *graph_engine.EngineFactory, applicationErrorCatalog *appcatalog.Catalog) *DigitalHumanRuntimeBundle {
 	// Health & setup routes first
 	RegisterHealthRoutes(v1)
 	RegisterSetupRoutes(v1, SetupRouteDeps{
@@ -40,6 +43,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	accountService := serviceContainer.GetAccountServiceAdapter()
 	tenantService := serviceContainer.GetTenantServiceAdapter()
+	var digitalHumanRuntime *DigitalHumanRuntimeBundle
 
 	// ---------- User / Auth domain ----------
 	RegisterUserRoutes(v1, UserRouteDeps{
@@ -64,6 +68,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DepartmentService:                serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
 	})
+	RegisterRuntimeWorkspaceManagementRoutes(v1, db, accountService, serviceContainer.GetTenantService())
 
 	// ---------- Explore ----------
 	RegisterExploreRoutes(v1, accountService)
@@ -107,6 +112,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		MemoryService:  serviceContainer.GetMemoryService(),
 		AccountService: accountService,
 	})
+	RegisterRelationshipMemoryRoutes(v1, db, accountService)
 
 	// ---------- Dataset ----------
 	RegisterDatasetRoutes(v1, DatasetRouteDeps{
@@ -165,19 +171,26 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Automation ----------
-	automationDefinitionService := RegisterAutomationRoutes(v1, AutomationRouteDeps{
+	automationBundle := RegisterAutomationRoutes(v1, AutomationRouteDeps{
 		DB:                               db,
 		TaskManager:                      serviceContainer.GetTaskManager(),
 		TaskHandlerRegistry:              serviceContainer.GetTaskHandlerRegistry(),
 		Scheduler:                        serviceContainer.GetScheduler(),
 		NotificationSMSService:           serviceContainer.GetNotificationSMSService(),
 		AutomationWorkflowRunnerProvider: serviceContainer.GetAutomationWorkflowRunner,
-		AccountService:                   accountService,
-		OrganizationService:              serviceContainer.GetOrganizationService(),
-		WorkspaceManagementService:       tenantService,
-		LLMClient:                        serviceContainer.GetLLMClient(),
-		DefaultModelService:              serviceContainer.GetDefaultModelService(),
+		DigitalHumanRunnerProvider: func() automationaction.AutomationDigitalHumanRunner {
+			if digitalHumanRuntime == nil || digitalHumanRuntime.Runtime == nil {
+				return nil
+			}
+			return &digitalHumanAutomationRunner{runtime: digitalHumanRuntime.Runtime, db: db}
+		},
+		AccountService:             accountService,
+		OrganizationService:        serviceContainer.GetOrganizationService(),
+		WorkspaceManagementService: tenantService,
+		LLMClient:                  serviceContainer.GetLLMClient(),
+		DefaultModelService:        serviceContainer.GetDefaultModelService(),
 	})
+	automationDefinitionService := automationBundle.Definition
 	serviceContainer.SetAutomationDefinitionService(automationDefinitionService)
 
 	// ---------- Payment ----------
@@ -193,6 +206,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Workflow ----------
+	approvalResumeHosts := approvalruntime.NewResumeHosts()
 	workflowService := RegisterWorkflowRoutes(v1, WorkflowRouteDeps{
 		DB:                          db,
 		AccountService:              accountService,
@@ -212,6 +226,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		EngineFactory:               workflowEngineFactory,
 		AutomationRunnerSetter:      serviceContainer,
 		ShortLinkService:            serviceContainer.GetShortLinkService(),
+		ApprovalResumeHosts:         approvalResumeHosts,
 	})
 
 	if err := serviceContainer.EnsureConnectorDefinitions(context.Background()); err != nil {
@@ -224,6 +239,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		References:              serviceContainer.GetConnectorReferenceService(),
 		Maintenance:             serviceContainer.GetConnectorMaintenanceService(),
 		Onboarding:              serviceContainer.GetConnectorOnboardingService(),
+		HostKeyProbe:            serviceContainer.GetServerOpsSSHHostKeyProbe(),
 		Preferences:             serviceContainer.GetConnectorChatPreferenceService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 		AccountService:          accountService,
@@ -231,7 +247,51 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager())
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager(), applicationErrorCatalog)
+
+	// ---------- DigitalHuman ----------
+	digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
+		DB:                                  db,
+		LLMClient:                           serviceContainer.GetLLMClient(),
+		FileService:                         serviceContainer.GetFileService(),
+		ContentExtractor:                    serviceContainer.GetContentExtractor(),
+		OrganizationService:                 serviceContainer.GetOrganizationService(),
+		ToolEngine:                          serviceContainer.GetToolEngine(),
+		ToolManager:                         serviceContainer.GetToolManager(),
+		TaskManager:                         serviceContainer.GetTaskManager(),
+		TaskRegistry:                        serviceContainer.GetTaskHandlerRegistry(),
+		Scheduler:                           serviceContainer.GetScheduler(),
+		ManifestResolver:                    nil,
+		CredentialCipher:                    serviceContainer.GetDigitalHumanCredentialCipher(),
+		ConnectorRuntime:                    serviceContainer.GetConnectorDigitalHumanRuntimeResolver(),
+		ConnectorDispatcher:                 serviceContainer.GetConnectorSurfaceDispatcher(),
+		ConnectorCatalog:                    serviceContainer.GetConnectorPluginManager(),
+		ConnectorPersonalConnectionResolver: serviceContainer.GetConnectorPersonalConnectionResolver(),
+		WorkspaceMembership:                 serviceContainer.GetWorkspaceMemberRepository(),
+		ConnectorConfirmationStore:          serviceContainer.GetConnectorConfirmationContinuationStore(),
+		Tasks:                               automationBundle.DigitalHumanTasks,
+		DefaultModelService:                 serviceContainer.GetDefaultModelService(),
+		KnowledgeRetrievalService:           serviceContainer.GetKnowledgeRetrievalService(),
+		WorkflowService:                     workflowService,
+	})
+	if digitalHumanRuntime.Runtime != nil {
+		approvalResumeHosts.Register(digitalHumanRuntime.Runtime)
+	}
+	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
+		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
+	}
+	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
+	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
+	consoleDigitalHumanService := serviceContainer.GetDigitalHumanService()
+	if digitalHumanRuntime.MemoryProjectionRepairer != nil {
+		consoleDigitalHumanService.SetMemoryProjectionRepairer(digitalHumanRuntime.MemoryProjectionRepairer)
+	}
+	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
+		Service: consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
+		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
+		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
+		ApplicationErrorCatalog: applicationErrorCatalog,
+	})
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -350,4 +410,5 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DB:             db,
 		AccountService: accountService,
 	})
+	return digitalHumanRuntime
 }

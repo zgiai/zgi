@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -35,6 +36,9 @@ func (target TargetIdentity) Validate() error {
 	ref := core.TargetRef{Type: target.Type, ID: target.ID, Scope: target.Scope, VersionID: target.VersionID}
 	if target.Type == core.TargetTypeWorkflow {
 		ref.BindingInstanceID = "authority"
+	}
+	if target.Type == core.TargetTypeDigitalHuman {
+		ref.BindingInstanceID = "00000000-0000-0000-0000-000000000001"
 	}
 	if ref.Validate() != nil || !validExactText(target.ID) {
 		return core.NewError(core.ErrorCodeInvalidInput, false, nil)
@@ -101,6 +105,14 @@ type UpdateBindingAuthorizationCommand struct {
 	BindingID         uuid.UUID
 	ExpectedRevision  int
 	AuthorizationMode string
+}
+
+type UpdateHostDelegationCommand struct {
+	OrganizationID    uuid.UUID
+	ActingPrincipalID uuid.UUID
+	BindingID         uuid.UUID
+	ExpectedRevision  int
+	Audiences         []core.HostAudience
 }
 
 // RemovalImpact is the Connector-native binding impact for a Personal
@@ -259,6 +271,27 @@ func (service *Service) ListTargetBindings(
 	return items, nil
 }
 
+// ListPublishedHostDelegations returns only active, exact-version bindings
+// whose owner explicitly delegated the requested host audience. The
+// repository performs the bounded query and validates each returned row;
+// keeping this method on Service prevents runtime authorization from reaching
+// around the binding lifecycle boundary.
+func (service *Service) ListPublishedHostDelegations(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	target core.TargetRef,
+	audience core.HostAudience,
+) ([]core.TargetBinding, error) {
+	if err := service.available(); err != nil {
+		return nil, err
+	}
+	repository, ok := service.repository.(HostDelegationCandidateRepository)
+	if !ok {
+		return nil, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	return repository.ListPublishedHostDelegations(ctx, organizationID, target, audience)
+}
+
 // DetachBinding removes a native Connection from an editable target without
 // deleting the binding identity. Runtime readers admit active rows only, so a
 // successful detach is effective before the next provider submission. A
@@ -396,6 +429,69 @@ func (service *Service) UpdateBindingAuthorization(ctx context.Context, command 
 	}
 	if updated.ID != binding.ID || updated.Revision != binding.Revision+1 || updated.Constraint == nil ||
 		updated.Constraint.AuthorizationModeValue() != command.AuthorizationMode {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	return updated, nil
+}
+
+func (service *Service) UpdateHostDelegation(ctx context.Context, command UpdateHostDelegationCommand) (core.TargetBinding, error) {
+	if err := service.available(); err != nil {
+		return core.TargetBinding{}, err
+	}
+	if !validOwnerScope(command.OrganizationID, command.ActingPrincipalID) || command.BindingID == uuid.Nil || command.ExpectedRevision < 1 {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	binding, err := service.repository.GetBinding(ctx, command.OrganizationID, command.ActingPrincipalID, command.BindingID)
+	if err != nil {
+		return core.TargetBinding{}, safeBindingDependencyError(err)
+	}
+	if binding.ID != command.BindingID || binding.OrganizationID != command.OrganizationID || binding.OwnerAccountID != command.ActingPrincipalID ||
+		(binding.Target.Type != core.TargetTypeDigitalHuman && binding.Target.Type != core.TargetTypeAgent) || binding.Target.EffectiveScope() != core.ScopePublished {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	if binding.Status != core.BindingStatusActive || binding.Revision != command.ExpectedRevision {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeConflict, false, nil)
+	}
+	if binding.Constraint == nil || binding.Constraint.Validate() != nil {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	constraint := *binding.Constraint
+	constraint.HostDelegation = nil
+	if len(command.Audiences) > 0 {
+		reader, ok := service.targets.(TargetReadAuthority)
+		if !ok {
+			return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
+		}
+		target := TargetIdentity{Type: binding.Target.Type, ID: binding.Target.ID, Scope: core.ScopePublished, VersionID: binding.Target.VersionID}
+		if err := reader.RequireTargetRead(ctx, command.OrganizationID, command.ActingPrincipalID, target); err != nil {
+			return core.TargetBinding{}, err
+		}
+		if err := service.requireTargetEdit(ctx, command.OrganizationID, command.ActingPrincipalID, TargetIdentity{Type: target.Type, ID: target.ID, Scope: core.ScopeDraft}); err != nil {
+			return core.TargetBinding{}, err
+		}
+		connection, err := service.ownedConnection(ctx, command.OrganizationID, command.ActingPrincipalID, binding.ConnectionID)
+		if err != nil {
+			return core.TargetBinding{}, err
+		}
+		if connection.State != core.ReadinessReady || connection.ID != binding.ConnectionID || connection.ConnectorID != binding.ConnectorID {
+			return core.TargetBinding{}, core.NewError(core.ErrorCodeConnectionNotReady, false, nil)
+		}
+		constraint.TargetBoundaries = []core.TargetBoundary{{Type: target.Type, ID: target.ID, Scope: string(core.ScopePublished), VersionID: target.VersionID}}
+		constraint.HostDelegation = &core.HostDelegation{GrantedBy: command.ActingPrincipalID, Audiences: slices.Clone(command.Audiences)}
+	}
+	if constraint.Validate() != nil {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	mutationRepository, ok := service.repository.(AuthorizationMutationRepository)
+	if !ok {
+		return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
+	}
+	updated, err := mutationRepository.UpdateBindingAuthorizationWithLifecycle(ctx, command.OrganizationID, command.ActingPrincipalID, command.BindingID, &constraint, command.ExpectedRevision,
+		BindingLifecycleMutation{ID: uuid.New(), MutationType: MutationBindingUpserted, CorrelationID: "host-delegation:" + uuid.NewString(), CreatedAt: service.now().UTC()})
+	if err != nil {
+		return core.TargetBinding{}, safeBindingDependencyError(err)
+	}
+	if updated.ID != binding.ID || updated.Revision != binding.Revision+1 || !core.EquivalentConstraints(updated.Constraint, &constraint) {
 		return core.TargetBinding{}, core.NewError(core.ErrorCodeInternal, false, nil)
 	}
 	return updated, nil

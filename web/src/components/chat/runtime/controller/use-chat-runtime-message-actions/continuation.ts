@@ -70,6 +70,7 @@ export function useWorkflowContinuationActions({
     applyAgentProgress,
     applyIntermediateAnswer,
     applyUserInputRequested,
+    applyTokenUsageUpdated,
     applyMessageEnd,
     applyStreamError,
   } = eventAppliers;
@@ -154,9 +155,11 @@ export function useWorkflowContinuationActions({
         sourceMessage?.status === 'waiting_approval' ||
         sourceMessage?.status === 'waiting_client_action' ||
         sourceMessage?.status === 'waiting_question' ||
+        sourceMessage?.status === 'waiting_budget' ||
         streamingStatus === 'waiting_approval' ||
         streamingStatus === 'waiting_client_action' ||
-        streamingStatus === 'waiting_question';
+        streamingStatus === 'waiting_question' ||
+        streamingStatus === 'waiting_budget';
       if (
         (currentState.isSending && !waitingForContinuation) ||
         (currentState.recoveringByConversation[conversationId] &&
@@ -179,22 +182,25 @@ export function useWorkflowContinuationActions({
       const shouldSyncContinuationOnClose =
         Boolean(toolGovernanceDecision) ||
         Boolean(clientActionResult) ||
-        Boolean(userInputContinuation);
+        Boolean(userInputContinuation) ||
+        Boolean(approvalPayload) ||
+        Boolean(questionInputs);
       const syncContinuationState = () => {
         if (!shouldSyncContinuationOnClose) return;
         refreshConversationSilently(conversationId);
         refreshMessagesSilently(conversationId);
       };
 
-      const restoreWorkflowApprovalContinuation = (errorMessage?: string) => {
+      const restoreWorkflowApprovalContinuation = (errorMessage?: string, clearError = false) => {
         setControllerState(current => {
           const nextStreamingByMessageId = { ...current.streamingByMessageId };
           delete nextStreamingByMessageId[messageId];
 
           return {
             ...current,
-            error:
-              errorMessage && current.activeConversationId === conversationId
+            error: clearError
+              ? null
+              : errorMessage && current.activeConversationId === conversationId
                 ? errorMessage
                 : current.error,
             isSending: getNextActiveSendingState(current, conversationId, false),
@@ -236,9 +242,7 @@ export function useWorkflowContinuationActions({
       streamAbortByConversationRef.current[conversationId] = abortController;
       markSelectionTarget(conversationId);
 
-      let continuationMetadata = sourceMessage.metadata
-        ? { ...sourceMessage.metadata }
-        : undefined;
+      let continuationMetadata = sourceMessage.metadata ? { ...sourceMessage.metadata } : undefined;
       let continuationTimeline = sourceTimeline;
       if (userInputContinuation && continuationMetadata) {
         const optimisticPresentation = withOptimisticUserInputResponsePresentation(
@@ -269,8 +273,7 @@ export function useWorkflowContinuationActions({
           sourceTimeline
         );
       }
-      const continuationPresentationState =
-        presentationStateFromMetadata(continuationMetadata);
+      const continuationPresentationState = presentationStateFromMetadata(continuationMetadata);
 
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
@@ -343,6 +346,11 @@ export function useWorkflowContinuationActions({
             if (abortController.signal.aborted) return;
             streamStarted = true;
             applyAgentProgress(payload, eventId);
+          },
+          onTokenUsageUpdated: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+            applyTokenUsageUpdated(payload, eventId);
           },
           onIntermediateAnswer: (payload, eventId) => {
             if (abortController.signal.aborted) return;
@@ -425,6 +433,11 @@ export function useWorkflowContinuationActions({
             applyMemoryMutation(payload, eventId);
             refreshAccountMemoryAfterMemoryMutation(payload);
           },
+          onRuntimeInputApplied: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+            eventAppliers.applyRuntimeInputApplied(payload, eventId);
+          },
           onWorkflowStarted: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             streamStarted = true;
@@ -501,21 +514,31 @@ export function useWorkflowContinuationActions({
             if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
             if (!streamStarted) {
               const suppressError =
-                (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
-                isContinuationLikelyStartedError(error);
+                Boolean(userInputContinuation) ||
+                ((toolGovernanceDecision || clientActionResult) &&
+                  isContinuationLikelyStartedError(error));
               if (!suppressError) {
                 startError = error;
               }
-              restoreWorkflowApprovalContinuation(suppressError ? undefined : error.message);
-              if (suppressError) {
-                syncContinuationState();
-              }
+              restoreWorkflowApprovalContinuation(
+                suppressError ? undefined : error.message,
+                Boolean(userInputContinuation)
+              );
+              // Approval continuations are persisted server-side. Always
+              // refresh after a failed request so a restored waiting form is
+              // visible instead of leaving the local message in a stale
+              // generating state.
+              syncContinuationState();
               return;
             }
             const suppressError =
-              (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
-              isContinuationLikelyStartedError(error);
+              Boolean(userInputContinuation) ||
+              ((toolGovernanceDecision || clientActionResult) &&
+                isContinuationLikelyStartedError(error));
             if (suppressError) {
+              if (userInputContinuation) {
+                restoreWorkflowApprovalContinuation(undefined, true);
+              }
               syncContinuationState();
               return;
             }
@@ -611,8 +634,8 @@ export function useWorkflowContinuationActions({
               (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
               isContinuationLikelyStartedError(error);
             restoreWorkflowApprovalContinuation(suppressError ? undefined : errorMessage);
+            syncContinuationState();
             if (suppressError) {
-              syncContinuationState();
               return;
             }
             if (clientActionResult || toolGovernanceDecision || userInputContinuation) {
@@ -627,6 +650,9 @@ export function useWorkflowContinuationActions({
             syncContinuationState();
             return;
           }
+          if (approvalPayload) {
+            syncContinuationState();
+          }
           setControllerState(current => ({
             ...current,
             error:
@@ -640,6 +666,7 @@ export function useWorkflowContinuationActions({
     },
     [
       applyAgentProgress,
+      applyTokenUsageUpdated,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,

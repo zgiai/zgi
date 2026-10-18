@@ -374,6 +374,7 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 | Waiting for approval | Latest message has `status=waiting_approval` | Replay that message to rebuild `approval_requested`; message metadata may provide an immediate form fallback |
 | Waiting for workflow answer | `question_answer_requested`, or `user_input_requested.source=agent_workflow_question_answer` | Render the question/choices and call workflow continuation |
 | Waiting for Skill input | Any other `user_input_requested` | Key answers by question id and call user-input continuation |
+| Waiting for token budget | Latest message has `status=waiting_budget` | Render the independent budget actions and call token-budget continuation with the matching `request_id` |
 | Completed or failed | `completed`, `stopped`, `error`, or `failed` | Render history only; do not open a recovery stream |
 
     Waiting conversations are normally no longer `running`, so checking only `active_message_id` is insufficient. Inspect the newest message status and recover that same `message_id`. If retained events and message metadata cannot reconstruct the form, actions, or request id, show an unrecoverable-state UI instead of inventing approval actions.
@@ -632,6 +633,62 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 ---
 
 <Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue"
+  method="POST"
+  title="Confirm or Reject a Platform CLI Call"
+  name="#Continue-Agent-Tool-Governance"
+/>
+
+<Row>
+  <Col>
+    Only server-admitted Linux platform CLI calls can require this approval. Ordinary
+    bound-tool calls remain non-interactive. Keep the original final-user identity and
+    copy `correlation_id` from `tool_governance_decision` with `requires_approval=true`.
+    Do not use workflow approval tokens or Skill user-input continuation.
+
+    <Properties>
+      <Property name="conversation_id / message_id" type="uuid" propKey="conversation_id">Required original conversation and waiting message.</Property>
+      <Property name="correlation_id" type="string" propKey="correlation_id">Required frozen invocation identifier, at most 256 characters.</Property>
+      <Property name="Authorization" type="string" propKey="Authorization">Required Agent API Key, bound to the same application.</Property>
+      <Property name="X-External-User-ID" type="string" propKey="X-External-User-ID">Required original final user; the existing user query fallback has the same meaning.</Property>
+      <Property name="action" type="approve | reject" propKey="action">Required. Approve executes the frozen business invocation once; reject executes none.</Property>
+      <Property name="reason" type="string" propKey="reason">Optional decision explanation.</Property>
+      <Property name="remember_for_session" type="boolean" propKey="remember_for_session">Default false. Does not grant reusable approval for platform CLI calls.</Property>
+    </Properties>
+
+    The response is `text/event-stream` for the original message. Confirmation rechecks
+    the original publication and current resource permissions; it cannot authorize an
+    unbound or revoked resource. Neither decision reruns the Shell. Duplicate decisions
+    recover the existing result, and uncertain writes are not automatically retried.
+    Rejection remains available after execution admission is disabled. Runtime Workspace
+    credentials cannot call this endpoint.
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --data '{"action":"approve"}'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="Response" label="200 SSE">
+
+    ```text
+    event: tool_governance_decision
+    data: {"event":"tool_governance_decision","data":{"correlation_id":"frozen-call","decision":"allowed","requires_approval":false}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading
   url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"
   method="POST"
   title="Answer a Skill User-Input Request"
@@ -696,7 +753,62 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 
 ---
 
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"
+  method="POST"
+  title="Continue or Stop a Token-Budget Pause"
+  name="#Continue-Agent-Token-Budget"
+/>
+
+<Row>
+  <Col>
+    Use only after `token_budget_requested`. This is an independent protocol: do not send
+    `answers`, and do not route the request through Skill user-input continuation.
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required waiting conversation id.</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>Required message id from the budget event.</Property>
+      <Property name='request_id' type='string' propKey='request_id'>Required request id from the budget event.</Property>
+      <Property name='action' type='add | stop' propKey='action'>Use `add` to increase the task limit or `stop` to end the run normally.</Property>
+      <Property name='additional_tokens' type='integer?' propKey='additional_tokens'>Required only for `add`; range is 1 to 100000000 and the resulting limit cannot overflow that maximum.</Property>
+    </Properties>
+
+    The response is another SSE stream for the same message. `add` resumes with `message_start`
+    and may emit usage updates or another `token_budget_requested`; `stop` emits only
+    `message_end` with `status=stopped` unless a real system error occurs.
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+    ```bash
+    curl --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue' \
+      --header 'Content-Type: application/json' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+    --data '{"action":"add","additional_tokens":2048}'
+    ```
+    </CodeGroup>
+    <CodeGroup title="Response">
+    ```text
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"..."}}
+
+    event: token_usage_updated
+    data: {"event":"token_usage_updated","data":{"message_id":"...","usage":{"total_tokens":2048}}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
 ## Agent Event Integration Guide
+
+Artifacts with `access_mode: authenticated` omit `url` and `download_url`. Fetch
+their bytes through the conversation file endpoint using the same API key and
+external-user identity. Never construct a public ToolFile URL from `file_id`.
 
 This section defines the SSE contract shared by chat, stream recovery, and continuation endpoints. Dispatch on the native `event:` field first, then read the event payload from `data.data` in the JSON envelope. Do not parse the whole response as one JSON document or wait for the connection to close before rendering.
 
@@ -733,6 +845,20 @@ This section defines the SSE contract shared by chat, stream recovery, and conti
     Unix seconds and optional Unix milliseconds for display and diagnostics. They are not
     deduplication keys.
   </Property>
+  <Property name="usage" type="object" propKey="usage">
+    Per-invocation input, output, and total token counts in `token_usage_updated`; clients may
+    accumulate them per message for real-time usage display.
+  </Property>
+  <Property name="task_token_budget" type="object" propKey="task_token_budget">
+    Cumulative API task budget state when `max_task_tokens` is configured; omitted otherwise.
+  </Property>
+  <Property name="prompt_tokens / completion_tokens / total_tokens" type="integer?" propKey="usage">
+    Provider-reported input, output, and total token counts. `total_tokens` is the value to add to
+    the per-message running total.
+  </Property>
+  <Property name="used_tokens / max_tokens / remaining_tokens" type="integer?" propKey="task_token_budget">
+    Cumulative API task usage, configured limit, and remaining allowance.
+  </Property>
 </Properties>
 
 ### Recommended Client State Machine
@@ -740,7 +866,7 @@ This section defines the SSE contract shared by chat, stream recovery, and conti
 1. On `message_start`, persist `conversation_id` and `message_id` from the response headers or event.
 2. Persist every non-empty SSE `id` immediately and deduplicate by id.
 3. Build the visible answer only from `message`, `message_retract`, and `message_end.answer`; never append progress events to the final answer.
-4. Treat `completed`, `stopped`, `error`, and `failed` as terminal `message_end.status` values. For `waiting_approval` or `waiting_question`, keep the same message and call the matching continuation endpoint.
+4. Treat `completed`, `stopped`, `error`, and `failed` as terminal `message_end.status` values. For `waiting_approval`, `waiting_question`, or `waiting_budget`, keep the same message and call the matching continuation endpoint.
 5. After a disconnect, recover from the events endpoint. Do not submit the original chat request again.
 
 <CodeGroup title="TypeScript Event Dispatcher">
@@ -765,6 +891,9 @@ function applyAgentEvent(frame: AgentEvent) {
     case 'question_answer_requested':
       renderPendingInteraction(frame);
       break;
+    case 'token_budget_requested':
+      renderTokenBudgetActions(frame);
+      break;
     case 'message_end':
       transitionMessage(String(data.message_id), String(data.status));
       break;
@@ -788,8 +917,10 @@ function applyAgentEvent(frame: AgentEvent) {
 | `message_retract` | Previously emitted candidate text no longer belongs to the final answer | For `process`, move it out of the final answer and optionally into a process view; for `discard`, remove it | `presentation_disposition`, `answer?`                  |
 | `message_end`     | The current SSE phase ends                                              | Enter a terminal or waiting state from `status`; when present, use `answer` to reconcile the complete text  | `status`, `metadata`, `answer?`                        |
 | `error`           | Streaming or the runtime produces a client-safe error                   | Display `message`, log `code`, and terminate as failed if no later `message_end` arrives                    | `message`, `code?`, `params?`                          |
+| `token_usage_updated` | A model invocation reports provider token usage                         | Add the invocation usage to the message total; use `task_token_budget` when present for API budget state | `conversation_id`, `message_id`, `usage`, `task_token_budget?` |
+| `token_budget_requested` | An API task reaches its configured token budget                         | Pause and render the independent add-budget or stop actions; continue through the token-budget endpoint | `request_id`, `request_kind`, `token_budget`, `actions[]` |
 
-An empty `message_start.parent_id` identifies a root message. `replace=true` means regeneration is replacing the result on the previous branch. Terminal `message_end.status` values are `completed`, `stopped`, `error`, and `failed`; waiting values are `waiting_approval` and `waiting_question`. `metadata` is an extensible public object, so read known fields and tolerate unknown ones.
+An empty `message_start.parent_id` identifies a root message. `replace=true` means regeneration is replacing the result on the previous branch. Terminal `message_end.status` values are `completed`, `stopped`, `error`, and `failed`; waiting values are `waiting_approval`, `waiting_question`, and `waiting_budget`. `metadata` is an extensible public object, so read known fields and tolerate unknown ones.
 
 <Properties>
   <Property name="parent_id" type="uuid | empty string" propKey="parent_id">
@@ -817,11 +948,11 @@ An empty `message_start.parent_id` identifies a root message. `replace=true` mea
   </Property>
   <Property
     name="status"
-    type="completed | stopped | error | failed | waiting_approval | waiting_question"
+    type="completed | stopped | error | failed | waiting_approval | waiting_question | waiting_budget"
     propKey="status"
   >
-    Required in `message_end`. The first four terminate the message; the final two require
-    continuing the same message.
+    Required in `message_end`. The first four terminate the message; the final three require
+    continuing the same message through the matching protocol.
   </Property>
   <Property name="metadata" type="object" propKey="metadata">
     Required in `message_end`. Public runtime metadata that may contain usage and waiting context;
@@ -931,7 +1062,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | `skill_call_end`           | A tool invocation succeeds                                                          | Complete the matching `invocation_id` step and read the public `result`              | `skill_id`, `tool_name`, `invocation_id`, `result?`, `duration_ms?`, `status`                               |
 | `skill_call_error`         | A tool invocation fails                                                             | Mark the invocation failed and show the safe `message`; the model may still continue | `skill_id`, `tool_name`, `invocation_id`, `message?`, `error_code?`, `duration_ms?`, `status`               |
 | `skill_artifact_created`   | A Skill creates a downloadable file artifact                                        | Render a file card, prefer `download_url`, and honor `expires_at`                    | Invocation ids plus `artifact_id?`, `file_id?`, `filename?`, `mime_type?`, `size?`, `url?`, `download_url?` |
-| `tool_governance_decision` | The published Agent makes a non-interactive authorization decision for a bound tool | Optionally show or log the allow/deny reason; never open a human approval dialog     | `correlation_id`, `decision`, `requires_approval=false`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
+| `tool_governance_decision` | Authorization for a bound tool or an admitted platform CLI call | Show confirmation only when `requires_approval=true`; use the dedicated tool-governance continuation, not workflow approval | `correlation_id`, `decision`, `requires_approval`, `reason?`, `risk_level?`, `effect?`, `asset_type?` |
 
 `arguments`, `arguments_summary`, `result`, and `governance` are public summaries, not stable raw provider objects. They may be displayed or logged, but business logic must not depend on undocumented nested fields.
 
@@ -1000,19 +1131,19 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     Asset operation id and public audit summary.
   </Property>
   <Property name="correlation_id" type="string" propKey="correlation_id">
-    Correlates a governance decision, tool invocation, and asset audit. It is not a continuation
-    parameter.
+    Correlates a governance decision, tool invocation, and asset audit. When
+    requires_approval is true, use it in the dedicated CLI continuation path.
   </Property>
   <Property name="decision" type="string" propKey="decision">
     Usually an allow or deny decision. A denial means the tool did not run; the final answer may
     still complete normally.
   </Property>
-  <Property name="requires_approval" type="false" propKey="requires_approval">
-    Always `false` in the published Agent API.
+  <Property name="requires_approval" type="boolean" propKey="requires_approval">
+    True only for a server-authorized interactive platform CLI invocation. Ordinary tool calls use false.
   </Property>
   <Property name="approval_every_invocation" type="boolean?" propKey="approval_every_invocation">
     Whether policy forbids reusing one authorization for later invocations. This is an audit field;
-    it never puts the external user into an approval flow.
+    admitted CLI invocations cannot turn it into reusable session authorization.
   </Property>
   <Property name="reason / risk_level / effect / asset_type" type="string?" propKey="reason">
     A displayable decision reason, risk level, expected external side effect, and affected asset
@@ -1046,6 +1177,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 | Event                  | Purpose and trigger                                                           | Client action                                                                                                                                     | Key fields                                                                                                 |
 | ---------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `user_input_requested` | A Skill needs input, or a workflow question is projected into the common input shape | Render the questions and route by `source`; use workflow continuation for `agent_workflow_question_answer`, otherwise submit `answers` through user-input continuation | `request_id`, `message?`, `questions[]`, `created_at`, `source?`, `workflow_run_id?`, `node_id?`, `round?` |
+| `token_budget_requested` | An API task exhausted its configured budget | Render only the returned `actions`; call token-budget continuation with `action=add` and `additional_tokens`, or `action=stop` | `request_id`, `request_kind`, `message`, `token_budget`, `actions[]` |
 
 <Properties>
   <Property name="request_id" type="string" propKey="request_id">
@@ -1269,7 +1401,7 @@ Workflow events describe execution traces and pending interactions. Maintain the
 | `user_input_requested` with `source=agent_workflow_question_answer` | `waiting_question` | Conversation/message ids, answer, and optional choice id | Workflow continuation with `type=question_answer` |
 | Other `user_input_requested` | `waiting_question` | Conversation/message/request ids and `answers` keyed by question id | Skill user-input continuation |
 
-The continuation response is another SSE stream for the same message and may pause again. Do not create a new message; keep processing until a terminal status. Tool governance is non-interactive for a published Agent: `tool_governance_decision.requires_approval` is always `false` and has no human continuation endpoint.
+The continuation response is another SSE stream for the same message and may pause again. Do not create a new message; keep processing until a terminal status. Ordinary published tools remain non-interactive. For server-admitted Linux platform CLI calls only, `tool_governance_decision.requires_approval=true` uses the dedicated tool-governance continuation. Approval never grants missing resource permissions or reruns the Shell.
 
 ---
 
@@ -1736,6 +1868,43 @@ Every operation in this section requires the same API Key and `X-External-User-I
   </Col>
 </Row>
 
+<Heading url="/api/v1/agents/conversations/{conversation_id}/files/{file_id}" method="GET" title="Read a Protected Execution File" name="#Read-Execution-File" />
+
+This endpoint checks current application access and the original conversation,
+application, entry and final-user ownership. Retained results remain available
+when Linux is disabled, but not after access is revoked. A different publication
+does not erase historical file ownership. The response is file bytes, not JSON
+or a public storage link.
+
+<Properties>
+  <Property name="conversation_id" type="uuid path" propKey="conversation_id">Owning conversation.</Property>
+  <Property name="file_id" type="uuid path" propKey="file_id">ID from the authenticated artifact event or message history.</Property>
+  <Property name="X-External-User-ID" type="string header" propKey="X-External-User-ID">Same final-user identity as the conversation; supplied by your trusted backend.</Property>
+  <Property name="download" type="boolean query" propKey="download">Optional; true requests an attachment. Range requests are supported.</Property>
+</Properties>
+
+<CodeGroup title="Request">
+```bash
+curl '{apibase}/agents/conversations/{conversation_id}/files/{file_id}?download=true' \
+  --header 'Authorization: Bearer {api_key}' \
+  --header 'X-External-User-ID: external-user-1' \
+  --output result.csv
+```
+</CodeGroup>
+
+<CodeGroup title="Response">
+```text
+HTTP/1.1 200 OK
+Cache-Control: private, no-store
+Content-Type: text/csv; charset=utf-8
+
+name,total
+sample,42
+```
+</CodeGroup>
+
+---
+
 ## Agent Memory
 
 Every Memory endpoint requires `X-External-User-ID` and can only address slots declared by the latest published Agent configuration. Use the same id as chat so conversation and long-term Memory ownership stay aligned.
@@ -2187,6 +2356,86 @@ These two read-only endpoints are retained for clients that share integrations w
 
   </Col>
 </Row>
+
+<Heading
+  url="/api/v1/agents/memory/settings"
+  method="GET"
+  title="Get User Memory Settings"
+  name="#Get-Agent-Memory-Settings"
+/>
+
+<Row>
+  <Col>
+    Use the original final-user identity. Memory settings do not grant Linux or platform CLI access.
+    <Properties>
+      <Property name="Authorization / X-External-User-ID" type="string" propKey="Authorization">Required application API Key and final-user identity.</Property>
+
+      <Property name="memory_enabled / auto_capture_enabled" type="boolean" propKey="memory_enabled">Per-user memory and automatic capture switches; changes remain subject to the published configuration.</Property>
+      <Property name="settings_revision / memory_epoch" type="integer" propKey="settings_revision">Settings concurrency revision and memory generation in the response.</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/memory/settings' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":0,"data":{"memory_enabled":true,"auto_capture_enabled":false,"settings_revision":0,"memory_epoch":0}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/settings"
+  method="PATCH"
+  title="Update User Memory Settings"
+  name="#Update-Agent-Memory-Settings"
+/>
+
+<Row>
+  <Col>
+    Use the original final-user identity. Memory settings do not grant Linux or platform CLI access.
+    <Properties>
+      <Property name="Authorization / X-External-User-ID" type="string" propKey="Authorization">Required application API Key and final-user identity.</Property>
+      <Property name="expected_revision" type="integer" propKey="expected_revision">Required settings_revision from the last read; stale updates are rejected.</Property>
+      <Property name="memory_enabled / auto_capture_enabled" type="boolean" propKey="memory_enabled">Per-user memory and automatic capture switches; changes remain subject to the published configuration.</Property>
+      <Property name="settings_revision / memory_epoch" type="integer" propKey="settings_revision">Settings concurrency revision and memory generation in the response.</Property>
+    </Properties>
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request PATCH '{apibase}/agents/memory/settings' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1' \
+      --header 'Content-Type: application/json' \
+      --data '{"expected_revision":0,"memory_enabled":true,"auto_capture_enabled":false}'
+    ```
+
+    </CodeGroup>
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":0,"data":{"memory_enabled":true,"auto_capture_enabled":false,"settings_revision":1,"memory_epoch":0}}
+    ```
+
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
 
 ## JSON Errors
 

@@ -5,13 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function debounce<T extends (...args: any[]) => any>(fn: T, delay: number) {
+export function debounce<TThis, TArgs extends unknown[]>(
+  fn: (this: TThis, ...args: TArgs) => unknown,
+  delay: number
+): (this: TThis, ...args: TArgs) => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  return function (this: any, ...args: Parameters<T>) {
+  return function (this: TThis, ...args: TArgs) {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       fn.apply(this, args);
       timer = null;
     }, delay);
-  } as T;
+  };
 }

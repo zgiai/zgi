@@ -149,7 +149,9 @@ export function ConnectorUnavailableReferences({
               value => value.usable && connection?.usable_operation_ids?.includes(value.id)
             ) ?? [];
         const connectorLabel = connectorName(item.label);
-        const targetLabel = t(`usage.surfaces.${item.target.type}`);
+        const targetLabel = t(
+          `usage.surfaces.${item.target.type === 'digital_human' ? 'digitalHuman' : item.target.type}`
+        );
         return (
           <div key={item.id} className="space-y-2 rounded-md border p-2">
             <div className="flex min-w-0 items-center justify-between gap-2">

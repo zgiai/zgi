@@ -3,6 +3,7 @@ package connectorfinalize
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,13 +26,57 @@ func requiresArchive(data snapshot) bool {
 	return false
 }
 
+const migrationLedgerLock = `LOCK TABLE public.migrations IN SHARE ROW EXCLUSIVE MODE NOWAIT`
+
+var errApplyReviewChanged = errors.New("reviewed report or supported checkpoint changed")
+
+func lockMigrationLedger(tx *gorm.DB) error {
+	if err := tx.Exec(migrationLedgerLock).Error; err != nil {
+		return fmt.Errorf("freeze the applied migration ledger before finalization: %w", err)
+	}
+	return nil
+}
+
+func requiresAdvancedLedgerLock(option Options) bool {
+	return option.AdvancedCheckpoint != ""
+}
+
+func requiredCheckpoint(option Options) string {
+	if option.AdvancedCheckpoint != "" {
+		return option.AdvancedCheckpoint
+	}
+	return CheckpointID
+}
+
+func validateApplyReview(option Options, report Report, expectedReport string) error {
+	if !sha256Digest(expectedReport) || report.Digest != expectedReport || report.Checkpoint != requiredCheckpoint(option) {
+		return errApplyReviewChanged
+	}
+	return nil
+}
+
+func validateApplyEntry(option Options, schemaVersion int) error {
+	if schemaVersion == 2 && option.AdvancedCheckpoint != "" {
+		return errAdvancedAlreadyDone
+	}
+	return nil
+}
+
 // Apply commits the marker in the same transaction as conversion and DDL.
 // A repeat checks the complete schema2 shape and proofs without adding records.
 func Apply(ctx context.Context, db *gorm.DB, options ApplyOptions) (Report, error) {
 	var report Report
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if requiresAdvancedLedgerLock(options.Options) {
+			if err := lockMigrationLedger(tx); err != nil {
+				return err
+			}
+		}
 		var version int
 		if err := tx.Table("connector_schema_readiness").Select("schema_version").Where("id=1").Scan(&version).Error; err != nil {
+			return err
+		}
+		if err := validateApplyEntry(options.Options, version); err != nil {
 			return err
 		}
 		if version == 2 {
@@ -46,8 +91,8 @@ func Apply(ctx context.Context, db *gorm.DB, options ApplyOptions) (Report, erro
 		if err != nil {
 			return err
 		}
-		if r.Checkpoint != CheckpointID || !sha256Digest(options.ExpectedReport) || r.Digest != options.ExpectedReport {
-			return fmt.Errorf("reviewed report or supported checkpoint changed")
+		if err := validateApplyReview(options.Options, r, options.ExpectedReport); err != nil {
+			return err
 		}
 		if len(r.Issues) > 0 {
 			return fmt.Errorf("retirement proof has %d unresolved issues", len(r.Issues))
@@ -69,6 +114,11 @@ func Apply(ctx context.Context, db *gorm.DB, options ApplyOptions) (Report, erro
 	return report, err
 }
 
+// ErrMaintenanceRequired reports legacy Connector storage that cannot be
+// retired without losing data: it needs plan, archive, apply and verify (or an
+// explicit discard). FinalizeEmpty returns it before changing anything.
+var ErrMaintenanceRequired = errors.New("Connector maintenance required: run connector-finalize plan, archive, apply and verify before restarting")
+
 // FinalizeEmpty is only called by the registered migration inside its outer
 // transaction. Every source and host row must be empty; existing installations
 // must use Plan/CreateArchive/Apply. gormigrate writes its marker before commit.
@@ -84,7 +134,7 @@ func FinalizeEmpty(tx *gorm.DB) error {
 		return err
 	}
 	if r.Checkpoint != CheckpointID || len(r.Issues) > 0 || requiresArchive(data) || r.HostTransitions > 0 {
-		return fmt.Errorf("Connector maintenance required: run connector-finalize plan, archive, apply and verify before restarting")
+		return ErrMaintenanceRequired
 	}
 	if err := applySnapshot(tx, r, data, nil); err != nil {
 		return err

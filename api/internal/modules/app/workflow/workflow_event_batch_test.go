@@ -12,7 +12,7 @@ import (
 
 func TestWorkflowEventBatchProjectsParallelInternalNodes(t *testing.T) {
 	db := openWorkflowStopV2TestDB(t)
-	if err := db.AutoMigrate(&WorkflowRunLog{}, &WorkflowNodeRuntimeLog{}, &workflowpause.RunEvent{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &WorkflowRunLog{}, &WorkflowNodeRuntimeLog{}, &workflowpause.RunEvent{}); err != nil {
 		t.Fatal(err)
 	}
 	previous := database.GetDB()

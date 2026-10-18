@@ -9,7 +9,9 @@ import (
 
 	appconfig "github.com/zgiai/zgi/api/config"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
+	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
+	"github.com/zgiai/zgi/api/internal/testutil/testdb"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -225,7 +227,7 @@ func TestCreateRuntimeFormReusesOneShortLinkAcrossSubmitMethods(t *testing.T) {
 	}
 }
 
-func TestFormAccessTokenSubmitsWithoutRecipientAttributionAndRejectsRepeat(t *testing.T) {
+func TestFormAccessTokenSubmitsWithoutRecipientAttributionAndReplaysIdenticalInput(t *testing.T) {
 	db := newApprovalTestDB(t)
 	restore := stubApprovalTokens(t, "formTok1")
 	defer restore()
@@ -272,12 +274,18 @@ func TestFormAccessTokenSubmitsWithoutRecipientAttributionAndRejectsRepeat(t *te
 		t.Fatalf("short link expires_at after submit = %v, want unchanged %v", afterSubmitLink.ExpiresAt, beforeSubmitLink.ExpiresAt)
 	}
 
-	_, err = service.SubmitByToken(context.Background(), runtimeForm.Form.AccessToken, SubmitRequest{
+	replayed, err := service.SubmitByToken(context.Background(), runtimeForm.Form.AccessToken, SubmitRequest{
 		Action: "approve",
 		Inputs: map[string]interface{}{},
 	}, nil, nil)
+	if err != nil || replayed.ID != submitted.ID || replayed.CompletedByRecipientID != nil {
+		t.Fatalf("identical submit replay = %#v, %v", replayed, err)
+	}
+	_, err = service.SubmitByToken(context.Background(), runtimeForm.Form.AccessToken, SubmitRequest{
+		Action: "approve", Inputs: map[string]interface{}{"changed": true},
+	}, nil, nil)
 	if !errors.Is(err, ErrFormAlreadySubmitted) {
-		t.Fatalf("repeat submit error = %v, want ErrFormAlreadySubmitted", err)
+		t.Fatalf("changed submit error = %v, want ErrFormAlreadySubmitted", err)
 	}
 }
 
@@ -679,7 +687,8 @@ func newApprovalTestDB(t *testing.T) *gorm.DB {
 		}
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&Form{}, &Delivery{}, &Recipient{}, &shortlinkcap.ShortLink{}); err != nil {
+	if err := testdb.AutoMigrate(db, &Form{}, &Delivery{}, &Recipient{}, &shortlinkcap.ShortLink{},
+		&approvalWorkflowRunScope{}, &workflowpause.RunPause{}, &workflowpause.RunPauseReason{}, &workflowpause.RunEvent{}, &workflowpause.RuntimeOutbox{}); err != nil {
 		t.Fatalf("migrate approval tables: %v", err)
 	}
 	if err := db.Exec("CREATE TABLE accounts (id text primary key, mobile_e164 text)").Error; err != nil {

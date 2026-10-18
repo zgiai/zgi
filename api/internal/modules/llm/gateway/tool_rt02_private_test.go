@@ -134,8 +134,8 @@ func TestRT02PrivateLateFactKeepsFrozenPriceAndChargesOnlyDelta(t *testing.T) {
 	}
 
 	// Private is billed locally. The frozen contract explicitly allows an attempt
-	// to have several legitimate difference transactions ("允许同一attempt有多笔
-	// 合法差额交易"), so the count is not pinned to one. What matters is that the
+	// to have several legitimate difference transactions, so the count is not
+	// pinned to one. What matters is that the
 	// total adjustment equals token + tool exactly once and no stray debits exist.
 	adjustments := f.countWalletTransactions(t, attempt, channelWalletTxTypeSettleAdjustment)
 	if adjustments < 1 || adjustments > 2 {

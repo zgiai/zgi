@@ -156,8 +156,8 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 	if got := toolNames(agent.Tools); !sameStrings(got, expectedTools) {
 		t.Fatalf("agent workflow tools = %v", got)
 	}
-	if !sameStrings(agent.Metadata.SupportedCallers, []string{SkillCallerAgent}) {
-		t.Fatalf("supported callers = %#v, want agent", agent.Metadata.SupportedCallers)
+	if !sameStrings(agent.Metadata.SupportedCallers, []string{SkillCallerAgent, SkillCallerDigitalHuman}) {
+		t.Fatalf("supported callers = %#v, want agent and digital_human", agent.Metadata.SupportedCallers)
 	}
 	if !sameStrings(agent.Metadata.RequiredConfig, []string{SkillRequiredConfigAgentWorkflow}) {
 		t.Fatalf("required config = %#v, want agent_workflow", agent.Metadata.RequiredConfig)
@@ -1246,6 +1246,63 @@ This custom skill should not be allowed to declare tools.
 	}
 }
 
+func TestCustomSkillCallerDefaultsIncludeDigitalHuman(t *testing.T) {
+	tests := []struct {
+		name             string
+		supportedCallers string
+		want             []string
+	}{
+		{
+			name: "omitted callers use portable custom defaults",
+			want: []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman},
+		},
+		{
+			name:             "explicit agent caller remains restricted",
+			supportedCallers: "supported_callers:\n  - agent\n",
+			want:             []string{SkillCallerAgent},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			content := `---
+name: caller-default-test
+description: Test custom skill caller defaults.
+when_to_use: Use when testing caller defaults.
+runtime_type: prompt
+` + tt.supportedCallers + `---
+
+# Caller defaults
+
+Follow the test instructions.
+`
+			if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(content), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			doc, err := LoadCustomSkillDocument(root)
+			if err != nil {
+				t.Fatalf("LoadCustomSkillDocument() error = %v", err)
+			}
+			if !sameStrings(doc.Metadata.SupportedCallers, tt.want) {
+				t.Fatalf("supported callers = %#v, want %#v", doc.Metadata.SupportedCallers, tt.want)
+			}
+		})
+	}
+}
+
+// A general-purpose system skill that does not declare `supported_callers` is
+// available to every conversational surface, including digital humans. Skills
+// that must stay off a surface declare their callers explicitly.
+func TestSystemSkillCallerDefaultsIncludeDigitalHuman(t *testing.T) {
+	got := normalizeSkillCallers("system-default-test", SkillSourceSystem, nil)
+	want := []string{SkillCallerAIChat, SkillCallerAgent, SkillCallerDigitalHuman}
+	if !sameStrings(got, want) {
+		t.Fatalf("supported callers = %#v, want %#v", got, want)
+	}
+}
+
 func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})
@@ -1432,6 +1489,20 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 				t.Fatalf("missing argument contract for %s/%s", doc.Metadata.ID, tool.Name)
 			}
 		}
+	}
+}
+
+func TestFileGeneratorSupportsDigitalHumanCaller(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(t.Context(), []string{SkillFileGenerator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	if len(resolved.Skills) != 1 {
+		t.Fatalf("resolved skills = %d, want 1", len(resolved.Skills))
+	}
+	if !SkillSupportsCaller(resolved.Skills[0].Metadata.SupportedCallers, SkillCallerDigitalHuman) {
+		t.Fatalf("supported callers = %#v, want digital_human", resolved.Skills[0].Metadata.SupportedCallers)
 	}
 }
 

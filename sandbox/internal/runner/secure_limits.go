@@ -30,9 +30,6 @@ func (l secureRuntimeLimits) prlimitArgs() []string {
 	if l.MemoryBytes > 0 {
 		args = append(args, "--as="+strconv.FormatInt(l.MemoryBytes, 10))
 	}
-	if l.ProcessLimit > 0 {
-		args = append(args, "--nproc="+strconv.Itoa(l.ProcessLimit))
-	}
 	if l.OpenFileLimit > 0 {
 		args = append(args, "--nofile="+strconv.Itoa(l.OpenFileLimit))
 	}

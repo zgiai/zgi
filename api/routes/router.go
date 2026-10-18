@@ -59,7 +59,7 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 
 	// API v1 routes
 	v1Group := r.Group("/console/api")
-	v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory, applicationErrorCatalog)
+	digitalHumanRuntime := v1.RegisterRoutes(r, v1Group, serviceContainer, workflowEngineFactory, applicationErrorCatalog)
 
 	external.RegisterExternalRoutes(r, external.ExternalRouteDeps{
 		DB:                         serviceContainer.GetDB(),
@@ -81,6 +81,10 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 		ConnectorDispatcher:        serviceContainer.GetConnectorSurfaceDispatcher(),
 		ConnectorAgentRuntime:      serviceContainer.GetConnectorAgentRuntimeResolver(),
 		ConnectorConfirmationStore: serviceContainer.GetConnectorConfirmationContinuationStore(),
+		DigitalHumanRuntime:        digitalHumanRuntime.Runtime,
+		DigitalHumanAccess:         digitalHumanRuntime.Access,
+		DigitalHumanTasks:          digitalHumanRuntime.Tasks,
+		ApplicationErrorCatalog:    applicationErrorCatalog,
 		ConnectorCatalog:           serviceContainer.GetConnectorPluginManager(),
 	})
 

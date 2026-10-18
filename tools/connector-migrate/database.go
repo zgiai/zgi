@@ -55,10 +55,12 @@ var sqlNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 var snapshotTables = []string{
 	"aichat_integration_preferences", "agent_published_versions", "agent_resource_bindings", "agents", "agents_configs",
 	"chat_runtime_conversations", "chat_runtime_custom_skills", "chat_runtime_organization_skill_configs",
+	"connector_chat_preference_mutations", "connector_chat_preferences", "connector_connection_provider_evidence",
 	"connector_connections", "connector_confirmation_continuations", "connector_conversion_records", "connector_definition_versions", "connector_definitions",
 	"connector_execution_route_claims", "connector_invocation_claims", "connector_legacy_identity_mappings", "connector_lifecycle_decisions",
 	"connector_operation_outcomes", "connector_plugin_versions", "connector_reversal_baselines", "connector_schema_readiness", "connector_target_bindings", "connector_unavailable_references",
-	"integration_action_policies", "integration_connection_grants", "integration_connections", "workflow_run_pauses", "workflow_runs", "workflows", "workspaces",
+	"connector_messaging_contexts", "connector_messaging_states", "connector_onboarding_flows", "connector_onboarding_secrets",
+	"integration_action_policies", "integration_connection_grants", "integration_connections", "migrations", "workflow_run_pauses", "workflow_runs", "workflows", "workspaces",
 }
 var mutableTables = map[string]bool{"connector_connections": true, "connector_target_bindings": true, "connector_unavailable_references": true, "connector_invocation_claims": true, "connector_confirmation_continuations": true, "connector_conversion_records": true, "connector_definitions": true, "connector_definition_versions": true, "connector_plugin_versions": true, "agents_configs": true, "agent_published_versions": true, "workflows": true, "workflow_runs": true, "workflow_run_pauses": true, "chat_runtime_custom_skills": true}
 

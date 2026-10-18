@@ -147,6 +147,37 @@ func TestAgentsService_GetAgentsListWithPermissions_FiltersWorkflowAssetKind(t *
 	)
 }
 
+func TestAgentsService_GetAgentsListWithPermissions_PropagatesCatalogTagFilter(t *testing.T) {
+	tagID := uuid.NewString()
+	repo := &stubAgentsListRepository{}
+	service := &agentsService{
+		agentsRepo: repo,
+		tenantService: &stubWorkspaceManagementServiceForAgentsList{
+			currentOrganization: &workspace_model.OrganizationMember{
+				OrganizationID: "org-1",
+				AccountID:      "account-1",
+				Role:           workspace_model.OrganizationRoleNormal,
+			},
+			workspaceIDsByOrganization: []string{"ws-alpha"},
+		},
+		enterpriseService: &stubOrganizationServiceForAgentsList{
+			workspaces:               []*workspace_model.Workspace{{ID: "ws-alpha", Status: workspace_model.WorkspaceStatusNormal}},
+			permissionsByWorkspaceID: map[string]bool{"ws-alpha": true},
+		},
+		resourcePermissionService: &stubResourcePermissionService{},
+	}
+
+	resp, err := service.GetAgentsListWithPermissions(t.Context(), "account-1", dto.GetAgentsListRequest{
+		Page:      1,
+		Limit:     20,
+		AssetKind: "agent",
+		TagIDs:    tagID + "," + tagID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, []string{tagID}, repo.lastFilter.TagIDs)
+}
+
 func TestAgentsService_GetAgentsListWithPermissions_PropagatesWorkflowFilters(t *testing.T) {
 	ctx := t.Context()
 	isPublished := true

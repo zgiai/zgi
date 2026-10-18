@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
@@ -15,6 +16,10 @@ var localBootstrapOnce sync.Once
 // non-cloud deployments. Failures are logged and do not block service startup.
 func EnsureLocalBootstrapStarted(ctx context.Context, db *gorm.DB, edition string) {
 	if db == nil || strings.EqualFold(strings.TrimSpace(edition), "CLOUD") {
+		return
+	}
+	if appconfig.GlobalConfig != nil && !appconfig.GlobalConfig.ModelMeta.AutoSyncEnabled {
+		logger.Info("Skipping local model metadata bootstrap sync: MODELMETA_AUTO_SYNC_ENABLED is false")
 		return
 	}
 

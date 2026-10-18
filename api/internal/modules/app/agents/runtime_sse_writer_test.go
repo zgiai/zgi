@@ -101,3 +101,21 @@ func TestWriteAgentChatEndRedactsPrivateMetadata(t *testing.T) {
 		t.Fatalf("SSE redaction mutated durable metadata: %#v", metadata)
 	}
 }
+
+func TestWriteAgentChatEndSkipsBudgetPendingDuplicate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	prepared := &runtimeservice.PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      &runtimemodel.Message{ID: uuid.New()},
+	}
+
+	writeAgentChatEnd(ginContext, prepared, &runtimeservice.ChatResult{
+		Status: runtimemodel.MessageStatusWaitingBudget,
+	})
+
+	if got := recorder.Body.String(); got != "" {
+		t.Fatalf("budget-pending handler tail emitted duplicate message_end: %s", got)
+	}
+}

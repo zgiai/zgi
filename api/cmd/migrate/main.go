@@ -76,6 +76,11 @@ func main() {
 	case "down":
 		runRollbackCommand()
 
+	case "digital-human-preserve":
+		if err := runDigitalHumanPreserve(os.Args[2:]); err != nil {
+			logger.Fatal("DigitalHuman preservation failed: %v", err)
+		}
+
 	case "rollback":
 		runRollbackCommand()
 
@@ -323,6 +328,10 @@ Commands:
   seed            Execute seed data
   connector-checkpoint --id ID    Advance to a registered historical Connector checkpoint
   connector-finalize plan|apply|verify|discard    Review, archive, finalize, verify, or discard legacy Connector storage
+                                          --advanced-checkpoint MIGRATION_ID opts a schema1
+                                          head later than the registered checkpoint into
+                                          plan/apply (rejected by verify)
+  digital-human-preserve plan|apply|verify    Move legacy channel credentials to their installations
 
 Migration Options:
   -pretend        Show migration status without applying changes

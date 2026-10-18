@@ -198,11 +198,15 @@ func TestInitialChatBindingsCommitBeforeFirstTurnDiscovery(t *testing.T) {
 			}}
 			svc := &service{repos: repository.NewRepositories(db), connectorChatRuntime: probe,
 				skillRuntime: skills.NewRuntime(nil, nil), modelSpecResolver: toolGovernanceStreamModelSpecResolver{}}
+			originalRepos := svc.repos
 			prepared, err := svc.PrepareChat(context.Background(), scope, runtimedto.ChatRequest{
 				Query: "search repositories", Model: "test", Provider: "test", Surface: runtimedto.RuntimeSurfaceWorkChat,
 				InitialConnectorBindings:         []runtimedto.InitialConnectorBinding{{ConnectorID: "github", ConnectionID: connectionID.String()}},
 				InitialConnectorDefaultsRevision: defaultsRevision,
 			})
+			if svc.repos != originalRepos || svc.repos.DB != db {
+				t.Fatal("initial connection transaction replaced the parent service repositories")
+			}
 			if prepared != nil || err == nil {
 				t.Fatalf("unexpected prepared turn: %#v, %v", prepared, err)
 			}

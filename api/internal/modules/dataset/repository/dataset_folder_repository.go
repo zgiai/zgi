@@ -340,6 +340,7 @@ func (r *datasetFolderRepository) GetDatasetsInFolder(ctx context.Context, folde
 
 	// Count total
 	if err := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("provider <> '"+model.ProviderDigitalHumanMemory+"'").
 		Where("id IN (?)", subQuery).
 		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
 		Count(&total).Error; err != nil {
@@ -349,6 +350,7 @@ func (r *datasetFolderRepository) GetDatasetsInFolder(ctx context.Context, folde
 	// Apply pagination
 	offset := (page - 1) * limit
 	if err := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("provider <> '"+model.ProviderDigitalHumanMemory+"'").
 		Where("id IN (?)", subQuery).
 		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
 		Offset(offset).Limit(limit).

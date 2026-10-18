@@ -77,7 +77,7 @@ const FormDataEditor: React.FC<FormDataEditorProps> = ({
     idx: number,
     payload: { sourceId: string; key: string; valuePath: string[]; type: WorkflowVariable['type'] }
   ) => {
-    updateItem(idx, { file: payload.valuePath } as any);
+    updateItem(idx, { file: payload.valuePath });
   };
 
   return (

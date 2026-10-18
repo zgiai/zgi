@@ -3,6 +3,8 @@ package skills
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -111,6 +113,70 @@ func TestBuildNativeToolSetActivatesStructuredFileGeneratorWithinBudget(t *testi
 				t.Fatalf("generate_pptx presentation schema = %#v", presentation)
 			}
 		}
+	}
+}
+
+func TestBuildNativeToolSetUsesProviderInputSchemaWithoutLegacyParameters(t *testing.T) {
+	catalogDir := t.TempDir()
+	skillRoot := filepath.Join(catalogDir, "input-schema-only")
+	if err := os.MkdirAll(skillRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	skill := `---
+name: input-schema-only
+description: Input schema only provider test
+when_to_use: Use when testing native provider schema projection.
+provider_type: connector
+provider_id: input-schema-only
+tools:
+  - execute_action
+runtime_type: tool
+---
+Use the provider action.
+`
+	if err := os.WriteFile(filepath.Join(skillRoot, "SKILL.md"), []byte(skill), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	provider := newInputSchemaOnlyProviderForTest()
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(provider); err != nil {
+		t.Fatalf("RegisterProvider() error = %v", err)
+	}
+	runtime := NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(t.Context(), []string{"input-schema-only"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+
+	toolSet := runtime.BuildNativeToolSet(t.Context(), resolved, NativeToolSetOptions{BudgetChars: 10000})
+	if len(toolSet.SkippedSkills) != 0 || len(toolSet.ProviderTools) != 1 {
+		t.Fatalf("tool set = %#v, want one active provider tool", toolSet)
+	}
+	parameters, ok := toolSet.ProviderTools[0].Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters = %#v, want object schema", toolSet.ProviderTools[0].Function.Parameters)
+	}
+	properties, ok := parameters["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("properties = %#v, want provider properties", parameters["properties"])
+	}
+	for _, name := range []string{"integration_id", "action_id", "arguments"} {
+		if _, exists := properties[name]; !exists {
+			t.Fatalf("properties = %#v, missing %q", properties, name)
+		}
+	}
+	if _, exists := properties["connection_id"]; exists {
+		t.Fatalf("properties = %#v, read-only connection_id must not be model-visible", properties)
+	}
+	required, ok := parameters["required"].([]interface{})
+	if !ok || len(required) != 3 {
+		t.Fatalf("required = %#v, want three model-owned fields", parameters["required"])
+	}
+
+	resolvedProperties := resolved.Skills[0].Tools[0].InputSchema["properties"].(map[string]interface{})
+	if _, exists := resolvedProperties["connection_id"]; !exists {
+		t.Fatalf("resolved input schema was mutated: %#v", resolved.Skills[0].Tools[0].InputSchema)
 	}
 }
 
@@ -546,4 +612,77 @@ func TestBuildNativeToolSetAliasesGlobalConflictsStably(t *testing.T) {
 	if bName := b.ProviderTools[0].Function.Name; bName == "calculate" || bName == aName {
 		t.Fatalf("calculator-b alias = %q, want distinct stable alias from %q", bName, aName)
 	}
+}
+
+type inputSchemaOnlyProviderForTest struct {
+	tool *inputSchemaOnlyToolForTest
+}
+
+func newInputSchemaOnlyProviderForTest() *inputSchemaOnlyProviderForTest {
+	return &inputSchemaOnlyProviderForTest{tool: &inputSchemaOnlyToolForTest{}}
+}
+
+func (p *inputSchemaOnlyProviderForTest) GetEntity() tools.ToolProviderEntity {
+	return tools.ToolProviderEntity{
+		Identity:     tools.ToolProviderIdentity{Name: "input-schema-only"},
+		ProviderType: tools.ToolProviderTypeConnector,
+		Tools:        []tools.ToolEntity{p.tool.GetEntity()},
+	}
+}
+
+func (p *inputSchemaOnlyProviderForTest) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeConnector
+}
+
+func (p *inputSchemaOnlyProviderForTest) GetTool(name string) (tools.Tool, error) {
+	if name != "execute_action" {
+		return nil, tools.ErrToolNotFound
+	}
+	return p.tool, nil
+}
+
+func (p *inputSchemaOnlyProviderForTest) GetTools() []tools.Tool { return []tools.Tool{p.tool} }
+
+func (p *inputSchemaOnlyProviderForTest) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type inputSchemaOnlyToolForTest struct{}
+
+func (t *inputSchemaOnlyToolForTest) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity:    tools.ToolIdentity{Name: "execute_action", Provider: "input-schema-only"},
+		Description: tools.ToolDescription{LLM: "Execute an action using its provider-defined input schema."},
+		InputSchema: map[string]interface{}{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]interface{}{
+				"integration_id": map[string]interface{}{"type": "string"},
+				"action_id":      map[string]interface{}{"type": "string"},
+				"arguments":      map[string]interface{}{"type": "object", "additionalProperties": true},
+				"connection_id":  map[string]interface{}{"type": "string", "format": "uuid", "readOnly": true},
+			},
+			"required": []string{"integration_id", "action_id", "arguments", "connection_id"},
+		},
+	}
+}
+
+func (t *inputSchemaOnlyToolForTest) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeConnector
+}
+
+func (t *inputSchemaOnlyToolForTest) GetTenantID() string { return "" }
+
+func (t *inputSchemaOnlyToolForTest) Invoke(context.Context, string, map[string]interface{}, *string, *string, *string) ([]tools.ToolInvokeMessage, error) {
+	return nil, nil
+}
+
+func (t *inputSchemaOnlyToolForTest) GetRuntimeParameters(context.Context, *string, *string, *string) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *inputSchemaOnlyToolForTest) ForkToolRuntime(*tools.ToolRuntime) tools.Tool { return t }
+
+func (t *inputSchemaOnlyToolForTest) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
 }

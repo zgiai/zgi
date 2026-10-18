@@ -29,6 +29,8 @@ type commandTransaction struct {
 	reads, writes, failWrite                       int
 	commitError, invalidConversion                 bool
 	committed, rolledBack, validated, readyWritten bool
+	maintenanceBusy, maintenanceLocked             bool
+	timezoneConfigured, timezoneError              bool
 }
 
 func (tx *commandTransaction) current() databaseSnapshot {
@@ -43,6 +45,10 @@ type existsRow bool
 func (r existsRow) Scan(dest ...any) error { *dest[0].(*bool) = bool(r); return nil }
 
 func (tx *commandTransaction) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	if query == "SELECT pg_try_advisory_xact_lock(hashtext('zgi:migrations'))" {
+		tx.maintenanceLocked = !tx.maintenanceBusy
+		return existsRow(tx.maintenanceLocked)
+	}
 	if query != "SELECT to_regclass($1) IS NOT NULL" {
 		panic("unexpected command query")
 	}
@@ -67,6 +73,9 @@ func (r *snapshotRows) Scan(dest ...any) error {
 }
 
 func (tx *commandTransaction) Query(_ context.Context, query string, _ ...any) (pgx.Rows, error) {
+	if !tx.timezoneConfigured {
+		return nil, errors.New("snapshot read without canonical timezone")
+	}
 	parts := strings.Split(query, `"`)
 	if len(parts) < 4 {
 		return nil, errors.New("unexpected snapshot query")
@@ -81,6 +90,11 @@ func (tx *commandTransaction) Query(_ context.Context, query string, _ ...any) (
 
 func (tx *commandTransaction) Exec(_ context.Context, query string, _ ...any) (pgconn.CommandTag, error) {
 	switch {
+	case query == "SET LOCAL TIME ZONE 'UTC'":
+		if tx.timezoneError {
+			return pgconn.CommandTag{}, errors.New(secretMarker)
+		}
+		tx.timezoneConfigured = true
 	case strings.HasPrefix(query, "ALTER TABLE connector_confirmation_continuations"):
 		tx.validated = true
 	case strings.HasPrefix(query, "UPDATE connector_schema_readiness"):
@@ -89,6 +103,9 @@ func (tx *commandTransaction) Exec(_ context.Context, query string, _ ...any) (p
 		}
 		tx.readyWritten = true
 	case strings.HasPrefix(query, "INSERT "), strings.HasPrefix(query, "UPDATE "):
+		if !tx.maintenanceLocked {
+			return pgconn.CommandTag{}, errors.New("write without migration lock")
+		}
 		tx.writes++
 		if tx.writes == tx.failWrite {
 			return pgconn.CommandTag{}, errors.New(secretMarker)
@@ -115,6 +132,7 @@ func (tx *commandTransaction) Rollback(context.Context) error {
 func commandFixture(t *testing.T) (*commandDatabase, string) {
 	t.Helper()
 	source := fixture(t)
+	source["migrations"] = []row{{"id": detachCheckpoint}}
 	if err := inventorySkillFiles(source, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -135,16 +153,18 @@ func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing
 				db.tx.source = db.tx.converted
 				before = hash(db.tx.source)
 			}
-			err := runOnConnection(context.Background(), db, command, testKeys(), digest, "", func(report) error { return nil })
+			err := runOnConnection(context.Background(), db, command, testKeys(), digest, "", "", func(report) error { return nil })
 			if err != nil || db.options.AccessMode != pgx.ReadOnly || db.options.IsoLevel != pgx.Serializable || db.tx.writes != 0 || db.tx.committed || !db.tx.rolledBack || hash(db.tx.source) != before {
 				t.Fatal("read-only command mutated or committed", err)
 			}
 		})
 	}
-	for _, scenario := range []string{"write_failure", "verification_failure", "commit_failure", "stale_report", "success"} {
+	for _, scenario := range []string{"timezone_failure", "write_failure", "verification_failure", "commit_failure", "stale_report", "changed_history", "migration_busy", "unsupported_history", "success"} {
 		t.Run(scenario, func(t *testing.T) {
 			db, digest := commandFixture(t)
 			switch scenario {
+			case "timezone_failure":
+				db.tx.timezoneError = true
 			case "write_failure":
 				db.tx.failWrite = 2
 			case "verification_failure":
@@ -153,9 +173,15 @@ func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing
 				db.tx.commitError = true
 			case "stale_report":
 				digest = strings.Repeat("0", 64)
+			case "changed_history":
+				db.tx.source["migrations"] = append(db.tx.source["migrations"], row{"id": "20260903183000_add_video_runtime_task_poster_url"})
+			case "migration_busy":
+				db.tx.maintenanceBusy = true
+			case "unsupported_history":
+				db.tx.source["migrations"] = append(db.tx.source["migrations"], row{"id": "202609031410353961_finalize_connector_detachment"})
 			}
 			var output report
-			err := runOnConnection(context.Background(), db, "apply", testKeys(), digest, "", func(r report) error { output = r; return nil })
+			err := runOnConnection(context.Background(), db, "apply", testKeys(), digest, "", "", func(r report) error { output = r; return nil })
 			if db.options.IsoLevel != pgx.Serializable || db.options.AccessMode == pgx.ReadOnly {
 				t.Fatal("apply did not use a writable serializable transaction")
 			}
@@ -168,7 +194,7 @@ func TestConversionCommandsKeepReadOnlyRunsAndFailedWritesUncommitted(t *testing
 			if err == nil || strings.Contains(err.Error(), secretMarker) || db.tx.committed || !db.tx.rolledBack || output.State == "applied" {
 				t.Fatal("failed conversion committed, reported success or exposed driver data", err)
 			}
-			if scenario == "stale_report" && db.tx.writes != 0 {
+			if (scenario == "timezone_failure" || scenario == "stale_report" || scenario == "changed_history" || scenario == "migration_busy" || scenario == "unsupported_history") && db.tx.writes != 0 {
 				t.Fatal("changed source was written")
 			}
 			if scenario == "write_failure" && db.tx.writes != 2 {

@@ -1,5 +1,10 @@
 # Script Skill 输出文件接入 ZGI
 
+新建 Skill 时建议从
+[`script-skill-development-guide.md`](script-skill-development-guide.md) 和其中的
+[Python](examples/zgi-script-skill-template/) 或
+[Node.js](examples/zgi-node-script-skill-template/) 可运行模板开始；本文只展开输出文件和前端附件链路。
+
 本文面向 Script Skill 开发者和 ZGI 运行时开发者，说明如何把脚本生成的文件接入对话附件链路，使文件可以在消息中展示、下载，并在刷新会话后继续访问。
 
 ## 先明确：文本路径不是附件
@@ -52,6 +57,18 @@ Skill 写入 artifacts/
 | `max_artifact_count` | 本次调用最多收集的文件数。普通 Script Skill 的默认上限是 10。 |
 | `max_artifact_bytes` | 本次产物清单允许的总字节数。普通 Script Skill 的默认上限是 2 MiB。 |
 | `result_mode` | 同时返回 stdout 结果和文件时使用 `mixed`；只产出文件可使用 `artifacts`。 |
+
+四种模式的推荐用法如下：
+
+| 模式 | stdout 契约 | 产物契约 |
+| --- | --- | --- |
+| `stdout_json` | 输出一个 JSON object，模型收到 JSON Tool 消息。 | 可不生成文件。 |
+| `stdout_text` | 输出 UTF-8 文本，模型收到 text Tool 消息。 | 可不生成文件。 |
+| `artifacts` | stdout 可留空。 | 文件是主要交付物。 |
+| `mixed` | 输出 JSON object 或文本摘要。 | 同时返回一个或多个文件。 |
+
+stderr 始终作为诊断 log 消息返回，不是业务结果通道。合法 JSON 数组或标量应放入
+JSON object 的字段中，避免被作为普通文本传递给模型。
 
 由服务端运行时授权的包可以获得更高限额，当前 API 管理授权上限为 20 个文件和 256 MiB，部署侧策略还可以进一步收紧。Skill 包不能仅靠提高 manifest 数值来获得该权限。不要在包内指定受管 `dependency_profile`；依赖环境仍由 ZGI 的依赖构建与授权流程决定。
 

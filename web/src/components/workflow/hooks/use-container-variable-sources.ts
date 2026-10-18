@@ -15,7 +15,7 @@ interface UseContainerVariableSourcesOptions {
   includeUpstream?: boolean;
   includeScopedSelf?: boolean;
   includeChildOutputs?: boolean;
-  excludeChildNodeTypes?: WorkflowNodeData['type'][];
+  excludeChildNodeTypes?: Array<WorkflowNodeData['type']>;
 }
 
 interface WorkflowGraphSnapshot {

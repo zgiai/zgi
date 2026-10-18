@@ -855,6 +855,7 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
 		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
 		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
+		errors.Is(err, runtimeservice.ErrConversationWaitingBudget),
 		errors.Is(err, runtimeservice.ErrMessageReplaceNotAllowed):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	default:
@@ -1124,6 +1125,7 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		HasReferences:         metadata.HasReferences,
 		HasScripts:            metadata.HasScripts,
 		ScriptsSupported:      metadata.ScriptsSupported,
+		ScriptExecutionMode:   metadata.ScriptExecutionMode,
 		MaxCallsPerTurn:       metadata.MaxCallsPerTurn,
 		TimeoutSeconds:        metadata.TimeoutSeconds,
 		Status:                metadata.Status,
@@ -1180,20 +1182,21 @@ func skillImportPreviewResponse(preview *runtimeservice.SkillImportPreview) runt
 		expiresAt = preview.ExpiresAt.Unix()
 	}
 	return runtimedto.ImportSkillPreviewResponse{
-		ImportID:         preview.ImportID,
-		ExpiresAt:        expiresAt,
-		Skill:            skill,
-		WillOverwrite:    preview.WillOverwrite,
-		ExistingSkill:    existingSkill,
-		FileCount:        preview.FileCount,
-		TotalSize:        preview.TotalSize,
-		Files:            files,
-		References:       copyStringSlice(preview.References),
-		HasScripts:       preview.HasScripts,
-		ScriptsSupported: preview.ScriptsSupported,
-		Warnings:         copyStringSlice(preview.Warnings),
-		ValidationErrors: copyStringSlice(preview.ValidationErrors),
-		CanImport:        preview.CanImport,
+		ImportID:            preview.ImportID,
+		ExpiresAt:           expiresAt,
+		Skill:               skill,
+		WillOverwrite:       preview.WillOverwrite,
+		ExistingSkill:       existingSkill,
+		FileCount:           preview.FileCount,
+		TotalSize:           preview.TotalSize,
+		Files:               files,
+		References:          copyStringSlice(preview.References),
+		HasScripts:          preview.HasScripts,
+		ScriptsSupported:    preview.ScriptsSupported,
+		ScriptExecutionMode: preview.ScriptExecutionMode,
+		Warnings:            copyStringSlice(preview.Warnings),
+		ValidationErrors:    copyStringSlice(preview.ValidationErrors),
+		CanImport:           preview.CanImport,
 	}
 }
 

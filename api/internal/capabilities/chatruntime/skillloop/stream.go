@@ -41,7 +41,8 @@ func (r *Runner) runModelToolRoundStream(
 	streamReq.Stream = true
 	startedAt := time.Now()
 	r.recordModelRequest(phase, round, streamReq)
-	stream, fallbackProgressStreamed, err := r.openSkillPlanningStream(ctx, prepared, streamReq, onEvent, phase == "agent_tool_loop")
+	stream, stopStream, fallbackProgressStreamed, err := r.openSkillPlanningStream(ctx, prepared, streamReq, onEvent, phase == "agent_tool_loop")
+	defer stopStream()
 	if err != nil {
 		r.recordModelInvocation(ModelInvocationTrace{
 			Phase:      phase,
@@ -388,7 +389,7 @@ func (r *Runner) openSkillPlanningStream(
 	streamReq *adapter.ChatRequest,
 	onEvent func(Event) error,
 	suppressFallback bool,
-) (<-chan adapter.StreamResponse, bool, error) {
+) (<-chan adapter.StreamResponse, context.CancelFunc, bool, error) {
 	resultCh := make(chan skillPlanningStreamOpenResult, 1)
 	callCtx, cancel := context.WithCancel(ctx)
 	go func() {
@@ -411,10 +412,10 @@ func (r *Runner) openSkillPlanningStream(
 		if result.err != nil {
 			cancel()
 		}
-		return result.stream, false, result.err
+		return result.stream, cancel, false, result.err
 	case <-idleTimer.C:
 		cancel()
-		return nil, false, ErrModelIdleTimeout
+		return nil, cancel, false, ErrModelIdleTimeout
 	case <-timerC:
 		fallbackProgressStreamed := r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 		select {
@@ -422,17 +423,17 @@ func (r *Runner) openSkillPlanningStream(
 			if result.err != nil {
 				cancel()
 			}
-			return result.stream, fallbackProgressStreamed, result.err
+			return result.stream, cancel, fallbackProgressStreamed, result.err
 		case <-idleTimer.C:
 			cancel()
-			return nil, fallbackProgressStreamed, ErrModelIdleTimeout
+			return nil, cancel, fallbackProgressStreamed, ErrModelIdleTimeout
 		case <-ctx.Done():
 			cancel()
-			return nil, fallbackProgressStreamed, ctx.Err()
+			return nil, cancel, fallbackProgressStreamed, ctx.Err()
 		}
 	case <-ctx.Done():
 		cancel()
-		return nil, false, ctx.Err()
+		return nil, cancel, false, ctx.Err()
 	}
 }
 

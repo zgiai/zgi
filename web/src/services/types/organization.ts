@@ -383,7 +383,7 @@ export interface UpdateWorkspaceRequest {
 
 export interface CreateWorkspaceRequest {
   name: string;
-  leader_id?: string;
+  leader_id: string;
   api_key_id?: string;
 }
 

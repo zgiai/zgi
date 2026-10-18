@@ -9,7 +9,7 @@ import type { UploadResponse } from '@/services/upload.service';
 import { generateClientId } from '@/utils/client-id';
 import { IMAGE_EXTENSIONS } from '@/utils/file-helpers';
 
-export type AIChatComposerSurface = 'aichat' | 'agent-draft' | 'agent-webapp';
+export type AIChatComposerSurface = 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
 
 export interface ScopedTranslatorWithHas {
   (key: string, values?: Record<string, string | number | Date>): string;
@@ -41,7 +41,7 @@ export function tAttachmentForSurface(
   values?: Record<string, string | number | Date>
 ): string {
   const surfaceKey =
-    surface === 'agent-draft'
+    surface === 'agent-draft' || surface === 'digital-human'
       ? `consoleChat.attachments.agentDraft.${key}`
       : surface === 'agent-webapp'
         ? `consoleChat.attachments.agentWebapp.${key}`
@@ -130,9 +130,7 @@ export function fileItemToAIChatMessageFile(file: FileItem): AIChatMessageFile {
   };
 }
 
-export function getUploadedAIChatFiles(
-  attachments: AIChatInputAttachment[]
-): AIChatMessageFile[] {
+export function getUploadedAIChatFiles(attachments: AIChatInputAttachment[]): AIChatMessageFile[] {
   return attachments
     .filter(attachment => attachment.status === 'uploaded' && attachment.file)
     .map(attachment => attachment.file)

@@ -38,6 +38,8 @@ var corsAllowHeaders = []string{
 	"Authorization",
 	"X-API-Key",
 	"X-External-User-ID",
+	"X-Workspace-ID",
+	"X-ZGI-External-User-ID",
 	"X-Requested-With",
 	"X-Request-ID",
 	"X-User-Account-Id",
@@ -228,6 +230,7 @@ func provideGinEngine(cfg *config.Config, reporter *observability.ZGIReporter, o
 			apptransport.HeaderApplicationErrorCode,
 			"X-ZGI-Conversation-ID",
 			"X-ZGI-Message-ID",
+			"Idempotent-Replayed",
 		},
 		AllowCredentials: true,
 	}))

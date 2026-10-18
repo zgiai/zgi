@@ -180,13 +180,14 @@ display:
       - 智能体
 supported_callers:
   - agent
+  - digital_human
 required_config:
   - agent_database
 ---
 
-# Agent Database Skill
+# Bound Database Skill
 
-Use this skill to work only with database tables configured on the current Agent.
+Use this skill to work only with database tables configured on the current Agent or DigitalHuman.
 
 ## Workflow
 

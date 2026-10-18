@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"strings"
 	"testing"
 
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -17,7 +18,7 @@ func TestKnownProviderModelProtocolUnsupportedMirrorsConsole(t *testing.T) {
 		want     bool
 	}{
 		{"agicto", "claude-sonnet-4-6", protocolOpenAIResponses, true},
-		{"Agicto 供应商", "CLAUDE-HAIKU-4-5", protocolOpenAIResponses, false}, // display name is not the routing provider key
+		{"Agicto 供应商", strings.ToUpper("claude-haiku-4-5"), protocolOpenAIResponses, false}, // display name is not the routing provider key
 		{"agicto", "gpt-4o", protocolOpenAIResponses, false},
 		{"agicto", "claude-sonnet-4-6", protocolAnthropicMessages, false},
 		{"deepseek", "deepseek-v4-pro", protocolAnthropicMessages, true},

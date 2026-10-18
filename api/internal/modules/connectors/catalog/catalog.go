@@ -33,8 +33,12 @@ const (
 	ClassificationDataSource Classification = "data_source"
 )
 
-// SetupMethod describes the only member connection journey offered by a
-// definition. The first release intentionally admits Key setup only.
+// SetupMethod describes the single member connection journey offered by a
+// definition. The historical first release admitted Key setup only. The current
+// catalog retains that Key dialect and adds narrow, separately versioned
+// admissions for application credentials (app_credentials), messaging
+// credentials (credentials), mail credentials (mail_credentials), and SSH
+// credentials (ssh_credentials).
 type SetupMethod string
 
 const SetupMethodKey SetupMethod = "key"
@@ -52,8 +56,9 @@ const (
 	SurfaceChat     Surface = "chat"
 	SurfaceAgent    Surface = "agent"
 	SurfaceWorkflow Surface = "workflow"
-	// SurfaceDigitalHuman is retained in accepted extension contracts. Its
-	// presence does not enable a runtime binding target in this release.
+	// SurfaceDigitalHuman is the Digital-Human runtime surface. A definition
+	// declaring it is eligible only for an exact bound DigitalHuman target
+	// under fresh per-invocation approval.
 	SurfaceDigitalHuman Surface = "digital_human"
 )
 

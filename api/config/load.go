@@ -164,6 +164,7 @@ func loadDomainConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("marketplace", loadMarketplaceConfig),
 
 		requiredConfigLoader("connectors", loadConnectorsConfig),
+		requiredConfigLoader("digital_human_credentials", loadDigitalHumanCredentialsConfig),
 		optionalConfigLoader("knowledge", loadKnowledgeConfig),
 		optionalConfigLoader("graph flow", loadGraphFlowConfig),
 		optionalConfigLoader("content parse", loadContentParseConfig),
@@ -433,13 +434,21 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	channelDeliveryFileTTL, err := source.int(DefaultChannelDeliveryFileTTLSeconds, envChannelDeliveryFileTTL)
+	if err != nil {
+		return err
+	}
+	if channelDeliveryFileTTL <= 0 || channelDeliveryFileTTL > MaxChannelDeliveryFileTTLSeconds {
+		return fmt.Errorf("%s must be between 1 and %d seconds", envChannelDeliveryFileTTL, MaxChannelDeliveryFileTTLSeconds)
+	}
 
 	cfg.App = AppConfig{
-		Name:               source.string("ZGI-GinKit", envAppName),
-		SecretKey:          source.string("", envSecretKey),
-		FilesURL:           source.string("http://localhost:2679", envFilesURL),
-		InternalFilesURL:   source.string("", envInternalFilesURL),
-		FilesAccessTimeout: filesAccessTimeout,
+		Name:                   source.string("ZGI-GinKit", envAppName),
+		SecretKey:              source.string("", envSecretKey),
+		FilesURL:               source.string("http://localhost:2679", envFilesURL),
+		InternalFilesURL:       source.string("", envInternalFilesURL),
+		FilesAccessTimeout:     filesAccessTimeout,
+		ChannelDeliveryFileTTL: channelDeliveryFileTTL,
 	}
 	return nil
 }
@@ -1063,7 +1072,8 @@ func shouldAutoEnableLangfuseDirectExport(endpoint string, tracesEndpoint string
 
 func loadModelMetaConfig(cfg *Config, source *envSource) {
 	cfg.ModelMeta = ModelMetaConfig{
-		APIURL: source.string("https://models.zgi.ai", envModelMetaAPIURL),
+		APIURL:          source.string("https://models.zgi.ai", envModelMetaAPIURL),
+		AutoSyncEnabled: mustBool(source.bool(true, envModelMetaAutoSyncEnabled)),
 	}
 }
 

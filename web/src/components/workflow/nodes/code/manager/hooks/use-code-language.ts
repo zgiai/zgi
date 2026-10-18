@@ -135,7 +135,6 @@ export function useCodeLanguage(
   const {
     localData: formData,
     setLocalData,
-    flush: flushLang,
   } = useLocalNodeData<Pick<CodeNodeData, 'code_language'>>(externalLangData, {
     delay: 400,
     onCommit: (data: Partial<Pick<CodeNodeData, 'code_language'>>) => updateNodeData(data),
