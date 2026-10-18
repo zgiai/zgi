@@ -21,8 +21,11 @@ func checkpointFixture(t *testing.T, stages int) databaseSnapshot {
 func TestHistoricalCheckpointRecovery(t *testing.T) {
 	for stages := 0; stages <= len(additiveCheckpoints); stages++ {
 		snapshot := checkpointFixture(t, stages)
-		// This legacy-runtime migration is newer than the Connector checkpoint.
-		snapshot["migrations"] = append(snapshot["migrations"], row{"id": "20260903183000_add_video_runtime_task_poster_url"})
+		// These legacy-runtime migrations sit next to the Connector checkpoint;
+		// the API upgrade chain writes the external-user marker itself.
+		for _, id := range compatibleCheckpointMigrations {
+			snapshot["migrations"] = append(snapshot["migrations"], row{"id": id})
+		}
 		if err := validateCheckpoint(snapshot); err != nil {
 			t.Fatal(stages, err)
 		}

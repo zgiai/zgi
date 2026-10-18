@@ -7,6 +7,15 @@ import (
 
 const detachCheckpoint = "20260902190000_detach_connector_runtime"
 
+// compatibleCheckpointMigrations are unrelated migrations a legacy runtime may
+// already have committed next to the Connector checkpoint. This closed list
+// must match connectorfinalize.CompatibleCheckpointMigration in the API, which
+// accepts the same history; this module cannot import it.
+var compatibleCheckpointMigrations = []string{
+	"20260903120000_add_chat_runtime_external_user",
+	"20260903183000_add_video_runtime_task_poster_url",
+}
+
 // These additive stages can precede a failed normal up on a historical database.
 // The converter does not understand their runtime records: recovery is supported
 // only while the new tables are empty. Do not infer compatibility from a prefix.
@@ -31,7 +40,10 @@ func validateCheckpoint(snapshot databaseSnapshot) error {
 	if err := requireSchema1(snapshot); err != nil {
 		return err
 	}
-	allowed := map[string]bool{detachCheckpoint: true, "20260903183000_add_video_runtime_task_poster_url": true}
+	allowed := map[string]bool{detachCheckpoint: true}
+	for _, id := range compatibleCheckpointMigrations {
+		allowed[id] = true
+	}
 	for _, stage := range additiveCheckpoints {
 		allowed[stage.id] = true
 	}
