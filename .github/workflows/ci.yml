@@ -392,7 +392,17 @@ jobs:
           MCP_PYTHON_EXECUTABLE: python
         run: |
           go test ./pkg/mcpclient/... ./internal/modules/connectors/providers/githubmcp/... -count=1
-          go test -race ./pkg/mcpclient/... -count=1
+      # -race needs cgo, and the self-hosted runners have no C compiler, so
+      # run the race pass in the same Go image the other cgo gates use.
+      - name: Race-test MCP client with Python interoperability
+        run: |
+          docker run --rm \
+            -e CGO_ENABLED=1 \
+            -e MCP_PYTHON_EXECUTABLE=/tmp/mcp-venv/bin/python \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace/api \
+            golang:1.26.2-bookworm \
+            bash -c 'apt-get update -qq && apt-get install -y -qq python3-venv && python3 -m venv /tmp/mcp-venv && /tmp/mcp-venv/bin/pip install -q mcp==2.3.0 && go test -race ./pkg/mcpclient/... -count=1'
 
   ratingcore:
     name: ratingcore vector contract
