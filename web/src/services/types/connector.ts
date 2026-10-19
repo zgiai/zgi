@@ -619,3 +619,16 @@ export interface ConnectorConfirmationPreview {
     truncated: boolean;
   }>;
 }
+
+/** Safe OAuth status only. Provider secrets never cross this boundary. */
+export interface ConnectorOAuthFlow {
+  id: string;
+  connector_id: string;
+  status: 'pending' | 'processing' | 'select_page' | 'ready' | 'failed';
+  authorize_url?: string;
+  connection_id?: string;
+  pages?: Array<{ id: string; name: string }>;
+  error_code?: string;
+  renewal_mode?: string;
+  expires_at?: string;
+}

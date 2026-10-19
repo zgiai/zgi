@@ -45,6 +45,7 @@ import (
 	connectorsocialmcp "github.com/zgiai/zgi/api/internal/modules/connectors/providers/socialmcp"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
+	connectorsocialoauth "github.com/zgiai/zgi/api/internal/modules/connectors/socialoauth"
 	"github.com/zgiai/zgi/api/internal/modules/consolesync"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
@@ -265,6 +266,7 @@ type ServiceContainer struct {
 	connectorTargetAuthority             *connectorTargetAuthority
 	connectorBindingService              *connectorbindings.Service
 	connectorAuditRepo                   *connectoraudit.GormRepository
+	connectorSocialOAuth                 *connectorsocialoauth.Service
 	connectorCredentialCipher            *connectorcredentials.Store
 	connectorPersonalConnectionResolver  *connectorcredentials.PersonalConnectionResolver
 	digitalHumanCredentialCipher         credentialcrypto.CredentialCipher
@@ -1222,7 +1224,7 @@ func (c *ServiceContainer) GetConnectorCredentialResolver() *connectorcredential
 func (c *ServiceContainer) GetConnectorPersonalConnectionResolver() *connectorcredentials.PersonalConnectionResolver {
 	if c.connectorPersonalConnectionResolver == nil {
 		c.connectorPersonalConnectionResolver = connectorcredentials.NewPersonalConnectionResolver(
-			c.GetConnectorConnectionRepository(), c.GetConnectorCredentialResolver(),
+			c.GetConnectorConnectionRepository(), c.GetConnectorRefreshingCredentialResolver(),
 		)
 	}
 	return c.connectorPersonalConnectionResolver
@@ -1422,7 +1424,7 @@ func (c *ServiceContainer) GetConnectorMaintenanceService() *connectorconnection
 			c.GetConnectorBindingRepository(),
 			c.GetConnectorCandidateVerifier(),
 			c.GetConnectorCredentialSealer(),
-			c.GetConnectorCredentialResolver(),
+			c.GetConnectorRefreshingCredentialResolver(),
 			c.connectorCommandHasher,
 			c.connectorImpactTokenCodec,
 		)
@@ -1457,7 +1459,7 @@ func (c *ServiceContainer) GetConnectorExecutionService() *connectorexecution.Se
 			c.GetConnectorConnectionRepository(),
 			c.GetConnectorTargetAuthority(),
 			c.GetConnectorTrustedRiskResolver(),
-			c.GetConnectorCredentialResolver(),
+			c.GetConnectorRefreshingCredentialResolver(),
 			c.GetConnectorAuditRepository(),
 			c.GetConnectorNativeProviderInvoker(),
 			c.connectorResultProjector,

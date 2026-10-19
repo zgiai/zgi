@@ -2,6 +2,7 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   ConnectorCatalogItem,
+  ConnectorOAuthFlow,
   ConnectorOnboardingFlow,
   ConnectorOnboardingRequest,
   ConnectorPendingSetup,
@@ -39,6 +40,37 @@ import type {
 class ConnectorService extends BaseService {
   constructor() {
     super({ basePath: '/console/api', endpoint: 'main' });
+  }
+
+  getOAuthAvailability(connectorId: string): Promise<ApiResponseData<{ available: boolean }>> {
+    return this.request('get', `/connectors/${encodeURIComponent(connectorId)}/oauth`);
+  }
+
+  startOAuth(
+    connectorId: string,
+    connectionId?: string
+  ): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request(
+      'post',
+      `/connectors/${encodeURIComponent(connectorId)}/oauth`,
+      connectionId ? { connection_id: connectionId } : {},
+      { retryAttemptsOverride: 0, withCredentials: true }
+    );
+  }
+
+  getOAuthFlow(flowId: string): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request('get', `/connectors/oauth-flows/${encodeURIComponent(flowId)}`, undefined, {
+      retryAttemptsOverride: 0,
+    });
+  }
+
+  selectOAuthPage(flowId: string, pageId: string): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request(
+      'post',
+      `/connectors/oauth-flows/${encodeURIComponent(flowId)}/page`,
+      { page_id: pageId },
+      { retryAttemptsOverride: 0 }
+    );
   }
 
   getCatalog(

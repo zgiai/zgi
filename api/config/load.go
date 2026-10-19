@@ -1252,11 +1252,13 @@ func loadConnectorsConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.Connectors = ConnectorsConfig{
-		SocialMCPNode:         strings.TrimSpace(source.string("node", "CONNECTOR_SOCIAL_MCP_NODE")),
-		SocialMCPScript:       strings.TrimSpace(source.string("", "CONNECTOR_SOCIAL_MCP_SCRIPT")),
-		CredentialActiveKeyID: activeKeyID,
-		CredentialKeys:        credentialKeys,
-		PluginDirectories:     pluginDirectories,
+		SocialOAuthFrontendURL: strings.TrimRight(strings.TrimSpace(source.string("", "CONNECTOR_SOCIAL_OAUTH_FRONTEND_URL")), "/"),
+		SocialOAuthProviders:   loadSocialOAuthProviders(source),
+		SocialMCPNode:          strings.TrimSpace(source.string("node", "CONNECTOR_SOCIAL_MCP_NODE")),
+		SocialMCPScript:        strings.TrimSpace(source.string("", "CONNECTOR_SOCIAL_MCP_SCRIPT")),
+		CredentialActiveKeyID:  activeKeyID,
+		CredentialKeys:         credentialKeys,
+		PluginDirectories:      pluginDirectories,
 	}
 	return nil
 }

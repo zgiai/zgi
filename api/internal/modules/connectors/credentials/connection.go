@@ -23,10 +23,10 @@ type PersonalConnectionReader interface {
 // another server-side security boundary; callers must clear Values after use.
 type PersonalConnectionResolver struct {
 	reader PersonalConnectionReader
-	store  *Store
+	store  connections.MaintenanceCredentialResolver
 }
 
-func NewPersonalConnectionResolver(reader PersonalConnectionReader, store *Store) *PersonalConnectionResolver {
+func NewPersonalConnectionResolver(reader PersonalConnectionReader, store connections.MaintenanceCredentialResolver) *PersonalConnectionResolver {
 	if reader == nil || store == nil {
 		panic("personal connection resolver requires reader and credential store")
 	}

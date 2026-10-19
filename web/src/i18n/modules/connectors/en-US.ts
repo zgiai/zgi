@@ -1,4 +1,32 @@
 const messages = {
+  oauth: {
+    title: 'Connect your social account',
+    description:
+      'Authorize access on the platform. ZGI saves credentials securely and renews them automatically when the platform supports it. You may need to reconnect when authorization expires or is revoked.',
+    connect: 'Connect account',
+    reconnect: 'Reconnect account',
+    reconnectDescription:
+      'Authorize the same account to keep this connection and its usage locations. A different account or Facebook Page creates a separate connection.',
+    loading: 'Loading…',
+    waiting: 'Complete authorization in the new window. This screen updates automatically.',
+    selectPage: 'Choose the Facebook Page to connect',
+    noPages: 'No authorized Pages are available. Reconnect and grant access to a Page you manage.',
+    pageFailed: 'Could not save this Page. Retry your selection or refresh the status.',
+    ready: 'Your connection is ready. You can close the authorization window.',
+    changedIdentity:
+      'A different account or Page was authorized. A new connection was created; existing usage locations still use the original connection.',
+    failed: 'Authorization could not be completed. Retry authorization or use manual credentials.',
+    statusFailed: 'Could not load authorization status. Retry to check the result.',
+    blocked: 'Allow popups for this site, then try Connect again.',
+    closed:
+      'The authorization window was closed. Reconnect to start again, or wait for the saved result.',
+    unavailable:
+      'An administrator must configure this platform’s OAuth application before automatic authorization is available. You can use manual credentials below.',
+    manual: 'Use manual credentials',
+    back: 'Back to platform authorization',
+    returnToWindow:
+      'After authorization and any Page selection, return to your original ZGI window. It updates automatically.',
+  },
   operationPolicy: {
     added: 'Will allow: {operations}',
     removed: 'Will stop allowing: {operations}',

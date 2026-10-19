@@ -117,6 +117,7 @@
     "test:skill-load-timeline-filter": "node scripts/test-skill-load-timeline-filter.mjs",
     "test:aichat-tool-recovery-display": "node scripts/test-aichat-tool-recovery-display.mjs",
     "test:aichat-external-action-status": "node scripts/test-aichat-external-action-status.mjs",
+    "test:connector-social-oauth": "node scripts/test-connector-social-oauth.mjs",
     "test:connector-api-contract": "node scripts/test-connector-api-contract.mjs",
     "test:http-service-request-body": "node scripts/test-http-service-request-body.mjs",
     "test:connector-app-setup": "node scripts/test-connector-app-setup.mjs",

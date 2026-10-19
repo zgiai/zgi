@@ -69,6 +69,8 @@ var (
 // machinery. Routes are registered only when the caller supplies explicit
 // Connector-native dependencies.
 type ConnectorRouteDeps struct {
+	SocialOAuth             connectorSocialOAuthService
+	SocialOAuthFrontendURL  string
 	Catalog                 connectorDefinitionCatalog
 	Connections             connectorConnectionService
 	Bindings                connectorBindingService
@@ -82,15 +84,17 @@ type ConnectorRouteDeps struct {
 }
 
 type connectorHandler struct {
-	catalog        connectorDefinitionCatalog
-	connections    connectorConnectionService
-	bindings       connectorBindingService
-	references     connectorReferenceService
-	maintenance    connectorMaintenanceService
-	onboarding     connectorOnboardingService
-	preferences    connectorChatPreferenceService
-	hostKeyProbe   connectorserveropsssh.HostKeyProbe
-	errorProjector *apptransport.Projector
+	socialOAuth            connectorSocialOAuthService
+	socialOAuthFrontendURL string
+	catalog                connectorDefinitionCatalog
+	connections            connectorConnectionService
+	bindings               connectorBindingService
+	references             connectorReferenceService
+	maintenance            connectorMaintenanceService
+	onboarding             connectorOnboardingService
+	preferences            connectorChatPreferenceService
+	hostKeyProbe           connectorserveropsssh.HostKeyProbe
+	errorProjector         *apptransport.Projector
 }
 
 func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
@@ -103,12 +107,14 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 	}
 
 	handler := &connectorHandler{
+		socialOAuth: deps.SocialOAuth, socialOAuthFrontendURL: deps.SocialOAuthFrontendURL,
 		references: deps.References, catalog: deps.Catalog, connections: deps.Connections, bindings: deps.Bindings, maintenance: deps.Maintenance,
 		preferences: deps.Preferences, onboarding: deps.Onboarding, hostKeyProbe: deps.HostKeyProbe,
 	}
 	if deps.ApplicationErrorCatalog != nil {
 		handler.errorProjector, _ = apptransport.NewProjector(deps.ApplicationErrorCatalog)
 	}
+	handler.registerSocialOAuthCallback(router)
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -116,6 +122,7 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 }
 
 func (handler *connectorHandler) register(group *gin.RouterGroup) {
+	handler.registerSocialOAuth(group)
 	group.POST("/connectors/:connectorId/credential-setups", handler.startCredentialSetup)
 	group.POST("/connectors/:connectorId/app-credential-setups", handler.startAppCredentialSetup)
 	group.POST("/connectors/:connectorId/host-key-tests", handler.probeConnectorHostKey)

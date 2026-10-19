@@ -136,6 +136,9 @@ func validateConfig(cfg *Config) error {
 }
 
 func validateConnectorsConfig(cfg ConnectorsConfig) error {
+	if err := validateSocialOAuthConfig(cfg); err != nil {
+		return err
+	}
 	if cfg.SocialMCPScript != "" && (!filepath.IsAbs(cfg.SocialMCPScript) || strings.ContainsAny(cfg.SocialMCPScript, "\x00\r\n")) {
 		return fmt.Errorf("CONNECTOR_SOCIAL_MCP_SCRIPT must be an absolute script path")
 	}

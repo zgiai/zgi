@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, UserRoundPlus } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,8 @@ import type { ConnectorCatalogItem, PersonalConnection } from '@/services/types/
 import { supportsMailSetup, connectionMailUsage } from '../setup/mail-setup-state';
 import { supportsServerOpsSSHConnectorSetup } from '../setup/app-setup-state';
 import { ConnectorMailSetupPanel } from '../setup/connector-mail-setup-panel';
+import { ConnectorSocialOAuthPanel } from '../setup/connector-social-oauth-panel';
+import { supportsSocialOAuth } from '../setup/social-oauth-state';
 import { ServerOpsSSHSetupPanel } from '../setup/serverops-ssh-setup-panel';
 
 function errorText(t: ScopedTranslations<'connectors'>, code: string | undefined): string {
@@ -55,6 +58,46 @@ interface ConnectionReconnectDialogProps {
 
 export function ConnectionReconnectDialog(props: ConnectionReconnectDialogProps) {
   const t = useT('connectors');
+  const [socialManual, setSocialManual] = useState(false);
+  if (supportsSocialOAuth(props.connector) && socialManual) {
+    return (
+      <KeyReconnectDialog
+        {...props}
+        onOpenChange={open => {
+          props.onOpenChange(open);
+          if (!open) setSocialManual(false);
+        }}
+      />
+    );
+  }
+  if (supportsSocialOAuth(props.connector)) {
+    return (
+      <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>{t('oauth.reconnect')}</DialogTitle>
+            <DialogDescription>{t('oauth.reconnectDescription')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            {props.open && (
+              <ConnectorSocialOAuthPanel
+                connector={props.connector}
+                reconnectId={props.connectionId}
+                embedded
+                manualFallback={null}
+                onManual={() => setSocialManual(true)}
+              />
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => props.onOpenChange(false)}>
+              {t('reconnect.close')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   if (supportsServerOpsSSHConnectorSetup(props.connector)) {
     return <ServerOpsSSHReconnectDialog {...props} />;
   }

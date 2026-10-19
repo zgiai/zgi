@@ -1,6 +1,31 @@
 import type { ConnectorMessages } from './en-US';
 
 const messages: ConnectorMessages = {
+  oauth: {
+    title: '连接社交账号',
+    description:
+      '在平台上授权后，ZGI 会安全保存凭据，并在平台支持时自动续期。授权过期或被撤销后，可能需要重新连接。',
+    connect: '连接账号',
+    reconnect: '重新连接账号',
+    reconnectDescription:
+      '授权同一账号可保留当前连接及其使用位置。授权其他账号或 Facebook 公共主页会创建独立的新连接。',
+    loading: '正在加载…',
+    waiting: '请在新窗口中完成平台授权，此页面会自动更新。',
+    selectPage: '选择要连接的 Facebook 公共主页',
+    noPages: '没有可用的已授权公共主页。请重新连接，并授权访问你管理的公共主页。',
+    pageFailed: '无法保存公共主页，请重新选择或刷新授权状态。',
+    ready: '连接已就绪，可以关闭授权窗口。',
+    changedIdentity: '本次授权了其他账号或公共主页，已创建新连接。已有使用位置仍使用原连接。',
+    failed: '无法完成授权。请重新授权，或使用手动凭据。',
+    statusFailed: '无法读取授权状态，请重试以确认结果。',
+    blocked: '请允许此网站打开弹出窗口，然后再次点击连接。',
+    closed: '授权窗口已关闭。可重新连接以发起授权，或等待已保存的结果。',
+    unavailable:
+      '管理员需要先配置此平台的 OAuth 应用，才能使用自动授权。你也可以使用下方的手动凭据方式。',
+    manual: '使用手动凭据',
+    back: '返回平台授权',
+    returnToWindow: '完成授权和公共主页选择后，请返回原来的 ZGI 窗口，连接状态会自动更新。',
+  },
   operationPolicy: {
     added: '将允许：{operations}',
     removed: '将停止允许：{operations}',
