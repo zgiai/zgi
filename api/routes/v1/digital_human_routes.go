@@ -145,8 +145,27 @@ func digitalHumanPermissionMiddleware(organizationService interfaces.Organizatio
 			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodePermissionDenied, apperror.WithOperation("digital_human.permission.check")))
 			return
 		}
+		if isDigitalHumanTaskCenterPath(c.FullPath()) && digitalhuman.TaskVisibilityEnabled() {
+			manager := permission == workspacemodel.WorkspacePermissionDigitalHumanUpdate
+			if !manager {
+				manager, err = organizationService.CheckWorkspacePermission(
+					c.Request.Context(), util.GetOrganizationID(c), util.GetWorkspaceID(c), util.GetAccountID(c), workspacemodel.WorkspacePermissionDigitalHumanUpdate,
+				)
+				if err != nil {
+					writeDigitalHumanRouteError(c, projector, apperror.Wrap(err, appcatalog.CodeInternal, apperror.WithOperation("digital_human.permission.check")))
+					return
+				}
+			}
+			c.Set(digitalhuman.TaskManagerContextKey, manager)
+		}
 		c.Next()
 	}
+}
+
+// isDigitalHumanTaskCenterPath matches the shared task center routes, not the
+// personal my-tasks view.
+func isDigitalHumanTaskCenterPath(routePath string) bool {
+	return strings.Contains(routePath, "/digital-humans/:id/tasks")
 }
 
 func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.WorkspacePermissionCode {
