@@ -1,5 +1,14 @@
 # syntax=docker/dockerfile:1
 
+# Pinned MCP dependencies are installed at image build time, never during a
+# member's tool call. The bridge is plain JavaScript and has no build step.
+FROM node:22-alpine AS social-mcp
+WORKDIR /social-mcp
+COPY social-mcp/package.json social-mcp/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+COPY social-mcp/server.mjs social-mcp/bridge.mjs ./
+COPY social-mcp/upstream ./upstream/
+
 # Build stage
 FROM golang:1.26.2-alpine AS builder
 
@@ -41,6 +50,7 @@ RUN if [ -n "$APK_MIRROR" ]; then \
 # and core fonts provide Helvetica-compatible fallbacks for PDF text rendering.
 # tesseract handles self-hosted OCR fallback for scan/image-like documents.
 RUN apk --no-cache add \
+    nodejs \
     ca-certificates \
     tzdata \
     bash \
@@ -73,6 +83,9 @@ COPY --from=builder /app/server .
 COPY --from=builder /app/config ./config/
 COPY --from=builder /app/templates ./templates/
 COPY --from=builder /app/internal/modules/skills/catalog ./internal/modules/skills/catalog/
+COPY --from=social-mcp /social-mcp ./social-mcp/
+ENV CONNECTOR_SOCIAL_MCP_NODE=node \
+    CONNECTOR_SOCIAL_MCP_SCRIPT=/app/social-mcp/server.mjs
 
 # Copy entrypoint script
 COPY --chmod=755 docker/entrypoint.sh /app/entrypoint.sh

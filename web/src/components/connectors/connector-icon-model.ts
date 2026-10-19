@@ -1,7 +1,19 @@
-export type ConnectorBrand = 'exa' | 'github' | 'feishu' | 'dingtalk' | 'weixin' | 'wecom';
+export type ConnectorBrand =
+  | 'exa'
+  | 'github'
+  | 'feishu'
+  | 'dingtalk'
+  | 'weixin'
+  | 'wecom'
+  | 'x'
+  | 'linkedin'
+  | 'facebook';
 
 export function connectorBrand(connectorId?: string, icon?: string): ConnectorBrand | undefined {
   const id = connectorId?.trim().toLowerCase();
+  if (id === 'x-social') return 'x';
+  if (id === 'linkedin-social') return 'linkedin';
+  if (id === 'facebook-social') return 'facebook';
   if (id === 'web-search' || id === 'exa') return 'exa';
   if (id === 'github' || id === 'github-mcp') return 'github';
   if (id === 'feishu' || id === 'lark') return 'feishu';
@@ -11,6 +23,7 @@ export function connectorBrand(connectorId?: string, icon?: string): ConnectorBr
   // Tokens are metadata, not relative URLs. Do not override a different stable ID.
   if (id) return undefined;
   const token = icon?.trim().toLowerCase();
+  if (token === 'x' || token === 'linkedin' || token === 'facebook') return token;
   if (token === 'exa' || token === 'globe-2') return 'exa';
   if (token === 'github') return 'github';
   if (token === 'feishu' || token === 'lark') return 'feishu';

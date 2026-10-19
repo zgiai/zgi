@@ -42,6 +42,7 @@ import (
 	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
 	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
 	connectorserveropsssh "github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
+	connectorsocialmcp "github.com/zgiai/zgi/api/internal/modules/connectors/providers/socialmcp"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	"github.com/zgiai/zgi/api/internal/modules/consolesync"
@@ -1315,6 +1316,13 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		// invocation, or a host-key probe reaches the capability.
 		_, serverOpsSSH := c.getServerOpsSSHClient()
 		drivers := append([]connectorproviders.Driver{github, githubMCP, exa, feishu, gmail, serverOpsSSH}, c.messagingDrivers()...)
+		for _, id := range []string{"x-social", "linkedin-social", "facebook-social"} {
+			driver, err := connectorsocialmcp.New(id, connectorsocialmcp.Options{NodeCommand: c.config.Connectors.SocialMCPNode, ScriptPath: c.config.Connectors.SocialMCPScript})
+			if err != nil {
+				panic("initialize social MCP Connector: invalid deployment configuration")
+			}
+			drivers = append(drivers, driver)
+		}
 		for _, id := range []string{"qqmail", "netease163"} {
 			driver, err := connectormail.New(connectormail.Options{Provider: id, HandleKey: c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID]})
 			if err != nil {

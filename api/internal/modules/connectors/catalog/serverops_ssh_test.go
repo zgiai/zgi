@@ -543,8 +543,8 @@ func TestServerOpsSSHIsAdmittedLastAndExistingBuiltinsAreUnchanged(t *testing.T)
 		"qqmail":     "486d6156d6e824794b47dd15c9b921258d8e6ad0a50d76e00a53d701c969c994",
 		"netease163": "d8ac059a4ed91922edc1e6577e4fa4bd791fd3bf60100b490e916ec8e5dc00b3",
 	}
-	if len(definitions) != len(wantDigests)+1 {
-		t.Fatalf("built-in count = %d, want %d", len(definitions), len(wantDigests)+1)
+	if len(definitions) != len(wantDigests)+1+len(SocialMCPDefinitions()) {
+		t.Fatalf("built-in count = %d, want %d", len(definitions), len(wantDigests)+1+len(SocialMCPDefinitions()))
 	}
 	admitted := definitions[len(definitions)-1]
 	if admitted.ID != ServerOpsSSHConnectorID || !admitted.IsServerOpsSSHCredentials() || !alreadyV4DigitalHumanOnly(admitted) {
@@ -562,6 +562,9 @@ func TestServerOpsSSHIsAdmittedLastAndExistingBuiltinsAreUnchanged(t *testing.T)
 		t.Fatalf("SSH integration identity changed: %+v", admitted)
 	}
 	for _, definition := range definitions[:len(definitions)-1] {
+		if IsSocialMCPConnector(definition.ID) {
+			continue
+		} // Covered by social_mcp_test; older contracts remain frozen below.
 		want, ok := wantDigests[definition.ID]
 		if !ok {
 			t.Fatalf("unexpected built-in %q", definition.ID)

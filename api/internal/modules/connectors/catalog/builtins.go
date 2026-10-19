@@ -63,7 +63,7 @@ func BuiltinDefinitions() ([]Definition, error) {
 	}
 	// Keep the SSH contract as the final catalog entry; callers use that stable
 	// position when validating the isolated Server Operations surface.
-	return append(append(append(append(append(definitions, feishu), messaging...), mail...), mcp), serveropsSSH), nil
+	return append(append(append(append(append(append(definitions, feishu), messaging...), mail...), mcp), SocialMCPDefinitions()...), serveropsSSH), nil
 }
 
 // ValidateBuiltinPackage admits exactly one package for a built-in plugin as
@@ -95,6 +95,14 @@ func ValidateBuiltinPackage(definitions []Definition) error {
 // exactly and is never upgraded a second time through WithDigitalHumanSurface
 // with a derived version suffix.
 func validateBuiltinPackageCandidate(accepted, candidate Definition) error {
+	// A built-in may already publish the additive V4 contract itself. Admit its
+	// exact current version before considering the older V1 → V4 projection.
+	if candidate.PluginVersion == accepted.PluginVersion {
+		if err := CheckCompatibleUpdate(accepted, candidate); err != nil {
+			return err
+		}
+		return CheckCompatibleUpdate(candidate, accepted)
+	}
 	if alreadyV4DigitalHumanOnly(accepted) {
 		if candidate.PluginVersion != accepted.PluginVersion {
 			return ErrInvalidDefinition

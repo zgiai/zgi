@@ -520,6 +520,8 @@ type ToolingConfig struct {
 // deliberately does not inherit the legacy external-integrations enable flag
 // or credential keyring.
 type ConnectorsConfig struct {
+	SocialMCPNode         string            `json:"-"`
+	SocialMCPScript       string            `json:"-"`
 	CredentialActiveKeyID string            `json:"credential_active_key_id"`
 	CredentialKeys        map[string]string `json:"-"`
 	PluginDirectories     []string          `json:"-"`

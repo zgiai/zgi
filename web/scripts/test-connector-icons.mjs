@@ -31,6 +31,9 @@ for (const [id, token, brand] of [
   ['dingtalk', 'dingtalk', 'dingtalk'],
   ['weixin', 'weixin', 'weixin'],
   ['wecom', 'wecom', 'wecom'],
+  ['x-social', 'x', 'x'],
+  ['linkedin-social', 'linkedin', 'linkedin'],
+  ['facebook-social', 'facebook', 'facebook'],
 ]) {
   assert.equal(model.connectorBrand(id, token), brand);
   assert.equal(model.connectorBrand(undefined, token), brand);

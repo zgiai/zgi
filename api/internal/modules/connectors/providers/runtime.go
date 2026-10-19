@@ -75,7 +75,7 @@ func NewRuntime(drivers ...Driver) (*Runtime, error) {
 		}
 	}
 	for _, definition := range definitions {
-		if _, registered := runtime.drivers[definition.ID]; !registered && !definition.IsMessagingCredentials() && !definition.IsMailCredentials() {
+		if _, registered := runtime.drivers[definition.ID]; !registered && !definition.IsMessagingCredentials() && !definition.IsMailCredentials() && !catalog.IsSocialMCPConnector(definition.ID) {
 			return nil, Invalid()
 		}
 	}

@@ -84,6 +84,9 @@ type ConnectorPresentation struct {
 }
 
 var connectorPresentationRegistry = map[string]PresentationMetadata{
+	"x-social":        {ConnectorID: "x-social", Category: ConnectorCategoryCommunication, Tags: []ConnectorTag{ConnectorTagSocial, ConnectorTagMessaging, ConnectorTagIntegration}, SourceURLs: []string{"https://docs.x.com/"}, Publisher: "ZGI", ReviewedAt: "2026-10-19", Rationale: "Native isolated MCP integration for X publishing, private conversations and platform statistics."},
+	"linkedin-social": {ConnectorID: "linkedin-social", Category: ConnectorCategoryCommunication, Tags: []ConnectorTag{ConnectorTagSocial, ConnectorTagEnterprise, ConnectorTagIntegration}, SourceURLs: []string{"https://learn.microsoft.com/en-us/linkedin/marketing/community-management/community-management-overview"}, Publisher: "ZGI", ReviewedAt: "2026-10-19", Rationale: "Organization publishing, interactions and statistics through an isolated MCP bridge; company-page messaging is unavailable."},
+	"facebook-social": {ConnectorID: "facebook-social", Category: ConnectorCategoryCommunication, Tags: []ConnectorTag{ConnectorTagSocial, ConnectorTagMessaging, ConnectorTagIntegration}, SourceURLs: []string{"https://developers.facebook.com/docs/pages-api/", "https://developers.facebook.com/docs/messenger-platform/"}, Publisher: "ZGI", ReviewedAt: "2026-10-19", Rationale: "Facebook Page publishing, interactions, private replies and insights through an isolated MCP bridge."},
 	"weixin": {
 		ConnectorID: "weixin", Category: ConnectorCategoryCommunication,
 		Tags:       []ConnectorTag{ConnectorTagSocial, ConnectorTagMessaging},
