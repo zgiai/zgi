@@ -1504,7 +1504,8 @@ const messages = {
   tasks: {
     title: 'Digital human shared tasks',
     myTitle: 'My tasks',
-    myDescription: 'Tasks created from this account are private to you on this digital human.',
+    myDescription:
+      'Tasks you requested on this digital human. Tasks shared with the workspace may also appear here as read-only.',
     createFromChat: 'Describe a task in the conversation; confirmed tasks appear here.',
     myEmpty: 'You have no private tasks yet.',
     myEmptyDescription:
@@ -1512,7 +1513,16 @@ const messages = {
     openMine: 'Open my tasks',
     approvalInChat: 'Return to the conversation to confirm',
     description:
-      'Only tasks shared by all users are shown here. Private console and channel tasks stay outside this page.',
+      'Tasks this digital human works on that you can access. Tasks requested privately in conversations and channels are labeled.',
+    sharedBadge: 'Shared',
+    sharedReadOnly: 'Shared with the workspace. Only its requester or a task manager can change it.',
+    visibilityNote: 'Who besides task managers can see this task',
+    visibility: {
+      requester: 'Requester only',
+      conversation: 'Conversation only',
+      workspace: 'Workspace',
+      restricted: 'Restricted',
+    },
     create: 'New task',
     created: 'Task created.',
     updated: 'Task updated.',

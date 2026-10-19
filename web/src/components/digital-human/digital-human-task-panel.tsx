@@ -282,8 +282,10 @@ export function DigitalHumanTaskPanel({
   // Lifecycle operations are deterministic user controls. Keep content edits
   // and proposal confirmation in the conversation, where the model can
   // explain the change and collect any missing details.
-  const allowDirectMutations = title === 'shared' || title === 'my';
-  const allowDirectEdit = title === 'shared' || !compact;
+  // A shared task shown in the personal view is read-only for this reader.
+  const selectedChangeable = selected?.can_change !== false;
+  const allowDirectMutations = (title === 'shared' || title === 'my') && selectedChangeable;
+  const allowDirectEdit = (title === 'shared' || !compact) && selectedChangeable;
   return (
     <section
       className={
@@ -462,6 +464,11 @@ export function DigitalHumanTaskPanel({
                         {task.priority !== 'normal' ? (
                           <Badge variant="secondary" className="text-[10px]" title={t('tasks.priorityNote')}>
                             {t(`tasks.priority.${task.priority}`)}
+                          </Badge>
+                        ) : null}
+                        {title === 'my' && task.can_change === false ? (
+                          <Badge variant="subtle" className="text-[10px]" title={t('tasks.sharedReadOnly')}>
+                            {t('tasks.sharedBadge')}
                           </Badge>
                         ) : null}
                       </div>

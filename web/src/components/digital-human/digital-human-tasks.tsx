@@ -314,8 +314,9 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{task.name}</p>
                     <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{task.goal}</p>
-                    <p className="mt-1 truncate text-[11px] text-muted-foreground/80">
-                      {sourceLabel(task, t)}
+                    <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground/80">
+                      <span className="truncate">{sourceLabel(task, t)}</span>
+                      <TaskVisibilityBadge task={task} />
                     </p>
                   </div>
                   <TaskListCell label={t('tasks.columns.status')}>
@@ -442,6 +443,18 @@ function TaskStatusBadge({ task }: { task: DigitalHumanTask }) {
   return <Badge variant={variant}>{t(`tasks.status.${status}`)}</Badge>;
 }
 
+// Workspace tasks are the default in the task center, so only narrower
+// visibility is called out.
+function TaskVisibilityBadge({ task }: { task: DigitalHumanTask }) {
+  const t = useT('digitalHumans');
+  if (!task.visibility || task.visibility === 'workspace') return null;
+  return (
+    <Badge variant="subtle" className="shrink-0 text-[10px]" title={t('tasks.visibilityNote')}>
+      {t(`tasks.visibility.${task.visibility}`)}
+    </Badge>
+  );
+}
+
 function PriorityBadge({ priority }: { priority: DigitalHumanTaskPriority }) {
   const t = useT('digitalHumans');
   return (
@@ -557,6 +570,7 @@ function TaskDetailSheet({
               <div className="flex flex-wrap items-center gap-2">
                 <TaskStatusBadge task={task} />
                 <PriorityBadge priority={task.priority} />
+                <TaskVisibilityBadge task={task} />
                 <Badge variant="outline">
                   <CalendarClock className="size-3" />
                   {t(`tasks.schedule.${task.schedule.type}`)}
