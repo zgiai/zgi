@@ -715,7 +715,7 @@ func (s *Service) ListTaskOccupancy(ctx context.Context, access digitalhuman.Tas
 		Select("next_run_at", "work_status", "status", "priority").
 		Where("organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_type = ? AND subject_id = ? AND status <> ?", access.OrganizationID, access.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, subjectTypeDigitalHuman, access.DigitalHumanID, automationmodel.AutomationTaskStatusArchived).
 		Where("work_status NOT IN ?", []string{string(automationmodel.AutomationWorkStatusProposed), string(automationmodel.AutomationWorkStatusCompleted), string(automationmodel.AutomationWorkStatusCanceled)}).
-		Where("NOT ("+visible+")", args...).
+		Where("NOT COALESCE(("+visible+"), FALSE)", args...).
 		Order("next_run_at IS NULL, next_run_at ASC").Limit(limit).
 		Find(&rows).Error
 	if err != nil {
@@ -1143,8 +1143,9 @@ func ownerPredicate(owner digitalhuman.TaskOwnerRef) (string, []any) {
 }
 
 // workspaceVisiblePredicate matches tasks every workspace member may read.
-// Rows written before visibility existed fall back to their owner kind.
-const workspaceVisiblePredicate = "(visibility = 'workspace' OR (visibility IS NULL AND owner_kind = 'digital_human'))"
+// Rows written before visibility existed fall back to their owner kind. It is
+// NULL-safe so that its negation is too.
+const workspaceVisiblePredicate = "(COALESCE(visibility, CASE WHEN owner_kind = 'digital_human' THEN 'workspace' ELSE '' END) = 'workspace')"
 
 // visibleTaskPredicate expresses the read visibility rules of ADR 0005. ok is
 // false when the reader sees every task of the DigitalHuman.

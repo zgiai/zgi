@@ -23,7 +23,12 @@ type visibilityFixture struct {
 func newVisibilityFixture(t *testing.T) visibilityFixture {
 	t.Helper()
 	service, _, sharedAccess, _ := newTaskService(t)
-	accountA, accountB := uuid.New(), uuid.New()
+	return newVisibilityFixtureFor(t, service, sharedAccess, uuid.New(), uuid.New())
+}
+
+// newVisibilityFixtureFor creates one task in each requester namespace.
+func newVisibilityFixtureFor(t *testing.T, service *Service, sharedAccess digitalhuman.TaskAccessContext, accountA, accountB uuid.UUID) visibilityFixture {
+	t.Helper()
 	member := func(account uuid.UUID) digitalhuman.TaskAccessContext {
 		access := sharedAccess
 		access.Principal.ID = account.String()
@@ -208,6 +213,13 @@ func TestTaskOccupancyRedactsHiddenOpenWork(t *testing.T) {
 		if item.NextRunAt == nil || item.WorkStatus != digitalhuman.TaskWorkStatusPending || item.Priority == "" {
 			t.Fatalf("occupancy item = %#v", item)
 		}
+	}
+	// A row written by a build without visibility support must stay counted.
+	if err := fixture.service.db.Exec("UPDATE automation_tasks SET visibility = NULL WHERE id = ?", fixture.privateB.ID.String()).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacy, err := fixture.service.ListTaskOccupancy(t.Context(), fixture.memberA, 0); err != nil || len(legacy) != 2 {
+		t.Fatalf("member A occupancy over a legacy row = %#v, %v", legacy, err)
 	}
 	channel, err := fixture.service.ListTaskOccupancy(t.Context(), fixture.channel, 0)
 	if err != nil || len(channel) != 3 {
