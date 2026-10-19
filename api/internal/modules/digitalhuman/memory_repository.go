@@ -229,14 +229,18 @@ func applyMemoryUndoStatus(items []*DigitalHumanMemory, records []MemoryUndoReco
 	}
 }
 
-// ActiveMemories returns every active memory for the DigitalHuman. Convergence:
-// class and business scope no longer gate recall; legacy business rows remain
-// readable so previously stored facts stay visible without a migration.
-func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int) ([]*DigitalHumanMemory, error) {
+// ActiveMemories returns active memories for the DigitalHuman. Without a read
+// scope every class and business scope is returned, so legacy business rows
+// stay visible; with one, recall follows the run's source trust (ADR 0004).
+func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int, readScope *memoryReadScope) ([]*DigitalHumanMemory, error) {
 	db := r.db.WithContext(ctx).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND status = ?",
 		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, MemoryStatusActive,
 	)
+	if readScope != nil {
+		clause, args := readScope.sqlPredicate()
+		db = db.Where(clause, args...)
+	}
 	items := make([]*DigitalHumanMemory, 0, limit)
 	if err := db.Order("updated_at DESC, id DESC").Limit(limit).Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("retrieve DigitalHuman memories: %w", err)

@@ -167,6 +167,9 @@ func (s *Service) ScheduleMemoryExtraction(
 		if !state.AutoExtractionEnabled {
 			return nil
 		}
+		if MemoryTrustPolicyEnabled() && !backgroundExtractionAdmitted(run) {
+			return nil
+		}
 		var version Version
 		if err := tx.db.WithContext(ctx).Where(
 			"id = ? AND organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND state = ?",
@@ -515,10 +518,15 @@ func (s *Service) UndoMemory(ctx context.Context, scope Scope, digitalHumanID, o
 // longer filter recall; legacy business rows stay visible. Actor identity never
 // participates in the storage key.
 func (s *Service) RetrieveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int) ([]*DigitalHumanMemory, error) {
+	return s.retrieveMemories(ctx, scope, digitalHumanID, limit, nil)
+}
+
+// retrieveMemories optionally limits recall to one run's readable scope.
+func (s *Service) retrieveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int, readScope *memoryReadScope) ([]*DigitalHumanMemory, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	items, err := s.repo.ActiveMemories(ctx, scope, digitalHumanID, limit)
+	items, err := s.repo.ActiveMemories(ctx, scope, digitalHumanID, limit, readScope)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.retrieve")
 	}
@@ -644,13 +652,24 @@ func (s *Service) recordRejectedMemoryProposal(ctx context.Context, scope Scope,
 		if err := tx.CreateMemoryEvent(ctx, event); err != nil {
 			return err
 		}
-		detail := mustJSON(map[string]any{"reason_code": event.ReasonCode, "memory_class": request.MemoryClass, "memory_type": request.MemoryType})
+		values := map[string]any{"reason_code": event.ReasonCode, "memory_class": request.MemoryClass, "memory_type": request.MemoryType}
+		if request.SourceContext.SourceTrust != "" {
+			values["source_trust"] = request.SourceContext.SourceTrust
+		}
+		if request.Scope != nil {
+			values["scope_type"] = request.Scope.Type
+		}
+		detail := mustJSON(values)
 		return tx.CreateActionLedger(ctx, &ActionLedgerEntry{ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID, RunID: request.RunID, ActionType: "memory.proposal", Status: "rejected", MemoryOperationID: &request.OperationID, Detail: detail, CreatedAt: s.now()})
 	})
 }
 
 func memoryRejectionReason(cause error) string {
 	switch {
+	case errors.Is(cause, errMemorySourceTrustRejected):
+		return memoryAdmissionReasonTrust
+	case errors.Is(cause, errMemoryChannelScopeUnresolved):
+		return memoryAdmissionReasonChannelScope
 	case errors.Is(cause, ErrMemoryConflict):
 		return "memory_fence_conflict"
 	case errors.Is(cause, ErrInvalidRequest):

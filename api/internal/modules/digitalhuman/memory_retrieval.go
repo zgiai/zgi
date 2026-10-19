@@ -145,7 +145,7 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 // and the underlying cause is written to the operator log rather than into
 // model-facing text.
 func (p *DigitalHumanMemoryProjectionProvider) fallbackToRecentMemories(ctx context.Context, run *Run, cause string, causeErr error) (*DigitalHumanMemoryRetrievalResult, error) {
-	items, err := NewRepository(p.db).ActiveMemories(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, fallbackRecentMemoryLimit)
+	items, err := NewRepository(p.db).ActiveMemories(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, fallbackRecentMemoryLimit, nil)
 	if err != nil {
 		return nil, fmt.Errorf("digital human memory recall failed (%s): %v: %w", cause, causeErr, err)
 	}
