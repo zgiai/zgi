@@ -25,7 +25,7 @@ func TestAuthoritativeMemoryResultKeepsActiveMemoriesAndDropsUnknownOrInactiveHi
 		{SegmentID: inactiveID.String(), Score: 0.7},
 		{SegmentID: uuid.New().String(), Score: 1.0},
 	}}
-	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories)
+	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories, nil, 0)
 	if result.ResultCount != 2 || len(result.Items) != 2 || result.Items[0].ID != allowedID || result.Items[1].ID != legacyBusinessID {
 		t.Fatalf("result = %#v, want both active memories regardless of class or scope", result)
 	}
@@ -122,5 +122,31 @@ func TestMemoryProjectionStableDocumentID(t *testing.T) {
 	}
 	if stableProjectionUUID("document", id) == stableProjectionUUID("document", uuid.New()) {
 		t.Fatal("different DigitalHuman ids share projection document id")
+	}
+}
+
+func TestAuthoritativeMemoryResultFiltersByReadScopeAndTrims(t *testing.T) {
+	readScope := memoryReadScope{workspaceID: "workspace", channelID: "channel-a"}
+	selfA, selfB, ownChannel, otherChannel, customer := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	memories := map[uuid.UUID]*DigitalHumanMemory{
+		otherChannel: {ID: otherChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-b", Status: MemoryStatusActive, Content: "other"},
+		customer:     {ID: customer, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeCustomer, ScopeID: "c", Status: MemoryStatusActive, Content: "customer"},
+		ownChannel:   {ID: ownChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-a", Status: MemoryStatusActive, Content: "own"},
+		selfA:        {ID: selfA, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self a"},
+		selfB:        {ID: selfB, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self b"},
+	}
+	response := &datasetservice.KnowledgeRetrieveResponse{Resources: []datasetservice.KnowledgeRetrieverResource{
+		{SegmentID: otherChannel.String(), Score: 0.99},
+		{SegmentID: customer.String(), Score: 0.98},
+		{SegmentID: ownChannel.String(), Score: 0.9},
+		{SegmentID: selfA.String(), Score: 0.8},
+		{SegmentID: selfB.String(), Score: 0.7},
+	}}
+	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories, &readScope, 2)
+	if result.ResultCount != 2 || result.Items[0].ID != ownChannel || result.Items[1].ID != selfA {
+		t.Fatalf("result = %#v, want own channel then first self memory", result.Items)
+	}
+	if result.TopScore == nil || *result.TopScore != 0.9 {
+		t.Fatalf("top score = %v, want the first readable hit", result.TopScore)
 	}
 }
