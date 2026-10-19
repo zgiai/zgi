@@ -326,14 +326,15 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 	)
 	dispatcher := digitalhuman.NewAsynqRunDispatcher(deps.TaskManager)
 	memoryService := digitalhuman.NewService(repository)
+	memoryPromotionAuthorizer := digitalhuman.MemoryPromotionAuthorizerFunc(
+		func(ctx context.Context, organizationID, workspaceID, actorID uuid.UUID) (bool, error) {
+			return deps.OrganizationService.CheckWorkspacePermission(
+				ctx, organizationID.String(), workspaceID.String(), actorID.String(), workspacemodel.WorkspacePermissionDigitalHumanMemoryManage,
+			)
+		},
+	)
 	memoryOptions := []digitalhuman.MemoryRuntimeProviderOption{
-		digitalhuman.WithMemoryPromotionAuthorizer(digitalhuman.MemoryPromotionAuthorizerFunc(
-			func(ctx context.Context, organizationID, workspaceID, actorID uuid.UUID) (bool, error) {
-				return deps.OrganizationService.CheckWorkspacePermission(
-					ctx, organizationID.String(), workspaceID.String(), actorID.String(), workspacemodel.WorkspacePermissionDigitalHumanMemoryManage,
-				)
-			},
-		)),
+		digitalhuman.WithMemoryPromotionAuthorizer(memoryPromotionAuthorizer),
 	}
 	var memoryRetriever digitalhuman.DigitalHumanMemoryRetriever
 	if deps.MemoryRetriever != nil {
@@ -373,6 +374,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
 		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
 		digitalhuman.WithLinuxExecutionRuntime(newDigitalHumanLinuxExecution(deps)),
+		digitalhuman.WithSourceTrustAuthorizer(memoryPromotionAuthorizer),
 	)
 	if deps.WorkflowService != nil {
 		runtimeOption := digitalhuman.WithWorkflowContinuationRunner(deps.DB,

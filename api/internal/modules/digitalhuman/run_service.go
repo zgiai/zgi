@@ -109,7 +109,9 @@ type RuntimeService struct {
 	channelContext ChannelContextRuntimeProvider
 	manualFiles    ManualInvocationFileValidator
 	linux          LinuxExecutionRuntimeProvider
-	now            func() time.Time
+	// trustAuthorizer classifies console runs at admission (ADR 0004).
+	trustAuthorizer MemoryPromotionAuthorizer
+	now             func() time.Time
 }
 
 func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRuntimeAdapter, chat ChatRuntime, dispatcher RunDispatcher, options ...RuntimeServiceOption) *RuntimeService {
@@ -424,12 +426,13 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 	surface := normalizedInvocationSurface(scope, validated)
 	actorID := persistedRunActorID(scope, principalType, surface)
 	principalID := cloneUUIDPointer(&scope.PrincipalID)
+	sourceTrust := s.classifySourceTrust(ctx, scope.OrganizationID, scope.WorkspaceID, surface, actorID, validated)
 	run := &Run{
 		ID: runID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		DigitalHumanID: validated.Target.ID, DigitalHumanVersionID: resolved.Snapshot.DigitalHumanVersion,
 		ActorID: actorID, PrincipalType: principalType, PrincipalID: principalID,
 		UserSubjectKind: strings.TrimSpace(scope.UserSubjectKind), UserSubjectID: cloneUUIDPointer(scope.UserSubjectID),
-		Surface: surface, RequestFingerprint: fingerprint, IdempotencyKey: validated.IdempotencyKey,
+		Surface: surface, SourceTrust: sourceTrustPointer(sourceTrust), RequestFingerprint: fingerprint, IdempotencyKey: validated.IdempotencyKey,
 		InvocationEvent: eventJSON, RunSpec: specJSON, RunSpecRevision: resolved.Spec.Revision,
 		ExecutionSnapshot: snapshotJSON, ExecutionSnapshotRevision: resolved.Snapshot.Revision,
 		ExecutionTrace: datatypes.JSON(`{}`),
