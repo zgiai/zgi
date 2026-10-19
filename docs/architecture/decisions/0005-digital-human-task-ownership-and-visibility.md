@@ -19,11 +19,12 @@ The namespaces are disjoint. During a conversation, the DigitalHuman's task tool
 
 Every DigitalHuman task is owned by its DigitalHuman. Each task records:
 
-- `requester`: the user subject or channel conversation that asked for it;
-- `origin`: the surface, conversation, and message where it was proposed;
-- `confirmed_by`: the principal that approved the proposal;
-- `visibility`: `requester`, `conversation`, `workspace`, or `restricted`;
-- an optional business scope, using the scope model from ADR 0004.
+- `requester`: the user subject or channel conversation that asked for it. The existing owner columns keep this role, so no requester data is duplicated;
+- `origin`: the surface, conversation, and source reference where it was proposed. These are the existing origin and source fields;
+- `confirmed_by`: the principal that approved the proposal, and when;
+- `visibility`: `requester`, `conversation`, `workspace`, or `restricted`.
+
+Business scopes for tasks, using the model from ADR 0004, are left for a later decision.
 
 ### Visibility is enforced in one query layer
 
@@ -31,21 +32,22 @@ A single server-side visibility function serves REST handlers and runtime task t
 
 | Viewer | Visible tasks |
 |---|---|
-| Task console user with task management permission | All tasks of the DigitalHuman |
-| `authorized_operator` or `workspace_member` in a conversation | Tasks they requested, plus `workspace` tasks |
-| `channel_participant` | Tasks originated in the current channel conversation, plus tasks whose scope that conversation resolves to |
+| Task center user with DigitalHuman update permission (manager) | All tasks of the DigitalHuman |
+| Other task center users | `workspace` tasks |
+| Workspace member in a console conversation or the personal task view | Tasks they requested, plus `workspace` tasks |
+| `channel_participant` | Tasks originated in the current channel conversation |
 | `external_end_user` | Only tasks they requested |
 
-`restricted` tasks are visible only to their requester and to the task console.
+`restricted` tasks are visible only to their requester and to task center managers. Each task read reports `can_change`, so a visible `workspace` task requested by someone else is shown read-only.
 
 ### Awareness without disclosure
 
-Task tools return a task the viewer cannot see only as occupancy: its time window, lifecycle status, and priority band. They never return its title, content, requester, or result. This lets the DigitalHuman reason about its workload and schedule conflicts without leaking another requester's work. Occupancy is disabled for `external_end_user` runs by default.
+Task tools return a task the viewer cannot see only as occupancy: its time window, lifecycle status, and priority band. They never return its title, content, requester, or result. This lets the DigitalHuman reason about its workload and schedule conflicts without leaking another requester's work. Occupancy covers committed open tasks only, never unapproved proposals, and is never returned to `external_end_user` runs.
 
 ### Mutation authority is separate from visibility
 
 - A requester may change, pause, resume, or cancel tasks they requested.
-- Other changes require task management permission in the workspace.
+- Task center managers may change any task. Only managers may change a task's visibility.
 - Scheduled runs keep their current restriction: they may update only the task being executed, and only to `waiting` or `blocked`.
 - Proposal and confirmation remain mandatory for every conversational task creation, and `confirmed_by` is recorded.
 
@@ -57,13 +59,13 @@ The external API task endpoints keep their meaning: they return and mutate tasks
 
 The existing namespaces map deterministically:
 
-| Current `owner_kind` | New requester | New visibility |
+| Current `owner_kind` | Requester (kept in the owner columns) | Visibility |
 |---|---|---|
 | `user_subject` | The previous owner subject | `requester` |
 | `conversation` | The previous owner conversation | `conversation` |
 | `digital_human` | The creating account (`created_by`) | `workspace` |
 
-The legacy ownership columns stay readable for one release so the previous build can still serve traffic during rollback. The new visibility layer ships behind a runtime switch, and the existing ownership checks stay authoritative until the switch is enabled.
+Visibility is nullable. Rows written by a build without visibility support resolve their visibility from the owner kind using the same mapping, so a rollback can keep serving traffic. Changes stay limited to the requester namespace except for task center managers. Delivery and scheduled execution keep reading the owner columns. The visibility layer ships behind `ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED`, which defaults to off. The existing ownership checks stay authoritative until it is enabled.
 
 ## Consequences
 
