@@ -20,7 +20,9 @@ func (LocalProcessLauncher) Launch(ctx context.Context, spec ProcessSpec) (Proce
 	}
 	cmd := exec.Command(spec.Command, spec.Args...)
 	cmd.Dir = spec.WorkDir
-	base := []string{"PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"}
+	// LD_LIBRARY_PATH is forwarded because shared-library builds (such as the
+	// Python that actions/setup-python installs) cannot start without it.
+	base := []string{"PATH", "LD_LIBRARY_PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"}
 	for _, key := range base {
 		if value := os.Getenv(key); value != "" {
 			cmd.Env = append(cmd.Env, key+"="+value)
