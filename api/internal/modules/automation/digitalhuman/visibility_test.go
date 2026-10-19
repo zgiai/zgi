@@ -219,3 +219,27 @@ func TestTaskOccupancyRedactsHiddenOpenWork(t *testing.T) {
 		}
 	}
 }
+
+func TestVisibleTasksReportWhetherTheReaderCanChangeThem(t *testing.T) {
+	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
+	fixture := newVisibilityFixture(t)
+	check := func(label string, access digitalhuman.TaskAccessContext, want map[string]bool) {
+		t.Helper()
+		result, err := fixture.service.ListTasks(t.Context(), access, digitalhuman.TaskListQuery{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range result.Items {
+			if expected, ok := want[item.Name]; !ok || item.CanChange != expected {
+				t.Fatalf("%s: %s can_change = %v, want %v", label, item.Name, item.CanChange, expected)
+			}
+		}
+	}
+	check("member A", fixture.memberA, map[string]bool{"shared": false, "private A": true})
+	check("task center", fixture.taskCenter, map[string]bool{"shared": true})
+	check("manager", fixture.manager, map[string]bool{"shared": true, "private A": true, "private B": true, "conversation": true})
+	shared, err := fixture.service.GetTask(t.Context(), fixture.memberA, fixture.shared.ID)
+	if err != nil || shared.CanChange {
+		t.Fatalf("member A GetTask(shared) = %#v, %v", shared, err)
+	}
+}

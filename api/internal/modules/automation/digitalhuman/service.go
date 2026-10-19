@@ -136,7 +136,7 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	}
 	items := make([]*digitalhuman.Task, 0, len(rows))
 	for _, row := range rows {
-		item, err := publicTask(row)
+		item, err := publicTaskForAccess(row, access)
 		if err != nil {
 			return nil, err
 		}
@@ -254,7 +254,7 @@ func (s *Service) GetTask(ctx context.Context, access digitalhuman.TaskAccessCon
 	if err != nil {
 		return nil, err
 	}
-	return publicTask(task)
+	return publicTaskForAccess(task, access)
 }
 
 func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, req digitalhuman.UpdateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
@@ -808,6 +808,34 @@ func compileSchedule(schedule digitalhuman.TaskSchedule) (automationmodel.Automa
 	return typeValue, timezone, config, next, err
 }
 
+// publicTaskForAccess projects a task read by access and reports whether that
+// reader may change it. Visibility can show a task its reader cannot change.
+func publicTaskForAccess(row *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) (*digitalhuman.Task, error) {
+	task, err := publicTask(row)
+	if err != nil {
+		return nil, err
+	}
+	task.CanChange = access.CurrentTaskID != nil || taskCenterManager(access) || taskRequestedBy(row, access.Owner)
+	return task, nil
+}
+
+// taskRequestedBy reports whether row was created in owner's namespace.
+func taskRequestedBy(row *automationmodel.AutomationTask, owner digitalhuman.TaskOwnerRef) bool {
+	if pointerValue(row.OwnerKind) != string(owner.Kind) {
+		return false
+	}
+	switch owner.Kind {
+	case digitalhuman.TaskOwnerDigitalHuman:
+		return row.OwnerSubjectID == nil && row.OwnerConversationID == nil
+	case digitalhuman.TaskOwnerUserSubject:
+		return pointerValue(row.OwnerSubjectKind) == string(owner.Subject.Kind) && pointerValue(row.OwnerSubjectID) == owner.Subject.ID.String()
+	case digitalhuman.TaskOwnerConversation:
+		return pointerValue(row.OwnerConversationID) == owner.ConversationID.String()
+	default:
+		return false
+	}
+}
+
 func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error) {
 	id, err := uuid.Parse(row.ID)
 	if err != nil {
@@ -830,6 +858,8 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 		result.Source = *row.SourceRef
 	}
 	result.SourceConversationType = sourceConversationType(row)
+	// Results of a change are always changeable by the caller that made it.
+	result.CanChange = true
 	return result, nil
 }
 

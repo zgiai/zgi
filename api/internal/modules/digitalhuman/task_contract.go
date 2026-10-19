@@ -259,8 +259,11 @@ type Task struct {
 	Revision                int64                    `json:"revision"`
 	ProposalExpiresAt       *time.Time               `json:"proposal_expires_at,omitempty"`
 	ConfirmedAt             *time.Time               `json:"confirmed_at,omitempty"`
-	CreatedAt               time.Time                `json:"created_at"`
-	UpdatedAt               time.Time                `json:"updated_at"`
+	// CanChange tells the reader whether it may change this task. A visible
+	// workspace task requested by someone else is read-only.
+	CanChange bool      `json:"can_change"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // TaskListQuery contains bounded task filters.
