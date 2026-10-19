@@ -392,7 +392,7 @@ jobs:
           MCP_PYTHON_EXECUTABLE: python
         run: |
           go test ./pkg/mcpclient/... ./internal/modules/connectors/providers/githubmcp/... -count=1
-      # -race needs cgo, and the self-hosted runners have no C compiler, so
+      # -race needs cgo, and the CI hosts have no C compiler, so
       # run the race pass in the same Go image the other cgo gates use.
       - name: Race-test MCP client with Python interoperability
         run: |
