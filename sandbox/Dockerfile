@@ -75,8 +75,16 @@ WORKDIR /src
 COPY --from=builder /out/zgi-sandbox-profilebuilder /usr/local/bin/zgi-sandbox-profilebuilder
 
 ARG PIP_INDEX_URL=
+ARG APT_MIRROR=
+ARG APT_SECURITY_MIRROR=
 
-RUN apt-get -o Acquire::Retries=5 update && \
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|http://deb.debian.org/debian|http://$APT_MIRROR/debian|g" /etc/apt/sources.list.d/*.sources; \
+    fi && \
+    if [ -n "$APT_SECURITY_MIRROR" ]; then \
+        sed -i "s|http://deb.debian.org/debian-security|http://$APT_SECURITY_MIRROR/debian-security|g" /etc/apt/sources.list.d/*.sources; \
+    fi && \
+    apt-get -o Acquire::Retries=5 update && \
     apt-get -o Acquire::Retries=5 install -y --fix-missing --no-install-recommends \
         bubblewrap util-linux \
         r-base-core r-base-dev \
