@@ -55,3 +55,39 @@ func TestConsoleTaskApprovalScopeOwnsTheConsoleRun(t *testing.T) {
 		t.Fatal("the console approval scope owns another account's run")
 	}
 }
+
+type taskApprovalContinuationChat struct {
+	*scopedConversationChat
+	callers []runtimeservice.Caller
+}
+
+func (c *taskApprovalContinuationChat) RunDigitalHumanTaskApprovalContinuation(_ context.Context, _ runtimeservice.Scope, caller runtimeservice.Caller, _ runtimeservice.RunConfig,
+	_, _ uuid.UUID, _ runtimeservice.DigitalHumanTaskApprovalRequest, _ runtimeservice.DigitalHumanTaskApprovalHandler, _ func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
+	c.callers = append(c.callers, caller)
+	return &runtimeservice.ChatResult{Status: "completed"}, nil
+}
+
+// The follow-up answer after a task approval resolves run-scoped capabilities,
+// such as delegated Connector access, which require the caller to carry the
+// sealed run. Without it the follow-up fails with connector_access_denied.
+func TestConsoleTaskApprovalContinuesTheSealedRun(t *testing.T) {
+	run, resolved, event, prepared := linuxExecutionFixture(t, SurfaceConsole)
+	run.MessageID = &prepared.Message.ID
+	access, err := executionAccessFor(run, resolved, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeRunStore()
+	store.runs[run.ID] = run
+	chat := &taskApprovalContinuationChat{scopedConversationChat: &scopedConversationChat{fakeDigitalHumanChat: &fakeDigitalHumanChat{}}}
+	service := NewRuntimeService(store, fakeExecutionResolver{}, fakeBrainAdapter{}, chat, &fakeRunDispatcher{},
+		WithTaskRuntime(NewTaskRuntimeProvider(taskRuntimeService{})))
+	_, err = service.ContinueTaskApproval(t.Context(), access.scope(), run.DigitalHumanID, *run.ConversationID, *run.MessageID,
+		runtimeservice.DigitalHumanTaskApprovalRequest{ApprovalToken: uuid.NewString(), Action: "approve"}, func(runtimeservice.StreamEvent) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.callers) != 1 || chat.callers[0].RunID == nil || *chat.callers[0].RunID != run.ID {
+		t.Fatalf("task approval continuation caller = %#v, want run %s", chat.callers, run.ID)
+	}
+}

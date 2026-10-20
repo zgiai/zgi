@@ -66,9 +66,15 @@ func (s *RuntimeService) ContinueTaskApproval(
 	// prevents the Agent Loop from turning one approval into a second proposal
 	// after it observes the newly applied task state.
 	allowTaskMutationTools := strings.EqualFold(strings.TrimSpace(request.Action), "revise")
-	continuationConfig, err := s.taskApprovalContinuationConfig(ctx, scope, digitalHumanID, messageID, allowTaskMutationTools)
+	continuationConfig, run, err := s.taskApprovalContinuationConfig(ctx, scope, digitalHumanID, messageID, allowTaskMutationTools)
 	if err != nil {
 		return nil, err
+	}
+	if run != nil {
+		// The resumed Agent loop is owned by this run, exactly like the other
+		// DigitalHuman continuations. Run-scoped capabilities such as delegated
+		// Connector access require it; without it the follow-up answer fails.
+		caller.RunID = cloneUUIDPointer(&run.ID)
 	}
 	return approvalRuntime.RunDigitalHumanTaskApprovalContinuation(
 		ctx,
@@ -94,16 +100,20 @@ func (s *RuntimeService) taskApprovalContinuationConfig(
 	scope Scope,
 	digitalHumanID, messageID uuid.UUID,
 	allowTaskMutationTools bool,
-) (service.RunConfig, error) {
+) (service.RunConfig, *Run, error) {
 	lookup, ok := s.store.(channelApprovalRunLookup)
 	if !ok {
-		return service.RunConfig{}, nil
+		return service.RunConfig{}, nil, nil
 	}
 	run, err := lookup.RunByMessageID(ctx, scope.OrganizationID, scope.WorkspaceID, digitalHumanID, messageID)
 	if err != nil {
-		return service.RunConfig{}, err
+		return service.RunConfig{}, nil, err
 	}
-	return s.taskApprovalContinuationConfigForRun(ctx, run, allowTaskMutationTools)
+	config, err := s.taskApprovalContinuationConfigForRun(ctx, run, allowTaskMutationTools)
+	if err != nil {
+		return service.RunConfig{}, nil, err
+	}
+	return config, run, nil
 }
 
 func (s *RuntimeService) taskApprovalContinuationConfigForRun(ctx context.Context, run *Run, allowTaskMutationTools bool) (service.RunConfig, error) {
@@ -251,6 +261,7 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 	if err != nil {
 		return false, err
 	}
+	caller.RunID = cloneUUIDPointer(&pendingRun.ID)
 	result, err := approvalRuntime.RunDigitalHumanTaskApprovalContinuation(
 		ctx,
 		runtimeScope,
