@@ -9,6 +9,7 @@ const ALL = [
   "post_get",
   "post_create",
   "comment_list",
+  "comment_get",
   "comment_create",
   "comment_reply",
   "conversation_list",
@@ -458,6 +459,166 @@ export function createBridge({
       until_id: a.until_id,
     };
   }
+  function unavailable(message) {
+    throw new BridgeError("provider_unavailable", message);
+  }
+  function exactString(value, field, { empty = false } = {}) {
+    if (
+      typeof value !== "string" ||
+      (!empty && !value) ||
+      value.length > 10000
+    )
+      unavailable(`${field} unavailable from platform readback`);
+    return value;
+  }
+  function publishedAt(value) {
+    const parsed =
+      typeof value === "number" && Number.isFinite(value)
+        ? new Date(value)
+        : new Date(exactString(value, "published_at"));
+    if (!Number.isFinite(parsed.getTime()))
+      unavailable("published_at unavailable from platform readback");
+    return parsed.toISOString();
+  }
+  function httpsURL(value, field = "url") {
+    const text = exactString(value, field);
+    try {
+      const url = new URL(text);
+      if (url.protocol !== "https:" || url.username || url.password)
+        throw Error("url");
+      return url.href;
+    } catch {
+      unavailable(`${field} unavailable from platform readback`);
+    }
+  }
+  function xReadback(raw, comment = false) {
+    const row = raw?.data;
+    if (!row || typeof row !== "object") unavailable("X readback unavailable");
+    const references = Array.isArray(row.referenced_tweets)
+        ? row.referenced_tweets
+        : [],
+      parent = references.find((r) => r?.type === "replied_to")?.id,
+      quoted = references.find((r) => r?.type === "quoted")?.id,
+      reposted = references.find((r) => r?.type === "retweeted")?.id,
+      mediaKeys = Array.isArray(row.attachments?.media_keys)
+        ? row.attachments.media_keys.map(String)
+        : [],
+      included = Array.isArray(raw.includes?.media) ? raw.includes.media : [],
+      media = mediaKeys.map((key) => {
+        const item = included.find((m) => String(m?.media_key) === key);
+        if (!item?.url)
+          unavailable(`media URL unavailable from X readback for ${key}`);
+        return { id: key, url: httpsURL(item.url, "media URL") };
+      }),
+      isRepost = references.some((r) => r?.type === "retweeted"),
+      id = exactString(row.id, "id");
+    if (comment && !parent)
+      unavailable("comment parent unavailable from X readback");
+    return {
+      id,
+      text: exactString(row.text, "text", { empty: isRepost }),
+      author_id: exactString(row.author_id, "author_id"),
+      url: `https://x.com/i/web/status/${enc(id)}`,
+      published_at: publishedAt(row.created_at),
+      ...(parent ? { parent_id: exactString(String(parent), "parent_id") } : {}),
+      ...(quoted ? { quoted_id: exactString(String(quoted), "quoted_id") } : {}),
+      ...(reposted
+        ? { reposted_id: exactString(String(reposted), "reposted_id") }
+        : {}),
+      ...(media.length ? { media } : {}),
+      vendor: raw,
+    };
+  }
+  function facebookMedia(raw) {
+    const attachments = Array.isArray(raw.attachments?.data)
+      ? raw.attachments.data
+      : raw.attachment
+        ? [raw.attachment]
+        : [];
+    return attachments.map((item) => {
+      const mediaID = item?.target?.id,
+        mediaURL = item?.target?.url || item?.url || item?.media?.image?.src;
+      if (!mediaID || !mediaURL)
+        unavailable("media identity unavailable from Facebook readback");
+      return {
+        id: exactString(String(mediaID), "media id"),
+        url: httpsURL(mediaURL, "media URL"),
+      };
+    });
+  }
+  function facebookReadback(raw, comment = false) {
+    const parent = comment ? raw.parent?.id || raw.object?.id : undefined,
+      media = facebookMedia(raw);
+    if (comment && !parent)
+      unavailable("comment parent unavailable from Facebook readback");
+    return {
+      id: exactString(String(raw.id ?? ""), "id"),
+      text: exactString(raw.message, "text"),
+      author_id: exactString(String(raw.from?.id ?? ""), "author_id"),
+      url: httpsURL(raw.permalink_url),
+      published_at: publishedAt(raw.created_time),
+      ...(parent ? { parent_id: exactString(String(parent), "parent_id") } : {}),
+      ...(media.length ? { media } : {}),
+      vendor: raw,
+    };
+  }
+  function linkedInReadback(raw, comment = false) {
+    const parent = comment ? raw.object : undefined,
+      id = comment ? raw.commentUrn : raw.id,
+      text = comment ? raw.message?.text : raw.commentary,
+      author = comment ? raw.actor : raw.author,
+      time = comment ? raw.created?.time : raw.publishedAt ?? raw.createdAt,
+      isRepost = !comment && raw.reshareContext?.parent;
+    if (comment && !parent)
+      unavailable("comment parent unavailable from LinkedIn readback");
+    const exactID = exactString(String(id ?? ""), "id");
+    return {
+      id: exactID,
+      text: exactString(text, "text", { empty: Boolean(isRepost) }),
+      author_id: exactString(String(author ?? ""), "author_id"),
+      url: comment
+        ? `https://www.linkedin.com/feed/update/${enc(parent)}?commentUrn=${enc(exactID)}`
+        : `https://www.linkedin.com/feed/update/${enc(exactID)}`,
+      published_at: publishedAt(time),
+      ...(parent ? { parent_id: exactString(String(parent), "parent_id") } : {}),
+      ...(isRepost
+        ? {
+            reposted_id: exactString(
+              String(raw.reshareContext.parent),
+              "reposted_id",
+            ),
+          }
+        : {}),
+      vendor: raw,
+    };
+  }
+  async function linkedInPostReadback(raw, org) {
+    const normalized = linkedInReadback(raw),
+      mediaIDs = [
+        raw.content?.media?.id,
+        ...(Array.isArray(raw.content?.multiImage?.images)
+          ? raw.content.multiImage.images.map((item) => item?.id)
+          : []),
+      ].filter(Boolean);
+    if (!mediaIDs.length) return normalized;
+    const assets = await Promise.all(
+      mediaIDs.map((mediaID) => request(`images/${enc(mediaID)}`)),
+    );
+    const media = assets.map((asset, index) => {
+      const expected = String(mediaIDs[index]);
+      if (asset.id !== expected)
+        unavailable("media identity unavailable from LinkedIn readback");
+      if (asset.owner !== org)
+        throw denied("media owner does not match managed organization");
+      if (asset.status !== "AVAILABLE")
+        unavailable("media is not available from LinkedIn readback");
+      return {
+        id: expected,
+        url: httpsURL(asset.downloadUrl, "media URL"),
+      };
+    });
+    return { ...normalized, media, vendor_media: assets };
+  }
   async function xCall(n, a, id) {
     if (n === "comment_create") {
       const postID = req(a, "post_id");
@@ -474,16 +635,22 @@ export function createBridge({
         body: { text: req(a, "text"), reply: { in_reply_to_tweet_id: postID } },
       });
     }
-    if (n === "post_repost")
-      return request(`users/${seg(id)}/retweets`, {
+    if (n === "post_repost") {
+      const target = req(a, "post_id"),
+        result = await request(`users/${seg(id)}/retweets`, {
         method: "POST",
-        body: { tweet_id: req(a, "post_id") },
+          body: { tweet_id: target },
       });
-    if (n === "post_quote")
-      return request("tweets", {
+      return { ...result, reposted_id: target };
+    }
+    if (n === "post_quote") {
+      const target = req(a, "post_id"),
+        result = await request("tweets", {
         method: "POST",
-        body: { text: req(a, "text"), quote_tweet_id: req(a, "post_id") },
+          body: { text: req(a, "text"), quote_tweet_id: target },
       });
+      return { ...result, quoted_id: target };
+    }
     if (n === "post_search" || n === "mention_list")
       return request(
         n === "post_search"
@@ -510,29 +677,45 @@ export function createBridge({
           "tweet.fields": "created_at,public_metrics,conversation_id",
         },
       });
-    if (n === "post_get")
-      return request(`tweets/${seg(req(a, "post_id"))}`, {
-        query: {
-          "tweet.fields": "author_id,created_at,public_metrics,conversation_id",
-        },
-      });
+    if (n === "post_get" || n === "comment_get")
+      return xReadback(
+        await request(
+          `tweets/${seg(req(a, n === "post_get" ? "post_id" : "comment_id"))}`,
+          {
+            query: {
+              "tweet.fields":
+                "author_id,created_at,public_metrics,conversation_id,referenced_tweets,attachments",
+              expansions: "attachments.media_keys,referenced_tweets.id",
+              "media.fields":
+                "media_key,type,url,preview_image_url,width,height,alt_text",
+            },
+          },
+        ),
+        n === "comment_get",
+      );
     if (n === "post_create") {
       if (a.image_url) throw invalid("image_url unavailable; use image_data");
       const body = { text: req(a, "text") };
+      let mediaID, mediaKey;
       if (image(a)) {
         const m = await request("media/upload", {
           method: "POST",
           body: { media: a.image_data, media_category: "tweet_image" },
         });
-        if (!m.data?.id)
+        if (!m.data?.id || !m.data?.media_key)
           throw new BridgeError(
             "outcome_unknown",
-            "media upload result unknown",
+            "media upload result missing authoritative identifiers",
             true,
           );
-        body.media = { media_ids: [String(m.data.id)] };
+        mediaID = String(m.data.id);
+        mediaKey = String(m.data.media_key);
+        body.media = { media_ids: [mediaID] };
       }
-      return request("tweets", { method: "POST", body });
+      const result = await request("tweets", { method: "POST", body });
+      return mediaKey
+        ? { ...result, media_receipts: [{ id: mediaKey }] }
+        : result;
     }
     if (n === "comment_list")
       return request("tweets/search/recent", {
@@ -603,18 +786,24 @@ export function createBridge({
       const range = interval(a);
       if (range.since || range.until)
         throw invalid("X metrics are current snapshots; interval unsupported");
+      const metrics = await request(
+        a.post_id ? `tweets/${seg(a.post_id)}` : `users/${seg(id)}`,
+        {
+          query: a.post_id
+            ? {
+                "tweet.fields":
+                  "author_id,public_metrics,non_public_metrics,organic_metrics,promoted_metrics",
+              }
+            : { "user.fields": "public_metrics" },
+        },
+      );
+      if (
+        a.post_id &&
+        (metrics.data?.id !== String(a.post_id) || metrics.data?.author_id !== id)
+      )
+        throw denied("post author does not match account");
       return {
-        ...(await request(
-          a.post_id ? `tweets/${seg(a.post_id)}` : `users/${seg(id)}`,
-          {
-            query: a.post_id
-              ? {
-                  "tweet.fields":
-                    "public_metrics,non_public_metrics,organic_metrics,promoted_metrics",
-                }
-              : { "user.fields": "public_metrics" },
-          },
-        )),
+        ...metrics,
         interval: null,
         limitations: [
           "Current snapshot only; fields depend on ownership, access tier and post age. Absent metrics unavailable.",
@@ -648,22 +837,48 @@ export function createBridge({
         form = new FormData();
       form.set("caption", req(a, "text"));
       form.set("source", new Blob([bytes], { type: a.mime_type }), "image");
-      return (
+      const result = await (
         await transport(`https://graph.facebook.com/v23.0/${id}/photos`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: form,
         })
       ).json();
+      const mediaID = result.id;
+      if (!mediaID)
+        throw new BridgeError(
+          "outcome_unknown",
+          "media publish result unknown",
+          true,
+        );
+      return {
+        ...result,
+        id: String(result.post_id || mediaID),
+        media_receipts: [{ id: String(mediaID) }],
+      };
     }
-    if (n === "post_create")
-      return a.image_url
-        ? fbTool("create_photo_post", {
-            page: id,
-            url: photo(a.image_url),
-            caption: req(a, "text"),
-          })
-        : fbTool("create_post", { page: id, message: req(a, "text") });
+    if (n === "post_create") {
+      if (a.image_url) {
+        const result = await fbTool("create_photo_post", {
+          page: id,
+          url: photo(a.image_url),
+          caption: req(a, "text"),
+        });
+        const mediaID = result.id;
+        if (!mediaID)
+          throw new BridgeError(
+            "outcome_unknown",
+            "media publish result unknown",
+            true,
+          );
+        return {
+          ...result,
+          id: String(result.post_id || mediaID),
+          media_receipts: [{ id: String(mediaID) }],
+        };
+      }
+      return fbTool("create_post", { page: id, message: req(a, "text") });
+    }
     if (n === "post_list")
       return request(`${id}/published_posts`, {
         query: {
@@ -674,11 +889,24 @@ export function createBridge({
         },
       });
     if (n === "post_get")
-      return request(seg(fbPost(a, id)), {
+      return facebookReadback(
+        await request(seg(fbPost(a, id)), {
+          query: {
+            fields: "id,message,created_time,permalink_url,from,attachments",
+          },
+        }),
+      );
+    if (n === "comment_get") {
+      const result = await request(seg(req(a, "comment_id")), {
         query: {
-          fields: "id,message,created_time,permalink_url,from,attachments",
+          fields:
+            "id,message,from,created_time,permalink_url,attachment,parent,object",
         },
       });
+      if (!String(result.object?.id ?? "").startsWith(`${id}_`))
+        throw denied("comment is outside the managed Page");
+      return facebookReadback(result, true);
+    }
     if (n === "comment_list")
       return request(`${seg(fbPost(a, id))}/comments`, {
         query: {
@@ -817,11 +1045,14 @@ export function createBridge({
       const parent = req(a, "post_id");
       if (!/^urn:li:(share|ugcPost):\d+$/.test(parent))
         throw invalid("invalid post_id");
-      return li.createPost({
+      return {
+        ...(await li.createPost({
         authorUrn: org,
         commentary: a.text === undefined ? "" : req(a, "text"),
         reshareUrn: parent,
-      });
+        })),
+        reposted_id: parent,
+      };
     }
     if (n === "notification_list") {
       const start = a.cursor === undefined ? 0 : Number(a.cursor);
@@ -851,11 +1082,14 @@ export function createBridge({
         imageUrn = (
           await li.uploadImage({ ownerUrn: org, dataBase64: a.image_data })
         ).image_urn;
-      return li.createPost({
+      const result = await li.createPost({
         authorUrn: org,
         commentary: text,
         imageUrn,
       });
+      return imageUrn
+        ? { ...result, media_receipts: [{ id: imageUrn }] }
+        : result;
     }
     if (n === "post_list" || n === "comment_list") {
       const start = a.cursor === undefined ? 0 : Number(a.cursor);
@@ -880,7 +1114,35 @@ export function createBridge({
         },
       );
     }
-    if (n === "post_get") return liPost(a, org);
+    if (n === "post_get")
+      return linkedInPostReadback(await liPost(a, org), org);
+    if (n === "comment_get") {
+      await liPost(a, org);
+      const c = req(a, "comment_id"),
+        match = c.match(
+          /^urn:li:comment:\((urn:li:activity:\d+),(\d+)\)$/,
+        ),
+        commentID = match ? match[2] : /^\d+$/.test(c) ? c : null;
+      if (!commentID) throw invalid("invalid LinkedIn comment_id");
+      const result = await request(
+        `socialActions/${enc(a.post_id)}/comments/${commentID}`,
+        ),
+        returned = result.commentUrn?.match(
+          /^urn:li:comment:\((urn:li:activity:\d+),(\d+)\)$/,
+        );
+      if (
+        String(result.id) !== commentID ||
+        returned?.[2] !== commentID ||
+        returned?.[1] !== result.object ||
+        (match && result.commentUrn !== c) ||
+        !/^urn:li:activity:\d+$/.test(result.object)
+      )
+        throw denied("comment parent does not match post");
+      return {
+        ...linkedInReadback(result, true),
+        parent_post_id: a.post_id,
+      };
+    }
     if (n === "comment_reply") {
       await liPost(a, org);
       const c = req(a, "comment_id");
@@ -926,6 +1188,7 @@ export function createBridge({
       }
       return {
         ...(await request("organizationalEntityShareStatistics", { query })),
+        ...(a.post_id ? { post_id: a.post_id, account_id: org } : {}),
         interval: range,
         limitations: [
           "Organization share statistics; missing fields unavailable. No trial/conversion attribution.",
@@ -946,6 +1209,10 @@ export function createBridge({
       throw invalid("arguments must be an object");
     const fixedArgs = {
       comment_create: ["account_id", "post_id", "text"],
+      comment_get:
+        provider === "linkedin-social"
+          ? ["account_id", "post_id", "comment_id"]
+          : ["account_id", "comment_id"],
       post_search: [
         "account_id",
         "query",

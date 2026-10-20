@@ -71,8 +71,8 @@ func (s *service) prepareConfiguredChatDefinition(ctx context.Context, scope Sco
 	if req.MaxTaskTokens < 0 || req.MaxTaskTokens > maxTaskTokenBudget {
 		return RunConfig{}, nil, nil, nil, fmt.Errorf("%w: max_task_tokens must be between 0 and %d", ErrInvalidInput, maxTaskTokenBudget)
 	}
-	if req.MaxTaskTokens > 0 && normalizeConversationSource(caller.Source) != runtimemodel.ConversationSourceExternalAPI {
-		return RunConfig{}, nil, nil, nil, fmt.Errorf("%w: max_task_tokens is only available for external API calls", ErrInvalidInput)
+	if req.MaxTaskTokens > 0 && !taskTokenBudgetCallerAllowed(caller, req) {
+		return RunConfig{}, nil, nil, nil, fmt.Errorf("%w: max_task_tokens requires an external API or scheduled digital employee", ErrInvalidInput)
 	}
 	initialConnections, err := initialChatConnections(caller, req)
 	if err != nil {
@@ -132,6 +132,14 @@ func (s *service) prepareConfiguredChatDefinition(ctx context.Context, scope Sco
 		return RunConfig{}, nil, nil, nil, err
 	}
 	return config, parts, conversation, parentID, nil
+}
+
+// Scheduled employees without Linux execution keep the console conversation
+// source. The server-owned exact run correlation, rather than that source
+// alone, admits their bounded model request.
+func taskTokenBudgetCallerAllowed(caller Caller, request runtimedto.ChatRequest) bool {
+	return normalizeConversationSource(caller.Source) == runtimemodel.ConversationSourceExternalAPI ||
+		(caller.Type == runtimemodel.ConversationCallerDigitalHuman && caller.RunID != nil && *caller.RunID != uuid.Nil && request.OperationContext["digital_human_run_id"] == caller.RunID.String())
 }
 
 func (s *service) PrepareRootRegeneration(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error) {

@@ -1006,6 +1006,12 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	if surface, ok := stringContextValue(event.Context, "surface"); ok && surface == SurfaceAPI {
 		chatRequest.MaxTaskTokens = intContextValue(event.Context, "max_task_tokens")
 	}
+	if run.Surface == SurfaceTask && event.Origin.Kind == invocation.OriginSchedule {
+		limit := intContextValue(event.Context, "max_task_tokens")
+		if limit > 0 && limit <= 100000 {
+			chatRequest.MaxTaskTokens = limit
+		}
+	}
 	if event.Origin.Kind == invocation.OriginChannel {
 		excludedTexts := []string{run.Query}
 		if channelContextPreparation != nil {

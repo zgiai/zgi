@@ -27,6 +27,7 @@ import {
 import { toast } from 'sonner';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { DigitalHumanResourceBindings } from '@/components/digital-human/digital-human-resource-bindings';
+import { DigitalHumanSocialOperations } from '@/components/digital-human/digital-human-social-operations';
 import { useDigitalHumanDraftPersistence } from '@/components/digital-human/use-digital-human-draft-persistence';
 import {
   useDigitalHumanDraftStore,
@@ -544,6 +545,7 @@ function ConfigurationEditor({
             ) : null}
             <DigitalHumanResourceBindings id={id} />
             <div className="my-4"><PolicyFileUploadSettings value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy} onChange={setFileUploadPolicy} disabled={!editingEnabled} /></div>
+            {!previewVersion ? <DigitalHumanSocialOperations id={id} /> : null}
           </div>
         </section>
       </div>

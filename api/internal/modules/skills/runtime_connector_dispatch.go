@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
@@ -43,6 +44,17 @@ func (runtime *Runtime) callConnectorTool(ctx context.Context, doc SkillDocument
 	defer cancel()
 	start := time.Now()
 	runCtx = connectorexecution.WithPresentationLocale(runCtx, execCtx.PresentationLocale)
+	if !identity.Interactive && identity.Target.Type == core.TargetTypeDigitalHuman {
+		runID, runErr := uuid.Parse(strings.TrimSpace(execCtx.ConnectorRunID))
+		messageID, messageErr := uuid.Parse(strings.TrimSpace(execCtx.MessageID))
+		if runErr != nil || messageErr != nil || runID == uuid.Nil || messageID == uuid.Nil {
+			err = core.NewError(core.ErrorCodeAccessDenied, false, nil)
+			invocation.Trace.Status = "error"
+			invocation.Trace.Error, invocation.Trace.ErrorCode = skillTraceError(err)
+			return invocation, err
+		}
+		runCtx = connectorexecution.WithBackgroundIdentity(runCtx, runID, messageID)
+	}
 	governanceParams := governanceRuntimeParameters(execCtx.RuntimeParameters)
 	sessionGrants := governanceSessionGrants(execCtx.RuntimeParameters, governanceParams)
 	result, err := runtime.connectorDispatcher.Dispatch(runCtx, dispatch.Invocation{

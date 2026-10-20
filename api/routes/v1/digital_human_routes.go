@@ -43,6 +43,7 @@ import (
 
 // DigitalHumanRouteDeps contains the lifecycle dependencies.
 type DigitalHumanRouteDeps struct {
+	SocialOperations        socialOperationsManagement
 	Service                 digitalhuman.HandlerService
 	Runtime                 digitalhuman.RuntimeHandlerService
 	Channels                digitalhuman.ChannelHandlerService
@@ -115,6 +116,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
 	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).RegisterRoutes(group)
 	channelHandler.RegisterAuthenticatedRoutes(group)
+	registerSocialOperationsRoutes(group, deps.SocialOperations)
 }
 
 func digitalHumanPermissionMiddleware(organizationService interfaces.OrganizationService, projector *apptransport.Projector) gin.HandlerFunc {
@@ -169,7 +171,7 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	if strings.Contains(path, "/my-tasks") {
 		return workspacemodel.WorkspacePermissionDigitalHumanRun
 	}
-	if strings.Contains(path, "/tasks") || strings.Contains(path, "/my-tasks") {
+	if strings.Contains(path, "/tasks") || strings.Contains(path, "/my-tasks") || strings.Contains(path, "/social-operations/") {
 		switch method {
 		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView

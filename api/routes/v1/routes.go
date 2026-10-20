@@ -231,19 +231,21 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		panic(fmt.Sprintf("admit Connector definitions: %v", err))
 	}
 	RegisterConnectorRoutes(v1, ConnectorRouteDeps{
-		SocialEvents:            serviceContainer.GetConnectorSocialEventsService(),
-		SocialOAuth:             serviceContainer.GetConnectorSocialOAuthService(),
-		SocialOAuthFrontendURL:  config.Current().Connectors.SocialOAuthFrontendURL,
-		Catalog:                 serviceContainer.GetConnectorPluginManager(),
-		Connections:             serviceContainer.GetConnectorConnectionService(),
-		Bindings:                serviceContainer.GetConnectorBindingService(),
-		References:              serviceContainer.GetConnectorReferenceService(),
-		Maintenance:             serviceContainer.GetConnectorMaintenanceService(),
-		Onboarding:              serviceContainer.GetConnectorOnboardingService(),
-		HostKeyProbe:            serviceContainer.GetServerOpsSSHHostKeyProbe(),
-		Preferences:             serviceContainer.GetConnectorChatPreferenceService(),
-		ApplicationErrorCatalog: applicationErrorCatalog,
-		AccountService:          accountService,
+		SocialEvents:               serviceContainer.GetConnectorSocialEventsService(),
+		SocialOAuth:                serviceContainer.GetConnectorSocialOAuthService(),
+		SocialOAuthFrontendURL:     config.Current().Connectors.SocialOAuthFrontendURL,
+		Catalog:                    serviceContainer.GetConnectorPluginManager(),
+		Connections:                serviceContainer.GetConnectorConnectionService(),
+		Bindings:                   serviceContainer.GetConnectorBindingService(),
+		References:                 serviceContainer.GetConnectorReferenceService(),
+		Maintenance:                serviceContainer.GetConnectorMaintenanceService(),
+		Onboarding:                 serviceContainer.GetConnectorOnboardingService(),
+		HostKeyProbe:               serviceContainer.GetServerOpsSSHHostKeyProbe(),
+		Preferences:                serviceContainer.GetConnectorChatPreferenceService(),
+		BackgroundGrants:           serviceContainer.GetConnectorBackgroundAuthorization(),
+		BackgroundGrantPermissions: serviceContainer.GetOrganizationService(),
+		ApplicationErrorCatalog:    applicationErrorCatalog,
+		AccountService:             accountService,
 	})
 
 	// ---------- Agent ----------
@@ -289,8 +291,13 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	if digitalHumanRuntime.MemoryProjectionRepairer != nil {
 		consoleDigitalHumanService.SetMemoryProjectionRepairer(digitalHumanRuntime.MemoryProjectionRepairer)
 	}
+	socialOperationsSetup, socialOperationsSetupErr := serviceContainer.GetSocialOperationsSetupService(automationBundle.DigitalHumanTasks)
+	if socialOperationsSetupErr != nil {
+		panic(fmt.Sprintf("initialize social operations setup: %v", socialOperationsSetupErr))
+	}
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
-		Service: consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
+		SocialOperations: socialOperationsSetup,
+		Service:          consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
 		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,

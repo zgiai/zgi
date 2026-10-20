@@ -32,7 +32,7 @@ func SocialMCPDefinitions() []Definition {
 		}{
 			{"account.get", "Read connected account", "读取已连接账号", false}, {"account.list", "List publishing accounts", "列出可运营账号", false},
 			{"post.list", "List posts", "读取帖子列表", false}, {"post.get", "Read a post", "读取帖子", false}, {"post.create", "Publish a post", "发布帖子", true},
-			{"comment.list", "Read comments", "读取评论", false}, {"comment.create", "Comment on a post", "评论帖子", true}, {"comment.reply", "Reply to a comment", "回复评论", true},
+			{"comment.list", "Read comments", "读取评论", false}, {"comment.get", "Read a comment", "读取评论详情", false}, {"comment.create", "Comment on a post", "评论帖子", true}, {"comment.reply", "Reply to a comment", "回复评论", true},
 			{"conversation.list", "List private conversations", "读取私信会话列表", false}, {"message.list", "Read private messages", "读取私信", false}, {"message.send", "Reply to a private conversation", "回复私信", true},
 			{"metrics.get", "Read platform metrics", "读取平台指标", false},
 			{"post.search", "Search recent posts", "搜索近期帖子", false}, {"mention.list", "Read mentions", "读取提及", false},
@@ -130,6 +130,11 @@ func socialInput(provider, action string) map[string]any {
 		}
 	case "post.get", "comment.list":
 		addID("post_id")
+	case "comment.get":
+		if provider == "linkedin-social" {
+			addID("post_id")
+		}
+		addID("comment_id")
 	case "post.create":
 		properties["text"] = text(3000)
 		required = append(required, "text")

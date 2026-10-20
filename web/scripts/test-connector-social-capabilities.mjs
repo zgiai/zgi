@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Blob } from 'node:buffer';
 import { load } from './connector-fixture.mjs';
 const calls = [];
 class BaseService {

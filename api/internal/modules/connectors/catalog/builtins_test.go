@@ -94,6 +94,40 @@ func TestValidateBuiltinPackageAdmitsDigitalHumanProjection(t *testing.T) {
 	}
 }
 
+func TestValidateBuiltinPackageAdmitsOnlyExactMailDigitalHumanProjection(t *testing.T) {
+	for _, id := range []string{"gmail", "qqmail", "netease163"} {
+		t.Run(id, func(t *testing.T) {
+			base, ok := MailDefinition(id)
+			if !ok {
+				t.Fatal("mail definition missing")
+			}
+			candidate, err := WithDigitalHumanSurface(base, base.PluginVersion+"-digitalhuman.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate.PluginDigest = strings.Repeat("a", 64)
+			if err = ValidateBuiltinPackage([]Definition{candidate}); err != nil {
+				t.Fatalf("exact mail Digital-Human projection rejected: %v", err)
+			}
+			for name, mutate := range map[string]func(*Definition){
+				"non-versioned":       func(d *Definition) { d.PluginVersion = base.PluginVersion },
+				"wildcard version":    func(d *Definition) { d.PluginVersion = "*" },
+				"surface shrink":      func(d *Definition) { d.Surfaces = []Surface{SurfaceDigitalHuman} },
+				"credential mutation": func(d *Definition) { d.CredentialFields[0].Secret = !d.CredentialFields[0].Secret },
+				"operation mutation":  func(d *Definition) { d.Operations[0].ToolName = "forged_mail_tool" },
+			} {
+				t.Run(name, func(t *testing.T) {
+					forged := cloneDefinition(candidate)
+					mutate(&forged)
+					if ValidateBuiltinPackage([]Definition{forged}) == nil {
+						t.Fatalf("forged mail Digital-Human projection admitted: %#v", forged)
+					}
+				})
+			}
+		})
+	}
+}
+
 // TestValidateBuiltinPackageAdmitsCurrentV4DigitalHumanBuiltin pins the catalog
 // admission of the already-V4 SSH Server Operations built-in. An already-V4
 // Digital-Human-only built-in has no pre-V4 base to project onto, so its package

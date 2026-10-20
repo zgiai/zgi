@@ -107,7 +107,7 @@ func validateBuiltinPackageCandidate(accepted, candidate Definition) error {
 		if candidate.PluginVersion != accepted.PluginVersion {
 			return ErrInvalidDefinition
 		}
-	} else if candidate.IsDigitalHumanContract() {
+	} else if candidate.Supports(SurfaceDigitalHuman) {
 		projected, err := WithDigitalHumanSurface(accepted, accepted.PluginVersion+"-digitalhuman.1")
 		if err != nil || candidate.PluginVersion != projected.PluginVersion {
 			return ErrInvalidDefinition

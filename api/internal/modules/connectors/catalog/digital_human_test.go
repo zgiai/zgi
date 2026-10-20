@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -223,5 +224,35 @@ func TestAdditiveDigitalHumanSurfaceOnlyExtendsFirstReleaseContracts(t *testing.
 	digitalHumanOnly.Surfaces = []Surface{SurfaceDigitalHuman}
 	if additiveDigitalHumanSurface(current, digitalHumanOnly) {
 		t.Fatal("digital-human-only candidate admitted as an additive extension")
+	}
+}
+
+func TestMailDigitalHumanProjectionPreservesV5AndV6Contracts(t *testing.T) {
+	for _, id := range []string{"gmail", "qqmail", "netease163"} {
+		t.Run(id, func(t *testing.T) {
+			base, ok := MailDefinition(id)
+			if !ok {
+				t.Fatal("mail definition missing")
+			}
+			projected, err := WithDigitalHumanSurface(base, base.PluginVersion+"-digitalhuman.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !projected.Supports(SurfaceDigitalHuman) || !projected.IsMailCredentials() ||
+				projected.ExtensionSchemaVersion != base.ExtensionSchemaVersion || projected.ContractVersion != base.ContractVersion ||
+				projected.SourceDialect != base.SourceDialect || projected.SourceSchemaVersion != base.SourceSchemaVersion ||
+				projected.ProviderID != base.ProviderID || projected.DriverID != base.DriverID || projected.AuthMethodID != base.AuthMethodID ||
+				projected.SetupMethod != base.SetupMethod || !reflect.DeepEqual(projected.Setup, base.Setup) ||
+				!reflect.DeepEqual(projected.CredentialFields, base.CredentialFields) || !reflect.DeepEqual(projected.Operations, base.Operations) {
+				t.Fatalf("mail projection changed its V%d contract: %#v", base.ContractVersion, projected)
+			}
+			if projected.PluginVersion != base.PluginVersion+"-digitalhuman.1" || projected.PluginDigest != "" ||
+				!hasAdditiveDigitalHumanSurfaces(projected.Surfaces) || !additiveDigitalHumanSurface(base, projected) {
+				t.Fatalf("mail projection identity/surfaces = %q/%q/%v", projected.PluginVersion, projected.PluginDigest, projected.Surfaces)
+			}
+			if _, err = WithDigitalHumanSurface(projected, projected.PluginVersion+"-digitalhuman.1"); !errors.Is(err, ErrInvalidDefinition) {
+				t.Fatalf("mail projection admitted a second projection: %v", err)
+			}
+		})
 	}
 }

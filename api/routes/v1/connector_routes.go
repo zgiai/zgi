@@ -69,34 +69,38 @@ var (
 // machinery. Routes are registered only when the caller supplies explicit
 // Connector-native dependencies.
 type ConnectorRouteDeps struct {
-	SocialEvents            connectorSocialEventService
-	SocialOAuth             connectorSocialOAuthService
-	SocialOAuthFrontendURL  string
-	Catalog                 connectorDefinitionCatalog
-	Connections             connectorConnectionService
-	Bindings                connectorBindingService
-	References              connectorReferenceService
-	Maintenance             connectorMaintenanceService
-	Onboarding              connectorOnboardingService
-	HostKeyProbe            connectorserveropsssh.HostKeyProbe
-	AccountService          interfaces.AccountService
-	Preferences             connectorChatPreferenceService
-	ApplicationErrorCatalog *appcatalog.Catalog
+	SocialEvents               connectorSocialEventService
+	SocialOAuth                connectorSocialOAuthService
+	SocialOAuthFrontendURL     string
+	Catalog                    connectorDefinitionCatalog
+	Connections                connectorConnectionService
+	Bindings                   connectorBindingService
+	References                 connectorReferenceService
+	Maintenance                connectorMaintenanceService
+	Onboarding                 connectorOnboardingService
+	HostKeyProbe               connectorserveropsssh.HostKeyProbe
+	AccountService             interfaces.AccountService
+	Preferences                connectorChatPreferenceService
+	BackgroundGrants           connectorBackgroundGrantService
+	BackgroundGrantPermissions connectorBackgroundGrantPermissionService
+	ApplicationErrorCatalog    *appcatalog.Catalog
 }
 
 type connectorHandler struct {
-	socialEvents           connectorSocialEventService
-	socialOAuth            connectorSocialOAuthService
-	socialOAuthFrontendURL string
-	catalog                connectorDefinitionCatalog
-	connections            connectorConnectionService
-	bindings               connectorBindingService
-	references             connectorReferenceService
-	maintenance            connectorMaintenanceService
-	onboarding             connectorOnboardingService
-	preferences            connectorChatPreferenceService
-	hostKeyProbe           connectorserveropsssh.HostKeyProbe
-	errorProjector         *apptransport.Projector
+	socialEvents               connectorSocialEventService
+	socialOAuth                connectorSocialOAuthService
+	socialOAuthFrontendURL     string
+	catalog                    connectorDefinitionCatalog
+	connections                connectorConnectionService
+	bindings                   connectorBindingService
+	references                 connectorReferenceService
+	maintenance                connectorMaintenanceService
+	onboarding                 connectorOnboardingService
+	preferences                connectorChatPreferenceService
+	backgroundGrants           connectorBackgroundGrantService
+	backgroundGrantPermissions connectorBackgroundGrantPermissionService
+	hostKeyProbe               connectorserveropsssh.HostKeyProbe
+	errorProjector             *apptransport.Projector
 }
 
 func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
@@ -113,6 +117,7 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 		socialOAuth:  deps.SocialOAuth, socialOAuthFrontendURL: deps.SocialOAuthFrontendURL,
 		references: deps.References, catalog: deps.Catalog, connections: deps.Connections, bindings: deps.Bindings, maintenance: deps.Maintenance,
 		preferences: deps.Preferences, onboarding: deps.Onboarding, hostKeyProbe: deps.HostKeyProbe,
+		backgroundGrants: deps.BackgroundGrants, backgroundGrantPermissions: deps.BackgroundGrantPermissions,
 	}
 	if deps.ApplicationErrorCatalog != nil {
 		handler.errorProjector, _ = apptransport.NewProjector(deps.ApplicationErrorCatalog)
@@ -123,6 +128,9 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
 	handler.register(group)
+	background := group.Group("")
+	background.Use(middleware.CurrentWorkspaceRequired())
+	handler.registerBackgroundAuthorization(background)
 }
 
 func (handler *connectorHandler) register(group *gin.RouterGroup) {

@@ -5,6 +5,7 @@ import "time"
 // ProviderEvidence is a bounded, non-secret projection of a verified app.
 // Requested configuration is not evidence of a granted permission.
 type ProviderEvidence struct {
+	Social                   *SocialEvidence    `json:"social,omitempty"`
 	Mail                     *MailEvidence      `json:"mail,omitempty"`
 	Messaging                *MessagingEvidence `json:"messaging,omitempty"`
 	Region                   string             `json:"region"`
@@ -23,6 +24,11 @@ func (value *ProviderEvidence) Clone() *ProviderEvidence {
 		return nil
 	}
 	result := *value
+	if value.Social != nil {
+		copy := *value.Social
+		copy.AccountIDs = append([]string{}, value.Social.AccountIDs...)
+		result.Social = &copy
+	}
 	if value.Mail != nil {
 		copy := *value.Mail
 		copy.Operations = append([]OperationEvidence{}, value.Mail.Operations...)
@@ -35,6 +41,16 @@ func (value *ProviderEvidence) Clone() *ProviderEvidence {
 	}
 	result.GrantedScopes = append([]string{}, value.GrantedScopes...)
 	return &result
+}
+
+// SocialEvidence records provider-observed managed accounts at credential
+// verification. It is setup evidence; every write still rechecks ownership.
+type SocialEvidence struct {
+	Version    int       `json:"version"`
+	Provider   string    `json:"provider"`
+	Identity   string    `json:"identity"`
+	AccountIDs []string  `json:"account_ids"`
+	CheckedAt  time.Time `json:"checked_at"`
 }
 
 // MailEvidence records protocol observations, never a Google stable subject or

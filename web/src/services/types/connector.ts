@@ -654,3 +654,28 @@ export interface PreparedSocialImage {
   height: number;
   bytes: number;
 }
+export interface IssueConnectorBackgroundGrantRequest {
+  operations: string[];
+  destinations?: Record<string, string>;
+  expires_at: string;
+  max_invocations: number;
+}
+
+export interface ConnectorBackgroundGrant {
+  id: string;
+  employee_id: string;
+  version_id: string;
+  binding_id: string;
+  connection_id: string;
+  operations: string[];
+  destinations: Record<string, string>;
+  expires_at: string;
+  max_invocations: number;
+  used_invocations: number;
+  revoked_at?: string;
+  created_at: string;
+  binding_revision: number;
+  connection_revision: number;
+  credential_version: number;
+  contract_digest: string;
+}

@@ -26,6 +26,7 @@ import (
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	connectoraudit "github.com/zgiai/zgi/api/internal/modules/connectors/audit"
+	connectorbackgroundauth "github.com/zgiai/zgi/api/internal/modules/connectors/backgroundauth"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectorconnections "github.com/zgiai/zgi/api/internal/modules/connectors/connections"
@@ -68,6 +69,7 @@ import (
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	"github.com/zgiai/zgi/api/internal/modules/shared/adapters"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/socialops"
 	system_repo "github.com/zgiai/zgi/api/internal/modules/system/repository"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -290,6 +292,9 @@ type ServiceContainer struct {
 	connectorOnboardingService           *connectoronboarding.Service
 	connectorMaintenanceService          *connectorconnections.MaintenanceService
 	connectorChatPreferenceService       *connectorpreferences.Service
+	connectorBackgroundGrantService      *connectorbackgroundauth.Service
+	connectorBackgroundAuthorization     *ConnectorBackgroundAuthorization
+	backgroundTaskRunResolver            *BackgroundTaskRunResolver
 
 	// Legacy external integrations
 
@@ -321,6 +326,9 @@ type ServiceContainer struct {
 	shortLinkService             shortlinkcap.Service
 	digitalHumanService          *digitalhuman.Service
 	digitalHumanChannelReceivers *digitalhuman.ChannelReceiverManager
+	socialOperations             *socialops.Service
+	socialOperationsOnce         sync.Once
+	socialOperationsErr          error
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
@@ -1096,6 +1104,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		_ = c.toolManager.RegisterProvider(files_tools.NewProvider(c.GetFileService(), c.GetContentExtractor(), c.GetOrganizationService(), files_tools.WithFileListService(c.GetFileFolderService())))
 		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
+		_ = c.toolManager.RegisterProvider(c.newSocialOperationsProvider())
 		if err := c.registerConnectorToolProviders(c.toolManager); err != nil {
 			panic(err)
 		}
@@ -1469,7 +1478,7 @@ func (c *ServiceContainer) GetConnectorExecutionService() *connectorexecution.Se
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector execution service: %v", err))
 		}
-		c.connectorExecutionService = executionService
+		c.connectorExecutionService = executionService.WithBackgroundAuthorizer(connectorBackgroundAuthorizationProxy{container: c})
 	}
 	return c.connectorExecutionService
 }

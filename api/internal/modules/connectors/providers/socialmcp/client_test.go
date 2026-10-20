@@ -227,3 +227,22 @@ func TestPackagedBridgeCatalogMatchesNativeContracts(t *testing.T) {
 		})
 	}
 }
+
+func TestLinkedInVerificationRetainsOnlyProviderObservedManagedAccounts(t *testing.T) {
+	client, _ := fixtureForProvider(t, "linkedin-social", "", map[string]any{"accounts": []any{map[string]any{"id": "urn:li:organization:123", "name": "Acme"}}}, false)
+	verified, err := client.Verify(context.Background(), "token-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Evidence == nil || verified.Evidence.Social == nil || len(verified.Evidence.Social.AccountIDs) != 1 || verified.Evidence.Social.AccountIDs[0] != "urn:li:organization:123" || verified.Evidence.Social.Identity != "42" {
+		t.Fatalf("managed account evidence=%#v", verified.Evidence)
+	}
+	client, _ = fixtureForProvider(t, "linkedin-social", "", map[string]any{"accounts": []any{map[string]any{"id": "urn:li:person:fake"}}}, false)
+	verified, err = client.Verify(context.Background(), "token-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Evidence != nil && verified.Evidence.Social != nil && len(verified.Evidence.Social.AccountIDs) != 0 {
+		t.Fatal("unverified identity persisted")
+	}
+}

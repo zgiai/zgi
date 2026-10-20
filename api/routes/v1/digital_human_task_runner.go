@@ -67,6 +67,9 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 	}
 	query := fmt.Sprintf("Execute the confirmed task %q.\nGoal: %s%s\nWhen finished, provide the final result and any generated files.", req.Name, req.Goal, criteria)
 	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: map[string]any{"task_id": req.TaskID, "task_run_id": req.TaskRunID, "action_run_id": req.ActionRunID, "task_owner_kind": req.OwnerKind, "origin_surface": req.OriginSurface, "task_name": req.Name, "delivery_mode": req.DeliveryMode}, ReplyTo: req.ReplyTo}
+	if req.MaxTaskTokens > 0 && req.MaxTaskTokens <= 100000 {
+		event.Context["max_task_tokens"] = req.MaxTaskTokens
+	}
 	run, _, err := r.runtime.SubmitInvocation(ctx, scope, event, query, nil)
 	if err != nil {
 		return nil, err

@@ -6,8 +6,19 @@ import (
 
 	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	toolfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 )
+
+// AuthorizeBackgroundExecutionArtifact admits a protected result only for its
+// exact live run, publication and message. Callers must use the execution file
+// reader with the returned identity; account-based file reads are insufficient.
+func (s *AccessService) AuthorizeBackgroundExecutionArtifact(ctx context.Context, run *Run, event invocation.Event, file *toolfile.ToolFile) (toolfile.ExecutionFileAccess, error) {
+	if err := s.AuthorizeBackgroundLinuxExecution(ctx, run, event); err != nil {
+		return toolfile.ExecutionFileAccess{}, err
+	}
+	return backgroundExecutionFileAccess(run, file)
+}
 
 // backgroundExecutionFileAccess binds an artifact to the exact frozen run and
 // message, not the legacy billing account or a model-supplied path.

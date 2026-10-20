@@ -52,6 +52,15 @@ import type {
   DigitalHumanAPIKeyCreated,
   DigitalHumanAPIKeyList,
 } from './types/digital-human';
+import type {
+  SaveSocialOperationsConfigurationRequest,
+  SetupSocialOperationsRequest,
+  SocialOperationsConfigurationResponse,
+  SocialOperationsImageUploadResponse,
+  SocialOperationsVerifiedAccountsResponse,
+  SocialOperationsPreflightReport,
+  SocialOperationsProvisioningResult,
+} from './types/social-operations';
 
 class DigitalHumanService extends BaseService {
   constructor() {
@@ -92,6 +101,47 @@ class DigitalHumanService extends BaseService {
 
   get(id: string): Promise<ApiResponseData<DigitalHumanDetail>> {
     return this.request('get', `/digital-humans/${id}`);
+  }
+
+  getSocialOperationsConfiguration(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsConfigurationResponse>> {
+    return this.request('get', `/digital-humans/${id}/social-operations/configuration`);
+  }
+
+  getSocialOperationsAccounts(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsVerifiedAccountsResponse>> {
+    return this.request('get', `/digital-humans/${id}/social-operations/accounts`);
+  }
+
+  saveSocialOperationsConfiguration(
+    id: string,
+    data: SaveSocialOperationsConfigurationRequest
+  ): Promise<ApiResponseData<SocialOperationsConfigurationResponse>> {
+    return this.request('put', `/digital-humans/${id}/social-operations/configuration`, data);
+  }
+
+  preflightSocialOperations(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsPreflightReport>> {
+    return this.request('post', `/digital-humans/${id}/social-operations/preflight`, {});
+  }
+
+  setupSocialOperations(
+    id: string,
+    data: SetupSocialOperationsRequest
+  ): Promise<ApiResponseData<SocialOperationsProvisioningResult>> {
+    return this.request('post', `/digital-humans/${id}/social-operations/setup`, data);
+  }
+
+  uploadSocialOperationsImage(
+    id: string,
+    file: File
+  ): Promise<ApiResponseData<SocialOperationsImageUploadResponse>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request('post', `/digital-humans/${id}/social-operations/assets/images`, formData);
   }
 
   update(

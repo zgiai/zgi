@@ -1,6 +1,8 @@
 import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
+  ConnectorBackgroundGrant,
+  IssueConnectorBackgroundGrantRequest,
   ConnectorCatalogItem,
   ConnectorSocialEventPage,
   PreparedSocialImage,
@@ -42,6 +44,35 @@ import type {
 class ConnectorService extends BaseService {
   constructor() {
     super({ basePath: '/console/api', endpoint: 'main' });
+  }
+
+  issueBackgroundGrant(
+    bindingId: string,
+    request: IssueConnectorBackgroundGrantRequest
+  ): Promise<ApiResponseData<ConnectorBackgroundGrant>> {
+    return this.request(
+      'post',
+      `/connector-target-bindings/${encodeURIComponent(bindingId)}/background-grants`,
+      request,
+      {
+        retryAttemptsOverride: 0,
+      }
+    );
+  }
+
+  getBackgroundGrants(): Promise<ApiResponseData<{ items: ConnectorBackgroundGrant[] }>> {
+    return this.request('get', '/connector-background-grants');
+  }
+
+  revokeBackgroundGrant(grantId: string): Promise<ApiResponseData<{ id: string }>> {
+    return this.request(
+      'delete',
+      `/connector-background-grants/${encodeURIComponent(grantId)}`,
+      undefined,
+      {
+        retryAttemptsOverride: 0,
+      }
+    );
   }
 
   getOAuthAvailability(connectorId: string): Promise<ApiResponseData<{ available: boolean }>> {

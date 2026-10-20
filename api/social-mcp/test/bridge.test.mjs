@@ -9,6 +9,7 @@ const contract = [
   "post_get",
   "post_create",
   "comment_list",
+  "comment_get",
   "comment_reply",
   "conversation_list",
   "message_list",
@@ -235,7 +236,7 @@ test("X uploads base64 media before posting; transport errors never retry writes
     u.pathname === "/2/users/me"
       ? { data: { id: "1", name: "ZGI" } }
       : u.pathname === "/2/media/upload"
-        ? { data: { id: "media" } }
+        ? { data: { id: "media", media_key: "3_media" } }
         : { data: { id: "post" } },
   );
   const image_data = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString(
@@ -420,6 +421,35 @@ test("all providers preserve metrics raw values, intervals and missing fields", 
       );
   }
 });
+test("X post metrics bind the returned post author to the connected account", async () => {
+  const owned = fixture("x-social", (u) =>
+    u.pathname === "/2/users/me"
+      ? { data: { id: "1", name: "ZGI" } }
+      : {
+          data: {
+            id: "9",
+            author_id: "1",
+            public_metrics: { like_count: 3 },
+          },
+        },
+  );
+  const metrics = await owned.bridge.call("metrics_get", { post_id: "9" });
+  assert.equal(metrics.data.author_id, "1");
+  assert.match(
+    owned.calls.at(-1).url.searchParams.get("tweet.fields"),
+    /author_id/,
+  );
+
+  const foreign = fixture("x-social", (u) =>
+    u.pathname === "/2/users/me"
+      ? { data: { id: "1", name: "ZGI" } }
+      : { data: { id: "9", author_id: "2", public_metrics: {} } },
+  );
+  await assert.rejects(
+    foreign.bridge.call("metrics_get", { post_id: "9" }),
+    /author/,
+  );
+});
 test("X replies verify requested thread before writing", async () => {
   const { bridge, calls } = fixture("x-social", (u) =>
     u.pathname === "/2/users/me"
@@ -595,7 +625,12 @@ test("LinkedIn share vs UGC filter uses native contract; post stats interval rej
           ? { author: "urn:li:organization:7" }
           : { elements: [] },
     );
-    await bridge.call("metrics_get", { account_id: "7", post_id });
+    const result = await bridge.call("metrics_get", {
+      account_id: "7",
+      post_id,
+    });
+    assert.equal(result.post_id, post_id);
+    assert.equal(result.account_id, "urn:li:organization:7");
     assert.equal(calls.at(-1).url.searchParams.get(key), value);
     const before = calls.length;
     await assert.rejects(
@@ -609,6 +644,394 @@ test("LinkedIn share vs UGC filter uses native contract; post stats interval rej
     );
     assert.equal(calls.length, before);
   }
+});
+
+test("X post and comment readback include authoritative thread and media fields", async () => {
+  const response = {
+    data: {
+      id: "20",
+      text: "A reply",
+      author_id: "1",
+      created_at: "2026-10-19T10:00:00.000Z",
+      conversation_id: "10",
+      referenced_tweets: [{ type: "replied_to", id: "10" }],
+      attachments: { media_keys: ["3_photo"] },
+    },
+    includes: {
+      media: [
+        {
+          media_key: "3_photo",
+          type: "photo",
+          url: "https://pbs.twimg.com/media/photo.jpg",
+        },
+      ],
+    },
+  };
+  const { bridge, calls } = fixture("x-social", (u) =>
+    u.pathname === "/2/users/me"
+      ? { data: { id: "1", name: "ZGI" } }
+      : response,
+  );
+  const post = await bridge.call("post_get", { post_id: "20" });
+  assert.deepEqual(
+    {
+      id: post.id,
+      text: post.text,
+      author_id: post.author_id,
+      url: post.url,
+      published_at: post.published_at,
+      parent_id: post.parent_id,
+      media: post.media,
+    },
+    {
+      id: "20",
+      text: "A reply",
+      author_id: "1",
+      url: "https://x.com/i/web/status/20",
+      published_at: "2026-10-19T10:00:00.000Z",
+      parent_id: "10",
+      media: [
+        { id: "3_photo", url: "https://pbs.twimg.com/media/photo.jpg" },
+      ],
+    },
+  );
+  assert.deepEqual(post.vendor, response);
+  const query = calls.at(-1).url.searchParams;
+  assert.match(query.get("tweet.fields"), /referenced_tweets/);
+  assert.match(query.get("tweet.fields"), /attachments/);
+  assert.match(query.get("expansions"), /attachments\.media_keys/);
+  assert.match(query.get("media.fields"), /media_key/);
+
+  const comment = await bridge.call("comment_get", { comment_id: "20" });
+  assert.equal(comment.parent_id, "10");
+  assert.equal(calls.at(-1).url.pathname, "/2/tweets/20");
+  await assert.rejects(
+    bridge.call("comment_get", { account_id: "other", comment_id: "20" }),
+    /account/,
+  );
+
+  for (const [type, field] of [
+    ["quoted", "quoted_id"],
+    ["retweeted", "reposted_id"],
+  ]) {
+    const linked = fixture("x-social", (u) =>
+      u.pathname === "/2/users/me"
+        ? { data: { id: "1", name: "ZGI" } }
+        : {
+            data: {
+              id: "21",
+              text: type === "retweeted" ? "" : "Commentary",
+              author_id: "1",
+              created_at: "2026-10-19T10:00:00Z",
+              referenced_tweets: [{ type, id: "10" }],
+            },
+          },
+    );
+    const linkedResult = await linked.bridge.call("post_get", {
+      post_id: "21",
+    });
+    assert.equal(linkedResult[field], "10");
+    assert.equal(linkedResult.parent_id, undefined);
+  }
+});
+
+test("Facebook comment readback verifies the managed Page root and preserves actual parent", async () => {
+  const comment = {
+    id: "10_30",
+    message: "Thanks",
+    from: { id: "25", name: "Customer" },
+    created_time: "2026-10-19T10:00:00+0000",
+    permalink_url: "https://www.facebook.com/10/posts/20?comment_id=30",
+    object: { id: "10_20" },
+    parent: { id: "10_29" },
+    attachment: {
+      target: { id: "photo-1", url: "https://www.facebook.com/photo/1" },
+    },
+  };
+  const { bridge, calls } = fixture("facebook-social", (u) =>
+    u.pathname.endsWith("/me")
+      ? { id: "10", name: "Page", category: "Software" }
+      : comment,
+  );
+  const result = await bridge.call("comment_get", { comment_id: "10_30" });
+  assert.equal(result.id, "10_30");
+  assert.equal(result.author_id, "25");
+  assert.equal(result.parent_id, "10_29");
+  assert.deepEqual(result.media, [
+    { id: "photo-1", url: "https://www.facebook.com/photo/1" },
+  ]);
+  assert.match(calls.at(-1).url.searchParams.get("fields"), /object/);
+  assert.match(calls.at(-1).url.searchParams.get("fields"), /attachment/);
+
+  const foreign = fixture("facebook-social", (u) =>
+    u.pathname.endsWith("/me")
+      ? { id: "10", name: "Page", category: "Software" }
+      : { ...comment, object: { id: "99_20" } },
+  );
+  await assert.rejects(
+    foreign.bridge.call("comment_get", { comment_id: "10_30" }),
+    /managed Page/,
+  );
+
+  const incomplete = fixture("facebook-social", (u) =>
+    u.pathname.endsWith("/me")
+      ? { id: "10", name: "Page", category: "Software" }
+      : { ...comment, permalink_url: undefined },
+  );
+  await assert.rejects(
+    incomplete.bridge.call("comment_get", { comment_id: "10_30" }),
+    (error) =>
+      error.code === "provider_unavailable" && /url unavailable/.test(error.message),
+  );
+});
+
+test("LinkedIn comment readback verifies the managed parent and returns exact vendor fields", async () => {
+  const commentUrn = "urn:li:comment:(urn:li:activity:9,2)";
+  const comment = {
+    id: "2",
+    commentUrn,
+    actor: "urn:li:organization:7",
+    created: { time: 1792404000000 },
+    message: { text: "Thanks" },
+    object: "urn:li:activity:9",
+  };
+  const { bridge, calls } = fixture("linkedin-social", (u) =>
+    u.pathname.endsWith("/organizationAcls")
+      ? {
+          elements: [
+            {
+              organization: "urn:li:organization:7",
+              role: "ADMINISTRATOR",
+              state: "APPROVED",
+            },
+          ],
+        }
+      : u.pathname.includes("/posts/")
+        ? { id: "urn:li:share:9", author: "urn:li:organization:7" }
+        : comment,
+  );
+  const result = await bridge.call("comment_get", {
+    account_id: "7",
+    post_id: "urn:li:share:9",
+    comment_id: commentUrn,
+  });
+  assert.equal(result.id, commentUrn);
+  assert.equal(result.author_id, "urn:li:organization:7");
+  assert.equal(result.parent_id, "urn:li:activity:9");
+  assert.equal(result.parent_post_id, "urn:li:share:9");
+  assert.equal(result.text, "Thanks");
+  assert.match(result.url, /^https:\/\/www\.linkedin\.com\/feed\/update\//);
+  assert.equal(calls.at(-1).url.pathname.endsWith("/comments/2"), true);
+
+  const foreign = fixture("linkedin-social", (u) =>
+    u.pathname.endsWith("/organizationAcls")
+      ? {
+          elements: [
+            {
+              organization: "urn:li:organization:7",
+              role: "ADMINISTRATOR",
+              state: "APPROVED",
+            },
+          ],
+        }
+      : u.pathname.includes("/posts/")
+        ? { id: "urn:li:share:9", author: "urn:li:organization:8" }
+        : comment,
+  );
+  await assert.rejects(
+    foreign.bridge.call("comment_get", {
+      account_id: "7",
+      post_id: "urn:li:share:9",
+      comment_id: commentUrn,
+    }),
+    /author/,
+  );
+
+  const inconsistent = fixture("linkedin-social", (u) =>
+    u.pathname.endsWith("/organizationAcls")
+      ? {
+          elements: [
+            {
+              organization: "urn:li:organization:7",
+              role: "ADMINISTRATOR",
+              state: "APPROVED",
+            },
+          ],
+        }
+      : u.pathname.includes("/posts/")
+        ? { id: "urn:li:share:9", author: "urn:li:organization:7" }
+        : { ...comment, object: "urn:li:activity:999" },
+  );
+  await assert.rejects(
+    inconsistent.bridge.call("comment_get", {
+      account_id: "7",
+      post_id: "urn:li:share:9",
+      comment_id: commentUrn,
+    }),
+    /parent/,
+  );
+});
+
+test("LinkedIn post readback resolves exact image IDs and URLs under the managed owner", async () => {
+  const post = {
+    id: "urn:li:share:9",
+    author: "urn:li:organization:7",
+    commentary: "Photo",
+    publishedAt: 1792404000000,
+    content: { media: { id: "urn:li:image:1" } },
+  };
+  const image = {
+    id: "urn:li:image:1",
+    owner: "urn:li:organization:7",
+    status: "AVAILABLE",
+    downloadUrl: "https://media.licdn.com/dms/image/1",
+  };
+  const managed = (asset = image) =>
+    fixture("linkedin-social", (u) =>
+      u.pathname.endsWith("/organizationAcls")
+        ? {
+            elements: [
+              {
+                organization: "urn:li:organization:7",
+                role: "ADMINISTRATOR",
+                state: "APPROVED",
+              },
+            ],
+          }
+        : u.pathname.includes("/posts/")
+          ? post
+          : asset,
+    );
+  const { bridge, calls } = managed();
+  const result = await bridge.call("post_get", {
+    account_id: "7",
+    post_id: "urn:li:share:9",
+  });
+  assert.deepEqual(result.media, [
+    { id: "urn:li:image:1", url: "https://media.licdn.com/dms/image/1" },
+  ]);
+  assert.deepEqual(result.vendor_media, [image]);
+  assert.equal(calls.at(-1).url.pathname, "/rest/images/urn%3Ali%3Aimage%3A1");
+
+  const foreign = managed({ ...image, owner: "urn:li:organization:8" });
+  await assert.rejects(
+    foreign.bridge.call("post_get", {
+      account_id: "7",
+      post_id: "urn:li:share:9",
+    }),
+    /media owner/,
+  );
+});
+
+test("LinkedIn post readback keeps reshare linkage distinct from comment parents", async () => {
+  const { bridge } = fixture("linkedin-social", (u) =>
+    u.pathname.endsWith("/organizationAcls")
+      ? {
+          elements: [
+            {
+              organization: "urn:li:organization:7",
+              role: "ADMINISTRATOR",
+              state: "APPROVED",
+            },
+          ],
+        }
+      : {
+          id: "urn:li:share:10",
+          author: "urn:li:organization:7",
+          commentary: "",
+          publishedAt: 1792404000000,
+          reshareContext: { parent: "urn:li:share:9" },
+        },
+  );
+  const result = await bridge.call("post_get", {
+    account_id: "7",
+    post_id: "urn:li:share:10",
+  });
+  assert.equal(result.reposted_id, "urn:li:share:9");
+  assert.equal(result.parent_id, undefined);
+});
+
+test("image post receipts retain canonical post IDs and uploaded media IDs", async () => {
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString(
+    "base64",
+  );
+  const x = fixture("x-social", (u) =>
+    u.pathname === "/2/users/me"
+      ? { data: { id: "1", name: "ZGI" } }
+      : u.pathname === "/2/media/upload"
+        ? { data: { id: "123", media_key: "3_123" } }
+        : u.pathname === "/2/tweets/post-x"
+          ? {
+              data: {
+                id: "post-x",
+                author_id: "1",
+                text: "Photo",
+                created_at: "2026-10-20T02:00:00Z",
+                attachments: { media_keys: ["3_123"] },
+              },
+              includes: {
+                media: [{ media_key: "3_123", url: "https://pbs.twimg.com/media/123" }],
+              },
+            }
+          : { data: { id: "post-x" } },
+  );
+  const xr = await x.bridge.call("post_create", {
+    text: "Photo",
+    image_data: png,
+    mime_type: "image/png",
+  });
+  assert.deepEqual(xr.media_receipts, [{ id: "3_123" }]);
+  assert.deepEqual(JSON.parse(x.calls.at(-1).init.body).media, {
+    media_ids: ["123"],
+  });
+  const xActual = await x.bridge.call("post_get", { post_id: "post-x" });
+  assert.deepEqual(xActual.media, [
+    { id: "3_123", url: "https://pbs.twimg.com/media/123" },
+  ]);
+
+  const fb = fixture("facebook-social", (u) =>
+    u.pathname.endsWith("/me")
+      ? { id: "10", name: "Page", category: "Software" }
+      : { id: "photo-fb", post_id: "10_post-fb" },
+  );
+  const fbr = await fb.bridge.call("post_create", {
+    text: "Photo",
+    image_data: png,
+    mime_type: "image/png",
+  });
+  assert.equal(fbr.id, "10_post-fb");
+  assert.deepEqual(fbr.media_receipts, [{ id: "photo-fb" }]);
+
+  const li = fixture("linkedin-social", (u) =>
+    u.pathname.endsWith("/organizationAcls")
+      ? {
+          elements: [
+            {
+              organization: "urn:li:organization:7",
+              role: "ADMINISTRATOR",
+              state: "APPROVED",
+            },
+          ],
+        }
+      : u.searchParams.get("action") === "initializeUpload"
+        ? {
+            value: {
+              uploadUrl: "https://www.linkedin.com/dms-uploads/photo",
+              image: "urn:li:image:1",
+            },
+          }
+        : u.pathname.includes("/images/")
+          ? { status: "AVAILABLE" }
+          : { body: {}, headers: { "x-restli-id": "urn:li:share:1" } },
+  );
+  const lir = await li.bridge.call("post_create", {
+    account_id: "7",
+    text: "Photo",
+    image_data: png,
+    mime_type: "image/png",
+  });
+  assert.equal(lir.id, "urn:li:share:1");
+  assert.deepEqual(lir.media_receipts, [{ id: "urn:li:image:1" }]);
 });
 
 const additions = [
@@ -685,7 +1108,11 @@ test("X repost checks acting account and explicit acknowledgment; quote needs po
       /account/,
     );
     const op = bridge.call("post_repost", { post_id: "9" });
-    if (acknowledged) assert.equal((await op).data.retweeted, true);
+    if (acknowledged) {
+      const receipt = await op;
+      assert.equal(receipt.data.retweeted, true);
+      assert.equal(receipt.reposted_id, "9");
+    }
     else await assert.rejects(op, (e) => e.code === "outcome_unknown");
     assert.equal(calls.filter((c) => c.init.method === "POST").length, 1);
     assert.deepEqual(JSON.parse(calls.at(-1).init.body), { tweet_id: "9" });
@@ -693,7 +1120,8 @@ test("X repost checks acting account and explicit acknowledgment; quote needs po
   const { bridge, calls } = fixture("x-social", (u) =>
     u.pathname.endsWith("/me") ? { data: { id: "1" } } : { data: { id: "30" } },
   );
-  await bridge.call("post_quote", { post_id: "9", text: "Hi" });
+  const quote = await bridge.call("post_quote", { post_id: "9", text: "Hi" });
+  assert.equal(quote.quoted_id, "9");
   assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
     text: "Hi",
     quote_tweet_id: "9",
@@ -742,11 +1170,12 @@ test("LinkedIn notifications use checked org native dates and reshare reuses ups
   );
   assert.equal(calls.at(-1).init.headers["LinkedIn-Version"], "202609");
   assert.equal(result.sync.next_cursor, "1");
-  await bridge.call("post_repost", {
+  const repost = await bridge.call("post_repost", {
     account_id: "7",
     post_id: "urn:li:share:9",
     text: "Hello (world)",
   });
+  assert.equal(repost.reposted_id, "urn:li:share:9");
   assert.deepEqual(JSON.parse(calls.at(-1).init.body).reshareContext, {
     parent: "urn:li:share:9",
   });

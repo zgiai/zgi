@@ -169,7 +169,79 @@ func (c *Client) Verify(ctx context.Context, token string) (providers.Verificati
 	if len(operations) == 0 {
 		return providers.Verification{}, &providers.Failure{Code: core.ErrorCodeInsufficientKey}
 	}
-	return providers.Verification{AccountID: providers.SafeText(id, 256), DisplayName: providers.SafeText(name, 256), Operations: operations}, nil
+	verification := providers.Verification{AccountID: providers.SafeText(id, 256), DisplayName: providers.SafeText(name, 256), Operations: operations}
+	if c.definition.ID == "linkedin-social" {
+		// A failed/partial account enumeration does not invent a managed company.
+		// Authentication may still succeed; setup will report the missing account.
+		if ids, ok := verifiedManagedAccounts(ctx, connection, token); ok {
+			verification.Evidence = &core.ProviderEvidence{Social: &core.SocialEvidence{Version: 1, Provider: c.definition.ID, Identity: id, AccountIDs: ids, CheckedAt: time.Now().UTC()}}
+		}
+	}
+	return verification, nil
+}
+
+func verifiedManagedAccounts(ctx context.Context, connection *mcpclient.Connection, token string) ([]string, bool) {
+	ids := []string{}
+	seen := map[string]bool{}
+	cursors := map[string]bool{}
+	cursor := ""
+	for page := 0; page < 3; page++ {
+		args := map[string]any{"limit": 50}
+		if cursor != "" {
+			args["cursor"] = cursor
+		}
+		encoded, _ := json.Marshal(args)
+		result, err := connection.CallTool(ctx, mcpclient.ToolCallRequest{Name: "account_list", Arguments: encoded})
+		if err != nil {
+			return nil, false
+		}
+		data, err := decodeResult(result, false)
+		if err != nil {
+			return nil, false
+		}
+		accounts, ok := data["accounts"].([]any)
+		if !ok || len(accounts) > 50 {
+			return nil, false
+		}
+		for _, raw := range accounts {
+			account, ok := raw.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			id, ok := account["id"].(string)
+			if !ok || !validManagedOrganization(id) || strings.Contains(id, token) || seen[id] {
+				return nil, false
+			}
+			seen[id] = true
+			ids = append(ids, id)
+			if len(ids) > 50 {
+				return nil, false
+			}
+		}
+		value, exists := data["cursor"]
+		if !exists || value == "" {
+			return ids, true
+		}
+		next, ok := value.(string)
+		if !ok || next == "" || len(next) > 32 || cursors[next] {
+			return nil, false
+		}
+		cursors[next] = true
+		cursor = next
+	}
+	return nil, false
+}
+func validManagedOrganization(value string) bool {
+	const prefix = "urn:li:organization:"
+	if !strings.HasPrefix(value, prefix) || len(value) <= len(prefix) || len(value) > 255 {
+		return false
+	}
+	for _, r := range value[len(prefix):] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) unavailableMessaging(operation string) bool {

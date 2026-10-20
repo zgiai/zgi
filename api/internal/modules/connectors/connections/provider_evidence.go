@@ -10,6 +10,7 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"strings"
 	"time"
 )
 
@@ -25,14 +26,18 @@ type providerEvidenceRecord struct {
 
 func (providerEvidenceRecord) TableName() string { return "connector_connection_provider_evidence" }
 func writeProviderEvidence(ctx context.Context, tx *gorm.DB, c core.PersonalConnection) error {
-	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) {
+	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) && !isSocialEvidenceConnection(c) {
 		return nil
 	}
 	if c.ProviderEvidence == nil {
 		return tx.WithContext(ctx).Where("connection_id = ? AND organization_id = ? AND owner_account_id = ?", c.ID, c.OrganizationID, c.OwnerAccountID).Delete(&providerEvidenceRecord{}).Error
 	}
 	value := c.ProviderEvidence
-	if isMailConnection(c) {
+	if isSocialEvidenceConnection(c) {
+		if !validSocialEvidence(c, value.Social) {
+			return invalidInputError("social account evidence identity")
+		}
+	} else if isMailConnection(c) {
 		if value.Mail == nil || c.ExternalAccountID == nil || value.Mail.AuthenticatedLogin != *c.ExternalAccountID || value.Mail.Provider != c.ConnectorID.String() || value.Mail.IdentityKind != "authenticated_login" || !value.Mail.CredentialVerified || len(value.Mail.Operations) > 4 {
 			return invalidInputError("mail evidence identity")
 		}
@@ -51,7 +56,7 @@ func writeProviderEvidence(ctx context.Context, tx *gorm.DB, c core.PersonalConn
 	return tx.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.AssignmentColumns([]string{"credential_version", "evidence", "verified_at"})}).Create(&record).Error
 }
 func loadProviderEvidence(ctx context.Context, db *gorm.DB, c core.PersonalConnection) (core.PersonalConnection, error) {
-	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) {
+	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) && !isSocialEvidenceConnection(c) {
 		return c, nil
 	}
 	var record providerEvidenceRecord
@@ -66,8 +71,39 @@ func loadProviderEvidence(ctx context.Context, db *gorm.DB, c core.PersonalConne
 	if json.Unmarshal(record.Evidence, &value) != nil {
 		return core.PersonalConnection{}, internalError("decode provider evidence")
 	}
+	if isSocialEvidenceConnection(c) && !validSocialEvidence(c, value.Social) {
+		return core.PersonalConnection{}, internalError("invalid social account evidence")
+	}
 	c.ProviderEvidence = value.Clone()
 	return c, nil
+}
+
+func isSocialEvidenceConnection(c core.PersonalConnection) bool {
+	for _, d := range catalog.SocialMCPDefinitions() {
+		if d.ID == "linkedin-social" && c.ConnectorID.String() == d.ID && c.ProviderID.String() == d.ProviderID && c.DriverID.String() == d.DriverID && c.AuthMethodID.String() == d.AuthMethodID {
+			return true
+		}
+	}
+	return false
+}
+func validSocialEvidence(c core.PersonalConnection, e *core.SocialEvidence) bool {
+	if e == nil || e.Version != 1 || e.Provider != c.ConnectorID.String() || c.ExternalAccountID == nil || e.Identity != *c.ExternalAccountID || len(e.AccountIDs) > 50 || e.CheckedAt.IsZero() {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, id := range e.AccountIDs {
+		const prefix = "urn:li:organization:"
+		if !strings.HasPrefix(id, prefix) || len(id) <= len(prefix) || len(id) > 255 || seen[id] {
+			return false
+		}
+		for _, r := range id[len(prefix):] {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		seen[id] = true
+	}
+	return true
 }
 
 func isMessagingConnection(c core.PersonalConnection) bool {

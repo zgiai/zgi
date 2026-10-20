@@ -1,6 +1,60 @@
 import type { ConnectorMessages } from './en-US';
 
 const messages: ConnectorMessages = {
+  backgroundGrants: {
+    title: '定时任务连接器授权',
+    description: '允许定时任务在限定时间和调用次数内，使用一个已连接账号的指定操作。',
+    create: '添加授权',
+    creating: '正在添加…',
+    created: '已添加定时任务连接器授权。',
+    createFailed: '无法添加定时任务连接器授权。',
+    loadFailed: '无法加载定时任务连接器授权。',
+    empty: '尚未为此数字员工授予定时任务连接器权限。',
+    regrantNotice:
+      '发布新版本、重新连接账号或更改账号权限后，原授权会失效。请检查新配置并重新授权。',
+    unknownAccount: '不可用的账号',
+    status: {
+      active: '生效中',
+      expired: '已过期',
+      revoked: '已撤销',
+      stale: '需要重新授权',
+    },
+    expires: '{date} 到期',
+    usage: '已使用 {used}/{total} 次',
+    revoke: '撤销',
+    revoked: '已撤销定时任务连接器授权。',
+    revokeTitle: '撤销定时任务连接器授权？',
+    revokeDescription: '后续定时任务执行这些操作时，需要逐次确认或使用另一个匹配的授权。',
+    revokeFailed: '无法撤销定时任务连接器授权。',
+    dialogTitle: '添加定时任务连接器授权',
+    dialogDescription: '选择一个已连接账号，并仅勾选数字员工需要的操作。默认不选择任何操作。',
+    account: '已连接账号',
+    accountPlaceholder: '选择账号和绑定',
+    operations: '允许的操作',
+    operationsDescription: '仅当此授权仍与已发布版本和账号匹配时，所选操作才可免于逐次确认。',
+    noOperations: '此账号目前没有可用于后台授权的操作。',
+    duration: '有效天数',
+    durationHint: '可设置 1 至 90 天，默认为 7 天。',
+    maxCalls: '最多调用次数',
+    destinations: '精确目标限制（可选）',
+    destinationsDescription:
+      '添加字段和允许的精确值，例如 account_id 和已批准的主页。定时调用必须匹配每一行。',
+    addDestination: '添加限制',
+    destinationField: '目标字段',
+    destinationFieldPlaceholder: '字段，例如 account_id',
+    destinationValue: '目标精确值',
+    destinationValuePlaceholder: '允许的精确值',
+    removeDestination: '移除目标限制',
+    cancel: '取消',
+    errors: {
+      binding: '请选择一个已连接账号。',
+      operations: '请至少选择一个操作，且不能重复。',
+      duration: '请输入 1 至 90 之间的整数天数。',
+      maxInvocations: '请输入 1 至 100,000 之间的整数调用次数。',
+      destinations: '字段名必须唯一且值必须精确，不能使用通配符、换行或空值。',
+      request: '授权未创建。请检查当前发布版本和账号后重试。',
+    },
+  },
   oauth: {
     title: '连接社交账号',
     description:
@@ -76,10 +130,8 @@ const messages: ConnectorMessages = {
     qqEmailPlaceholder: 'name@qq.com',
     neteaseEmailPlaceholder: 'name@163.com',
     gmailEmailPlaceholder: 'name@gmail.com 或 Workspace 邮箱',
-    qqPasswordHint:
-      '填写 QQ 官方生成的客户端授权码。可直接粘贴；不使用普通登录密码。',
-    neteasePasswordHint:
-      '填写网易官方生成的客户端授权码。可直接粘贴；不使用邮箱登录密码。',
+    qqPasswordHint: '填写 QQ 官方生成的客户端授权码。可直接粘贴；不使用普通登录密码。',
+    neteasePasswordHint: '填写网易官方生成的客户端授权码。可直接粘贴；不使用邮箱登录密码。',
     invalidAuthorizationCode: '请填写有效的客户端授权码。',
     clientIdentityRequired:
       '邮箱服务器未接受客户端标识或访问策略。请联系部署管理员检查邮件协议兼容性，无需关闭邮箱安全设置。',

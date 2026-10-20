@@ -301,6 +301,47 @@ type TaskActivityListResult struct {
 	HasMore  bool            `json:"has_more"`
 }
 
+// SocialOperationsTaskScope is the immutable authority scope captured when a
+// trusted setup service creates an SOP task. It is server-only metadata and is
+// never populated from CreateTaskRequest or model tool arguments.
+type SocialOperationsTaskScope struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	WorkspaceID    uuid.UUID `json:"workspace_id"`
+	OwnerID        uuid.UUID `json:"owner_id"`
+	EmployeeID     uuid.UUID `json:"employee_id"`
+}
+
+type SocialOperationsTaskBudget struct {
+	MaxPages            int `json:"max_pages"`
+	MaxRecords          int `json:"max_records"`
+	MaxConnectorCalls   int `json:"max_connector_calls"`
+	MaxTokens           int `json:"max_tokens"`
+	MaxSafeReadAttempts int `json:"max_safe_read_attempts"`
+}
+
+type SocialOperationsRecordTarget struct {
+	Kind string `json:"kind"`
+	Key  string `json:"key"`
+}
+
+// SocialOperationsTaskMetadata binds an Automation task to one exact,
+// validated SOP configuration and published employee version.
+type SocialOperationsTaskMetadata struct {
+	ResearchConnectorID     string                         `json:"research_connector_id"`
+	ResearchConnectionID    uuid.UUID                      `json:"research_connection_id"`
+	Scope                   SocialOperationsTaskScope      `json:"scope"`
+	EmployeeVersionID       uuid.UUID                      `json:"employee_version_id"`
+	ConfigurationRevision   int64                          `json:"configuration_revision"`
+	ConfigurationRecordID   uuid.UUID                      `json:"configuration_record_id"`
+	ConfigurationArtifactID uuid.UUID                      `json:"configuration_artifact_id"`
+	TaskKey                 string                         `json:"task_key"`
+	Stages                  []string                       `json:"stages"`
+	Budget                  SocialOperationsTaskBudget     `json:"budget"`
+	ConsumesRecordKinds     []string                       `json:"consumes_record_kinds"`
+	ProducesRecordKinds     []string                       `json:"produces_record_kinds"`
+	UpdatesRecords          []SocialOperationsRecordTarget `json:"updates_records"`
+}
+
 // TaskMutationContext describes the trusted server-side source of a task
 // mutation. HTTP and runtime adapters construct it; model arguments cannot.
 type TaskMutationContext struct {
@@ -313,6 +354,7 @@ type TaskMutationContext struct {
 	SourceConversationType string
 	ReplyTo                *invocation.ReplyAddress
 	Proposed               bool
+	SocialOperations       *SocialOperationsTaskMetadata
 }
 
 // TaskResultDeliveryRequest is the durable, user-visible result projection

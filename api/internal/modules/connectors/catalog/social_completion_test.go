@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"strings"
 	"testing"
 )
 
@@ -11,7 +12,7 @@ func TestSocialCompletionOperations(t *testing.T) {
 		for _, op := range d.Operations {
 			found[op.ID] = op
 		}
-		expected := map[string][]string{"x-social": {"comment.create", "post.search", "mention.list", "post.repost", "post.quote"}, "linkedin-social": {"comment.create", "notification.list", "post.repost"}, "facebook-social": {"comment.create", "mention.list", "webhook.subscribe"}}
+		expected := map[string][]string{"x-social": {"comment.create", "comment.get", "post.search", "mention.list", "post.repost", "post.quote"}, "linkedin-social": {"comment.create", "comment.get", "notification.list", "post.repost"}, "facebook-social": {"comment.create", "comment.get", "mention.list", "webhook.subscribe"}}
 		for _, id := range expected[d.ID] {
 			op, ok := found[d.ID+"."+id]
 			if !ok {
@@ -20,6 +21,15 @@ func TestSocialCompletionOperations(t *testing.T) {
 			}
 			if id == "comment.create" && (op.Effect != OperationEffectExternalSend || op.RiskHint != OperationRiskHintHigh || op.Idempotent) {
 				t.Errorf("unsafe comment contract: %+v", op)
+			}
+			if id == "comment.get" {
+				if op.Effect != OperationEffectRead || op.RiskHint != OperationRiskHintLow || !op.Idempotent {
+					t.Errorf("unsafe comment read contract: %+v", op)
+				}
+				wantTool := strings.ReplaceAll(d.ID, "-", "_") + "_comment_get"
+				if op.ToolName != wantTool {
+					t.Errorf("comment read tool %q, want %q", op.ToolName, wantTool)
+				}
 			}
 			if id == "post.repost" || id == "post.quote" {
 				if op.Effect != OperationEffectPublish || op.Idempotent {
@@ -44,6 +54,9 @@ func TestSocialCompletionInputBoundaries(t *testing.T) {
 		{"facebook-social", "webhook.subscribe", map[string]any{}, map[string]any{"subscribed_fields": []any{"arbitrary"}}},
 		{"facebook-social", "post.create", map[string]any{"text": "hi", "image_data": "aGVsbG8=", "mime_type": "image/png"}, map[string]any{"text": "hi", "image_data": "aGVsbG8=", "mime_type": "image/png", "image_url": "https://cdn.public.org/a.png"}},
 		{"facebook-social", "post.create", map[string]any{"text": "hi", "image_url": "https://cdn.public.org/a.png"}, map[string]any{"text": "hi", "mime_type": "image/png"}},
+		{"x-social", "comment.get", map[string]any{"comment_id": "123"}, map[string]any{}},
+		{"facebook-social", "comment.get", map[string]any{"comment_id": "10_20"}, map[string]any{"comment_id": "10_20", "post_id": "10_10"}},
+		{"linkedin-social", "comment.get", map[string]any{"account_id": "7", "post_id": "urn:li:share:9", "comment_id": "2"}, map[string]any{"account_id": "7", "comment_id": "2"}},
 	}
 	for _, c := range cases {
 		t.Run(c.provider+"."+c.action, func(t *testing.T) {
