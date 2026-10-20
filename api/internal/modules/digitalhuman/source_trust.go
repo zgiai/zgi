@@ -133,10 +133,14 @@ func surfaceSourceTrust(surface string) SourceTrust {
 	}
 }
 
+// TaskOwnerConversationContextKey carries a channel task's verified owner
+// conversation into its scheduled invocations.
+const TaskOwnerConversationContextKey = "task_owner_conversation_id"
+
 // runChannelScopeID returns the stable channel conversation identifier for a
 // channel run or a scheduled run whose task was created in a channel.
 func runChannelScopeID(run *Run, event invocation.Event) (uuid.UUID, bool) {
-	if run == nil || event.ReplyTo == nil {
+	if run == nil {
 		return uuid.Nil, false
 	}
 	if event.Origin.Kind != invocation.OriginChannel && event.Origin.Kind != invocation.OriginSchedule {
@@ -146,6 +150,18 @@ func runChannelScopeID(run *Run, event invocation.Event) (uuid.UUID, bool) {
 		if origin, _ := event.Context["origin_surface"].(string); strings.TrimSpace(origin) != SurfaceChannel {
 			return uuid.Nil, false
 		}
+		// The scheduler supplies the task's verified owner conversation, which
+		// is the same identifier ChannelTaskConversationID derives below. A
+		// task_only task has no reply address, so the owner must come first.
+		if raw, _ := event.Context[TaskOwnerConversationContextKey].(string); raw != "" {
+			if id, err := uuid.Parse(raw); err == nil && id != uuid.Nil {
+				return id, true
+			}
+			return uuid.Nil, false
+		}
+	}
+	if event.ReplyTo == nil {
+		return uuid.Nil, false
 	}
 	id, err := ChannelTaskConversationID(run.OrganizationID, run.WorkspaceID, run.DigitalHumanID,
 		event.ReplyTo.Provider, event.ReplyTo.InstallationID, event.ReplyTo.ConversationID)

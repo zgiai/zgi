@@ -33,7 +33,7 @@ A single server-side visibility function serves REST handlers and runtime task t
 | Viewer | Visible tasks |
 |---|---|
 | Task center user with DigitalHuman update permission (manager) | All tasks of the DigitalHuman |
-| Other task center users | `workspace` tasks |
+| Other task center users | `workspace` tasks, plus shared tasks they created |
 | Workspace member in a console conversation or the personal task view | Tasks they requested, plus `workspace` tasks |
 | `channel_participant` | Tasks originated in the current channel conversation |
 | `external_end_user` | Only tasks they requested |
@@ -46,7 +46,7 @@ Task tools return a task the viewer cannot see only as occupancy: its time windo
 
 ### Mutation authority is separate from visibility
 
-- A requester may change, pause, resume, or cancel tasks they requested.
+- A requester may change, pause, resume, or cancel tasks they requested. The requester of a shared task is the account that created it.
 - Task center managers may change any task. Only managers may change a task's visibility.
 - Scheduled runs keep their current restriction: they may update only the task being executed, and only to `waiting` or `blocked`.
 - Proposal and confirmation remain mandatory for every conversational task creation, and `confirmed_by` is recorded.

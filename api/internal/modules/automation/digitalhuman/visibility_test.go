@@ -186,7 +186,11 @@ func TestTaskVisibilityReadRulesAndMutationScope(t *testing.T) {
 		t.Fatalf("manager visibility update = %#v, %v", updated, err)
 	}
 	assertNames(t, "member A after restriction", listNames(t, service, fixture.memberA), "private A")
-	assertNames(t, "task center after restriction", listNames(t, service, fixture.taskCenter))
+	// The task center viewer created the shared task, so it remains its requester.
+	assertNames(t, "task center creator after restriction", listNames(t, service, fixture.taskCenter), "shared")
+	otherViewer := fixture.taskCenter
+	otherViewer.Principal.ID = uuid.NewString()
+	assertNames(t, "other task center user after restriction", listNames(t, service, otherViewer))
 	assertNames(t, "manager after restriction", listNames(t, service, fixture.manager), "shared", "private A", "private B", "conversation")
 }
 
@@ -253,5 +257,48 @@ func TestVisibleTasksReportWhetherTheReaderCanChangeThem(t *testing.T) {
 	shared, err := fixture.service.GetTask(t.Context(), fixture.memberA, fixture.shared.ID)
 	if err != nil || shared.CanChange {
 		t.Fatalf("member A GetTask(shared) = %#v, %v", shared, err)
+	}
+}
+
+func TestTaskCenterNonManagerChangesOnlySharedTasksTheyCreated(t *testing.T) {
+	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
+	fixture := newVisibilityFixture(t)
+	service := fixture.service
+	// Another workspace member with only the Run permission in the task center.
+	runner := fixture.taskCenter
+	runner.Principal.ID = uuid.NewString()
+
+	shared, err := service.GetTask(t.Context(), runner, fixture.shared.ID)
+	if err != nil || shared.CanChange {
+		t.Fatalf("runner GetTask(shared) = %#v, %v; want read-only", shared, err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), runner, fixture.shared.ID, digitalhuman.TaskActionCancel,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.shared.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("runner cancel(shared by another account) error = %v, want not found", err)
+	}
+
+	restricted := digitalhuman.TaskVisibilityRestricted
+	updated, err := service.UpdateTask(t.Context(), fixture.manager, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &restricted},
+		digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: fixture.manager.Principal.ID, OperationID: uuid.New()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GetTask(t.Context(), runner, fixture.shared.ID); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("runner GetTask(restricted) error = %v, want not found", err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), runner, fixture.shared.ID, digitalhuman.TaskActionCancel,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: updated.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("runner cancel(restricted) error = %v, want not found", err)
+	}
+
+	// The creator of a shared task remains its requester, even after restriction.
+	creator := fixture.taskCenter
+	own, err := service.GetTask(t.Context(), creator, fixture.shared.ID)
+	if err != nil || !own.CanChange {
+		t.Fatalf("creator GetTask(restricted) = %#v, %v", own, err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), creator, fixture.shared.ID, digitalhuman.TaskActionPause,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: updated.Revision}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: creator.Principal.ID, OperationID: uuid.New()}); err != nil {
+		t.Fatalf("creator pause(restricted) error = %v", err)
 	}
 }

@@ -106,3 +106,36 @@ func TestRunChannelScopeIDIsStablePerConversation(t *testing.T) {
 		t.Fatal("api run resolved a channel scope")
 	}
 }
+
+func TestRunChannelScopeIDUsesVerifiedOwnerWithoutDeliveryAddress(t *testing.T) {
+	run := &Run{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), DigitalHumanID: uuid.New()}
+	channel := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginChannel},
+		ReplyTo: &invocation.ReplyAddress{Provider: "feishu", InstallationID: "installation", ConversationID: "group-a"}}
+	conversationScope, ok := runChannelScopeID(run, channel)
+	if !ok {
+		t.Fatal("channel run has no scope")
+	}
+	// A task_only channel task is scheduled without a reply address.
+	taskOnly := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Context: map[string]any{
+		"origin_surface": SurfaceChannel, TaskOwnerConversationContextKey: conversationScope.String(),
+	}}
+	if got, ok := runChannelScopeID(run, taskOnly); !ok || got != conversationScope {
+		t.Fatalf("task_only scheduled scope = %s, %v; want %s", got, ok, conversationScope)
+	}
+	invalid := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginSchedule}, ReplyTo: channel.ReplyTo, Context: map[string]any{
+		"origin_surface": SurfaceChannel, TaskOwnerConversationContextKey: "not-a-uuid",
+	}}
+	if _, ok := runChannelScopeID(run, invalid); ok {
+		t.Fatal("an invalid verified owner fell back to the delivery address")
+	}
+	admission := admitMemoryWrite(trustedRunWithIDs(run, SourceTrustChannelParticipant), taskOnly, memoryWriteBackground, true)
+	if !admission.Allowed || admission.Scope == nil || admission.Scope.ID != conversationScope.String() {
+		t.Fatalf("task_only scheduled admission = %+v", admission)
+	}
+}
+
+func trustedRunWithIDs(base *Run, trust SourceTrust) *Run {
+	run := *base
+	run.Surface, run.SourceTrust = SurfaceTask, sourceTrustPointer(trust)
+	return &run
+}
