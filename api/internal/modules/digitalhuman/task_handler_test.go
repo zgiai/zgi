@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -86,6 +87,36 @@ func TestTaskApprovalDiffDoesNotApplySupplementDirectly(t *testing.T) {
 		if change["field"] == "supplement" || strings.Contains(fmt.Sprint(change["after"]), "补充要求") {
 			t.Fatalf("supplement leaked into task diff: %#v", changes)
 		}
+	}
+}
+
+func TestTaskApprovalDiffDropsStaleNextRunWhenScheduleChanges(t *testing.T) {
+	nextRun := time.Date(2026, 10, 21, 1, 0, 0, 0, time.UTC)
+	task := &Task{
+		Name:      "Daily smoke check",
+		Goal:      "Remind me at 9:00",
+		OwnerKind: TaskOwnerUserSubject,
+		Schedule:  TaskSchedule{Type: TaskScheduleCron, Cron: "0 9 * * 1-5", Timezone: "Asia/Shanghai"},
+		NextRunAt: &nextRun,
+	}
+	before, after, changes := taskApprovalDiff(task, map[string]interface{}{
+		"schedule": map[string]interface{}{"type": "cron", "cron": "0 10 * * 1-5", "timezone": "Asia/Shanghai"},
+	}, "update")
+	if _, ok := after["next_run_at"]; ok {
+		t.Fatalf("task after = %#v, want the stale next run removed", after["next_run_at"])
+	}
+	if _, ok := before["next_run_at"]; !ok {
+		t.Fatalf("task before lost its next run: %#v", before)
+	}
+	for _, change := range changes {
+		if change["field"] == "next_run_at" {
+			t.Fatalf("next run listed as a change: %#v", change)
+		}
+	}
+
+	_, unchanged, _ := taskApprovalDiff(task, map[string]interface{}{"goal": "Remind me at 9:00 sharp"}, "update")
+	if _, ok := unchanged["next_run_at"]; !ok {
+		t.Fatalf("next run removed without a schedule change: %#v", unchanged)
 	}
 }
 

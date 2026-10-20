@@ -581,8 +581,16 @@ const messages = {
       supplement: 'What should change',
       supplementPlaceholder: 'For example: Move it to 9:00 AM and keep only the key metrics…',
       supplementHint:
-        'If this proposal does not meet your needs, explain what should change. Choose “Add instructions and regenerate” to reject this proposal without applying it and ask the Agent to generate a new one for approval.',
+        'Regenerating discards this proposal without applying it. The digital human then prepares a new one for you to review.',
       supplementRequired: 'Describe what should change before regenerating the proposal.',
+      requestChanges: 'Request changes',
+      regenerate: 'Regenerate proposal',
+      backToReview: 'Back',
+      nextRunRecalculated: 'Recalculated after you confirm',
+      relatedFieldsHint:
+        'The schedule changes, but the task goal and success criteria stay the same. Check that they still match the new schedule.',
+      showUnchanged: 'Show full task ({count} unchanged)',
+      hideUnchanged: 'Hide unchanged fields',
       emptyValue: 'Not set',
       manual: 'Manual execution',
       once: 'One-time execution',
@@ -620,7 +628,7 @@ const messages = {
       confirmRetry: 'Confirm retry',
       confirmArchive: 'Confirm archive',
       revise: 'Add instructions and regenerate',
-      decline: 'Cancel operation',
+      decline: "Don't apply",
     },
     contextCompaction: {
       running: 'Organizing conversation context. Your response will continue automatically…',

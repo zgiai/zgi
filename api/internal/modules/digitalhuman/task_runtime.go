@@ -799,6 +799,18 @@ func taskApprovalDiff(task *Task, requestedInputs map[string]interface{}, action
 		}
 		after[key] = value
 	}
+	// The stored next run belongs to the old schedule. The scheduler computes
+	// the new one when the change is applied, so the preview must not present
+	// the stale value as the outcome.
+	nextRunRecalculated := false
+	if _, requested := requestedInputs["next_run_at"]; !requested {
+		beforeSchedule, _ := json.Marshal(before["schedule"])
+		afterSchedule, _ := json.Marshal(after["schedule"])
+		if string(beforeSchedule) != string(afterSchedule) {
+			delete(after, "next_run_at")
+			nextRunRecalculated = true
+		}
+	}
 	changes := make([]map[string]interface{}, 0)
 	labels := map[string]string{
 		"name": "任务名称", "goal": "任务目标", "success_criteria": "成功标准",
@@ -807,6 +819,9 @@ func taskApprovalDiff(task *Task, requestedInputs map[string]interface{}, action
 		"work_status": "工作状态", "lifecycle_status": "运行状态", "next_run_at": "下次执行时间",
 	}
 	for key, label := range labels {
+		if key == "next_run_at" && nextRunRecalculated {
+			continue
+		}
 		beforeValue := before[key]
 		afterValue := after[key]
 		beforeJSON, _ := json.Marshal(beforeValue)

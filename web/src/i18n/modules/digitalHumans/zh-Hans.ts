@@ -1423,6 +1423,7 @@ const messages: DigitalHumansMessages = {
     },
     filters: {
       search: '搜索待办名称或目标',
+      toggle: '筛选任务',
       status: '状态',
       priority: '优先级',
       schedule: '执行计划',

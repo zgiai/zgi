@@ -1545,6 +1545,7 @@ const messages = {
     },
     filters: {
       search: 'Search task name or goal',
+      toggle: 'Filter tasks',
       status: 'Status',
       priority: 'Priority',
       schedule: 'Schedule',
