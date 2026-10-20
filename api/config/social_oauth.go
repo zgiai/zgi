@@ -12,8 +12,8 @@ func loadSocialOAuthProviders(source *envSource) map[string]SocialOAuthProviderC
 	result := make(map[string]SocialOAuthProviderConfig, 3)
 	for _, entry := range []struct{ id, prefix, scopes string }{
 		{"x-social", "CONNECTOR_X_OAUTH_", "tweet.read tweet.write users.read media.write dm.read dm.write offline.access"},
-		{"linkedin-social", "CONNECTOR_LINKEDIN_OAUTH_", "openid profile r_organization_social w_organization_social rw_organization_admin"},
-		{"facebook-social", "CONNECTOR_FACEBOOK_OAUTH_", "pages_show_list pages_read_engagement pages_read_user_content pages_manage_posts pages_manage_engagement pages_messaging read_insights"},
+		{"linkedin-social", "CONNECTOR_LINKEDIN_OAUTH_", "openid profile r_organization_social w_organization_social r_organization_social_feed w_organization_social_feed rw_organization_admin"},
+		{"facebook-social", "CONNECTOR_FACEBOOK_OAUTH_", "pages_show_list pages_read_engagement pages_read_user_content pages_manage_posts pages_manage_engagement pages_manage_metadata pages_messaging read_insights"},
 	} {
 		cfg := SocialOAuthProviderConfig{
 			ClientID:     strings.TrimSpace(source.string("", entry.prefix+"CLIENT_ID")),

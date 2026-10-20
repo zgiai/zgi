@@ -247,7 +247,11 @@ func (entry registration) invoke(ctx context.Context, operation string, input Cr
 	if entry.definition.UsesCredentials() {
 		return entry.driver.(CredentialDriver).InvokeCredentials(ctx, operation, input, args)
 	}
-	return entry.driver.(KeyDriver).Invoke(ctx, operation, strings.TrimSpace(input.Values[entry.definition.KeyFields[0].Name]), args)
+	key := strings.TrimSpace(input.Values[entry.definition.KeyFields[0].Name])
+	if scoped, ok := entry.driver.(ScopedKeyDriver); ok {
+		return scoped.InvokeWithScope(ctx, operation, key, args, input.ResourceScope)
+	}
+	return entry.driver.(KeyDriver).Invoke(ctx, operation, key, args)
 }
 func (entry registration) secrets(input CredentialInput) []string {
 	var values []string

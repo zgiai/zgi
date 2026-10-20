@@ -58,9 +58,12 @@ reconnection through the existing connection lifecycle.
 | Group | X | LinkedIn | Facebook |
 |---|---|---|---|
 | Identity/account selection | Connected user | Connected member and approved administered organizations | Connected Page |
-| Text/image posts | Official API; bounded base64 image input | Company organization author; bounded base64 image input | Reused MCP text/photo handlers; public HTTPS image URL |
+| Text/image posts | Official API; bounded base64 image input | Company organization author; bounded base64 image input | Reused MCP text/photo handlers; inline base64 or public HTTPS image URL |
 | Post/comment reads and replies | Post lookup, recent conversation search and reply | Organization posts and comment threads | Page posts and comments |
 | Private conversations | Read existing DM events/threads and reply | **Unavailable for company pages in this integration** | Messenger conversation reads and eligible replies |
+| Search, mentions, notifications | Recent post search and connected-user mentions | Managed organization activity notifications | Tagged posts on connected Page |
+| Repost/quote | Official repost and quote publishing | Official organization reshare, optional commentary | Unavailable |
+| Event subscription | Pull reads | Pull notifications; partner webhook enrollment separate | Fixed Page feed and Messenger subscription |
 | Metrics | Current account/post metric snapshots | Organization share statistics | Current Page/post snapshots and explicitly requested Insights |
 
 All features depend on the developer application, vendor access tier, granted
@@ -84,10 +87,10 @@ to send. It does not initiate unsolicited private conversations.
 ## Inputs and results
 
 Read lists accept bounded `limit` and platform cursors. Publishing accepts `text`.
-For X/LinkedIn, `image_data` is base64 (maximum 196,608 characters, approximately
+For all three platforms, `image_data` is base64 (maximum 196,608 characters, approximately
 144 KiB decoded) and requires matching `mime_type` (`image/png`, `image/jpeg`,
-`image/webp`). Larger assets and video are outside this initial contract.
-Facebook accepts `image_url`; the bridge does not fetch arbitrary image hosts
+`image/webp`). The separate authenticated image preparation endpoint can normalize larger uploaded image sources to this runtime limit; video is unavailable.
+Facebook also accepts `image_url` (mutually exclusive with `image_data`); the bridge does not fetch arbitrary image hosts
 with its own credentials.
 
 Results contain `provider`, `transport: "mcp"`, and bounded platform data. IDs,
@@ -122,3 +125,17 @@ acceptance additionally requires real developer apps and accounts: verify each
 platform's identity, one approved test post, read-back, comment reply, permitted
 private-message reply, and available metrics. A missing vendor grant is not
 certified by successful fixture tests.
+
+## Incremental reads, reshares and Page subscriptions
+
+Plugin 1.1.0 adds `x-social.post.search`, `x-social.mention.list`, `x-social.post.repost`, `x-social.post.quote`, `linkedin-social.notification.list`, `linkedin-social.post.repost`, `facebook-social.mention.list`, and `facebook-social.webhook.subscribe`. Search requires `query`; reposts require `post_id`; X quote requires `text`, while LinkedIn reshare commentary is optional. There is no LinkedIn global search or company messaging endpoint and no generic Facebook search.
+
+X post lists, recent search, mentions and comments accept `since`/`until` (RFC3339) and `since_id`/`until_id` (decimal IDs). LinkedIn organization notifications accept native date intervals. Other lists reject these filters explicitly. List/search outputs preserve raw vendor fields and add a `sync` object with source platform/IDs, continuation cursor and supplied filters. Pass the original query/account/filters on every page; checkpoint only after all pages are stored and processed. No checkpoint persistence, scheduling or full historical sync is implied. Offset pagination can shift as data changes.
+
+Reposts and quotes require normal publishing confirmation. X repost and Facebook subscription use explicit native boolean acknowledgments; the bridge never invents a post ID for them. Unknown submissions are not retried. The Page subscription has fixed `feed,messages,messaging_postbacks` fields, requires a configured application webhook and `pages_manage_metadata`; it cannot target another Page or an arbitrary callback URL. Signed webhook storage and owner-scoped event reads/acknowledgements are API features; this does not create a full operations inbox. Feedback handoff can use the existing Feishu, DingTalk and email connectors, with their usual authorization and confirmation.
+
+LinkedIn is pinned to supported `202609`. Its [scope migration](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/community-management-api-migration-guide?view=li-lms-2026-09) requires `r_organization_social_feed`/`w_organization_social_feed` for social actions, alongside post grants; [notifications](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/organizations/organization-social-action-notifications?view=li-lms-2026-09) require `rw_organization_admin`. Existing connections may need reauthorization. Facebook tagged reads require the corresponding Page content grant; API/app review restrictions still apply. Meta documentation returned rate-limit errors during implementation, so fixture success does not certify current real-account availability.
+
+X date and ID bounds are mutually exclusive per side: use either `since` or `since_id`, and either `until` or `until_id`. IDs are bounded to 19 decimal digits. Invalid combinations fail before network access.
+
+Top-level comments are available as `comment.create` (`comment_create` inside MCP) on all three platforms. Inputs require `post_id` and `text`, plus the usual LinkedIn organization `account_id`; no existing `comment_id` is needed. The operation is a non-idempotent external send with normal confirmation and native receipt checks. X verifies the requested post exists and replies as the authenticated user, including to visible posts by other authors; any explicit acting `account_id` must match the token. Facebook restricts the post ID to the verified Page, and LinkedIn verifies the post author against the selected managed organization. Commenting on external discussions through Facebook/LinkedIn is outside this contract. LinkedIn sends the managed organization actor and source object without a `parentComment`; nested replies continue using `comment.reply`.

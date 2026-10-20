@@ -25,6 +25,7 @@ type Options struct {
 	NodeCommand string
 	ScriptPath  string
 	Launcher    mcpclient.ProcessLauncher
+	Events      EventStore
 }
 
 type Client struct {
@@ -152,7 +153,7 @@ func (c *Client) Verify(ctx context.Context, token string) (providers.Verificati
 	operations := []string{}
 	for _, op := range c.definition.Operations {
 		tool := remoteName(c.definition.ID, op.ID)
-		if c.unavailableMessaging(op.ID) {
+		if c.unavailableMessaging(op.ID) || localEventOperation(op.ID) {
 			continue
 		}
 		for _, raw := range available {
@@ -161,6 +162,9 @@ func (c *Client) Verify(ctx context.Context, token string) (providers.Verificati
 				break
 			}
 		}
+	}
+	if c.definition.ID == "facebook-social" && c.options.Events != nil {
+		operations = append(operations, "facebook-social.event.list", "facebook-social.event.ack")
 	}
 	if len(operations) == 0 {
 		return providers.Verification{}, &providers.Failure{Code: core.ErrorCodeInsufficientKey}
@@ -173,12 +177,23 @@ func (c *Client) unavailableMessaging(operation string) bool {
 }
 
 func (c *Client) Invoke(ctx context.Context, operation, token string, input map[string]any) (providers.Response, error) {
+	if localEventOperation(operation) {
+		return providers.Response{}, &providers.Failure{Code: core.ErrorCodeAccessDenied}
+	}
 	if !validToken(token) {
 		return providers.Response{}, providers.Invalid()
 	}
-	args, err := c.schemas.Input(operation, input)
+	// Own the map before normalizing any image fields.
+	ownedInput := make(map[string]any, len(input))
+	for key, value := range input {
+		ownedInput[key] = value
+	}
+	args, err := c.schemas.Input(operation, ownedInput)
 	if err != nil {
 		return providers.Response{}, providers.Invalid()
+	}
+	if err := normalizeImageInput(args); err != nil {
+		return providers.Response{}, err
 	}
 	if c.unavailableMessaging(operation) {
 		return providers.Response{}, &providers.Failure{Code: core.ErrorCodeInsufficientKey}

@@ -1252,13 +1252,15 @@ func loadConnectorsConfig(cfg *Config, source *envSource) error {
 	}
 
 	cfg.Connectors = ConnectorsConfig{
-		SocialOAuthFrontendURL: strings.TrimRight(strings.TrimSpace(source.string("", "CONNECTOR_SOCIAL_OAUTH_FRONTEND_URL")), "/"),
-		SocialOAuthProviders:   loadSocialOAuthProviders(source),
-		SocialMCPNode:          strings.TrimSpace(source.string("node", "CONNECTOR_SOCIAL_MCP_NODE")),
-		SocialMCPScript:        strings.TrimSpace(source.string("", "CONNECTOR_SOCIAL_MCP_SCRIPT")),
-		CredentialActiveKeyID:  activeKeyID,
-		CredentialKeys:         credentialKeys,
-		PluginDirectories:      pluginDirectories,
+		SocialWebhookFacebookAppSecret:   strings.TrimSpace(source.string("", "CONNECTOR_FACEBOOK_WEBHOOK_APP_SECRET")),
+		SocialWebhookFacebookVerifyToken: strings.TrimSpace(source.string("", "CONNECTOR_FACEBOOK_WEBHOOK_VERIFY_TOKEN")),
+		SocialOAuthFrontendURL:           strings.TrimRight(strings.TrimSpace(source.string("", "CONNECTOR_SOCIAL_OAUTH_FRONTEND_URL")), "/"),
+		SocialOAuthProviders:             loadSocialOAuthProviders(source),
+		SocialMCPNode:                    strings.TrimSpace(source.string("node", "CONNECTOR_SOCIAL_MCP_NODE")),
+		SocialMCPScript:                  strings.TrimSpace(source.string("", "CONNECTOR_SOCIAL_MCP_SCRIPT")),
+		CredentialActiveKeyID:            activeKeyID,
+		CredentialKeys:                   credentialKeys,
+		PluginDirectories:                pluginDirectories,
 	}
 	return nil
 }

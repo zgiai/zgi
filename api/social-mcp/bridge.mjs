@@ -9,6 +9,7 @@ const ALL = [
   "post_get",
   "post_create",
   "comment_list",
+  "comment_create",
   "comment_reply",
   "conversation_list",
   "message_list",
@@ -141,6 +142,41 @@ function scrub(v, t, k = "") {
     );
   return v;
 }
+// Input is validated as JSON before this scan. Quoting large integer tokens must
+// never repair malformed JSON (for example an unquoted numeric property name).
+function losslessIntegerJSON(text) {
+  const pieces = [];
+  let quoted = false,
+    escaped = false,
+    start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') quoted = false;
+      continue;
+    }
+    if (c === '"') {
+      quoted = true;
+      continue;
+    }
+    if (c !== "-" && !(c >= "0" && c <= "9")) continue;
+    let end = i + 1;
+    while (end < text.length && /[0-9.eE+\-]/.test(text[end])) end++;
+    const number = text.slice(i, end);
+    if (
+      /^-?(?:0|[1-9][0-9]*)$/.test(number) &&
+      !Number.isSafeInteger(Number(number))
+    ) {
+      pieces.push(text.slice(start, i), JSON.stringify(number));
+      start = end;
+    }
+    i = end - 1;
+  }
+  pieces.push(text.slice(start));
+  return pieces.join("");
+}
 export function createBridge({
   provider,
   token,
@@ -154,7 +190,12 @@ export function createBridge({
     typeof token !== "string"
   )
     throw invalid("provider and token required");
-  const supported = ALL.filter(
+  const extra = {
+    "x-social": ["post_search", "mention_list", "post_repost", "post_quote"],
+    "linkedin-social": ["notification_list", "post_repost"],
+    "facebook-social": ["mention_list", "webhook_subscribe"],
+  };
+  const supported = [...ALL, ...extra[provider]].filter(
     (n) => provider !== "linkedin-social" || !MSG.includes(n),
   );
   const tools = contract
@@ -213,7 +254,7 @@ export function createBridge({
           }
           chunks.push(Buffer.from(value));
         }
-      const text = Buffer.concat(chunks).toString();
+      let text = Buffer.concat(chunks).toString();
       if (!r.ok) {
         let vendorCode;
         if (provider === "facebook-social")
@@ -245,6 +286,9 @@ export function createBridge({
       if (text)
         try {
           JSON.parse(text);
+          // Supply lossless JSON text to both response.json() and upstream
+          // clients that parse response.text() themselves.
+          text = losslessIntegerJSON(text);
         } catch {
           if (!(upload && method === "PUT")) throw Error("JSON");
         }
@@ -274,7 +318,7 @@ export function createBridge({
     const headers = { Authorization: `Bearer ${token}` };
     if (provider === "linkedin-social")
       Object.assign(headers, {
-        "LinkedIn-Version": "202610",
+        "LinkedIn-Version": "202609",
         "X-Restli-Protocol-Version": "2.0.0",
       });
     if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -286,7 +330,7 @@ export function createBridge({
     return r.status === 204 ? {} : await r.json();
   }
   const li = new LinkedInApiClient({
-    version: "202610",
+    version: "202609",
     getAccessToken: async () => token,
     fetch: (u, i) =>
       transport(u, i, new URL(u).origin !== "https://api.linkedin.com"),
@@ -405,12 +449,64 @@ export function createBridge({
       );
     return JSON.parse(r.content[0].text);
   }
+  function xRange(a) {
+    const r = interval(a);
+    return {
+      start_time: r.since,
+      end_time: r.until,
+      since_id: a.since_id,
+      until_id: a.until_id,
+    };
+  }
   async function xCall(n, a, id) {
+    if (n === "comment_create") {
+      const postID = req(a, "post_id");
+      const post = await request(`tweets/${seg(postID)}`, {
+        query: { "tweet.fields": "author_id" },
+      });
+      if (post.data?.id !== postID)
+        throw new BridgeError(
+          "provider_unavailable",
+          "requested post unavailable",
+        );
+      return request("tweets", {
+        method: "POST",
+        body: { text: req(a, "text"), reply: { in_reply_to_tweet_id: postID } },
+      });
+    }
+    if (n === "post_repost")
+      return request(`users/${seg(id)}/retweets`, {
+        method: "POST",
+        body: { tweet_id: req(a, "post_id") },
+      });
+    if (n === "post_quote")
+      return request("tweets", {
+        method: "POST",
+        body: { text: req(a, "text"), quote_tweet_id: req(a, "post_id") },
+      });
+    if (n === "post_search" || n === "mention_list")
+      return request(
+        n === "post_search"
+          ? "tweets/search/recent"
+          : `users/${seg(id)}/mentions`,
+        {
+          query: {
+            ...(n === "post_search"
+              ? { query: req(a, "query"), next_token: cursor(a) }
+              : { pagination_token: cursor(a) }),
+            max_results: Math.max(n === "post_search" ? 10 : 5, limit(a)),
+            ...xRange(a),
+            "tweet.fields":
+              "author_id,created_at,public_metrics,conversation_id",
+          },
+        },
+      );
     if (n === "post_list")
       return request(`users/${seg(id)}/tweets`, {
         query: {
           max_results: Math.max(5, limit(a)),
           pagination_token: cursor(a),
+          ...xRange(a),
           "tweet.fields": "created_at,public_metrics,conversation_id",
         },
       });
@@ -444,6 +540,7 @@ export function createBridge({
           query: `conversation_id:${seg(req(a, "post_id"))}`,
           max_results: Math.max(10, limit(a)),
           next_token: cursor(a),
+          ...xRange(a),
           "tweet.fields":
             "author_id,created_at,in_reply_to_user_id,conversation_id",
         },
@@ -526,6 +623,39 @@ export function createBridge({
     }
   }
   async function fbCall(n, a, id) {
+    if (n === "comment_create")
+      return request(`${seg(fbPost(a, id))}/comments`, {
+        method: "POST",
+        body: { message: req(a, "text") },
+      });
+    if (n === "webhook_subscribe")
+      return request(`${id}/subscribed_apps`, {
+        method: "POST",
+        body: {
+          subscribed_fields: ["feed", "messages", "messaging_postbacks"],
+        },
+      });
+    if (n === "mention_list")
+      return request(`${id}/tagged`, {
+        query: {
+          limit: limit(a),
+          after: cursor(a),
+          fields: "id,message,created_time,permalink_url,from",
+        },
+      });
+    if (n === "post_create" && a.image_data !== undefined) {
+      const bytes = image(a),
+        form = new FormData();
+      form.set("caption", req(a, "text"));
+      form.set("source", new Blob([bytes], { type: a.mime_type }), "image");
+      return (
+        await transport(`https://graph.facebook.com/v23.0/${id}/photos`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: form,
+        })
+      ).json();
+    }
     if (n === "post_create")
       return a.image_url
         ? fbTool("create_photo_post", {
@@ -674,6 +804,45 @@ export function createBridge({
   }
 
   async function liCall(n, a, org) {
+    if (n === "comment_create") {
+      await liPost(a, org);
+      return li.commentOnPost({
+        postUrn: a.post_id,
+        actorUrn: org,
+        message: req(a, "text"),
+        objectUrn: a.post_id,
+      });
+    }
+    if (n === "post_repost") {
+      const parent = req(a, "post_id");
+      if (!/^urn:li:(share|ugcPost):\d+$/.test(parent))
+        throw invalid("invalid post_id");
+      return li.createPost({
+        authorUrn: org,
+        commentary: a.text === undefined ? "" : req(a, "text"),
+        reshareUrn: parent,
+      });
+    }
+    if (n === "notification_list") {
+      const start = a.cursor === undefined ? 0 : Number(a.cursor);
+      if (!Number.isSafeInteger(start) || start < 0 || start > 100000)
+        throw invalid("invalid cursor");
+      const r = interval(a),
+        range = [];
+      if (r.since) range.push(`start:${Date.parse(r.since)}`);
+      if (r.until) range.push(`end:${Date.parse(r.until)}`);
+      return request("organizationalEntityNotifications", {
+        query: {
+          q: "criteria",
+          organizationalEntity: org,
+          actions:
+            "List(LIKE,COMMENT,SHARE,SHARE_MENTION,ADMIN_COMMENT,COMMENT_EDIT,COMMENT_DELETE)",
+          count: limit(a),
+          start,
+          ...(range.length ? { timeRange: `(${range.join(",")})` } : {}),
+        },
+      });
+    }
     if (n === "post_create") {
       if (a.image_url) throw invalid("image_url unavailable; use image_data");
       let imageUrn;
@@ -775,6 +944,86 @@ export function createBridge({
       throw invalid("operation outside native contract");
     if (!a || typeof a !== "object" || Array.isArray(a))
       throw invalid("arguments must be an object");
+    const fixedArgs = {
+      comment_create: ["account_id", "post_id", "text"],
+      post_search: [
+        "account_id",
+        "query",
+        "limit",
+        "cursor",
+        "since",
+        "until",
+        "since_id",
+        "until_id",
+      ],
+      mention_list:
+        provider === "x-social"
+          ? [
+              "account_id",
+              "limit",
+              "cursor",
+              "since",
+              "until",
+              "since_id",
+              "until_id",
+            ]
+          : ["account_id", "limit", "cursor"],
+      notification_list: ["account_id", "limit", "cursor", "since", "until"],
+      post_repost:
+        provider === "linkedin-social"
+          ? ["account_id", "post_id", "text"]
+          : ["account_id", "post_id"],
+      post_quote: ["account_id", "post_id", "text"],
+      webhook_subscribe: ["account_id"],
+    };
+    if (fixedArgs[n] && Object.keys(a).some((k) => !fixedArgs[n].includes(k)))
+      throw invalid("unsupported argument or unsupported filter for operation");
+    const filters = ["since", "until", "since_id", "until_id"].filter(
+      (k) => a[k] !== undefined,
+    );
+    const nativeX =
+      provider === "x-social" &&
+      ["post_list", "post_search", "mention_list", "comment_list"].includes(n);
+    if (
+      filters.some(
+        (k) =>
+          (!nativeX && !(k === "since" || k === "until")) ||
+          (!nativeX &&
+            n !== "metrics_get" &&
+            !(provider === "linkedin-social" && n === "notification_list")),
+      )
+    )
+      throw invalid("unsupported filter for operation");
+    interval(a);
+    if (
+      nativeX &&
+      ((a.since !== undefined && a.since_id !== undefined) ||
+        (a.until !== undefined && a.until_id !== undefined))
+    )
+      throw invalid("date and ID bounds are mutually exclusive");
+    if (n === "post_create") {
+      if (a.image_data !== undefined && a.image_url !== undefined)
+        throw invalid("image_data and image_url are mutually exclusive");
+      image(a);
+    }
+    for (const key of ["since_id", "until_id"])
+      if (
+        a[key] !== undefined &&
+        (typeof a[key] !== "string" || !/^\d{1,19}$/.test(a[key]))
+      )
+        throw invalid("invalid ID filter");
+    if (a.since_id && a.until_id && BigInt(a.since_id) >= BigInt(a.until_id))
+      throw invalid("invalid ID interval");
+    cursor(a);
+    if (n === "post_search") {
+      if (req(a, "query").length > 512) throw invalid("query too long");
+    }
+    if (
+      provider === "x-social" &&
+      ["post_repost", "post_quote"].includes(n) &&
+      !/^\d{1,19}$/.test(req(a, "post_id"))
+    )
+      throw invalid("invalid post_id");
     try {
       if (n === "account_get")
         return {
@@ -828,7 +1077,30 @@ export function createBridge({
         token,
       );
       if (!data || typeof data !== "object") throw Error("result");
-      if (["post_create", "comment_reply", "message_send"].includes(n)) {
+      if (n === "post_repost" && provider === "x-social") {
+        if (data.data?.retweeted !== true)
+          throw new BridgeError(
+            "outcome_unknown",
+            "write outcome unknown",
+            true,
+          );
+      } else if (n === "webhook_subscribe") {
+        if (data.success !== true)
+          throw new BridgeError(
+            "outcome_unknown",
+            "write outcome unknown",
+            true,
+          );
+      } else if (
+        [
+          "post_create",
+          "comment_create",
+          "post_quote",
+          "post_repost",
+          "comment_reply",
+          "message_send",
+        ].includes(n)
+      ) {
         const receipt =
           provider === "x-social"
             ? data.data?.id || data.data?.dm_event_id
@@ -842,6 +1114,40 @@ export function createBridge({
             "write outcome unknown",
             true,
           );
+      }
+      if (n.endsWith("_list") || n === "post_search") {
+        let next;
+        if (provider === "x-social") next = data.meta?.next_token;
+        if (provider === "facebook-social" && data.paging?.next)
+          next = data.paging?.cursors?.after;
+        if (
+          provider === "linkedin-social" &&
+          data.paging?.links?.some((l) => l.rel === "next")
+        )
+          next = String(
+            Number(a.cursor ?? 0) + Number(data.paging.count ?? limit(a)),
+          );
+        const rows = data.data ?? data.elements ?? [];
+        data.sync = {
+          source_platform: provider,
+          source_ids: Array.isArray(rows)
+            ? rows
+                .map((r) => r.id ?? r.notificationId ?? r.commentUrn)
+                .filter((v) => v !== undefined)
+                .map((value) => {
+                  if (typeof value === "number" && !Number.isSafeInteger(value))
+                    throw new BridgeError(
+                      "provider_unavailable",
+                      "platform source identifier is not lossless",
+                    );
+                  return String(value);
+                })
+            : [],
+          next_cursor: next ?? null,
+          filters: Object.fromEntries(filters.map((k) => [k, a[k]])),
+          checkpoint_policy:
+            "Keep original filters across every cursor page; advance a caller checkpoint only after all pages are durably processed. Native cursors may expire; reads are not snapshots.",
+        };
       }
       return data;
     } catch (e) {

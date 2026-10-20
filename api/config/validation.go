@@ -136,6 +136,9 @@ func validateConfig(cfg *Config) error {
 }
 
 func validateConnectorsConfig(cfg ConnectorsConfig) error {
+	if err := validateSocialWebhookConfig(cfg); err != nil {
+		return err
+	}
 	if err := validateSocialOAuthConfig(cfg); err != nil {
 		return err
 	}

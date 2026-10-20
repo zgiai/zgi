@@ -20,7 +20,12 @@ import (
 
 func fixture(t *testing.T, omit string, outcome map[string]any, toolError bool) (*Client, *int) {
 	t.Helper()
-	c, err := New("x-social", Options{})
+	return fixtureForProvider(t, "x-social", omit, outcome, toolError)
+}
+
+func fixtureForProvider(t *testing.T, id, omit string, outcome map[string]any, toolError bool) (*Client, *int) {
+	t.Helper()
+	c, err := New(id, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +34,7 @@ func fixture(t *testing.T, omit string, outcome map[string]any, toolError bool) 
 	var names []any
 	for _, op := range c.definition.Operations {
 		name := remoteName(c.definition.ID, op.ID)
-		if name == omit {
+		if name == omit || localEventOperation(op.ID) {
 			continue
 		}
 		names = append(names, name)
@@ -198,14 +203,17 @@ func TestPackagedBridgeCatalogMatchesNativeContracts(t *testing.T) {
 			if id == "linkedin-social" {
 				want -= 3
 			}
+			if id == "facebook-social" {
+				want -= 2
+			}
 			if len(tools.Items) != want {
 				t.Fatalf("bridge tools %d, native %d", len(tools.Items), want)
 			}
 			for _, op := range c.definition.Operations {
 				name := remoteName(id, op.ID)
-				if c.unavailableMessaging(op.ID) {
+				if c.unavailableMessaging(op.ID) || localEventOperation(op.ID) {
 					if listed(tools.Items, name) {
-						t.Fatal("unavailable messaging advertised")
+						t.Fatal("unavailable or local tool advertised by bridge")
 					}
 					continue
 				}

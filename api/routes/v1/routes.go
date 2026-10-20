@@ -231,6 +231,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		panic(fmt.Sprintf("admit Connector definitions: %v", err))
 	}
 	RegisterConnectorRoutes(v1, ConnectorRouteDeps{
+		SocialEvents:            serviceContainer.GetConnectorSocialEventsService(),
 		SocialOAuth:             serviceContainer.GetConnectorSocialOAuthService(),
 		SocialOAuthFrontendURL:  config.Current().Connectors.SocialOAuthFrontendURL,
 		Catalog:                 serviceContainer.GetConnectorPluginManager(),

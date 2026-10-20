@@ -69,6 +69,7 @@ var (
 // machinery. Routes are registered only when the caller supplies explicit
 // Connector-native dependencies.
 type ConnectorRouteDeps struct {
+	SocialEvents            connectorSocialEventService
 	SocialOAuth             connectorSocialOAuthService
 	SocialOAuthFrontendURL  string
 	Catalog                 connectorDefinitionCatalog
@@ -84,6 +85,7 @@ type ConnectorRouteDeps struct {
 }
 
 type connectorHandler struct {
+	socialEvents           connectorSocialEventService
 	socialOAuth            connectorSocialOAuthService
 	socialOAuthFrontendURL string
 	catalog                connectorDefinitionCatalog
@@ -107,7 +109,8 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 	}
 
 	handler := &connectorHandler{
-		socialOAuth: deps.SocialOAuth, socialOAuthFrontendURL: deps.SocialOAuthFrontendURL,
+		socialEvents: deps.SocialEvents,
+		socialOAuth:  deps.SocialOAuth, socialOAuthFrontendURL: deps.SocialOAuthFrontendURL,
 		references: deps.References, catalog: deps.Catalog, connections: deps.Connections, bindings: deps.Bindings, maintenance: deps.Maintenance,
 		preferences: deps.Preferences, onboarding: deps.Onboarding, hostKeyProbe: deps.HostKeyProbe,
 	}
@@ -115,6 +118,7 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 		handler.errorProjector, _ = apptransport.NewProjector(deps.ApplicationErrorCatalog)
 	}
 	handler.registerSocialOAuthCallback(router)
+	handler.registerSocialWebhook(router)
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -123,6 +127,7 @@ func RegisterConnectorRoutes(router *gin.RouterGroup, deps ConnectorRouteDeps) {
 
 func (handler *connectorHandler) register(group *gin.RouterGroup) {
 	handler.registerSocialOAuth(group)
+	handler.registerSocialCapabilities(group)
 	group.POST("/connectors/:connectorId/credential-setups", handler.startCredentialSetup)
 	group.POST("/connectors/:connectorId/app-credential-setups", handler.startAppCredentialSetup)
 	group.POST("/connectors/:connectorId/host-key-tests", handler.probeConnectorHostKey)

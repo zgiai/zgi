@@ -610,3 +610,525 @@ test("LinkedIn share vs UGC filter uses native contract; post stats interval rej
     assert.equal(calls.length, before);
   }
 });
+
+const additions = [
+  "post_search",
+  "mention_list",
+  "post_repost",
+  "post_quote",
+  "notification_list",
+  "webhook_subscribe",
+];
+contract.push(
+  ...additions.map((name) => ({ name, inputSchema: { type: "object" } })),
+);
+test("new operations are platform-specific; unsupported filters fail before identity fetch", async () => {
+  for (const [provider, name] of [
+    ["facebook-social", "post_search"],
+    ["linkedin-social", "mention_list"],
+    ["x-social", "webhook_subscribe"],
+  ]) {
+    const { bridge, calls } = fixture(provider, () => ({}));
+    assert.ok(!bridge.tools().some((t) => t.name === name));
+    await assert.rejects(bridge.call(name, {}), /unavailable/);
+    assert.equal(calls.length, 0);
+  }
+  for (const [provider, name, args] of [
+    [
+      "linkedin-social",
+      "post_list",
+      { account_id: "7", since: "2026-10-01T00:00:00Z" },
+    ],
+    ["facebook-social", "mention_list", { since_id: "9" }],
+    [
+      "x-social",
+      "message_list",
+      { conversation_id: "c", until: "2026-10-01T00:00:00Z" },
+    ],
+  ]) {
+    const { bridge, calls } = fixture(provider, () => ({}));
+    await assert.rejects(bridge.call(name, args), /unsupported/);
+    assert.equal(calls.length, 0);
+  }
+});
+test("X search and mentions forward native increments with stable continuation metadata", async () => {
+  const { bridge, calls } = fixture("x-social", (u) =>
+    u.pathname.endsWith("/me")
+      ? { data: { id: "1" } }
+      : { data: [{ id: "12" }], meta: { next_token: "next", newest_id: "12" } },
+  );
+  const args = {
+    query: "zgi -is:retweet",
+    until_id: "20",
+    since: "2026-10-01T00:00:00Z",
+    cursor: "page",
+  };
+  const result = await bridge.call("post_search", args);
+  assert.equal(calls.at(-1).url.pathname, "/2/tweets/search/recent");
+  assert.equal(calls.at(-1).url.searchParams.get("start_time"), args.since);
+  assert.equal(calls.at(-1).url.searchParams.get("until_id"), "20");
+  assert.equal(result.sync.next_cursor, "next");
+  assert.equal(result.sync.filters.until_id, "20");
+  assert.deepEqual(result.sync.source_ids, ["12"]);
+  await bridge.call("mention_list", { since_id: "9" });
+  assert.equal(calls.at(-1).url.pathname, "/2/users/1/mentions");
+});
+test("X repost checks acting account and explicit acknowledgment; quote needs post receipt", async () => {
+  for (const acknowledged of [true, false]) {
+    const { bridge, calls } = fixture("x-social", (u) =>
+      u.pathname.endsWith("/me")
+        ? { data: { id: "1" } }
+        : { data: { retweeted: acknowledged } },
+    );
+    await assert.rejects(
+      bridge.call("post_repost", { account_id: "2", post_id: "9" }),
+      /account/,
+    );
+    const op = bridge.call("post_repost", { post_id: "9" });
+    if (acknowledged) assert.equal((await op).data.retweeted, true);
+    else await assert.rejects(op, (e) => e.code === "outcome_unknown");
+    assert.equal(calls.filter((c) => c.init.method === "POST").length, 1);
+    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { tweet_id: "9" });
+  }
+  const { bridge, calls } = fixture("x-social", (u) =>
+    u.pathname.endsWith("/me") ? { data: { id: "1" } } : { data: { id: "30" } },
+  );
+  await bridge.call("post_quote", { post_id: "9", text: "Hi" });
+  assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
+    text: "Hi",
+    quote_tweet_id: "9",
+  });
+});
+test("LinkedIn notifications use checked org native dates and reshare reuses upstream", async () => {
+  const { bridge, calls } = fixture("linkedin-social", (u) =>
+    u.pathname.endsWith("/organizationAcls")
+      ? {
+          elements: [
+            {
+              organization: "urn:li:organization:7",
+              role: "ADMINISTRATOR",
+              state: "APPROVED",
+            },
+          ],
+        }
+      : u.pathname.endsWith("/posts")
+        ? { body: {}, headers: { "x-restli-id": "urn:li:share:11" } }
+        : {
+            elements: [
+              {
+                notificationId: 12,
+                organizationalEntity: "urn:li:organization:7",
+              },
+            ],
+            paging: {
+              start: 0,
+              count: 1,
+              links: [{ rel: "next", href: "/ignored" }],
+            },
+          },
+  );
+  const result = await bridge.call("notification_list", {
+    account_id: "7",
+    since: "2026-10-01T00:00:00Z",
+    limit: 1,
+  });
+  assert.equal(
+    calls.at(-1).url.pathname,
+    "/rest/organizationalEntityNotifications",
+  );
+  assert.equal(
+    calls.at(-1).url.searchParams.get("timeRange"),
+    "(start:1790812800000)",
+  );
+  assert.equal(calls.at(-1).init.headers["LinkedIn-Version"], "202609");
+  assert.equal(result.sync.next_cursor, "1");
+  await bridge.call("post_repost", {
+    account_id: "7",
+    post_id: "urn:li:share:9",
+    text: "Hello (world)",
+  });
+  assert.deepEqual(JSON.parse(calls.at(-1).init.body).reshareContext, {
+    parent: "urn:li:share:9",
+  });
+  assert.equal(
+    JSON.parse(calls.at(-1).init.body).commentary,
+    "Hello \\(world\\)",
+  );
+});
+test("Facebook tagged reads and subscription use only verified Page and fixed fields", async () => {
+  const { bridge, calls } = fixture("facebook-social", (u) =>
+    u.pathname.endsWith("/me")
+      ? { id: "10", category: "Software" }
+      : u.pathname.endsWith("/subscribed_apps")
+        ? { success: true }
+        : {
+            data: [{ id: "20_30" }],
+            paging: {
+              cursors: { after: "p" },
+              next: "https://untrusted.invalid/",
+            },
+          },
+  );
+  const result = await bridge.call("mention_list", {});
+  assert.equal(calls.at(-1).url.pathname, "/v23.0/10/tagged");
+  assert.equal(result.sync.next_cursor, "p");
+  await bridge.call("webhook_subscribe", {});
+  assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
+    subscribed_fields: ["feed", "messages", "messaging_postbacks"],
+  });
+  assert.equal(calls.at(-1).url.pathname, "/v23.0/10/subscribed_apps");
+});
+test("Facebook inline image uses bounded multipart bytes and rejects mixed media", async () => {
+  const { bridge, calls } = fixture("facebook-social", (u) =>
+    u.pathname.endsWith("/me")
+      ? { id: "10", category: "Software" }
+      : { id: "photo" },
+  );
+  const image_data = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString(
+    "base64",
+  );
+  await assert.rejects(
+    bridge.call("post_create", {
+      text: "hi",
+      image_data,
+      mime_type: "image/png",
+      image_url: "https://cdn.public.org/a.png",
+    }),
+    /mutually exclusive/,
+  );
+  await bridge.call("post_create", {
+    text: "hi",
+    image_data,
+    mime_type: "image/png",
+  });
+  const call = calls.at(-1);
+  assert.equal(call.url.pathname, "/v23.0/10/photos");
+  assert.ok(call.init.body instanceof FormData);
+  assert.equal(call.init.body.get("caption"), "hi");
+  assert.equal(call.init.body.get("source").size, 8);
+  assert.equal(call.init.headers.Authorization, `Bearer ${token}`);
+});
+test("fixed operations reject injected subscription fields and unsupported reshare media before network", async () => {
+  for (const [provider, name, args] of [
+    [
+      "facebook-social",
+      "webhook_subscribe",
+      { subscribed_fields: ["arbitrary"] },
+    ],
+    ["x-social", "post_repost", { post_id: "9", text: "ignored" }],
+    [
+      "linkedin-social",
+      "post_repost",
+      {
+        account_id: "7",
+        post_id: "urn:li:share:9",
+        image_url: "https://cdn.public.org/a",
+      },
+    ],
+  ]) {
+    const { bridge, calls } = fixture(provider, () => ({}));
+    await assert.rejects(bridge.call(name, args), /unsupported argument/);
+    assert.equal(calls.length, 0);
+  }
+});
+test("new publish operations never retry unknown outcomes or accept missing receipts", async () => {
+  for (const [provider, name, args] of [
+    ["x-social", "post_repost", { post_id: "9" }],
+    ["x-social", "post_quote", { post_id: "9", text: "Hi" }],
+    [
+      "linkedin-social",
+      "post_repost",
+      { account_id: "7", post_id: "urn:li:share:9" },
+    ],
+    ["facebook-social", "webhook_subscribe", {}],
+  ]) {
+    for (const mode of ["timeout", "no-receipt"]) {
+      let writes = 0;
+      const bridge = createBridge({
+        provider,
+        token,
+        contract,
+        fetch: async (u, i) => {
+          if (i.method === "POST") {
+            writes++;
+            if (mode === "timeout") throw Error("timeout");
+            return new Response("{}");
+          }
+          return new Response(
+            JSON.stringify(
+              provider === "x-social"
+                ? { data: { id: "1" } }
+                : provider === "facebook-social"
+                  ? { id: "10", category: "Software" }
+                  : {
+                      elements: [
+                        {
+                          organization: "urn:li:organization:7",
+                          role: "ADMINISTRATOR",
+                          state: "APPROVED",
+                        },
+                      ],
+                    },
+            ),
+          );
+        },
+      });
+      await assert.rejects(
+        bridge.call(name, args),
+        (e) => e.code === "outcome_unknown" && e.unknown,
+      );
+      assert.equal(writes, 1);
+    }
+  }
+});
+test("X refuses mutually exclusive native date and ID bounds before network", async () => {
+  for (const args of [
+    { query: "zgi", since: "2026-10-01T00:00:00Z", since_id: "1" },
+    { query: "zgi", until: "2026-10-01T00:00:00Z", until_id: "2" },
+  ]) {
+    const { bridge, calls } = fixture("x-social", () => ({
+      data: { id: "1" },
+    }));
+    await assert.rejects(
+      bridge.call("post_search", args),
+      /mutually exclusive/,
+    );
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("raw unsafe integer IDs remain distinct strings without changing quoted text or scientific numbers", async () => {
+  const raw = String.raw`{"elements":[{"notificationId":9007199254740993},{"notificationId":9007199254740992},{"notificationId":9007199254740991}],"text":"9007199254740993 and \"escaped\" and \\ slash","quoted":"9007199254740993","decimal":1.25,"exponent":1.5e3,"scientific":9.007199254740993e15,"negative":-9007199254740993}`;
+  const bridge = createBridge({
+    provider: "linkedin-social",
+    token,
+    contract,
+    fetch: async (u) =>
+      new Response(
+        new URL(u).pathname.endsWith("/organizationAcls")
+          ? JSON.stringify({
+              elements: [
+                {
+                  organization: "urn:li:organization:7",
+                  role: "ADMINISTRATOR",
+                  state: "APPROVED",
+                },
+              ],
+            })
+          : raw,
+      ),
+  });
+  const result = await bridge.call("notification_list", { account_id: "7" });
+  assert.deepEqual(result.sync.source_ids, [
+    "9007199254740993",
+    "9007199254740992",
+    "9007199254740991",
+  ]);
+  assert.equal(result.elements[0].notificationId, "9007199254740993");
+  assert.equal(result.elements[2].notificationId, 9007199254740991);
+  assert.equal(result.text, JSON.parse(raw).text);
+  assert.equal(result.quoted, "9007199254740993");
+  assert.equal(result.decimal, 1.25);
+  assert.equal(result.exponent, 1500);
+  assert.equal(result.scientific, JSON.parse(raw).scientific);
+  assert.equal(result.negative, "-9007199254740993");
+  const identity = createBridge({
+    provider: "linkedin-social",
+    token,
+    contract,
+    fetch: async () => new Response('{"sub":9007199254740993}'),
+  });
+  assert.equal((await identity.call("account_get", {})).id, "9007199254740993");
+});
+test("lossless number handling never repairs invalid JSON", async () => {
+  for (const raw of [
+    '{"id":09007199254740993}',
+    '{"id":9007199254740993x}',
+    '{"id":9007199254740993,}',
+    '{"id":"unterminated}',
+    '{"id":9007199254740993.}',
+  ]) {
+    const bridge = createBridge({
+      provider: "x-social",
+      token,
+      contract,
+      fetch: async () => new Response(raw),
+    });
+    await assert.rejects(
+      bridge.call("account_get", {}),
+      (e) => e.code === "provider_unavailable",
+    );
+  }
+});
+contract.push({ name: "comment_create", inputSchema: { type: "object" } });
+test("top-level comments use verified actors without existing comment IDs", async () => {
+  for (const provider of ["x-social", "linkedin-social", "facebook-social"]) {
+    const { bridge, calls } = fixture(provider, (u, i) => {
+      if (u.pathname.endsWith("/organizationAcls"))
+        return {
+          elements: [
+            {
+              organization: "urn:li:organization:7",
+              role: "ADMINISTRATOR",
+              state: "APPROVED",
+            },
+          ],
+        };
+      if (u.pathname.endsWith("/me"))
+        return provider === "x-social"
+          ? { data: { id: "1" } }
+          : { id: "10", category: "Software" };
+      if (i.method === "POST")
+        return provider === "x-social"
+          ? { data: { id: "created" } }
+          : { id: "created" };
+      return provider === "x-social"
+        ? { data: { id: "9", author_id: "1" } }
+        : { author: "urn:li:organization:7" };
+    });
+    const args = {
+      post_id:
+        provider === "x-social"
+          ? "9"
+          : provider === "linkedin-social"
+            ? "urn:li:share:9"
+            : "10_20",
+      text: "Hello",
+      ...(provider === "linkedin-social" ? { account_id: "7" } : {}),
+    };
+    await bridge.call("comment_create", args);
+    const write = calls.at(-1),
+      body = JSON.parse(write.init.body);
+    assert.equal(calls.filter((c) => c.init.method === "POST").length, 1);
+    if (provider === "x-social")
+      assert.deepEqual(body, {
+        text: "Hello",
+        reply: { in_reply_to_tweet_id: "9" },
+      });
+    if (provider === "linkedin-social")
+      assert.deepEqual(body, {
+        actor: "urn:li:organization:7",
+        message: { text: "Hello" },
+        object: "urn:li:share:9",
+      });
+    if (provider === "facebook-social") {
+      assert.equal(write.url.pathname, "/v23.0/10_20/comments");
+      assert.deepEqual(body, { message: "Hello" });
+    }
+  }
+});
+test("managed Page comments deny foreign posts and comments require native write receipts", async () => {
+  for (const provider of ["facebook-social", "linkedin-social"]) {
+    const { bridge, calls } = fixture(provider, (u, i) =>
+      u.pathname.endsWith("/organizationAcls")
+        ? {
+            elements: [
+              {
+                organization: "urn:li:organization:7",
+                role: "ADMINISTRATOR",
+                state: "APPROVED",
+              },
+            ],
+          }
+        : u.pathname.endsWith("/me")
+          ? provider === "x-social"
+            ? { data: { id: "1" } }
+            : { id: "10", category: "Software" }
+          : provider === "x-social"
+            ? { data: { author_id: "other" } }
+            : { author: "urn:li:organization:8" },
+    );
+    await assert.rejects(
+      bridge.call("comment_create", {
+        account_id: provider === "linkedin-social" ? "7" : undefined,
+        post_id:
+          provider === "x-social"
+            ? "9"
+            : provider === "facebook-social"
+              ? "99_20"
+              : "urn:li:share:9",
+        text: "Hello",
+      }),
+      /author|belong/,
+    );
+    assert.equal(calls.filter((c) => c.init.method === "POST").length, 0);
+  }
+  const { bridge } = fixture("x-social", (u, i) =>
+    u.pathname.endsWith("/me")
+      ? { data: { id: "1" } }
+      : i.method === "POST"
+        ? {}
+        : { data: { id: "9", author_id: "1" } },
+  );
+  await assert.rejects(
+    bridge.call("comment_create", { post_id: "9", text: "Hello" }),
+    (e) => e.code === "outcome_unknown",
+  );
+});
+test("X comments allow visible foreign authors while binding the acting account", async () => {
+  const { bridge, calls } = fixture("x-social", (u, i) =>
+    u.pathname.endsWith("/me")
+      ? { data: { id: "1" } }
+      : i.method === "POST"
+        ? { data: { id: "created" } }
+        : { data: { id: "9", author_id: "foreign" } },
+  );
+  await assert.rejects(
+    bridge.call("comment_create", {
+      account_id: "other",
+      post_id: "9",
+      text: "Hi",
+    }),
+    /account/,
+  );
+  assert.equal(calls.filter((c) => c.init.method === "POST").length, 0);
+  await bridge.call("comment_create", {
+    account_id: "1",
+    post_id: "9",
+    text: "Hi",
+  });
+  assert.equal(calls.at(-1).init.headers.Authorization, `Bearer ${token}`);
+  assert.deepEqual(JSON.parse(calls.at(-1).init.body), {
+    text: "Hi",
+    reply: { in_reply_to_tweet_id: "9" },
+  });
+  for (const data of [{ id: "different" }, {}]) {
+    const invalid = fixture("x-social", (u) =>
+      u.pathname.endsWith("/me") ? { data: { id: "1" } } : { data },
+    );
+    await assert.rejects(
+      invalid.bridge.call("comment_create", { post_id: "9", text: "Hi" }),
+    );
+    assert.equal(
+      invalid.calls.filter((c) => c.init.method === "POST").length,
+      0,
+    );
+  }
+});
+test("unsafe exponent and decimal numeric source identifiers fail rather than collide", async () => {
+  for (const value of ["9.007199254740993e15", "9007199254740993.0", "1.25"]) {
+    const bridge = createBridge({
+      provider: "linkedin-social",
+      token,
+      contract,
+      fetch: async (u) =>
+        new Response(
+          new URL(u).pathname.endsWith("/organizationAcls")
+            ? JSON.stringify({
+                elements: [
+                  {
+                    organization: "urn:li:organization:7",
+                    role: "ADMINISTRATOR",
+                    state: "APPROVED",
+                  },
+                ],
+              })
+            : `{"elements":[{"notificationId":${value}}]}`,
+        ),
+    });
+    await assert.rejects(
+      bridge.call("notification_list", { account_id: "7" }),
+      (e) => e.code === "provider_unavailable",
+    );
+  }
+});

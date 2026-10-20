@@ -632,3 +632,25 @@ export interface ConnectorOAuthFlow {
   renewal_mode?: string;
   expires_at?: string;
 }
+
+/** A verified Page delivery batch; payload remains untrusted external content. */
+export interface ConnectorSocialEvent {
+  id: number;
+  provider: string;
+  kind: string;
+  source_id: string;
+  external_account_id: string;
+  received_at: string;
+  payload: Record<string, unknown>;
+}
+export interface ConnectorSocialEventPage {
+  items: ConnectorSocialEvent[];
+  next_after_id: number;
+}
+export interface PreparedSocialImage {
+  image_data: string;
+  mime_type: 'image/jpeg' | 'image/png';
+  width: number;
+  height: number;
+  bytes: number;
+}

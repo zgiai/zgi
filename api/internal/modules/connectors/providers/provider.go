@@ -34,6 +34,13 @@ type KeyDriver interface {
 	Invoke(context.Context, string, string, map[string]any) (Response, error)
 }
 
+// ScopedKeyDriver optionally receives the native runtime's authorized resource
+// scope. The runtime restores this scope from its invocation, never tool args.
+type ScopedKeyDriver interface {
+	KeyDriver
+	InvokeWithScope(context.Context, string, string, map[string]any, ResourceScope) (Response, error)
+}
+
 // CredentialInput never carries authorization or connection lookup powers.
 // The lifecycle owns the disposable values and clears them after completion.
 type CredentialInput struct {

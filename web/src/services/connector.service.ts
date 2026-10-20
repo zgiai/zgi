@@ -2,6 +2,8 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   ConnectorCatalogItem,
+  ConnectorSocialEventPage,
+  PreparedSocialImage,
   ConnectorOAuthFlow,
   ConnectorOnboardingFlow,
   ConnectorOnboardingRequest,
@@ -69,6 +71,37 @@ class ConnectorService extends BaseService {
       'post',
       `/connectors/oauth-flows/${encodeURIComponent(flowId)}/page`,
       { page_id: pageId },
+      { retryAttemptsOverride: 0 }
+    );
+  }
+
+  prepareSocialImage(source: Blob): Promise<ApiResponseData<PreparedSocialImage>> {
+    return this.request('post', '/connectors/social-media/prepare-image', source, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+      retryAttemptsOverride: 0,
+    });
+  }
+
+  getSocialEvents(
+    connectionId: string,
+    params?: { after_id?: number; limit?: number }
+  ): Promise<ApiResponseData<ConnectorSocialEventPage>> {
+    return this.request(
+      'get',
+      `/connector-connections/${encodeURIComponent(connectionId)}/social-events`,
+      undefined,
+      { params }
+    );
+  }
+
+  acknowledgeSocialEvents(
+    connectionId: string,
+    throughId: number
+  ): Promise<ApiResponseData<{ acknowledged_through_id: number }>> {
+    return this.request(
+      'post',
+      `/connector-connections/${encodeURIComponent(connectionId)}/social-events/ack`,
+      { through_id: throughId },
       { retryAttemptsOverride: 0 }
     );
   }

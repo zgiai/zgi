@@ -45,6 +45,7 @@ import (
 	connectorsocialmcp "github.com/zgiai/zgi/api/internal/modules/connectors/providers/socialmcp"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
+	connectorsocialevents "github.com/zgiai/zgi/api/internal/modules/connectors/socialevents"
 	connectorsocialoauth "github.com/zgiai/zgi/api/internal/modules/connectors/socialoauth"
 	"github.com/zgiai/zgi/api/internal/modules/consolesync"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
@@ -266,6 +267,7 @@ type ServiceContainer struct {
 	connectorTargetAuthority             *connectorTargetAuthority
 	connectorBindingService              *connectorbindings.Service
 	connectorAuditRepo                   *connectoraudit.GormRepository
+	connectorSocialEvents                *connectorsocialevents.Service
 	connectorSocialOAuth                 *connectorsocialoauth.Service
 	connectorCredentialCipher            *connectorcredentials.Store
 	connectorPersonalConnectionResolver  *connectorcredentials.PersonalConnectionResolver
@@ -1319,7 +1321,7 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		_, serverOpsSSH := c.getServerOpsSSHClient()
 		drivers := append([]connectorproviders.Driver{github, githubMCP, exa, feishu, gmail, serverOpsSSH}, c.messagingDrivers()...)
 		for _, id := range []string{"x-social", "linkedin-social", "facebook-social"} {
-			driver, err := connectorsocialmcp.New(id, connectorsocialmcp.Options{NodeCommand: c.config.Connectors.SocialMCPNode, ScriptPath: c.config.Connectors.SocialMCPScript})
+			driver, err := connectorsocialmcp.New(id, connectorsocialmcp.Options{NodeCommand: c.config.Connectors.SocialMCPNode, ScriptPath: c.config.Connectors.SocialMCPScript, Events: &connectorSocialEventStore{container: c}})
 			if err != nil {
 				panic("initialize social MCP Connector: invalid deployment configuration")
 			}
