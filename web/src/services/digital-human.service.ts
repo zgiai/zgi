@@ -62,6 +62,15 @@ import type {
   SocialOperationsProvisioningResult,
 } from './types/social-operations';
 
+import type {
+  WorkJournalRecord,
+  WorkJournalOperation,
+  WorkJournalOperationState,
+  WorkJournalPage,
+  WorkJournalHistory,
+  WorkJournalListParams,
+} from './types/work-journal';
+
 class DigitalHumanService extends BaseService {
   constructor() {
     super({ basePath: '/console/api', endpoint: 'main' });
@@ -101,6 +110,49 @@ class DigitalHumanService extends BaseService {
 
   get(id: string): Promise<ApiResponseData<DigitalHumanDetail>> {
     return this.request('get', `/digital-humans/${id}`);
+  }
+
+  listWorkJournalRecords(
+    id: string,
+    params?: WorkJournalListParams & { kind?: string }
+  ): Promise<ApiResponseData<WorkJournalPage<WorkJournalRecord>>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/records`, undefined, { params });
+  }
+
+  getWorkJournalRecord(
+    id: string,
+    recordId: string
+  ): Promise<ApiResponseData<{ record: WorkJournalRecord }>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/records/${recordId}`);
+  }
+
+  getWorkJournalRecordHistory(
+    id: string,
+    recordId: string,
+    params?: { after_revision?: number; limit?: number }
+  ): Promise<ApiResponseData<WorkJournalHistory>> {
+    return this.request(
+      'get',
+      `/digital-humans/${id}/work-journal/records/${recordId}/history`,
+      undefined,
+      { params }
+    );
+  }
+
+  listWorkJournalOperations(
+    id: string,
+    params?: WorkJournalListParams & { state?: WorkJournalOperationState }
+  ): Promise<ApiResponseData<WorkJournalPage<WorkJournalOperation>>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/operations`, undefined, {
+      params,
+    });
+  }
+
+  getWorkJournalOperation(
+    id: string,
+    operationId: string
+  ): Promise<ApiResponseData<{ operation: WorkJournalOperation }>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/operations/${operationId}`);
   }
 
   getSocialOperationsConfiguration(

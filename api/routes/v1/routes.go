@@ -297,6 +297,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 		SocialOperations: socialOperationsSetup,
+		WorkJournal:      serviceContainer.GetWorkJournalManagement(),
 		Service:          consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
 		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),

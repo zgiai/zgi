@@ -319,7 +319,11 @@ func (s *ConnectorBackgroundAuthorization) AuthorizeBackground(ctx context.Conte
 		(restored.ResearchConnectorID != r.ConnectorID.String() || restored.ResearchConnectionID != request.Connection.ID) {
 		return false, backgroundDenied(nil)
 	}
-	if socialBackgroundWrite(r.ConnectorID, r.OperationID) {
+	if _, journalClaim := ctx.Value(workJournalClaimContextKey{}).(workJournalClaim); journalClaim {
+		if err := s.authorizeWorkJournalClaim(ctx, restored, request, input); err != nil {
+			return false, err
+		}
+	} else if socialBackgroundWrite(r.ConnectorID, r.OperationID) {
 		if err := s.authorizeSocialPublicationClaim(ctx, restored, request, input); err != nil {
 			return false, err
 		}

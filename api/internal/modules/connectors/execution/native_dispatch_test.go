@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -298,4 +299,38 @@ func TestPrepareInvocationKeepsNonDigitalHumanConnectionBoundary(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNativeRouterPreservesExactJSONNumbersForFrozenInput(t *testing.T) {
+	h := newExecutionHarness(t)
+	request := h.pinned.Request
+	request.Input = map[string]any{"integer": json.Number("9223372036854775807"), "decimal": json.Number("1.0"), "exponent": json.Number("1e0")}
+	service := &numberCaptureService{}
+	router, err := NewNativeRouter(&memoryInvocationStore{}, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = router.Route(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	got := service.input.(map[string]any)
+	for key, want := range request.Input.(map[string]any) {
+		if got[key] != want {
+			t.Fatalf("%s changed from %#v to %#v", key, want, got[key])
+		}
+	}
+	request.Input.(map[string]any)["integer"] = "changed after request"
+	if got["integer"] != json.Number("9223372036854775807") {
+		t.Fatal("request copy not immutable")
+	}
+}
+
+type numberCaptureService struct{ input any }
+
+func (s *numberCaptureService) PrepareInvocation(_ context.Context, r ExecutionRequest) (InvocationSnapshot, error) {
+	s.input = r.Input
+	return InvocationSnapshot{}, nil
+}
+func (s *numberCaptureService) InvokeConnector(context.Context, PinnedExecution) (ExecutionResult, error) {
+	return ExecutionResult{}, nil
 }

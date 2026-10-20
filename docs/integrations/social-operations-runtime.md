@@ -1,5 +1,7 @@
 # Social operations employee runtime
 
+This document describes the legacy specialized social runtime. New SOPs use the [generic employee work journal](employee-work-journal.md), editable prompts and existing Automation Tasks. Existing specialized schedules retain their prior behavior and evidence gates.
+
 This runtime extends the existing DigitalHuman, Automation and Connector modules. Its target behavior is defined in [the SOP contract](social-operations-sop.md). The implementation is not accepted as a complete live SOP until the configuration/schedule setup and account acceptance matrix have also passed.
 
 ## Identity and background authority

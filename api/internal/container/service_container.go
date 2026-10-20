@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
+	"github.com/zgiai/zgi/api/internal/capabilities/workjournal"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
@@ -326,6 +327,9 @@ type ServiceContainer struct {
 	shortLinkService             shortlinkcap.Service
 	digitalHumanService          *digitalhuman.Service
 	digitalHumanChannelReceivers *digitalhuman.ChannelReceiverManager
+	workJournal                  *workjournal.Service
+	workJournalOnce              sync.Once
+	workJournalErr               error
 	socialOperations             *socialops.Service
 	socialOperationsOnce         sync.Once
 	socialOperationsErr          error
@@ -1105,6 +1109,7 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
 		_ = c.toolManager.RegisterProvider(c.newSocialOperationsProvider())
+		_ = c.toolManager.RegisterProvider(c.newWorkJournalProvider())
 		if err := c.registerConnectorToolProviders(c.toolManager); err != nil {
 			panic(err)
 		}

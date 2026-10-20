@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -61,7 +62,9 @@ func (router *NativeRouter) Route(ctx context.Context, request ExecutionRequest)
 		return ExecutionResult{}, connectorError(core.ErrorCodeInvalidInput, false)
 	}
 	defer clear(encoded)
-	if json.Unmarshal(encoded, &request.Input) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if decoder.Decode(&request.Input) != nil {
 		return ExecutionResult{}, connectorError(core.ErrorCodeInvalidInput, false)
 	}
 	snapshot, err := router.service.PrepareInvocation(ctx, request)

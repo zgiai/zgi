@@ -1,6 +1,6 @@
 # Social operations SOP implementation plan
 
-> Execute with superpowers:subagent-driven-development. The approved contract is `social-operations-sop.md`.
+> Historical implementation plan for the specialized social runtime. New SOPs use the [generic employee work journal](employee-work-journal.md); this plan remains as a record of the compatibility path.
 
 **Goal:** Run the complete configurable social SOP through ZGI digital employees and Automation with durable local content, scoped unattended authority and verified external effects.
 
