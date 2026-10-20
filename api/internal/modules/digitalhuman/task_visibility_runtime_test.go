@@ -2,10 +2,12 @@ package digitalhuman
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -103,5 +105,38 @@ func TestTaskRuntimeVisibilityDisabledKeepsLegacyList(t *testing.T) {
 	}
 	if scope := data["scope"].(taskListToolScope); scope.Visibility == "current_user_and_shared" {
 		t.Fatalf("legacy scope = %#v", scope)
+	}
+}
+
+type readOnlyTaskService struct {
+	taskRuntimeService
+	canChange bool
+}
+
+func (s readOnlyTaskService) GetTask(_ context.Context, access TaskAccessContext, taskID uuid.UUID) (*Task, error) {
+	return &Task{ID: taskID, DigitalHumanID: access.DigitalHumanID, OwnerKind: TaskOwnerDigitalHuman, Name: "shared", WorkStatus: TaskWorkStatusPending, LifecycleStatus: "active", Revision: 3, CanChange: s.canChange}, nil
+}
+
+func TestTaskRuntimeRefusesApprovalForReadOnlyTask(t *testing.T) {
+	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
+	for _, canChange := range []bool{false, true} {
+		provider := NewTaskRuntimeProvider(readOnlyTaskService{canChange: canChange})
+		run, event := taskRuntimeFixture(invocation.OriginManual)
+		prepared, err := provider.Prepare(t.Context(), run, event)
+		if err != nil {
+			t.Fatalf("Prepare() error = %v", err)
+		}
+		result := prepared.Tools[2].Handler(t.Context(), adapter.ToolCall{ID: "cancel-shared", Function: adapter.FunctionCall{
+			Name: taskManageToolName, Arguments: `{"action":"cancel","task_id":"` + uuid.NewString() + `","expected_revision":3}`,
+		}})
+		if canChange {
+			if result.Status != "success" || result.PendingApproval == nil {
+				t.Fatalf("changeable task result = %#v", result)
+			}
+			continue
+		}
+		if result.Status == "success" || result.PendingApproval != nil || !strings.Contains(fmt.Sprint(result.Result, result.Error), taskReadOnlyErrorCode) {
+			t.Fatalf("read-only task result = %#v", result)
+		}
 	}
 }

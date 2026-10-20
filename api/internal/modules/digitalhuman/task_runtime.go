@@ -118,7 +118,7 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 		guidance = append(guidance, "This is a scheduled execution. The scheduler owns successful completion: do not mark the task completed. You may only update the current task to waiting or blocked when the work genuinely cannot finish; do not create, confirm, reschedule, rerun, or cancel tasks from this run.")
 	} else if TaskVisibilityEnabled() && boundary.access.Viewer.Mode == TaskViewMember {
 		guidance = append(guidance,
-			"Visible tasks are the tasks the current user requested plus tasks shared with the workspace. You may change only tasks the current user requested.",
+			"Visible tasks are the tasks the current user requested plus tasks shared with the workspace. Tasks with can_change false are read-only: explain that only their requester or a task manager can change them, and never propose a change to them.",
 			"Open tasks requested by others appear only in other_open_work as time, status, and priority. Use them to reason about workload and schedule conflicts, but never guess, ask about, or reveal their content or requester.",
 		)
 	} else if boundary.access.Owner.Kind == TaskOwnerUserSubject {
@@ -342,8 +342,13 @@ func taskListScope(boundary taskRuntimeBoundary) taskListToolScope {
 	return taskListToolScope{Visibility: "current_user"}
 }
 
+// taskReadOnlyErrorCode reports a change request for a task the current user
+// can see but did not request.
+const taskReadOnlyErrorCode = "digital_human.task.read_only"
+
 type taskListToolItem struct {
 	ID            uuid.UUID      `json:"id"`
+	CanChange     bool           `json:"can_change"`
 	Name          string         `json:"name"`
 	Goal          string         `json:"goal"`
 	WorkStatus    TaskWorkStatus `json:"work_status"`
@@ -356,7 +361,7 @@ type taskListToolItem struct {
 }
 
 func newTaskListToolItem(task *Task) taskListToolItem {
-	return taskListToolItem{ID: task.ID, Name: task.Name, Goal: task.Goal, WorkStatus: task.WorkStatus, Priority: task.Priority, NextRunAt: task.NextRunAt, LastRunAt: task.LastRunAt, LastRunStatus: task.LastRunStatus, Revision: task.Revision, UpdatedAt: task.UpdatedAt}
+	return taskListToolItem{ID: task.ID, CanChange: task.CanChange, Name: task.Name, Goal: task.Goal, WorkStatus: task.WorkStatus, Priority: task.Priority, NextRunAt: task.NextRunAt, LastRunAt: task.LastRunAt, LastRunStatus: task.LastRunStatus, Revision: task.Revision, UpdatedAt: task.UpdatedAt}
 }
 
 func (p *DefaultTaskRuntimeProvider) taskListQuery(view, keyword, historySince, historyUntil string, limit int) (TaskListQuery, string, error) {
@@ -500,6 +505,11 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			result, err := p.service.GetTask(ctx, boundary.access, *args.TaskID)
 			if err != nil {
 				return taskToolFailure(taskErrorCode(err), false)
+			}
+			// A visible task requested by someone else is read-only. Never ask
+			// the user to approve a change the approval could not apply.
+			if !result.CanChange {
+				return taskToolFailure(taskReadOnlyErrorCode, false)
 			}
 			approvalAction := taskApprovalActionForTask(args, result)
 			return taskToolSuccessWithApproval(call,

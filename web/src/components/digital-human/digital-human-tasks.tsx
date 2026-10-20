@@ -524,6 +524,11 @@ function TaskDetailSheet({
   const task = detail.task.data?.data;
   const actionPendingRef = useRef(false);
   const [confirmAction, setConfirmAction] = useState<'decline' | 'cancel' | 'archive' | null>(null);
+  // A task requested by another account is read-only unless the reader manages
+  // the task center; the server reports this per task.
+  const taskChangeable = task?.can_change !== false;
+  const allowUpdate = canUpdate && taskChangeable;
+  const allowRun = canRun && taskChangeable;
   const perform = async (action: string) => {
     if (!open || !task || actionPendingRef.current) return;
     actionPendingRef.current = true;
@@ -537,6 +542,10 @@ function TaskDetailSheet({
         latest.data.data.work_status !== task.work_status ||
         latest.data.data.lifecycle_status !== task.lifecycle_status) {
         toast.error(t('tasks.actionStale'));
+        return;
+      }
+      if (latest.data.data.can_change === false) {
+        toast.error(t('tasks.sharedReadOnly'));
         return;
       }
       await mutations.action.mutateAsync({ taskId, action, revision: latest.data.data.revision });
@@ -661,14 +670,17 @@ function TaskDetailSheet({
           </div>
         )}
         {task ? (
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t bg-background px-6 py-4">
-            {canUpdate && task.work_status !== 'canceled' ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t bg-background px-6 py-4">
+            {!taskChangeable ? (
+              <p className="mr-auto text-xs text-muted-foreground">{t('tasks.sharedReadOnly')}</p>
+            ) : null}
+            {allowUpdate && task.work_status !== 'canceled' ? (
               <Button variant="outline" size="sm" onClick={() => onEdit(task)}>
                 <Pencil className="size-4" />
                 {t('common.edit')}
               </Button>
             ) : null}
-            {task.work_status === 'proposed' && canUpdate ? (
+            {task.work_status === 'proposed' && allowUpdate ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => setConfirmAction('decline')}>
                   <XCircle className="size-4" />
@@ -680,7 +692,7 @@ function TaskDetailSheet({
                 </Button>
               </>
             ) : null}
-            {task.lifecycle_status === 'active' && task.work_status === 'pending' && canUpdate ? (
+            {task.lifecycle_status === 'active' && task.work_status === 'pending' && allowUpdate ? (
               <Button variant="outline" size="sm" onClick={() => void perform('pause')}>
                 <Pause className="size-4" />
                 {t('tasks.actions.pause')}
@@ -688,19 +700,19 @@ function TaskDetailSheet({
             ) : null}
             {task.lifecycle_status === 'paused' &&
             !['canceled', 'completed'].includes(task.work_status) &&
-            canUpdate ? (
+            allowUpdate ? (
               <Button variant="outline" size="sm" onClick={() => void perform('resume')}>
                 <Play className="size-4" />
                 {t('tasks.actions.resume')}
               </Button>
             ) : null}
-            {task.work_status === 'blocked' && canRun ? (
+            {task.work_status === 'blocked' && allowRun ? (
               <Button size="sm" onClick={() => void perform('retry')}>
                 <RotateCcw className="size-4" />
                 {t('tasks.actions.retry')}
               </Button>
             ) : null}
-            {!['proposed', 'in_progress', 'canceled', 'blocked'].includes(task.work_status) && canRun ? (
+            {!['proposed', 'in_progress', 'canceled', 'blocked'].includes(task.work_status) && allowRun ? (
               <Button
                 size="sm"
                 onClick={() => void perform('run_now')}
@@ -710,13 +722,13 @@ function TaskDetailSheet({
                 {t('tasks.actions.runNow')}
               </Button>
             ) : null}
-            {!['completed', 'canceled'].includes(task.work_status) && canRun ? (
+            {!['completed', 'canceled'].includes(task.work_status) && allowRun ? (
               <Button variant="outline" size="sm" onClick={() => setConfirmAction('cancel')}>
                 <XCircle className="size-4" />
                 {t('tasks.actions.cancel')}
               </Button>
             ) : null}
-            {['completed', 'canceled'].includes(task.work_status) && canUpdate ? (
+            {['completed', 'canceled'].includes(task.work_status) && allowUpdate ? (
               <Button variant="outline" size="sm" onClick={() => setConfirmAction('archive')}>
                 <MoreHorizontal className="size-4" />
                 {t('tasks.actions.archive')}
