@@ -9,6 +9,9 @@ import type {
   DigitalHumanTaskRun,
   DigitalHumanWebAppConfig,
   UpdateDigitalHumanTaskRequest,
+  DigitalHumanTaskReport,
+  DigitalHumanTaskReportList,
+  ReviewDigitalHumanTaskReportRequest,
 } from '@/services/types/digital-human';
 
 export const digitalHumanWebAppService = {
@@ -64,6 +67,22 @@ export const digitalHumanWebAppService = {
     return createDigitalHumanWebAppHttp(webAppId).get(
       `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/tasks/${encodeURIComponent(taskId)}/activities`,
       { params: { page } }
+    );
+  },
+  listTaskReports(webAppId: string, taskId: string): Promise<ApiResponseData<DigitalHumanTaskReportList>> {
+    return createDigitalHumanWebAppHttp(webAppId).get(
+      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/task-reports`,
+      { params: { task_id: taskId } }
+    );
+  },
+  reviewTaskReport(
+    webAppId: string,
+    reportId: string,
+    request: ReviewDigitalHumanTaskReportRequest
+  ): Promise<ApiResponseData<DigitalHumanTaskReport>> {
+    return createDigitalHumanWebAppHttp(webAppId).post(
+      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/task-reports/${encodeURIComponent(reportId)}/review`,
+      request
     );
   },
 };

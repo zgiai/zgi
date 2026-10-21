@@ -86,6 +86,10 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
         digitalHumanWebAppService.applyTaskAction(webAppId, taskId, action, revision),
       runs: (taskId, page) => digitalHumanWebAppService.listTaskRuns(webAppId, taskId, page),
       activities: (taskId, page) => digitalHumanWebAppService.listTaskActivities(webAppId, taskId, page),
+      reports: {
+        list: taskId => digitalHumanWebAppService.listTaskReports(webAppId, taskId),
+        review: (reportId, request) => digitalHumanWebAppService.reviewTaskReport(webAppId, reportId, request),
+      },
     }),
     [webAppId]
   );

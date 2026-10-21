@@ -70,6 +70,7 @@ func (h *ExternalHandler) RegisterWebAppRoutes(router *gin.RouterGroup) {
 	protected.POST("/tasks/:task_id/actions/:action", h.ApplyWebAppTaskAction)
 	protected.GET("/tasks/:task_id/runs", h.ListWebAppTaskRuns)
 	protected.GET("/tasks/:task_id/activities", h.ListWebAppTaskActivities)
+	h.registerWebAppReportRoutes(protected)
 }
 
 func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
