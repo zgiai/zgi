@@ -1,7 +1,8 @@
 # ADR 0004: DigitalHuman Memory Source Trust and Business Scope
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-19
+- Accepted: 2026-10-21
 - Amends: ADR 0002
 
 ## Context

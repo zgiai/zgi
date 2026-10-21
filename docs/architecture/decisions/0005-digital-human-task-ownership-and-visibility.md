@@ -1,7 +1,8 @@
 # ADR 0005: DigitalHuman Task Ownership and Visibility
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-19
+- Accepted: 2026-10-21
 
 ## Context
 
