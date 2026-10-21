@@ -27,8 +27,22 @@ type contextEntrySync struct {
 	organizationID uuid.UUID
 	head           *uuid.UUID
 	persisted      int
-	ordered        []contextEntryOrigin
-	bootstrap      []adapter.Message
+	// base is the number of stored entries that precede this run's
+	// transcript: the entries a paused turn stored before a continuation, or a
+	// legacy parent prefix once it has been written.
+	base      int
+	ordered   []contextEntryOrigin
+	bootstrap []adapter.Message
+	// continuation is set when the run resumes a paused turn. Its context
+	// manager starts empty, so the turn written here is what resumed the run
+	// followed by what the run produced.
+	continuation bool
+	// resumedAnswer is the answer the paused turn already had, such as a
+	// partial answer before a token budget pause. It is not this run's output.
+	resumedAnswer string
+	// resumePrefix rebuilds a paused turn that has no stored entries: its
+	// question, the exchange kept in message metadata, and its partial answer.
+	resumePrefix []adapter.Message
 }
 
 // contextEntryOrigin tracks where one transcript message lives in the durable
@@ -89,6 +103,17 @@ func (s *service) agentContextEntrySync(ctx context.Context, prepared *PreparedC
 		}
 	}
 	writer.persisted = len(existing)
+	if prepared.Continuation {
+		writer.continuation = true
+		writer.base = len(existing)
+		writer.resumedAnswer = strings.TrimSpace(prepared.Message.Answer)
+		if prepared.pausedAnswer != nil {
+			writer.resumedAnswer = strings.TrimSpace(*prepared.pausedAnswer)
+		}
+		if writer.base == 0 {
+			writer.resumePrefix = s.pausedTurnWithoutEntries(ctx, prepared.Message, writer.resumedAnswer)
+		}
+	}
 	prepared.contextEntries = writer
 	return writer, nil
 }
@@ -124,14 +149,27 @@ func (s *service) persistTurnTranscriptEntries(ctx context.Context, prepared *Pr
 	if strings.TrimSpace(prepared.Message.Query) != "" {
 		turnStart = 1
 	}
+	if writer.continuation {
+		prefix := append(append([]adapter.Message(nil), writer.resumePrefix...), prepared.continuationTranscript...)
+		turn = appendResumedTurnAnswer(prepared, writer.resumedAnswer, append(prefix, transcript...))
+		turnStart = len(prefix)
+	}
+	bootstrapped := 0
 	if writer.persisted == 0 && len(writer.bootstrap) > 0 {
 		turn = append(append([]adapter.Message{}, writer.bootstrap...), turn...)
 		turnStart += len(writer.bootstrap)
+		bootstrapped = len(writer.bootstrap)
 	}
 	origins, err := writer.syncWithOrigins(ctx, s.repos, turn)
 	if err != nil {
 		logger.WarnContext(ctx, "failed to append agent transcript entries", "message_id", messageIDString(prepared), err)
 		return transcript
+	}
+	if bootstrapped > 0 {
+		// The legacy prefix is stored once. Later checkpoints carry only this
+		// turn, so its positions now start after the prefix.
+		writer.base += bootstrapped
+		writer.bootstrap = nil
 	}
 	prepared.Message.TranscriptHeadEntryID = cloneUUID(writer.head)
 	bound := append([]adapter.Message(nil), transcript...)
@@ -202,7 +240,63 @@ func turnTranscriptWithQuery(prepared *PreparedChat, transcript []adapter.Messag
 }
 
 func turnTranscriptWithQueryAndAnswer(prepared *PreparedChat, transcript []adapter.Message) []adapter.Message {
-	messages := turnTranscriptWithQuery(prepared, transcript)
+	return appendTurnAnswer(prepared, turnTranscriptWithQuery(prepared, transcript))
+}
+
+// resumeWith gives the model a message that resumes the paused turn, such as
+// the user's answer or an approval decision, and records it for the turn's
+// durable transcript. Without it later turns would only see the pause.
+func (p *PreparedChat) resumeWith(message adapter.Message) {
+	if p == nil || p.LLMRequest == nil {
+		return
+	}
+	p.LLMRequest.Messages = append(p.LLMRequest.Messages, message)
+	if p.pausedAnswer == nil && p.Message != nil {
+		answer := p.Message.Answer
+		p.pausedAnswer = &answer
+	}
+	recorded := message
+	if strings.EqualFold(strings.TrimSpace(recorded.Role), "system") {
+		// The durable log keeps user, assistant, and tool messages. A runtime
+		// fact the model received as system context is kept as a user-side
+		// record so later turns can replay how the pause was resolved.
+		recorded.Role = "user"
+	}
+	p.continuationTranscript = append(p.continuationTranscript, recorded)
+}
+
+// appendResumedTurnAnswer adds the turn's answer only when this run produced
+// it. The answer the paused turn already had is stored before the pause.
+func appendResumedTurnAnswer(prepared *PreparedChat, resumedAnswer string, messages []adapter.Message) []adapter.Message {
+	if prepared == nil || prepared.Message == nil || strings.TrimSpace(prepared.Message.Answer) == strings.TrimSpace(resumedAnswer) {
+		return messages
+	}
+	return appendTurnAnswer(prepared, messages)
+}
+
+// pausedTurnWithoutEntries rebuilds a paused turn saved before transcript
+// entries existed, so a continuation stores it ahead of what resumed it.
+func (s *service) pausedTurnWithoutEntries(ctx context.Context, message *runtimemodel.Message, pausedAnswer string) []adapter.Message {
+	if message == nil {
+		return nil
+	}
+	out := make([]adapter.Message, 0, 4)
+	if query := strings.TrimSpace(message.Query); query != "" {
+		out = append(out, adapter.Message{Role: "user", Content: query})
+	}
+	paused := *message
+	paused.Answer = pausedAnswer
+	out = append(out, s.historicalAgentTranscript(ctx, &paused)...)
+	if answer := strings.TrimSpace(pausedAnswer); answer != "" {
+		last := len(out) - 1
+		if last < 0 || !strings.EqualFold(strings.TrimSpace(out[last].Role), "assistant") || messageContentText(out[last].Content) != answer || len(out[last].ToolCalls) > 0 {
+			out = append(out, adapter.Message{Role: "assistant", Content: answer})
+		}
+	}
+	return out
+}
+
+func appendTurnAnswer(prepared *PreparedChat, messages []adapter.Message) []adapter.Message {
 	if prepared == nil || prepared.Message == nil || strings.TrimSpace(prepared.Message.Answer) == "" {
 		return messages
 	}
@@ -242,27 +336,33 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 		payloads[index], sizes[index] = payload, len(encoded)
 		fingerprints[index] = protocolMessageFingerprint(payload)
 	}
-	stored := w.persisted
+	// Positions are relative to base: a continuation's transcript starts
+	// after the entries its paused run already stored.
+	persisted := w.persisted - w.base
+	if persisted < 0 {
+		persisted = 0
+	}
+	stored := persisted
 	if stored > len(transcript) {
 		stored = len(transcript)
 	}
 	matched := 0
-	for matched < stored && fingerprints[matched] == w.ordered[matched].fingerprint {
+	for matched < stored && fingerprints[matched] == w.ordered[w.base+matched].fingerprint {
 		matched++
 	}
 	if matched < stored {
 		w.refreshRewrittenPreviews(ctx, repos, payloads, sizes, fingerprints, matched, stored)
 	}
-	if w.persisted >= len(transcript) {
+	if persisted >= len(transcript) {
 		origins := make([]contextEntryOrigin, len(transcript))
-		copy(origins, w.ordered[:len(transcript)])
+		copy(origins, w.ordered[w.base:w.base+len(transcript)])
 		return origins, nil
 	}
 
 	head := cloneUUID(w.head)
-	entries := make([]*runtimemodel.TranscriptEntry, 0, len(transcript)-w.persisted)
-	origins := make([]contextEntryOrigin, 0, len(transcript)-w.persisted)
-	for index := w.persisted; index < len(transcript); index++ {
+	entries := make([]*runtimemodel.TranscriptEntry, 0, len(transcript)-persisted)
+	origins := make([]contextEntryOrigin, 0, len(transcript)-persisted)
+	for index := persisted; index < len(transcript); index++ {
 		kind, storable := transcriptEntryKindForRole(transcript[index].Role)
 		if !storable {
 			origins = append(origins, contextEntryOrigin{fingerprint: fingerprints[index]})
@@ -275,7 +375,7 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 			ConversationID: w.conversationID,
 			OrganizationID: w.organizationID,
 			ParentEntryID:  cloneUUID(head),
-			EventID:        fmt.Sprintf("%s:%d:%s", w.messageID, index, fingerprints[index]),
+			EventID:        fmt.Sprintf("%s:%d:%s", w.messageID, w.base+index, fingerprints[index]),
 			Kind:           kind,
 			Preview:        pruneTranscriptMessageForWrite(id, payloads[index], kind),
 			Payload:        payloads[index],
@@ -298,8 +398,8 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 		}
 	}
 	w.ordered = append(w.ordered, origins...)
-	w.persisted = len(transcript)
-	return append([]contextEntryOrigin(nil), w.ordered[:len(transcript)]...), nil
+	w.persisted = w.base + len(transcript)
+	return append([]contextEntryOrigin(nil), w.ordered[w.base:w.base+len(transcript)]...), nil
 }
 
 // refreshRewrittenPreviews replaces the canonical stored form of entries whose
@@ -310,7 +410,7 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 // divergence. The log is append-only, so the stored entry is kept and reported.
 func (w *contextEntrySync) refreshRewrittenPreviews(ctx context.Context, repos *repository.Repositories, payloads []map[string]interface{}, sizes []int, fingerprints []string, from, to int) {
 	for index := from; index < to; index++ {
-		origin := w.ordered[index]
+		origin := w.ordered[w.base+index]
 		if origin.id == uuid.Nil {
 			continue
 		}
@@ -326,7 +426,7 @@ func (w *contextEntrySync) refreshRewrittenPreviews(ctx context.Context, repos *
 				"message_id", w.messageID.String(), "entry_id", origin.id.String(), err)
 			continue
 		}
-		w.ordered[index].fingerprint = fingerprints[index]
+		w.ordered[w.base+index].fingerprint = fingerprints[index]
 	}
 }
 

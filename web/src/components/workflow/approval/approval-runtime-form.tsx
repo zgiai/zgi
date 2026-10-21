@@ -91,16 +91,24 @@ export function ApprovalRuntimeForm({
   const [revising, setRevising] = React.useState(false);
   const renderedFields = isDigitalHumanTaskApproval && !revising ? [] : visibleFields;
 
+  // Callers may rebuild an equal form object on every render. Reset the
+  // entered values only when a different form or field set arrives, so typing
+  // is not wiped and the change request box does not close on its own.
+  const latestForm = React.useRef(form);
+  latestForm.current = form;
+  const latestFields = React.useRef(visibleFields);
+  latestFields.current = visibleFields;
+  const fieldKeys = visibleFields.map(field => field.key).join('\u0000');
   React.useEffect(() => {
-    const defaults = form.resolved_default_values || {};
+    const defaults = latestForm.current.resolved_default_values || {};
     const next: Record<string, string> = {};
-    for (const field of visibleFields) {
+    for (const field of latestFields.current) {
       next[field.key] = stringifyDefault(defaults[field.key]);
     }
     setInputs(next);
     setErrors({});
     setRevising(false);
-  }, [form, visibleFields]);
+  }, [form.id, fieldKeys]);
 
   const submit = React.useCallback(
     async (action: ApprovalRuntimeAction) => {
