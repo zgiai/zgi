@@ -147,28 +147,47 @@ export function DigitalHumanChat({ id }: { id: string }) {
   );
 
   // Brings a pending task approval into view once its conversation shows it.
-  const [approvalMessageId, setApprovalMessageId] = useState<string | null>(null);
+  // The approval may sit on a branch the reader has since switched away from,
+  // so that branch is selected first; its confirmation form needs it current.
+  const [approvalTarget, setApprovalTarget] = useState<DigitalHumanTaskPendingChange | null>(
+    null
+  );
+  const controllerStore = controller.store;
+  const switchBranch = controller.switchBranch;
   useEffect(() => {
-    if (!approvalMessageId) return;
+    if (!approvalTarget) return;
+    const { conversation_id: conversationId, message_id: messageId } = approvalTarget;
     let attempts = 0;
+    let branchSelected = false;
     const timer = window.setInterval(() => {
       attempts += 1;
       const target = document.querySelector<HTMLElement>(
-        `[data-chat-message-id="${CSS.escape(approvalMessageId)}"]`
+        `[data-chat-message-id="${CSS.escape(messageId)}"]`
       );
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (!branchSelected) {
+        const state = controllerStore.getState();
+        const loaded = state.messagesByConversation[conversationId]?.some(
+          message => message.id === messageId
+        );
+        if (state.activeConversationId === conversationId && loaded && !state.isSending) {
+          branchSelected = true;
+          switchBranch(messageId);
+        }
+      }
       if (target || attempts >= 40) {
         window.clearInterval(timer);
-        setApprovalMessageId(null);
+        setApprovalTarget(null);
       }
     }, 150);
     return () => window.clearInterval(timer);
-  }, [approvalMessageId]);
+  }, [approvalTarget, controllerStore, switchBranch]);
 
   const openPendingChange = useCallback(
     (change: DigitalHumanTaskPendingChange) => {
       selectConversation(change.conversation_id);
-      setApprovalMessageId(change.message_id);
+      setApprovalTarget(change);
     },
     [selectConversation]
   );
