@@ -107,6 +107,43 @@ func TestDigitalHumanMemoryRescopePostgres(t *testing.T) {
 		t.Fatalf("original after undo = %#v, %v", restored, err)
 	}
 
+	// Moving again reactivates the workspace row the first move left behind,
+	// and that move can be undone too.
+	again, err := rescope(restored, memoryruntime.MemoryClassBusiness, workspace)
+	if err != nil {
+		t.Fatalf("rescope after undo: %v", err)
+	}
+	if again.Memory.ID != moved.Memory.ID || again.Memory.Status != MemoryStatusActive || again.Memory.ScopeType != memoryruntime.MemoryScopeWorkspace {
+		t.Fatalf("second move = %#v", again.Memory)
+	}
+	if _, err := service.UndoMemory(t.Context(), scope, digitalHumanID, again.Event.OperationID, MemoryUndoRequest{ExpectedRevision: again.Memory.Revision}); err != nil {
+		t.Fatalf("undo second rescope: %v", err)
+	}
+	restored, err = NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, original.ID)
+	if err != nil || restored.Status != MemoryStatusActive {
+		t.Fatalf("original after second undo = %#v, %v", restored, err)
+	}
+	workspaceRow, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, moved.Memory.ID)
+	if err != nil || workspaceRow.Status != MemoryStatusInvalidated {
+		t.Fatalf("workspace row after second undo = %#v, %v", workspaceRow, err)
+	}
+
+	// An active memory with the same key in the target scope is a conflict.
+	shared := write("shared-key", memoryruntime.MemoryTypeFact)
+	if _, err := service.ApplyMemoryProposal(t.Context(), scope, digitalHumanID, MemoryProposalRequest{
+		OperationID: uuid.New(), Key: "shared-key", Action: memoryruntime.MutationActionUpsert, MemoryClass: memoryruntime.MemoryClassBusiness,
+		Scope:      &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String()},
+		MemoryType: memoryruntime.MemoryTypeFact, Content: "workspace version", ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
+		Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "operator:shared-key"}},
+		Visibility: MemoryVisibilityWorkspace, Confidence: 1, OccurredAt: fixedNow, AdminApproved: true,
+		SourceContext: MemorySourceContext{PromotedByAuthorizedActor: true},
+	}); err != nil {
+		t.Fatalf("write workspace shared-key: %v", err)
+	}
+	if _, err := rescope(shared, memoryruntime.MemoryClassBusiness, workspace); !errors.Is(err, ErrMemoryConflict) {
+		t.Fatalf("rescope onto active key error = %v, want conflict", err)
+	}
+
 	// Identity stays self memory, and a move to the current scope is refused.
 	identity := write("who-i-am", memoryruntime.MemoryTypeIdentity)
 	if _, err := rescope(identity, memoryruntime.MemoryClassBusiness, workspace); !errors.Is(err, ErrMemoryPolicyRejected) {
