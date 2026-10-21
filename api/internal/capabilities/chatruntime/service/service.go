@@ -672,6 +672,9 @@ type PreparedChat struct {
 	// such as the resolved approval. They reach the model only through the
 	// request, so they are stored ahead of the resumed run's own output.
 	continuationTranscript []adapter.Message
+	// pausedAnswer is the answer the paused turn had when the continuation
+	// was prepared, captured before the resumed run can change it.
+	pausedAnswer *string
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage

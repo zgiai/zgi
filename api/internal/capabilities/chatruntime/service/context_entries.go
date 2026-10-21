@@ -28,11 +28,21 @@ type contextEntrySync struct {
 	head           *uuid.UUID
 	persisted      int
 	// base is the number of stored entries that precede this run's
-	// transcript. It is zero for a new turn and the stored entry count for a
-	// continuation, whose transcript holds only what the resumed run produced.
+	// transcript: the entries a paused turn stored before a continuation, or a
+	// legacy parent prefix once it has been written.
 	base      int
 	ordered   []contextEntryOrigin
 	bootstrap []adapter.Message
+	// continuation is set when the run resumes a paused turn. Its context
+	// manager starts empty, so the turn written here is what resumed the run
+	// followed by what the run produced.
+	continuation bool
+	// resumedAnswer is the answer the paused turn already had, such as a
+	// partial answer before a token budget pause. It is not this run's output.
+	resumedAnswer string
+	// resumePrefix rebuilds a paused turn that has no stored entries: its
+	// question, the exchange kept in message metadata, and its partial answer.
+	resumePrefix []adapter.Message
 }
 
 // contextEntryOrigin tracks where one transcript message lives in the durable
@@ -94,10 +104,15 @@ func (s *service) agentContextEntrySync(ctx context.Context, prepared *PreparedC
 	}
 	writer.persisted = len(existing)
 	if prepared.Continuation {
-		// A continuation resumes a paused turn whose question and earlier
-		// exchange are already stored. Its context manager starts with an
-		// empty turn transcript, so its positions start after those entries.
+		writer.continuation = true
 		writer.base = len(existing)
+		writer.resumedAnswer = strings.TrimSpace(prepared.Message.Answer)
+		if prepared.pausedAnswer != nil {
+			writer.resumedAnswer = strings.TrimSpace(*prepared.pausedAnswer)
+		}
+		if writer.base == 0 {
+			writer.resumePrefix = s.pausedTurnWithoutEntries(ctx, prepared.Message, writer.resumedAnswer)
+		}
 	}
 	prepared.contextEntries = writer
 	return writer, nil
@@ -134,21 +149,27 @@ func (s *service) persistTurnTranscriptEntries(ctx context.Context, prepared *Pr
 	if strings.TrimSpace(prepared.Message.Query) != "" {
 		turnStart = 1
 	}
-	if writer.base > 0 {
-		// The question is already stored ahead of the continuation. What
-		// resumed the turn is stored first, then what the resumed run produced.
-		resumed := append(append([]adapter.Message(nil), prepared.continuationTranscript...), transcript...)
-		turn = turnTranscriptWithAnswer(prepared, resumed)
-		turnStart = len(prepared.continuationTranscript)
+	if writer.continuation {
+		prefix := append(append([]adapter.Message(nil), writer.resumePrefix...), prepared.continuationTranscript...)
+		turn = appendResumedTurnAnswer(prepared, writer.resumedAnswer, append(prefix, transcript...))
+		turnStart = len(prefix)
 	}
+	bootstrapped := 0
 	if writer.persisted == 0 && len(writer.bootstrap) > 0 {
 		turn = append(append([]adapter.Message{}, writer.bootstrap...), turn...)
 		turnStart += len(writer.bootstrap)
+		bootstrapped = len(writer.bootstrap)
 	}
 	origins, err := writer.syncWithOrigins(ctx, s.repos, turn)
 	if err != nil {
 		logger.WarnContext(ctx, "failed to append agent transcript entries", "message_id", messageIDString(prepared), err)
 		return transcript
+	}
+	if bootstrapped > 0 {
+		// The legacy prefix is stored once. Later checkpoints carry only this
+		// turn, so its positions now start after the prefix.
+		writer.base += bootstrapped
+		writer.bootstrap = nil
 	}
 	prepared.Message.TranscriptHeadEntryID = cloneUUID(writer.head)
 	bound := append([]adapter.Message(nil), transcript...)
@@ -230,11 +251,49 @@ func (p *PreparedChat) resumeWith(message adapter.Message) {
 		return
 	}
 	p.LLMRequest.Messages = append(p.LLMRequest.Messages, message)
-	p.continuationTranscript = append(p.continuationTranscript, message)
+	if p.pausedAnswer == nil && p.Message != nil {
+		answer := p.Message.Answer
+		p.pausedAnswer = &answer
+	}
+	recorded := message
+	if strings.EqualFold(strings.TrimSpace(recorded.Role), "system") {
+		// The durable log keeps user, assistant, and tool messages. A runtime
+		// fact the model received as system context is kept as a user-side
+		// record so later turns can replay how the pause was resolved.
+		recorded.Role = "user"
+	}
+	p.continuationTranscript = append(p.continuationTranscript, recorded)
 }
 
-func turnTranscriptWithAnswer(prepared *PreparedChat, transcript []adapter.Message) []adapter.Message {
-	return appendTurnAnswer(prepared, append([]adapter.Message(nil), transcript...))
+// appendResumedTurnAnswer adds the turn's answer only when this run produced
+// it. The answer the paused turn already had is stored before the pause.
+func appendResumedTurnAnswer(prepared *PreparedChat, resumedAnswer string, messages []adapter.Message) []adapter.Message {
+	if prepared == nil || prepared.Message == nil || strings.TrimSpace(prepared.Message.Answer) == strings.TrimSpace(resumedAnswer) {
+		return messages
+	}
+	return appendTurnAnswer(prepared, messages)
+}
+
+// pausedTurnWithoutEntries rebuilds a paused turn saved before transcript
+// entries existed, so a continuation stores it ahead of what resumed it.
+func (s *service) pausedTurnWithoutEntries(ctx context.Context, message *runtimemodel.Message, pausedAnswer string) []adapter.Message {
+	if message == nil {
+		return nil
+	}
+	out := make([]adapter.Message, 0, 4)
+	if query := strings.TrimSpace(message.Query); query != "" {
+		out = append(out, adapter.Message{Role: "user", Content: query})
+	}
+	paused := *message
+	paused.Answer = pausedAnswer
+	out = append(out, s.historicalAgentTranscript(ctx, &paused)...)
+	if answer := strings.TrimSpace(pausedAnswer); answer != "" {
+		last := len(out) - 1
+		if last < 0 || !strings.EqualFold(strings.TrimSpace(out[last].Role), "assistant") || messageContentText(out[last].Content) != answer || len(out[last].ToolCalls) > 0 {
+			out = append(out, adapter.Message{Role: "assistant", Content: answer})
+		}
+	}
+	return out
 }
 
 func appendTurnAnswer(prepared *PreparedChat, messages []adapter.Message) []adapter.Message {
