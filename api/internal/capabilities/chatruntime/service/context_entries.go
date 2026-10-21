@@ -222,6 +222,17 @@ func turnTranscriptWithQueryAndAnswer(prepared *PreparedChat, transcript []adapt
 	return appendTurnAnswer(prepared, turnTranscriptWithQuery(prepared, transcript))
 }
 
+// resumeWith gives the model a message that resumes the paused turn, such as
+// the user's answer or an approval decision, and records it for the turn's
+// durable transcript. Without it later turns would only see the pause.
+func (p *PreparedChat) resumeWith(message adapter.Message) {
+	if p == nil || p.LLMRequest == nil {
+		return
+	}
+	p.LLMRequest.Messages = append(p.LLMRequest.Messages, message)
+	p.continuationTranscript = append(p.continuationTranscript, message)
+}
+
 func turnTranscriptWithAnswer(prepared *PreparedChat, transcript []adapter.Message) []adapter.Message {
 	return appendTurnAnswer(prepared, append([]adapter.Message(nil), transcript...))
 }

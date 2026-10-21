@@ -138,6 +138,18 @@ func TestContinuationAppendsAfterStoredTurnEntries(t *testing.T) {
 	}
 }
 
+func TestResumeWithRecordsTheResumingMessage(t *testing.T) {
+	prepared := &PreparedChat{LLMRequest: &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "question"}}}}
+	answer := adapter.Message{Role: "user", Content: "The user answered: yes"}
+	prepared.resumeWith(answer)
+	if got := prepared.LLMRequest.Messages; len(got) != 2 || got[1].Content != answer.Content {
+		t.Fatalf("request messages = %+v, want the resuming message last", got)
+	}
+	if got := prepared.continuationTranscript; len(got) != 1 || got[0].Content != answer.Content {
+		t.Fatalf("continuation transcript = %+v, want the resuming message", got)
+	}
+}
+
 func TestProjectTranscriptChainUsesSummaryBoundary(t *testing.T) {
 	svc, message, conversation := newContextEntryTestService(t, "context-entry-projection-new")
 	prepared := &PreparedChat{Message: message, Conversation: conversation, Scope: Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}}

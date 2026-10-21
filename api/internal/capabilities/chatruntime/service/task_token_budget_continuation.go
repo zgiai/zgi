@@ -253,12 +253,13 @@ func (s *service) prepareTaskTokenBudgetContinuationChat(
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
-	llmRequest.Messages = append(llmRequest.Messages, taskTokenBudgetContinuationMessage(message, req.AdditionalTokens))
-	return &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation: conversation, Message: message, LLMRequest: llmRequest, Scope: scope, Caller: caller,
 		RunConfig: config, ParentID: message.ParentID, Continuation: true, ContinuationType: "task_token_budget",
 		parts: parts, contextBudget: contextResult,
-	}, nil
+	}
+	prepared.resumeWith(taskTokenBudgetContinuationMessage(message, req.AdditionalTokens))
+	return prepared, nil
 }
 
 func taskTokenBudgetContinuationMessage(message *runtimemodel.Message, additional int) adapter.Message {
