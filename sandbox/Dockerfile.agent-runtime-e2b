@@ -28,8 +28,8 @@ COPY e2b-template-build/zgi /usr/local/bin/zgi
 COPY scripts/agent-runtime-e2b-bootstrap.sh /usr/local/bin/zgi-runtime-agent-bootstrap
 COPY scripts/zgi-apt-get /usr/local/bin/apt-get
 COPY scripts/zgi-apt-get /usr/local/bin/apt
-COPY profiles/cc-codex-standard/apt-packages.txt /tmp/zgi-profile/apt-packages.txt
-COPY profiles/cc-codex-standard/requirements.lock /tmp/zgi-profile/requirements.lock
+COPY profiles/cc-codex-standard/apt-packages.txt /opt/zgi-profile/apt-packages.txt
+COPY profiles/cc-codex-standard/requirements.lock /opt/zgi-profile/requirements.lock
 COPY profiles/cc-codex-standard/package.json profiles/cc-codex-standard/pnpm-lock.yaml /opt/zgi-profile/
 COPY profiles/cc-codex-standard/verify.py profiles/cc-codex-standard/verify-node.mjs /opt/zgi-profile/
 COPY profiles/cc-codex-standard/resources/ /opt/zgi-profile/resources/
@@ -39,18 +39,29 @@ RUN chmod 0755 /usr/local/bin/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent
     useradd --uid 65532 --gid 65532 --create-home --home-dir /home/zgi-runtime \
       --shell /usr/sbin/nologin zgi-runtime && \
     mkdir -p /workspace /run/zgi-agent /etc/zgi && \
-    printf '%s\n' '[global]' 'index-url = https://pypi.org/simple' 'disable-pip-version-check = true' > /etc/zgi/pip.conf && \
-    printf '%s\n' 'Dir::Etc::sourcelist "/etc/apt/sources.list.d/zgi-controlled.sources";' 'Dir::Etc::sourceparts "-";' > /etc/zgi/apt.conf && \
+    echo '[global]' > /etc/zgi/pip.conf && \
+    echo 'index-url = https://pypi.org/simple' >> /etc/zgi/pip.conf && \
+    echo 'disable-pip-version-check = true' >> /etc/zgi/pip.conf && \
+    echo 'Dir::Etc::sourcelist "/etc/apt/sources.list.d/zgi-controlled.sources";' > /etc/zgi/apt.conf && \
+    echo 'Dir::Etc::sourceparts "-";' >> /etc/zgi/apt.conf && \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources && \
-    printf '%s\n' 'Types: deb' 'URIs: https://deb.debian.org/debian' 'Suites: bookworm bookworm-updates' 'Components: main' '' 'Types: deb' 'URIs: https://security.debian.org/debian-security' 'Suites: bookworm-security' 'Components: main' > /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Types: deb' > /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'URIs: https://deb.debian.org/debian' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Suites: bookworm bookworm-updates' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Components: main' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo '' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Types: deb' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'URIs: https://security.debian.org/debian-security' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Suites: bookworm-security' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Components: main' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
     if [ -d /etc/apt ]; then sed -i 's#http://deb.debian.org#https://deb.debian.org#g; s#http://security.debian.org#https://security.debian.org#g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; fi && \
-    /usr/bin/apt-get update && xargs -r /usr/bin/apt-get install -y --no-install-recommends < /tmp/zgi-profile/apt-packages.txt && \
-    python -m pip install --no-cache-dir --break-system-packages -r /tmp/zgi-profile/requirements.lock && \
+    /usr/bin/apt-get update && xargs -r /usr/bin/apt-get install -y --no-install-recommends < /opt/zgi-profile/apt-packages.txt && \
+    python -m pip install --no-cache-dir --break-system-packages -r /opt/zgi-profile/requirements.lock && \
     export COREPACK_HOME=/opt/corepack && corepack enable pnpm && corepack prepare pnpm@10.27.0 --activate && cd /opt/zgi-profile && pnpm install --prod --frozen-lockfile && \
     python verify.py && NODE_PATH=/opt/zgi-profile/node_modules node verify-node.mjs && \
     mkdir -p /usr/lib/zgi && mv /usr/bin/apt-get /usr/lib/zgi/apt-get.real && mv /usr/bin/apt /usr/lib/zgi/apt.real && \
     cp /usr/local/bin/apt-get /usr/bin/apt-get && cp /usr/local/bin/apt /usr/bin/apt && \
-    rm -rf /tmp/zgi-profile && \
+    rm -f /opt/zgi-profile/apt-packages.txt /opt/zgi-profile/requirements.lock && \
     chown -R 65532:65532 /workspace /run/zgi-agent /home/zgi-runtime
 
 ENV HOME=/home/zgi-runtime \

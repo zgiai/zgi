@@ -33,11 +33,13 @@ COPY --from=node-runtime /usr/local/ /usr/local/
 COPY --from=builder /out/zgi-sandbox-profilebuilder /usr/local/bin/zgi-sandbox-profilebuilder
 COPY profiles ./profiles
 
-RUN if [ -n "$APT_MIRROR" ]; then \
-        sed -i "s|http://deb.debian.org/debian|http://$APT_MIRROR/debian|g" /etc/apt/sources.list.d/*.sources; \
-    fi && \
-    if [ -n "$APT_SECURITY_MIRROR" ]; then \
+# The security source goes first: the main source URI is a prefix of it, so
+# replacing the main source first would also take over the security source.
+RUN if [ -n "$APT_SECURITY_MIRROR" ]; then \
         sed -i "s|http://deb.debian.org/debian-security|http://$APT_SECURITY_MIRROR/debian-security|g" /etc/apt/sources.list.d/*.sources; \
+    fi && \
+    if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|http://deb.debian.org/debian|http://$APT_MIRROR/debian|g" /etc/apt/sources.list.d/*.sources; \
     fi && \
     apt-get -o Acquire::Retries=5 update && \
     apt-get -o Acquire::Retries=5 install -y --fix-missing --no-install-recommends bubblewrap util-linux && \
@@ -75,8 +77,18 @@ WORKDIR /src
 COPY --from=builder /out/zgi-sandbox-profilebuilder /usr/local/bin/zgi-sandbox-profilebuilder
 
 ARG PIP_INDEX_URL=
+ARG APT_MIRROR=
+ARG APT_SECURITY_MIRROR=
 
-RUN apt-get -o Acquire::Retries=5 update && \
+# The security source goes first: the main source URI is a prefix of it, so
+# replacing the main source first would also take over the security source.
+RUN if [ -n "$APT_SECURITY_MIRROR" ]; then \
+        sed -i "s|http://deb.debian.org/debian-security|http://$APT_SECURITY_MIRROR/debian-security|g" /etc/apt/sources.list.d/*.sources; \
+    fi && \
+    if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|http://deb.debian.org/debian|http://$APT_MIRROR/debian|g" /etc/apt/sources.list.d/*.sources; \
+    fi && \
+    apt-get -o Acquire::Retries=5 update && \
     apt-get -o Acquire::Retries=5 install -y --fix-missing --no-install-recommends \
         bubblewrap util-linux \
         r-base-core r-base-dev \
