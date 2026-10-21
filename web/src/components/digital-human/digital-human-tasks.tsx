@@ -560,9 +560,10 @@ function TaskDetailSheet({
   };
 
   // Visibility belongs to task center managers, including for tasks another
-  // account requested, so it is gated on the update permission alone.
+  // account requested. The server reports it per task, because it also
+  // depends on whether task visibility is enabled.
   const changeVisibility = async (visibility: DigitalHumanTaskVisibility) => {
-    if (!open || !task || !canUpdate || visibility === effectiveTaskVisibility(task) || actionPendingRef.current) return;
+    if (!open || !task || !task.can_change_visibility || visibility === effectiveTaskVisibility(task) || actionPendingRef.current) return;
     actionPendingRef.current = true;
     try {
       const latest = await detail.task.refetch();
@@ -640,7 +641,7 @@ function TaskDetailSheet({
                   value={
                     <TaskVisibilityControl
                       task={task}
-                      editable={canUpdate}
+                      editable={!!task.can_change_visibility}
                       onChange={visibility => void changeVisibility(visibility)}
                     />
                   }
@@ -796,7 +797,9 @@ function TaskDetailSheet({
 }
 
 // The requester-scoped option depends on where the task came from: a channel
-// task belongs to its conversation, other conversational tasks to a user.
+// task belongs to its conversation, other conversational tasks to a user. A
+// shared task has no separate requester option: its requester is its creator,
+// which `restricted` already limits it to.
 function taskVisibilityOptions(task: DigitalHumanTask): DigitalHumanTaskVisibility[] {
   switch (task.owner_kind) {
     case 'conversation':

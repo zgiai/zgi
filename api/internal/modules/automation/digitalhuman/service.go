@@ -816,6 +816,7 @@ func publicTaskForAccess(row *automationmodel.AutomationTask, access digitalhuma
 		return nil, err
 	}
 	task.CanChange = access.CurrentTaskID != nil || taskCenterManager(access) || taskRequestedBy(row, access)
+	task.CanChangeVisibility = taskCenterManager(access)
 	return task, nil
 }
 
