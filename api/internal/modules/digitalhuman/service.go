@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/pkg/apperror"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"gorm.io/datatypes"
 )
 
@@ -952,6 +953,8 @@ func applicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict):
 		code = AppCodeTaskConflict
+	case errors.Is(err, ErrTaskVisibilityForbidden):
+		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected
 	case errors.Is(err, ErrChannelInstallationNotFound):
@@ -993,6 +996,8 @@ func taskApplicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict), errors.Is(err, ErrRevisionConflict):
 		code = AppCodeTaskConflict
+	case errors.Is(err, ErrTaskVisibilityForbidden):
+		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected
 	default:

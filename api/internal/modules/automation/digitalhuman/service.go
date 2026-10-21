@@ -285,7 +285,7 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 		changes := map[string]any{}
 		if req.Visibility != nil {
 			if !taskCenterManager(access) {
-				return digitalhuman.ErrTaskPolicyRejected
+				return digitalhuman.ErrTaskVisibilityForbidden
 			}
 			if !req.Visibility.Valid() {
 				return digitalhuman.ErrInvalidRequest
