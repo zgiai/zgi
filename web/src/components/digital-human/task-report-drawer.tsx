@@ -3,13 +3,13 @@
 import { useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ExternalLink } from 'lucide-react';
+import { ArrowRight, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TaskReportDetail } from '@/components/digital-human/digital-human-task-reports';
 import { useDigitalHumanTaskReport } from '@/hooks/digital-human/use-digital-human-tasks';
-import { useInboxMutations } from '@/hooks/use-inbox';
+import { useInboxList, useInboxMutations } from '@/hooks/use-inbox';
 import { useT } from '@/i18n';
 
 // A report opens over whatever console page the reader is on. The URL keeps
@@ -73,7 +73,7 @@ export function TaskReportDrawer() {
   return (
     <Sheet open={open} onOpenChange={value => !value && close()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-        {open ? <TaskReportDrawerBody digitalHumanId={digitalHumanId ?? ''} reportId={reportId ?? ''} /> : null}
+        {open ? <TaskReportDrawerBody key={reportId} digitalHumanId={digitalHumanId ?? ''} reportId={reportId ?? ''} /> : null}
       </SheetContent>
     </Sheet>
   );
@@ -87,6 +87,13 @@ function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: st
   useEffect(() => {
     markReportRead({ source_type: 'digital_human_task_report', source_id: reportId });
   }, [reportId, markReportRead]);
+  // Unread reports form a queue, so a backlog can be worked through here.
+  const openReport = useOpenTaskReport();
+  const unread = useInboxList({ unread_only: true });
+  const queue = (unread.data?.data.items ?? []).filter(
+    item => item.source_type === 'digital_human_task_report' && item.source_id !== reportId && typeof item.context.digital_human_id === 'string'
+  );
+  const next = queue[0];
   // A member's own private task lives in their conversation panel; every
   // other task opens in the task center.
   const taskHref = report
@@ -120,6 +127,15 @@ function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: st
           <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
         ) : null}
       </div>
+      {next ? (
+        <div className="sticky bottom-0 mt-auto flex items-center justify-between gap-2 border-t bg-background px-4 py-3">
+          <span className="text-xs text-muted-foreground">{t('tasks.reports.unreadLeft', { count: queue.length })}</span>
+          <Button size="sm" variant="outline" onClick={() => openReport(next.source_id, String(next.context.digital_human_id))}>
+            {t('tasks.reports.nextUnread')}
+            <ArrowRight className="size-4" />
+          </Button>
+        </div>
+      ) : null}
     </>
   );
 }

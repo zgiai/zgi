@@ -12,7 +12,8 @@ import type { DigitalHumanTaskActivity, DigitalHumanTaskPage, DigitalHumanTaskRu
 
 type TaskTranslator = ReturnType<typeof useT<'digitalHumans'>>;
 
-export function DigitalHumanTaskRunSummary({ run, children }: { run: DigitalHumanTaskRun; children?: ReactNode }) {
+// showResult is off when the task's reports already carry what the run produced.
+export function DigitalHumanTaskRunSummary({ run, showResult = true, children }: { run: DigitalHumanTaskRun; showResult?: boolean; children?: ReactNode }) {
   const t = useT('digitalHumans');
   return (
     <div className="rounded-md border bg-muted/20 p-3 text-xs">
@@ -30,7 +31,7 @@ export function DigitalHumanTaskRunSummary({ run, children }: { run: DigitalHuma
           {run.result_delivery_error ? ` · ${run.result_delivery_error}` : ''}
         </p>
       ) : null}
-      {run.result_summary ? <p className="mt-1 whitespace-pre-wrap text-foreground">{run.result_summary}</p> : null}
+      {showResult && run.result_summary ? <p className="mt-1 whitespace-pre-wrap text-foreground">{run.result_summary}</p> : null}
       {children}
     </div>
   );

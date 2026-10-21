@@ -58,7 +58,8 @@ func (h *TaskHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+		IncludeUnreviewed: c.Query("include_unreviewed") == "true"}
 	var err error
 	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
 	if err != nil {
@@ -220,7 +221,8 @@ func (h *TaskHandler) myList(c *gin.Context) {
 	if !ok {
 		return
 	}
-	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+		IncludeUnreviewed: c.Query("include_unreviewed") == "true"}
 	var err error
 	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
 	if err != nil {

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { CheckCircle2, CircleDashed, FileText, RotateCcw, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleDashed, FileText, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Badge } from '@/components/ui/badge';
@@ -120,6 +120,8 @@ export function TaskReportDetailView({
   const [reworkOpen, setReworkOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   const body = report.body?.trim() && report.body.trim() !== report.summary.trim() ? report.body : '';
+  // A failed run's issue is often its summary; show it once.
+  const issues = report.issues?.trim() && report.issues.trim() !== report.summary.trim() ? report.issues : '';
 
   const submit = async (action: 'accept' | 'rework') => {
     try {
@@ -170,10 +172,10 @@ export function TaskReportDetailView({
           </div>
         </section>
       ) : null}
-      {report.issues?.trim() ? (
+      {issues ? (
         <section>
           <h4 className="text-sm font-semibold">{t('tasks.reports.issues')}</h4>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{report.issues}</p>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{issues}</p>
         </section>
       ) : null}
       {report.review_feedback ? (
@@ -415,12 +417,22 @@ export function TaskPanelReports({
             aria-expanded={openId === report.id}
             onClick={() => setOpenId(current => (current === report.id ? null : report.id))}
           >
-            <span className="flex flex-wrap items-center gap-2">
-              <TaskReportOutcomeBadge outcome={report.outcome} />
-              <ReviewStateLabel state={report.review_state} />
-              <span className="ml-auto text-[11px] text-muted-foreground">{new Date(report.created_at).toLocaleString(locale)}</span>
-            </span>
-            {openId === report.id ? null : <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{report.summary}</span>}
+            {/* An open report shows its own outcome and time below. */}
+            {openId === report.id ? (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <ChevronDown className="size-3.5" />
+                {t('tasks.reports.collapse')}
+              </span>
+            ) : (
+              <>
+                <span className="flex flex-wrap items-center gap-2">
+                  <TaskReportOutcomeBadge outcome={report.outcome} />
+                  <ReviewStateLabel state={report.review_state} />
+                  <span className="ml-auto text-[11px] text-muted-foreground">{new Date(report.created_at).toLocaleString(locale)}</span>
+                </span>
+                <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{report.summary}</span>
+              </>
+            )}
           </button>
           {openId === report.id ? (
             <div className="border-t px-3 py-3">

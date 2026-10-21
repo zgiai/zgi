@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
+  ChevronRight,
   ListTodo,
   Loader2,
   MoreHorizontal,
@@ -53,6 +54,7 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
@@ -136,6 +138,8 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           : [status],
     priority: priority === 'all' ? undefined : [priority],
     schedule_type: schedule === 'all' ? undefined : schedule,
+    // Finished work stays in the default view until its report is read.
+    include_unreviewed: status === 'open' || undefined,
   });
   const items = query.data?.data.items ?? [];
   const counts = query.data?.data.counts ?? {};
@@ -721,39 +725,12 @@ function TaskDetailSheet({
                   {t(`tasks.schedule.${task.schedule.type}`)}
                 </Badge>
               </div>
-              <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
-                <DetailValue
-                  label={t('tasks.fields.schedule')}
-                  value={<TaskScheduleLabel task={task} />}
-                />
-                <DetailValue
-                  label={t('tasks.fields.delivery')}
-                  value={t(`tasks.delivery.${task.delivery_mode}`)}
-                />
-                <DetailValue
-                  label={t('tasks.fields.nextRun')}
-                  value={task.next_run_at ? formatDate(task.next_run_at) : '—'}
-                />
-                <DetailValue
-                  label={t('tasks.fields.timeout')}
-                  value={t('tasks.seconds', { value: task.execution_timeout_seconds })}
-                />
-                <DetailValue
-                  label={t('tasks.fields.retry')}
-                  value={String(task.max_attempts - 1)}
-                />
-                <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
-                <DetailValue
-                  label={t('tasks.visibilityControl.label')}
-                  value={
-                    <TaskVisibilityControl
-                      task={task}
-                      onChange={visibility => void changeVisibility(visibility)}
-                    />
-                  }
-                />
+              <section>
+                <h3 className="text-sm font-semibold">{t('tasks.reports.history')}</h3>
+                <div className="mt-3">
+                  <TaskReportFeed digitalHumanId={id} taskId={task.id} onOpen={setReportView} />
+                </div>
               </section>
-              <TaskReportDestinations task={task} onChange={changeChannels} />
               {(task.success_criteria ?? []).length ? (
                 <section>
                   <h3 className="text-sm font-semibold">{t('tasks.fields.successCriteria')}</h3>
@@ -767,12 +744,50 @@ function TaskDetailSheet({
                   </ul>
                 </section>
               ) : null}
-              <section>
-                <h3 className="text-sm font-semibold">{t('tasks.reports.history')}</h3>
-                <div className="mt-3">
-                  <TaskReportFeed digitalHumanId={id} taskId={task.id} onOpen={setReportView} />
-                </div>
-              </section>
+              <TaskReportDestinations task={task} onChange={changeChannels} />
+              {/* What the task produced comes first; how it runs is folded away. */}
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="-ml-2 group">
+                    <ChevronRight className="size-4 transition-transform group-data-[state=open]:rotate-90" />
+                    {t('tasks.detail.settings')}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                <section className="mt-3 grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
+                  <DetailValue
+                    label={t('tasks.fields.schedule')}
+                    value={<TaskScheduleLabel task={task} />}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.delivery')}
+                    value={t(`tasks.delivery.${task.delivery_mode}`)}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.nextRun')}
+                    value={task.next_run_at ? formatDate(task.next_run_at) : '—'}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.timeout')}
+                    value={t('tasks.seconds', { value: task.execution_timeout_seconds })}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.retry')}
+                    value={String(task.max_attempts - 1)}
+                  />
+                  <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
+                  <DetailValue
+                    label={t('tasks.visibilityControl.label')}
+                    value={
+                      <TaskVisibilityControl
+                        task={task}
+                        onChange={visibility => void changeVisibility(visibility)}
+                      />
+                    }
+                  />
+                </section>
+                </CollapsibleContent>
+              </Collapsible>
               <section>
                 <h3 className="text-sm font-semibold">{t('tasks.detail.runs')}</h3>
                 <div className="mt-3 space-y-2">
@@ -786,7 +801,7 @@ function TaskDetailSheet({
                     </p>
                   ) : (
                     (detail.runs.data?.data.items ?? []).map(run => (
-                      <DigitalHumanTaskRunSummary key={run.id} run={run}>
+                      <DigitalHumanTaskRunSummary key={run.id} run={run} showResult={!task.latest_report}>
                         {run.digital_human_run_id ? (
                           <Button asChild variant="ghost" size="sm" className="mt-2">
                             <Link href={`/console/digital-humans/${id}/runs?run=${run.digital_human_run_id}`}>

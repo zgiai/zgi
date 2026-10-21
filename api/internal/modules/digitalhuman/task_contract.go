@@ -324,7 +324,10 @@ type TaskNotifyChannels interface {
 
 // TaskListQuery contains bounded task filters.
 type TaskListQuery struct {
-	Statuses          []TaskWorkStatus
+	Statuses []TaskWorkStatus
+	// IncludeUnreviewed also lists tasks outside Statuses whose final report
+	// still waits for review, so finished work is not hidden before it is read.
+	IncludeUnreviewed bool
 	Priorities        []TaskPriority
 	ScheduleType      TaskScheduleType
 	Source            string

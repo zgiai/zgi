@@ -91,7 +91,10 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	}
 	page, pageSize := normalizePage(query.Page, query.PageSize)
 	base := s.taskQuery(ctx, access)
-	if len(query.Statuses) > 0 {
+	if len(query.Statuses) > 0 && query.IncludeUnreviewed {
+		base = base.Where(`(work_status IN ? OR EXISTS (SELECT 1 FROM digital_human_task_reports AS reports
+			WHERE reports.task_id = automation_tasks.id AND reports.final AND reports.review_state = ?))`, stringValues(query.Statuses), string(digitalhuman.TaskReportNew))
+	} else if len(query.Statuses) > 0 {
 		base = base.Where("work_status IN ?", stringValues(query.Statuses))
 	}
 	if len(query.Priorities) > 0 {

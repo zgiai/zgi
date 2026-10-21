@@ -14,14 +14,18 @@ import (
 	"gorm.io/gorm"
 )
 
-type recordingDeliverer struct{ requests []digitalhuman.TaskResultDeliveryRequest }
+type recordingDeliverer struct {
+	requests []digitalhuman.TaskResultDeliveryRequest
+}
 
 func (d *recordingDeliverer) DeliverTaskResult(_ context.Context, req digitalhuman.TaskResultDeliveryRequest) error {
 	d.requests = append(d.requests, req)
 	return nil
 }
 
-type recordingNotifier struct{ notices []digitalhuman.TaskReportNotice }
+type recordingNotifier struct {
+	notices []digitalhuman.TaskReportNotice
+}
 
 func (n *recordingNotifier) NotifyTaskReport(_ context.Context, notice digitalhuman.TaskReportNotice) error {
 	n.notices = append(n.notices, notice)
@@ -170,11 +174,29 @@ func TestReportsAreListedReviewedAndReworked(t *testing.T) {
 	if err != nil || len(listed.Items) != 1 || listed.Items[0].LatestReport == nil || listed.Items[0].LatestReport.ID != reportID {
 		t.Fatalf("task latest report = %#v, %v", listed, err)
 	}
+	// A finished task stays in the open view until its report is reviewed.
+	if err := service.db.Model(&automationmodel.AutomationTask{}).Where("id = ?", row.ID).Update("work_status", automationmodel.AutomationWorkStatusCompleted).Error; err != nil {
+		t.Fatal(err)
+	}
+	openTasks := func(includeUnreviewed bool) int {
+		t.Helper()
+		result, err := service.ListTasks(t.Context(), access, digitalhuman.TaskListQuery{Statuses: []digitalhuman.TaskWorkStatus{digitalhuman.TaskWorkStatusPending}, IncludeUnreviewed: includeUnreviewed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(result.Items)
+	}
+	if openTasks(false) != 0 || openTasks(true) != 1 {
+		t.Fatalf("open tasks = %d without and %d with unreviewed reports", openTasks(false), openTasks(true))
+	}
 
 	mutation := digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID}
 	accepted, err := service.ReviewTaskReport(t.Context(), access, reportID, digitalhuman.ReviewTaskReportRequest{Action: digitalhuman.TaskReportAccept}, mutation)
 	if err != nil || accepted.ReviewState != digitalhuman.TaskReportAccepted || accepted.ReviewedAt == nil {
 		t.Fatalf("accept = %#v, %v", accepted, err)
+	}
+	if openTasks(true) != 0 {
+		t.Fatal("an accepted report kept its finished task in the open view")
 	}
 	if _, err := service.ReviewTaskReport(t.Context(), access, reportID, digitalhuman.ReviewTaskReportRequest{Action: digitalhuman.TaskReportAccept}, mutation); !errors.Is(err, digitalhuman.ErrTaskConflict) {
 		t.Fatalf("accepting twice: %v", err)

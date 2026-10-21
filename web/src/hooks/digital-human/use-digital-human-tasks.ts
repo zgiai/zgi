@@ -20,6 +20,8 @@ export interface DigitalHumanTaskFilters {
   schedule_type?: string;
   run_finished_after?: string;
   run_finished_before?: string;
+  // Also list tasks outside `status` whose final report waits for review.
+  include_unreviewed?: boolean;
 }
 
 export function useDigitalHumanTasks(id: string, filters: DigitalHumanTaskFilters = {}) {

@@ -157,6 +157,8 @@ export function DigitalHumanTaskPanel({
         page_size: 100,
         ...(deferredSearch.trim() ? { query: deferredSearch.trim() } : {}),
         ...(statusValues ? { status: statusValues } : {}),
+        // Finished work stays in the default view until its report is read.
+        ...(status === 'open' ? { include_unreviewed: true } : {}),
         ...(priority !== 'all' ? { priority: [priority] } : {}),
       });
       if (sequence !== loadSequenceRef.current) return;
