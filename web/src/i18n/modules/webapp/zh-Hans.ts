@@ -421,6 +421,7 @@ const messages: WebappMessages = {
   consoleChat: {
     taskReport: {
       title: '任务汇报',
+      view: '查看并处理',
       outcome: { done: '已完成', partial: '部分完成', not_done: '未完成', failed: '执行失败' },
     },
     title: '工作台助手',

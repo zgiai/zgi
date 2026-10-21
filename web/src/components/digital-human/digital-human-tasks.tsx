@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
+  ArrowLeft,
   CalendarClock,
   CheckCircle2,
   ListTodo,
@@ -55,7 +56,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
-import { TaskLatestReport, TaskReportFeed, TaskReportSheet } from '@/components/digital-human/digital-human-task-reports';
+import { TaskLatestReport, TaskReportFeed, TaskReportView } from '@/components/digital-human/digital-human-task-reports';
 import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
 import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
 import { TEAM_NOTIFICATION_CHANNELS_PATH } from '@/services/notification-channel.service';
@@ -122,7 +123,6 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= 10_000 ? rawPage : 1;
   const selectedTaskID = searchParams.get(taskParam) ?? '';
   const tab = searchParams.get('tab') === 'reports' ? 'reports' : 'tasks';
-  const selectedReportID = searchParams.get('report');
   const [editorTask, setEditorTask] = useState<DigitalHumanTask | null | undefined>();
   const [teamChannelsOpen, setTeamChannelsOpen] = useState(false);
   const query = useDigitalHumanTasks(id, {
@@ -409,14 +409,6 @@ export function DigitalHumanTasks({ id }: { id: string }) {
       </>
       )}
 
-      <TaskReportSheet
-        digitalHumanId={id}
-        reportId={selectedReportID}
-        mine={false}
-        onOpenChange={open => {
-          if (!open) updateParams({ report: null });
-        }}
-      />
       <TaskEditorDialog
         id={id}
         task={editorTask}
@@ -432,7 +424,6 @@ export function DigitalHumanTasks({ id }: { id: string }) {
         canUpdate={canUpdate}
         canRun={canRun}
         onEdit={task => setEditorTask(task)}
-        onOpenReport={openReport}
         onOpenChange={open => {
           if (!open) setSelectedTaskID();
         }}
@@ -573,7 +564,6 @@ function TaskDetailSheet({
   canUpdate,
   canRun,
   onEdit,
-  onOpenReport,
   onOpenChange,
 }: {
   id: string;
@@ -582,14 +572,16 @@ function TaskDetailSheet({
   canUpdate: boolean;
   canRun: boolean;
   onEdit: (task: DigitalHumanTask) => void;
-  onOpenReport: (reportId: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
   const [runPage, setRunPage] = useState(1);
   const [activityPage, setActivityPage] = useState(1);
-  useEffect(() => { setRunPage(1); setActivityPage(1); }, [taskId]);
+  // A report opens inside this sheet, in place of the task, rather than in a
+  // second sheet stacked over it.
+  const [reportView, setReportView] = useState<string | null>(null);
+  useEffect(() => { setRunPage(1); setActivityPage(1); setReportView(null); }, [taskId]);
   const detail = useDigitalHumanTaskDetail(id, taskId, runPage, activityPage);
   const mutations = useDigitalHumanTaskMutations(id);
   const task = detail.task.data?.data;
@@ -702,7 +694,17 @@ function TaskDetailSheet({
           <SheetTitle>{task?.name ?? t('tasks.detail.title')}</SheetTitle>
           <SheetDescription>{task?.goal ?? t('tasks.detail.description')}</SheetDescription>
         </SheetHeader>
-        {detail.task.isLoading || !task ? (
+        {reportView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="space-y-4 p-6">
+              <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setReportView(null)}>
+                <ArrowLeft className="size-4" />
+                {t('tasks.reports.backToTask')}
+              </Button>
+              <TaskReportView digitalHumanId={id} reportId={reportView} mine={false} />
+            </div>
+          </div>
+        ) : detail.task.isLoading || !task ? (
           <div className="space-y-4 p-6">
             <Skeleton className="h-28" />
             <Skeleton className="h-44" />
@@ -768,7 +770,7 @@ function TaskDetailSheet({
               <section>
                 <h3 className="text-sm font-semibold">{t('tasks.reports.history')}</h3>
                 <div className="mt-3">
-                  <TaskReportFeed digitalHumanId={id} taskId={task.id} onOpen={onOpenReport} />
+                  <TaskReportFeed digitalHumanId={id} taskId={task.id} onOpen={setReportView} />
                 </div>
               </section>
               <section>

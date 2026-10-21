@@ -453,6 +453,7 @@ const messages = {
   consoleChat: {
     taskReport: {
       title: 'Task report',
+      view: 'Review',
       outcome: { done: 'Done', partial: 'Partly done', not_done: 'Not done', failed: 'Failed' },
     },
     title: 'Workbench assistant',

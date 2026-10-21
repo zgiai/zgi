@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { AlertTriangle, Bell, CheckCheck, FileText, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useOpenTaskReport } from '@/components/digital-human/task-report-drawer';
 import { useInboxList, useInboxMutations, useInboxUnreadCount } from '@/hooks/use-inbox';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
@@ -17,6 +18,8 @@ export function InboxBell() {
   const t = useT('common');
   const { locale } = useLocale();
   const router = useRouter();
+  const pathname = usePathname();
+  const openReport = useOpenTaskReport();
   const [open, setOpen] = useState(false);
   const unread = useInboxUnreadCount();
   const list = useInboxList({}, open);
@@ -27,6 +30,13 @@ export function InboxBell() {
   const openNotification = (notification: InboxNotification) => {
     if (!notification.read_at) markRead.mutate({ ids: [notification.id] });
     setOpen(false);
+    // In the console a report opens over the current page, so reading it
+    // does not lose the reader's place.
+    const digitalHumanId = typeof notification.context.digital_human_id === 'string' ? notification.context.digital_human_id : '';
+    if (notification.source_type === 'digital_human_task_report' && digitalHumanId && pathname?.startsWith('/console')) {
+      openReport(notification.source_id, digitalHumanId);
+      return;
+    }
     if (notification.link.startsWith('/')) router.push(notification.link);
   };
 

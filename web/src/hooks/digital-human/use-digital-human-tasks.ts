@@ -98,11 +98,12 @@ export function useDigitalHumanTaskReports(
   });
 }
 
-export function useDigitalHumanTaskReport(id: string, reportId: string | null, mine = false) {
+export function useDigitalHumanTaskReport(id: string, reportId: string | null, mine = false, options: { retry?: boolean } = {}) {
   return useQuery({
     queryKey: [...DIGITAL_HUMAN_KEYS.taskReports(id), 'report', reportId, mine],
     queryFn: () => digitalHumanService.getTaskReport(id, reportId ?? '', mine),
     enabled: Boolean(id && reportId),
+    ...options,
   });
 }
 

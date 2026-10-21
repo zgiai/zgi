@@ -38,6 +38,8 @@ export function DigitalHumanChat({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // `task` opens one of the reader's tasks in the panel, e.g. from a report.
+  const focusTaskId = searchParams.get('task');
   const detail = useDigitalHuman(id).data?.data;
   const permissions = useAccountPermissions();
   const canRun = permissions.hasPermission('digital_human.run');
@@ -348,6 +350,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
             compact
             refreshKey={taskRefreshKey}
             onOpenPendingChange={openPendingChange}
+            focusTaskId={focusTaskId}
           />
         </div>
       ) : null}

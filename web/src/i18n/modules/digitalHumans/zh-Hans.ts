@@ -1413,6 +1413,8 @@ const messages: DigitalHumansMessages = {
       tab: '汇报',
       tasksTab: '任务',
       sheetDescription: '数字人执行任务后交回的成果。你可以采纳，或者带意见要求返工。',
+      openTask: '打开任务',
+      backToTask: '返回任务',
       none: '还没有汇报',
       loadError: '无法加载这份汇报',
       latest: '最新汇报',

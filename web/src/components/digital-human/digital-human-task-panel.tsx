@@ -95,11 +95,14 @@ export function DigitalHumanTaskPanel({
   compact = false,
   refreshKey = 0,
   onOpenPendingChange,
+  focusTaskId,
 }: {
   client: DigitalHumanTaskPanelClient;
   title?: 'my' | 'shared';
   compact?: boolean;
   refreshKey?: number;
+  // Opens this task once it loads, for links such as a report's "Open task".
+  focusTaskId?: string | null;
   // Opens the conversation that holds a task's pending approval card.
   onOpenPendingChange?: (change: DigitalHumanTaskPendingChange) => void;
 }) {
@@ -245,6 +248,24 @@ export function DigitalHumanTaskPanel({
     setDraft({ name: task.name, goal: task.goal });
     if (compact) setDetailOpen(true);
   };
+
+  // A focused task may be finished, so look for it among all tasks.
+  const focusedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusTaskId || focusedRef.current === focusTaskId) return;
+    setStatus('all');
+    setPage(1);
+  }, [focusTaskId]);
+  useEffect(() => {
+    if (!focusTaskId || focusedRef.current === focusTaskId) return;
+    const task = tasks?.items.find(item => item.id === focusTaskId);
+    if (!task) return;
+    focusedRef.current = focusTaskId;
+    setSelectedId(task.id);
+    setEditing(false);
+    setDraft({ name: task.name, goal: task.goal });
+    if (compact) setDetailOpen(true);
+  }, [compact, focusTaskId, tasks]);
 
   const create = async () => {
     if (!draft.name.trim() || !draft.goal.trim()) return;

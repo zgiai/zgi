@@ -16,7 +16,9 @@ import {
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { useOpenTaskReport } from '@/components/digital-human/task-report-drawer';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
@@ -1832,6 +1834,7 @@ type TaskReportOutcome = 'done' | 'partial' | 'not_done' | 'failed';
 interface TaskReportMessage {
   taskName: string;
   outcome: TaskReportOutcome;
+  reportId: string;
 }
 
 // A DigitalHuman task report delivered into the conversation carries its
@@ -1841,7 +1844,11 @@ function taskReportMetadata(value: unknown): TaskReportMessage | null {
   const record = value as Record<string, unknown>;
   const outcome = record.outcome;
   if (outcome !== 'done' && outcome !== 'partial' && outcome !== 'not_done' && outcome !== 'failed') return null;
-  return { taskName: typeof record.task_name === 'string' ? record.task_name : '', outcome };
+  return {
+    taskName: typeof record.task_name === 'string' ? record.task_name : '',
+    outcome,
+    reportId: typeof record.report_id === 'string' ? record.report_id : '',
+  };
 }
 
 const taskReportOutcomeVariant: Record<TaskReportOutcome, 'success' | 'warning' | 'destructive' | 'subtle'> = {
@@ -1853,6 +1860,11 @@ const taskReportOutcomeVariant: Record<TaskReportOutcome, 'success' | 'warning' 
 
 function TaskReportMessageHeader({ report }: { report: TaskReportMessage }) {
   const t = useT('webapp');
+  const pathname = usePathname();
+  const openReport = useOpenTaskReport();
+  // The console opens the report in its report drawer, where it can be
+  // accepted or sent back; the WebApp keeps reports in its task panel.
+  const reviewable = Boolean(report.reportId && pathname?.startsWith('/console/digital-humans/'));
   return (
     <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
       <FileText className="size-3.5 shrink-0 text-muted-foreground" />
@@ -1861,6 +1873,11 @@ function TaskReportMessageHeader({ report }: { report: TaskReportMessage }) {
       <Badge variant={taskReportOutcomeVariant[report.outcome]} className="ml-auto">
         {t(`consoleChat.taskReport.outcome.${report.outcome}`)}
       </Badge>
+      {reviewable ? (
+        <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => openReport(report.reportId)}>
+          {t('consoleChat.taskReport.view')}
+        </Button>
+      ) : null}
     </div>
   );
 }

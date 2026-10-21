@@ -16,7 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useDigitalHumanTaskReport, useDigitalHumanTaskReportReview, useDigitalHumanTaskReports } from '@/hooks/digital-human/use-digital-human-tasks';
@@ -234,47 +233,28 @@ export function TaskReportDetailView({
   );
 }
 
-/** Opens one report in a side sheet and marks its notification read. */
-export function TaskReportSheet({
-  digitalHumanId,
-  reportId,
-  mine,
-  onOpenChange,
-}: {
-  digitalHumanId: string;
-  reportId: string | null;
-  mine: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
+/** Loads one report, marks its notification read, and shows it in place. */
+export function TaskReportView({ digitalHumanId, reportId, mine }: { digitalHumanId: string; reportId: string; mine: boolean }) {
   const t = useT('digitalHumans');
   const query = useDigitalHumanTaskReport(digitalHumanId, reportId, mine);
   const { markRead } = useInboxMutations();
   const report = query.data?.data;
   const markReportRead = markRead.mutate;
   useEffect(() => {
-    if (reportId) markReportRead({ source_type: 'digital_human_task_report', source_id: reportId });
+    markReportRead({ source_type: 'digital_human_task_report', source_id: reportId });
   }, [reportId, markReportRead]);
-  return (
-    <Sheet open={Boolean(reportId)} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle>{report?.task_name || t('tasks.reports.title')}</SheetTitle>
-          <SheetDescription>{t('tasks.reports.sheetDescription')}</SheetDescription>
-        </SheetHeader>
-        <div className="px-4 pb-6">
-          {query.isLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-6 w-40" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          ) : report ? (
-            <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} />
-          ) : (
-            <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
+  if (query.isLoading) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+  return report ? (
+    <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} />
+  ) : (
+    <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
   );
 }
 

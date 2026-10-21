@@ -1534,6 +1534,8 @@ const messages = {
       tab: 'Reports',
       tasksTab: 'Tasks',
       sheetDescription: 'What the digital human handed back from a task run. Accept it, or ask for rework with feedback.',
+      openTask: 'Open task',
+      backToTask: 'Back to task',
       none: 'No report yet',
       loadError: 'This report could not be loaded.',
       latest: 'Latest report',
