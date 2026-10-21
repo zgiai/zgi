@@ -1396,6 +1396,16 @@ const messages: DigitalHumansMessages = {
     sharedBadge: '共享',
     sharedReadOnly: '与工作空间共享。只有发起人或任务管理员可以修改。',
     visibilityNote: '除任务管理员外，还有谁能看到这个任务',
+    visibilityControl: {
+      label: '可见范围',
+      updated: '可见范围已更新。',
+      hint: {
+        requester: '仅发起人和任务管理者可见。',
+        conversation: '仅来源会话和任务管理者可见。',
+        workspace: '工作空间成员都可见，非发起人只读。',
+        restricted: '不在工作空间中共享，仅发起人和任务管理者可见。',
+      },
+    },
     visibility: {
       requester: '仅发起人',
       conversation: '仅本会话',

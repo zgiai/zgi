@@ -258,6 +258,23 @@ func TestVisibleTasksReportWhetherTheReaderCanChangeThem(t *testing.T) {
 	if err != nil || shared.CanChange {
 		t.Fatalf("member A GetTask(shared) = %#v, %v", shared, err)
 	}
+	// Only task center managers may change who sees a task.
+	for label, access := range map[string]digitalhuman.TaskAccessContext{"manager": fixture.manager, "task center": fixture.taskCenter, "member A": fixture.memberA} {
+		task, err := fixture.service.GetTask(t.Context(), access, fixture.shared.ID)
+		if err != nil || task.CanChangeVisibility != (label == "manager") {
+			t.Fatalf("%s GetTask(shared) can_change_visibility = %#v, %v", label, task, err)
+		}
+	}
+}
+
+func TestTaskVisibilityCannotChangeWhileVisibilityIsDisabled(t *testing.T) {
+	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
+	fixture := newVisibilityFixture(t)
+	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "false")
+	task, err := fixture.service.GetTask(t.Context(), fixture.manager, fixture.shared.ID)
+	if err != nil || task.CanChangeVisibility {
+		t.Fatalf("manager GetTask(shared) with visibility disabled = %#v, %v", task, err)
+	}
 }
 
 func TestTaskCenterNonManagerChangesOnlySharedTasksTheyCreated(t *testing.T) {

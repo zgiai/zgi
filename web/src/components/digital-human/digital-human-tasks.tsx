@@ -68,6 +68,7 @@ import type {
   CreateDigitalHumanTaskRequest,
   DigitalHumanTask,
   DigitalHumanTaskPriority,
+  DigitalHumanTaskVisibility,
   DigitalHumanTaskScheduleType,
   DigitalHumanTaskSchedulePreview,
   DigitalHumanTaskStatus,
@@ -558,6 +559,34 @@ function TaskDetailSheet({
     }
   };
 
+  // Visibility belongs to task center managers, including for tasks another
+  // account requested. The server reports it per task, because it also
+  // depends on whether task visibility is enabled.
+  const changeVisibility = async (visibility: DigitalHumanTaskVisibility) => {
+    if (!open || !task || !task.can_change_visibility || visibility === effectiveTaskVisibility(task) || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    try {
+      const latest = await detail.task.refetch();
+      if (latest.isError || !latest.data?.data || latest.data.data.id !== taskId) {
+        toast.error(t('tasks.loadError'));
+        return;
+      }
+      if (latest.data.data.revision !== task.revision) {
+        toast.error(t('tasks.actionStale'));
+        return;
+      }
+      await mutations.update.mutateAsync({
+        taskId,
+        request: { expected_revision: latest.data.data.revision, visibility },
+      });
+      toast.success(t('tasks.visibilityControl.updated'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -607,6 +636,16 @@ function TaskDetailSheet({
                   value={String(task.max_attempts - 1)}
                 />
                 <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
+                <DetailValue
+                  label={t('tasks.visibilityControl.label')}
+                  value={
+                    <TaskVisibilityControl
+                      task={task}
+                      editable={!!task.can_change_visibility}
+                      onChange={visibility => void changeVisibility(visibility)}
+                    />
+                  }
+                />
               </section>
               {(task.success_criteria ?? []).length ? (
                 <section>
@@ -754,6 +793,67 @@ function TaskDetailSheet({
         />
       </SheetContent>
     </Sheet>
+  );
+}
+
+// The requester-scoped option depends on where the task came from: a channel
+// task belongs to its conversation, other conversational tasks to a user. A
+// shared task has no separate requester option: its requester is its creator,
+// which `restricted` already limits it to.
+function taskVisibilityOptions(task: DigitalHumanTask): DigitalHumanTaskVisibility[] {
+  switch (task.owner_kind) {
+    case 'conversation':
+      return ['conversation', 'workspace', 'restricted'];
+    case 'user_subject':
+      return ['requester', 'workspace', 'restricted'];
+    default:
+      return ['workspace', 'restricted'];
+  }
+}
+
+function effectiveTaskVisibility(task: DigitalHumanTask): DigitalHumanTaskVisibility {
+  if (task.visibility) return task.visibility;
+  if (task.owner_kind === 'conversation') return 'conversation';
+  if (task.owner_kind === 'user_subject') return 'requester';
+  return 'workspace';
+}
+
+function TaskVisibilityControl({
+  task,
+  editable,
+  onChange,
+}: {
+  task: DigitalHumanTask;
+  editable: boolean;
+  onChange: (visibility: DigitalHumanTaskVisibility) => void;
+}) {
+  const t = useT('digitalHumans');
+  const current = effectiveTaskVisibility(task);
+  const hint = t(`tasks.visibilityControl.hint.${current}`);
+  if (!editable) {
+    return (
+      <div>
+        <span>{t(`tasks.visibility.${current}`)}</span>
+        <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <Select value={current} onValueChange={value => onChange(value as DigitalHumanTaskVisibility)}>
+        <SelectTrigger className="h-8 w-full sm:w-56" aria-label={t('tasks.visibilityControl.label')}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {taskVisibilityOptions(task).map(option => (
+            <SelectItem key={option} value={option}>
+              {t(`tasks.visibility.${option}`)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+    </div>
   );
 }
 

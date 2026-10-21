@@ -803,6 +803,7 @@ export interface DigitalHumanTask {
   visibility?: DigitalHumanTaskVisibility;
   /** False when the task is visible to the reader but requested by someone else. */
   can_change?: boolean;
+  can_change_visibility?: boolean;
   name: string;
   goal: string;
   success_criteria: string[];
@@ -850,6 +851,8 @@ export interface CreateDigitalHumanTaskRequest {
 
 export type UpdateDigitalHumanTaskRequest = Partial<CreateDigitalHumanTaskRequest> & {
   expected_revision: number;
+  // Only task center managers may change visibility.
+  visibility?: DigitalHumanTaskVisibility;
 };
 
 export interface DigitalHumanTaskRun {

@@ -204,9 +204,11 @@ function formatActivityChanges(changes: Record<string, unknown> | undefined, act
   if (!changes) return [];
   const labels: Record<string, string> = locale?.startsWith('zh')
     ? { name: '名称', goal: '目标', priority: '优先级', work_status: '状态', lifecycle_status: '生命周期',
-        delivery_mode: '交付方式', schedule: '执行计划', reason: '原因', run_status: '执行状态', digital_human_status: '数字人状态' }
+        delivery_mode: '交付方式', schedule: '执行计划', reason: '原因', run_status: '执行状态', digital_human_status: '数字人状态',
+        visibility: '可见范围', success_criteria: '成功标准' }
     : { name: 'Name', goal: 'Goal', priority: 'Priority', work_status: 'Status', lifecycle_status: 'Lifecycle',
-        delivery_mode: 'Delivery', schedule: 'Schedule', reason: 'Reason', run_status: 'Run status', digital_human_status: 'Digital human status' };
+        delivery_mode: 'Delivery', schedule: 'Schedule', reason: 'Reason', run_status: 'Run status', digital_human_status: 'Digital human status',
+        visibility: 'Visibility', success_criteria: 'Success criteria' };
   const entries: Array<{ key: string; label: string; before?: unknown; after?: unknown }> = [];
   for (const [key, rawValue] of Object.entries(changes)) {
     if (rawValue === undefined || rawValue === null) continue;
@@ -246,6 +248,9 @@ function formatActivityValue(key: string, value: unknown, locale?: string): stri
     status: zh
       ? { draft: '未启用', active: '已启用', paused: '已暂停', archived: '已归档' }
       : { draft: 'Not active', active: 'Enabled', paused: 'Paused', archived: 'Archived' },
+    visibility: zh
+      ? { requester: '仅发起人', conversation: '仅本会话', workspace: '工作空间', restricted: '受限' }
+      : { requester: 'Requester only', conversation: 'Conversation only', workspace: 'Workspace', restricted: 'Restricted' },
     priority: zh
       ? { low: '低', normal: '普通', high: '高', urgent: '紧急' }
       : { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' },
