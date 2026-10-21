@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"gorm.io/gorm"
 )
@@ -70,6 +71,27 @@ func NewAccessService(db *gorm.DB) *AccessService {
 		panic("digital human access service requires db")
 	}
 	return &AccessService{db: db, repo: NewRepository(db), runtimeAuth: runtimeauth.NewStore(db), now: func() time.Time { return time.Now().UTC() }}
+}
+
+// digitalHumanAPIIssuerType identifies API end users derived from a
+// DigitalHuman's `user` values. The DigitalHuman is the issuer.
+const digitalHumanAPIIssuerType = "digital_human_api"
+
+// EnsureAPIEndUserSubject registers an API end user before any stateful API
+// work. Only a caller holding the raw `user` value can derive the subject, so
+// the external API may register it. Without it, task and file requests from a
+// user who has not chatted yet were rejected as an unknown subject.
+func (s *AccessService) EnsureAPIEndUserSubject(ctx context.Context, digitalHumanID uuid.UUID, subject usersubject.Ref) error {
+	if s == nil || s.db == nil || digitalHumanID == uuid.Nil || subject.Kind != usersubject.APIEndUser {
+		return ErrInvalidRequest
+	}
+	issuer := digitalHumanID
+	if _, err := usersubject.NewService(s.db).Ensure(ctx, usersubject.EnsureRequest{
+		Subject: subject, IssuerType: digitalHumanAPIIssuerType, IssuerID: &issuer,
+	}); err != nil {
+		return fmt.Errorf("ensure DigitalHuman API end user: %w", err)
+	}
+	return nil
 }
 
 func (s *AccessService) GetSettings(ctx context.Context, scope Scope, digitalHumanID uuid.UUID) (*AccessSettings, error) {
