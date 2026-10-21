@@ -22,6 +22,7 @@ import (
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -51,6 +52,9 @@ type DigitalHumanRouteDeps struct {
 	AccountService          interfaces.AccountService
 	OrganizationService     interfaces.OrganizationService
 	ApplicationErrorCatalog *appcatalog.Catalog
+	// NotificationChannels serves the webhook a DigitalHuman's API
+	// integrations receive task notifications on (ADR 0008).
+	NotificationChannels *inbox.ChannelHandler
 	// PendingTaskChanges is optional. It marks personal-view tasks whose
 	// proposed change waits for the reader's approval.
 	PendingTaskChanges digitalhuman.TaskPendingChangeSource
@@ -119,6 +123,9 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges)
 	taskHandler.RegisterRoutes(group)
 	taskHandler.RegisterReportRoutes(group)
+	if deps.NotificationChannels != nil {
+		deps.NotificationChannels.RegisterRoutes(group, "/digital-humans/:id/notification-channels", digitalHumanChannelOwner(deps.Service, errorProjector))
+	}
 	channelHandler.RegisterAuthenticatedRoutes(group)
 }
 
@@ -225,7 +232,7 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		}
 		return ""
 	}
-	if strings.Contains(path, "/access") || strings.Contains(path, "/api-keys") {
+	if strings.Contains(path, "/access") || strings.Contains(path, "/api-keys") || strings.Contains(path, "/notification-channels") {
 		return workspacemodel.WorkspacePermissionDigitalHumanPublish
 	}
 	if strings.Contains(path, "/memory") {
@@ -488,4 +495,26 @@ func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.L
 			return nil
 		},
 	})
+}
+
+// digitalHumanChannelOwner resolves the DigitalHuman whose webhook channels
+// a request manages, and only when it belongs to the current workspace, so a
+// webhook can never receive another workspace's end-user notifications.
+func digitalHumanChannelOwner(service digitalhuman.HandlerService, projector *apptransport.Projector) inbox.OwnerResolver {
+	return func(c *gin.Context) (inbox.ChannelOwner, bool) {
+		organizationID, orgErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+		workspaceID, workspaceErr := uuid.Parse(strings.TrimSpace(util.GetWorkspaceID(c)))
+		actorID, actorErr := uuid.Parse(strings.TrimSpace(util.GetAccountID(c)))
+		digitalHumanID, idErr := uuid.Parse(strings.TrimSpace(c.Param("id")))
+		if orgErr != nil || workspaceErr != nil || actorErr != nil || idErr != nil {
+			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodeRequestInvalid, apperror.WithOperation("digital_human.notification_channel.owner")))
+			return inbox.ChannelOwner{}, false
+		}
+		scope := digitalhuman.Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}
+		if _, err := service.Get(c.Request.Context(), scope, digitalHumanID); err != nil {
+			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodeResourceNotFound, apperror.WithOperation("digital_human.notification_channel.owner")))
+			return inbox.ChannelOwner{}, false
+		}
+		return inbox.ChannelOwner{OrganizationID: organizationID, WorkspaceID: &workspaceID, Kind: inbox.OwnerDigitalHuman, ID: digitalHumanID}, true
+	}
 }

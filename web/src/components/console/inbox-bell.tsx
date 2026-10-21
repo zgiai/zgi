@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Bell, CheckCheck, FileText } from 'lucide-react';
+import { AlertTriangle, Bell, CheckCheck, FileText, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -50,7 +50,7 @@ export function InboxBell() {
             {t('inbox.markAllRead')}
           </Button>
         </div>
-        <div className="max-h-[28rem] overflow-y-auto">
+        <div className="max-h-[26rem] overflow-y-auto">
           {list.isLoading ? (
             <div className="space-y-2 p-4">
               <Skeleton className="h-12 w-full" />
@@ -94,6 +94,12 @@ export function InboxBell() {
               })}
             </ul>
           )}
+        </div>
+        <div className="border-t px-4 py-2 text-right">
+          <Button variant="ghost" size="sm" onClick={() => { setOpen(false); router.push('/profile/notifications'); }}>
+            <Settings className="size-4" />
+            {t('notifications.settings')}
+          </Button>
         </div>
       </PopoverContent>
     </Popover>

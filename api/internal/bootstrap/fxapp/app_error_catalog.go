@@ -7,6 +7,7 @@ import (
 	connectorpreferences "github.com/zgiai/zgi/api/internal/modules/connectors/preferences"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
+	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
 	authservice "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
@@ -25,6 +26,7 @@ func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions = append(definitions, connectorcore.CatalogDefinitions()...)
 	definitions = append(definitions, digitalhuman.CatalogDefinitions()...)
 	definitions = append(definitions, imageservice.CatalogDefinitions()...)
+	definitions = append(definitions, inbox.CatalogDefinitions()...)
 	definitions = append(definitions, llmerrors.CatalogDefinitions()...)
 	definitions = append(definitions, llmerrors.BillingCatalogDefinitions()...)
 	definitions = append(definitions, musicmodule.CatalogDefinitions()...)

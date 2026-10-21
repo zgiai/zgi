@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Copy, Edit, KeyRound, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -74,6 +75,7 @@ function DigitalHumanAPIKeysContent({
   canPublish: boolean;
 }) {
   const t = useT('digitalHumans.access');
+  const tCommon = useT('common');
   const access = useDigitalHumanAccess(id, canPublish);
   const keys = useDigitalHumanAPIKeys(id, canPublish && published);
   const mutations = useDigitalHumanAccessMutations(id);
@@ -344,6 +346,11 @@ function DigitalHumanAPIKeysContent({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <section className="rounded-xl border bg-background p-5">
+        <h3 className="text-sm font-semibold">{tCommon('notifications.webhookSectionTitle')}</h3>
+        <p className="mb-3 mt-1 text-sm text-muted-foreground">{tCommon('notifications.webhookSectionDescription')}</p>
+        <NotificationChannelManager basePath={`/digital-humans/${id}/notification-channels`} types={['webhook']} canManage={canPublish} />
+      </section>
     </div>
   );
 }

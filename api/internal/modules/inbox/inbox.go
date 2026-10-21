@@ -91,8 +91,14 @@ type List struct {
 
 // Service stores and serves inbox notifications.
 type Service struct {
-	db  *gorm.DB
-	now func() time.Time
+	db         *gorm.DB
+	dispatcher *Dispatcher
+	now        func() time.Time
+}
+
+// SetDispatcher sends new notifications to their recipients' channels.
+func (s *Service) SetDispatcher(dispatcher *Dispatcher) {
+	s.dispatcher = dispatcher
 }
 
 // NewService builds an inbox backed by db.
@@ -122,11 +128,18 @@ func (s *Service) Notify(ctx context.Context, req NotifyRequest) (*Notification,
 		SourceType: strings.TrimSpace(req.SourceType), SourceID: req.SourceID, Title: strings.TrimSpace(req.Title),
 		Summary: strings.TrimSpace(req.Summary), Link: strings.TrimSpace(req.Link), Context: contextValue, CreatedAt: s.now(),
 	}
-	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+	result := s.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "recipient_kind"}, {Name: "recipient_id"}, {Name: "event"}, {Name: "source_type"}, {Name: "source_id"}},
 		DoNothing: true,
-	}).Create(notification).Error; err != nil {
-		return nil, fmt.Errorf("store inbox notification: %w", err)
+	}).Create(notification)
+	if result.Error != nil {
+		return nil, fmt.Errorf("store inbox notification: %w", result.Error)
+	}
+	// A redelivered event changes nothing and is not sent again.
+	if result.RowsAffected == 1 && s.dispatcher != nil {
+		// The notification stays in the inbox if a channel cannot be
+		// planned; channel delivery never fails the notification.
+		_ = s.dispatcher.Plan(ctx, notification)
 	}
 	return notification, nil
 }

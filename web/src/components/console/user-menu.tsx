@@ -33,7 +33,7 @@ import { useUpdateInterfaceLanguage } from '@/hooks/use-update-interface-languag
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { LANGUAGES } from '@/lib/constants';
 import type { Locale } from '@/lib/i18n';
-import { Building2, GitBranch } from 'lucide-react';
+import { Bell, Building2, GitBranch } from 'lucide-react';
 import { organizationService } from '@/services/organization.service';
 import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
@@ -233,6 +233,12 @@ export function UserMenu() {
           <Link href="/profile/memory" className="!cursor-pointer">
             <Icons.Brain className="h-4 w-4" />
             <span>{tNav('memory')}</span>
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/profile/notifications" className="!cursor-pointer">
+            <Bell className="h-4 w-4" />
+            <span>{tNav('notifications')}</span>
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />

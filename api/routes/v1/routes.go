@@ -18,6 +18,7 @@ import (
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/internal/modules/zgimarket"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
@@ -285,11 +286,18 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		approvalResumeHosts.Register(digitalHumanRuntime.Runtime)
 	}
 	inboxService := inbox.NewService(db)
+	notificationChannels, notificationDispatcher := newNotificationChannels(inboxService, db, serviceContainer.GetDigitalHumanCredentialCipher(),
+		serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetTaskManager())
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
 		automationBundle.DigitalHumanTaskReconciler.SetReportNotifier(digitalHumanReportInbox{inbox: inboxService})
 	}
-	RegisterInboxRoutes(v1, InboxRouteDeps{Service: inboxService, AccountService: accountService, ApplicationErrorCatalog: applicationErrorCatalog})
+	inboxErrorProjector, err := apptransport.NewProjector(applicationErrorCatalog)
+	if err != nil {
+		panic("inbox routes require application error catalog")
+	}
+	channelHandler := inbox.NewChannelHandler(notificationChannels, notificationDispatcher, inboxErrorProjector)
+	RegisterInboxRoutes(v1, InboxRouteDeps{Service: inboxService, Channels: channelHandler, AccountService: accountService, ApplicationErrorCatalog: applicationErrorCatalog})
 	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 	consoleDigitalHumanService := serviceContainer.GetDigitalHumanService()
@@ -302,6 +310,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 		PendingTaskChanges:      digitalhuman.NewRepository(db),
+		NotificationChannels:    channelHandler,
 	})
 
 	// ---------- Prompt Library ----------
