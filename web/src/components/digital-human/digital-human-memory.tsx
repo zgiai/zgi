@@ -80,7 +80,9 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const [search, setSearch] = useState('');
   const [memoryClass, setMemoryClass] = useState<typeof all | DigitalHumanMemoryClass>(all);
   const [memoryType, setMemoryType] = useState<typeof all | DigitalHumanMemoryType>(all);
-  const [status, setStatus] = useState<typeof all | DigitalHumanMemoryStatus>(all);
+  // Invalidated memories no longer shape behavior; they are hidden unless
+  // the reader asks for them.
+  const [status, setStatus] = useState<typeof all | DigitalHumanMemoryStatus>('active');
   const [scopeType, setScopeType] = useState<typeof all | DigitalHumanMemoryScopeType>(all);
   const [scopeId, setScopeId] = useState('');
   const [source, setSource] = useState('');
@@ -108,7 +110,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     search.trim() ||
       memoryClass !== all ||
       memoryType !== all ||
-      status !== all ||
+      status !== 'active' ||
       scopeType !== all ||
       scopeId.trim() ||
       source.trim()
@@ -118,7 +120,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     setSearch('');
     setMemoryClass(all);
     setMemoryType(all);
-    setStatus(all);
+    setStatus('active');
     setScopeType(all);
     setScopeId('');
     setSource('');
@@ -515,7 +517,7 @@ function MemoryBody({
           <div className="text-xs text-muted-foreground">
             <div className="font-medium text-foreground">{t(memoryScopeKey(memory))}</div>
             <div className="mt-1">
-              {t('memory.confidence', { value: Math.round(memory.confidence * 100) })}
+              {t(`memory.confidenceLevel.${memory.confidence >= 0.8 ? 'high' : memory.confidence >= 0.5 ? 'medium' : 'low'}`)}
             </div>
             <div className="mt-1">
               {t('memory.sourceSummary', {

@@ -420,9 +420,9 @@ const messages = {
     publishTitle: 'Publish digital human',
     updateTitle: 'Publish an update',
     publishDescription:
-      'Add optional release details, validate the draft, and publish its first immutable runtime version.',
+      'Optionally describe the release, check the draft, and publish it as the first live version.',
     updateDescription:
-      'Add optional release details, validate the draft, and publish a new immutable runtime version.',
+      'Optionally describe the release, check the draft, and publish it as a new live version.',
     nameLabel: 'Version name',
     optional: 'Optional',
     namePlaceholder: 'For example: Improved research handoff',
@@ -434,7 +434,7 @@ const messages = {
     fallbackName: 'Version {time}',
     publish: 'Publish',
     update: 'Publish update',
-    immutableHint: 'Published versions are immutable and remain available in version history.',
+    immutableHint: 'Every release stays in version history, and you can restore it later.',
   },
   overview: {
     eyebrow: 'Workspace teammate',
@@ -615,7 +615,7 @@ const messages = {
   },
   configuration: {
     identity: 'Identity and rules',
-    identityDescription: 'Runtime identity is published as an immutable version.',
+    identityDescription: 'The name and persona go live when you publish.',
     versionManagement: 'Versions and publishing',
     versionManagementDescription:
       'Save a draft first, then publish the checked configuration as the active runtime version.',
@@ -639,11 +639,11 @@ const messages = {
     preflight: {
       title: 'Publish readiness',
       loading: 'Checking the current draft…',
-      identity: 'Conversation name and persona are complete',
+      identity: 'Name and persona are filled in',
       rules: 'At least one operating rule is configured',
       model: 'A runtime model is selected',
       bindings: 'At least one resource is bound',
-      warning: '{count} recommended item(s) are still missing. Publishing is allowed.',
+      warning: 'Some recommended setup is missing ({count}). You can still publish.',
     },
   },
   bindings: {
@@ -1844,7 +1844,7 @@ const messages = {
   memory: {
     title: 'Long-term memory',
     description:
-      'Memory belongs to this digital human and is shared across authorized conversations and actors.',
+      'Memory belongs to this digital human and is shared across the conversations and people allowed to use it.',
     count: '{count} memories',
     fuseOn: 'Automatic extraction on',
     fuseOff: 'Automatic extraction off',
@@ -1899,6 +1899,7 @@ const messages = {
     sourceSummary: 'Source: {source}',
     revision: 'Revision {revision}',
     confidence: '{value}% confidence',
+    confidenceLevel: { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' },
     updated: 'Updated {date}',
     evidence: 'Evidence',
     noEvidence: 'No visible evidence references.',
@@ -1966,7 +1967,7 @@ const messages = {
       'These fields are saved in the draft and take effect after publishing.',
     openingGuideTitle: 'Opening guide',
     openingGuideDescription:
-      'Edit the title, opening statement, and suggested questions with the same experience as Agent.',
+      'Set the landing page title, opening statement, and suggested questions.',
     configureOpeningGuide: 'Configure opening guide',
     livePreview: 'Draft preview',
     livePreviewDescription:
