@@ -33,6 +33,7 @@ type Run struct {
 	UserSubjectID             *uuid.UUID     `gorm:"type:uuid;column:user_subject_id" json:"user_subject_id,omitempty"`
 	Surface                   string         `gorm:"type:varchar(32);not null;default:'digital_human_console';column:surface" json:"surface"`
 	SourceTrust               *string        `gorm:"type:varchar(32);column:source_trust" json:"-"`
+	EndUserInstanceID         *uuid.UUID     `gorm:"type:uuid;column:end_user_instance_id" json:"end_user_instance_id,omitempty"`
 	RequestFingerprint        string         `gorm:"type:varchar(71);not null;default:'';column:request_fingerprint" json:"-"`
 	IdempotencyKey            string         `gorm:"type:varchar(160);not null" json:"idempotency_key"`
 	InvocationEvent           datatypes.JSON `gorm:"type:jsonb;not null" json:"invocation_event"`

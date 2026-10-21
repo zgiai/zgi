@@ -932,6 +932,8 @@ func applicationError(err error, operation string) error {
 		code = AppCodeRunNotFound
 	case errors.Is(err, ErrRunConflict):
 		code = AppCodeRunConflict
+	case errors.Is(err, ErrEndUserSuspended):
+		code = AppCodeEndUserSuspended
 	case errors.Is(err, ErrConversationNotFound):
 		code = AppCodeConversationNotFound
 	case errors.Is(err, ErrConsoleFileNotAccessible):
