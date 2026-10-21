@@ -316,10 +316,14 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 		if err := tx.CreateMemoryUndo(ctx, undo); err != nil {
 			return err
 		}
-		detail, _ := json.Marshal(map[string]any{
+		ledger := map[string]any{
 			"memory_class": memory.MemoryClass, "memory_type": memory.MemoryType,
 			"scope_type": memory.ScopeType, "scope_id": memory.ScopeID, "supersedes_id": memory.SupersedesID,
-		})
+		}
+		if request.rescope {
+			ledger["rescoped_from"] = request.SupersedesID
+		}
+		detail, _ := json.Marshal(ledger)
 		if err := tx.CreateActionLedger(ctx, &ActionLedgerEntry{
 			ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
 			RunID: request.RunID, ActionType: "memory." + string(request.Action), Status: "committed",
@@ -355,8 +359,8 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 			if targetErr != nil {
 				return nil, nil, nil, targetErr
 			}
-			if superseded.Status != MemoryStatusActive || superseded.Revision != request.ExpectedSupersededRevision ||
-				superseded.MemoryClass != request.MemoryClass || superseded.ScopeType != scopeType || superseded.ScopeID != scopeID {
+			sameScope := superseded.MemoryClass == request.MemoryClass && superseded.ScopeType == scopeType && superseded.ScopeID == scopeID
+			if superseded.Status != MemoryStatusActive || superseded.Revision != request.ExpectedSupersededRevision || sameScope == request.rescope {
 				return nil, nil, nil, ErrMemoryConflict
 			}
 			supersededBefore = mustJSON(superseded)
@@ -371,13 +375,19 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 			}
 		}
 		validFrom := request.OccurredAt
+		supersedesID := request.SupersedesID
+		if request.rescope {
+			// A supersede link stays within one scope. A rescoped memory is
+			// linked to its origin by the undo record and the action ledger.
+			supersedesID = nil
+		}
 		memory := &DigitalHumanMemory{
 			ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
 			MemoryKey: request.Key, MemoryClass: request.MemoryClass, MemoryType: request.MemoryType, ScopeType: scopeType, ScopeID: scopeID,
 			Content: request.Content, ContentDigest: memoryContentDigest(request.Content), Visibility: request.Visibility,
 			Status: MemoryStatusActive, Confidence: request.Confidence, Revision: 1, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence: mustJSON(request.Evidence), SourcePrincipalID: scope.ActorID.String(), LastOperationID: request.OperationID,
-			SupersedesID: request.SupersedesID, ValidFrom: &validFrom, CreatedAt: now, UpdatedAt: now,
+			SupersedesID: supersedesID, ValidFrom: &validFrom, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.CreateMemory(ctx, memory); err != nil {
 			return nil, nil, nil, err

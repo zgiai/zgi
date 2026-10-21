@@ -517,6 +517,16 @@ export interface DigitalHumanMemoryListParams {
   source?: string;
 }
 
+// Moves one memory between self memory and workspace business memory.
+export interface DigitalHumanMemoryRescopeRequest {
+  operation_id: string;
+  expected_revision: number;
+  config_revision: string;
+  memory_epoch: number;
+  memory_class: 'self' | 'business';
+  scope?: { type: 'workspace'; id: string };
+}
+
 export interface DigitalHumanMemoryProposalRequest {
   operation_id: string;
   key: string;

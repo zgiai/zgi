@@ -1798,6 +1798,12 @@ const messages = {
     undoUnavailable: 'Undo is no longer available',
     invalidated: 'Memory invalidated.',
     undone: 'Memory change undone.',
+    rescope: {
+      toSelf: 'Move to self memory',
+      toWorkspace: 'Move to workspace memory',
+      done: 'Memory moved.',
+      hint: 'Self memory shapes the DigitalHuman itself. Workspace memory holds shared business facts that workspace members and channels can recall.',
+    },
     details: 'View evidence',
     close: 'Close',
     errors: {
