@@ -343,19 +343,27 @@ func (r *Runtime) ValidateCatalog(ctx context.Context) error {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	// Report every invalid skill: stopping at the first one hid the state of
+	// every skill sorted after it.
+	var errs []error
 	for _, id := range ids {
 		doc, err := r.loadSkillDocumentFromLocation(locations[id])
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
-		if err := r.validateSkillTools(ctx, doc); err != nil {
-			return err
+		// Runtime-managed skills receive their tools from the runtime that
+		// enables them, such as DigitalHuman memory, not from the tool manager.
+		if !SystemSkillExposureProfile(id).RuntimeManaged {
+			if err := r.validateSkillTools(ctx, doc); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		if err := r.validateSkillReferences(doc); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func LoadCustomSkillDocument(root string) (SkillDocument, error) {
