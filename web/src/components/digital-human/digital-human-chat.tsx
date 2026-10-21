@@ -147,17 +147,21 @@ export function DigitalHumanChat({ id }: { id: string }) {
   );
 
   // Brings a pending task approval into view once its conversation shows it.
-  // The approval may sit on a branch the reader has since switched away from,
-  // so that branch is selected first; its confirmation form needs it current.
+  // The approval may be older than the first page of history, so older pages
+  // are loaded until it appears. It may also sit on a branch the reader has
+  // since switched away from, so that branch is selected first; its
+  // confirmation form needs it current.
   const [approvalTarget, setApprovalTarget] = useState<DigitalHumanTaskPendingChange | null>(
     null
   );
   const controllerStore = controller.store;
   const switchBranch = controller.switchBranch;
+  const loadOlderMessages = controller.loadOlderMessages;
   useEffect(() => {
     if (!approvalTarget) return;
     const { conversation_id: conversationId, message_id: messageId } = approvalTarget;
     let attempts = 0;
+    let olderPagesLoaded = 0;
     let branchSelected = false;
     const timer = window.setInterval(() => {
       attempts += 1;
@@ -171,9 +175,21 @@ export function DigitalHumanChat({ id }: { id: string }) {
         const loaded = state.messagesByConversation[conversationId]?.some(
           message => message.id === messageId
         );
-        if (state.activeConversationId === conversationId && loaded && !state.isSending) {
+        const ready = state.activeConversationId === conversationId && !state.isLoadingMessages;
+        if (ready && loaded && !state.isSending) {
           branchSelected = true;
           switchBranch(messageId);
+        } else if (
+          ready &&
+          !loaded &&
+          olderPagesLoaded < 10 &&
+          state.messagePaginationByConversation[conversationId]?.hasMore &&
+          !state.loadingOlderByConversation[conversationId]
+        ) {
+          // Each loaded page restarts the wait for the approval to render.
+          olderPagesLoaded += 1;
+          attempts = 0;
+          void loadOlderMessages(conversationId);
         }
       }
       if (target || attempts >= 40) {
@@ -182,7 +198,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
       }
     }, 150);
     return () => window.clearInterval(timer);
-  }, [approvalTarget, controllerStore, switchBranch]);
+  }, [approvalTarget, controllerStore, loadOlderMessages, switchBranch]);
 
   const openPendingChange = useCallback(
     (change: DigitalHumanTaskPendingChange) => {
