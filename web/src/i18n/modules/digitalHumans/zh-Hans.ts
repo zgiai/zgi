@@ -1406,6 +1406,8 @@ const messages: DigitalHumansMessages = {
         restricted: '不在工作空间中共享，仅发起人和任务管理者可见。',
       },
     },
+    pendingChange: '有修改待你确认',
+    pendingChangeOpen: '打开待确认修改所在的会话',
     visibility: {
       requester: '仅发起人',
       conversation: '仅本会话',

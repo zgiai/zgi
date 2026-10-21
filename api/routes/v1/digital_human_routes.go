@@ -51,6 +51,9 @@ type DigitalHumanRouteDeps struct {
 	AccountService          interfaces.AccountService
 	OrganizationService     interfaces.OrganizationService
 	ApplicationErrorCatalog *appcatalog.Catalog
+	// PendingTaskChanges is optional. It marks personal-view tasks whose
+	// proposed change waits for the reader's approval.
+	PendingTaskChanges digitalhuman.TaskPendingChangeSource
 }
 
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
@@ -113,7 +116,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewAccessHandler(deps.Access, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
-	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).RegisterRoutes(group)
+	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges).RegisterRoutes(group)
 	channelHandler.RegisterAuthenticatedRoutes(group)
 }
 

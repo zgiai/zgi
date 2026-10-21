@@ -297,6 +297,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
+		PendingTaskChanges:      digitalhuman.NewRepository(db),
 	})
 
 	// ---------- Prompt Library ----------

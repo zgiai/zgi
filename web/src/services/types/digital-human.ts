@@ -777,6 +777,11 @@ export type DigitalHumanTaskScheduleType = 'manual' | 'once' | 'cron';
 export type DigitalHumanTaskOwnerKind = 'digital_human' | 'user_subject' | 'conversation';
 export type DigitalHumanTaskVisibility = 'requester' | 'conversation' | 'workspace' | 'restricted';
 
+export interface DigitalHumanTaskPendingChange {
+  conversation_id: string;
+  message_id: string;
+}
+
 export interface DigitalHumanTaskSchedule {
   type: DigitalHumanTaskScheduleType;
   run_at?: string;
@@ -804,6 +809,9 @@ export interface DigitalHumanTask {
   /** False when the task is visible to the reader but requested by someone else. */
   can_change?: boolean;
   can_change_visibility?: boolean;
+  // Set in the personal view when a proposed change to this task waits for
+  // the reader's approval in one of their conversations.
+  pending_change?: DigitalHumanTaskPendingChange;
   name: string;
   goal: string;
   success_criteria: string[];

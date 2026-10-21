@@ -28,6 +28,7 @@ import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
+import type { DigitalHumanTaskPendingChange } from '@/services/types/digital-human';
 
 const conversationParam = 'conversation';
 
@@ -145,6 +146,68 @@ export function DigitalHumanChat({ id }: { id: string }) {
     [initialConversationId, replaceConversationParam]
   );
 
+  // Brings a pending task approval into view once its conversation shows it.
+  // The approval may be older than the first page of history, so older pages
+  // are loaded until it appears. It may also sit on a branch the reader has
+  // since switched away from, so that branch is selected first; its
+  // confirmation form needs it current.
+  const [approvalTarget, setApprovalTarget] = useState<DigitalHumanTaskPendingChange | null>(
+    null
+  );
+  const controllerStore = controller.store;
+  const switchBranch = controller.switchBranch;
+  const loadOlderMessages = controller.loadOlderMessages;
+  useEffect(() => {
+    if (!approvalTarget) return;
+    const { conversation_id: conversationId, message_id: messageId } = approvalTarget;
+    let attempts = 0;
+    let olderPagesLoaded = 0;
+    let branchSelected = false;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      const target = document.querySelector<HTMLElement>(
+        `[data-chat-message-id="${CSS.escape(messageId)}"]`
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (!branchSelected) {
+        const state = controllerStore.getState();
+        const loaded = state.messagesByConversation[conversationId]?.some(
+          message => message.id === messageId
+        );
+        const ready = state.activeConversationId === conversationId && !state.isLoadingMessages;
+        if (ready && loaded && !state.isSending) {
+          branchSelected = true;
+          switchBranch(messageId);
+        } else if (
+          ready &&
+          !loaded &&
+          olderPagesLoaded < 10 &&
+          state.messagePaginationByConversation[conversationId]?.hasMore &&
+          !state.loadingOlderByConversation[conversationId]
+        ) {
+          // Each loaded page restarts the wait for the approval to render.
+          olderPagesLoaded += 1;
+          attempts = 0;
+          void loadOlderMessages(conversationId);
+        }
+      }
+      if (target || attempts >= 40) {
+        window.clearInterval(timer);
+        setApprovalTarget(null);
+      }
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [approvalTarget, controllerStore, loadOlderMessages, switchBranch]);
+
+  const openPendingChange = useCallback(
+    (change: DigitalHumanTaskPendingChange) => {
+      selectConversation(change.conversation_id);
+      setApprovalTarget(change);
+    },
+    [selectConversation]
+  );
+
   const handleStartNewConversation = useCallback(() => {
     startNewConversationRef.current();
     replaceConversationParam(null, 'draft-persistence');
@@ -243,39 +306,58 @@ export function DigitalHumanChat({ id }: { id: string }) {
           onSelectConversation={selectConversation}
           onStartNewConversation={handleStartNewConversation}
           headerRightAction={
-            <Button variant="ghost" size="sm" asChild>
-              <Link
-                href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
-              >
-                <Brain className="mr-2 size-4" />
-                {t('chat.manageMemory')}
-              </Link>
-            </Button>
+            <div className="flex items-center gap-1">
+              {canRun ? (
+                // Below xl the task panel is a sheet. A floating button sat
+                // under the composer on phones, so it lives in the header.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="xl:hidden"
+                  onClick={() => setMobileTasksOpen(true)}
+                  aria-label={t('tasks.myTitle')}
+                  title={t('tasks.myTitle')}
+                >
+                  <ListTodo className="size-4 sm:mr-2" />
+                  <span className="hidden sm:inline">{t('tasks.myTitle')}</span>
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" asChild>
+                <Link
+                  href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
+                >
+                  <Brain className="mr-2 size-4" />
+                  {t('chat.manageMemory')}
+                </Link>
+              </Button>
+            </div>
           }
           onTaskMutation={handleTaskMutation}
         />
       </div>
       {canRun ? (
         <div className="hidden w-[22rem] shrink-0 xl:block">
-          <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+          <DigitalHumanTaskPanel
+            client={taskClient}
+            compact
+            refreshKey={taskRefreshKey}
+            onOpenPendingChange={openPendingChange}
+          />
         </div>
-      ) : null}
-      {canRun ? (
-        <Button
-          variant="outline"
-          size="sm"
-          className="absolute bottom-4 right-4 z-10 gap-2 shadow-md xl:hidden"
-          onClick={() => setMobileTasksOpen(true)}
-        >
-          <ListTodo className="size-4" />
-          {t('tasks.myTitle')}
-        </Button>
       ) : null}
       {canRun ? (
         <Sheet open={mobileTasksOpen} onOpenChange={setMobileTasksOpen}>
           <SheetContent side="right" className="w-full max-w-none p-0 sm:max-w-lg">
             <SheetTitle className="sr-only">{t('tasks.myTitle')}</SheetTitle>
-            <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+            <DigitalHumanTaskPanel
+              client={taskClient}
+              compact
+              refreshKey={taskRefreshKey}
+              onOpenPendingChange={change => {
+                setMobileTasksOpen(false);
+                openPendingChange(change);
+              }}
+            />
           </SheetContent>
         </Sheet>
       ) : null}

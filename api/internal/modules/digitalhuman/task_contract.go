@@ -262,6 +262,9 @@ type Task struct {
 	// CanChange tells the reader whether it may change this task. A visible
 	// workspace task requested by someone else is read-only.
 	CanChange bool `json:"can_change"`
+	// PendingChange is set in the personal task view when a proposed change
+	// to this task waits for the reader's approval in their own conversation.
+	PendingChange *TaskPendingChange `json:"pending_change,omitempty"`
 	// CanChangeVisibility tells the reader whether it may change who sees
 	// this task. Only task center managers may, and only while task
 	// visibility is enabled.

@@ -1527,6 +1527,8 @@ const messages = {
         restricted: 'Hidden from the workspace. Only the requester and task managers can see it.',
       },
     },
+    pendingChange: 'Change awaiting your approval',
+    pendingChangeOpen: 'Open the conversation with this approval',
     visibility: {
       requester: 'Requester only',
       conversation: 'Conversation only',
