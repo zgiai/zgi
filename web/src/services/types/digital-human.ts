@@ -850,6 +850,8 @@ export interface CreateDigitalHumanTaskRequest {
 
 export type UpdateDigitalHumanTaskRequest = Partial<CreateDigitalHumanTaskRequest> & {
   expected_revision: number;
+  // Only task center managers may change visibility.
+  visibility?: DigitalHumanTaskVisibility;
 };
 
 export interface DigitalHumanTaskRun {

@@ -1517,6 +1517,16 @@ const messages = {
     sharedBadge: 'Shared',
     sharedReadOnly: 'Shared with the workspace. Only its requester or a task manager can change it.',
     visibilityNote: 'Who besides task managers can see this task',
+    visibilityControl: {
+      label: 'Visibility',
+      updated: 'Visibility updated.',
+      hint: {
+        requester: 'Only the requester and task managers can see it.',
+        conversation: 'Only its source conversation and task managers can see it.',
+        workspace: 'Everyone in the workspace can see it. Others see it read-only.',
+        restricted: 'Hidden from the workspace. Only the requester and task managers can see it.',
+      },
+    },
     visibility: {
       requester: 'Requester only',
       conversation: 'Conversation only',
