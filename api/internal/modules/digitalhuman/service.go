@@ -953,7 +953,7 @@ func applicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict):
 		code = AppCodeTaskConflict
-	case errors.Is(err, ErrTaskVisibilityForbidden):
+	case errors.Is(err, ErrTaskVisibilityForbidden), errors.Is(err, ErrTaskReadOnly):
 		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected
@@ -996,7 +996,7 @@ func taskApplicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict), errors.Is(err, ErrRevisionConflict):
 		code = AppCodeTaskConflict
-	case errors.Is(err, ErrTaskVisibilityForbidden):
+	case errors.Is(err, ErrTaskVisibilityForbidden), errors.Is(err, ErrTaskReadOnly):
 		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected

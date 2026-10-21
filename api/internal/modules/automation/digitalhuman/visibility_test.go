@@ -161,8 +161,8 @@ func TestTaskVisibilityReadRulesAndMutationScope(t *testing.T) {
 		t.Fatalf("member A GetTask(shared) error = %v", err)
 	}
 	if _, err := service.ApplyTaskAction(t.Context(), fixture.memberA, fixture.shared.ID, digitalhuman.TaskActionPause,
-		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.shared.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
-		t.Fatalf("member A pause(shared) error = %v, want not found", err)
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.shared.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskReadOnly) {
+		t.Fatalf("member A pause(shared) error = %v, want read-only", err)
 	}
 	if _, err := service.ApplyTaskAction(t.Context(), fixture.taskCenter, fixture.privateB.ID, digitalhuman.TaskActionPause,
 		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.privateB.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
@@ -273,8 +273,17 @@ func TestTaskCenterNonManagerChangesOnlySharedTasksTheyCreated(t *testing.T) {
 		t.Fatalf("runner GetTask(shared) = %#v, %v; want read-only", shared, err)
 	}
 	if _, err := service.ApplyTaskAction(t.Context(), runner, fixture.shared.ID, digitalhuman.TaskActionCancel,
-		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.shared.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
-		t.Fatalf("runner cancel(shared by another account) error = %v, want not found", err)
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.shared.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskReadOnly) {
+		t.Fatalf("runner cancel(shared by another account) error = %v, want read-only", err)
+	}
+	priority := digitalhuman.TaskPriorityHigh
+	if _, err := service.UpdateTask(t.Context(), runner, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Priority: &priority},
+		digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskReadOnly) {
+		t.Fatalf("runner update(shared by another account) error = %v, want read-only", err)
+	}
+	if _, err := service.UpdateTask(t.Context(), runner, fixture.privateA.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.privateA.Revision, Priority: &priority},
+		digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("runner update(another member's private task) error = %v, want not found", err)
 	}
 
 	restricted := digitalhuman.TaskVisibilityRestricted

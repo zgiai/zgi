@@ -49,6 +49,7 @@ Task tools return a task the viewer cannot see only as occupancy: its time windo
 
 - A requester may change, pause, resume, or cancel tasks they requested. The requester of a shared task is the account that created it.
 - Task center managers may change any task. Only managers may change a task's visibility.
+- A refused change to a task the caller can see reports missing permission. A task the caller cannot see is reported as not found, so a refusal never reveals hidden tasks.
 - Scheduled runs keep their current restriction: they may update only the task being executed, and only to `waiting` or `blocked`.
 - Proposal and confirmation remain mandatory for every conversational task creation, and `confirmed_by` is recorded.
 

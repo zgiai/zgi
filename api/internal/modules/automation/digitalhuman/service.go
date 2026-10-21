@@ -750,11 +750,23 @@ func (s *Service) loadTask(ctx context.Context, db *gorm.DB, access digitalhuman
 	}
 	var task automationmodel.AutomationTask
 	if err := query.First(&task).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		if lock && s.taskVisible(ctx, db, access, taskID) {
+			return nil, digitalhuman.ErrTaskReadOnly
+		}
 		return nil, digitalhuman.ErrTaskNotFound
 	} else if err != nil {
 		return nil, fmt.Errorf("load digital human task: %w", err)
 	}
 	return &task, nil
+}
+
+// taskVisible reports whether a task outside the caller's change scope is
+// still readable by them, so a refused change can say why without revealing
+// tasks the caller cannot see.
+func (s *Service) taskVisible(ctx context.Context, db *gorm.DB, access digitalhuman.TaskAccessContext, taskID uuid.UUID) bool {
+	query := db.WithContext(ctx).Model(&automationmodel.AutomationTask{}).Where("id = ? AND organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_type = ? AND subject_id = ?", taskID, access.OrganizationID, access.WorkspaceID, automationmodel.AutomationTaskKindDigitalHuman, subjectTypeDigitalHuman, access.DigitalHumanID)
+	var count int64
+	return applyReadScope(query, access).Count(&count).Error == nil && count > 0
 }
 
 func (s *Service) taskByOperation(ctx context.Context, access digitalhuman.TaskAccessContext, operationID uuid.UUID) (*automationmodel.AutomationTask, error) {
