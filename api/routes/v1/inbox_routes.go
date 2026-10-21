@@ -111,3 +111,20 @@ func (n digitalHumanReportInbox) NotifyTaskReport(ctx context.Context, notice di
 }
 
 var _ digitalhuman.TaskReportNotifier = digitalHumanReportInbox{}
+
+// reportNotifiers tells each notifier about a final report, in order. One
+// notifier's failure does not stop the others.
+type reportNotifiers []digitalhuman.TaskReportNotifier
+
+func (n reportNotifiers) NotifyTaskReport(ctx context.Context, notice digitalhuman.TaskReportNotice) error {
+	var first error
+	for _, notifier := range n {
+		if notifier == nil {
+			continue
+		}
+		if err := notifier.NotifyTaskReport(ctx, notice); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}

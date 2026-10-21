@@ -11,6 +11,7 @@ import {
   ListTodo,
   Loader2,
   MessageSquare,
+  Package,
   RadioTower,
   Server,
   Settings2,
@@ -125,6 +126,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
       label: t('tabs.reports'),
       icon: FileText,
       active: pathname.startsWith(`/console/digital-humans/${id}/reports`),
+    },
+    {
+      href: `/console/digital-humans/${id}/artifacts`,
+      label: t('tabs.artifacts'),
+      icon: Package,
+      active: pathname.startsWith(`/console/digital-humans/${id}/artifacts`),
     },
     {
       href: `/console/digital-humans/${id}/runs`,

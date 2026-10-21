@@ -2,6 +2,10 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
 import type {
   CreateDigitalHumanRequest,
+  DigitalHumanArtifact,
+  DigitalHumanArtifactList,
+  DigitalHumanArtifactParams,
+  DigitalHumanArtifactVersion,
   CreateDigitalHumanPersonaTemplateRequest,
   DigitalHumanDetail,
   DigitalHumanChannelDelivery,
@@ -582,6 +586,23 @@ class DigitalHumanService extends BaseService {
     mine = false
   ): Promise<ApiResponseData<DigitalHumanTaskReport>> {
     return this.request('post', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}/review`, request);
+  }
+
+  listArtifacts(id: string, params: DigitalHumanArtifactParams = {}): Promise<ApiResponseData<DigitalHumanArtifactList>> {
+    return this.request('get', `/digital-humans/${id}/artifacts`, undefined, { params });
+  }
+
+  getArtifact(id: string, artifactId: string): Promise<ApiResponseData<DigitalHumanArtifact>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}`);
+  }
+
+  listArtifactVersions(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactVersion[] }>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}/versions`);
+  }
+
+  // Number 0 reads the current version.
+  readArtifactContent(id: string, artifactId: string, number: number, signal?: AbortSignal) {
+    return this.request<Blob>('get', `/digital-humans/${id}/artifacts/${artifactId}/versions/${number}/content`, undefined, { responseType: 'blob', signal });
   }
 
   downloadTaskReportFile(id: string, reportId: string, fileId: string, mine = false, signal?: AbortSignal) {

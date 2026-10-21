@@ -508,6 +508,17 @@ func reportNotice(row *taskReportRow, task *automationmodel.AutomationTask) (dig
 	}
 	notice.TaskName = task.Name
 	notice.ChannelIDs = taskNotifyChannels(task)
+	notice.Shared = teamReportableTask(task) && storedTaskVisibility(task) == digitalhuman.TaskVisibilityWorkspace
+	if row.DigitalHumanRunID != nil {
+		if id, err := uuid.Parse(*row.DigitalHumanRunID); err == nil {
+			notice.RunID = &id
+		}
+	}
+	for _, ref := range row.Files {
+		if id, err := uuid.Parse(fmt.Sprint(ref["id"])); err == nil {
+			notice.FileIDs = append(notice.FileIDs, id)
+		}
+	}
 	switch digitalhuman.TaskOwnerKind(pointerValue(task.OwnerKind)) {
 	case digitalhuman.TaskOwnerUserSubject:
 		id, err := uuid.Parse(pointerValue(task.OwnerSubjectID))

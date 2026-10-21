@@ -516,6 +516,12 @@ type TaskReportNotice struct {
 	RecipientID   uuid.UUID
 	// ChannelIDs are the task's team channels that also receive the report.
 	ChannelIDs []uuid.UUID
+	// RunID is the run that produced the report, and FileIDs the run files it
+	// chose to carry (empty means all of them).
+	RunID   *uuid.UUID
+	FileIDs []uuid.UUID
+	// Shared reports whether the team can see the task.
+	Shared bool
 }
 
 // TaskReportNotifier is implemented by the in-app inbox and injected into the

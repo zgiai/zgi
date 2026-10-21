@@ -917,6 +917,55 @@ export interface DigitalHumanTaskReportSummary {
 }
 
 /** What one task run hands back (ADR 0008). */
+export type DigitalHumanArtifactKind = 'document' | 'file' | 'image' | 'table';
+
+/** One immutable version of an artifact (ADR 0009). */
+export interface DigitalHumanArtifactVersion {
+  id: string;
+  artifact_id: string;
+  number: number;
+  file_name?: string;
+  mime_type: string;
+  size: number;
+  note?: string;
+  source_kind: 'run' | 'task_report' | 'manual';
+  source_task_id?: string;
+  source_run_id?: string;
+  source_report_id?: string;
+  created_at: string;
+}
+
+/** A deliverable the digital human kept, with its current version. */
+export interface DigitalHumanArtifact {
+  id: string;
+  kind: DigitalHumanArtifactKind;
+  title: string;
+  visibility: 'owner' | 'team' | 'application';
+  owner_kind: 'account' | 'api_end_user' | 'workspace' | 'application';
+  owner_id: string;
+  source_task_id?: string;
+  current_version: number;
+  created_at: string;
+  updated_at: string;
+  latest?: DigitalHumanArtifactVersion;
+}
+
+export interface DigitalHumanArtifactList {
+  items: DigitalHumanArtifact[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DigitalHumanArtifactParams {
+  scope?: 'mine';
+  kind?: DigitalHumanArtifactKind;
+  q?: string;
+  task_id?: string;
+  page?: number;
+  page_size?: number;
+}
+
 /** A file a task report carries, downloaded through the report. */
 export interface DigitalHumanTaskReportFile {
   id: string;

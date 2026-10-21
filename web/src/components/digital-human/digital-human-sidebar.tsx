@@ -12,6 +12,7 @@ import {
   KeyRound,
   ListTodo,
   MessageSquare,
+  Package,
   RadioTower,
   Server,
   Settings2,
@@ -103,6 +104,11 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
       title: t('digitalHumans.tabs.reports'),
       href: `/console/digital-humans/${id}/reports`,
       icon: FileText,
+    },
+    {
+      title: t('digitalHumans.tabs.artifacts'),
+      href: `/console/digital-humans/${id}/artifacts`,
+      icon: Package,
     },
     {
       title: t('digitalHumans.tabs.runs'),

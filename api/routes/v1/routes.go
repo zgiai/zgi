@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/artifacts"
 	"github.com/zgiai/zgi/api/internal/container"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -258,7 +259,10 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager(), applicationErrorCatalog)
 
 	// ---------- DigitalHuman ----------
+	// Artifacts outlive the runs that produce them (ADR 0009).
+	artifactService := artifacts.NewService(db, digitalhuman.ToolFileArtifactBlobs{})
 	digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
+		Artifacts:                           artifactService,
 		DB:                                  db,
 		LLMClient:                           serviceContainer.GetLLMClient(),
 		FileService:                         serviceContainer.GetFileService(),
@@ -293,7 +297,10 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
-		automationBundle.DigitalHumanTaskReconciler.SetReportNotifier(digitalHumanReportInbox{inbox: inboxService})
+		automationBundle.DigitalHumanTaskReconciler.SetReportNotifier(reportNotifiers{
+			digitalHumanReportInbox{inbox: inboxService},
+			digitalhuman.NewArtifactReportCapture(digitalHumanRuntime.Runtime, artifactService),
+		})
 	}
 	inboxErrorProjector, err := apptransport.NewProjector(applicationErrorCatalog)
 	if err != nil {
@@ -309,7 +316,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 		Service: consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
-		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
+		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access, Artifacts: artifactService,
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 		PendingTaskChanges:      digitalhuman.NewRepository(db),

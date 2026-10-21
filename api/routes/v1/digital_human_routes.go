@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
+	"github.com/zgiai/zgi/api/internal/capabilities/artifacts"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	channelproviders "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -58,6 +59,8 @@ type DigitalHumanRouteDeps struct {
 	// PendingTaskChanges is optional. It marks personal-view tasks whose
 	// proposed change waits for the reader's approval.
 	PendingTaskChanges digitalhuman.TaskPendingChangeSource
+	// Artifacts serves the DigitalHuman's artifact center (ADR 0009).
+	Artifacts *artifacts.Service
 }
 
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
@@ -86,6 +89,8 @@ type DigitalHumanRuntimeDeps struct {
 	Tasks                               digitalhuman.TaskHandlerService
 	MemoryRetriever                     digitalhuman.DigitalHumanMemoryRetriever
 	WorkflowService                     interfaces.WorkflowService
+	// Artifacts gives runs the artifact tools when it is set.
+	Artifacts *artifacts.Service
 }
 
 // DigitalHumanRuntimeBundle keeps the model runtime and channel application
@@ -125,6 +130,9 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges).WithReportFiles(reportFiles)
 	taskHandler.RegisterRoutes(group)
 	taskHandler.RegisterReportRoutes(group)
+	if deps.Artifacts != nil {
+		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).RegisterRoutes(group)
+	}
 	if deps.NotificationChannels != nil {
 		deps.NotificationChannels.RegisterRoutes(group, "/digital-humans/:id/notification-channels", digitalHumanChannelOwner(deps.Service, errorProjector))
 		deps.NotificationChannels.RegisterChoiceRoute(group, "/team-notification-channels/options", workspaceChannelOwner(errorProjector))
@@ -161,7 +169,7 @@ func digitalHumanPermissionMiddleware(organizationService interfaces.Organizatio
 			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodePermissionDenied, apperror.WithOperation("digital_human.permission.check")))
 			return
 		}
-		if isDigitalHumanTaskCenterPath(c.FullPath()) && digitalhuman.TaskVisibilityEnabled() {
+		if (isDigitalHumanTaskCenterPath(c.FullPath()) && digitalhuman.TaskVisibilityEnabled()) || strings.Contains(c.FullPath(), "/digital-humans/:id/artifacts") {
 			manager := permission == workspacemodel.WorkspacePermissionDigitalHumanUpdate
 			if !manager {
 				manager, err = organizationService.CheckWorkspacePermission(
@@ -233,6 +241,14 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		}
 		if method == http.MethodPost && strings.HasSuffix(path, "/cancel") {
 			return workspacemodel.WorkspacePermissionDigitalHumanRun
+		}
+		return ""
+	}
+	// Artifacts are read with view permission; the artifact center decides
+	// which ones the reader sees.
+	if strings.Contains(path, "/digital-humans/:id/artifacts") {
+		if method == http.MethodGet {
+			return workspacemodel.WorkspacePermissionDigitalHumanView
 		}
 		return ""
 	}
@@ -429,7 +445,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 			memoryProvider,
 			digitalhuman.NewRelationshipMemoryRuntimeProvider(deps.DB),
 		)),
-		digitalhuman.WithTaskRuntime(digitalhuman.NewTaskRuntimeProvider(deps.Tasks)),
+		digitalhuman.WithTaskRuntime(digitalhuman.NewArtifactRuntimeProvider(digitalhuman.NewTaskRuntimeProvider(deps.Tasks), deps.Artifacts)),
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
 		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
