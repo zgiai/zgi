@@ -6,6 +6,7 @@ import {
   AppWindow,
   BrainCircuit,
   FileCode2,
+  FileText,
   History,
   House,
   KeyRound,
@@ -97,6 +98,11 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
       title: t('digitalHumans.tabs.tasks'),
       href: `/console/digital-humans/${id}/tasks`,
       icon: ListTodo,
+    },
+    {
+      title: t('digitalHumans.tabs.reports'),
+      href: `/console/digital-humans/${id}/reports`,
+      icon: FileText,
     },
     {
       title: t('digitalHumans.tabs.runs'),

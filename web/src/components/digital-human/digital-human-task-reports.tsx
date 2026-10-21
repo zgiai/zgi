@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { CheckCircle2, ChevronDown, CircleDashed, FileText, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -22,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useDigitalHumanTaskReport, useDigitalHumanTaskReportReview, useDigitalHumanTaskReports } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useInboxMutations } from '@/hooks/use-inbox';
 import { useLocale } from '@/hooks/use-locale';
+import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type { ApiResponseData } from '@/services/types/common';
@@ -97,12 +99,16 @@ export function TaskReportDetail({
   report,
   mine,
   onOpenRun,
+  stickyActions,
+  actionsExtra,
 }: {
   digitalHumanId: string;
   report: DigitalHumanTaskReport;
   mine: boolean;
   // Shows the run that produced the report in place, for readers of run logs.
   onOpenRun?: (runId: string) => void;
+  stickyActions?: boolean;
+  actionsExtra?: ReactNode;
 }) {
   const review = useDigitalHumanTaskReportReview(digitalHumanId, mine);
   const runId = report.digital_human_run_id;
@@ -110,6 +116,8 @@ export function TaskReportDetail({
     <TaskReportDetailView
       report={report}
       pending={review.isPending}
+      stickyActions={stickyActions}
+      actionsExtra={actionsExtra}
       readFile={(fileId, signal) => digitalHumanService.downloadTaskReportFile(digitalHumanId, report.id, fileId, mine, signal)}
       onOpenRun={runId && !mine && onOpenRun ? () => onOpenRun(runId) : undefined}
       onReview={async request => {
@@ -135,10 +143,15 @@ export function TaskReportDetailView({
   pending = false,
   onOpenRun,
   readFile,
+  stickyActions = false,
+  actionsExtra,
   onReview,
 }: {
   report: DigitalHumanTaskReport;
   pending?: boolean;
+  stickyActions?: boolean;
+  // Shown at the end of the action bar, such as a link to the next report.
+  actionsExtra?: ReactNode;
   onOpenRun?: () => void;
   // Reads a file the report carries through the surface's own API.
   readFile?: (fileId: string, signal?: AbortSignal) => Promise<Blob>;
@@ -228,7 +241,14 @@ export function TaskReportDetailView({
           <p className="mt-1 whitespace-pre-wrap text-sm">{report.review_feedback}</p>
         </section>
       ) : null}
-      <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2',
+          // Pinned to the bottom of a scrolling pane, so reviewing never needs
+          // a scroll past a long result.
+          stickyActions && 'sticky bottom-0 -mx-4 border-t bg-background px-4 py-3'
+        )}
+      >
         {report.can_review && report.review_state === 'new' ? (
           <Button size="sm" disabled={pending} onClick={() => void submit('accept')}>
             <CheckCircle2 className="mr-1 size-4" />
@@ -247,6 +267,7 @@ export function TaskReportDetailView({
             {t('tasks.runTrace.open')}
           </Button>
         ) : null}
+        {actionsExtra ? <div className="ml-auto flex items-center gap-2">{actionsExtra}</div> : null}
       </div>
       <Dialog open={reworkOpen} onOpenChange={setReworkOpen}>
         <DialogContent>
@@ -283,11 +304,16 @@ export function TaskReportView({
   reportId,
   mine,
   onOpenRun,
+  stickyActions,
+  withHeading = false,
 }: {
   digitalHumanId: string;
   reportId: string;
   mine: boolean;
   onOpenRun?: (runId: string) => void;
+  stickyActions?: boolean;
+  // Shows the task name with a link to the task, where nothing else does.
+  withHeading?: boolean;
 }) {
   const t = useT('digitalHumans');
   const query = useDigitalHumanTaskReport(digitalHumanId, reportId, mine);
@@ -306,7 +332,19 @@ export function TaskReportView({
     );
   }
   return report ? (
-    <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} onOpenRun={onOpenRun} />
+    <div className="space-y-4">
+      {withHeading ? (
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-base font-semibold">{report.task_name}</h3>
+          {mine ? null : (
+            <Link href={`/console/digital-humans/${digitalHumanId}/tasks?task=${report.task_id}`} className="text-xs text-primary hover:underline">
+              {t('tasks.reports.openTask')}
+            </Link>
+          )}
+        </div>
+      ) : null}
+      <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} onOpenRun={onOpenRun} stickyActions={stickyActions} />
+    </div>
   ) : (
     <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
   );
@@ -326,11 +364,14 @@ export function TaskReportFeed({
   digitalHumanId,
   mine = false,
   taskId,
+  selectedId,
   onOpen,
 }: {
   digitalHumanId: string;
   mine?: boolean;
   taskId?: string;
+  // Highlights the report open beside the list.
+  selectedId?: string | null;
   onOpen: (reportId: string) => void;
 }) {
   const t = useT('digitalHumans');
@@ -375,7 +416,12 @@ export function TaskReportFeed({
         <ul className="divide-y rounded-lg border">
           {items.map(report => (
             <li key={report.id}>
-              <button type="button" className="w-full px-4 py-3 text-left hover:bg-muted/40" onClick={() => onOpen(report.id)}>
+              <button
+                type="button"
+                aria-current={selectedId === report.id ? 'true' : undefined}
+                className={cn('w-full px-4 py-3 text-left hover:bg-muted/40', selectedId === report.id && 'bg-primary/5')}
+                onClick={() => onOpen(report.id)}
+              >
                 <div className="flex flex-wrap items-center gap-2">
                   <TaskReportOutcomeBadge outcome={report.outcome} />
                   {taskId ? null : <span className="text-sm font-medium">{report.task_name}</span>}

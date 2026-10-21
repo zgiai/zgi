@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import {
   BrainCircuit,
+  FileText,
   History,
   House,
   ListTodo,
@@ -118,6 +119,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
       label: t('tabs.tasks'),
       icon: ListTodo,
       active: pathname.startsWith(`/console/digital-humans/${id}/tasks`),
+    },
+    {
+      href: `/console/digital-humans/${id}/reports`,
+      label: t('tabs.reports'),
+      icon: FileText,
+      active: pathname.startsWith(`/console/digital-humans/${id}/reports`),
     },
     {
       href: `/console/digital-humans/${id}/runs`,

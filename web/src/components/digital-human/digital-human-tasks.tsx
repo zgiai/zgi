@@ -124,7 +124,11 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const rawPage = Number(searchParams.get('page') ?? 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= 10_000 ? rawPage : 1;
   const selectedTaskID = searchParams.get(taskParam) ?? '';
-  const tab = searchParams.get('tab') === 'reports' ? 'reports' : 'tasks';
+  // Reports moved to their own page; keep old links working.
+  const legacyReportsTab = searchParams.get('tab') === 'reports';
+  useEffect(() => {
+    if (legacyReportsTab) router.replace(`/console/digital-humans/${id}/reports`);
+  }, [id, legacyReportsTab, router]);
   const [editorTask, setEditorTask] = useState<DigitalHumanTask | null | undefined>();
   const [teamChannelsOpen, setTeamChannelsOpen] = useState(false);
   const query = useDigitalHumanTasks(id, {
@@ -212,43 +216,20 @@ export function DigitalHumanTasks({ id }: { id: string }) {
         </div>
       </div>
 
-      <div role="tablist" className="flex gap-1 border-b">
-        {(['tasks', 'reports'] as const).map(item => (
-          <button
-            key={item}
-            type="button"
-            role="tab"
-            aria-selected={tab === item}
-            className={cn(
-              '-mb-px border-b-2 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
-              tab === item && 'border-primary text-foreground',
-              tab !== item && 'border-transparent'
-            )}
-            onClick={() => updateParams({ tab: item === 'tasks' ? null : item, page: null })}
-          >
-            {item === 'tasks' ? t('tasks.reports.tasksTab') : t('tasks.reports.tab')}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'reports' ? (
-        <TaskReportFeed digitalHumanId={id} onOpen={openReport} />
-      ) : (
-      <>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
+      {/* One row of status filters with counts, instead of a card per status. */}
+      <div className="flex flex-wrap gap-2">
         {summaryStatuses.map(item => (
-          <button
+          <Button
             key={item}
-            type="button"
-            className={cn(
-              'rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:border-primary/30 hover:bg-primary/[0.02] focus-visible:ring-2 focus-visible:ring-ring',
-              status === item && 'border-primary/40 bg-primary/5'
-            )}
+            size="sm"
+            variant={status === item ? 'default' : 'outline'}
+            className="h-8 gap-1.5 rounded-full"
+            aria-pressed={status === item}
             onClick={() => updateParams({ status: status === item ? null : item, page: null })}
           >
-            <p className="text-xs text-muted-foreground">{t(`tasks.status.${item}`)}</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{counts[item] ?? 0}</p>
-          </button>
+            {t(`tasks.status.${item}`)}
+            <span className="tabular-nums opacity-70">{counts[item] ?? 0}</span>
+          </Button>
         ))}
       </div>
 
@@ -410,8 +391,6 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           </div>
         ) : null}
       </section>
-      </>
-      )}
 
       <TaskEditorDialog
         id={id}

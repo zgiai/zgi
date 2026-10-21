@@ -135,20 +135,28 @@ function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: st
             <DigitalHumanRunTimeline digitalHumanId={digitalHumanId} runId={runView} />
           </div>
         ) : report ? (
-          <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} onOpenRun={canViewLogs ? setRunView : undefined} />
+          <TaskReportDetail
+            digitalHumanId={digitalHumanId}
+            report={report}
+            mine={mine}
+            onOpenRun={canViewLogs ? setRunView : undefined}
+            stickyActions
+            actionsExtra={
+              next ? (
+                <>
+                  <span className="text-xs text-muted-foreground">{t('tasks.reports.unreadLeft', { count: queue.length })}</span>
+                  <Button size="sm" variant="outline" onClick={() => openReport(next.source_id, String(next.context.digital_human_id))}>
+                    {t('tasks.reports.nextUnread')}
+                    <ArrowRight className="size-4" />
+                  </Button>
+                </>
+              ) : null
+            }
+          />
         ) : isError ? (
           <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
         ) : null}
       </div>
-      {next ? (
-        <div className="sticky bottom-0 mt-auto flex items-center justify-between gap-2 border-t bg-background px-4 py-3">
-          <span className="text-xs text-muted-foreground">{t('tasks.reports.unreadLeft', { count: queue.length })}</span>
-          <Button size="sm" variant="outline" onClick={() => openReport(next.source_id, String(next.context.digital_human_id))}>
-            {t('tasks.reports.nextUnread')}
-            <ArrowRight className="size-4" />
-          </Button>
-        </div>
-      ) : null}
     </>
   );
 }
