@@ -45,6 +45,35 @@ func (h *ChannelHandler) RegisterRoutes(router *gin.RouterGroup, path string, re
 	group.POST("/:channel_id/test", h.handle(resolve, h.test))
 }
 
+// RegisterChoiceRoute lists the active channels of the owner resolve
+// returns, without their targets, for someone choosing where a task reports.
+func (h *ChannelHandler) RegisterChoiceRoute(router *gin.RouterGroup, path string, resolve OwnerResolver) {
+	router.GET(path, h.handle(resolve, h.choices))
+}
+
+// channelChoice is a channel as someone choosing it sees it.
+type channelChoice struct {
+	ID     uuid.UUID `json:"id"`
+	Type   string    `json:"type"`
+	Name   string    `json:"name"`
+	Events []string  `json:"events"`
+}
+
+func (h *ChannelHandler) choices(c *gin.Context, owner ChannelOwner) {
+	channels, err := h.channels.List(c.Request.Context(), owner)
+	if err != nil {
+		h.writeError(c, channelError(err, "inbox.channel.list"))
+		return
+	}
+	items := make([]channelChoice, 0, len(channels))
+	for _, channel := range channels {
+		if channel.Status == ChannelActive {
+			items = append(items, channelChoice{ID: channel.ID, Type: channel.Type, Name: channel.Name, Events: channel.Events})
+		}
+	}
+	writeData(c, gin.H{"items": items})
+}
+
 // AccountOwner resolves the signed-in account in its current organization.
 func (h *ChannelHandler) AccountOwner(c *gin.Context) (ChannelOwner, bool) {
 	organizationID, orgErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))

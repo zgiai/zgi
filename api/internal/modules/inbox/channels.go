@@ -149,6 +149,22 @@ func (s *Channels) List(ctx context.Context, owner ChannelOwner) ([]*Channel, er
 	return channels, nil
 }
 
+// ActiveWorkspaceChannels reports whether every id is an active team
+// channel of the workspace, so a task can report to it.
+func (s *Channels) ActiveWorkspaceChannels(ctx context.Context, organizationID, workspaceID uuid.UUID, ids []uuid.UUID) (bool, error) {
+	if len(ids) == 0 {
+		return true, nil
+	}
+	var count int64
+	err := s.db.WithContext(ctx).Model(&Channel{}).
+		Where("organization_id = ? AND owner_kind = ? AND owner_id = ? AND status = ? AND id IN ?", organizationID, OwnerWorkspace, workspaceID, ChannelActive, ids).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("check workspace notification channels: %w", err)
+	}
+	return count == int64(len(ids)), nil
+}
+
 // Create registers a channel. An email channel stays pending until its owner
 // enters the code sent to it. A webhook channel is active at once; its signing
 // secret is returned only here.

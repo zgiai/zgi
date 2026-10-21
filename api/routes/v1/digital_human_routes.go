@@ -125,6 +125,8 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	taskHandler.RegisterReportRoutes(group)
 	if deps.NotificationChannels != nil {
 		deps.NotificationChannels.RegisterRoutes(group, "/digital-humans/:id/notification-channels", digitalHumanChannelOwner(deps.Service, errorProjector))
+		deps.NotificationChannels.RegisterChoiceRoute(group, "/team-notification-channels/options", workspaceChannelOwner(errorProjector))
+		deps.NotificationChannels.RegisterRoutes(group, "/team-notification-channels", workspaceChannelOwner(errorProjector))
 	}
 	channelHandler.RegisterAuthenticatedRoutes(group)
 }
@@ -231,6 +233,18 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 			return workspacemodel.WorkspacePermissionDigitalHumanRun
 		}
 		return ""
+	}
+	// Team channels receive the reports of tasks shared with the workspace.
+	// Task center managers keep the list; anyone who can run a DigitalHuman
+	// may see the choices for their own task.
+	if strings.Contains(path, "/team-notification-channels") {
+		if strings.HasSuffix(path, "/options") {
+			if method == http.MethodGet {
+				return workspacemodel.WorkspacePermissionDigitalHumanRun
+			}
+			return ""
+		}
+		return workspacemodel.WorkspacePermissionDigitalHumanUpdate
 	}
 	if strings.Contains(path, "/access") || strings.Contains(path, "/api-keys") || strings.Contains(path, "/notification-channels") {
 		return workspacemodel.WorkspacePermissionDigitalHumanPublish
@@ -495,6 +509,19 @@ func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.L
 			return nil
 		},
 	})
+}
+
+// workspaceChannelOwner resolves the current workspace's team channels.
+func workspaceChannelOwner(projector *apptransport.Projector) inbox.OwnerResolver {
+	return func(c *gin.Context) (inbox.ChannelOwner, bool) {
+		organizationID, orgErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+		workspaceID, workspaceErr := uuid.Parse(strings.TrimSpace(util.GetWorkspaceID(c)))
+		if orgErr != nil || workspaceErr != nil {
+			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodeRequestInvalid, apperror.WithOperation("digital_human.notification_channel.workspace")))
+			return inbox.ChannelOwner{}, false
+		}
+		return inbox.ChannelOwner{OrganizationID: organizationID, WorkspaceID: &workspaceID, Kind: inbox.OwnerWorkspace, ID: workspaceID}, true
+	}
 }
 
 // digitalHumanChannelOwner resolves the DigitalHuman whose webhook channels

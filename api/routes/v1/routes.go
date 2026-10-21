@@ -288,6 +288,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	inboxService := inbox.NewService(db)
 	notificationChannels, notificationDispatcher := newNotificationChannels(inboxService, db, serviceContainer.GetDigitalHumanCredentialCipher(),
 		serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetTaskManager())
+	if automationBundle.DigitalHumanTasks != nil {
+		automationBundle.DigitalHumanTasks.SetNotifyChannels(notificationChannels)
+	}
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
 		automationBundle.DigitalHumanTaskReconciler.SetReportNotifier(digitalHumanReportInbox{inbox: inboxService})

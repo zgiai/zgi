@@ -36,6 +36,8 @@ type Service struct {
 	dispatcher RunDispatcher
 	now        func() time.Time
 	runner     automationaction.DigitalHumanRunnerProvider
+	// notifyChannels checks the team channels a task reports to.
+	notifyChannels digitalhuman.TaskNotifyChannels
 }
 
 func NewService(db *gorm.DB, dispatcher RunDispatcher, runner automationaction.DigitalHumanRunnerProvider) *Service {
@@ -224,6 +226,20 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 	ownerKind, ownerSubjectKind, ownerSubjectID, ownerConversationID := storedOwner(access.Owner)
 	originSurface := strings.TrimSpace(access.Surface)
 	visibility := string(digitalhuman.DefaultTaskVisibility(access.Owner.Kind))
+	if len(req.NotifyChannelIDs) > 0 {
+		ids, err := normalizeNotifyChannels(req.NotifyChannelIDs)
+		if err != nil {
+			return nil, err
+		}
+		if access.Owner.Kind != digitalhuman.TaskOwnerDigitalHuman || access.Surface != digitalhuman.SurfaceConsole ||
+			visibility != string(digitalhuman.TaskVisibilityWorkspace) {
+			return nil, digitalhuman.ErrInvalidRequest
+		}
+		if err := s.checkNotifyChannels(ctx, access.OrganizationID.String(), access.WorkspaceID.String(), ids); err != nil {
+			return nil, err
+		}
+		delivery = withNotifyChannels(delivery, ids)
+	}
 	task := &automationmodel.AutomationTask{
 		OrganizationID: access.OrganizationID.String(), WorkspaceID: access.WorkspaceID.String(), Name: strings.TrimSpace(req.Name),
 		TaskKind: automationmodel.AutomationTaskKindDigitalHuman, SubjectType: stringPointer(subjectTypeDigitalHuman), SubjectID: &subjectID,
@@ -302,6 +318,7 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			return digitalhuman.ErrTaskConflict
 		}
 		changes := map[string]any{}
+		currentChannels := taskNotifyChannels(task)
 		if req.Visibility != nil {
 			if !slices.Contains(digitalhuman.TaskVisibilityOptions(digitalhuman.TaskOwnerKind(pointerValue(task.OwnerKind))), *req.Visibility) {
 				return digitalhuman.ErrInvalidRequest
@@ -417,6 +434,20 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			}
 			task.DeliveryConfig, changes["delivery_mode"] = cfg, *req.DeliveryMode
 		}
+		channels := currentChannels
+		if req.NotifyChannelIDs != nil {
+			if channels, err = s.changeNotifyChannels(ctx, task, access, currentChannels, *req.NotifyChannelIDs); err != nil {
+				return err
+			}
+		}
+		// A task withdrawn from its workspace stops reporting to team channels.
+		if storedTaskVisibility(task) != digitalhuman.TaskVisibilityWorkspace {
+			channels = nil
+		}
+		if !slices.Equal(channels, currentChannels) {
+			changes["notify_channel_ids"] = channels
+		}
+		task.DeliveryConfig = withNotifyChannels(task.DeliveryConfig, channels)
 		task.Revision++
 		task.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(task, s.now())
@@ -836,6 +867,7 @@ func publicTaskForAccess(row *automationmodel.AutomationTask, access digitalhuma
 	}
 	task.CanChange = access.CurrentTaskID != nil || taskCenterManager(access) || taskRequestedBy(row, access)
 	task.VisibilityOptions = taskVisibilityChoices(row, access)
+	task.NotifyChannelAccess = notifyChannelAccess(row, access)
 	return task, nil
 }
 
@@ -897,7 +929,7 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 		return nil, fmt.Errorf("invalid stored digital human task owner")
 	}
 	mode := deliveryMode(row.DeliveryConfig)
-	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.LastRunStatus != nil {
 		result.LastRunStatus = *row.LastRunStatus
 	}

@@ -17,6 +17,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Webhook,
   XCircle,
 } from 'lucide-react';
 import { isAxiosError } from 'axios';
@@ -55,6 +56,9 @@ import { digitalHumanChannelProvider } from '@/components/digital-human/digital-
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import { TaskLatestReport, TaskReportFeed, TaskReportSheet } from '@/components/digital-human/digital-human-task-reports';
+import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
+import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
+import { TEAM_NOTIFICATION_CHANNELS_PATH } from '@/services/notification-channel.service';
 import { useLocale } from '@/hooks/use-locale';
 import {
   useDigitalHumanTaskDetail,
@@ -120,6 +124,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const tab = searchParams.get('tab') === 'reports' ? 'reports' : 'tasks';
   const selectedReportID = searchParams.get('report');
   const [editorTask, setEditorTask] = useState<DigitalHumanTask | null | undefined>();
+  const [teamChannelsOpen, setTeamChannelsOpen] = useState(false);
   const query = useDigitalHumanTasks(id, {
     page,
     query: deferredSearch.trim() || undefined,
@@ -188,6 +193,12 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             <RefreshCw className={cn('size-4', query.isFetching && 'animate-spin')} />
             {t('common.refresh')}
           </Button>
+          {canUpdate ? (
+            <Button variant="outline" size="sm" onClick={() => setTeamChannelsOpen(true)}>
+              <Webhook className="size-4" />
+              {t('tasks.destinations.manage')}
+            </Button>
+          ) : null}
           {canUpdate ? (
             <Button size="sm" onClick={() => setEditorTask(null)}>
               <Plus className="size-4" />
@@ -426,6 +437,19 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           if (!open) setSelectedTaskID();
         }}
       />
+      {canUpdate ? (
+        <Sheet open={teamChannelsOpen} onOpenChange={setTeamChannelsOpen}>
+          <SheetContent side="right" className="w-[min(560px,100vw)] max-w-none overflow-y-auto sm:max-w-none">
+            <SheetHeader className="text-left">
+              <SheetTitle>{t('tasks.destinations.manage')}</SheetTitle>
+              <SheetDescription>{t('tasks.destinations.manageDescription')}</SheetDescription>
+            </SheetHeader>
+            <div className="mt-4">
+              <NotificationChannelManager basePath={TEAM_NOTIFICATION_CHANNELS_PATH} types={['webhook']} />
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </main>
   );
 }
@@ -605,6 +629,33 @@ function TaskDetailSheet({
     }
   };
 
+  // The requester chooses the team channels of their shared task; a task
+  // manager may only remove them. The server enforces both.
+  const changeChannels = async (channelIds: string[]) => {
+    if (!open || !task?.notify_channel_access || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    try {
+      const latest = await detail.task.refetch();
+      if (latest.isError || !latest.data?.data || latest.data.data.id !== taskId) {
+        toast.error(t('tasks.loadError'));
+        return;
+      }
+      if (latest.data.data.revision !== task.revision) {
+        toast.error(t('tasks.actionStale'));
+        return;
+      }
+      await mutations.update.mutateAsync({
+        taskId,
+        request: { expected_revision: latest.data.data.revision, notify_channel_ids: channelIds },
+      });
+      toast.success(t('tasks.destinations.updated'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
+  };
+
   // Visibility belongs to task center managers, including for tasks another
   // account requested. The server reports it per task, because it also
   // depends on whether task visibility is enabled.
@@ -700,6 +751,7 @@ function TaskDetailSheet({
                   }
                 />
               </section>
+              <TaskReportDestinations task={task} onChange={changeChannels} />
               {(task.success_criteria ?? []).length ? (
                 <section>
                   <h3 className="text-sm font-semibold">{t('tasks.fields.successCriteria')}</h3>

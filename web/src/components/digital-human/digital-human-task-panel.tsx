@@ -40,6 +40,7 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import { translateTimezone } from '@/utils/timezone';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
 import { TaskLatestReport, TaskPanelReports, type TaskReportClient } from '@/components/digital-human/digital-human-task-reports';
+import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import type {
   CreateDigitalHumanTaskRequest,
@@ -288,6 +289,21 @@ export function DigitalHumanTaskPanel({
         visibility,
       });
       toast.success(t('tasks.visibilityControl.updated'));
+      await load();
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('tasks.loadError'));
+      await load();
+    }
+  };
+
+  const changeChannels = async (channelIds: string[]) => {
+    if (!selected) return;
+    try {
+      await clientRef.current.update(selected.id, {
+        expected_revision: selected.revision,
+        notify_channel_ids: channelIds,
+      });
+      toast.success(t('tasks.destinations.updated'));
       await load();
     } catch (error) {
       toast.error(getErrorMessage(error) || t('tasks.loadError'));
@@ -589,6 +605,7 @@ export function DigitalHumanTaskPanel({
               onCancelEdit={() => setEditing(false)}
               onAction={action}
               onChangeVisibility={changeVisibility}
+              onChangeChannels={changeChannels}
               reportClient={client.reports}
               onReportsChanged={() => void load()}
               allowProposalApproval
@@ -622,6 +639,7 @@ export function DigitalHumanTaskPanel({
                 onCancelEdit={() => setEditing(false)}
                 onAction={action}
                 onChangeVisibility={changeVisibility}
+                onChangeChannels={changeChannels}
                 reportClient={client.reports}
                 onReportsChanged={() => void load()}
                 allowProposalApproval={false}
@@ -700,6 +718,7 @@ function TaskDetailContent({
   onCancelEdit,
   onAction,
   onChangeVisibility,
+  onChangeChannels,
   reportClient,
   onReportsChanged,
   allowProposalApproval,
@@ -718,6 +737,7 @@ function TaskDetailContent({
   onCancelEdit: () => void;
   onAction: (name: string) => Promise<void>;
   onChangeVisibility: (visibility: DigitalHumanTaskVisibility) => Promise<void>;
+  onChangeChannels: (channelIds: string[]) => Promise<void>;
   reportClient?: TaskReportClient;
   onReportsChanged?: () => void;
   allowProposalApproval: boolean;
@@ -785,6 +805,7 @@ function TaskDetailContent({
         <p className="mt-1 text-sm text-muted-foreground">{selected.goal}</p>
       </div>
       <TaskShareRow task={selected} onChange={onChangeVisibility} />
+      <TaskReportDestinations task={selected} onChange={onChangeChannels} requesterView={title === 'my'} />
       <div className="flex flex-wrap gap-2">
         <Badge>{t(`tasks.status.${digitalHumanTaskDisplayStatus(selected)}`)}</Badge>
         {allowDirectMutations && selected.work_status === 'proposed' && allowProposalApproval ? (

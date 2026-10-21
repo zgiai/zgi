@@ -825,6 +825,10 @@ export interface DigitalHumanTask {
   pending_change?: DigitalHumanTaskPendingChange;
   /** The newest final report of the task. */
   latest_report?: DigitalHumanTaskReportSummary;
+  /** Team channels that also receive this task's reports. */
+  notify_channel_ids?: string[];
+  /** The requester manages the team channels; a task manager may only remove them. */
+  notify_channel_access?: 'manage' | 'remove';
   name: string;
   goal: string;
   success_criteria: string[];
@@ -868,6 +872,7 @@ export interface CreateDigitalHumanTaskRequest {
   delivery_mode?: 'task_only' | 'source_conversation';
   execution_timeout_seconds?: number;
   max_attempts?: number;
+  notify_channel_ids?: string[];
 }
 
 export type UpdateDigitalHumanTaskRequest = Partial<CreateDigitalHumanTaskRequest> & {
@@ -923,7 +928,7 @@ export interface DigitalHumanTaskReport {
   outcome: DigitalHumanTaskReportOutcome;
   summary: string;
   body?: string;
-  criteria: { criterion: string; status: DigitalHumanTaskCriterionStatus; note?: string }[];
+  criteria: Array<{ criterion: string; status: DigitalHumanTaskCriterionStatus; note?: string }>;
   issues?: string;
   source: 'report_tool' | 'system';
   final: boolean;

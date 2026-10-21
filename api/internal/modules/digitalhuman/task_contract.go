@@ -292,8 +292,34 @@ type Task struct {
 	// enabled. On a task someone else requested it holds only narrower
 	// options, because widening would share that requester's work.
 	VisibilityOptions []TaskVisibility `json:"visibility_options,omitempty"`
-	CreatedAt         time.Time        `json:"created_at"`
-	UpdatedAt         time.Time        `json:"updated_at"`
+	// NotifyChannelIDs are the team channels this task's reports are also
+	// sent to. Only a task visible to its workspace may have them.
+	NotifyChannelIDs []uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// NotifyChannelAccess says how this reader may change NotifyChannelIDs:
+	// the requester manages them, a task center manager may only remove.
+	NotifyChannelAccess TaskNotifyChannelAccess `json:"notify_channel_access,omitempty"`
+	CreatedAt           time.Time               `json:"created_at"`
+	UpdatedAt           time.Time               `json:"updated_at"`
+}
+
+// TaskNotifyChannelAccess is how a reader may change a task's team channels.
+type TaskNotifyChannelAccess string
+
+const (
+	// TaskNotifyChannelsManage lets the requester add and remove channels.
+	TaskNotifyChannelsManage TaskNotifyChannelAccess = "manage"
+	// TaskNotifyChannelsRemove lets a manager stop a task from reporting to a
+	// channel without choosing new destinations for someone else's work.
+	TaskNotifyChannelsRemove TaskNotifyChannelAccess = "remove"
+)
+
+// MaxTaskNotifyChannels bounds the team channels one task reports to.
+const MaxTaskNotifyChannels = 5
+
+// TaskNotifyChannels checks that team notification channels exist. It is
+// implemented by the notification channels and injected into the task service.
+type TaskNotifyChannels interface {
+	ActiveWorkspaceChannels(ctx context.Context, organizationID, workspaceID uuid.UUID, ids []uuid.UUID) (bool, error)
 }
 
 // TaskListQuery contains bounded task filters.
@@ -333,6 +359,8 @@ type CreateTaskRequest struct {
 	DeliveryMode            TaskDeliveryMode `json:"delivery_mode,omitempty"`
 	ExecutionTimeoutSeconds int              `json:"execution_timeout_seconds,omitempty"`
 	MaxAttempts             int              `json:"max_attempts,omitempty"`
+	// NotifyChannelIDs are team channels that also receive the task's reports.
+	NotifyChannelIDs []uuid.UUID `json:"notify_channel_ids,omitempty"`
 }
 
 // UpdateTaskRequest updates a task using optimistic concurrency.
@@ -352,6 +380,8 @@ type UpdateTaskRequest struct {
 	MaxAttempts             *int    `json:"max_attempts,omitempty"`
 	// Visibility may be changed only by a task center manager.
 	Visibility *TaskVisibility `json:"visibility,omitempty"`
+	// NotifyChannelIDs replaces the team channels that receive the reports.
+	NotifyChannelIDs *[]uuid.UUID `json:"notify_channel_ids,omitempty"`
 }
 
 // TaskAction identifies an explicit lifecycle operation.
@@ -481,6 +511,8 @@ type TaskReportNotice struct {
 	// api_end_user); RecipientID is that subject.
 	RecipientKind string
 	RecipientID   uuid.UUID
+	// ChannelIDs are the task's team channels that also receive the report.
+	ChannelIDs []uuid.UUID
 }
 
 // TaskReportNotifier is implemented by the in-app inbox and injected into the

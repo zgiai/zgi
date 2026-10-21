@@ -104,6 +104,7 @@ func (n digitalHumanReportInbox) NotifyTaskReport(ctx context.Context, notice di
 		Link: "/console/digital-humans/" + notice.DigitalHumanID.String() + "/tasks?report=" + notice.ReportID.String(),
 		Context: map[string]any{
 			"digital_human_id": notice.DigitalHumanID.String(), "task_id": notice.TaskID.String(), "outcome": string(notice.Outcome),
+			"channel_ids": notice.ChannelIDs,
 		},
 	})
 	return err

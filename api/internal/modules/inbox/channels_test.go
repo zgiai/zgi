@@ -199,3 +199,46 @@ func TestNotificationsReachSubscribedChannelsSigned(t *testing.T) {
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+func TestTaskTeamChannelsStayInTheirWorkspace(t *testing.T) {
+	service, channels, _, _, queued := newChannelFixture(t)
+	ctx := t.Context()
+	organization, workspace, elsewhere := uuid.New(), uuid.New(), uuid.New()
+	team := func(id uuid.UUID) *Channel {
+		t.Helper()
+		channel, _, err := channels.Create(ctx, ChannelOwner{OrganizationID: organization, WorkspaceID: &id, Kind: OwnerWorkspace, ID: id}, uuid.New(),
+			ChannelInput{Type: ChannelWebhook, Target: "https://hooks.example/" + id.String(), Events: []string{EventTaskReport}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return channel
+	}
+	ours, theirs := team(workspace), team(elsewhere)
+	if ok, err := channels.ActiveWorkspaceChannels(ctx, organization, workspace, []uuid.UUID{ours.ID}); err != nil || !ok {
+		t.Fatalf("own channel = %v, %v", ok, err)
+	}
+	if ok, err := channels.ActiveWorkspaceChannels(ctx, organization, workspace, []uuid.UUID{ours.ID, theirs.ID}); err != nil || ok {
+		t.Fatalf("another workspace's channel = %v, %v", ok, err)
+	}
+	disabled := false
+	if _, err := channels.Update(ctx, ChannelOwner{OrganizationID: organization, WorkspaceID: &workspace, Kind: OwnerWorkspace, ID: workspace}, ours.ID, ChannelUpdate{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := channels.ActiveWorkspaceChannels(ctx, organization, workspace, []uuid.UUID{ours.ID}); ok {
+		t.Fatal("a disabled channel was accepted")
+	}
+	enabled := true
+	if _, err := channels.Update(ctx, ChannelOwner{OrganizationID: organization, WorkspaceID: &workspace, Kind: OwnerWorkspace, ID: workspace}, ours.ID, ChannelUpdate{Enabled: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.Notify(ctx, NotifyRequest{Recipient: Recipient{OrganizationID: organization, Kind: RecipientAccount, ID: uuid.New()}, WorkspaceID: &workspace,
+		Event: "digital_human.task_report", SourceType: "digital_human_task_report", SourceID: uuid.New(), Title: "Weekly", Summary: "Done",
+		Context: map[string]any{"channel_ids": []uuid.UUID{ours.ID, theirs.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	var deliveries []Delivery
+	if err := service.db.Find(&deliveries).Error; err != nil || len(*queued) != 1 || len(deliveries) != 1 || deliveries[0].ChannelID != ours.ID {
+		t.Fatalf("deliveries = %#v, queued %d, %v", deliveries, len(*queued), err)
+	}
+}

@@ -501,6 +501,7 @@ func reportNotice(row *taskReportRow, task *automationmodel.AutomationTask) (dig
 		return notice, false
 	}
 	notice.TaskName = task.Name
+	notice.ChannelIDs = taskNotifyChannels(task)
 	switch digitalhuman.TaskOwnerKind(pointerValue(task.OwnerKind)) {
 	case digitalhuman.TaskOwnerUserSubject:
 		id, err := uuid.Parse(pointerValue(task.OwnerSubjectID))

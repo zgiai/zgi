@@ -20,6 +20,17 @@ export interface NotificationChannel {
   secret?: string;
 }
 
+/** A team channel as someone choosing where a task reports sees it. */
+export interface NotificationChannelChoice {
+  id: string;
+  type: NotificationChannelType;
+  name: string;
+  events: NotificationChannelEvent[];
+}
+
+/** Team channels of the current workspace, kept by task center managers. */
+export const TEAM_NOTIFICATION_CHANNELS_PATH = '/team-notification-channels';
+
 export interface NotificationChannelInput {
   type: NotificationChannelType;
   name?: string;
@@ -66,6 +77,10 @@ class NotificationChannelService extends BaseService {
 
   rotateSecret(basePath: string, id: string): Promise<ApiResponseData<{ secret: string }>> {
     return this.request('post', `${basePath}/${id}/rotate-secret`, {});
+  }
+
+  teamChoices(): Promise<ApiResponseData<{ items: NotificationChannelChoice[] }>> {
+    return this.request('get', `${TEAM_NOTIFICATION_CHANNELS_PATH}/options`);
   }
 
   test(basePath: string, id: string): Promise<ApiResponseData<{ sent: boolean; error?: string }>> {

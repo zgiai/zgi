@@ -91,7 +91,8 @@ func eventKey(event string) string {
 // recipients; an API end user's notification goes to the webhook of the
 // DigitalHuman whose task it is. Extra channels named by the notification's
 // context, such as a team channel chosen for a task, are added when they
-// belong to the same organization and subscribe to the event.
+// are team channels of the notification's workspace and subscribe to the
+// event.
 func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error {
 	key := eventKey(notification.Event)
 	if key == "" {
@@ -115,19 +116,11 @@ func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error
 			return fmt.Errorf("find notification channels: %w", err)
 		}
 	}
-	if raw, ok := meta["channel_ids"].([]any); ok && len(raw) > 0 {
-		ids := make([]uuid.UUID, 0, len(raw))
-		for _, value := range raw {
-			if id, err := uuid.Parse(fmt.Sprint(value)); err == nil {
-				ids = append(ids, id)
-			}
-		}
-		var extra []*Channel
-		if err := d.db.WithContext(ctx).Where("organization_id = ? AND status = ? AND id IN ?", notification.OrganizationID, ChannelActive, ids).Find(&extra).Error; err != nil {
-			return fmt.Errorf("find task notification channels: %w", err)
-		}
-		candidates = append(candidates, extra...)
+	extra, err := d.teamChannels(ctx, notification, meta)
+	if err != nil {
+		return err
 	}
+	candidates = append(candidates, extra...)
 	seen := map[uuid.UUID]bool{}
 	now := d.now()
 	for _, channel := range candidates {
@@ -145,6 +138,27 @@ func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error
 		}
 	}
 	return nil
+}
+
+// teamChannels finds the team channels named by a notification's context.
+// Only active channels of the notification's own workspace qualify.
+func (d *Dispatcher) teamChannels(ctx context.Context, notification *Notification, meta map[string]any) ([]*Channel, error) {
+	raw, _ := meta["channel_ids"].([]any)
+	ids := make([]uuid.UUID, 0, len(raw))
+	for _, value := range raw {
+		if id, err := uuid.Parse(fmt.Sprint(value)); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 || notification.WorkspaceID == nil {
+		return nil, nil
+	}
+	var channels []*Channel
+	if err := d.db.WithContext(ctx).Where("organization_id = ? AND owner_kind = ? AND owner_id = ? AND status = ? AND id IN ?",
+		notification.OrganizationID, OwnerWorkspace, *notification.WorkspaceID, ChannelActive, ids).Find(&channels).Error; err != nil {
+		return nil, fmt.Errorf("find task notification channels: %w", err)
+	}
+	return channels, nil
 }
 
 // Deliver attempts one delivery. It returns an error while a retry may still
