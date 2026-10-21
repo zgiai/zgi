@@ -47,6 +47,7 @@ interface InputAreaProps {
   currentRuntimeModel?: ImageRuntimeModel;
   topNotice?: React.ReactNode;
   referenceImage?: ImageReferenceAttachment | null;
+  hasReferenceContext?: boolean;
   onReferenceImageChange?: (image: ImageReferenceAttachment | null) => void;
 }
 
@@ -63,6 +64,7 @@ export function InputArea({
   currentRuntimeModel,
   topNotice,
   referenceImage,
+  hasReferenceContext = false,
   onReferenceImageChange,
 }: InputAreaProps) {
   const t = useT('webapp');
@@ -255,13 +257,13 @@ export function InputArea({
             isIcon
             className={cn(
               'h-8 w-8 rounded-full ml-1 transition-all',
-              (input.trim() || referenceImage) && !isPromptTooLong
+              (input.trim() || referenceImage || hasReferenceContext) && !isPromptTooLong
                 ? 'bg-primary text-white hover:bg-primary-hover'
                 : 'bg-muted text-muted-foreground'
             )}
             onClick={handleSend}
             disabled={
-              (!input.trim() && !referenceImage) ||
+              (!input.trim() && !referenceImage && !hasReferenceContext) ||
               isPromptTooLong ||
               isSending ||
               isReferenceUploading ||
@@ -395,6 +397,11 @@ function mapImageRuntimeModelToModelItem(item: ImageRuntimeModel): ModelItem {
   return {
     id: `${item.provider}/${item.model}`,
     provider: item.provider,
+    // Runtime models are projected into the same platform-model shape used by
+    // ModelSelector. Platform aggregation groups by the logical vendor and
+    // intentionally skips entries without one, so preserve the provider as a
+    // vendor fallback for both Cloud and custom-channel runtime models.
+    vendor: item.provider,
     model: item.model,
     model_name: label,
     family: item.model,

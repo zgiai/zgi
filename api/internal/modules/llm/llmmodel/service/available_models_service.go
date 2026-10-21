@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
@@ -43,10 +44,14 @@ const AgentRuntimeUseCase = "agent-runtime"
 // Aligned with ModelHub structure for consistency
 type AvailableModel struct {
 	// Basic info
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"model"`
-	DisplayName string    `json:"model_name"`
-	Provider    string    `json:"provider"`
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"model"`
+	DisplayName  string    `json:"model_name"`
+	Provider     string    `json:"provider"`
+	Vendor       string    `json:"vendor,omitempty"`
+	VendorName   string    `json:"vendor_name,omitempty"`
+	VendorCNName string    `json:"vendor_cn_name,omitempty"`
+	VendorENName string    `json:"vendor_en_name,omitempty"`
 
 	// Pricing
 	Currency                    string          `json:"currency"`
@@ -411,11 +416,16 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		if !visibility.Allows(m.Provider) {
 			continue
 		}
-		// Contract: every model must have provider + use_cases
-		if m.Provider == "" || len(m.UseCases) == 0 {
+		// Contract: every model must have provider + a usable capability label.
+		// Endpoint flags are also accepted because older catalog publications may
+		// not have had their use_cases array backfilled yet.
+		if m.Provider == "" {
 			continue
 		}
-		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Model, m.UseCases)
+		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Model, modelUseCases(m))
+		if len(effectiveUseCases) == 0 {
+			continue
+		}
 		if !modelMatchesAvailableUseCase(effectiveUseCases, useCase) {
 			continue
 		}
@@ -467,6 +477,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Name:            m.Model,
 			DisplayName:     m.ModelName,
 			Provider:        m.Provider,
+			Vendor:          catalogvendor.Lookup(m.Provider, m.Model),
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
 			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
@@ -558,6 +569,11 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Capabilities:        capabilities,
 			Video:               videoFromCapabilities(capabilities),
 		}
+		if metadata, ok := catalogvendor.LookupMetadata(am.Vendor); ok {
+			am.VendorName = metadata.VendorName
+			am.VendorCNName = metadata.CNName
+			am.VendorENName = metadata.ENName
+		}
 
 		// Apply tenant custom display name if set
 		if cfg, ok := tenantEntry.configs[m.ID]; ok && cfg.CustomDisplayName != "" {
@@ -610,11 +626,29 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		if !visibility.Allows(m.Provider) {
 			continue
 		}
-		// Contract: every model must have provider + use_cases
-		if m.Provider == "" || len(m.UseCases) == 0 {
+		// Endpoint flags are accepted for legacy custom models whose use_cases
+		// metadata was not populated when the model was created.
+		if m.Provider == "" {
 			continue
 		}
-		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Name, types.StringArray(m.UseCases))
+		customUseCases := append([]string(nil), []string(m.UseCases)...)
+		customUseCases = append(customUseCases, model.InferUseCasesFromEndpoints(model.ModelEndpoints{
+			ChatCompletions:  m.ChatCompletions,
+			Responses:        m.Responses,
+			Realtime:         m.Realtime,
+			Assistants:       m.Assistants,
+			Embeddings:       m.Embeddings,
+			ImageGeneration:  m.ImageGeneration,
+			Vision:           m.SupportsVision,
+			SpeechGeneration: m.SpeechGeneration,
+			Transcription:    m.Transcription,
+			Translation:      m.Translation,
+			Moderation:       m.Moderation,
+		})...)
+		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Name, types.StringArray(model.NormalizeUseCases(customUseCases)))
+		if len(effectiveUseCases) == 0 {
+			continue
+		}
 		if !modelMatchesAvailableUseCase(effectiveUseCases, useCase) {
 			continue
 		}
@@ -648,6 +682,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			Name:            m.Name,
 			DisplayName:     m.DisplayName,
 			Provider:        m.Provider,
+			IsCustom:        true,
 			ContextWindow:   m.ContextWindow,
 			MaxOutputTokens: m.MaxOutputTokens,
 			InputModalities: cloneJSONArray(m.InputModalities), OutputModalities: cloneJSONArray(m.OutputModalities),
@@ -666,6 +701,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
 			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
 			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
+			Pricing:                     cloneRawJSON(m.Pricing),
 
 			// ModelHub-aligned nested structures (aligned with global models)
 			Endpoints: model.ModelEndpoints{
@@ -1051,6 +1087,32 @@ func containsUseCase(useCases types.StringArray, target string) bool {
 	return false
 }
 
+// modelUseCases returns canonical use cases while preserving compatibility
+// with legacy catalog rows that only stored endpoint capability booleans.
+func modelUseCases(m *model.LLMModel) types.StringArray {
+	if m == nil {
+		return nil
+	}
+	values := append([]string(nil), []string(m.UseCases)...)
+	values = append(values, model.InferUseCasesFromEndpoints(model.ModelEndpoints{
+		ChatCompletions:  m.ChatCompletions,
+		Responses:        m.Responses,
+		Realtime:         m.Realtime,
+		Assistants:       m.Assistants,
+		Embeddings:       m.Embeddings,
+		ImageGeneration:  m.ImageGeneration,
+		ImageEdit:        m.ImageEdit,
+		Vision:           m.SupportsVision,
+		SpeechGeneration: m.SpeechGeneration,
+		Transcription:    m.Transcription,
+		Translation:      m.Translation,
+		Moderation:       m.Moderation,
+		Videos:           m.Videos,
+		MusicGeneration:  m.MusicGeneration,
+	})...)
+	return types.StringArray(model.NormalizeUseCases(values))
+}
+
 func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, modelName, useCase string, useCases types.StringArray, customModel bool) bool {
 	if !modelMatchesAvailableUseCase(useCases, useCase) {
 		return false
@@ -1062,7 +1124,16 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 			continue
 		}
 		official := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
-		if !route.SupportsModelForProvider(modelProvider, modelName) {
+		// Mirror ChannelRouter.filterRoutesForSelection: a tenant custom model is
+		// served only by a private route. An official route that happens to
+		// advertise the same logical model name must not make the tenant's
+		// custom provider/model record appear available, otherwise disabling the
+		// private route still leaves the model in the session selector even
+		// though invocation rejects it (no candidate route).
+		if customModel && official {
+			continue
+		}
+		if !route.SupportsPlatformModel(modelProvider, modelName) {
 			continue
 		}
 		if !requiresAgentProtocol {

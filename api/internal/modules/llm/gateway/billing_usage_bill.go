@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ var usageBillUpsertColumns = []string{
 	"quota_subject_id",
 	"model_id",
 	"model_name",
+	"operation",
 	"provider_id",
 	"provider_name",
 	"route_id",
@@ -134,6 +136,9 @@ func (b *BillingService) buildUsageBill(
 
 	promptTokens, cacheReadTokens, cacheWriteTokens, completionTokens, totalTokens := usageBillTokens(bc, status)
 	officialPoints, privatePoints := usageBillPoints(bc, status, billingLane)
+	// Media records must always carry both source labels; normalize before the
+	// snapshot is frozen so the columns and the snapshot agree.
+	pricingSource, usageSource := normalizeMediaUsageBillSources(bc)
 	pricingSnapshot := bc.PricingSnapshot
 	if len(pricingSnapshot) == 0 || string(pricingSnapshot) == "null" {
 		pricingSnapshot = datatypes.JSON([]byte("{}"))
@@ -167,6 +172,7 @@ func (b *BillingService) buildUsageBill(
 		QuotaSubjectID:    quotaSubjectID,
 		ModelID:           bc.ModelID,
 		ModelName:         strings.TrimSpace(bc.ModelName),
+		Operation:         string(bc.PricingOperation),
 		ProviderID:        bc.ProviderID,
 		ProviderName:      strings.TrimSpace(bc.ProviderName),
 		RouteID:           normalizedUUIDPtr(bc.RouteID),
@@ -180,11 +186,11 @@ func (b *BillingService) buildUsageBill(
 		CacheWriteTokens:  cacheWriteTokens,
 		CompletionTokens:  completionTokens,
 		TotalTokens:       totalTokens,
-		OfficialPoints:    officialPoints,
-		PrivatePoints:     privatePoints,
-		TotalPoints:       officialPoints + privatePoints,
-		PricingSource:     bc.PricingSource,
-		UsageSource:       bc.UsageSource,
+		OfficialPoints:    millipoints.MilliPoints(officialPoints),
+		PrivatePoints:     millipoints.MilliPoints(privatePoints),
+		TotalPoints:       millipoints.MilliPoints(officialPoints + privatePoints),
+		PricingSource:     pricingSource,
+		UsageSource:       usageSource,
 		PricingSnapshot:   pricingSnapshot,
 		ResponseTimeMS:    maxInt64(bc.ResponseTime, 0),
 		ErrorCode:         errorCode,

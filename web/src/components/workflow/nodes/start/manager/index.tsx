@@ -7,7 +7,6 @@ import { Plus, Trash2, GripVertical, AlertCircle, Edit } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { InputVar, SystemVariable } from '../../../types/input-var';
 import { validateInputVar, SYSTEM_VARIABLES } from '../../../types/input-var';
-import type { StartNodeData } from '../../../store/type';
 import VariableEditModal from './variable-edit-modal';
 import { AgentType } from '@/services/types/agent';
 import { useT } from '@/i18n';
@@ -83,7 +82,7 @@ const VariableItem: React.FC<VariableItemProps> = ({
         {hasErrors && (
           <div className="text-sm text-red-600">
             {errors.map((error, i) => (
-              <div key={i}>• {t(`${error.code}` as any, error.params as any)}</div>
+              <div key={i}>• {t(error.code, error.params)}</div>
             ))}
           </div>
         )}
@@ -99,8 +98,8 @@ interface SystemVariableItemProps {
 const SystemVariableItem: React.FC<SystemVariableItemProps> = ({ variable }) => {
   const t = useT('nodes');
   // Get translated label and description
-  const label = t(variable.label as any);
-  const description = t(variable.description as any);
+  const label = t(variable.label);
+  const description = t(variable.description);
 
   return (
     <Card title={description}>

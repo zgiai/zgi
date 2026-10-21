@@ -51,7 +51,7 @@ func newNativeCommentaryState(model string, metadata map[string]interface{}) *na
 	return state
 }
 
-func (s *nativeCommentaryState) classify(content string, calls []adapter.ToolCall, toolSet *skills.NativeToolSet) nativeCommentaryDecision {
+func (s *nativeCommentaryState) classify(content string, calls []adapter.ToolCall, toolSet *skills.NativeToolSet, runtimeTools ...RuntimeTool) nativeCommentaryDecision {
 	if s == nil {
 		s = newNativeCommentaryState("", nil)
 	}
@@ -64,7 +64,7 @@ func (s *nativeCommentaryState) classify(content string, calls []adapter.ToolCal
 		totalTokens: s.totalTokens,
 	}
 
-	business, controlsOnly := nativeCommentaryCallKinds(calls, toolSet)
+	business, controlsOnly := nativeCommentaryCallKinds(calls, toolSet, runtimeTools...)
 	switch {
 	case !business && !controlsOnly:
 		decision.reason = nativeCommentaryRejectNoBusinessTool
@@ -74,7 +74,7 @@ func (s *nativeCommentaryState) classify(content string, calls []adapter.ToolCal
 		decision.reason = nativeCommentaryRejectCountLimit
 	case s.totalTokens+tokens > nativeCommentaryTurnTokenLimit:
 		decision.reason = nativeCommentaryRejectTurnBudget
-	case nativeCommentaryContainsInternalIdentifier(text, calls, toolSet):
+	case nativeCommentaryContainsInternalIdentifier(text, calls, toolSet, runtimeTools...):
 		decision.reason = nativeCommentaryRejectInternalIdentity
 	default:
 		decision.disposition = nativeCommentaryDispositionProcess
@@ -90,7 +90,7 @@ func (s *nativeCommentaryState) classify(content string, calls []adapter.ToolCal
 	return decision
 }
 
-func nativeCommentaryCallKinds(calls []adapter.ToolCall, toolSet *skills.NativeToolSet) (business bool, controlsOnly bool) {
+func nativeCommentaryCallKinds(calls []adapter.ToolCall, toolSet *skills.NativeToolSet, runtimeTools ...RuntimeTool) (business bool, controlsOnly bool) {
 	if len(calls) == 0 {
 		return false, false
 	}
@@ -103,6 +103,13 @@ func nativeCommentaryCallKinds(calls []adapter.ToolCall, toolSet *skills.NativeT
 	controlsOnly = true
 	for _, call := range calls {
 		name := strings.ToLower(strings.TrimSpace(call.Function.Name))
+		if _, ok := runtimeToolForCall(runtimeTools, call); ok {
+			controlsOnly = false
+			if _, err := skills.ParseArguments(call.Function.Arguments); err == nil {
+				business = true
+			}
+			continue
+		}
 		if _, ok := bindings[name]; ok {
 			controlsOnly = false
 			if _, err := skills.ParseArguments(call.Function.Arguments); err == nil {
@@ -132,7 +139,7 @@ func nativeCommentaryControlTool(name string) bool {
 	}
 }
 
-func nativeCommentaryContainsInternalIdentifier(content string, calls []adapter.ToolCall, toolSet *skills.NativeToolSet) bool {
+func nativeCommentaryContainsInternalIdentifier(content string, calls []adapter.ToolCall, toolSet *skills.NativeToolSet, runtimeTools ...RuntimeTool) bool {
 	if nativeCommentaryUUIDPattern.MatchString(content) {
 		return true
 	}
@@ -154,6 +161,9 @@ func nativeCommentaryContainsInternalIdentifier(content string, calls []adapter.
 	}
 	for _, call := range calls {
 		identifiers = append(identifiers, call.ID, call.Function.Name)
+	}
+	for _, runtimeTool := range runtimeTools {
+		identifiers = append(identifiers, runtimeTool.SkillID, runtimeTool.Definition.Function.Name)
 	}
 	if toolSet != nil {
 		identifiers = append(identifiers, toolSet.ActiveSkillIDs...)

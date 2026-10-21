@@ -33,6 +33,29 @@ func (s *agentsService) GetPublishedAgentRuntimeConfig(ctx context.Context, agen
 	return s.publishedAgentRuntimeConfig(ctx, ag, false, false, false)
 }
 
+// Only an authenticated continuation may select an immutable historical version.
+// Ordinary turns continue to resolve the latest published configuration.
+func (s *agentsService) getPublishedAgentRuntimeConfigAtVersion(ctx context.Context, agentID, publication uuid.UUID) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	ag, err := s.agentsRepo.GetByID(ctx, agentID.String())
+	if err != nil {
+		return nil, err
+	}
+	reader, ok := s.agentsRepo.(interface {
+		getAgentPublishedVersionByUUID(context.Context, uuid.UUID, uuid.UUID) (*AgentPublishedVersion, error)
+	})
+	if !ok || ag == nil || ag.ID != agentID || ag.AgentsType != "AGENT" || publication == uuid.Nil {
+		return nil, errAgentWebAppNotPublished
+	}
+	version, err := reader.getAgentPublishedVersionByUUID(ctx, agentID, publication)
+	if err != nil {
+		return nil, err
+	}
+	if version == nil || version.DeletedAt != nil || version.AgentID != ag.ID || version.WorkspaceID != ag.TenantID || version.VersionUUID != publication {
+		return nil, errAgentWebAppNotPublished
+	}
+	return s.agentRuntimeConfigForPublishedVersion(ctx, ag, version, true, "")
+}
+
 func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Agent, requireActiveWebApp bool, requireWebAppSurface bool, failOnOrganizationError bool) (*dto.AgentWebAppRuntimeConfigResponse, error) {
 	if ag == nil {
 		return nil, fmt.Errorf("agent not found")
@@ -59,6 +82,10 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 	if version == nil {
 		return nil, errAgentWebAppNotPublished
 	}
+	return s.agentRuntimeConfigForPublishedVersion(ctx, ag, version, failOnOrganizationError, "")
+}
+
+func (s *agentsService) agentRuntimeConfigForPublishedVersion(ctx context.Context, ag *Agent, version *AgentPublishedVersion, failOnOrganizationError bool, bindingAccountID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
 	workspaceID := ag.TenantID.String()
 	organizationID := workspaceID
 	if s.enterpriseService != nil {
@@ -73,6 +100,9 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 		}
 	}
 	cfg := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	cfg.ConnectorTargetScope = "published"
+	cfg.ConnectorTargetVersionID = version.VersionUUID.String()
+	cfg.ConnectorBindings = nil
 	if indexed, _ := version.ConfigSnapshot["binding_indexed"].(bool); indexed {
 		if s.agentBindings == nil {
 			return nil, fmt.Errorf("agent binding index is not configured")
@@ -86,7 +116,7 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 			return nil, err
 		}
 		applyAgentBindingAuthorizationsFromRows(cfg, rows)
-		cfg.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, "", cfg, rows)
+		cfg.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, bindingAccountID, cfg, rows)
 		cfg.BindingRevision = agentBindingRevision(rows)
 		cfg = configResponsePtr(filterAgentConfigByBindingHealth(*cfg))
 	}
@@ -159,6 +189,11 @@ func (s *agentsService) GetWebAppRuntimeCapability(ctx context.Context, webAppID
 		decision = surface.Evaluate(runtimeauth.RuntimeAudience{})
 	}
 	privateAudienceEnabled := webAppSurfaceHasPrivateAudience(surface)
+	publishedConfig := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	if ok && !authenticated && publishedConfig != nil && agentWebAppRequiresLogin(*publishedConfig) {
+		decision.Allowed = false
+		decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonLoginRequired)
+	}
 	if ok && !decision.Allowed && privateAudienceEnabled {
 		if !authenticated {
 			decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonLoginRequired)

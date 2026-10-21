@@ -15,13 +15,13 @@ func TestAuthoritativeQuoteFloatRoundTripDoesNotIncreaseCredits(t *testing.T) {
 		for _, tokens := range tokenCounts {
 			quotedUSD := price.Mul(decimal.NewFromInt(int64(tokens))).Div(oneMillion)
 			quotedCredits := creditsFromUSD(quotedUSD)
-			derivedPrice, resolved, err := deriveAuthoritativeTokenPrice(quotedUSD.InexactFloat64(), tokens)
+			derivedPrice, resolved, err := deriveAuthoritativeTokenPrice(quotedUSD, tokens)
 			if err != nil || !resolved {
 				t.Fatalf("derive price=%s tokens=%d: resolved=%v err=%v", priceText, tokens, resolved, err)
 			}
 			roundTripCredits := creditsFromUSD(derivedPrice.Mul(decimal.NewFromInt(int64(tokens))).Div(oneMillion))
 			if roundTripCredits > quotedCredits {
-				t.Fatalf("float round trip increased credits: price=%s tokens=%d quoted=%d roundtrip=%d usd=%s float=%.18g derived=%s", priceText, tokens, quotedCredits, roundTripCredits, quotedUSD, quotedUSD.InexactFloat64(), derivedPrice)
+				t.Fatalf("decimal round trip increased credits: price=%s tokens=%d quoted=%d roundtrip=%d usd=%s derived=%s", priceText, tokens, quotedCredits, roundTripCredits, quotedUSD, derivedPrice)
 			}
 		}
 	}
@@ -41,11 +41,11 @@ func TestAuthoritativeDualQuoteFloatRoundTripDoesNotIncreaseCredits(t *testing.T
 					outputUSD := outputPrice.Mul(decimal.NewFromInt(int64(completionTokens))).Div(oneMillion)
 					quotedCredits := creditsFromUSD(inputUSD.Add(outputUSD))
 
-					derivedInput, _, err := deriveAuthoritativeTokenPrice(inputUSD.InexactFloat64(), promptTokens)
+					derivedInput, _, err := deriveAuthoritativeTokenPrice(inputUSD, promptTokens)
 					if err != nil {
 						t.Fatalf("derive input price=%s tokens=%d: %v", inputPriceText, promptTokens, err)
 					}
-					derivedOutput, _, err := deriveAuthoritativeTokenPrice(outputUSD.InexactFloat64(), completionTokens)
+					derivedOutput, _, err := deriveAuthoritativeTokenPrice(outputUSD, completionTokens)
 					if err != nil {
 						t.Fatalf("derive output price=%s tokens=%d: %v", outputPriceText, completionTokens, err)
 					}
@@ -53,7 +53,7 @@ func TestAuthoritativeDualQuoteFloatRoundTripDoesNotIncreaseCredits(t *testing.T
 						Add(derivedOutput.Mul(decimal.NewFromInt(int64(completionTokens))).Div(oneMillion))
 					roundTripCredits := creditsFromUSD(roundTripUSD)
 					if roundTripCredits > quotedCredits {
-						t.Fatalf("dual float round trip increased credits: input=%s/%d output=%s/%d quoted=%d roundtrip=%d", inputPriceText, promptTokens, outputPriceText, completionTokens, quotedCredits, roundTripCredits)
+						t.Fatalf("dual decimal round trip increased credits: input=%s/%d output=%s/%d quoted=%d roundtrip=%d", inputPriceText, promptTokens, outputPriceText, completionTokens, quotedCredits, roundTripCredits)
 					}
 				}
 			}

@@ -1,0 +1,87 @@
+# syntax=docker/dockerfile:1
+
+# E2B package-install template. Keep this file separate from the offline
+# template because E2B Build System 2.0 does not expose Docker build args in
+# the CLI. The immutable snapshot therefore carries the package capability.
+FROM python:3.13-slim-bookworm
+
+ARG NODE_VERSION=22.23.3
+ARG NODE_SHA256=df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl xz-utils && \
+    curl --fail --silent --show-error --location \
+      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+      --output /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum --check --strict && \
+    tar --extract --xz --file /tmp/node.tar.xz --directory /usr/local --strip-components=1 && \
+    rm -f /tmp/node.tar.xz && \
+    apt-get purge -y --auto-remove curl xz-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY e2b-template-build/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent
+COPY e2b-template-build/zgi /usr/local/bin/zgi
+COPY scripts/agent-runtime-e2b-bootstrap.sh /usr/local/bin/zgi-runtime-agent-bootstrap
+COPY scripts/zgi-apt-get /usr/local/bin/apt-get
+COPY scripts/zgi-apt-get /usr/local/bin/apt
+COPY profiles/cc-codex-standard/apt-packages.txt /opt/zgi-profile/apt-packages.txt
+COPY profiles/cc-codex-standard/requirements.lock /opt/zgi-profile/requirements.lock
+COPY profiles/cc-codex-standard/package.json profiles/cc-codex-standard/pnpm-lock.yaml /opt/zgi-profile/
+COPY profiles/cc-codex-standard/verify.py profiles/cc-codex-standard/verify-node.mjs /opt/zgi-profile/
+COPY profiles/cc-codex-standard/resources/ /opt/zgi-profile/resources/
+
+RUN chmod 0755 /usr/local/bin/zgi-runtime-agent /usr/local/bin/zgi-runtime-agent-bootstrap /usr/local/bin/apt-get /usr/local/bin/apt && \
+    groupadd --gid 65532 zgi-runtime && \
+    useradd --uid 65532 --gid 65532 --create-home --home-dir /home/zgi-runtime \
+      --shell /usr/sbin/nologin zgi-runtime && \
+    mkdir -p /workspace /run/zgi-agent /etc/zgi && \
+    echo '[global]' > /etc/zgi/pip.conf && \
+    echo 'index-url = https://pypi.org/simple' >> /etc/zgi/pip.conf && \
+    echo 'disable-pip-version-check = true' >> /etc/zgi/pip.conf && \
+    echo 'Dir::Etc::sourcelist "/etc/apt/sources.list.d/zgi-controlled.sources";' > /etc/zgi/apt.conf && \
+    echo 'Dir::Etc::sourceparts "-";' >> /etc/zgi/apt.conf && \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources && \
+    echo 'Types: deb' > /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'URIs: https://deb.debian.org/debian' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Suites: bookworm bookworm-updates' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Components: main' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo '' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Types: deb' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'URIs: https://security.debian.org/debian-security' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Suites: bookworm-security' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    echo 'Components: main' >> /etc/apt/sources.list.d/zgi-controlled.sources && \
+    if [ -d /etc/apt ]; then sed -i 's#http://deb.debian.org#https://deb.debian.org#g; s#http://security.debian.org#https://security.debian.org#g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true; fi && \
+    /usr/bin/apt-get update && xargs -r /usr/bin/apt-get install -y --no-install-recommends < /opt/zgi-profile/apt-packages.txt && \
+    python -m pip install --no-cache-dir --break-system-packages -r /opt/zgi-profile/requirements.lock && \
+    export COREPACK_HOME=/opt/corepack && corepack enable pnpm && corepack prepare pnpm@10.27.0 --activate && cd /opt/zgi-profile && pnpm install --prod --frozen-lockfile && \
+    python verify.py && NODE_PATH=/opt/zgi-profile/node_modules node verify-node.mjs && \
+    mkdir -p /usr/lib/zgi && mv /usr/bin/apt-get /usr/lib/zgi/apt-get.real && mv /usr/bin/apt /usr/lib/zgi/apt.real && \
+    cp /usr/local/bin/apt-get /usr/bin/apt-get && cp /usr/local/bin/apt /usr/bin/apt && \
+    chown -R 65532:65532 /workspace /run/zgi-agent /home/zgi-runtime
+
+ENV HOME=/home/zgi-runtime \
+    COREPACK_HOME=/opt/corepack \
+    PATH=/opt/zgi-profile/node_modules/.bin:/usr/local/bin:/usr/bin:/bin \
+    NODE_PATH=/opt/zgi-profile/node_modules \
+    PYTHONDONTWRITEBYTECODE=1 \
+    XML_CATALOG_FILES=/opt/zgi-profile/resources/xml/catalog.xml \
+    ZGI_RUNTIME_AGENT_WORKSPACE=/workspace \
+    ZGI_RUNTIME_AGENT_LISTEN=tcp://0.0.0.0:49984 \
+    ZGI_RUNTIME_AGENT_NETWORK_MODE=package-install \
+    ZGI_RUNTIME_AGENT_EGRESS_MODE=direct \
+    ZGI_RUNTIME_AGENT_JOB_UID=65532 \
+    ZGI_RUNTIME_AGENT_JOB_GID=65532 \
+    ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_ENABLED=true \
+    ZGI_RUNTIME_AGENT_DEPENDENCY_PREPARATION_MODE=offline-bundled \
+    ZGI_RUNTIME_AGENT_DEPENDENCY_INSTALLATION_ENABLED=true \
+    ZGI_RUNTIME_AGENT_PACKAGE_NETWORK_MODE=package-install \
+    ZGI_RUNTIME_AGENT_PACKAGE_LISTEN=unix:///run/zgi-agent/package.sock \
+    ZGI_RUNTIME_AGENT_APT_PATH=/usr/lib/zgi/apt-get.real \
+    ZGI_RUNTIME_AGENT_TOKEN_FILE=/run/zgi-agent/bootstrap-token
+
+# The Runtime Agent is the only process allowed to execute the guarded apt
+# helper. Jobs are explicitly switched to UID/GID 65532 by the agent.
+USER root
+WORKDIR /workspace
+EXPOSE 49984
+ENTRYPOINT ["/usr/local/bin/zgi-runtime-agent-bootstrap"]

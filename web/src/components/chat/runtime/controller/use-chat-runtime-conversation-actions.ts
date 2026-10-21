@@ -427,18 +427,21 @@ export function useChatRuntimeConversationActions({
           ),
           messagesByConversation: {
             ...current.messagesByConversation,
-            [conversationId]: targetMessageId
-              ? messages.map(message =>
-                  message.id === targetMessageId
-                    ? {
-                        ...message,
-                        answer: liveStreaming?.answer || message.answer,
-                        status: 'stopped' as const,
-                        updated_at: stoppedAt,
-                      }
-                    : message
-                )
-              : messages,
+            [conversationId]: messages.map(message => ({
+              ...message,
+              ...(message.id === targetMessageId
+                ? {
+                    answer: liveStreaming?.answer || message.answer,
+                    status: 'stopped' as const,
+                    updated_at: stoppedAt,
+                  }
+                : {}),
+              runtime_inputs: message.runtime_inputs?.map(input =>
+                input.status === 'pending' || input.status === 'queued_follow_up'
+                  ? { ...input, status: 'canceled' as const }
+                  : input
+              ),
+            })),
           },
           streamingByMessageId: nextStreamingByMessageId,
           recoveringByConversation: {

@@ -105,6 +105,9 @@ func TestSandboxScriptRunnerLegacyCommandFlow(t *testing.T) {
 	if fake.uploadValidateManifest {
 		t.Fatalf("legacy upload should not validate skill manifest")
 	}
+	if !fake.uploadSkillPackage {
+		t.Fatal("legacy upload should request Skill package limits")
+	}
 	if fake.deleted != 1 {
 		t.Fatalf("deleted sandboxes = %d, want 1", fake.deleted)
 	}
@@ -180,6 +183,9 @@ func TestSandboxScriptRunnerManifestFlowUsesExecSkill(t *testing.T) {
 	}
 	if !fake.uploadValidateManifest {
 		t.Fatalf("manifest upload should request validation")
+	}
+	if !fake.uploadSkillPackage {
+		t.Fatal("manifest upload should request Skill package limits")
 	}
 	if fake.treeRequests != 0 {
 		t.Fatalf("tree requests = %d, want 0 for manifest artifacts", fake.treeRequests)
@@ -262,6 +268,13 @@ func TestSandboxScriptRunnerManifestInputFilesUploadToInputsAndStdin(t *testing.
 	}
 	if fake.uploadArchiveRequests != 2 {
 		t.Fatalf("upload archive requests = %d, want skill package and input files", fake.uploadArchiveRequests)
+	}
+	if fake.uploadSkillPackageRequests != 1 || fake.uploadValidateManifestRequests != 1 {
+		t.Fatalf(
+			"skill package uploads=%d manifest validation uploads=%d, want one package upload and one generic input upload",
+			fake.uploadSkillPackageRequests,
+			fake.uploadValidateManifestRequests,
+		)
 	}
 	if !fake.archiveNames["inputs/confirmation/original.xlsx"] {
 		t.Fatalf("archive names = %#v, want sanitized input file path", fake.archiveNames)
@@ -772,6 +785,135 @@ func TestSandboxScriptRunnerUsesReadyFallbackWhenRuntimeBuildsDisabled(t *testin
 	}
 }
 
+func TestSandboxScriptRunnerUsesPrebuiltProfileWhenDependencyScanDisabled(t *testing.T) {
+	root := writePythonScenarioSkill(t, "import copy\nprint(copy.deepcopy({'ok': True}))")
+
+	dependencyBuildRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"language": "python3",
+				"profiles": []map[string]interface{}{
+					{"name": "scientific-data", "version": "2026.09.14", "status": "ready", "enabled": true, "languages": []string{"python3"}},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandbox/dependencies/builds":
+			dependencyBuildRequests++
+			t.Fatalf("unexpected dynamic dependency build request")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			request := readJSONBody(t, r)
+			if request["dependency_profile"] != "scientific-data" {
+				t.Fatalf("dependency profile = %#v, want scientific-data", request["dependency_profile"])
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_test"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			request := readJSONBody(t, r)
+			manifestContent := archiveFileContent(t, request["archive_base64"].(string), "skill.manifest.json")
+			if !strings.Contains(manifestContent, `"dependency_profile":"scientific-data"`) {
+				t.Fatalf("uploaded manifest = %s, want scientific-data profile", manifestContent)
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"file_count": 3})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/command":
+			writeSandboxOK(t, w, map[string]interface{}{"stdout": "ok\n", "error": "", "exit_code": 0, "duration_ms": 1, "truncated": false, "command": "python3"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/files/tree":
+			writeSandboxOK(t, w, map[string]interface{}{"items": []map[string]interface{}{}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_test":
+			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  server.URL,
+		FallbackDependencyProfile: "scientific-data",
+		DependencyScanDisabled:    true,
+	})
+	if _, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_1"); err != nil {
+		t.Fatalf("run skill script: %v", err)
+	}
+	if dependencyBuildRequests != 0 {
+		t.Fatalf("dynamic dependency build requests = %d, want 0", dependencyBuildRequests)
+	}
+}
+
+func TestSandboxScriptRunnerKeepsStdlibForNodeWhenDependencyScanDisabled(t *testing.T) {
+	root := writeNodeManifestSkill(t)
+	if err := os.WriteFile(filepath.Join(root, "scripts", "run.js"), []byte("const yaml = require('yaml'); console.log(JSON.stringify({ok: Boolean(yaml)}));\n"), 0o600); err != nil {
+		t.Fatalf("write Node script: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sandbox/dependencies":
+			if r.URL.Query().Get("language") != "nodejs" {
+				t.Fatalf("dependency catalog language = %q, want nodejs", r.URL.Query().Get("language"))
+			}
+			writeSandboxOK(t, w, map[string]interface{}{
+				"language": "nodejs",
+				"profiles": []map[string]interface{}{
+					{"name": "stdlib", "version": "2026.09.14", "status": "ready", "enabled": true, "languages": []string{"nodejs"}},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandbox/dependencies/builds":
+			t.Fatal("unexpected dynamic dependency build request")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+			request := readJSONBody(t, r)
+			if request["dependency_profile"] != "stdlib" {
+				t.Fatalf("dependency profile = %#v, want stdlib", request["dependency_profile"])
+			}
+			writeSandboxOK(t, w, map[string]interface{}{"id": "sbx_node"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/files/upload-archive":
+			writeSandboxOK(t, w, map[string]interface{}{"file_count": 2})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/exec/skill":
+			writeSandboxOK(t, w, map[string]interface{}{
+				"command": map[string]interface{}{
+					"stdout":      "{\"ok\":true}\n",
+					"error":       "",
+					"exit_code":   0,
+					"duration_ms": 1,
+					"truncated":   false,
+					"command":     "node",
+				},
+				"artifact_manifests": []map[string]interface{}{},
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/sandboxes/sbx_node":
+			writeSandboxOK(t, w, map[string]interface{}{"deleted": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  server.URL,
+		FallbackDependencyProfile: "scientific-data",
+		DependencyScanDisabled:    true,
+	})
+	if _, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_node"); err != nil {
+		t.Fatalf("run Node skill script: %v", err)
+	}
+}
+
+func TestSandboxScriptRunnerRequiresPrebuiltProfileWhenDependencyScanDisabled(t *testing.T) {
+	root := writePythonScenarioSkill(t, "print('ok')")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected sandbox request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:               server.URL,
+		DependencyScanDisabled: true,
+	})
+	_, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_1")
+	if err == nil || !strings.Contains(err.Error(), "prebuilt dependency profile is not configured") {
+		t.Fatalf("RunSkillScript() error = %v, want missing prebuilt profile error", err)
+	}
+}
+
 func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
 	root := writePythonScenarioSkill(t, "import json\nimport pandas as pd\nprint('ok')")
 	if !skillPackageHasDependencyHints(root) {
@@ -781,6 +923,35 @@ func TestSkillPackageDependencyHintsDetectThirdPartyImports(t *testing.T) {
 	stdlibRoot := writePythonScenarioSkill(t, "import json\nfrom pathlib import Path\nprint(Path('.'))")
 	if skillPackageHasDependencyHints(stdlibRoot) {
 		t.Fatal("did not expect stdlib-only Python imports to trigger dependency prepare")
+	}
+
+	localRoot := writePythonScenarioSkill(t, "from zgi_local.main import run\nprint(run())")
+	if err := os.MkdirAll(filepath.Join(localRoot, "scripts", "zgi_local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localRoot, "scripts", "zgi_local", "main.py"), []byte("def run(): return 'ok'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if skillPackageHasDependencyHints(localRoot) {
+		t.Fatal("did not expect bundled Python imports to trigger dependency prepare")
+	}
+
+	nodeLocalRoot := writeNodeManifestSkill(t)
+	if err := os.WriteFile(filepath.Join(nodeLocalRoot, "scripts", "run.js"), []byte("const {value} = require('./local'); const fs = require('node:fs'); const hooks = require('async_hooks'); const inspector = require('inspector/promises'); console.log(value, fs, hooks, inspector);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nodeLocalRoot, "scripts", "local.js"), []byte("module.exports = 'ok';\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if skillPackageHasDependencyHints(nodeLocalRoot) {
+		t.Fatal("did not expect relative Node imports to trigger dependency prepare")
+	}
+
+	if err := os.WriteFile(filepath.Join(nodeLocalRoot, "scripts", "run.js"), []byte("const {read} = require('xlsx'); console.log(read);\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !skillPackageHasDependencyHints(nodeLocalRoot) {
+		t.Fatal("expected bare Node import to trigger dependency prepare")
 	}
 }
 
@@ -1081,7 +1252,10 @@ func TestSandboxScriptRunnerReturnsStructuredSandboxError(t *testing.T) {
 	defer server.Close()
 
 	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
-	err := runner.uploadArchive(context.Background(), "sbx_test", "archive", ExecutionContext{}, true)
+	err := runner.uploadArchive(context.Background(), "sbx_test", "archive", ExecutionContext{}, archiveUploadOptions{
+		skillPackage:          true,
+		validateSkillManifest: true,
+	})
 	if err == nil {
 		t.Fatal("expected sandbox request error")
 	}
@@ -1228,7 +1402,10 @@ func TestSandboxScriptRunnerDoesNotRetryNonIdempotentUpload(t *testing.T) {
 	defer server.Close()
 
 	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{Endpoint: server.URL})
-	err := runner.uploadArchive(context.Background(), "sbx_test", "archive", ExecutionContext{}, true)
+	err := runner.uploadArchive(context.Background(), "sbx_test", "archive", ExecutionContext{}, archiveUploadOptions{
+		skillPackage:          true,
+		validateSkillManifest: true,
+	})
 	if err == nil {
 		t.Fatal("expected upload error")
 	}
@@ -1260,6 +1437,63 @@ func TestSandboxScriptRunnerRealSandboxE2E(t *testing.T) {
 	}
 	if !messagesContainArtifacts(result.Messages) {
 		t.Fatalf("expected real sandbox artifact message, got %+v", result.Messages)
+	}
+}
+
+func TestSandboxScriptRunnerRealSandboxPrebuiltDependencyProfile(t *testing.T) {
+	endpoint := strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_ENDPOINT"))
+	if endpoint == "" {
+		t.Skip("set ZGI_SANDBOX_E2E_ENDPOINT to run prebuilt dependency profile E2E")
+	}
+	profile := strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_PREBUILT_PROFILE"))
+	if profile == "" {
+		profile = "scientific-data"
+	}
+	root := writePythonScenarioSkill(t, `
+import copy
+import json
+import lifelines
+import networkx
+import numpy
+import openpyxl
+import pandas
+import scipy
+import sklearn
+import statsmodels
+import xlrd
+
+print(json.dumps({
+    "ok": copy.deepcopy({"value": True})["value"],
+    "versions": {
+        "lifelines": lifelines.__version__,
+        "networkx": networkx.__version__,
+        "numpy": numpy.__version__,
+        "openpyxl": openpyxl.__version__,
+        "pandas": pandas.__version__,
+        "scipy": scipy.__version__,
+        "sklearn": sklearn.__version__,
+        "statsmodels": statsmodels.__version__,
+        "xlrd": xlrd.__version__,
+    },
+}, sort_keys=True))
+`)
+	manifest := `{"entrypoint":"scripts/run.py","language":"python3","timeout_ms":120000,"allowed_artifact_paths":["artifacts"],"max_artifact_count":1,"max_artifact_bytes":1048576,"result_mode":"mixed"}`
+	if err := os.WriteFile(filepath.Join(root, "skill.manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	runner := NewSandboxScriptRunner(SandboxScriptRunnerConfig{
+		Endpoint:                  endpoint,
+		APIKey:                    strings.TrimSpace(os.Getenv("ZGI_SANDBOX_E2E_API_KEY")),
+		FallbackDependencyProfile: profile,
+		DependencyScanDisabled:    true,
+	})
+	result, err := runner.RunSkillScript(context.Background(), scriptSkillDocument(root), map[string]interface{}{}, ExecutionContext{}, "call_prebuilt")
+	if err != nil {
+		t.Fatalf("run skill with prebuilt dependency profile: %v", err)
+	}
+	if len(result.Messages) == 0 || result.Messages[0].Type != tools.ToolInvokeMessageTypeJSON || result.Messages[0].Data["ok"] != true {
+		t.Fatalf("result messages = %#v, want JSON success", result.Messages)
 	}
 }
 
@@ -1539,25 +1773,28 @@ type fakeSandboxServer struct {
 
 	server *httptest.Server
 
-	commandStdout            string
-	commandStderr            string
-	commandExitCode          int
-	manifestArtifacts        []sandboxFileManifest
-	failManifestUpload       bool
-	archiveNames             map[string]bool
-	archiveContainsBackslash bool
-	uploadArchiveRequests    int
-	uploadValidateManifest   bool
-	lastCommand              map[string]interface{}
-	lastSkill                map[string]interface{}
-	lastSandboxCreate        map[string]interface{}
-	commandRequests          int
-	skillRequests            int
-	dependencyPrepareStatus  string
-	dependencyBuildStatus    string
-	dependencyBuildProfile   string
-	treeRequests             int
-	deleted                  int
+	commandStdout                  string
+	commandStderr                  string
+	commandExitCode                int
+	manifestArtifacts              []sandboxFileManifest
+	failManifestUpload             bool
+	archiveNames                   map[string]bool
+	archiveContainsBackslash       bool
+	uploadArchiveRequests          int
+	uploadSkillPackage             bool
+	uploadSkillPackageRequests     int
+	uploadValidateManifest         bool
+	uploadValidateManifestRequests int
+	lastCommand                    map[string]interface{}
+	lastSkill                      map[string]interface{}
+	lastSandboxCreate              map[string]interface{}
+	commandRequests                int
+	skillRequests                  int
+	dependencyPrepareStatus        string
+	dependencyBuildStatus          string
+	dependencyBuildProfile         string
+	treeRequests                   int
+	deleted                        int
 }
 
 type fakeSkillArtifactPersister struct {
@@ -1698,8 +1935,16 @@ func (f *fakeSandboxServer) handle(w http.ResponseWriter, r *http.Request) {
 func (f *fakeSandboxServer) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 	f.uploadArchiveRequests++
 	body := readJSONBody(f.t, r)
+	skillPackage, _ := body["skill_package"].(bool)
+	f.uploadSkillPackage = skillPackage
+	if skillPackage {
+		f.uploadSkillPackageRequests++
+	}
 	validate, _ := body["validate_skill_manifest"].(bool)
 	f.uploadValidateManifest = validate
+	if validate {
+		f.uploadValidateManifestRequests++
+	}
 	if validate && f.failManifestUpload {
 		writeSandboxEnvelopeWithMessage(w, http.StatusBadRequest, -400, "invalid skill manifest")
 		return

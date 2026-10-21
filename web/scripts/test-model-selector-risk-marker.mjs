@@ -56,7 +56,7 @@ assert.match(
 );
 assert.match(
   files.modelSelector,
-  /data-model-warning=\{selectedModelWarning \? 'true' : undefined\}/,
+  /data-model-warning=\{effectiveSelectedModelWarning \? 'true' : undefined\}/,
   'the model selector trigger should expose its warning state for accessibility and browser tests'
 );
 assert.match(
@@ -75,8 +75,23 @@ const triggerClassNames = files.modelSelector.match(
 )?.[1];
 assert.ok(triggerClassNames, 'the model selector trigger should compose semantic class names');
 assert.ok(
-  triggerClassNames.indexOf('className') < triggerClassNames.indexOf('selectedModelWarning'),
+  triggerClassNames.indexOf('className') < triggerClassNames.indexOf('effectiveSelectedModelWarning'),
   'the warning border and background should override neutral classes supplied by callers'
+);
+assert.match(
+  files.modelSelector,
+  /isModelPricingConfigured/,
+  'the model selector should detect models without configured sale pricing'
+);
+assert.match(
+  files.modelSelector,
+  /pricingMissingWarning[\s\S]*models\.selector\.pricingMissingHint/,
+  'the model selector should surface a pricing reminder for unpriced selections'
+);
+assert.match(
+  files.modelSelector,
+  /href="\/dashboard\/provider"/,
+  'admins should be able to jump to model management from the pricing reminder'
 );
 
 console.log('model selector risk marker regression checks passed');

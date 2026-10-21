@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -47,10 +49,14 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
+	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, resp); err != nil {
+		return nil, err
+	}
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
-	rows, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
+	rows, bindingRevision, bindingHealth, err := s.draftBindingStateForConfig(ctx, ag, resp, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -66,10 +72,14 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
+	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, resp); err != nil {
+		return nil, err
+	}
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
-	rows, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
+	rows, bindingRevision, bindingHealth, err := s.draftBindingStateForConfig(ctx, ag, resp, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -148,11 +158,14 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	}
 	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
 	previous := agentConfigResponse(ag.ID.String(), cfg)
+	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, previous); err != nil {
+		return nil, err
+	}
 	if runtimeReq.AgentMemorySlots != nil {
 		previous.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 		previous.AgentMemoryConfigRevision = agentMemoryConfigRevision(previous.AgentMemoryEnabled, previous.AgentMemoryAutoExtractionEnabled, previous.AgentMemorySlots)
 	}
-	previousRows, currentRevision, currentHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
+	previousRows, currentRevision, currentHealth, err := s.draftBindingStateForConfig(ctx, ag, previous, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +212,8 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 		}
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
-	resp.BindingRevision = agentBindingRevision(rows)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
+	resp.BindingRevision = agentBindingRevisionWithConnectors(rows, resp.ConnectorBindings)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, rows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
@@ -242,6 +256,10 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 	if stale == nil {
 		return nil, nil, fmt.Errorf("agent draft config is required")
 	}
+	staleConfig := agentConfigResponse(ag.ID.String(), stale)
+	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, staleConfig); err != nil {
+		return nil, nil, err
+	}
 	candidate := *stale
 	if _, err := applyAgentConfigRequestToDraft(&candidate, req, accountID); err != nil {
 		return nil, nil, err
@@ -250,11 +268,15 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 	if err != nil {
 		return nil, nil, err
 	}
+	staleRows, err := s.bindingRowsForConfig(ctx, ag, staleConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
 	var saved *AgentsConfig
 	var savedRows []agentbindings.Binding
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		bindingRepo := s.agentBindings.WithTx(tx)
-		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingMutationResourceRefs(staleRows, candidateRows)); err != nil {
 			return err
 		}
 		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
@@ -280,7 +302,13 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		if err := query.First(&current).Error; err != nil {
 			return err
 		}
+		txService := *s
+		txService.db = tx
+		txService.agentBindings = bindingRepo
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		if err := txService.projectOwnedAgentConnectorBindings(ctx, tx, ag, accountID, currentConfig); err != nil {
+			return err
+		}
 		var memoryService *agentmemory.Service
 		if s.agentMemoryService != nil || req.AgentMemorySlots != nil {
 			memoryService = agentmemory.NewService(tx)
@@ -313,7 +341,7 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		}
 		currentRows = preserveAgentBindingEvidence(currentRows, existing)
 		applyAgentBindingAuthorizationsFromRows(currentConfig, currentRows)
-		currentRevision := agentBindingRevision(currentRows)
+		currentRevision := agentBindingRevisionWithConnectors(currentRows, currentConfig.ConnectorBindings)
 		if currentRevision != expectedRevision {
 			currentHealth := s.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, currentRows)
 			currentConfig.BindingRevision = currentRevision
@@ -322,14 +350,14 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 				"current_config": currentConfig, "binding_revision": currentRevision, "binding_health": currentHealth,
 			}}
 		}
-		txService := *s
-		txService.db = tx
-		txService.agentBindings = bindingRepo
 		if err := txService.validateIncrementalAgentBindingChanges(ctx, ag, accountID, currentConfig, req); err != nil {
 			return err
 		}
 		if len(req.BindingAuthorizations) == 0 {
 			req.BindingAuthorizations = append([]dto.AgentBindingAuthorization(nil), currentConfig.BindingAuthorizations...)
+		}
+		if err := txService.resolveAgentConnectorReferences(ctx, tx, ag, accountID, &req); err != nil {
+			return err
 		}
 		if _, err := applyAgentConfigRequestToDraft(&current, req, accountID); err != nil {
 			return err
@@ -343,6 +371,15 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 			return err
 		}
 		nextRows = preserveAgentBindingEvidence(nextRows, existing)
+		if !connectorBindingsEqual(currentConfig.ConnectorBindings, nextConfig.ConnectorBindings) {
+			connectorBindings, syncErr := txService.syncAgentConnectorTargetBindings(ctx, tx, ag, accountID, nextConfig.ConnectorBindings)
+			if syncErr != nil {
+				return syncErr
+			}
+			if err := storeDraftConnectorSnapshot(&current, connectorBindings); err != nil {
+				return err
+			}
+		}
 		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
 			return err
 		}
@@ -388,6 +425,9 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		return nil, fmt.Errorf("database and agent binding repository are required for atomic system prompt patch")
 	}
 	staleConfig := agentConfigResponse(ag.ID.String(), stale)
+	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, staleConfig); err != nil {
+		return nil, err
+	}
 	candidateReq, err := mergeAgentConfigRequestedFields(agentConfigRequestFromResponse(*staleConfig), patch.Config, patch.RequestedFields)
 	if err != nil {
 		return nil, err
@@ -405,11 +445,15 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 	if err != nil {
 		return nil, err
 	}
+	staleRows, err := s.bindingRowsForConfig(ctx, ag, staleConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+	if err != nil {
+		return nil, err
+	}
 	var saved *AgentsConfig
 	var savedRows []agentbindings.Binding
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		bindingRepo := s.agentBindings.WithTx(tx)
-		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingMutationResourceRefs(staleRows, candidateRows)); err != nil {
 			return err
 		}
 		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
@@ -428,7 +472,13 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		if err := query.First(&current).Error; err != nil {
 			return fmt.Errorf("lock agent draft config for system prompt patch: %w", err)
 		}
+		txService := *s
+		txService.db = tx
+		txService.agentBindings = bindingRepo
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		if err := txService.projectOwnedAgentConnectorBindings(ctx, tx, ag, accountID, currentConfig); err != nil {
+			return err
+		}
 		actualBaseDigest := agentSystemPromptSHA256(currentConfig.SystemPrompt)
 		if expected := strings.TrimSpace(patch.ExpectedBaseSHA256); expected != actualBaseDigest {
 			return &agentBindingAPIError{
@@ -452,7 +502,7 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		}
 		currentRows = preserveAgentBindingEvidence(currentRows, existing)
 		applyAgentBindingAuthorizationsFromRows(currentConfig, currentRows)
-		currentRevision := agentBindingRevision(currentRows)
+		currentRevision := agentBindingRevisionWithConnectors(currentRows, currentConfig.ConnectorBindings)
 		if expectedRevision := strings.TrimSpace(patch.Config.BindingRevision); expectedRevision != "" && expectedRevision != currentRevision {
 			currentHealth := s.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, currentRows)
 			currentConfig.BindingRevision = currentRevision
@@ -469,14 +519,14 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		if err != nil {
 			return err
 		}
-		txService := *s
-		txService.db = tx
-		txService.agentBindings = bindingRepo
 		if err := txService.validateIncrementalAgentBindingChanges(ctx, ag, accountID, currentConfig, nextReq); err != nil {
 			return err
 		}
 		if len(nextReq.BindingAuthorizations) == 0 {
 			nextReq.BindingAuthorizations = append([]dto.AgentBindingAuthorization(nil), currentConfig.BindingAuthorizations...)
+		}
+		if err := txService.resolveAgentConnectorReferences(ctx, tx, ag, accountID, &nextReq); err != nil {
+			return err
 		}
 		if _, err := applyAgentConfigRequestToDraft(&current, nextReq, accountID); err != nil {
 			return err
@@ -491,6 +541,15 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 			return err
 		}
 		nextRows = preserveAgentBindingEvidence(nextRows, existing)
+		if !connectorBindingsEqual(currentConfig.ConnectorBindings, nextConfig.ConnectorBindings) {
+			connectorBindings, syncErr := txService.syncAgentConnectorTargetBindings(ctx, tx, ag, accountID, nextConfig.ConnectorBindings)
+			if syncErr != nil {
+				return syncErr
+			}
+			if err := storeDraftConnectorSnapshot(&current, connectorBindings); err != nil {
+				return err
+			}
+		}
 		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
 			return err
 		}
@@ -516,7 +575,8 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		return nil, err
 	}
 	resp := agentConfigResponse(ag.ID.String(), saved)
-	resp.BindingRevision = agentBindingRevision(savedRows)
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
+	resp.BindingRevision = agentBindingRevisionWithConnectors(savedRows, resp.ConnectorBindings)
 	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, savedRows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
@@ -542,6 +602,8 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.AgentMemoryAutoExtractionEnabled = requested.AgentMemoryAutoExtractionEnabled
 		case "file_upload_enabled":
 			current.FileUpload = requested.FileUpload
+		case "file_upload_policy":
+			current.FileUploadPolicy = chatfile.Clone(requested.FileUploadPolicy)
 		case "home_title":
 			current.HomeTitle = requested.HomeTitle
 		case "opening_statement":
@@ -560,8 +622,10 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.DatabaseBindings = requested.DatabaseBindings
 		case "workflow_bindings":
 			current.WorkflowBindings = requested.WorkflowBindings
-		case "integration_bindings":
-			current.IntegrationBindings = requested.IntegrationBindings
+		case "connector_reference_commands":
+			current.ConnectorReferenceCommands = requested.ConnectorReferenceCommands
+		case "connector_bindings":
+			current.ConnectorBindings = requested.ConnectorBindings
 		case "":
 			continue
 		default:
@@ -695,7 +759,14 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 	if err := validateAgentSystemPromptSource(stringFromSnapshot(snapshot, "system_prompt")); err != nil {
 		return nil, err
 	}
-	_, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
+	draftConfig := agentConfigResponse(ag.ID.String(), cfg)
+	if err := s.executionApprovals.validate(organizationID.String(), draftConfig.ExecutionRuntime); err != nil {
+		return nil, err
+	}
+	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, draftConfig); err != nil {
+		return nil, err
+	}
+	_, bindingRevision, bindingHealth, err := s.draftBindingStateForConfig(ctx, ag, draftConfig, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -835,7 +906,11 @@ func (s *agentsService) createAgentPublishedVersion(
 	if s.db == nil {
 		return fmt.Errorf("database is required")
 	}
-	candidateRows, err := s.bindingRowsForConfig(ctx, ag, agentConfigResponse(ag.ID.String(), staleConfig), agentbindings.ScopeDraft, nil, accountID, time.Now())
+	candidateConfig := agentConfigResponse(ag.ID.String(), staleConfig)
+	if err := s.projectOwnedAgentConnectorBindings(ctx, s.db, ag, accountID, candidateConfig); err != nil {
+		return err
+	}
+	candidateRows, err := s.bindingRowsForConfig(ctx, ag, candidateConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 	if err != nil {
 		return err
 	}
@@ -870,6 +945,9 @@ func (s *agentsService) createAgentPublishedVersion(
 		txService.db = tx
 		txService.agentBindings = bindingRepo
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		if err := txService.projectOwnedAgentConnectorBindings(ctx, tx, ag, accountID, currentConfig); err != nil {
+			return err
+		}
 		var memoryService *agentmemory.Service
 		if s.agentMemoryService != nil {
 			memoryService = agentmemory.NewService(tx)
@@ -889,7 +967,7 @@ func (s *agentsService) createAgentPublishedVersion(
 		}
 		rows = preserveAgentBindingEvidence(rows, existing)
 		applyAgentBindingAuthorizationsFromRows(currentConfig, rows)
-		bindingRevision := agentBindingRevision(rows)
+		bindingRevision := agentBindingRevisionWithConnectors(rows, currentConfig.ConnectorBindings)
 		bindingHealth := txService.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, rows)
 		if bindingRevision != expectedBindingRevision {
 			currentConfig.BindingRevision = bindingRevision
@@ -910,6 +988,9 @@ func (s *agentsService) createAgentPublishedVersion(
 		if bindingHealth.SuspendedCount > 0 && !acknowledgeSuspended {
 			return &agentBindingAPIError{Code: agentBindingsSuspendedCode, Message: "agent has suspended bindings", Data: map[string]interface{}{"binding_health": bindingHealth}}
 		}
+		if err := txService.executionApprovals.validate(txService.organizationIDForAgentWorkspace(ctx, ag.TenantID.String()), currentConfig.ExecutionRuntime); err != nil {
+			return err
+		}
 
 		snapshot := agentConfigSnapshot(ag.ID.String(), &current)
 		snapshot["binding_authorizations"] = normalizeAgentBindingAuthorizations(currentConfig.BindingAuthorizations)
@@ -919,6 +1000,13 @@ func (s *agentsService) createAgentPublishedVersion(
 		snapshot["database_bound_at_unix"] = currentConfig.DatabaseBoundAtUnix
 		snapshot["workflow_bound_by_account_id"] = currentConfig.WorkflowBoundByAccountID
 		snapshot["workflow_bound_at_unix"] = currentConfig.WorkflowBoundAtUnix
+		publishedConnectors, err := txService.snapshotAgentConnectorBindings(ctx, tx, ag, accountID, version.VersionUUID, currentConfig.ConnectorBindings)
+		if err != nil {
+			return err
+		}
+		snapshot["connector_bindings"] = publishedConnectors
+		snapshot["connector_target_scope"] = "published"
+		snapshot["connector_target_version_id"] = version.VersionUUID.String()
 		snapshot["binding_indexed"] = true
 		snapshot["binding_revision"] = bindingRevision
 		snapshot["supports_vision"] = txService.resolveAgentModelSupportsVision(
@@ -977,7 +1065,7 @@ func (s *agentsService) createAgentPublishedVersion(
 }
 
 func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
-	_, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentPublishPermissionCodes("AGENT")...)
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -1001,6 +1089,10 @@ func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID,
 			continue
 		}
 		snapshot := agentConfigResponseFromSnapshot(version.AgentID.String(), version.ConfigSnapshot)
+		snapshot.ConnectorBindings, err = s.filterOwnedAgentConnectorSnapshotBindings(ctx, s.db, ag, accountID, snapshot.ConnectorBindings)
+		if err != nil {
+			return nil, err
+		}
 		items = append(items, dto.AgentPublishedVersionResponse{
 			ID:             version.ID.String(),
 			AgentID:        version.AgentID.String(),
@@ -1068,6 +1160,7 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 	if err != nil {
 		return nil, err
 	}
+	s.decorateAgentExecutionRuntimeCapability(ctx, ag, resp)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
 	resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
 	return resp, nil
@@ -1075,7 +1168,7 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 
 func agentRollbackPreview(version *AgentPublishedVersion, snapshot *dto.AgentConfigResponse, rows []agentbindings.Binding, health dto.AgentBindingHealth, impactToken string) *dto.AgentRollbackPreviewResponse {
 	snapshotCopy := *snapshot
-	snapshotCopy.BindingRevision = agentBindingRevision(rows)
+	snapshotCopy.BindingRevision = agentBindingRevisionWithConnectors(rows, snapshotCopy.ConnectorBindings)
 	snapshotCopy.BindingHealth = health
 	removed := make([]dto.AgentBindingHealthItem, 0, health.SuspendedCount+health.UnavailableCount)
 	for _, item := range health.Items {
@@ -1130,6 +1223,10 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 		txService := *s
 		txService.db = tx
 		txService.agentBindings = bindingRepo
+		currentOwnerConfig := agentConfigResponse(ag.ID.String(), &current)
+		if err := txService.projectOwnedAgentConnectorBindings(ctx, tx, ag, accountID, currentOwnerConfig); err != nil {
+			return err
+		}
 		versionID := strings.TrimSpace(req.VersionID)
 		if versionID == "" {
 			return fmt.Errorf("version id is required")
@@ -1142,6 +1239,11 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 			return fmt.Errorf("published version not found")
 		}
 		snapshot := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+		originalConnectorBindings := append([]dto.AgentConnectorBinding(nil), snapshot.ConnectorBindings...)
+		snapshot.ConnectorBindings, err = txService.filterOwnedAgentConnectorSnapshotBindings(ctx, tx, ag, accountID, snapshot.ConnectorBindings)
+		if err != nil {
+			return err
+		}
 		impactRows, err := txService.bindingRowsForConfig(ctx, ag, snapshot, agentbindings.ScopeDraft, nil, accountID, version.CreatedAt)
 		if err != nil {
 			return err
@@ -1159,21 +1261,23 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 			}
 		}
 		if !staleConfig.UpdatedAt.IsZero() && !current.UpdatedAt.Equal(staleConfig.UpdatedAt) {
-			currentConfig := agentConfigResponse(ag.ID.String(), &current)
-			currentRows, rowErr := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+			currentRows, rowErr := txService.bindingRowsForConfig(ctx, ag, currentOwnerConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 			if rowErr != nil {
 				return rowErr
 			}
-			currentConfig.BindingRevision = agentBindingRevision(currentRows)
-			currentConfig.BindingHealth = txService.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, currentRows)
+			currentOwnerConfig.BindingRevision = agentBindingRevisionWithConnectors(currentRows, currentOwnerConfig.ConnectorBindings)
+			currentOwnerConfig.BindingHealth = txService.resolveAgentBindingHealth(ctx, ag, accountID, currentOwnerConfig, currentRows)
 			return &agentBindingAPIError{Code: agentBindingRevisionConflictCode, Message: "agent draft config has changed", Data: map[string]interface{}{
-				"current_config": currentConfig, "binding_revision": currentConfig.BindingRevision, "binding_health": currentConfig.BindingHealth,
+				"current_config": currentOwnerConfig, "binding_revision": currentOwnerConfig.BindingRevision, "binding_health": currentOwnerConfig.BindingHealth,
 			}}
 		}
 
 		snapshot.BindingHealth = health
 		filtered := filterAgentConfigByBindingHealth(*snapshot)
-		applied, err := applyAgentConfigRequestToDraft(&current, agentConfigRequestFromResponse(filtered), accountID)
+		if err := txService.recordUnavailableRestoredConnectors(ctx, tx, ag, actorID, version.VersionUUID, originalConnectorBindings, filtered.ConnectorBindings); err != nil {
+			return err
+		}
+		applied, err := applyAgentConfigRequestToDraft(&current, agentConfigRequestForRollback(filtered), accountID)
 		if err != nil {
 			return err
 		}
@@ -1182,6 +1286,15 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 		rows, err := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 		if err != nil {
 			return err
+		}
+		if !connectorBindingsEqual(currentOwnerConfig.ConnectorBindings, currentConfig.ConnectorBindings) {
+			connectorBindings, syncErr := txService.syncAgentConnectorTargetBindings(ctx, tx, ag, accountID, currentConfig.ConnectorBindings)
+			if syncErr != nil {
+				return syncErr
+			}
+			if err := storeDraftConnectorSnapshot(&current, connectorBindings); err != nil {
+				return err
+			}
 		}
 		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
 			return err
@@ -1202,7 +1315,7 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 		}
 		result = agentConfigResponse(ag.ID.String(), &current)
 		result.EnabledSkillIDs = applied.EnabledSkillIDs
-		result.BindingRevision = agentBindingRevision(rows)
+		result.BindingRevision = agentBindingRevisionWithConnectors(rows, result.ConnectorBindings)
 		result.BindingHealth = txService.resolveAgentBindingHealth(ctx, ag, accountID, result, rows)
 		return nil
 	})
@@ -1222,6 +1335,10 @@ func (s *agentsService) agentRollbackImpact(ctx context.Context, ag *Agent, acco
 		return nil, nil, nil, dto.AgentBindingHealth{}, fmt.Errorf("published version not found")
 	}
 	snapshot := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	snapshot.ConnectorBindings, err = s.filterOwnedAgentConnectorSnapshotBindings(ctx, s.db, ag, accountID, snapshot.ConnectorBindings)
+	if err != nil {
+		return nil, nil, nil, dto.AgentBindingHealth{}, err
+	}
 	rows, err := s.bindingRowsForConfig(ctx, ag, snapshot, agentbindings.ScopeDraft, nil, accountID, version.CreatedAt)
 	if err != nil {
 		return nil, nil, nil, dto.AgentBindingHealth{}, err
@@ -1241,6 +1358,7 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		AgentMemoryEnabled:               config.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: config.AgentMemoryAutoExtractionEnabled,
 		FileUpload:                       config.FileUpload,
+		FileUploadPolicy:                 chatfile.Clone(config.FileUploadPolicy),
 		HomeTitle:                        config.HomeTitle,
 		OpeningStatement:                 config.OpeningStatement,
 		InputPlaceholder:                 config.InputPlaceholder,
@@ -1256,9 +1374,20 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		WorkflowBindings:                 config.WorkflowBindings,
 		WorkflowBoundByAccountID:         config.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:              config.WorkflowBoundAtUnix,
-		IntegrationBindings:              config.IntegrationBindings,
+		ConnectorBindings:                config.ConnectorBindings,
 		BindingAuthorizations:            config.BindingAuthorizations,
+		ExecutionRuntime:                 normalizeAgentExecutionRuntimeConfig(config.ExecutionRuntime),
 	}
+}
+
+func agentConfigRequestForRollback(config dto.AgentConfigResponse) dto.AgentConfigRequest {
+	req := agentConfigRequestFromResponse(config)
+	if req.ExecutionRuntime == nil {
+		// A snapshot predating execution_runtime means that it was disabled.
+		// Unlike a legacy editor save, rollback must restore that state.
+		req.ExecutionRuntime = &dto.AgentExecutionRuntime{}
+	}
+	return req
 }
 
 func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool, permissionCodes ...model.WorkspacePermissionCode) (*Agent, *AgentsConfig, error) {
@@ -1321,6 +1450,8 @@ func (s *agentsService) ensureAgentRuntimeDraftConfig(ctx context.Context, ag *A
 }
 
 func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequest {
+	req.FileUploadPolicy = chatfile.Clone(req.FileUploadPolicy)
+	req.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(req.ExecutionRuntime)
 	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt)
 	req.ModelProvider = strings.TrimSpace(req.ModelProvider)
 	req.Model = strings.TrimSpace(req.Model)
@@ -1337,7 +1468,7 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 	req.KnowledgeRetrievalConfig = normalizeAgentKnowledgeRetrievalConfig(req.KnowledgeRetrievalConfig)
 	req.DatabaseBindings = normalizeAgentDatabaseBindings(req.DatabaseBindings)
 	req.WorkflowBindings = normalizeAgentWorkflowBindings(req.WorkflowBindings)
-	req.IntegrationBindings = normalizeAgentIntegrationBindings(req.IntegrationBindings)
+	req.ConnectorBindings = normalizeAgentConnectorBindings(req.ConnectorBindings)
 	return req
 }
 
@@ -1347,6 +1478,17 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	}
 	previousMode := agentRuntimeModeFromConfig(cfg)
 	runtimeCfg := normalizeAgentConfigRequest(req)
+	if runtimeCfg.FileUploadPolicy == nil {
+		runtimeCfg.FileUploadPolicy = chatfile.Clone(previousMode.FileUploadPolicy)
+	}
+	if err := runtimeCfg.FileUploadPolicy.Validate(); err != nil {
+		return dto.AgentConfigRequest{}, fmt.Errorf("%w: invalid file upload policy", runtimeservice.ErrInvalidInput)
+	}
+	if runtimeCfg.ExecutionRuntime == nil {
+		// Older editors do not know this field; their full-config saves must not
+		// silently disable an execution environment selected by another editor.
+		runtimeCfg.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(previousMode.ExecutionRuntime)
+	}
 	if err := validateAgentSystemPromptSource(runtimeCfg.SystemPrompt); err != nil {
 		return dto.AgentConfigRequest{}, err
 	}
@@ -1380,10 +1522,12 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 	cfg.Configs = &params
 	modeJSON, err := json.Marshal(dto.AgentRuntimeModeConfig{
 		EnabledSkillIDs:                  runtimeCfg.EnabledSkillIDs,
+		ExecutionRuntime:                 runtimeCfg.ExecutionRuntime,
 		UseMemory:                        false,
 		AgentMemoryEnabled:               runtimeCfg.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: runtimeCfg.AgentMemoryAutoExtractionEnabled,
 		FileUploadEnabled:                runtimeCfg.FileUpload,
+		FileUploadPolicy:                 chatfile.Clone(runtimeCfg.FileUploadPolicy),
 		HomeTitle:                        runtimeCfg.HomeTitle,
 		OpeningStatement:                 runtimeCfg.OpeningStatement,
 		InputPlaceholder:                 runtimeCfg.InputPlaceholder,
@@ -1399,7 +1543,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		WorkflowBindings:                 runtimeCfg.WorkflowBindings,
 		WorkflowBoundByAccountID:         workflowBoundByAccountID,
 		WorkflowBoundAtUnix:              workflowBoundAtUnix,
-		IntegrationBindings:              runtimeCfg.IntegrationBindings,
+		ConnectorBindings:                runtimeCfg.ConnectorBindings,
 		BindingAuthorizations:            bindingAuthorizations,
 	})
 	if err != nil {
@@ -1420,11 +1564,13 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		AgentID:                          agentID,
 		ModelParameters:                  params,
 		EnabledSkillIDs:                  normalizeAgentEnabledSkillIDs(mode.EnabledSkillIDs),
+		ExecutionRuntime:                 normalizeAgentExecutionRuntimeConfig(mode.ExecutionRuntime),
 		UseMemory:                        false,
 		AgentMemoryEnabled:               mode.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: mode.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
 		FileUpload:                       mode.FileUploadEnabled,
+		FileUploadPolicy:                 chatfile.Clone(mode.FileUploadPolicy),
 		HomeTitle:                        normalizeAgentHomeTitle(mode.HomeTitle),
 		OpeningStatement:                 normalizeAgentOpeningStatement(mode.OpeningStatement),
 		InputPlaceholder:                 normalizeAgentInputPlaceholder(mode.InputPlaceholder),
@@ -1440,7 +1586,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		WorkflowBindings:                 normalizeAgentWorkflowBindings(mode.WorkflowBindings),
 		WorkflowBoundByAccountID:         strings.TrimSpace(mode.WorkflowBoundByAccountID),
 		WorkflowBoundAtUnix:              mode.WorkflowBoundAtUnix,
-		IntegrationBindings:              normalizeAgentIntegrationBindings(mode.IntegrationBindings),
+		ConnectorBindings:                normalizeAgentConnectorBindings(mode.ConnectorBindings),
 		BindingAuthorizations:            bindingAuthorizationsForRuntimeMode(mode),
 	}
 	if cfg != nil {
@@ -1453,10 +1599,19 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 	return resp
 }
 
+func (s *agentsService) decorateAgentExecutionRuntimeCapability(ctx context.Context, ag *Agent, resp *dto.AgentConfigResponse) {
+	if s == nil || ag == nil || resp == nil {
+		return
+	}
+	organizationID := s.organizationIDForAgentWorkspace(ctx, ag.TenantID.String())
+	resp.ExecutionRuntimeCapability = s.executionApprovals.capability(organizationID)
+}
+
 func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface{} {
 	resp := agentConfigResponse(agentID, cfg)
 	return map[string]interface{}{
 		"agent_id":                             resp.AgentID,
+		"execution_runtime":                    resp.ExecutionRuntime,
 		"system_prompt":                        resp.SystemPrompt,
 		"model_provider":                       resp.ModelProvider,
 		"model":                                resp.Model,
@@ -1469,6 +1624,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"agent_memory_slots":                   normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
 		"agent_memory_config_revision":         resp.AgentMemoryConfigRevision,
 		"file_upload_enabled":                  resp.FileUpload,
+		"file_upload_policy":                   chatfile.Clone(resp.FileUploadPolicy),
 		"home_title":                           resp.HomeTitle,
 		"opening_statement":                    resp.OpeningStatement,
 		"input_placeholder":                    resp.InputPlaceholder,
@@ -1484,7 +1640,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"workflow_bindings":                    normalizeAgentWorkflowBindings(resp.WorkflowBindings),
 		"workflow_bound_by_account_id":         resp.WorkflowBoundByAccountID,
 		"workflow_bound_at_unix":               resp.WorkflowBoundAtUnix,
-		"integration_bindings":                 normalizeAgentIntegrationBindings(resp.IntegrationBindings),
+		"connector_bindings":                   normalizeAgentConnectorBindings(resp.ConnectorBindings),
 		"binding_authorizations":               normalizeAgentBindingAuthorizations(resp.BindingAuthorizations),
 	}
 }
@@ -1498,6 +1654,9 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	if snapshot == nil {
 		return resp
 	}
+	resp.ConnectorTargetScope = stringFromSnapshot(snapshot, "connector_target_scope")
+	resp.ExecutionRuntime = agentExecutionRuntimeConfigFromSnapshot(snapshot["execution_runtime"])
+	resp.ConnectorTargetVersionID = stringFromSnapshot(snapshot, "connector_target_version_id")
 	resp.BindingRevision = strings.TrimSpace(stringFromSnapshot(snapshot, "binding_revision"))
 	resp.SystemPrompt = stringFromSnapshot(snapshot, "system_prompt")
 	resp.ModelProvider = stringFromSnapshot(snapshot, "model_provider")
@@ -1526,6 +1685,15 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	if fileUpload, ok := snapshot["file_upload_enabled"].(bool); ok {
 		resp.FileUpload = fileUpload
 	}
+	if value := snapshot["file_upload_policy"]; value != nil {
+		payload, err := json.Marshal(value)
+		policy := &chatfile.Policy{}
+		if err == nil && json.Unmarshal(payload, policy) == nil && policy.Validate() == nil {
+			resp.FileUploadPolicy = policy
+		} else {
+			resp.FileUploadPolicy = &chatfile.Policy{}
+		}
+	}
 	resp.HomeTitle = normalizeAgentHomeTitle(stringFromSnapshot(snapshot, "home_title"))
 	resp.OpeningStatement = normalizeAgentOpeningStatement(stringFromSnapshot(snapshot, "opening_statement"))
 	resp.InputPlaceholder = normalizeAgentInputPlaceholder(stringFromSnapshot(snapshot, "input_placeholder"))
@@ -1543,7 +1711,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.WorkflowBindings = agentWorkflowBindingsFromSnapshot(snapshot["workflow_bindings"])
 	resp.WorkflowBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "workflow_bound_by_account_id"))
 	resp.WorkflowBoundAtUnix = int64FromSnapshot(snapshot["workflow_bound_at_unix"])
-	resp.IntegrationBindings = agentIntegrationBindingsFromSnapshot(snapshot["integration_bindings"])
+	resp.ConnectorBindings = agentConnectorBindingsFromSnapshot(snapshot["connector_bindings"])
 	resp.BindingAuthorizations = agentBindingAuthorizationsFromSnapshot(snapshot["binding_authorizations"])
 	if len(resp.BindingAuthorizations) == 0 {
 		resp.BindingAuthorizations = bindingAuthorizationsForRuntimeMode(dto.AgentRuntimeModeConfig{
@@ -1556,7 +1724,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 			WorkflowBindings:          resp.WorkflowBindings,
 			WorkflowBoundByAccountID:  resp.WorkflowBoundByAccountID,
 			WorkflowBoundAtUnix:       resp.WorkflowBoundAtUnix,
-			IntegrationBindings:       resp.IntegrationBindings,
+			ConnectorBindings:         resp.ConnectorBindings,
 		})
 	}
 	return resp
@@ -1664,6 +1832,32 @@ func agentRuntimeModeFromConfig(cfg *AgentsConfig) dto.AgentRuntimeModeConfig {
 	}
 	_ = json.Unmarshal([]byte(*cfg.AgentMode), &mode)
 	return mode
+}
+
+func normalizeAgentExecutionRuntimeConfig(config *dto.AgentExecutionRuntime) *dto.AgentExecutionRuntime {
+	if config == nil {
+		return nil
+	}
+	// The editor only owns the boolean opt-in. Environment selection is an
+	// operator concern and is resolved from deployment settings at validation
+	// and execution time. Dropping legacy IDs here also prevents them from
+	// leaking back through Agent config responses or published snapshots.
+	return &dto.AgentExecutionRuntime{Enabled: config.Enabled}
+}
+
+func agentExecutionRuntimeConfigFromSnapshot(value interface{}) *dto.AgentExecutionRuntime {
+	if value == nil {
+		return nil
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var config dto.AgentExecutionRuntime
+	if err := json.Unmarshal(payload, &config); err != nil {
+		return nil
+	}
+	return normalizeAgentExecutionRuntimeConfig(&config)
 }
 
 func normalizeAgentEnabledSkillIDs(input []string) []string {

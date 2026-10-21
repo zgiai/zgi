@@ -57,9 +57,14 @@ func TestLocalizedProtocolErrorFallsBackToEnglishAndLeavesOtherErrorsAlone(t *te
 	}
 
 	other := handler.localizedProtocolError(context, adapter.ErrContentPolicyViolation)
-	want := classifyProtocolError(adapter.ErrContentPolicyViolation)
-	if other != want {
-		t.Fatalf("unmigrated error changed: got %#v, want %#v", other, want)
+	if other.openAIStatus != 400 || other.openAICode != "content_policy_violation" || other.anthropicType != "invalid_request_error" || other.message != "The model request is invalid. Check the request and try again." {
+		t.Fatalf("content policy projection = %#v", other)
+	}
+	if other.errorID == "" {
+		t.Fatal("projection boundary did not mint an error_id")
+	}
+	if other.appCode != llmerrors.AppCodeRequestInvalid.String() {
+		t.Fatalf("content policy stable code = %q", other.appCode)
 	}
 }
 
@@ -70,8 +75,13 @@ func TestLocalizedProtocolErrorWithoutProjectorFallsBackToSafeLegacyContract(t *
 
 	got := handler.localizedProtocolError(context, timeout)
 
-	if got.openAIStatus != 504 || got.openAICode != "upstream_timeout" || got.message != "Upstream provider timed out" {
+	// The fallback (no projector) still owns a stable catalog code and a
+	// user-facing message, and it must never echo the upstream cause.
+	if got.openAIStatus != 504 || got.openAICode != "upstream_timeout" || got.message != "The model service took too long to respond. Please try again or choose another model." {
 		t.Fatalf("fallback protocol contract = %#v", got)
+	}
+	if got.appCode != llmerrors.AppCodeProviderTimeout.String() || !got.retryable {
+		t.Fatalf("fallback must carry the catalog identity and retry hint: %#v", got)
 	}
 	if strings.Contains(got.message, "sk-secret") {
 		t.Fatalf("fallback message leaked cause: %q", got.message)
@@ -106,8 +116,8 @@ func TestLocalizedChatStreamErrorSanitizesOnlyMigratedTimeout(t *testing.T) {
 	}
 
 	unmigrated := errors.New("legacy stream message")
-	if got := handler.localizedChatStreamError(context, unmigrated); got != unmigrated.Error() {
-		t.Fatalf("unmigrated stream message = %q", got)
+	if got := handler.localizedChatStreamError(context, unmigrated); got == unmigrated.Error() || strings.Contains(got, "legacy stream message") || got == "" {
+		t.Fatalf("unmigrated stream message leaked raw diagnostics: %q", got)
 	}
 }
 
@@ -149,7 +159,7 @@ func TestLocalizedProtocolErrorDoesNotMisclassifyInternalDeadline(t *testing.T) 
 
 	got := handler.localizedProtocolError(requestContext, internalErr)
 
-	if got.openAIStatus != 500 || got.openAICode != "internal_error" || got.message != "Internal server error" {
+	if got.openAIStatus != 502 || got.openAICode != "internal_error" || got.message != "大模型调用未完成，请重试或选择其他模型。" || got.appCode != llmerrors.AppCodeInvocationFailed.String() {
 		t.Fatalf("internal deadline was misclassified: %#v", got)
 	}
 }
@@ -174,6 +184,20 @@ func TestLocalizedProtocolErrorMapsTransportTimeoutToStableContract(t *testing.T
 	}
 }
 
+func TestLocalizedProtocolErrorProjectsGenericUpstreamFailure(t *testing.T) {
+	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(t)}
+	context := testProtocolContext(t, "/v1/chat/completions", "zh-CN")
+
+	got := handler.localizedProtocolError(context, adapter.ErrUpstreamError)
+
+	if got.openAIStatus != 502 || got.appCode != llmerrors.AppCodeInvocationFailed.String() {
+		t.Fatalf("protocol contract = %#v", got)
+	}
+	if got.message != "大模型调用未完成，请重试或选择其他模型。" {
+		t.Fatalf("message = %q", got.message)
+	}
+}
+
 func BenchmarkLocalizedProtocolErrorProviderTimeout(b *testing.B) {
 	handler := &LLMHandler{errorProjector: testApplicationErrorProjector(b)}
 	context := testProtocolContext(b, "/v1/chat/completions", "zh-CN")
@@ -192,6 +216,7 @@ type testingTB interface {
 func testApplicationErrorProjector(tb testingTB) *apptransport.Projector {
 	tb.Helper()
 	definitions := append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)
+	definitions = append(definitions, llmerrors.BillingCatalogDefinitions()...)
 	productCatalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
 	if err != nil {
 		tb.Fatal(err)

@@ -34,6 +34,13 @@ func (r *Runtime) attachProviderToolSchemas(ctx context.Context, doc *SkillDocum
 		definition.InputSchema = entity.InputSchema
 		definition.OutputSchema = entity.OutputSchema
 		definition.RuntimeDescription = strings.TrimSpace(entity.Description.LLM)
+		if tools.NormalizeToolProviderType(definition.ProviderType) == tools.ToolProviderTypeConnector {
+			operationID := strings.TrimSpace(entity.ConnectorOperationID)
+			if operationID != "" && (definition.ConnectorOperationID == "" || definition.ConnectorOperationID == operationID) {
+				definition.ConnectorNative = true
+				definition.ConnectorOperationID = operationID
+			}
+		}
 		if entity.Governance != nil {
 			manifest := fallbackProviderGovernanceManifest(doc, *definition, entity)
 			if definition.Governance != nil {

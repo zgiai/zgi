@@ -93,7 +93,11 @@ export abstract class BaseService {
       case 'patch':
         return await client.patch<T>(url, data, requestOptions);
       case 'delete':
-        return await client.delete<T>(url, requestOptions);
+        // axios has no body parameter for DELETE; the payload must ride on config.data.
+        return await client.delete<T>(
+          url,
+          data === undefined ? requestOptions : { ...requestOptions, data }
+        );
       default:
         throw new Error(`Unsupported HTTP method: ${method}`);
     }

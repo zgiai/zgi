@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
@@ -35,8 +36,8 @@ func TestHydrateOfficialRoutesUsesPlatformProviderModelCatalog(t *testing.T) {
 		Models:          []string{"private-model"},
 	}
 	provider := &hydrationProvider{channels: []*OfficialChannel{
-		{Provider: "openai", Models: []string{"gpt-5", " shared-model "}},
-		{Provider: "anthropic", Models: []string{"claude-4", "shared-model"}},
+		{Provider: "openai", Models: []string{"gpt-5", " shared-model "}, ModelProtocols: map[string][]string{"gpt-5": {"openai_chat_completions", "openai_responses"}, " shared-model ": {"openai_responses"}}},
+		{Provider: "anthropic", Models: []string{"claude-4", "shared-model"}, ModelProtocols: map[string][]string{"claude-4": {"anthropic_messages"}, "shared-model": {"anthropic_messages"}}},
 	}}
 
 	routes, err := HydrateOfficialRoutes(t.Context(), provider, uuid.New(), []*channelmodel.LLMRoute{officialRoute, privateRoute})
@@ -57,6 +58,9 @@ func TestHydrateOfficialRoutesUsesPlatformProviderModelCatalog(t *testing.T) {
 	}
 	if !reflect.DeepEqual(routes[0].OfficialProviderModels, wantPairs) {
 		t.Fatalf("official provider/model pairs = %#v, want %#v", routes[0].OfficialProviderModels, wantPairs)
+	}
+	if !reflect.DeepEqual(routes[0].OfficialModelProtocols["shared-model"], []string{"openai_responses", "anthropic_messages"}) {
+		t.Fatalf("shared model protocols = %#v", routes[0].OfficialModelProtocols["shared-model"])
 	}
 	if !reflect.DeepEqual(privateRoute.Models, []string{"private-model"}) {
 		t.Fatalf("private route models changed = %#v", privateRoute.Models)
@@ -87,5 +91,42 @@ func TestHydrateOfficialRoutesReturnsPlatformError(t *testing.T) {
 	_, err := HydrateOfficialRoutes(t.Context(), provider, uuid.New(), routes)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("HydrateOfficialRoutes() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestHydrateOfficialRoutesResolvesUnmappedSupplierWithoutChangingPriceIdentity(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		entries []catalogvendor.Entry
+		want    bool
+	}{
+		{"unique owner", []catalogvendor.Entry{{Provider: "qwen", Model: "qwen3.8-max", Vendor: "qwen"}}, true},
+		{"same owner suppliers", []catalogvendor.Entry{{Provider: "qwen", Model: "qwen3.8-max", Vendor: "qwen"}, {Provider: "supplier-b", Model: "qwen3.8-max", Vendor: "qwen"}}, true},
+		{"ambiguous owners", []catalogvendor.Entry{{Provider: "qwen", Model: "qwen3.8-max", Vendor: "qwen"}, {Provider: "other", Model: "qwen3.8-max", Vendor: "other"}}, false},
+		{"explicit different owner", []catalogvendor.Entry{{Provider: "qwen", Model: "qwen3.8-max", Vendor: "qwen"}, {Provider: "agicto 供应商", Model: "qwen3.8-max", Vendor: "other"}}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			catalogvendor.Replace(tt.entries)
+			t.Cleanup(func() { catalogvendor.Replace(nil) })
+			official := &channelmodel.LLMRoute{Type: shared.RouteTypeZGICloud, IsOfficial: true}
+			private := &channelmodel.LLMRoute{Type: shared.RouteTypePrivate, Models: []string{"private-only"}}
+			provider := &hydrationProvider{channels: []*OfficialChannel{{Provider: "agicto 供应商", Models: []string{"qwen3.8-max"}}}}
+			_, err := HydrateOfficialRoutes(t.Context(), provider, uuid.New(), []*channelmodel.LLMRoute{official, private})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := official.SupportsPlatformModel("qwen", "qwen3.8-max"); got != tt.want {
+				t.Fatalf("canonical model callable = %v, want %v", got, tt.want)
+			}
+			if official.SupportsPlatformModel("unrelated-owner", "qwen3.8-max") {
+				t.Fatal("unrelated price identity accepted")
+			}
+			if !reflect.DeepEqual(private.Models, []string{"private-only"}) {
+				t.Fatal("private route modified")
+			}
+			if catalogvendor.Lookup("agicto 供应商", "qwen3.8-max") == "qwen" {
+				t.Fatal("hydration must not create a supplier price identity")
+			}
+		})
 	}
 }

@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"time"
 )
 
@@ -86,20 +87,22 @@ type Variable struct {
 
 // SyncDraftWorkflowRequest represents request to sync draft workflow
 type SyncDraftWorkflowRequest struct {
-	Graph                 map[string]interface{} `json:"graph" validate:"required"`
-	Features              map[string]interface{} `json:"features"`
-	Hash                  string                 `json:"hash,omitempty"`
-	EnvironmentVariables  []Variable             `json:"environment_variables,omitempty"`
-	ConversationVariables []Variable             `json:"conversation_variables,omitempty"`
-	Type                  WorkflowType           `json:"type"`
-	Internal              *bool                  `json:"internal,omitempty"`
+	ConnectorReferenceCommands []connectorcore.ReferenceCommand `json:"connector_reference_commands,omitempty"`
+	Graph                      map[string]interface{}           `json:"graph" validate:"required"`
+	Features                   map[string]interface{}           `json:"features"`
+	Hash                       string                           `json:"hash,omitempty"`
+	EnvironmentVariables       []Variable                       `json:"environment_variables,omitempty"`
+	ConversationVariables      []Variable                       `json:"conversation_variables,omitempty"`
+	Type                       WorkflowType                     `json:"type"`
+	Internal                   *bool                            `json:"internal,omitempty"`
 }
 
 // SyncDraftWorkflowResponse represents response for sync draft workflow
 type SyncDraftWorkflowResponse struct {
-	Result    string    `json:"result"`
-	Hash      string    `json:"hash"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Graph     map[string]interface{} `json:"graph"`
+	Result    string                 `json:"result"`
+	Hash      string                 `json:"hash"`
+	UpdatedAt time.Time              `json:"updated_at"`
 }
 
 // WorkflowParallelConfigResponse represents workflow parallel configuration

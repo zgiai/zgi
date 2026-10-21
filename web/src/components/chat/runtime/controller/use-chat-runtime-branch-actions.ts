@@ -27,7 +27,8 @@ function isPersistableChatLeaf(
     message.status === 'error' ||
     message.status === 'waiting_approval' ||
     message.status === 'waiting_question' ||
-    message.status === 'waiting_client_action'
+    message.status === 'waiting_client_action' ||
+    message.status === 'waiting_budget'
   ) {
     return true;
   }

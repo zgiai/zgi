@@ -1345,8 +1345,9 @@ const {
 const organizationRoutes = [
   '/console',
   '/console/skills',
-  '/console/integrations',
-  '/console/integrations/oauth/result',
+  '/console/connectors',
+  '/console/connectors/github',
+  '/console/connectors/connections/connection-1',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',
@@ -1360,8 +1361,10 @@ const workRouteRoot = path.join(rootDir, 'src', 'app', 'console', 'work');
 const consoleRouteRoot = path.join(rootDir, 'src', 'app', 'console');
 const expectedOrganizationConsolePageRoutes = [
   '/console',
-  '/console/integrations',
-  '/console/integrations/oauth/result',
+  '/console/connectors',
+  '/console/connectors/:connectorId',
+  '/console/connectors/connections',
+  '/console/connectors/connections/:connectionId',
   '/console/model',
   '/console/skills',
   '/console/work',
@@ -1406,6 +1409,21 @@ const expectedWorkspaceConsolePageRoutes = [
   '/console/db/:dbId/table/:tableId/data',
   '/console/db/:dbId/table/:tableId/structure',
   '/console/developer/content-parse',
+  '/console/digital-humans',
+  '/console/digital-humans/:digitalHumanId',
+  '/console/digital-humans/:digitalHumanId/capabilities',
+  '/console/digital-humans/:digitalHumanId/channels',
+  '/console/digital-humans/:digitalHumanId/chat',
+  '/console/digital-humans/:digitalHumanId/configuration',
+  '/console/digital-humans/:digitalHumanId/external',
+  '/console/digital-humans/:digitalHumanId/external/docs',
+  '/console/digital-humans/:digitalHumanId/external/keys',
+  '/console/digital-humans/:digitalHumanId/memory',
+  '/console/digital-humans/:digitalHumanId/preferences',
+  '/console/digital-humans/:digitalHumanId/runs',
+  '/console/digital-humans/:digitalHumanId/settings',
+  '/console/digital-humans/:digitalHumanId/tasks',
+  '/console/digital-humans/create',
   '/console/files',
   '/console/files/:fileId',
   '/console/prompts',
@@ -1487,8 +1505,8 @@ assert.deepEqual(
   [
     '/console',
     '/console/skills',
-    '/console/integrations',
     '/console/model',
+    '/console/connectors',
     '/console/work',
     '/console/work/chat',
     '/console/work/image',
@@ -1500,7 +1518,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   [...ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES],
-  ['/console/integrations/', '/console/work/app/'],
+  ['/console/connectors/', '/console/work/app/'],
   'console organization-scoped prefix metadata should include connection and app detail routes'
 );
 assert.deepEqual(

@@ -199,8 +199,6 @@ func (s *S3Storage) Download(key string, targetPath string) error {
 	}
 
 	return nil
-
-	return nil
 }
 
 func (s *S3Storage) Delete(key string) error {

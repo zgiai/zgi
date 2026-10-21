@@ -42,6 +42,13 @@ type GraphRetrievalConfig struct {
 func NormalizeGraphRetrievalConfig(searchMethod string, retrievalMode string, fallbackPolicy string) (GraphRetrievalConfig, error) {
 	method := strings.ToLower(strings.TrimSpace(searchMethod))
 	mode := strings.ToLower(strings.TrimSpace(retrievalMode))
+	switch mode {
+	case "vectorandbm25", "vector_and_bm25":
+		// vectorAndBM25 is the public name for the textual route. Keep the
+		// shorter internal mode here so callers that bypass the knowledge
+		// service still get the same graph-selection semantics.
+		mode = RetrievalModeVector
+	}
 	if mode == "" {
 		if method == string(GraphSearch) {
 			mode = RetrievalModeHybrid
@@ -71,7 +78,10 @@ func ShouldPropagateRetrievalError(config GraphRetrievalConfig, graphFailed bool
 	if !graphFailed {
 		return false
 	}
-	graphRequested := config.RequestedMethod == string(GraphSearch) || config.ActualMode == RetrievalModeGraph
+	// An explicit retrieval mode is authoritative. In particular, a legacy
+	// dataset search_method of graph_search must not re-enable graph retrieval
+	// when the caller selected vectorAndBM25 (normalized to vector).
+	graphRequested := config.ActualMode == RetrievalModeGraph
 	return graphRequested && config.FallbackPolicy == FallbackPolicyNone
 }
 

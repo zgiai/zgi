@@ -4,6 +4,20 @@ const messages: FilesMessages = {
   title: '文件管理',
   eyebrow: '资产库',
   description: '上传并解析源文件，生成切片后用于知识库引用，提高AI对话准确度。',
+  knowledgeBase: {
+    dialogTitle: '添加到知识库',
+    dialogDescription: '选择当前工作空间中的知识库，关联这个已就绪文件。',
+    selectPlaceholder: '选择知识库',
+    loading: '正在加载知识库...',
+    loadFailed: '知识库加载失败。',
+    empty: '当前工作空间暂无可用知识库。',
+    missingSelection: '请先选择知识库。',
+    addSuccess: '文件已添加到知识库。',
+    alreadyAdded: '文件已在该知识库中。',
+    addFailed: '文件添加到知识库失败。',
+    cancel: '取消',
+    confirm: '添加',
+  },
 
   // Sidebar
   sidebar: {
@@ -209,6 +223,7 @@ const messages: FilesMessages = {
     datasetBreadcrumb: '知识库',
     previewOriginal: '预览原文件',
     downloadOriginal: '下载原文件',
+    addToKnowledgeBase: '添加到知识库',
     processing: '处理进度',
     fileType: '{extension} 文件',
     createdAt: '上传于 {time}',

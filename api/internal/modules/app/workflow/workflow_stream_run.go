@@ -9,11 +9,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	workflowshared "github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
@@ -74,52 +77,54 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 		)
 	}
 
-	// Generate task ID (will be replaced with real workflow run ID from database)
-	taskID := fmt.Sprintf("task-%s-%d", appID, time.Now().UnixNano())
-
-	// Get the actual workflow ID from database (not agent_id)
-	workflowID := appID // fallback to appID if query fails
-	if ws, ok := h.workflowService.(*WorkflowService); ok {
-		if ws.repo != nil {
-			workflow, err := ws.repo.GetDraftWorkflow(c.Request.Context(), appID)
-			if err == nil && workflow != nil {
-				workflowID = workflow.ID
-				logger.DebugContext(c.Request.Context(), "workflow stream draft workflow id loaded",
-					zap.String("workflow_id", workflowID),
-					zap.String("agent_id", appID),
-				)
-			} else {
-				logger.WarnContext(c.Request.Context(), "failed to load workflow id, using agent id fallback",
-					zap.String("agent_id", appID),
-					zap.Error(err),
-				)
-			}
+	// Select one concrete draft or published Workflow row before creating the
+	// run. Its graph and identity must stay together: a published graph must
+	// never execute with the draft row's authorization ledger.
+	workflowData, err := h.loadWorkflowStreamData(c.Request.Context(), workspaceID, appID, runType, isDraft)
+	if err != nil {
+		h.sendSSEError(c.Request.Context(), c.Writer, err.Error())
+		return
+	}
+	workflowID, err := requiredWorkflowDataID(workflowData)
+	if err != nil {
+		h.sendSSEError(c.Request.Context(), c.Writer, err.Error())
+		return
+	}
+	chatFiles, err := ChatAttachmentReferences(req.Files, req.Inputs)
+	if err != nil {
+		h.sendSSEError(c.Request.Context(), c.Writer, "invalid chat attachments")
+		return
+	}
+	if len(chatFiles) > 0 {
+		if h.fileService == nil {
+			h.sendSSEError(c.Request.Context(), c.Writer, "attachment access is unavailable")
+			return
+		}
+		policy := WorkflowChatUploadPolicy(workflowData["features"], h.fileService.GetUploadConfig())
+		scope := runtimeservice.Scope{}
+		scope.AccountID, _ = uuid.Parse(accountID)
+		scope.OrganizationID, _ = uuid.Parse(util.GetOrganizationID(c))
+		if err := ValidateChatAttachments(c.Request.Context(), chatFiles, h.fileService, policy, func(ctx context.Context, file *dto.UploadFile) error {
+			return runtimeservice.AuthorizeAttachment(ctx, scope, h.enterpriseService, file)
+		}); err != nil {
+			h.sendSSEError(c.Request.Context(), c.Writer, "attachments are unavailable or exceed the upload policy")
+			return
 		}
 	}
+	logger.DebugContext(c.Request.Context(), "workflow stream configuration selected",
+		zap.String("workflow_id", workflowID),
+		zap.String("agent_id", appID),
+		zap.Bool("is_draft", isDraft),
+	)
+
+	// Generate task ID (will be replaced with real workflow run ID from database)
+	taskID := fmt.Sprintf("task-%s-%d", appID, time.Now().UnixNano())
 
 	sequenceNumber := 1
 
 	// isDraft := (runType == "debugging")
 
-	// Note: don't fetch workflow here; let executor goroutine handle fetching and errors via channels to guarantee streaming path can emit workflow_finished
-
-	// Add req.Files to inputs for processing if provided
-	if req.Files != nil && len(req.Files) > 0 {
-		if req.Inputs == nil {
-			req.Inputs = make(map[string]interface{})
-		}
-		// Convert []FileInfo to []interface{} for processing
-		filesInterface := make([]interface{}, len(req.Files))
-		for i, f := range req.Files {
-			filesInterface[i] = map[string]interface{}{
-				"type":            f.Type,
-				"transfer_method": f.TransferMethod,
-				"url":             f.URL,
-				"upload_file_id":  f.UploadFileID,
-			}
-		}
-		req.Inputs["#files#"] = filesInterface
-	}
+	req.Inputs = chatInputsWithFiles(req.Inputs, req.Files)
 
 	// Process all file inputs before workflow execution
 	processedInputs := h.processAllFileInputs(c.Request.Context(), req.Inputs, workspaceID, appID)
@@ -267,6 +272,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 			if errors.As(err, &busyErr) {
 				h.sendSSEErrorData(c.Request.Context(), c.Writer, map[string]interface{}{
 					"code":            workflowConversationBusyCode,
+					"error_code":      workflowBusyContractCode,
 					"message":         busyErr.Error(),
 					"conversation_id": busyErr.ConversationID,
 					"workflow_run_id": busyErr.WorkflowRunID,
@@ -390,7 +396,7 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 	// Start workflow execution in goroutine
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(execCtx, workspaceID, appID, req, accountID, taskID, workflowRunLogID, workflowID, systemInputs, sequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, triggeredFrom)
+		h.executeWorkflowStream(execCtx, workspaceID, appID, req, accountID, taskID, workflowRunLogID, workflowID, systemInputs, sequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, triggeredFrom, workflowData)
 	}()
 
 	sendTerminalFailure := func(err error) bool {

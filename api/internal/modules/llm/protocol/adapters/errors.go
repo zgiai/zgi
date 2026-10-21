@@ -34,6 +34,27 @@ var (
 	// ErrPlatformChannelUnavailable indicates an official platform channel cannot currently serve requests.
 	ErrPlatformChannelUnavailable = errors.New("platform channel unavailable")
 
+	// ErrNoProviderAvailable indicates the model exists but no channel can serve
+	// it right now. It is distinct from ErrPlatformChannelUnavailable: the
+	// catalog answers llm.provider.none_available rather than
+	// llm.provider.unavailable, so the two must never collapse into one sentinel.
+	ErrNoProviderAvailable = errors.New("no provider available")
+
+	// ErrRateLimitExceeded is this gateway's own limit. It is distinct from
+	// ErrRateLimited, which is the upstream provider throttling the call.
+	ErrRateLimitExceeded = errors.New("rate limit exceeded by gateway")
+
+	// ErrPricingNotConfigured indicates the requested meter has no configured
+	// price, so the call must not be attempted at all.
+	ErrPricingNotConfigured = errors.New("model pricing not configured")
+
+	// ErrExchangeRateUnavailable indicates the USD/CNY rate needed to price the
+	// call could not be resolved.
+	ErrExchangeRateUnavailable = errors.New("exchange rate unavailable")
+
+	// ErrBillingSettleFailed indicates the call completed but settlement failed.
+	ErrBillingSettleFailed = errors.New("billing settlement failed")
+
 	// ErrModelNotFound model not found
 	ErrModelNotFound = errors.New("model not found")
 
@@ -177,7 +198,33 @@ func HandleNonJSONError(statusCode int, body []byte) *AdapterError {
 		}
 	}
 
-	return NewAdapterError("PARSE_ERROR",
+	// A plain-text body still carries the upstream's decision, which lives in
+	// the status line. Collapsing every non-JSON body into ErrUpstreamError
+	// turned an upstream 401/403/404 into a retryable 502 invocation failure;
+	// keep the HTML branch's mapping for the text path too.
+	code, sentinel := nonJSONStatusClassification(statusCode)
+	return NewAdapterError(code,
 		fmt.Sprintf("Failed to parse error response (status %d): %s", statusCode, bodyStr),
-		statusCode, ErrUpstreamError)
+		statusCode, sentinel)
+}
+
+// nonJSONStatusClassification gives a non-JSON error body the identity its HTTP
+// status implies, mirroring the HTML branch above.
+func nonJSONStatusClassification(statusCode int) (string, error) {
+	switch statusCode {
+	case 400:
+		return "BAD_REQUEST", ErrInvalidRequest
+	case 401:
+		return "UNAUTHORIZED", ErrAuthFailed
+	case 403:
+		return "FORBIDDEN", ErrAuthFailed
+	case 404:
+		return "NOT_FOUND", ErrModelNotFound
+	case 408, 504:
+		return "UPSTREAM_TIMEOUT", ErrTimeout
+	case 429:
+		return "RATE_LIMITED", ErrRateLimited
+	default:
+		return "PARSE_ERROR", ErrUpstreamError
+	}
 }

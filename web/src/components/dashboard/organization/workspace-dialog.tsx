@@ -219,7 +219,7 @@ export function WorkspaceDialog({
         } else {
           const payload: CreateWorkspaceRequest = {
             name,
-            ...(leaderId ? { leader_id: leaderId } : {}),
+            leader_id: leaderId,
             ...(apiKeyId ? { api_key_id: apiKeyId } : {}),
           };
           await onCreate(payload);

@@ -8,6 +8,7 @@ type ModelUsageRequest struct {
 	AppType           *string    `form:"app_type" binding:"omitempty,oneof=workflow dataset agent aichat image-runtime video-runtime data_library_file prompt_optimizer prompt_playground automation_task_draft unknown"`
 	AppID             *uuid.UUID `form:"app_id"`
 	ModelName         *string    `form:"model_name"`
+	Operation         *string    `form:"operation"`
 	BillingLane       *string    `form:"billing_lane" binding:"omitempty,oneof=platform private"`
 	UseSystemProvider *bool      `form:"use_system_provider"`
 }
@@ -37,6 +38,7 @@ type ModelUsageByModelItem struct {
 	ModelName        string    `json:"model_name"`
 	ProviderID       uuid.UUID `json:"provider_id"`
 	ProviderName     string    `json:"provider_name"`
+	Operation        string    `json:"operation"`
 	AttemptCount     int64     `json:"attempt_count"`
 	SuccessCount     int64     `json:"success_count"`
 	FailedCount      int64     `json:"failed_count"`

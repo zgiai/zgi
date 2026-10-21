@@ -146,6 +146,9 @@ export interface InvocationLogItem {
   model_name: string;
   provider_name: string;
   channel_name: string;
+  supplier_name?: string;
+  actual_channel_name?: string;
+  settlement_id?: string;
   status: InvocationStatus;
   attempt_count: number;
   prompt_tokens: number;
@@ -185,6 +188,10 @@ export interface InvocationPricingDetails {
   cache_read_price_source?: string;
   cache_write_price_source?: string;
   output_price_source?: string;
+  // Non-token (metered) operations carry no per-token price. When this is set
+  // the UI must render a metered dimension instead of a token formula.
+  metered_operation?: string;
+  metered_unit?: string;
 }
 
 export interface InvocationLogCursor {
@@ -204,6 +211,7 @@ export interface GetInvocationLogParams {
   invocation_source?: InvocationSource;
   app_type?: string;
   model_name?: string;
+  attempt_id?: string;
   cursor_time?: string;
   cursor_id?: string;
   limit?: number;

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 const (
@@ -27,12 +28,22 @@ type speechService interface {
 
 // SpeechHandler accepts complete text and streams generated MP3 audio.
 type SpeechHandler struct {
-	service speechService
+	service        speechService
+	errorProjector *apptransport.Projector
 }
 
 // NewSpeechHandler creates the public speech generation handler.
 func NewSpeechHandler(service speechService) *SpeechHandler {
 	return &SpeechHandler{service: service}
+}
+
+// SetErrorProjector attaches the shared application-error projector so this
+// handler's failures carry the catalog's localized message, stable code, and
+// error_id like every other public exit.
+func (h *SpeechHandler) SetErrorProjector(projector *apptransport.Projector) {
+	if h != nil {
+		h.errorProjector = projector
+	}
 }
 
 // Generate handles POST /v1/audio/speech.
@@ -65,7 +76,7 @@ func (h *SpeechHandler) Generate(c *gin.Context) {
 
 	c.Writer.Header().Del("Content-Type")
 	recordServiceError(c, err)
-	writeSpeechProtocolError(c, err)
+	h.writeProtocolError(c, err)
 }
 
 func decodeSpeechRequest(request *http.Request) (gateway.SpeechRequest, bool) {
@@ -109,7 +120,7 @@ func (w *speechStreamWriter) Write(chunk []byte) (int, error) {
 	return written, err
 }
 
-func writeSpeechProtocolError(c *gin.Context, err error) {
+func (h *SpeechHandler) writeProtocolError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, context.Canceled):
 		writeOpenAIProtocolError(c, newProtocolError(
@@ -128,6 +139,10 @@ func writeSpeechProtocolError(c *gin.Context, err error) {
 			"Speech generation timed out",
 		))
 	default:
-		writeOpenAIProtocolError(c, classifyProtocolError(err))
+		var projector *apptransport.Projector
+		if h != nil {
+			projector = h.errorProjector
+		}
+		writeOpenAIProtocolError(c, projectProtocolError(c, projector, err))
 	}
 }

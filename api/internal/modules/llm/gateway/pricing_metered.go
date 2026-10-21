@@ -62,7 +62,13 @@ func (e *pricingEngine) QuoteMetered(ctx context.Context, ref PricingModelRef, u
 	switch currency {
 	case "USD":
 	case "CNY":
-		priceUSD = amount.Div(loadOrganizationUSDToCNYRate(ctx, e.db, ref.OrganizationID))
+		// CNY metered prices need a positive organization rate. A missing rate
+		// is fail-closed; it never falls back to a hard-coded 7.
+		rate, rateErr := loadOrganizationUSDToCNYRate(ctx, e.db, ref.OrganizationID)
+		if rateErr != nil {
+			return PricingQuote{}, fmt.Errorf("%w: metered CNY pricing requires an exchange rate: %v", ErrExchangeRateUnavailable, rateErr)
+		}
+		priceUSD = amount.Div(rate)
 	default:
 		return PricingQuote{}, fmt.Errorf("%w: unsupported metered pricing currency %q", ErrPricingNotConfigured, currency)
 	}
@@ -130,10 +136,15 @@ func meteredDimensionsMatch(priceDimensions, requestDimensions map[string]string
 	return true
 }
 
-func loadOrganizationUSDToCNYRate(ctx context.Context, db *gorm.DB, organizationID uuid.UUID) decimal.Decimal {
-	fallback := decimal.NewFromInt(7)
-	if db == nil || organizationID == uuid.Nil {
-		return fallback
+// loadOrganizationUSDToCNYRate resolves the organization's configured
+// USD-to-CNY rate. A missing, unreadable, or non-positive rate is fail-closed:
+// callers must never assume a hard-coded 7 or treat CNY as USD.
+func loadOrganizationUSDToCNYRate(ctx context.Context, db *gorm.DB, organizationID uuid.UUID) (decimal.Decimal, error) {
+	if db == nil {
+		return decimal.Zero, fmt.Errorf("%w: billing database is nil", ErrExchangeRateUnavailable)
+	}
+	if organizationID == uuid.Nil {
+		return decimal.Zero, fmt.Errorf("%w: organization_id is empty", ErrExchangeRateUnavailable)
 	}
 	var row struct {
 		USDToCNYRate decimal.Decimal `gorm:"column:usd_to_cny_rate"`
@@ -143,10 +154,13 @@ func loadOrganizationUSDToCNYRate(ctx context.Context, db *gorm.DB, organization
 		Select("usd_to_cny_rate").
 		Where("id = ?", organizationID).
 		Take(&row).Error
-	if err != nil || !row.USDToCNYRate.IsPositive() {
-		return fallback
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("%w: load organization usd_to_cny_rate: %v", ErrExchangeRateUnavailable, err)
 	}
-	return row.USDToCNYRate
+	if !row.USDToCNYRate.IsPositive() {
+		return decimal.Zero, fmt.Errorf("%w: organization usd_to_cny_rate is not positive", ErrExchangeRateUnavailable)
+	}
+	return row.USDToCNYRate, nil
 }
 
 func withMeteredPricingBasis(quote PricingQuote, usage MeteredUsage, unitPriceUSD decimal.Decimal) PricingQuote {

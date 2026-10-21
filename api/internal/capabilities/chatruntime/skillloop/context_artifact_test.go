@@ -16,12 +16,11 @@ import (
 func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testing.T) {
 	store := contextmgr.NewMemoryStore()
 	manager, err := contextmgr.New(contextmgr.Config{
-		AgentRunID:             "run-read-context-artifact",
-		ConfiguredAgentWindowK: 256,
-		ModelContextWindow:     1_000_000,
-		MaxOutputTokens:        16_000,
-		MaxToolResultTokens:    100,
-	}, nil, store, nil)
+		AgentRunID:          "run-read-context-artifact",
+		ModelContextWindow:  256_000,
+		MaxOutputTokens:     16_000,
+		MaxToolResultTokens: 100,
+	}, nil, store, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,18 +79,8 @@ func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testi
 	if answer != "used restored evidence" || fakeLLM.appChatCalls != 2 {
 		t.Fatalf("answer = %q calls = %d", answer, fakeLLM.appChatCalls)
 	}
-	if !runnerTestHasTool(fakeLLM.appChatRequests[0].Tools, contextArtifactToolName) {
-		t.Fatalf("first request did not expose %s", contextArtifactToolName)
-	}
-	for _, tool := range fakeLLM.appChatRequests[0].Tools {
-		if tool.Function.Name != contextArtifactToolName {
-			continue
-		}
-		parameters, _ := tool.Function.Parameters.(map[string]interface{})
-		properties, _ := parameters["properties"].(map[string]interface{})
-		if len(properties) != 1 || properties["artifact_ref"] == nil {
-			t.Fatalf("artifact reader still exposes paging parameters: %#v", properties)
-		}
+	if runnerTestHasTool(fakeLLM.appChatRequests[0].Tools, contextArtifactToolName) {
+		t.Fatalf("first request unexpectedly exposed %s", contextArtifactToolName)
 	}
 	secondRequest := fakeLLM.appChatRequests[1]
 	if !runnerTestMessagesContain(secondRequest.Messages, "restored knowledge evidence row") {
@@ -118,9 +107,9 @@ func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testi
 	t.Fatal("second request did not contain the artifact tool result")
 }
 
-func TestLegacyToolChatKeepsContextArtifactReader(t *testing.T) {
+func TestLegacyToolChatRemovesContextArtifactReader(t *testing.T) {
 	tools := legacyToolChatTools([]adapter.Tool{contextArtifactTool()}, false)
-	if !runnerTestHasTool(tools, contextArtifactToolName) {
-		t.Fatalf("legacy tools removed %s", contextArtifactToolName)
+	if runnerTestHasTool(tools, contextArtifactToolName) {
+		t.Fatalf("legacy tools retained %s", contextArtifactToolName)
 	}
 }

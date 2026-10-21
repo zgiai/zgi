@@ -220,10 +220,37 @@ func hasScripts(root string) bool {
 	return err == nil && len(entries) > 0
 }
 
+// Standard custom Skills may keep helpers at the package root or in core/,
+// not only in scripts/. Discovery is advisory; archive validation still
+// rejects symlinks, special files, escaping paths and oversized packages.
+func hasCustomScripts(root string) bool {
+	if hasScripts(root) {
+		return true
+	}
+	found := false
+	_ = filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type().IsRegular() {
+			switch strings.ToLower(filepath.Ext(entry.Name())) {
+			case ".py", ".js", ".mjs", ".cjs":
+				found = true
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	return found
+}
+
 func hasLocationScripts(location skillLocation) bool {
 	if location.Embedded {
 		entries, err := embeddedSkillCatalog.ReadDir(path.Join(location.Root, "scripts"))
 		return err == nil && len(entries) > 0
+	}
+	if normalizeSkillSource(location.Source) == SkillSourceCustom {
+		return hasCustomScripts(location.Root)
 	}
 	return hasScripts(location.Root)
 }
@@ -577,6 +604,12 @@ func summarizeStructuredArtifactArgument(key string, value interface{}) map[stri
 }
 
 func summarizeToolArguments(tool SkillToolDefinition, args map[string]interface{}) map[string]interface{} {
+	if tool.ConnectorNative {
+		return map[string]interface{}{
+			"schema_bound_arguments_redacted": true,
+			"argument_count":                  len(args),
+		}
+	}
 	if tool.Governance == nil || !tool.Governance.DataEgress || tool.Governance.SensitiveDataAllowed {
 		return summarizeArguments(args)
 	}

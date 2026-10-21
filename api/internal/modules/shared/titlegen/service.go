@@ -49,6 +49,7 @@ type GenerateRequest struct {
 	FallbackTitle     string
 	PreferredProvider string
 	PreferredModel    string
+	RoutingStrategy   string
 	PreferredUseCase  string
 }
 
@@ -194,7 +195,7 @@ func (s *service) Generate(ctx context.Context, req GenerateRequest) (*GenerateR
 			continue
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, titleAttemptTimeout)
-		resp, err := s.llmClient.AppChat(attemptCtx, appContext(req), titleChatRequest(candidate, rendered))
+		resp, err := s.llmClient.AppChat(attemptCtx, appContext(req), titleChatRequest(candidate, rendered, req.RoutingStrategy))
 		cancel()
 		if err != nil {
 			logger.DebugContext(ctx, "conversation title model attempt failed", "provider", candidate.Provider, "model", candidate.Model, err)
@@ -468,14 +469,15 @@ func appContext(req GenerateRequest) *llmclient.AppContext {
 	return appCtx
 }
 
-func titleChatRequest(resolved *llmdefaultservice.ResolvedModel, promptText string) *adapter.ChatRequest {
+func titleChatRequest(resolved *llmdefaultservice.ResolvedModel, promptText string, routingStrategy string) *adapter.ChatRequest {
 	temperature := 0.2
 	maxTokens := 64
 	return &adapter.ChatRequest{
-		Provider:    strings.TrimSpace(resolved.Provider),
-		Model:       strings.TrimSpace(resolved.Model),
-		Temperature: &temperature,
-		MaxTokens:   &maxTokens,
+		Provider:        strings.TrimSpace(resolved.Provider),
+		RoutingStrategy: routingStrategy,
+		Model:           strings.TrimSpace(resolved.Model),
+		Temperature:     &temperature,
+		MaxTokens:       &maxTokens,
 		Messages: []adapter.Message{
 			{Role: "user", Content: promptText},
 		},

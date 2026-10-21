@@ -14,6 +14,7 @@ import (
 
 type fileMetadataReader interface {
 	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
+	IsRuntimeExternalFile(ctx context.Context, fileID string) (bool, error)
 }
 
 type fileWorkspacePermissionChecker interface {
@@ -138,6 +139,15 @@ func authorizeFileAccess(c *gin.Context, fileService fileMetadataReader, permiss
 
 	uploadFile, err := fileService.GetFileByID(c.Request.Context(), fileID)
 	if err != nil || uploadFile == nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return nil, false
+	}
+	runtimeExternal, checkErr := fileService.IsRuntimeExternalFile(c.Request.Context(), fileID)
+	if checkErr != nil {
+		response.Fail(c, response.ErrSystemError)
+		return nil, false
+	}
+	if runtimeExternal {
 		response.Fail(c, response.ErrFileNotFound)
 		return nil, false
 	}

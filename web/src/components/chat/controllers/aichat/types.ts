@@ -1,5 +1,7 @@
 import type {
+  ExecutionFileReader,
   AIChatConversation,
+  AIChatInitialConnectorBinding,
   AIChatAgentProgressEventData,
   AIChatErrorEventData,
   AIChatIntermediateAnswerEventData,
@@ -13,11 +15,13 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenUsageUpdatedEventData,
   AIChatPresentationItem,
   AIChatMemoryMutationEventData,
   AIChatClientActionResultRequest,
   AIChatSkillInvocation,
   AIChatRuntimeSurface,
+  AIChatRuntimeInput,
   AIChatToolGovernanceDecisionEventData,
   AIChatToolGovernanceDecisionRequest,
   AIChatUserInputContinuationRequest,
@@ -53,6 +57,7 @@ export interface AIChatStreamingMessageState {
     | 'waiting_approval'
     | 'waiting_client_action'
     | 'waiting_question'
+    | 'waiting_budget'
     | 'stopped'
     | 'error';
   timeline?: AIChatAgenticTimelineItem[];
@@ -67,6 +72,7 @@ export interface AIChatStreamingMessageState {
   replace?: boolean;
   sensitiveOutputBlocked?: boolean;
   modelProcessing?: AIChatModelProcessingState;
+  tokenUsage?: AIChatTokenUsageUpdatedEventData;
 }
 
 export type AIChatAgenticTimelineItem =
@@ -171,6 +177,18 @@ export type AIChatAgenticTimelineItem =
     }
   | {
       id: string;
+      type: 'runtime_input';
+      input_id: string;
+      content: string;
+      checkpoint?: string;
+      model_round?: number;
+      created_at?: number;
+      event_id?: string | null;
+      presentation_id?: string;
+      presentation_sequence?: number;
+    }
+  | {
+      id: string;
       type: 'tool_governance_decision';
       event: AIChatToolGovernanceDecisionEventData;
       created_at?: number;
@@ -181,7 +199,10 @@ export type AIChatAgenticTimelineItem =
   | {
       id: string;
       type: 'workflow_run';
+      kind?: string;
       workflowRunId: string;
+      taskId?: string;
+      taskName?: string;
       status: RunStatus;
       elapsedTime?: number;
       error?: string;
@@ -251,6 +272,10 @@ export interface AIChatControllerStore extends AIChatControllerState {
   applyFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
   applyFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
   applyMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
+  applyTokenUsageUpdated: (
+    payload: AIChatTokenUsageUpdatedEventData,
+    eventId?: string | null
+  ) => void;
   applyStreamError: (payload: AIChatErrorEventData, fallbackConversationId: string | null) => void;
   mergeMessages: (conversationId: string, messages: AIChatMessage[]) => void;
   setActiveConversationId: (conversationId: string | null) => void;
@@ -262,6 +287,7 @@ export interface AIChatControllerStore extends AIChatControllerState {
 }
 
 export interface AIChatController {
+  readExecutionFile?: ExecutionFileReader;
   store: StoreApi<AIChatControllerStore>;
   conversations: AIChatConversation[];
   pagination: AIChatPagination;
@@ -279,6 +305,8 @@ export interface AIChatController {
   isRecoveringMessages: boolean;
   isStopping: boolean;
   isSending: boolean;
+  supportsRuntimeInput: boolean;
+  canSubmitRuntimeInput: boolean;
   connectionState: AIChatConnectionState;
   error: string | null;
   init: (conversationId?: string | null) => void;
@@ -293,6 +321,8 @@ export interface AIChatController {
     options?: { conversation?: AIChatConversation; mode?: AIChatRecoveryMode }
   ) => Promise<void>;
   send: (payload: {
+    initialConnectorBindings?: AIChatInitialConnectorBinding[];
+    initialConnectorDefaultsRevision?: number;
     query: string;
     model: AIChatModelSelection;
     files?: AIChatMessageFile[];
@@ -302,11 +332,19 @@ export interface AIChatController {
     runtimeSurface?: AIChatRuntimeSurface;
     operationContext?: unknown;
   }) => Promise<void>;
+  submitRuntimeInput: (
+    content: string
+  ) => Promise<{ status: 'accepted' | 'conversation_idle' | 'failed'; input?: AIChatRuntimeInput }>;
   stop: () => Promise<void>;
   regenerate: (
     messageId: string,
     model: AIChatModelSelection,
-    options?: { operationContext?: unknown; runtimeSurface?: AIChatRuntimeSurface }
+    options?: {
+      operationContext?: unknown;
+      runtimeSurface?: AIChatRuntimeSurface;
+      initialConnectorBindings?: AIChatInitialConnectorBinding[];
+      initialConnectorDefaultsRevision?: number;
+    }
   ) => Promise<void>;
   replaceRootMessage: (payload: {
     messageId: string;

@@ -21,10 +21,15 @@ const (
 
 type BillingDisplayCurrency string
 
+type LLMRoutingStrategy string
+
 const (
-	BillingDisplayCurrencyUSD BillingDisplayCurrency = "USD"
-	BillingDisplayCurrencyCNY BillingDisplayCurrency = "CNY"
-	DefaultUSDToCNYRate                              = 7
+	BillingDisplayCurrencyUSD   BillingDisplayCurrency = "USD"
+	BillingDisplayCurrencyCNY   BillingDisplayCurrency = "CNY"
+	DefaultUSDToCNYRate                                = 7
+	LLMRoutingStrategySpeed     LLMRoutingStrategy     = "speed"
+	LLMRoutingStrategyPrice     LLMRoutingStrategy     = "price"
+	LLMRoutingStrategyStability LLMRoutingStrategy     = "stability"
 )
 
 // OrganizationRole represents a role in an organization
@@ -44,6 +49,7 @@ type Organization struct {
 	Status                   OrganizationStatus     `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
 	BillingDisplayCurrency   BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
 	USDToCNYRate             decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
+	LLMRoutingStrategy       LLMRoutingStrategy     `gorm:"type:varchar(16);not null;default:'stability'" json:"llm_routing_strategy"`
 	LLMContentCaptureEnabled bool                   `gorm:"not null;default:false" json:"llm_content_capture_enabled"`
 	LLMContentRetentionDays  *int                   `json:"llm_content_retention_days"`
 	CreatedAt                time.Time              `json:"created_at"`
@@ -75,6 +81,9 @@ func (org *Organization) BeforeCreate(tx *gorm.DB) error {
 	}
 	if !org.USDToCNYRate.GreaterThan(decimal.Zero) {
 		org.USDToCNYRate = decimal.NewFromInt(DefaultUSDToCNYRate)
+	}
+	if org.LLMRoutingStrategy == "" {
+		org.LLMRoutingStrategy = LLMRoutingStrategyStability
 	}
 
 	// Set timestamps
@@ -119,6 +128,16 @@ const (
 	WorkspacePermissionAgentPublish             WorkspacePermissionCode = "agent.publish"
 	WorkspacePermissionAgentRuntimeAccessManage WorkspacePermissionCode = "agent.runtime_access.manage"
 	WorkspacePermissionAgentLogsView            WorkspacePermissionCode = "agent.logs.view"
+
+	WorkspacePermissionDigitalHumanView         WorkspacePermissionCode = "digital_human.view"
+	WorkspacePermissionDigitalHumanCreate       WorkspacePermissionCode = "digital_human.create"
+	WorkspacePermissionDigitalHumanUpdate       WorkspacePermissionCode = "digital_human.update"
+	WorkspacePermissionDigitalHumanDelete       WorkspacePermissionCode = "digital_human.delete"
+	WorkspacePermissionDigitalHumanPublish      WorkspacePermissionCode = "digital_human.publish"
+	WorkspacePermissionDigitalHumanRun          WorkspacePermissionCode = "digital_human.run"
+	WorkspacePermissionDigitalHumanLogsView     WorkspacePermissionCode = "digital_human.logs.view"
+	WorkspacePermissionDigitalHumanMemoryView   WorkspacePermissionCode = "digital_human.memory.view"
+	WorkspacePermissionDigitalHumanMemoryManage WorkspacePermissionCode = "digital_human.memory.manage"
 
 	WorkspacePermissionWorkflowView                WorkspacePermissionCode = "workflow.view"
 	WorkspacePermissionWorkflowCreate              WorkspacePermissionCode = "workflow.create"
@@ -200,6 +219,15 @@ func AllWorkspacePermissionCodes() []WorkspacePermissionCode {
 		WorkspacePermissionAgentPublish,
 		WorkspacePermissionAgentRuntimeAccessManage,
 		WorkspacePermissionAgentLogsView,
+		WorkspacePermissionDigitalHumanView,
+		WorkspacePermissionDigitalHumanCreate,
+		WorkspacePermissionDigitalHumanUpdate,
+		WorkspacePermissionDigitalHumanDelete,
+		WorkspacePermissionDigitalHumanPublish,
+		WorkspacePermissionDigitalHumanRun,
+		WorkspacePermissionDigitalHumanLogsView,
+		WorkspacePermissionDigitalHumanMemoryView,
+		WorkspacePermissionDigitalHumanMemoryManage,
 		WorkspacePermissionWorkflowView,
 		WorkspacePermissionWorkflowCreate,
 		WorkspacePermissionWorkflowUpdate,
@@ -509,6 +537,15 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 		return AllWorkspacePermissionCodes()
 	case WorkspaceBuiltinRoleAdminID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
+			WorkspacePermissionDigitalHumanView,
+			WorkspacePermissionDigitalHumanCreate,
+			WorkspacePermissionDigitalHumanUpdate,
+			WorkspacePermissionDigitalHumanDelete,
+			WorkspacePermissionDigitalHumanPublish,
+			WorkspacePermissionDigitalHumanRun,
+			WorkspacePermissionDigitalHumanLogsView,
+			WorkspacePermissionDigitalHumanMemoryView,
+			WorkspacePermissionDigitalHumanMemoryManage,
 			WorkspacePermissionAgentView,
 			WorkspacePermissionAgentLogsView,
 			WorkspacePermissionAgentManage,
@@ -534,6 +571,10 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 		})
 	case WorkspaceBuiltinRoleMemberID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
+			WorkspacePermissionDigitalHumanView,
+			WorkspacePermissionDigitalHumanRun,
+			WorkspacePermissionDigitalHumanLogsView,
+			WorkspacePermissionDigitalHumanMemoryView,
 			WorkspacePermissionAgentView,
 			WorkspacePermissionAgentLogsView,
 			WorkspacePermissionWorkflowView,
@@ -551,6 +592,9 @@ func GetBuiltinGroupRolePermissionsByID(roleID string) []WorkspacePermissionCode
 		})
 	case WorkspaceBuiltinRoleViewerID:
 		return ExpandWorkspacePermissionCodesForCompatibility([]WorkspacePermissionCode{
+			WorkspacePermissionDigitalHumanView,
+			WorkspacePermissionDigitalHumanLogsView,
+			WorkspacePermissionDigitalHumanMemoryView,
 			WorkspacePermissionAgentView,
 			WorkspacePermissionAgentLogsView,
 			WorkspacePermissionWorkflowView,
@@ -737,6 +781,8 @@ func DefaultWorkspaceRoleTemplateDefinition(systemKey string) (WorkspaceDefaultR
 }
 
 func advancedWorkspaceMemberPermissionStrings() []string {
+	// Default templates are snapshots: initialize future advanced templates with
+	// every assignable business permission without rewriting existing templates.
 	codes := AllWorkspacePermissionCodes()
 	permissions := make([]string, 0, len(codes))
 	for _, code := range codes {
@@ -750,6 +796,13 @@ func advancedWorkspaceMemberPermissionStrings() []string {
 
 func basicWorkspaceMemberPermissionStrings() []string {
 	return CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
+		string(WorkspacePermissionDigitalHumanView),
+		string(WorkspacePermissionDigitalHumanCreate),
+		string(WorkspacePermissionDigitalHumanUpdate),
+		string(WorkspacePermissionDigitalHumanRun),
+		string(WorkspacePermissionDigitalHumanLogsView),
+		string(WorkspacePermissionDigitalHumanMemoryView),
+		string(WorkspacePermissionDigitalHumanMemoryManage),
 		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentCreate),
 		string(WorkspacePermissionAgentUpdate),
@@ -779,6 +832,9 @@ func basicWorkspaceMemberPermissionStrings() []string {
 
 func readonlyWorkspaceMemberPermissionStrings() []string {
 	return CanonicalAssignableWorkspacePermissionSnapshotStrings([]string{
+		string(WorkspacePermissionDigitalHumanView),
+		string(WorkspacePermissionDigitalHumanLogsView),
+		string(WorkspacePermissionDigitalHumanMemoryView),
 		string(WorkspacePermissionAgentView),
 		string(WorkspacePermissionAgentLogsView),
 		string(WorkspacePermissionWorkflowView),

@@ -2,13 +2,11 @@ package APIKey
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
@@ -29,17 +27,10 @@ func NewAPIKeyService(db *gorm.DB) *APIKeyService {
 // GenerateAPIKey generates a new API key
 func (s *APIKeyService) GenerateAPIKey(ctx context.Context, agentID, tenantID uuid.UUID, name string) (string, error) {
 	// Generate random key
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
+	key, keyPrefix, keyHash, err := externalapikey.Generate()
+	if err != nil {
 		return "", fmt.Errorf("failed to generate random key: %w", err)
 	}
-
-	key := "zgi_" + hex.EncodeToString(bytes)
-	keyPrefix := key[:12] // Store first 12 characters for identification
-
-	// Hash the key before storing
-	hash := sha256.Sum256([]byte(key))
-	keyHash := hex.EncodeToString(hash[:])
 
 	apiKey := &APIKey{
 		AgentID:   agentID,
@@ -194,17 +185,10 @@ func (s *APIKeyService) ValidateAPIKeyByHash(ctx context.Context, keyHash string
 // CreateAPIKey creates a new API key and returns both the key and the database record
 func (s *APIKeyService) CreateAPIKey(ctx context.Context, agentID, tenantID uuid.UUID, name string, expiresAt *time.Time) (*APIKey, string, error) {
 	// Generate random key
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
+	key, keyPrefix, keyHash, err := externalapikey.Generate()
+	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate random key: %w", err)
 	}
-
-	key := "zgi_" + hex.EncodeToString(bytes)
-	keyPrefix := key[:12] // Store first 12 characters for identification
-
-	// Hash the key before storing
-	hash := sha256.Sum256([]byte(key))
-	keyHash := hex.EncodeToString(hash[:])
 
 	apiKey := &APIKey{
 		ID:        uuid.New(),
@@ -245,6 +229,5 @@ func (s *APIKeyService) CreateAPIKey(ctx context.Context, agentID, tenantID uuid
 
 // HashAPIKey creates a hash of the API key for validation
 func (s *APIKeyService) HashAPIKey(key string) string {
-	hash := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(hash[:])
+	return externalapikey.Hash(key)
 }

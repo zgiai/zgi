@@ -71,7 +71,9 @@ func loadCoreRuntimeConfig(cfg *Config, source *envSource) error {
 		requiredConfigLoader("jwt", loadJWTConfig),
 		requiredConfigLoader("log", loadLogConfig),
 
-		optionalConfigLoader("console", loadConsoleConfig),
+		// Console is optional in effect (every field has a default) but the loader
+		// validates the organization report interval, so it is registered as required.
+		requiredConfigLoader("console", loadConsoleConfig),
 		optionalConfigLoader("platform", loadPlatformConfig),
 		optionalConfigLoader("feature", loadFeatureConfig),
 		requiredConfigLoader("chat runtime", loadChatRuntimeConfig),
@@ -86,23 +88,12 @@ func loadChatRuntimeConfig(cfg *Config, source *envSource) error {
 	if timeout <= 0 {
 		timeout = 300
 	}
-	agentContextWindowK, err := source.int(256, envChatRuntimeAgentContextWindowK)
-	if err != nil {
-		return err
-	}
-	if agentContextWindowK <= 0 {
-		return fmt.Errorf("%s must be a positive integer", envChatRuntimeAgentContextWindowK)
-	}
-	if agentContextWindowK > int(^uint(0)>>1)/1000 {
-		return fmt.Errorf("%s is too large", envChatRuntimeAgentContextWindowK)
-	}
 	contextPromptDumpEnabled, err := source.bool(false, envChatRuntimeContextPromptDumpEnabled)
 	if err != nil {
 		return err
 	}
 	cfg.ChatRuntime = ChatRuntimeConfig{
 		ModelIdleTimeoutSeconds:  timeout,
-		AgentContextWindowK:      agentContextWindowK,
 		ContextPromptDumpEnabled: contextPromptDumpEnabled,
 	}
 	return nil
@@ -172,8 +163,8 @@ func loadDomainConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("neo4j", loadNeo4jConfig),
 		optionalConfigLoader("marketplace", loadMarketplaceConfig),
 
-		requiredConfigLoader("web search", loadWebSearchConfig),
-		requiredConfigLoader("external integrations", loadExternalIntegrationsConfig),
+		requiredConfigLoader("connectors", loadConnectorsConfig),
+		requiredConfigLoader("digital_human_credentials", loadDigitalHumanCredentialsConfig),
 		optionalConfigLoader("knowledge", loadKnowledgeConfig),
 		optionalConfigLoader("graph flow", loadGraphFlowConfig),
 		optionalConfigLoader("content parse", loadContentParseConfig),
@@ -443,24 +434,64 @@ func loadAppConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	channelDeliveryFileTTL, err := source.int(DefaultChannelDeliveryFileTTLSeconds, envChannelDeliveryFileTTL)
+	if err != nil {
+		return err
+	}
+	if channelDeliveryFileTTL <= 0 || channelDeliveryFileTTL > MaxChannelDeliveryFileTTLSeconds {
+		return fmt.Errorf("%s must be between 1 and %d seconds", envChannelDeliveryFileTTL, MaxChannelDeliveryFileTTLSeconds)
+	}
 
 	cfg.App = AppConfig{
-		Name:               source.string("ZGI-GinKit", envAppName),
-		SecretKey:          source.string("", envSecretKey),
-		FilesURL:           source.string("http://localhost:2679", envFilesURL),
-		InternalFilesURL:   source.string("", envInternalFilesURL),
-		FilesAccessTimeout: filesAccessTimeout,
+		Name:                   source.string("ZGI-GinKit", envAppName),
+		SecretKey:              source.string("", envSecretKey),
+		FilesURL:               source.string("http://localhost:2679", envFilesURL),
+		InternalFilesURL:       source.string("", envInternalFilesURL),
+		FilesAccessTimeout:     filesAccessTimeout,
+		ChannelDeliveryFileTTL: channelDeliveryFileTTL,
 	}
 	return nil
 }
 
-func loadConsoleConfig(cfg *Config, source *envSource) {
-	cfg.Console = ConsoleConfig{
-		APIURL:         source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
-		GRPCAddr:       source.string("", envConsoleAPIGRPCAddr),
-		InternalAPIKey: source.string("", envConsoleInternalAPIKey),
-		WebURL:         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
+func loadConsoleConfig(cfg *Config, source *envSource) error {
+	syncIntervalSec, _ := source.int(45, envConsoleSyncIntervalSec)
+	syncStaleSec, _ := source.int(300, envConsoleSyncStaleSec)
+	grpcTLS, err := source.bool(false, envConsoleAPIGRPCTLS)
+	if err != nil {
+		return err
 	}
+	organizationReportInterval, err := source.duration(
+		defaultOrganizationReportInterval, envConsoleSyncOrganizationReportInterval,
+	)
+	if err != nil {
+		return err
+	}
+
+	cfg.Console = ConsoleConfig{
+		APIURL:   source.string(defaultLocalConsoleAPIURL(cfg), envConsoleAPIURL),
+		GRPCAddr: source.string("", envConsoleAPIGRPCAddr),
+		GRPCTLS: ConsoleGRPCTLSConfig{
+			Enabled:    grpcTLS,
+			CAFile:     source.string("", envConsoleAPIGRPCTLSCAFile),
+			ServerName: source.string("", envConsoleAPIGRPCTLSServerName),
+		},
+		InternalAPIKey:                 source.string("", envConsoleInternalAPIKey),
+		WebURL:                         source.string(cfg.Email.ConsoleWebURL, envEmailConsoleWebURL),
+		InstanceID:                     source.string("", envConsoleInstanceID),
+		InstanceSecret:                 source.string("", envConsoleInstanceSecret),
+		SyncEnabled:                    mustBool(source.bool(true, envConsoleSyncEnabled)),
+		SyncIntervalSec:                syncIntervalSec,
+		SyncStaleSec:                   syncStaleSec,
+		SyncOrganizationReportInterval: organizationReportInterval,
+		ZGIMarketGatewayURL:            strings.TrimRight(source.string("", envZGIMarketGatewayURL), "/"),
+		ZGIMarketOAuthRedirectURL:      strings.TrimSpace(source.string("", envZGIMarketOAuthRedirectURL)),
+		ZGIMarketConfirmAbovePoints:    max(mustInt(source.int(100, envZGIMarketConfirmAbovePoints)), 0),
+		ZGIMarketAllowPrivateTargets:   mustBool(source.bool(false, envZGIMarketAllowPrivateTargets)),
+	}
+	if err := ValidateConsoleGRPCTLS(cfg.Console.GRPCTLS); err != nil {
+		return err
+	}
+	return nil
 }
 
 func defaultLocalConsoleAPIURL(cfg *Config) string {
@@ -773,6 +804,10 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	skillDependencyScanEnabled, err := source.bool(true, envCodeExecutionSkillDependencyScanEnabled)
+	if err != nil {
+		return err
+	}
 	maxNumber, err := source.int64(9223372036854775807, envCodeMaxNumber)
 	if err != nil {
 		return err
@@ -799,6 +834,7 @@ func loadCodeExecConfig(cfg *Config, source *envSource) error {
 		EnableNetwork:                enableNetwork,
 		SystemOfficeProfile:          source.string("skill-office", envCodeExecutionSystemOfficeProfile),
 		SystemDataProfile:            source.string("scientific-data", envCodeExecutionSystemDataProfile),
+		SkillDependencyScanDisabled:  !skillDependencyScanEnabled,
 		MaxNumber:                    maxNumber,
 		MinNumber:                    minNumber,
 		MaxStringLength:              maxStringLength,
@@ -1040,7 +1076,8 @@ func shouldAutoEnableLangfuseDirectExport(endpoint string, tracesEndpoint string
 
 func loadModelMetaConfig(cfg *Config, source *envSource) {
 	cfg.ModelMeta = ModelMetaConfig{
-		APIURL: source.string("https://models.zgi.ai", envModelMetaAPIURL),
+		APIURL:          source.string("https://models.zgi.ai", envModelMetaAPIURL),
+		AutoSyncEnabled: mustBool(source.bool(true, envModelMetaAutoSyncEnabled)),
 	}
 }
 
@@ -1190,146 +1227,46 @@ func loadAutomationConfig(cfg *Config, source *envSource) {
 	}
 }
 
-func loadWebSearchConfig(cfg *Config, source *envSource) error {
-	timeoutSeconds, err := source.int(20, envExaTimeoutSeconds)
-	if err != nil {
-		return err
-	}
-	maxResults, err := source.int(10, envExaMaxResults)
-	if err != nil {
-		return err
-	}
-	maxFetchURLs, err := source.int(5, envExaMaxFetchURLs)
-	if err != nil {
-		return err
-	}
-	maxContentCharacters, err := source.int(20000, envExaMaxContentCharacters)
-	if err != nil {
-		return err
-	}
-
-	cfg.WebSearch = WebSearchConfig{
-		Provider: strings.ToLower(strings.TrimSpace(source.string("exa", envWebSearchProvider))),
-		Exa: ExaConfig{
-			TimeoutSeconds:       timeoutSeconds,
-			MaxResults:           maxResults,
-			DefaultSearchType:    strings.ToLower(strings.TrimSpace(source.string("auto", envExaDefaultSearchType))),
-			MaxFetchURLs:         maxFetchURLs,
-			MaxContentCharacters: maxContentCharacters,
-		},
-	}
-	return nil
-}
-
-func loadExternalIntegrationsConfig(cfg *Config, source *envSource) error {
-	enabled, err := source.bool(false, envExternalIntegrationsEnabled)
-	if err != nil {
-		return err
-	}
-	orgDailyLimit, err := source.int(1000, envIntegrationOrgDailyLimit)
-	if err != nil {
-		return err
-	}
-	timeoutSeconds, err := source.int(20, envIntegrationTimeoutSeconds)
-	if err != nil {
-		return err
-	}
-	healthFailureThreshold, err := source.int(3, envIntegrationHealthFailureThreshold)
-	if err != nil {
-		return err
-	}
-	oauthRefreshWindow, err := source.int(600, envIntegrationOAuthRefreshWindowSeconds)
-	if err != nil {
-		return err
-	}
-	oauthFlowTTL, err := source.int(600, envIntegrationOAuthFlowTTLSeconds)
-	if err != nil {
-		return err
-	}
-	oauthAPIBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.APIURL), "/")
-	if oauthAPIBaseURL == "" {
-		oauthAPIBaseURL = defaultLocalConsoleAPIURL(cfg)
-	}
-	oauthWebBaseURL := strings.TrimRight(strings.TrimSpace(cfg.Console.WebURL), "/")
-	if oauthWebBaseURL == "" {
-		oauthWebBaseURL = "http://localhost:3000"
-	}
-	oauthCallbackURL := strings.TrimSpace(source.string(
-		oauthAPIBaseURL+"/console/api/integrations/oauth/callback",
-		envIntegrationOAuthCallbackURL,
-	))
-	oauthResultURL := strings.TrimSpace(source.string(
-		oauthWebBaseURL+"/console/integrations/oauth/result",
-		envIntegrationOAuthResultURL,
-	))
-	type rawOAuthClientConfig struct {
-		ClientID     string            `json:"client_id"`
-		ClientSecret string            `json:"client_secret"`
-		Config       map[string]string `json:"config"`
-	}
-	rawOAuthClients := make(map[string]rawOAuthClientConfig)
-	clientsJSON := strings.TrimSpace(source.string("", envIntegrationOAuthClientsJSON))
-	if clientsJSON != "" {
-		if err := json.Unmarshal([]byte(clientsJSON), &rawOAuthClients); err != nil {
-			return fmt.Errorf("%s must be a JSON object: %w", envIntegrationOAuthClientsJSON, err)
-		}
-	}
-	oauthClients := make(map[string]ExternalIntegrationOAuthClientConfig, len(rawOAuthClients))
-	for rawKey, rawClient := range rawOAuthClients {
-		key := strings.ToLower(strings.TrimSpace(rawKey))
-		if key == "" {
-			return fmt.Errorf("%s contains an empty provider key", envIntegrationOAuthClientsJSON)
-		}
-		configValues := make(map[string]string, len(rawClient.Config))
-		for rawConfigKey, rawValue := range rawClient.Config {
-			configKey := strings.ToLower(strings.TrimSpace(rawConfigKey))
-			if configKey == "" {
-				return fmt.Errorf("%s contains an empty config key for %q", envIntegrationOAuthClientsJSON, key)
-			}
-			configValues[configKey] = strings.TrimSpace(rawValue)
-		}
-		oauthClients[key] = ExternalIntegrationOAuthClientConfig{
-			ClientID:     strings.TrimSpace(rawClient.ClientID),
-			ClientSecret: strings.TrimSpace(rawClient.ClientSecret),
-			Config:       configValues,
-		}
-	}
+func loadConnectorsConfig(cfg *Config, source *envSource) error {
 	credentialKeys := make(map[string]string)
-	keysJSON := strings.TrimSpace(source.string("", envIntegrationCredentialKeysJSON))
+	keysJSON := strings.TrimSpace(source.string("", envConnectorCredentialKeysJSON))
 	if keysJSON != "" {
 		if err := json.Unmarshal([]byte(keysJSON), &credentialKeys); err != nil {
-			return fmt.Errorf("%s must be a JSON object: %w", envIntegrationCredentialKeysJSON, err)
+			return fmt.Errorf("%s must be a JSON object: %w", envConnectorCredentialKeysJSON, err)
 		}
 	}
-	activeKeyID := strings.TrimSpace(source.string("", envIntegrationCredentialActiveKeyID))
-	if len(credentialKeys) == 0 && strings.TrimSpace(cfg.Encryption.APIKeyEncryptionKey) != "" {
-		credentialKeys["legacy"] = cfg.Encryption.APIKeyEncryptionKey
-		if activeKeyID == "" {
-			activeKeyID = "legacy"
-		}
-	}
+	activeKeyID := strings.TrimSpace(source.string("", envConnectorCredentialActiveKeyID))
 	if activeKeyID == "" {
 		if _, ok := credentialKeys["default"]; ok {
 			activeKeyID = "default"
 		}
 	}
+	pluginDirectories := make([]string, 0)
+	directoriesJSON := strings.TrimSpace(source.string("", envConnectorPluginDirectoriesJSON))
+	if directoriesJSON != "" {
+		if err := json.Unmarshal([]byte(directoriesJSON), &pluginDirectories); err != nil {
+			return fmt.Errorf("%s must be a JSON array of trusted package directories: %w", envConnectorPluginDirectoriesJSON, err)
+		}
+		seenDirectories := make(map[string]struct{}, len(pluginDirectories))
+		normalized := pluginDirectories[:0]
+		for _, directory := range pluginDirectories {
+			directory = strings.TrimSpace(directory)
+			if directory == "" {
+				return fmt.Errorf("%s must not contain an empty directory", envConnectorPluginDirectoriesJSON)
+			}
+			if _, duplicate := seenDirectories[directory]; duplicate {
+				continue
+			}
+			seenDirectories[directory] = struct{}{}
+			normalized = append(normalized, directory)
+		}
+		pluginDirectories = normalized
+	}
 
-	cfg.ExternalIntegrations = ExternalIntegrationsConfig{
-		Enabled:               enabled,
-		OrgDailyLimit:         orgDailyLimit,
-		TimeoutSeconds:        timeoutSeconds,
+	cfg.Connectors = ConnectorsConfig{
 		CredentialActiveKeyID: activeKeyID,
 		CredentialKeys:        credentialKeys,
-		Health: ExternalIntegrationHealthConfig{
-			FailureThreshold: healthFailureThreshold,
-		},
-		OAuth: ExternalIntegrationOAuthConfig{
-			RefreshWindowSeconds: oauthRefreshWindow,
-			FlowTTLSeconds:       oauthFlowTTL,
-			CallbackURL:          oauthCallbackURL,
-			ResultURL:            oauthResultURL,
-			Clients:              oauthClients,
-		},
+		PluginDirectories:     pluginDirectories,
 	}
 	return nil
 }

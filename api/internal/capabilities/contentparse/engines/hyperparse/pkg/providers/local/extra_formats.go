@@ -58,6 +58,7 @@ func parseLocalExtraFormat(filename string, data []byte, ext string) (*extractco
 }
 
 func parseDelimitedRowsAsDoc(filename string, data []byte, comma rune, source string) (*extractcommon.DocumentResult, error) {
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	reader := csv.NewReader(bytes.NewReader(data))
 	reader.Comma = comma
 	reader.FieldsPerRecord = -1

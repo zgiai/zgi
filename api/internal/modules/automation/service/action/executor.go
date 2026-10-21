@@ -9,9 +9,10 @@ import (
 
 // ActionExecutionRequest contains the task, run, and action snapshots needed to execute one action.
 type ActionExecutionRequest struct {
-	Task    *automationmodel.AutomationTask
-	TaskRun *automationmodel.AutomationTaskRun
-	Action  *automationmodel.AutomationTaskAction
+	Task      *automationmodel.AutomationTask
+	TaskRun   *automationmodel.AutomationTaskRun
+	Action    *automationmodel.AutomationTaskAction
+	ActionRun *automationmodel.AutomationActionRun
 }
 
 // ActionExecutionResult stores normalized payloads for automation action run records.
@@ -19,6 +20,9 @@ type ActionExecutionResult struct {
 	RequestPayload  map[string]interface{}
 	ResponsePayload map[string]interface{}
 	ChannelType     *automationmodel.NotificationChannelType
+	Pending         bool
+	ExternalRunType string
+	ExternalRunID   string
 }
 
 // ActionExecutor executes one supported automation action type.

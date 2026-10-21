@@ -72,7 +72,7 @@ func (s *service) customSkillDiscoveryMetadata(ctx context.Context, organization
 		if item == nil {
 			continue
 		}
-		doc, err := skills.LoadCustomSkillDocument(item.StoragePath)
+		doc, err := skills.LoadCustomSkillDocumentWithName(item.StoragePath, item.SkillID)
 		if err == nil {
 			loaded := skillDiscoveryMetadataPtr(doc)
 			metadata = append(metadata, *loaded)

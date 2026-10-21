@@ -12,15 +12,132 @@ type apiRound struct {
 	Messages []adapter.Message
 }
 
+// compactionBatch is the smallest safe unit for semantic-compaction
+// boundaries. An assistant tool-call message and all immediately following
+// tool results form one batch; every other message is a singleton batch.
+// Keeping this unit intact prevents a summary request or a retry from
+// producing an orphaned tool result.
+type compactionBatch struct {
+	Messages []adapter.Message
+}
+
+func groupMessagesByCompactionBatch(messages []adapter.Message) []compactionBatch {
+	batches := make([]compactionBatch, 0, len(messages))
+	for index := 0; index < len(messages); {
+		end := index + 1
+		message := messages[index]
+		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") && len(message.ToolCalls) > 0 {
+			for end < len(messages) && strings.EqualFold(strings.TrimSpace(messages[end].Role), "tool") {
+				end++
+			}
+		}
+		batches = append(batches, compactionBatch{Messages: cloneMessages(messages[index:end])})
+		index = end
+	}
+	return batches
+}
+
+func flattenCompactionBatches(batches []compactionBatch) []adapter.Message {
+	messages := make([]adapter.Message, 0)
+	for _, batch := range batches {
+		messages = append(messages, cloneMessages(batch.Messages)...)
+	}
+	return messages
+}
+
+// selectPreservedTailMessages returns the first message of the verbatim tail.
+// The count is measured in protocol messages, not user/assistant rounds. If
+// the boundary falls inside a tool batch, the complete batch is retained and
+// the returned tail is therefore allowed to exceed minimumMessages.
+//
+// A zero result means that there is no prefix to summarize (the complete
+// dialogue is protected), which is important for short conversations.
+func selectPreservedTailMessages(messages []adapter.Message, minimumMessages int) int {
+	if minimumMessages <= 0 {
+		minimumMessages = 1
+	}
+	if len(messages) <= minimumMessages {
+		return 0
+	}
+	batches := groupMessagesByCompactionBatch(messages)
+	messageCount := 0
+	batchStart := len(batches)
+	for batchStart > 0 && messageCount < minimumMessages {
+		batchStart--
+		messageCount += len(batches[batchStart].Messages)
+	}
+	if batchStart >= len(batches) {
+		return 0
+	}
+	start := 0
+	for index := 0; index < batchStart; index++ {
+		start += len(batches[index].Messages)
+	}
+	return start
+}
+
+// selectPreservedTailMessagesByRounds returns the first message of the newest
+// complete model rounds. A model round starts with an assistant response and
+// includes every immediately following tool result. Any trailing current user
+// input is preserved as part of the tail. Returning zero means there is no
+// older prefix that can be summarized safely.
+func selectPreservedTailMessagesByRounds(messages []adapter.Message, roundsToKeep int) int {
+	if roundsToKeep <= 0 {
+		roundsToKeep = defaultPreservedRounds
+	}
+	rounds := groupMessagesByAPIRound(messages)
+	assistantRounds := make([]int, 0, len(rounds))
+	for index, round := range rounds {
+		for _, message := range round.Messages {
+			if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
+				assistantRounds = append(assistantRounds, index)
+				break
+			}
+		}
+	}
+	if len(assistantRounds) <= roundsToKeep {
+		return 0
+	}
+	firstPreservedRound := assistantRounds[len(assistantRounds)-roundsToKeep]
+	start := 0
+	for index := 0; index < firstPreservedRound; index++ {
+		start += len(rounds[index].Messages)
+	}
+	return start
+}
+
 // groupMessagesByAPIRound starts a new group at every assistant response.
-// Tool results following that assistant remain in the same group, so a
-// compaction boundary can never split a tool_call/tool_result pair.
+// Tool results following that assistant remain in the same group. The groups
+// are retained for round-based diagnostics; compaction boundaries use the
+// message-level batches above.
 func groupMessagesByAPIRound(messages []adapter.Message) []apiRound {
 	rounds := make([]apiRound, 0)
 	current := apiRound{}
 	sequence := 0
 	for _, message := range messages {
-		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") && len(current.Messages) > 0 {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		startsNewRound := false
+		if len(current.Messages) > 0 && role == "assistant" {
+			// Each assistant response is one model invocation. A follow-up
+			// assistant response after tool results therefore starts a new round.
+			for _, existing := range current.Messages {
+				if strings.EqualFold(strings.TrimSpace(existing.Role), "assistant") {
+					startsNewRound = true
+					break
+				}
+			}
+		}
+		if len(current.Messages) > 0 && role == "user" {
+			// A new user turn belongs to the next round, not to the previous
+			// assistant response and its tool results.
+			for _, existing := range current.Messages {
+				if strings.EqualFold(strings.TrimSpace(existing.Role), "assistant") {
+					startsNewRound = true
+					break
+				}
+			}
+		}
+		if startsNewRound {
 			rounds = append(rounds, current)
 			sequence++
 			current = apiRound{Sequence: sequence}
@@ -103,6 +220,15 @@ func cloneMessages(messages []adapter.Message) []adapter.Message {
 		out = append(out, cloneMessage(message))
 	}
 	return out
+}
+
+func summarizedEntryID(messages []adapter.Message) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if id := strings.TrimSpace(messages[index].EntryID); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 func cloneMessage(message adapter.Message) adapter.Message {

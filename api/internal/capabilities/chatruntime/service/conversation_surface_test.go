@@ -265,6 +265,7 @@ func TestUpdateConversationAllowsPausedRuntimeMessageAsCurrentLeaf(t *testing.T)
 		runtimemodel.MessageStatusPending,
 		runtimemodel.MessageStatusWaitingApproval,
 		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingBudget,
 		runtimemodel.MessageStatusWaitingClientAction,
 	} {
 		t.Run(status, func(t *testing.T) {

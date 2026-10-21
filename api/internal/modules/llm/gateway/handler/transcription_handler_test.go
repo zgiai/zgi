@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -91,7 +92,9 @@ func TestTranscriptionHandlerMapsServiceErrors(t *testing.T) {
 	}{
 		{name: "unsupported model", err: adapter.ErrCapabilityUnsupported, status: http.StatusBadRequest},
 		{name: "model not found", err: gateway.ErrModelNotFound, status: http.StatusNotFound},
-		{name: "insufficient balance", err: adapter.ErrInsufficientBalance, status: http.StatusTooManyRequests},
+		// The ledger records llm.balance.insufficient (403) for a declined
+		// reservation, so the egress must answer 403 and not a retryable 429.
+		{name: "insufficient balance", err: adapter.ErrInsufficientBalance, status: http.StatusForbidden},
 		{name: "timeout", err: context.DeadlineExceeded, status: http.StatusGatewayTimeout},
 		{name: "cancelled", err: context.Canceled, status: 499},
 	}
@@ -129,4 +132,44 @@ func (s *transcriptionServiceStub) Transcribe(_ context.Context, _ *apikeymodel.
 		s.audio, _ = io.ReadAll(request.Audio)
 	}
 	return s.response, s.err
+}
+
+// TestTranscriptionHandlerProjectsFailuresWithTheProjector pins residue 1 of the
+// classification divergence: the handler used to answer through the raw
+// classifier, so a declined reservation reached the client as an unprojected
+// 429 without the catalog code. With the projector attached the egress carries
+// the catalog identity, header, and localized message like every other exit.
+func TestTranscriptionHandlerProjectsFailuresWithTheProjector(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewTranscriptionHandler(&transcriptionServiceStub{err: adapter.ErrInsufficientBalance})
+	handler.SetErrorProjector(testApplicationErrorProjector(t))
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions?model=asr", bytes.NewReader([]byte("pcm")))
+	c.Request.Header.Set("Content-Type", "audio/pcm")
+	c.Request.Header.Set("Accept-Language", "zh-CN")
+
+	handler.Transcribe(c)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("X-ZGI-App-Error-Code"); got != "llm.balance.insufficient" {
+		t.Fatalf("X-ZGI-App-Error-Code = %q, want llm.balance.insufficient", got)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error_code"] != "llm.balance.insufficient" {
+		t.Fatalf("error_code = %v, want llm.balance.insufficient", body["error_code"])
+	}
+	if body["retryable"] != false {
+		t.Fatalf("retryable = %v, want false", body["retryable"])
+	}
+	if message, _ := body["message"].(string); !strings.Contains(message, "余额不足") {
+		t.Fatalf("message = %q, want the catalog's Chinese text", message)
+	}
 }

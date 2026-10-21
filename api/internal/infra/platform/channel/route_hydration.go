@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
@@ -43,6 +44,8 @@ func HydrateOfficialRoutes(
 	providerModels := make([]channelmodel.ProviderModel, 0)
 	seenModels := make(map[string]struct{})
 	seenProviderModels := make(map[channelmodel.ProviderModel]struct{})
+	modelProtocols := make(map[string][]string)
+	modelProtocolSeen := make(map[string]map[string]struct{})
 	for _, platformChannel := range channels {
 		if platformChannel == nil {
 			continue
@@ -58,14 +61,53 @@ func HydrateOfficialRoutes(
 				models = append(models, modelName)
 			}
 			if channelProvider == "" {
-				continue
+				// Protocol capability remains model-scoped even if a legacy Console
+				// response omitted the supplier label.
+			} else {
+				providers := []string{channelProvider}
+				// A multi-vendor channel supplier need not own a separate price
+				// row for every advertised model. Resolve its explicit model
+				// capability through the synchronized catalog only when the
+				// owner is unambiguous. Keep exact supplier mappings authoritative.
+				if catalogvendor.Lookup(channelProvider, modelName) == "" {
+					providers = append(providers, catalogvendor.UnambiguousModelProviders(modelName)...)
+				}
+				for _, modelProvider := range providers {
+					pair := channelmodel.ProviderModel{Provider: modelProvider, Model: modelName}
+					if _, ok := seenProviderModels[pair]; !ok {
+						seenProviderModels[pair] = struct{}{}
+						providerModels = append(providerModels, pair)
+					}
+				}
 			}
-			pair := channelmodel.ProviderModel{Provider: channelProvider, Model: modelName}
-			if _, ok := seenProviderModels[pair]; ok {
-				continue
+			// An explicitly published per-model list is authoritative even when it
+			// is empty: Console sends [] for a model no protocol can serve, and
+			// falling back to the channel-wide union there re-advertised
+			// Responses/Messages for image and embedding models.
+			protocols, declared := platformChannel.ModelProtocols[rawModel]
+			if !declared {
+				protocols = platformChannel.SupportedProtocols
+			} else if _, exists := modelProtocols[modelName]; !exists {
+				// Seed the key so an authoritative empty declaration survives into
+				// OfficialModelProtocols. The append loop below never creates it for
+				// zero protocols, and a missing key reads as "not declared", which
+				// let the channel-wide union leak back in.
+				modelProtocols[modelName] = []string{}
 			}
-			seenProviderModels[pair] = struct{}{}
-			providerModels = append(providerModels, pair)
+			if modelProtocolSeen[modelName] == nil {
+				modelProtocolSeen[modelName] = map[string]struct{}{}
+			}
+			for _, protocol := range protocols {
+				protocol = strings.TrimSpace(protocol)
+				if protocol == "" {
+					continue
+				}
+				if _, exists := modelProtocolSeen[modelName][protocol]; exists {
+					continue
+				}
+				modelProtocolSeen[modelName][protocol] = struct{}{}
+				modelProtocols[modelName] = append(modelProtocols[modelName], protocol)
+			}
 		}
 	}
 	sort.Strings(models)
@@ -82,6 +124,7 @@ func HydrateOfficialRoutes(
 		}
 		route.Models = append([]string(nil), models...)
 		route.OfficialProviderModels = append([]channelmodel.ProviderModel(nil), providerModels...)
+		route.OfficialModelProtocols = cloneModelProtocols(modelProtocols)
 	}
 	return routes, nil
 }

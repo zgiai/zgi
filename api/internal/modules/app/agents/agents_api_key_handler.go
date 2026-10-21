@@ -11,8 +11,11 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/util"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -26,6 +29,7 @@ type apiKeyAgentChatRequest struct {
 	Parameters     map[string]interface{} `json:"parameters,omitempty"`
 	UseMemory      bool                   `json:"use_memory,omitempty"`
 	User           string                 `json:"user,omitempty"`
+	MaxTaskTokens  int                    `json:"max_task_tokens,omitempty"`
 }
 
 type apiKeyAgentRegenerateRequest struct {
@@ -33,26 +37,27 @@ type apiKeyAgentRegenerateRequest struct {
 }
 
 type apiKeyAgentRuntimeConfigResponse struct {
-	AgentID              string   `json:"agent_id"`
-	WebAppID             string   `json:"web_app_id"`
-	AgentType            string   `json:"agent_type"`
-	Name                 string   `json:"name"`
-	Description          string   `json:"description"`
-	Icon                 string   `json:"icon"`
-	IconType             string   `json:"icon_type"`
-	IconURL              string   `json:"icon_url"`
-	HomeTitle            string   `json:"home_title"`
-	OpeningStatement     string   `json:"opening_statement"`
-	InputPlaceholder     string   `json:"input_placeholder"`
-	ThemeColor           string   `json:"theme_color"`
-	SuggestedQuestions   []string `json:"suggested_questions"`
-	FileUploadEnabled    bool     `json:"file_upload_enabled"`
-	SupportsVision       bool     `json:"supports_vision"`
-	AgentMemoryEnabled   bool     `json:"agent_memory_enabled"`
-	MemoryRequiresUser   bool     `json:"memory_requires_user"`
-	ExternalUserRequired bool     `json:"external_user_required"`
-	Version              string   `json:"version"`
-	VersionUUID          string   `json:"version_uuid"`
+	FileUploadPolicy     *chatfile.Policy `json:"file_upload_policy,omitempty"`
+	AgentID              string           `json:"agent_id"`
+	WebAppID             string           `json:"web_app_id"`
+	AgentType            string           `json:"agent_type"`
+	Name                 string           `json:"name"`
+	Description          string           `json:"description"`
+	Icon                 string           `json:"icon"`
+	IconType             string           `json:"icon_type"`
+	IconURL              string           `json:"icon_url"`
+	HomeTitle            string           `json:"home_title"`
+	OpeningStatement     string           `json:"opening_statement"`
+	InputPlaceholder     string           `json:"input_placeholder"`
+	ThemeColor           string           `json:"theme_color"`
+	SuggestedQuestions   []string         `json:"suggested_questions"`
+	FileUploadEnabled    bool             `json:"file_upload_enabled"`
+	SupportsVision       bool             `json:"supports_vision"`
+	AgentMemoryEnabled   bool             `json:"agent_memory_enabled"`
+	MemoryRequiresUser   bool             `json:"memory_requires_user"`
+	ExternalUserRequired bool             `json:"external_user_required"`
+	Version              string           `json:"version"`
+	VersionUUID          string           `json:"version_uuid"`
 }
 
 // GetAPIKeyAgentRuntimeConfig returns the public, published presentation
@@ -72,7 +77,12 @@ func (h *AgentsHandler) GetAPIKeyAgentRuntimeConfig(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	memoryEnabled := published.Config.AgentMemoryEnabled
+	if _, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal"); runtimeWorkspaceRequest {
+		memoryEnabled = memoryEnabled && relationshipmemory.RuntimeEnabled()
+	}
 	response.Success(c, apiKeyAgentRuntimeConfigResponse{
+		FileUploadPolicy:     chatfile.Clone(published.Config.FileUploadPolicy),
 		AgentID:              published.AgentID,
 		WebAppID:             published.WebAppID,
 		AgentType:            published.AgentType,
@@ -88,8 +98,8 @@ func (h *AgentsHandler) GetAPIKeyAgentRuntimeConfig(c *gin.Context) {
 		SuggestedQuestions:   published.Config.SuggestedQuestions,
 		FileUploadEnabled:    published.Config.FileUpload,
 		SupportsVision:       published.Config.SupportsVision,
-		AgentMemoryEnabled:   published.Config.AgentMemoryEnabled,
-		MemoryRequiresUser:   publishedAgentConfigRequiresExternalUser(published.Config),
+		AgentMemoryEnabled:   memoryEnabled,
+		MemoryRequiresUser:   memoryEnabled && publishedAgentConfigRequiresExternalUser(published.Config),
 		ExternalUserRequired: true,
 		Version:              published.Version,
 		VersionUUID:          published.VersionUUID,
@@ -133,11 +143,28 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		h.failRuntime(c, err)
 		return
 	}
+	if !published.Config.FileUpload {
+		req.FileIDs = nil
+	}
 	scope := runtimeCtx.Scope
+	scope, err = scopeWithAgentResourceWorkspace(scope, published.WorkspaceID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	runConfig, err := h.agentRunConfig(ctx, scope, published.AgentID, "agent.published."+published.Version, published.Config, "end_user")
 	if err != nil {
 		h.failRuntime(c, err)
 		return
+	}
+	if _, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal"); runtimeWorkspaceRequest {
+		runConfig = runtimeWorkspaceRunConfig(runConfig)
+	} else {
+		keyID, _ := uuid.Parse(c.GetString("api_key_id"))
+		if err := h.attachPublishedAgentExecutionTools(ctx, &runConfig, scope, runtimeCtx.Caller, published, false, keyID); err != nil {
+			h.failRuntime(c, err)
+			return
+		}
 	}
 
 	chatReq := runtimedto.ChatRequest{
@@ -148,6 +175,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		ResponseMode:   "streaming",
 		Parameters:     nil,
 		UseMemory:      false,
+		MaxTaskTokens:  req.MaxTaskTokens,
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
 		ctx,
@@ -181,6 +209,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
+		markExternalAgentRuntimeFailure(c)
 		if runtimeservice.IsFinalizedStreamError(err) {
 			return
 		}
@@ -188,7 +217,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			status = runtimemodel.MessageStatusStopped
 		}
-		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err))
+		_ = writeAgentSSE(c, "error", runtimeservice.BuildLocalizedStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID"), apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))))
 		_ = writeAgentSSE(c, "message_end", gin.H{
 			"conversation_id": prepared.Conversation.ID.String(),
 			"message_id":      prepared.Message.ID.String(),
@@ -235,6 +264,7 @@ func (h *AgentsHandler) StreamAPIKeyAgentRuntimeEvents(c *gin.Context) {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
+		markExternalAgentRuntimeFailure(c)
 		logger.WarnContext(c.Request.Context(), "external Agent event stream failed", "conversation_id", conversationID.String(), "message_id", messageID.String(), err)
 		_ = writeAgentSSEEvent(c, "", "error", gin.H{
 			"conversation_id": conversationID.String(),
@@ -293,6 +323,31 @@ func (h *AgentsHandler) ListAPIKeyAgentRuntimeConversations(c *gin.Context) {
 		return
 	}
 	h.listRuntimeConversations(c, runtimeCtx)
+}
+
+// CreateAPIKeyAgentRuntimeConversation creates an empty conversation in the
+// published Agent's external caller scope. Keeping creation in the existing
+// runtime service makes the unified Runtime Workspace API share the same
+// ownership and subject isolation rules as the legacy Agent API.
+func (h *AgentsHandler) CreateAPIKeyAgentRuntimeConversation(c *gin.Context) {
+	runtimeCtx, ok := h.apiKeyAgentUserRuntimeContext(c, c.Query("user"))
+	if !ok {
+		return
+	}
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	runtimeCtx.Caller.ConversationType = runtimemodel.ConversationTypeChat
+	conversation, err := h.chatRuntimeService.CreateConversationForCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, req.Title)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, runtimeConversationResponse(conversation))
 }
 
 func (h *AgentsHandler) SearchAPIKeyAgentRuntimeConversations(c *gin.Context) {
@@ -396,6 +451,27 @@ func (h *AgentsHandler) apiKeyAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		WorkspaceID:     &workspaceID,
 		SkipAccessCheck: true,
 	}
+	if rawRuntimeWorkspaceID := strings.TrimSpace(c.GetString("runtime_workspace_id")); rawRuntimeWorkspaceID != "" {
+		runtimeWorkspaceID, parseErr := uuid.Parse(rawRuntimeWorkspaceID)
+		if parseErr != nil || runtimeWorkspaceID == uuid.Nil {
+			response.Fail(c, response.ErrUnauthorized)
+			return agentRuntimeContext{}, false
+		}
+		scope.RuntimeWorkspaceID = &runtimeWorkspaceID
+	}
+	if rawRuntimeSubjectID := strings.TrimSpace(c.GetString("runtime_subject_id")); rawRuntimeSubjectID != "" {
+		runtimeSubjectID, parseErr := uuid.Parse(rawRuntimeSubjectID)
+		if parseErr != nil || runtimeSubjectID == uuid.Nil {
+			response.Fail(c, response.ErrUnauthorized)
+			return agentRuntimeContext{}, false
+		}
+		scope.RuntimeSubjectID = &runtimeSubjectID
+	}
+	if authorizer, exists := c.Get("runtime_file_authorizer"); exists {
+		if typed, ok := authorizer.(runtimeservice.RuntimeExternalFileAuthorizer); ok {
+			scope.RuntimeFileAuthorizer = typed
+		}
+	}
 	caller := runtimeservice.Caller{
 		Type:   runtimemodel.ConversationCallerAgent,
 		ID:     &agentID,
@@ -418,6 +494,11 @@ func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (a
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	runtimeCtx.Scope, err = scopeWithAgentResourceWorkspace(runtimeCtx.Scope, published.WorkspaceID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
 	runConfig, err := h.agentRunConfig(
 		c.Request.Context(),
 		runtimeCtx.Scope,
@@ -430,8 +511,26 @@ func (h *AgentsHandler) apiKeyAgentContinuationRuntimeContext(c *gin.Context) (a
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	if _, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal"); runtimeWorkspaceRequest {
+		runConfig = runtimeWorkspaceRunConfig(runConfig)
+	} else {
+		keyID, _ := uuid.Parse(c.GetString("api_key_id"))
+		if err := h.attachPublishedAgentExecutionTools(c.Request.Context(), &runConfig, runtimeCtx.Scope, runtimeCtx.Caller, published, false, keyID); err != nil {
+			h.failRuntime(c, err)
+			return agentRuntimeContext{}, false
+		}
+	}
 	runtimeCtx.RunConfig = runConfig
 	return runtimeCtx, true
+}
+
+func scopeWithAgentResourceWorkspace(scope runtimeservice.Scope, rawWorkspaceID string) (runtimeservice.Scope, error) {
+	workspaceID, err := uuid.Parse(strings.TrimSpace(rawWorkspaceID))
+	if err != nil || workspaceID == uuid.Nil {
+		return runtimeservice.Scope{}, errors.New("agent resource workspace id is invalid")
+	}
+	scope.ResourceWorkspaceID = &workspaceID
+	return scope, nil
 }
 
 func (h *AgentsHandler) apiKeyAgentUserRuntimeContext(c *gin.Context, legacyUser string) (agentRuntimeContext, bool) {
@@ -452,19 +551,38 @@ func (h *AgentsHandler) apiKeyAgentUserRuntimeContext(c *gin.Context, legacyUser
 		return agentRuntimeContext{}, false
 	}
 	externalUserID := DeriveExternalUserID(*runtimeCtx.Scope.WorkspaceID, *runtimeCtx.Caller.ID, externalUser)
+	if runtimeSubject := strings.TrimSpace(c.GetString("runtime_subject_id")); runtimeSubject != "" {
+		parsedSubject, parseErr := uuid.Parse(runtimeSubject)
+		if parseErr != nil || parsedSubject == uuid.Nil {
+			response.Fail(c, response.ErrUnauthorized)
+			return agentRuntimeContext{}, false
+		}
+		externalUserID = parsedSubject
+	}
 	runtimeCtx.Scope.ExternalUserID = uuidPtr(externalUserID)
 	runtimeCtx.Scope.AgentMemoryUserID = uuidPtr(externalUserID)
 	return runtimeCtx, true
 }
 
+func runtimeWorkspaceRunConfig(config runtimeservice.RunConfig) runtimeservice.RunConfig {
+	// Phase one does not expose personal Connectors. Runtime Subjects are data
+	// owners, not the internal account that owns an Agent's Connector bindings,
+	// so Connector discovery must not run under their identity.
+	config.ConnectorToolsDisabled = true
+	// Runtime Workspace credentials are not an execution entry. Never carry a
+	// caller-scoped Linux/CLI factory through this compatibility projection.
+	config.RuntimeToolFactory = nil
+	if !relationshipmemory.RuntimeEnabled() {
+		config.AgentMemoryEnabled = false
+		config.AgentMemoryAutoExtractionEnabled = false
+		config.AgentMemorySlots = nil
+	}
+	return config
+}
+
 func publishedAgentConfigRequiresExternalUser(cfg dto.AgentConfigResponse) bool {
-	if !cfg.AgentMemoryEnabled {
-		return false
-	}
-	for _, slot := range cfg.AgentMemorySlots {
-		if slot.Enabled && strings.TrimSpace(slot.Key) != "" {
-			return true
-		}
-	}
-	return false
+	// Memory is always scoped to an external Subject at the API boundary. The
+	// published slot list controls which values are available, not whether the
+	// caller identity is required.
+	return cfg.AgentMemoryEnabled
 }

@@ -1,4 +1,4 @@
-import { Query, QueryClient, QueryKey } from '@tanstack/react-query';
+import type { Query, QueryClient, QueryKey } from '@tanstack/react-query';
 
 /**
  * Common predicate for invalidating queries that belong to a specific workspace.
@@ -12,7 +12,7 @@ export const workspaceInvalidatePredicate = (
   domainKey: string,
   currentWorkspaceId: string | undefined
 ) => {
-  return (query: Query<any, any, any, QueryKey>) => {
+  return (query: Pick<Query, 'queryKey'>) => {
     const key = query.queryKey;
     if (key[0] !== domainKey) return false;
 
@@ -21,7 +21,9 @@ export const workspaceInvalidatePredicate = (
     if (key[1] === 'detail') return false;
 
     // Find params object in the query key array
-    const params = key.find(k => typeof k === 'object' && k !== null) as any;
+    const params = key.find(
+      (k): k is Record<string, unknown> => typeof k === 'object' && k !== null
+    );
     const wId = params?.workspace_id || params?.workspaceId;
 
     // Invalidate if it's the current workspace or if no workspace filter is applied (global list)
@@ -50,11 +52,11 @@ export const infiniteQueryUtils = {
     queryClient: QueryClient,
     queryKey: QueryKey,
     startIndex: number,
-    fetchNextPage: () => Promise<any>
+    fetchNextPage: () => Promise<unknown>
   ) => {
     const cached = queryClient.getQueryData<{
-      pages: any[];
-      pageParams: any[];
+      pages: unknown[];
+      pageParams: unknown[];
     }>(queryKey);
 
     if (cached && Array.isArray(cached.pages)) {

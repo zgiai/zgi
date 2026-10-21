@@ -1,6 +1,7 @@
 package model
 
 import (
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,17 +11,17 @@ import (
 // GroupAICreditAccount represents a group's AI credit account
 // Renamed from UserAICreditAccount to match group_wallets naming convention
 type GroupAICreditAccount struct {
-	ID                  string     `gorm:"type:varchar(255);primaryKey" json:"id"`
-	AccountID           uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_account_group_credit;index:idx_credit_account" json:"account_id"` // Redundant for query convenience
-	GroupID             uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_account_group_credit;index:idx_credit_group" json:"group_id"`
-	SubscriptionCredits int64      `gorm:"-" json:"subscription_credits"`               // Legacy field kept for response compatibility, always zero
-	PurchasedCredits    int64      `gorm:"not null;default:0" json:"purchased_credits"` // Purchased credits balance (no reset)
-	TotalEarned         int64      `gorm:"not null;default:0" json:"total_earned"`      // Total credits earned (cumulative)
-	TotalSpent          int64      `gorm:"not null;default:0" json:"total_spent"`       // Total credits spent (cumulative)
-	LastResetAt         *time.Time `gorm:"-" json:"last_reset_at"`                      // Legacy field kept for response compatibility, always nil
-	NextResetAt         *time.Time `gorm:"-" json:"next_reset_at"`                      // Legacy field kept for response compatibility, always nil
-	CreatedAt           time.Time  `gorm:"type:timestamptz;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
-	UpdatedAt           time.Time  `gorm:"type:timestamptz;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	ID                  string                  `gorm:"type:varchar(255);primaryKey" json:"id"`
+	AccountID           uuid.UUID               `gorm:"type:uuid;not null;uniqueIndex:idx_account_group_credit;index:idx_credit_account" json:"account_id"` // Redundant for query convenience
+	GroupID             uuid.UUID               `gorm:"type:uuid;not null;uniqueIndex:idx_account_group_credit;index:idx_credit_group" json:"group_id"`
+	SubscriptionCredits int64                   `gorm:"-" json:"subscription_credits"`               // Legacy field kept for response compatibility, always zero
+	PurchasedCredits    millipoints.MilliPoints `gorm:"not null;default:0" json:"purchased_credits"` // Purchased credits balance (no reset)
+	TotalEarned         millipoints.MilliPoints `gorm:"not null;default:0" json:"total_earned"`      // Total credits earned (cumulative)
+	TotalSpent          millipoints.MilliPoints `gorm:"not null;default:0" json:"total_spent"`       // Total credits spent (cumulative)
+	LastResetAt         *time.Time              `gorm:"-" json:"last_reset_at"`                      // Legacy field kept for response compatibility, always nil
+	NextResetAt         *time.Time              `gorm:"-" json:"next_reset_at"`                      // Legacy field kept for response compatibility, always nil
+	CreatedAt           time.Time               `gorm:"type:timestamptz;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt           time.Time               `gorm:"type:timestamptz;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
 }
 
 // TableName returns the table name
@@ -51,7 +52,7 @@ func (gaca *GroupAICreditAccount) BeforeUpdate(tx *gorm.DB) error {
 
 // GetTotalCredits returns the total credit balance
 func (gaca *GroupAICreditAccount) GetTotalCredits() int64 {
-	return gaca.PurchasedCredits
+	return gaca.PurchasedCredits.Int64()
 }
 
 // GetSubscriptionBalance returns the subscription credit balance
@@ -61,7 +62,7 @@ func (gaca *GroupAICreditAccount) GetSubscriptionBalance() int64 {
 
 // GetPurchasedBalance returns the purchased credit balance
 func (gaca *GroupAICreditAccount) GetPurchasedBalance() int64 {
-	return gaca.PurchasedCredits
+	return gaca.PurchasedCredits.Int64()
 }
 
 // CanSpend checks if there are enough credits to spend

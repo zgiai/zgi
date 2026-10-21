@@ -11,8 +11,6 @@ import {
 } from 'lucide-react';
 import { useWorkflowOperations } from '../hooks';
 import useWorkflowValidation from '../hooks/use-workflow-validation';
-import { toast } from 'sonner';
-import { useParams } from 'next/navigation';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,9 +27,6 @@ import ImageSafe from '@/components/common/image-safe';
 // import useOpenWorkflowIssues from '../hooks/use-open-workflow-issues';
 
 const WorkflowToolbar: React.FC = () => {
-  const params = useParams();
-  const agentId = params.agentId as string;
-
   const { getWorkflowStats } = useWorkflowOperations();
 
   const { isValid, hasWarnings, errors, warnings } = useWorkflowValidation();
@@ -91,8 +86,8 @@ const WorkflowToolbar: React.FC = () => {
         groups.set(key, {
           title,
           id,
-          type: (node?.data as any)?.type,
-          iconUrl: (node?.data as any)?.iconUrl,
+          type: node?.data.type,
+          iconUrl: typeof node?.data.iconUrl === 'string' ? node.data.iconUrl : undefined,
           items: [it.message],
         });
       }

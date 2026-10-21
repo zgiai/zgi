@@ -10,10 +10,10 @@ const messages = {
     quota: 'Remaining Quota',
   },
   credit: {
-    points: 'pts',
-    rate: 'Conversion: $1.00 = 10,000 pts',
+    points: 'points',
+    rate: 'Conversion: $1.00 = 1,000 points',
     approxUsd: 'about {amount}',
-    usdToPoints: '{usd} = {points} pts',
+    usdToPoints: '{usd} = {points} points',
     quickAmount: '${amount}',
   },
   filters: {
@@ -496,8 +496,8 @@ const messages = {
     increase: 'Increase',
     decrease: 'Decrease',
     noChange: 'No Change',
-    maxLimit: 'Maximum quota: {max} pts',
-    rateHint: '10,000 pts is approximately $1.00 of call quota',
+    maxLimit: 'Maximum quota: {max} points',
+    rateHint: '1,000 points is approximately $1.00 of call quota',
     validation: {
       required: 'Please enter target quota',
       min: 'Quota cannot be negative',

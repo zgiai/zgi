@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -21,7 +23,7 @@ func TestBuildStreamErrorPayloadDoesNotGuessPrivateBalanceFromProviderError(t *t
 		adapter.NewAdapterError("insufficient_quota", "account credits exhausted", 402, adapter.ErrInsufficientBalance),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrSystemError.Code {
 		t.Fatalf("stream error code = %#v, want generic code %d", got, response.ErrSystemError.Code)
@@ -38,7 +40,7 @@ func TestBuildStreamErrorPayloadMapsTypedUpstreamErrorWithoutGuessingPrivateBala
 		adapter.NewAdapterError("", "Insufficient Balance", 402, adapter.ErrUpstreamError),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelServiceUnavailable {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelServiceUnavailable)
@@ -49,6 +51,12 @@ func TestBuildStreamErrorPayloadMapsTypedUpstreamErrorWithoutGuessingPrivateBala
 	if got := payload["message"]; got != aichatModelServiceUnavailableMessage {
 		t.Fatalf("stream error message = %#v, want %q", got, aichatModelServiceUnavailableMessage)
 	}
+	if got := payload["error_code"]; got != "llm.provider.unavailable" {
+		t.Fatalf("stable stream error code = %#v", got)
+	}
+	if payload["error_id"] == "" || payload["params"] == nil {
+		t.Fatalf("stream error metadata missing: %#v", payload)
+	}
 }
 
 func TestBuildStreamErrorPayloadMapsTypedPrivateChannelBalance(t *testing.T) {
@@ -58,7 +66,7 @@ func TestBuildStreamErrorPayloadMapsTypedPrivateChannelBalance(t *testing.T) {
 		Cause: adapter.ErrInsufficientBalance,
 	})
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelBalanceInsufficient.Code {
 		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowPrivateChannelBalanceInsufficient.Code)
@@ -75,7 +83,7 @@ func TestBuildStreamErrorPayloadMapsPlatformChannelUnavailable(t *testing.T) {
 		adapter.NewAdapterError("platform_channel_unavailable", "Platform model service is temporarily unavailable", 502, adapter.ErrPlatformChannelUnavailable),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPlatformChannelUnavailable.Code {
 		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowPlatformChannelUnavailable.Code)
@@ -89,7 +97,7 @@ func TestBuildStreamErrorPayloadMapsPrivateChannelUpstreamUnavailable(t *testing
 	prepared := streamErrorTestPrepared()
 	err := fmt.Errorf("failed to select provider: %w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code {
 		t.Fatalf("stream error code = %#v, want %d", got, response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code)
@@ -103,7 +111,7 @@ func TestBuildStreamErrorPayloadSanitizesOrdinaryError(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 	err := errors.New("redis password leaked by internal error")
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["message"]; got != response.ErrSystemError.Message {
 		t.Fatalf("stream error message = %#v, want %#v", got, response.ErrSystemError.Message)
@@ -120,7 +128,7 @@ func TestBuildStreamErrorPayloadMapsFinalAnswerUnavailable(t *testing.T) {
 		errors.New("terminal-only model returned no final answer"),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeFinalAnswerUnavailable {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeFinalAnswerUnavailable)
@@ -128,15 +136,15 @@ func TestBuildStreamErrorPayloadMapsFinalAnswerUnavailable(t *testing.T) {
 	if got := payload["message"]; got != aichatFinalAnswerUnavailableMessage {
 		t.Fatalf("stream error message = %#v, want %q", got, aichatFinalAnswerUnavailableMessage)
 	}
-	if _, ok := payload["params"]; ok {
-		t.Fatalf("stream error params = %#v, want no params", payload["params"])
+	if payload["params"] == nil {
+		t.Fatalf("stream error params missing: %#v", payload)
 	}
 }
 
 func TestBuildStreamErrorPayloadMapsModelIdleTimeout(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 
-	payload := BuildStreamErrorPayload(prepared, ErrModelIdleTimeout)
+	payload := BuildStreamErrorPayload(prepared, ErrModelIdleTimeout, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelServiceTimeout {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelServiceTimeout)
@@ -150,7 +158,7 @@ func TestBuildStreamErrorPayloadMapsPlanningTermination(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 	err := &skillloop.PlanningTerminationError{Reason: "content_filter"}
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelInvocationFailed {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelInvocationFailed)
@@ -167,7 +175,7 @@ func TestBuildStreamErrorPayloadMapsPlanningOutputTruncation(t *testing.T) {
 		&skillloop.PlanningTerminationError{Reason: "length", Recoverable: true},
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodePlanningOutputTruncated {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodePlanningOutputTruncated)
@@ -181,7 +189,7 @@ func TestBuildStreamErrorPayloadMapsNativeAgentOutputTruncation(t *testing.T) {
 	prepared := streamErrorTestPrepared()
 	err := fmt.Errorf("native round failed: %w", skillloop.ErrAgentOutputTruncated)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeAgentOutputTruncated {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeAgentOutputTruncated)
@@ -198,7 +206,7 @@ func TestBuildStreamErrorPayloadPreservesProviderCauseAfterFinalAnswerRetry(t *t
 		adapter.NewAdapterError("upstream_error", "provider failed", 502, adapter.ErrUpstreamError),
 	)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != aichatErrorCodeModelServiceUnavailable {
 		t.Fatalf("stream error code = %#v, want %q", got, aichatErrorCodeModelServiceUnavailable)
@@ -216,7 +224,7 @@ func TestBuildStreamErrorPayloadPreservesTypedBillingErrorOverFinalAnswerError(t
 	}
 	err := errors.Join(skillloop.ErrFinalAnswerUnavailable, billingErr)
 
-	payload := BuildStreamErrorPayload(prepared, err)
+	payload := BuildStreamErrorPayload(prepared, err, "")
 
 	if got := payload["code"]; got != response.ErrWorkflowPrivateChannelBalanceInsufficient.Code {
 		t.Fatalf("stream error code = %#v, want billing code %d", got, response.ErrWorkflowPrivateChannelBalanceInsufficient.Code)
@@ -247,5 +255,141 @@ func streamErrorTestPrepared() *PreparedChat {
 	return &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
 		Message:      &runtimemodel.Message{ID: uuid.New()},
+	}
+}
+
+// The frozen catalog owns the retryable flag; the stream payload must copy it
+// instead of guessing from the error text, and must carry the transport request
+// identity when the caller has one.
+func TestBuildStreamErrorPayloadPublishesCatalogRetryableAndRequestID(t *testing.T) {
+	catalog, err := appcatalog.New(
+		appcatalog.LocaleEnglishUS,
+		appcatalog.CodeInternal,
+		append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)...,
+	)
+	if err != nil {
+		t.Fatalf("compose catalog: %v", err)
+	}
+	SetApplicationErrorCatalog(catalog)
+	t.Cleanup(func() { SetApplicationErrorCatalog(nil) })
+
+	prepared := streamErrorTestPrepared()
+	streamErr := fmt.Errorf("provider stream call failed: %w", adapter.ErrUpstreamError)
+
+	payload := BuildStreamErrorPayload(prepared, streamErr, "req-123")
+
+	if got, ok := payload["retryable"]; !ok || got != true {
+		t.Fatalf("retryable = %#v, want true from the catalog for llm.provider.unavailable", got)
+	}
+	if got := payload["request_id"]; got != "req-123" {
+		t.Fatalf("request_id = %#v, want req-123", got)
+	}
+
+	// Without a published catalog the field is omitted rather than guessed, and
+	// without a transport request id the field is omitted as well.
+	SetApplicationErrorCatalog(nil)
+	payload = BuildStreamErrorPayload(prepared, streamErr, "")
+	if _, ok := payload["retryable"]; ok {
+		t.Fatalf("retryable = %#v, want omitted when the catalog is unavailable", payload["retryable"])
+	}
+	if _, ok := payload["request_id"]; ok {
+		t.Fatalf("request_id = %#v, want omitted without a transport request id", payload["request_id"])
+	}
+}
+
+// An unknown model, and a model no route can serve, are published with their
+// own cataloged codes. They used to fall through to llm.invocation.failed with
+// retryable=true, while the skill loop already treats a missing model as not
+// retryable.
+func TestBuildStreamErrorPayloadMapsModelNotFoundAndNoProvider(t *testing.T) {
+	catalog, err := appcatalog.New(
+		appcatalog.LocaleEnglishUS,
+		appcatalog.CodeInternal,
+		append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)...,
+	)
+	if err != nil {
+		t.Fatalf("compose catalog: %v", err)
+	}
+	SetApplicationErrorCatalog(catalog)
+	t.Cleanup(func() { SetApplicationErrorCatalog(nil) })
+
+	prepared := streamErrorTestPrepared()
+	for _, tc := range []struct {
+		name      string
+		err       error
+		code      string
+		retryable bool
+	}{
+		{"domain model not found", fmt.Errorf("failed to select provider: %w", llmerrors.NewModelNotFoundErrorWithName("zzz-unknown-qa")), "llm.model.not_found", false},
+		{"gateway model not found", fmt.Errorf("resolve: %w", gateway.ErrModelNotFound), "llm.model.not_found", false},
+		{"adapter model not found", fmt.Errorf("upstream: %w", adapter.ErrModelNotFound), "llm.model.not_found", false},
+		{"no provider", fmt.Errorf("select: %w", gateway.ErrNoProviderAvailable), "llm.provider.none_available", true},
+		{"route not found", fmt.Errorf("select: %w", llmerrors.DomainErrRouteNotFound), "llm.provider.none_available", true},
+	} {
+		payload := BuildStreamErrorPayload(prepared, tc.err, "")
+		if got := payload["error_code"]; got != tc.code {
+			t.Fatalf("%s: error_code = %#v, want %s", tc.name, got, tc.code)
+		}
+		if got, ok := payload["retryable"]; !ok || got != tc.retryable {
+			t.Fatalf("%s: retryable = %#v, want %t from the catalog", tc.name, got, tc.retryable)
+		}
+	}
+}
+
+// An error without a product-specific message used to be published as the
+// fixed English "Internal server error" whatever Accept-Language said. It is
+// now the catalog message of its error_code in the caller's locale; product
+// messages are kept, and without a catalog the generic message stays.
+func TestBuildLocalizedStreamErrorPayloadRendersCatalogMessageInLocale(t *testing.T) {
+	catalog, err := appcatalog.New(
+		appcatalog.LocaleEnglishUS,
+		appcatalog.CodeInternal,
+		append(appcatalog.DefaultDefinitions(), llmerrors.CatalogDefinitions()...)...,
+	)
+	if err != nil {
+		t.Fatalf("compose catalog: %v", err)
+	}
+	SetApplicationErrorCatalog(catalog)
+	t.Cleanup(func() { SetApplicationErrorCatalog(nil) })
+
+	prepared := streamErrorTestPrepared()
+	unknownModel := fmt.Errorf("failed to select provider: %w", llmerrors.NewModelNotFoundErrorWithName("zzz-unknown-qa"))
+	want := func(locale appcatalog.Locale) string {
+		presentation, err := catalog.Present(llmerrors.AppCodeModelNotFound, locale, nil)
+		if err != nil {
+			t.Fatalf("present: %v", err)
+		}
+		return presentation.Message
+	}
+
+	zh := BuildLocalizedStreamErrorPayload(prepared, unknownModel, "", appcatalog.LocaleChineseSimplified)
+	en := BuildLocalizedStreamErrorPayload(prepared, unknownModel, "", appcatalog.LocaleEnglishUS)
+	if zh["message"] != want(appcatalog.LocaleChineseSimplified) || en["message"] != want(appcatalog.LocaleEnglishUS) {
+		t.Fatalf("messages = zh %#v / en %#v, want the catalog messages of llm.model.not_found", zh["message"], en["message"])
+	}
+	if zh["message"] == en["message"] || zh["message"] == response.ErrSystemError.Message {
+		t.Fatalf("zh-Hans message = %#v, want a localized catalog message", zh["message"])
+	}
+
+	// The locale carried on the context from Accept-Language is the one used.
+	ctx := WithStreamLocale(context.Background(), "zh-CN,zh;q=0.9,en;q=0.8")
+	if got := StreamLocale(ctx); got != appcatalog.LocaleChineseSimplified {
+		t.Fatalf("StreamLocale = %q, want zh-Hans", got)
+	}
+	if got := StreamLocale(WithStreamLocale(context.Background(), "")); got != "" {
+		t.Fatalf("StreamLocale without header = %q, want empty", got)
+	}
+
+	// A product-specific message is not replaced.
+	idle := BuildLocalizedStreamErrorPayload(prepared, ErrModelIdleTimeout, "", appcatalog.LocaleChineseSimplified)
+	if idle["message"] != aichatModelServiceTimeoutMessage {
+		t.Fatalf("idle timeout message = %#v, want the product message", idle["message"])
+	}
+
+	// Without a published catalog the generic message stays.
+	SetApplicationErrorCatalog(nil)
+	bare := BuildLocalizedStreamErrorPayload(prepared, unknownModel, "", appcatalog.LocaleChineseSimplified)
+	if bare["message"] != response.ErrSystemError.Message {
+		t.Fatalf("message without catalog = %#v, want %q", bare["message"], response.ErrSystemError.Message)
 	}
 }

@@ -552,11 +552,6 @@ func cloneNativeToolSet(input NativeToolSet) NativeToolSet {
 	out.ProviderTools = append([]llmadapter.Tool(nil), input.ProviderTools...)
 	out.SkippedSkills = append([]NativeSkillSkip(nil), input.SkippedSkills...)
 	out.SkippedTools = append([]NativeToolSkip(nil), input.SkippedTools...)
-	out.ExternalActionIntentKeys = append([]string(nil), input.ExternalActionIntentKeys...)
-	out.ExternalActionCandidates = make([]NativeExternalActionCandidate, 0, len(input.ExternalActionCandidates))
-	for _, candidate := range input.ExternalActionCandidates {
-		out.ExternalActionCandidates = append(out.ExternalActionCandidates, cloneNativeExternalActionCandidate(candidate))
-	}
 	out.ToolBindings = make(map[string]NativeToolBinding, len(input.ToolBindings))
 	for name, binding := range input.ToolBindings {
 		out.ToolBindings[name] = cloneNativeToolBinding(binding)
@@ -603,11 +598,15 @@ func nativeSkipContains(skips []NativeSkillSkip, skillID string) bool {
 }
 
 func nativeSkillSearchScore(doc SkillDocument, query string) int {
+	return nativeSearchFieldScore(nativeSkillSearchFields(doc), query)
+}
+
+func nativeSearchFieldScore(fields []string, query string) int {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
 		return 0
 	}
-	haystack := strings.ToLower(strings.Join(nativeSkillSearchFields(doc), " "))
+	haystack := strings.ToLower(strings.Join(fields, " "))
 	score := 0
 	if strings.Contains(haystack, query) {
 		score += 1000

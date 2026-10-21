@@ -19,8 +19,8 @@ export interface AIChatSkillDisplayInfo {
   categoryLabel: string;
   scenarios: SkillScenario[];
   icon: string;
-  dependencyKind?: 'standalone' | 'external_integration';
-  integrationRequirements?: string[];
+  dependencyKind?: 'standalone' | 'connector';
+  connectorRequirements?: string[];
 }
 
 export type AIChatSkillDisplayMap = Record<string, AIChatSkillDisplayInfo>;
@@ -36,22 +36,25 @@ const AGENT_KNOWLEDGE_SKILL_ID = 'agent-knowledge';
 const AGENT_DATABASE_SKILL_ID = 'agent-database';
 const AGENT_WORKFLOW_SKILL_ID = 'agent-workflow';
 const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
-const EXTERNAL_APPS_SKILL_ID = 'external-apps';
+const DIGITAL_HUMAN_TASKS_SKILL_ID = 'digital-human-tasks';
+const CONNECTOR_RUNTIME_SKILL_ID = 'connector-runtime';
+// The request-scoped Skill of the ZGI Market tools bound to an agent or a digital human.
+const ZGI_MARKET_TOOLS_SKILL_ID = 'zgi-market-tools';
 const RETIRED_WEB_SEARCH_SKILL_ID = 'web-search';
 
-function normalizeIntegrationRequirement(value: unknown): string {
+function normalizeConnectorRequirement(value: unknown): string {
   if (typeof value === 'string') return value.trim().toLowerCase();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
-  const integrationId = (value as { integration_id?: unknown }).integration_id;
-  return typeof integrationId === 'string' ? integrationId.trim().toLowerCase() : '';
+  const connectorId = (value as { connector_id?: unknown }).connector_id;
+  return typeof connectorId === 'string' ? connectorId.trim().toLowerCase() : '';
 }
 
-export function getSkillIntegrationRequirements(skill: AIChatSkillMetadata): string[] {
+export function getSkillConnectorRequirements(skill: AIChatSkillMetadata): string[] {
   const explicit = [
-    ...(Array.isArray(skill.integration_requirements) ? skill.integration_requirements : []),
+    ...(Array.isArray(skill.connector_requirements) ? skill.connector_requirements : []),
     ...(Array.isArray(skill.external_dependencies) ? skill.external_dependencies : []),
   ]
-    .map(normalizeIntegrationRequirement)
+    .map(normalizeConnectorRequirement)
     .filter(Boolean);
   const providerType = normalizeAIChatSkillId(skill.provider_type);
   const providerId = normalizeAIChatSkillId(skill.provider_id);
@@ -75,7 +78,9 @@ export function isHiddenSystemSkill(skillId: unknown): boolean {
     normalized === AGENT_DATABASE_SKILL_ID ||
     normalized === AGENT_WORKFLOW_SKILL_ID ||
     normalized === AGENT_MANAGEMENT_SKILL_ID ||
-    normalized === EXTERNAL_APPS_SKILL_ID ||
+    normalized === DIGITAL_HUMAN_TASKS_SKILL_ID ||
+    normalized === CONNECTOR_RUNTIME_SKILL_ID ||
+    normalized === ZGI_MARKET_TOOLS_SKILL_ID ||
     normalized === RETIRED_WEB_SEARCH_SKILL_ID
   );
 }
@@ -234,7 +239,7 @@ const SYSTEM_SKILL_DISPLAY: Record<
     category: 'productivity',
     icon: 'route',
   },
-  [EXTERNAL_APPS_SKILL_ID]: {
+  [CONNECTOR_RUNTIME_SKILL_ID]: {
     label: {
       en_US: 'Connected Apps',
       zh_Hans: '已连接应用',
@@ -250,6 +255,26 @@ const SYSTEM_SKILL_DISPLAY: Record<
     tags: {
       en_US: ['Connected apps', 'External'],
       zh_Hans: ['已连接应用', '外部应用'],
+    },
+    category: 'productivity',
+    icon: 'plug',
+  },
+  [ZGI_MARKET_TOOLS_SKILL_ID]: {
+    label: {
+      en_US: 'ZGI Market',
+      zh_Hans: 'ZGI 市场',
+    },
+    description: {
+      en_US: 'Tools of the ZGI Market MCP servers and API operations bound to this assistant.',
+      zh_Hans: '绑定给当前助手的 ZGI 市场 MCP 服务和 API 接口。',
+    },
+    whenToUse: {
+      en_US: 'Use when a bound ZGI Market tool can complete the user request.',
+      zh_Hans: '当已绑定的 ZGI 市场工具可以完成用户请求时使用。',
+    },
+    tags: {
+      en_US: ['ZGI Market', 'External'],
+      zh_Hans: ['ZGI 市场', '外部服务'],
     },
     category: 'productivity',
     icon: 'plug',
@@ -482,27 +507,29 @@ const SYSTEM_SKILL_DISPLAY: Record<
     category: 'system',
     icon: 'brain',
   },
+  [DIGITAL_HUMAN_TASKS_SKILL_ID]: {
+    label: {
+      en_US: 'Digital Human Tasks',
+      zh_Hans: '数字人待办',
+    },
+    description: {
+      en_US: 'Creates and manages tasks that belong to the current digital human user.',
+      zh_Hans: '创建和管理当前数字人下属于用户的待办任务。',
+    },
+    whenToUse: {
+      en_US: 'Use when the user asks the digital human to create, update, or check a task.',
+      zh_Hans: '当用户要求数字人创建、更新或查询待办时使用。',
+    },
+    tags: {
+      en_US: ['Tasks', 'Digital Human'],
+      zh_Hans: ['待办', '数字人'],
+    },
+    category: 'productivity',
+    icon: 'list-todo',
+  },
 };
 
 const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, string>>> = {
-  [EXTERNAL_APPS_SKILL_ID]: {
-    list_connections: {
-      en_US: 'Review selected connections',
-      zh_Hans: '查看已选连接',
-    },
-    search_actions: {
-      en_US: 'Find external app actions',
-      zh_Hans: '查找外部应用操作',
-    },
-    get_action_guide: {
-      en_US: 'Review action requirements',
-      zh_Hans: '查看操作要求',
-    },
-    execute_action: {
-      en_US: 'Run external app action',
-      zh_Hans: '执行外部应用操作',
-    },
-  },
   time: {
     current_time: {
       en_US: 'Current time',
@@ -777,6 +804,20 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
       zh_Hans: '查看临时记忆',
     },
   },
+  [DIGITAL_HUMAN_TASKS_SKILL_ID]: {
+    list_digital_human_tasks: {
+      en_US: 'List tasks',
+      zh_Hans: '查看待办列表',
+    },
+    get_digital_human_task: {
+      en_US: 'View task',
+      zh_Hans: '查看待办',
+    },
+    manage_digital_human_task: {
+      en_US: 'Manage task',
+      zh_Hans: '管理待办',
+    },
+  },
 };
 
 const USER_MEMORY_TOOL_RESULT_TEXT: Record<string, Record<string, string>> = {
@@ -838,8 +879,8 @@ export function getAIChatSkillDisplayInfo(
   const rawCategory = skill.display?.category ?? fallback?.category;
   const category = normalizeSkillCapabilityCategory(rawCategory);
   const tags = pickLocalizedTags(skill.display?.tags, locale);
-  const integrationRequirements = getSkillIntegrationRequirements(skill);
-  const useFriendlySystemDisplay = skillId === EXTERNAL_APPS_SKILL_ID;
+  const connectorRequirements = getSkillConnectorRequirements(skill);
+  const useFriendlySystemDisplay = skillId === CONNECTOR_RUNTIME_SKILL_ID;
 
   return {
     skillId,
@@ -872,8 +913,8 @@ export function getAIChatSkillDisplayInfo(
       scenarios: skill.display?.scenarios,
     }),
     icon: skill.display?.icon ?? fallback?.icon ?? 'sparkles',
-    dependencyKind: integrationRequirements.length > 0 ? 'external_integration' : 'standalone',
-    integrationRequirements,
+    dependencyKind: connectorRequirements.length > 0 ? 'connector' : 'standalone',
+    connectorRequirements,
   };
 }
 

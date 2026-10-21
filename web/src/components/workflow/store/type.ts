@@ -1,4 +1,6 @@
 import type { Edge, Viewport, Node } from '@xyflow/react';
+import type { ChatUploadPolicy } from '@/services/upload.service';
+import type { ConnectorReferenceCommand } from '@/services/types/connector';
 import type { NodesSuffix, AllTranslationKeys } from '@/i18n';
 export type { NodesSuffix, AllTranslationKeys };
 import type { InputVar } from '../types/input-var';
@@ -318,6 +320,7 @@ export interface WorkflowFeatures {
     history_window_size: number;
   };
   file_upload: {
+    effective_policy?: ChatUploadPolicy;
     enabled: boolean;
     allowed_file_types: FileUploadType[];
     allowed_file_extensions: string[];
@@ -376,6 +379,7 @@ export interface ConversationVariableDraftItem {
 
 // Payload shape for saving workflow draft to server
 export interface WorkflowDraftSavePayload {
+  connector_reference_commands?: ConnectorReferenceCommand[];
   graph: WorkflowData['graph'];
   features: WorkflowData['features'];
   environment_variables: EnvironmentVariable[];
@@ -384,6 +388,7 @@ export interface WorkflowDraftSavePayload {
 }
 
 export interface WorkflowData {
+  connector_reference_commands?: ConnectorReferenceCommand[];
   graph: {
     nodes: WorkflowNode[];
     edges: WorkflowEdge[];

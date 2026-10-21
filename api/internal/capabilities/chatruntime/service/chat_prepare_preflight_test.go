@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -91,14 +92,17 @@ func TestMarkUserMemoryPreflightErrorPreservesContext(t *testing.T) {
 	}
 }
 
-func TestApplyModelCapabilitiesRejectsUnknownModelSpec(t *testing.T) {
+func TestApplyModelCapabilitiesFallsBackWhenModelSpecIsUnavailable(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{}, false, nil
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "new-model"}
 
-	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err == nil {
-		t.Fatal("applyModelCapabilities() error = nil, want unknown model error")
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err != nil {
+		t.Fatalf("applyModelCapabilities() error = %v", err)
+	}
+	if parts.ModelCapabilityStatus != "fallback" || parts.FunctionCallingKnown || !parts.FunctionCallingAssumed {
+		t.Fatalf("fallback capabilities = %#v", parts)
 	}
 }
 
@@ -167,15 +171,17 @@ func TestApplyModelCapabilitiesUsesNativeLoopForNewAgentCaller(t *testing.T) {
 	}
 }
 
-func TestApplyModelCapabilitiesRejectsResolverFailure(t *testing.T) {
+func TestApplyModelCapabilitiesFallsBackOnResolverFailure(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{}, false, errModelSpecResolver
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "new-model"}
 
-	err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts)
-	if err == nil || !errors.Is(err, errModelSpecResolver) {
-		t.Fatalf("applyModelCapabilities() error = %v, want resolver error", err)
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err != nil {
+		t.Fatalf("applyModelCapabilities() error = %v", err)
+	}
+	if parts.ModelCapabilityStatus != "fallback" || !strings.Contains(parts.ModelCapabilityError, errModelSpecResolver.Error()) {
+		t.Fatalf("fallback capabilities = %#v", parts)
 	}
 }
 

@@ -2,14 +2,20 @@ package agents
 
 import (
 	"errors"
+
 	"github.com/gin-gonic/gin"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 func (h *AgentsHandler) regenerateRuntimeMessage(c *gin.Context, runtimeCtx agentRuntimeContext) {
+	if runtimeCtx.ExecutionError != nil {
+		h.failRuntime(c, runtimeCtx.ExecutionError)
+		return
+	}
 	messageID, ok := uuidParam(c, "message_id")
 	if !ok {
 		return
@@ -48,6 +54,7 @@ func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtime
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {
+		markExternalAgentRuntimeFailure(c)
 		status := runtimemodel.MessageStatusError
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
 			status = runtimemodel.MessageStatusStopped
@@ -55,7 +62,7 @@ func (h *AgentsHandler) runPreparedAgentStream(c *gin.Context, prepared *runtime
 		if runtimeservice.IsFinalizedStreamError(err) {
 			return
 		}
-		_ = writeAgentSSE(c, "error", runtimeservice.BuildStreamErrorPayload(prepared, err))
+		_ = writeAgentSSE(c, "error", runtimeservice.BuildLocalizedStreamErrorPayload(prepared, err, c.Writer.Header().Get("X-Request-ID"), apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))))
 		_ = writeAgentSSE(c, "message_end", gin.H{
 			"conversation_id": prepared.Conversation.ID.String(),
 			"message_id":      prepared.Message.ID.String(),

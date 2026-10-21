@@ -1,0 +1,27 @@
+services:
+  agentworker:
+    image: ${ZGI_AGENT_RUNTIME_WORKER_IMAGE:?Set the approved digest-pinned Worker image}
+    init: true
+    restart: unless-stopped
+    env_file:
+      - ${ZGI_AGENT_RUNTIME_ENV_FILE:-./e2b.env}
+    environment:
+      ZGI_AGENT_RUNTIME_BACKEND: e2b
+      ZGI_AGENT_RUNTIME_LISTEN: 0.0.0.0:2670
+      ZGI_AGENT_RUNTIME_ROOT: /var/lib/zgi-ar
+      ZGI_AGENT_RUNTIME_CHECKPOINT_DIR: /var/lib/zgi-ar/checkpoints
+    volumes:
+      - runtime-state:/var/lib/zgi-ar
+    networks:
+      zgi:
+        aliases:
+          - zgi-agentworker
+    # No published management port and no Docker/containerd socket mount.
+
+volumes:
+  runtime-state:
+
+networks:
+  zgi:
+    external: true
+    name: ${ZGI_AGENT_RUNTIME_DOCKER_NETWORK:?Set the existing private API network}

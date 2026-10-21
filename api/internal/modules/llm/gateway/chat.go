@@ -91,9 +91,11 @@ func (s *llmGatewayServiceImpl) chatCompletionInternal(
 
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationChatCompletions)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
@@ -166,7 +168,8 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	tCalc := time.Now()
 	attemptID := buildAttemptID(requestID, attemptIdx)
 
-	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+	reservedCompletion := reservationCompletionTokens(providerSelection, req.MaxTokens, completionTokens)
+	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, reservedCompletion)
 	if err != nil {
 		return nil, wrapPricingCalculationError(err)
 	}
@@ -192,12 +195,13 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		startTime,
 		requestID,
 		attemptID,
-		quote.ReservationPolicy,
+		quote,
 	)
 	if err != nil {
 		return nil, err
 	}
-	lockTokenPricingQuote(billingCtx, quote)
+	billingCtx.EstimatedInputTokens = promptTokens
+	billingCtx.EstimatedOutputTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat")
 	ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -226,7 +230,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		return nil, fmt.Errorf("failed to create adapter: %w", adapterErr)
 	}
 
-	normalizedReq := cloneChatRequestWithNormalizedModel(req)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
 
 	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
 		return nil, err
@@ -333,9 +337,11 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "chat")
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationChatCompletions)
 	if useCase := modelUseCaseForAppContext(appCtx); useCase != "" {
 		ctx = context.WithValue(ctx, shared.ContextKeyModelUseCase, useCase)
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, effectiveReq.Provider, effectiveReq.Model, 3)
 	if err != nil {
@@ -416,7 +422,8 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 ) (<-chan adapter.StreamResponse, error) {
 	// Calculate estimated credits
 	attemptID := buildAttemptID(requestID, attemptIdx)
-	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+	reservedCompletion := reservationCompletionTokens(providerSelection, req.MaxTokens, completionTokens)
+	quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, reservedCompletion)
 	if err != nil {
 		return nil, wrapPricingCalculationError(err)
 	}
@@ -438,12 +445,13 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		startTime,
 		requestID,
 		attemptID,
-		quote.ReservationPolicy,
+		quote,
 	)
 	if err != nil {
 		return nil, err
 	}
-	lockTokenPricingQuote(billingCtx, quote)
+	billingCtx.EstimatedInputTokens = promptTokens
+	billingCtx.EstimatedOutputTokens = completionTokens
 	billingCtx.PromptTokens = promptTokens
 	billingCtx.CompletionTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat.stream")
@@ -462,7 +470,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		return nil, fmt.Errorf("failed to create adapter: %w", err)
 	}
 
-	normalizedReq := cloneChatRequestWithNormalizedModel(req)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
 
 	if normalizedReq.StreamOptions == nil {
 		normalizedReq.StreamOptions = &adapter.StreamOptions{IncludeUsage: true}
@@ -498,7 +506,16 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	outputChan := make(chan adapter.StreamResponse)
 	// Preserve trace values while allowing billing and tracing to finish after request cancellation.
 	billingBgCtx := context.WithoutCancel(ctx)
-	go s.handleStreamBilling(billingBgCtx, streamChan, outputChan, billingCtx, traceReq, &providerSelection.Model, startTime, channelID)
+	go s.handleStreamBilling(billingBgCtx, streamChan, outputChan, billingCtx, traceReq, &providerSelection.Model, startTime, channelID, providerSelection.HasRoute() && providerSelection.AutoBan)
 
 	return outputChan, nil
+}
+
+func normalizeConsoleRoutingStrategy(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "speed", "price", "stability":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "stability"
+	}
 }

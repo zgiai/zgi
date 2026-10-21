@@ -25,6 +25,10 @@ import (
 
 type fakeOrganizationService struct {
 	interfaces.OrganizationService
+	getOrganizationByIDFn            func(ctx context.Context, organizationID string) (*model.Organization, error)
+	getUserOrganizationRoleFn        func(ctx context.Context, organizationID, accountID string) (model.OrganizationRole, error)
+	checkWorkspaceNameExistsFn       func(ctx context.Context, organizationID, workspaceName string) (bool, error)
+	addWorkspaceFn                   func(ctx context.Context, req *shared_dto.AddWorkspaceToOrganizationRequest) error
 	getWorkspaceMemberPermissionsFn  func(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error)
 	getOrganizationWorkspaceDetailFn func(ctx context.Context, organizationID, workspaceID, accountID string) (*shared_dto.OrganizationWorkspaceResponse, error)
 	getOrganizationByWorkspaceIDFn   func(ctx context.Context, workspaceID string) (*model.Organization, error)
@@ -51,6 +55,34 @@ type fakeOrganizationService struct {
 	getWorkspaceRoleDetailFn         func(ctx context.Context, organizationID, roleID, accountID string) (*shared_dto.OrganizationRoleDetailResponse, error)
 	applyWorkspaceRoleTemplateFn     func(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error)
 	replaceAndDeleteRoleFn           func(ctx context.Context, req *shared_dto.ReplaceWorkspaceRoleTemplateRequest) (*shared_dto.ReplaceWorkspaceRoleTemplateResponse, error)
+}
+
+func (f fakeOrganizationService) GetOrganizationByID(ctx context.Context, organizationID string) (*model.Organization, error) {
+	if f.getOrganizationByIDFn != nil {
+		return f.getOrganizationByIDFn(ctx, organizationID)
+	}
+	return &model.Organization{ID: organizationID, Status: model.OrganizationStatusActive}, nil
+}
+
+func (f fakeOrganizationService) GetUserOrganizationRole(ctx context.Context, organizationID, accountID string) (model.OrganizationRole, error) {
+	if f.getUserOrganizationRoleFn != nil {
+		return f.getUserOrganizationRoleFn(ctx, organizationID, accountID)
+	}
+	return model.OrganizationRoleOwner, nil
+}
+
+func (f fakeOrganizationService) CheckWorkspaceNameExistsInOrganization(ctx context.Context, organizationID, workspaceName string) (bool, error) {
+	if f.checkWorkspaceNameExistsFn != nil {
+		return f.checkWorkspaceNameExistsFn(ctx, organizationID, workspaceName)
+	}
+	return false, nil
+}
+
+func (f fakeOrganizationService) AddWorkspace(ctx context.Context, req *shared_dto.AddWorkspaceToOrganizationRequest) error {
+	if f.addWorkspaceFn != nil {
+		return f.addWorkspaceFn(ctx, req)
+	}
+	return nil
 }
 
 func (f fakeOrganizationService) GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
@@ -246,6 +278,9 @@ func (f fakeOrganizationService) ReplaceAndDeleteCustomWorkspaceRole(ctx context
 
 type fakeWorkspaceManagementService struct {
 	interfaces.WorkspaceManagementService
+	createWorkspaceFn               func(ctx context.Context, name string, isFromDashboard bool) (*model.Workspace, error)
+	createWorkspaceMemberFn         func(ctx context.Context, workspaceID, accountID, role string) error
+	deleteWorkspaceWithMembersFn    func(ctx context.Context, workspaceID string) error
 	getWorkspaceMembersFn           func(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error)
 	getWorkspaceMembersPaginatedFn  func(ctx context.Context, workspaceID string, page, limit int, keyword, roleFilter string) ([]*interfaces.AccountWithRole, int64, error)
 	getWorkspaceByIDFn              func(ctx context.Context, id string) (*model.Workspace, error)
@@ -253,6 +288,27 @@ type fakeWorkspaceManagementService struct {
 	getUserRoleFn                   func(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error)
 	addMemberFn                     func(ctx context.Context, req *interfaces.AddMemberRequest) error
 	updateMemberDirectPermissionsFn func(ctx context.Context, workspaceID, accountID string, permissions []string) error
+}
+
+func (f fakeWorkspaceManagementService) CreateWorkspace(ctx context.Context, name string, isFromDashboard bool) (*model.Workspace, error) {
+	if f.createWorkspaceFn != nil {
+		return f.createWorkspaceFn(ctx, name, isFromDashboard)
+	}
+	return &model.Workspace{ID: "ws-1", Name: name, Status: model.WorkspaceStatusNormal}, nil
+}
+
+func (f fakeWorkspaceManagementService) CreateWorkspaceMember(ctx context.Context, workspaceID, accountID, role string) error {
+	if f.createWorkspaceMemberFn != nil {
+		return f.createWorkspaceMemberFn(ctx, workspaceID, accountID, role)
+	}
+	return nil
+}
+
+func (f fakeWorkspaceManagementService) DeleteWorkspaceWithMembers(ctx context.Context, workspaceID string) error {
+	if f.deleteWorkspaceWithMembersFn != nil {
+		return f.deleteWorkspaceWithMembersFn(ctx, workspaceID)
+	}
+	return nil
 }
 
 func (f fakeWorkspaceManagementService) GetWorkspaceMembers(ctx context.Context, workspaceID string) ([]*interfaces.AccountWithRole, error) {
@@ -406,6 +462,167 @@ func (f fakeDepartmentService) GetDepartmentTree(ctx context.Context, organizati
 		return f.getDepartmentTreeFn(ctx, organizationID)
 	}
 	return nil, nil
+}
+
+func TestCreateOrganizationWorkspaceRequiresLeader(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name string
+		body string
+	}{
+		{name: "missing leader", body: `{"name":"Workspace"}`},
+		{name: "empty leader", body: `{"name":"Workspace","leader_id":""}`},
+		{name: "blank leader", body: `{"name":"Workspace","leader_id":"   "}`},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler := &OrganizationHandler{
+				organizationService: fakeOrganizationService{
+					getOrganizationByIDFn: func(context.Context, string) (*model.Organization, error) {
+						t.Fatal("organization lookup should not run without a leader")
+						return nil, nil
+					},
+				},
+				workspaceManagementService: fakeWorkspaceManagementService{
+					createWorkspaceFn: func(context.Context, string, bool) (*model.Workspace, error) {
+						t.Fatal("workspace creation should not run without a leader")
+						return nil, nil
+					},
+				},
+			}
+
+			c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/workspaces")
+			c.Set("account_id", "operator-1")
+			c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+			c.Request.Body = io.NopCloser(bytes.NewBufferString(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			handler.CreateOrganizationWorkspace(c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			var resp response.Response
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp), recorder.Body.String())
+			require.Equal(t, strconv.Itoa(response.ErrInvalidParam.Code), resp.Code)
+		})
+	}
+}
+
+func TestCreateOrganizationWorkspaceCreatesExplicitOwner(t *testing.T) {
+	t.Parallel()
+
+	var linked bool
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			addWorkspaceFn: func(ctx context.Context, req *shared_dto.AddWorkspaceToOrganizationRequest) error {
+				require.Equal(t, "org-1", req.OrganizationID)
+				require.Equal(t, "ws-1", req.WorkspaceID)
+				linked = true
+				return nil
+			},
+		},
+		workspaceManagementService: fakeWorkspaceManagementService{
+			createWorkspaceFn: func(ctx context.Context, name string, isFromDashboard bool) (*model.Workspace, error) {
+				require.Equal(t, "Workspace", name)
+				require.True(t, isFromDashboard)
+				return &model.Workspace{ID: "ws-1", Name: name, Status: model.WorkspaceStatusNormal}, nil
+			},
+			createWorkspaceMemberFn: func(ctx context.Context, workspaceID, accountID, role string) error {
+				require.True(t, linked)
+				require.Equal(t, "ws-1", workspaceID)
+				require.Equal(t, "leader-1", accountID)
+				require.Equal(t, string(model.WorkspaceRoleOwner), role)
+				return nil
+			},
+			deleteWorkspaceWithMembersFn: func(context.Context, string) error {
+				t.Fatal("successful workspace creation must not roll back")
+				return nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/workspaces")
+	c.Set("account_id", "operator-1")
+	c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Workspace","leader_id":" leader-1 "}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.CreateOrganizationWorkspace(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var resp response.Response
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp), recorder.Body.String())
+	require.Equal(t, "0", resp.Code)
+	require.NotContains(t, recorder.Body.String(), "warning")
+}
+
+func TestCreateOrganizationWorkspaceRollsBackIncompleteWorkspace(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name              string
+		addWorkspaceErr   error
+		createOwnerErr    error
+		wantOwnerCreation bool
+	}{
+		{
+			name:            "organization link fails",
+			addWorkspaceErr: errors.New("link workspace"),
+		},
+		{
+			name:              "owner creation fails",
+			createOwnerErr:    errors.New("create owner"),
+			wantOwnerCreation: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var ownerCreationCalled bool
+			var rolledBack bool
+			handler := &OrganizationHandler{
+				organizationService: fakeOrganizationService{
+					addWorkspaceFn: func(context.Context, *shared_dto.AddWorkspaceToOrganizationRequest) error {
+						return tc.addWorkspaceErr
+					},
+				},
+				workspaceManagementService: fakeWorkspaceManagementService{
+					createWorkspaceFn: func(context.Context, string, bool) (*model.Workspace, error) {
+						return &model.Workspace{ID: "ws-1", Name: "Workspace", Status: model.WorkspaceStatusNormal}, nil
+					},
+					createWorkspaceMemberFn: func(context.Context, string, string, string) error {
+						ownerCreationCalled = true
+						return tc.createOwnerErr
+					},
+					deleteWorkspaceWithMembersFn: func(ctx context.Context, workspaceID string) error {
+						require.Equal(t, "ws-1", workspaceID)
+						rolledBack = true
+						return nil
+					},
+				},
+			}
+
+			c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/workspaces")
+			c.Set("account_id", "operator-1")
+			c.Params = gin.Params{{Key: "organization_id", Value: "org-1"}}
+			c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"name":"Workspace","leader_id":"leader-1"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			handler.CreateOrganizationWorkspace(c)
+
+			require.Equal(t, tc.wantOwnerCreation, ownerCreationCalled)
+			require.True(t, rolledBack)
+			var resp response.Response
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp), recorder.Body.String())
+			require.Equal(t, strconv.Itoa(response.ErrSystemError.Code), resp.Code)
+			require.NotEqual(t, http.StatusOK, recorder.Code)
+		})
+	}
 }
 
 func TestGetWorkspaceMemberPermissionsReturnsSingleErrorResponse(t *testing.T) {

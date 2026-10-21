@@ -29,6 +29,7 @@ export function toModelParams(
 export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequest): string {
   const editablePayload = { ...payload };
   delete editablePayload.agent_memory_config_revision;
+  delete editablePayload.execution_runtime;
 
   const editableMemorySlots = (payload.agent_memory_slots ?? []).map(slot => ({
     key: slot.key,
@@ -41,14 +42,20 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
 
   return JSON.stringify({
     ...editablePayload,
+    execution_runtime: payload.execution_runtime
+      ? {
+          enabled: payload.execution_runtime.enabled,
+        }
+      : null,
     enabled_skill_ids: [...payload.enabled_skill_ids].sort(),
     knowledge_dataset_ids: [...(payload.knowledge_dataset_ids ?? [])].sort(),
     workflow_bindings: [...(payload.workflow_bindings ?? [])].sort((left, right) =>
       left.binding_id.localeCompare(right.binding_id)
     ),
-    integration_bindings: [...(payload.integration_bindings ?? [])].sort((left, right) =>
-      left.integration_id.localeCompare(right.integration_id)
+    connector_bindings: [...(payload.connector_bindings ?? [])].sort((left, right) =>
+      left.connector_id.localeCompare(right.connector_id)
     ),
+    connector_reference_commands: payload.connector_reference_commands ?? [],
     agent_memory_slots: editableMemorySlots.sort((left, right) =>
       left.key.localeCompare(right.key)
     ),

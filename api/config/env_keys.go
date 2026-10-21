@@ -32,10 +32,6 @@ const (
 	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
 	// seconds without any upstream response. Default: 300.
 	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
-	// envChatRuntimeAgentContextWindowK sets the Agent working context window in
-	// thousands of tokens (k). 1k means 1,000 tokens. Default: 256. The runtime
-	// caps the effective value at the selected model's physical context window.
-	envChatRuntimeAgentContextWindowK = "CHAT_RUNTIME_AGENT_CONTEXT_WINDOW_K"
 	// envChatRuntimeContextPromptDumpEnabled writes each final model request to
 	// local debug storage. Default: false.
 	envChatRuntimeContextPromptDumpEnabled = "ZGI_AICHAT_CONTEXT_PROMPT_DUMP"
@@ -182,6 +178,8 @@ const (
 	envAppName = "APP_NAME"
 	// envFilesAccessTimeout sets how long generated file access links remain valid in seconds. Default: 3600.
 	envFilesAccessTimeout = "FILES_ACCESS_TIMEOUT"
+	// envChannelDeliveryFileTTL sets how long channel-delivery download links remain valid in seconds. Default: 2592000 (30 days).
+	envChannelDeliveryFileTTL = "CHANNEL_DELIVERY_FILE_TTL"
 	// envAppVersion sets the application version string. Default: 1.0.0.
 	envAppVersion = "APP_VERSION"
 	// envFilesURL sets the public base URL for file access. Default: http://localhost:2679.
@@ -199,8 +197,46 @@ const (
 	envConsoleAPIURL = "CONSOLE_API_URL"
 	// envConsoleAPIGRPCAddr sets the console gRPC endpoint address. Default: empty.
 	envConsoleAPIGRPCAddr = "CONSOLE_API_GRPC_ADDR"
+	// envConsoleAPIGRPCTLS enables TLS for outbound Console gRPC calls. Default: false.
+	envConsoleAPIGRPCTLS = "CONSOLE_API_GRPC_TLS_ENABLED"
+	// envConsoleAPIGRPCTLSCAFile optionally selects a custom CA bundle. Empty uses system roots.
+	envConsoleAPIGRPCTLSCAFile = "CONSOLE_API_GRPC_TLS_CA_FILE"
+	// envConsoleAPIGRPCTLSServerName overrides the TLS server name used for verification.
+	envConsoleAPIGRPCTLSServerName = "CONSOLE_API_GRPC_TLS_SERVER_NAME"
 	// envConsoleInternalAPIKey sets the internal API key shared with the console service. Default: empty.
 	envConsoleInternalAPIKey = "CONSOLE_INTERNAL_API_KEY"
+	// envZGIMarketGatewayURL sets the public origin of the ZGI Market gateway that market tools
+	// of agents and digital humans are called at. Default: empty (market tools off).
+	envZGIMarketGatewayURL = "ZGI_MARKET_GATEWAY_URL"
+	// envZGIMarketOAuthRedirectURL sets the callback address of this instance for connector
+	// authorizations of the ZGI Market: the web page /dashboard/market/oauth/callback at this
+	// instance's public web origin. Default: empty (the market uses its own default address).
+	envZGIMarketOAuthRedirectURL = "ZGI_MARKET_OAUTH_REDIRECT_URL"
+	// envZGIMarketConfirmAbovePoints sets the cost above which a ZGI Market tool asks before it
+	// runs: a tool whose one call can cost more points than this needs a person's approval, and
+	// is refused where nobody can approve. Default: 100. 0 never asks for cost.
+	envZGIMarketConfirmAbovePoints = "ZGI_MARKET_CONFIRM_ABOVE_POINTS"
+	// envZGIMarketAllowPrivateTargets lets the market gateway resolve to a private address, for
+	// local development only. Default: false.
+	envZGIMarketAllowPrivateTargets = "ZGI_MARKET_ALLOW_PRIVATE_TARGETS"
+	// envConsoleInstanceID selects the per-instance Console credential issued by the
+	// console control plane (Cloud mode). Default: empty.
+	envConsoleInstanceID = "CONSOLE_INSTANCE_ID"
+	// envConsoleInstanceSecret is the per-instance secret that signs every console call.
+	// The plaintext is never logged. Default: empty.
+	envConsoleInstanceSecret = "CONSOLE_INSTANCE_SECRET"
+	// envConsoleSyncEnabled turns on the console control-plane sync loop. Cloud mode
+	// only; SELF_HOSTED ignores it. Default: true in Cloud mode.
+	envConsoleSyncEnabled = "CONSOLE_SYNC_ENABLED"
+	// envConsoleSyncIntervalSec sets the normal poll cadence in seconds. Default: 45.
+	envConsoleSyncIntervalSec = "CONSOLE_SYNC_INTERVAL_SEC"
+	// envConsoleSyncStaleSec is the age at which the console link counts as stale and
+	// the official channel is cut off. Default: 300.
+	envConsoleSyncStaleSec = "CONSOLE_SYNC_STALE_SEC"
+	// envConsoleSyncOrganizationReportInterval is how often pre pushes its organization
+	// inventory to console, as a Go duration string ("5m", "90s"). Default: 5m. Set to
+	// 0 to disable the report.
+	envConsoleSyncOrganizationReportInterval = "CONSOLE_SYNC_ORGANIZATION_REPORT_INTERVAL"
 
 	// Bootstrap credentials.
 	// envZGIAdminPass sets the static admin token for self-hosted platform identity calls. Default: empty.
@@ -368,8 +404,10 @@ const (
 	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
 	// envCodeExecutionSystemOfficeProfile sets the managed dependency profile used by system Office/PDF/PPTX file tools. Default: skill-office.
 	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
-	// envCodeExecutionSystemDataProfile sets the prebuilt dependency profile used when runtime dependency builds are disabled. Default: scientific-data.
+	// envCodeExecutionSystemDataProfile sets the prebuilt Python dependency profile used when runtime dependency builds are disabled. Default: scientific-data.
 	envCodeExecutionSystemDataProfile = "CODE_EXECUTION_SYSTEM_DATA_PROFILE"
+	// envCodeExecutionSkillDependencyScanEnabled controls per-skill dependency discovery and managed profile builds. Default: true.
+	envCodeExecutionSkillDependencyScanEnabled = "CODE_EXECUTION_SKILL_DEPENDENCY_SCAN_ENABLED"
 	// envSkillRuntimeGrantsPath points to administrator-owned organization/package grants.
 	envSkillRuntimeGrantsPath = "ZGI_SKILL_RUNTIME_GRANTS_PATH"
 
@@ -499,6 +537,8 @@ const (
 	// Dependency services.
 	// envModelMetaAPIURL sets the ModelMeta-compatible API base URL. Default: https://models.zgi.ai.
 	envModelMetaAPIURL = "MODELMETA_API_URL"
+	// envModelMetaAutoSyncEnabled controls the one-shot local ModelMeta sync at startup. Default: true.
+	envModelMetaAutoSyncEnabled = "MODELMETA_AUTO_SYNC_ENABLED"
 	// envNeo4jURI sets the Neo4j connection URI. Default: empty, which disables GraphFlow Neo4j integration.
 	envNeo4jURI = "NEO4J_URI"
 	// envNeo4jUsername sets the Neo4j username. Default: neo4j.
@@ -620,32 +660,19 @@ const (
 
 // Domain behavior and toolchain keys.
 const (
-	// Shared external-integration runtime, including Web Search.
-	envExternalIntegrationsEnabled          = "EXTERNAL_INTEGRATIONS_ENABLED"
-	envIntegrationOrgDailyLimit             = "INTEGRATION_ORG_DAILY_LIMIT"
-	envIntegrationTimeoutSeconds            = "INTEGRATION_TIMEOUT_SECONDS"
-	envIntegrationCredentialActiveKeyID     = "INTEGRATION_CREDENTIAL_ACTIVE_KEY_ID"
-	envIntegrationCredentialKeysJSON        = "INTEGRATION_CREDENTIAL_KEYS_JSON"
-	envIntegrationHealthFailureThreshold    = "INTEGRATION_HEALTH_FAILURE_THRESHOLD"
-	envIntegrationOAuthRefreshWindowSeconds = "INTEGRATION_OAUTH_REFRESH_WINDOW_SECONDS"
-	envIntegrationOAuthFlowTTLSeconds       = "INTEGRATION_OAUTH_FLOW_TTL_SECONDS"
-	envIntegrationOAuthCallbackURL          = "INTEGRATION_OAUTH_CALLBACK_URL"
-	envIntegrationOAuthResultURL            = "INTEGRATION_OAUTH_RESULT_URL"
-	envIntegrationOAuthClientsJSON          = "INTEGRATION_OAUTH_CLIENTS_JSON"
+	// Independent Personal Connector runtime.
+	envConnectorCredentialActiveKeyID = "CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID"
+	envConnectorCredentialKeysJSON    = "CONNECTOR_CREDENTIAL_KEYS_JSON"
+	// JSON array of trusted local Agent Plugin package roots.
+	envConnectorPluginDirectoriesJSON = "CONNECTOR_PLUGIN_DIRECTORIES_JSON"
 
-	// Web search provider runtime configuration.
-	// envWebSearchProvider selects the web search provider. Phase one supports exa. Default: exa.
-	envWebSearchProvider = "WEB_SEARCH_PROVIDER"
-	// envExaTimeoutSeconds sets the total Exa request timeout in seconds. Default: 20.
-	envExaTimeoutSeconds = "EXA_TIMEOUT_SECONDS"
-	// envExaMaxResults caps results returned by one search action. Default: 10.
-	envExaMaxResults = "EXA_MAX_RESULTS"
-	// envExaDefaultSearchType selects the search mode used when a tool call omits search_type. Default: auto.
-	envExaDefaultSearchType = "EXA_DEFAULT_SEARCH_TYPE"
-	// envExaMaxFetchURLs caps URLs handled by one fetch action. Default: 5.
-	envExaMaxFetchURLs = "EXA_MAX_FETCH_URLS"
-	// envExaMaxContentCharacters caps content retained for one fetched page. Default: 20000.
-	envExaMaxContentCharacters = "EXA_MAX_CONTENT_CHARACTERS"
+	// Legacy DigitalHuman channel credential keyring. Independent from the
+	// Connector keyring; API_KEY_ENCRYPTION_KEY is retained as key id "legacy"
+	// so pre-Connector v1/v2 channel envelopes stay readable.
+	// envDigitalHumanCredentialKeysJSON sets the optional legacy JSON keyring. Default: empty.
+	envDigitalHumanCredentialKeysJSON = "DIGITAL_HUMAN_CREDENTIAL_KEYS_JSON"
+	// envDigitalHumanCredentialActiveKeyID selects the key used for new DigitalHuman envelopes. Default: legacy.
+	envDigitalHumanCredentialActiveKeyID = "DIGITAL_HUMAN_CREDENTIAL_ACTIVE_KEY_ID"
 
 	// Knowledge retrieval limit switch.
 	// envKnowledgeRateLimitEnabled controls whether knowledge retrieval rate limiting is enabled. Default: false.

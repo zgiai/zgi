@@ -8,11 +8,14 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
@@ -298,6 +301,25 @@ func (h *ExternalWorkflowHandler) RunChatWorkflow(c *gin.Context) {
 	}
 
 	// Check if streaming mode is requested
+	chatFiles, err := workflow.ChatAttachmentReferences(internalReq.Files, req.Inputs)
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if len(chatFiles) > 0 {
+		publishedMap, ok := publishedWorkflow.(map[string]interface{})
+		if !ok {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		policy := workflow.WorkflowChatUploadPolicy(publishedMap["features"], h.fileService.GetUploadConfig())
+		if err := workflow.ValidateChatAttachments(c.Request.Context(), chatFiles, h.fileService, policy, func(ctx context.Context, file *dto.UploadFile) error {
+			return h.validateFileAccess(ctx, file.ID, tenantID, keyInfo.ID.String())
+		}); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+	}
 	logger.Info("External API - Checking response mode", "responseMode", req.ResponseMode, "isStreaming", req.ResponseMode == "streaming")
 	if req.ResponseMode == "streaming" {
 		logger.Info("External API - Calling runChatWorkflowStream")
@@ -955,6 +977,7 @@ func (h *ExternalWorkflowHandler) StopWorkflowTask(c *gin.Context) {
 }
 
 func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, chatfile.MaxRequestBytes)
 	keyInfo, agent, ok := h.externalAgent(c)
 	if !ok {
 		return
@@ -977,8 +1000,29 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 
 	tenantID := keyInfo.TenantID.String()
 	userID := keyInfo.ID.String()
+	var uploadOwner *execution.UploadOwner
+	var uploadPolicy *chatfile.Effective
 	if externalAppMode(agent.AgentsType) == "agent" {
+		policy := h.fileService.GetUploadConfig().ChatPolicy(nil)
+		uploadPolicy = &policy
 		userID = agents.DeriveExternalUserID(keyInfo.TenantID, keyInfo.AgentID, user).String()
+		// Historical adapters without a publication resolver cannot enable new
+		// execution entries. Their upload contract remains unchanged; unbound
+		// uploads will never pass identity-scoped execution authorization.
+		if h.agentRuntime != nil {
+			published, err := h.agentRuntime.GetPublishedAgentRuntimeConfig(c.Request.Context(), agent.ID.String())
+			if err != nil || published == nil || published.AgentID != agent.ID.String() {
+				response.Fail(c, response.ErrAppNotFound)
+				return
+			}
+			if !published.Config.FileUpload {
+				response.Fail(c, response.ErrPermissionDenied)
+				return
+			}
+			policy = h.fileService.GetUploadConfig().ChatPolicy(published.Config.FileUploadPolicy)
+			uploadOwner = &execution.UploadOwner{OrganizationID: published.OrganizationID, WorkspaceID: published.WorkspaceID,
+				ApplicationType: "agent", ApplicationID: published.AgentID, Entry: "external-api", SubjectKind: "api_end_user", SubjectID: userID}
+		}
 	}
 
 	logger.Info("External API - File upload started",
@@ -986,6 +1030,16 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 		"size", file.Size,
 		"tenant_id", tenantID,
 	)
+	if uploadPolicy != nil {
+		if err := uploadPolicy.ValidateFile(chatfile.Extension(file.Filename), file.Size); err != nil {
+			if errors.Is(err, chatfile.ErrUnsupportedType) {
+				response.Fail(c, response.ErrUnsupportedFileType)
+			} else {
+				response.Fail(c, response.ErrFileTooLarge)
+			}
+			return
+		}
+	}
 
 	// Open uploaded file
 	fileContent, err := file.Open()
@@ -997,7 +1051,7 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 	defer fileContent.Close()
 
 	// Read file content
-	content, err := io.ReadAll(fileContent)
+	content, err := io.ReadAll(io.LimitReader(fileContent, chatfile.MaxTurnBytes+1))
 	if err != nil {
 		logger.CriticalContext(c.Request.Context(), "external api failed to read file content", "tenant_id", tenantID, "filename", file.Filename, err)
 		response.Fail(c, response.ErrSystemError)
@@ -1005,6 +1059,10 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 	}
 
 	// Get MIME type
+	if int64(len(content)) > chatfile.MaxTurnBytes || (uploadPolicy != nil && uploadPolicy.ValidateFile(chatfile.Extension(file.Filename), int64(len(content))) != nil) {
+		response.Fail(c, response.ErrFileTooLarge)
+		return
+	}
 	mimeType := file.Header.Get("Content-Type")
 	if mimeType == "" {
 		mimeType = http.DetectContentType(content)
@@ -1054,6 +1112,17 @@ func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
 		logger.CriticalContext(c.Request.Context(), "external api failed to upload file", "tenant_id", tenantID, "filename", file.Filename, err)
 		response.Fail(c, response.ErrSystemError)
 		return
+	}
+
+	if uploadOwner != nil {
+		if err := execution.BindUpload(c.Request.Context(), h.db, uploadedFile.ID, *uploadOwner); err != nil {
+			if cleanupErr := h.fileService.DeleteFiles(c.Request.Context(), []string{uploadedFile.ID}); cleanupErr != nil {
+				logger.ErrorContext(c.Request.Context(), "failed to clean up unbound execution upload", cleanupErr)
+			}
+			logger.ErrorContext(c.Request.Context(), "failed to bind execution upload", err)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
 	}
 
 	// Get file extension
@@ -1156,7 +1225,7 @@ func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
 	variables := []map[string]interface{}{}
 	features := map[string]interface{}{}
 	fileUploadEnabled := false
-	supportsVision := false
+	var uploadSelection *chatfile.Policy
 	memoryEnabled := false
 	memoryRequiresUser := false
 	if externalAppMode(agent.AgentsType) == "agent" {
@@ -1171,7 +1240,7 @@ func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
 			return
 		}
 		fileUploadEnabled = published.Config.FileUpload
-		supportsVision = published.Config.SupportsVision
+		uploadSelection = published.Config.FileUploadPolicy
 		memoryEnabled = published.Config.AgentMemoryEnabled
 		memoryRequiresUser = externalAgentMemoryRequiresUser(published.Config)
 		features = map[string]interface{}{
@@ -1207,13 +1276,16 @@ func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
 		if value, ok := workflowMap["features"].(map[string]interface{}); ok {
 			features = value
 			fileUploadEnabled = externalFileUploadEnabled(value["file_upload"])
-			supportsVision = fileUploadEnabled
 		}
 	}
 
 	var uploadConfig *interfaces.FileUploadConfigResponse
 	if h.fileService != nil {
 		uploadConfig = h.fileService.GetUploadConfig()
+	}
+	effectivePolicy := uploadConfig.ChatPolicy(uploadSelection)
+	if externalAppMode(agent.AgentsType) != "agent" {
+		effectivePolicy = workflow.WorkflowChatUploadPolicy(features, uploadConfig)
 	}
 	systemParameters := gin.H{}
 	fileLimit := 0
@@ -1232,16 +1304,21 @@ func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
 	if h.fileService != nil {
 		allowedFileTypes = h.fileService.GetSupportedFileTypes()
 	}
+	if externalAppMode(agent.AgentsType) == "agent" {
+		fileLimit = effectivePolicy.NumberLimit
+		allowedFileTypes = effectivePolicy.AllowedFileTypes
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"user_input_form": variables,
-		"features":        features,
+		"user_input_form":    variables,
+		"chat_upload_policy": effectivePolicy,
+		"features":           features,
 		"file_upload": gin.H{
 			"enabled":            fileUploadEnabled,
 			"number_limits":      fileLimit,
 			"allowed_file_types": allowedFileTypes,
 			"transfer_methods":   []string{"local_file"},
 			"image": gin.H{
-				"enabled":          fileUploadEnabled && supportsVision,
+				"enabled":          fileUploadEnabled && slices.Contains(effectivePolicy.AllowedFileTypes, "image"),
 				"number_limits":    fileLimit,
 				"transfer_methods": []string{"local_file"},
 			},

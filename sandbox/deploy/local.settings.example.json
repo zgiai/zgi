@@ -1,0 +1,11 @@
+{
+  "ZGI_AGENT_RUNTIME_API_KEY": "replace-with-dedicated-worker-secret",
+  "ZGI_AGENT_RUNTIME_DATABASE_URL": "postgres://runtime:replace-password@127.0.0.1:5432/zgi_runtime?sslmode=disable",
+  "ZGI_AGENT_RUNTIME_WORKER_SOURCE": "/opt/zgi-release/zgi-agent-runtime-worker",
+  "ZGI_AGENT_RUNTIME_IMAGE_REF": "registry.example/zgi-agent-runtime@sha256:replace-with-published-digest",
+  "ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS": "/run/containerd/containerd.sock",
+  "ZGI_AGENT_RUNTIME_STATE_DIR": "/var/lib/zgi-ar",
+  "ZGI_AGENT_RUNTIME_MAX_WORKERS": "1",
+  "ZGI_AGENT_RUNTIME_MEMORY_BYTES": "805306368",
+  "ZGI_AGENT_RUNTIME_PIDS": "256"
+}

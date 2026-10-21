@@ -3,9 +3,8 @@ package guard
 import (
 	"strings"
 
-	"github.com/auxten/postgresql-parser/pkg/sql/parser"
 	"github.com/auxten/postgresql-parser/pkg/sql/sem/tree"
-	"github.com/auxten/postgresql-parser/pkg/walk"
+	"github.com/zgiai/zgi/api/pkg/sql_base/sqlanalysis"
 )
 
 type analysis struct {
@@ -17,37 +16,22 @@ type analysis struct {
 }
 
 func parseSQL(sql string) analysis {
-	stmts, err := parser.Parse(sql)
-	a := analysis{parseErr: err}
-	if err != nil {
-		return a
+	shared := sqlanalysis.Analyze(sql)
+	a := analysis{
+		statements:             shared.Statements,
+		topLevelStatementCount: shared.StatementCount,
+		functions:              shared.Functions,
+		maxJoins:               shared.MaxJoinCount,
 	}
-
-	a.statements = make([]tree.Statement, 0, len(stmts))
-	for _, stmt := range stmts {
-		if stmt.AST != nil {
-			a.topLevelStatementCount++
-			a.statements = appendAnalyzedStatements(a.statements, stmt.AST)
-		}
+	if shared.ParseError != "" {
+		a.parseErr = parseError(shared.ParseError)
 	}
-
-	w := &walk.AstWalker{
-		Fn: func(ctx interface{}, node interface{}) bool {
-			out := ctx.(*analysis)
-			switch n := node.(type) {
-			case *tree.FuncExpr:
-				out.functions = append(out.functions, strings.ToLower(n.Func.String()))
-			case *tree.SelectClause:
-				out.maxJoins = max(out.maxJoins, countJoins(n.From.Tables))
-			case *tree.Update:
-				out.maxJoins = max(out.maxJoins, countJoins(n.From))
-			}
-			return false
-		},
-	}
-	_, _ = w.Walk(stmts, &a)
 	return a
 }
+
+type parseError string
+
+func (e parseError) Error() string { return string(e) }
 
 func appendAnalyzedStatements(out []tree.Statement, stmt tree.Statement) []tree.Statement {
 	if stmt == nil {

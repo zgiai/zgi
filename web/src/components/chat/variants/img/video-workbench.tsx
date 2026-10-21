@@ -310,6 +310,10 @@ export function VideoWorkbench() {
       toast.error(t('chat.videoWorkbench.submitFailed'));
       return;
     }
+    if (generationOptions.resolutions.length === 0) {
+      toast.error(t('chat.videoWorkbench.submitFailed') + ': model has no declared resolutions');
+      return;
+    }
     submitLockRef.current = true;
     const clientRequestId = submitClientRequestIdRef.current ?? createVideoClientRequestId();
     submitClientRequestIdRef.current = clientRequestId;
@@ -387,6 +391,7 @@ export function VideoWorkbench() {
   }, [
     generateMutation,
     effectiveReferenceMode,
+    generationOptions.resolutions.length,
     generationOptions.audioModes.length,
     prompt,
     referenceFiles,
@@ -2097,6 +2102,7 @@ function ReferencePreview({ item }: { item: SelectedReferenceFile }) {
 function getVideoGenerationOptions(model: ModelItem | undefined): VideoGenerationOptions {
   const videoConfig = getModelVideoConfig(model);
   const supportsAudioGeneration = supportsVideoAudioGeneration(videoConfig);
+  const pricingResolutions = getVideoPricingResolutions(videoConfig);
 
   return {
     aspectRatios: getStringOptions(
@@ -2108,11 +2114,40 @@ function getVideoGenerationOptions(model: ModelItem | undefined): VideoGeneratio
     resolutions: getStringOptions(
       videoConfig,
       ['resolutions', 'resolution_options'],
-      [...DEFAULT_VIDEO_GENERATION_OPTIONS.resolutions]
+      pricingResolutions.length > 0 ? pricingResolutions : []
     ),
     referenceModes: getReferenceModeOptions(videoConfig),
     audioModes: supportsAudioGeneration ? [...VIDEO_AUDIO_MODES] : ['off'],
   };
+}
+
+function getVideoPricingResolutions(config: Record<string, unknown> | null): string[] {
+  if (!config) return [];
+  const values: string[] = [];
+  const append = (value: unknown) => {
+    if (typeof value !== 'string') return;
+    const normalized = value.trim().toLowerCase();
+    if (normalized && !values.includes(normalized)) values.push(normalized);
+  };
+  const grouped = config.resolution_rates;
+  if (Array.isArray(grouped)) {
+    grouped.forEach(entry => {
+      if (!entry || typeof entry !== 'object') return;
+      const record = entry as Record<string, unknown>;
+      append(record.resolution);
+      if (Array.isArray(record.rates)) {
+        record.rates.forEach(rate => {
+          if (rate && typeof rate === 'object') append((rate as Record<string, unknown>).resolution);
+        });
+      }
+    });
+  }
+  if (Array.isArray(config.rates)) {
+    config.rates.forEach(rate => {
+      if (rate && typeof rate === 'object') append((rate as Record<string, unknown>).resolution);
+    });
+  }
+  return values;
 }
 
 function normalizeVideoSettings(
@@ -2365,6 +2400,7 @@ function getModelVideoConfig(model?: ModelItem): Record<string, unknown> | null 
     supported_parameters?: unknown;
     features?: unknown;
     parameters?: unknown;
+    pricing?: unknown;
   };
 
   return mergeVideoConfigRecords([
@@ -2378,6 +2414,10 @@ function getModelVideoConfig(model?: ModelItem): Record<string, unknown> | null 
     getNestedRecord(maybeModel.supported_parameters, ['video']),
     getNestedRecord(maybeModel.features, ['video']),
     getNestedRecord(maybeModel.parameters, ['video']),
+    // Cloud catalog pricing carries the supported resolution/rate contract.
+    // Use it as the authoritative option source when capability metadata is
+    // otherwise absent; do not silently invent 720p/1080p choices.
+    getNestedRecord(maybeModel.pricing, ['video_generation']),
   ]);
 }
 

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+  <system systemId="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <uri name="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <system systemId="https://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <uri name="https://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <system systemId="http://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <uri name="http://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <system systemId="https://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <uri name="https://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dc.xsd"/>
+  <system systemId="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <uri name="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <system systemId="https://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <uri name="https://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <system systemId="http://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <uri name="http://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <system systemId="https://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <uri name="https://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dcterms.xsd"/>
+  <system systemId="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <uri name="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <system systemId="https://dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <uri name="https://dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <system systemId="http://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <uri name="http://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <system systemId="https://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <uri name="https://www.dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dcmitype.xsd"/>
+  <system systemId="http://www.w3.org/2001/03/xml.xsd" uri="xml.xsd"/>
+  <uri name="http://www.w3.org/2001/03/xml.xsd" uri="xml.xsd"/>
+  <system systemId="https://www.w3.org/2001/03/xml.xsd" uri="xml.xsd"/>
+  <uri name="https://www.w3.org/2001/03/xml.xsd" uri="xml.xsd"/>
+  <system systemId="http://www.w3.org/2001/03/XMLSchema.dtd" uri="XMLSchema.dtd"/>
+  <uri name="http://www.w3.org/2001/03/XMLSchema.dtd" uri="XMLSchema.dtd"/>
+  <system systemId="https://www.w3.org/2001/03/XMLSchema.dtd" uri="XMLSchema.dtd"/>
+  <uri name="https://www.w3.org/2001/03/XMLSchema.dtd" uri="XMLSchema.dtd"/>
+  <system systemId="http://www.w3.org/2001/03/datatypes.dtd" uri="datatypes.dtd"/>
+  <uri name="http://www.w3.org/2001/03/datatypes.dtd" uri="datatypes.dtd"/>
+  <system systemId="https://www.w3.org/2001/03/datatypes.dtd" uri="datatypes.dtd"/>
+  <uri name="https://www.w3.org/2001/03/datatypes.dtd" uri="datatypes.dtd"/>
+  <public publicId="-//W3C//DTD XMLSCHEMA 200102//EN" uri="XMLSchema.dtd"/>
+  <public publicId="datatypes" uri="datatypes.dtd"/>
+</catalog>

@@ -44,6 +44,7 @@ export interface UseAgentsParams {
   agent_type?: AgentType;
   is_published?: boolean;
   web_app_status?: WebAppStatus;
+  tag_ids?: string;
 }
 
 export interface UseAgentsOptions {
@@ -92,6 +93,7 @@ export function useAgents(
       agent_type: params.agent_type,
       is_published: params.is_published,
       web_app_status: params.web_app_status,
+      tag_ids: params.tag_ids,
     }),
     [
       params.limit,
@@ -101,6 +103,7 @@ export function useAgents(
       params.agent_type,
       params.is_published,
       params.web_app_status,
+      params.tag_ids,
     ]
   );
 

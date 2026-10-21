@@ -6,6 +6,7 @@ runtime_type: prompt
 supported_callers:
   - aichat
   - agent
+  - digital_human
   - workflow
 max_calls_per_turn: 5
 timeout_seconds: 5

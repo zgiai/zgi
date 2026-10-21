@@ -75,7 +75,6 @@ for (const [documentName, source] of renderDocuments) {
 for (const forbidden of [
   'client_action_required',
   'client_action_result',
-  '/tool-governance/',
   '/client-actions/',
   'waiting_client_action',
 ]) {
@@ -84,6 +83,26 @@ for (const forbidden of [
     assert.ok(!source.includes(forbidden), `${locale} Agent docs expose ${forbidden}`);
   }
 }
+
+const governancePath =
+  '/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue';
+const governance = spec.paths?.[governancePath]?.post;
+assert.ok(governance, 'Agent OpenAPI must expose the admitted platform CLI continuation');
+assert.equal(governance.operationId, 'continueAgentPlatformToolGovernance');
+assert.deepEqual(
+  governance.requestBody?.content?.['application/json']?.schema?.properties?.action?.enum,
+  ['approve', 'reject'],
+  'CLI continuation must only confirm or reject a frozen invocation'
+);
+assert.equal(governance.responses?.['200']?.$ref, '#/components/responses/AgentEventStream');
+assert.match(governance.description, /never the original Shell/);
+assert.match(governance.description, /resource authorization/);
+assert.match(governance.description, /Rejection remains available after execution is disabled/);
+assert.deepEqual(
+  Object.keys(spec.paths).filter(apiPath => apiPath.includes('/tool-governance/')),
+  [governancePath],
+  'Only the dedicated Agent CLI continuation is public, not internal governance endpoints'
+);
 
 assert.match(
   tocSource,
@@ -185,6 +204,13 @@ for (const [name, source] of [...documents, ['quickstart', quickstart]]) {
 }
 
 for (const [locale, source] of documents) {
+  assert.match(source, /requires_approval=true/, `${locale} must describe admitted CLI approval`);
+  assert.match(source, /remember_for_session/, `${locale} must explain non-reusable CLI decisions`);
+  assert.doesNotMatch(
+    source,
+    /Always `false` in the published Agent API|在已发布 Agent API 中固定为 `false`|has no human continuation endpoint|不对应人工继续接口/,
+    `${locale} must not describe all published tools as unconditionally non-interactive`
+  );
   const guideHeading =
     locale === 'zh-Hans' ? '## Agent 事件接入手册' : '## Agent Event Integration Guide';
   const guideStart = source.indexOf(guideHeading);

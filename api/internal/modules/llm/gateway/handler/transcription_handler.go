@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 const (
@@ -23,12 +24,23 @@ type transcriptionService interface {
 
 // TranscriptionHandler accepts PCM audio and returns final editable text.
 type TranscriptionHandler struct {
-	service transcriptionService
+	service        transcriptionService
+	errorProjector *apptransport.Projector
 }
 
 // NewTranscriptionHandler creates the public transcription handler.
 func NewTranscriptionHandler(service transcriptionService) *TranscriptionHandler {
 	return &TranscriptionHandler{service: service}
+}
+
+// SetErrorProjector attaches the shared application-error projector so this
+// handler's failures carry the catalog's localized message, stable code, and
+// error_id like every other public exit. Without it the raw classifier's
+// English fallback reached the client.
+func (h *TranscriptionHandler) SetErrorProjector(projector *apptransport.Projector) {
+	if h != nil {
+		h.errorProjector = projector
+	}
 }
 
 // Transcribe handles POST /v1/audio/transcriptions?model=...
@@ -50,7 +62,7 @@ func (h *TranscriptionHandler) Transcribe(c *gin.Context) {
 		Audio: c.Request.Body,
 	})
 	if err != nil {
-		writeTranscriptionProtocolError(c, err)
+		h.writeProtocolError(c, err)
 		return
 	}
 	if result == nil {
@@ -61,7 +73,7 @@ func (h *TranscriptionHandler) Transcribe(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-func writeTranscriptionProtocolError(c *gin.Context, err error) {
+func (h *TranscriptionHandler) writeProtocolError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, context.Canceled):
 		writeOpenAIProtocolError(c, newProtocolError(
@@ -80,6 +92,10 @@ func writeTranscriptionProtocolError(c *gin.Context, err error) {
 			"Transcription timed out",
 		))
 	default:
-		writeOpenAIProtocolError(c, classifyProtocolError(err))
+		var projector *apptransport.Projector
+		if h != nil {
+			projector = h.errorProjector
+		}
+		writeOpenAIProtocolError(c, projectProtocolError(c, projector, err))
 	}
 }

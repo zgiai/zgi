@@ -9,6 +9,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/migrations/connectorfinalize"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
 	"github.com/zgiai/zgi/api/pkg/database"
 )
 
@@ -17,6 +19,8 @@ const advisoryLockKey = "zgi:migrations"
 type RunOptions struct {
 	DryRun bool
 	NoLock bool
+	// Required for late-install verification when native encrypted records exist.
+	ConnectorCredentials *credentials.Store
 }
 
 type RollbackOptions struct {
@@ -31,6 +35,33 @@ type MigrationStatus struct {
 
 func allMigrations() []*gormigrate.Migration {
 	return registeredMigrations()
+}
+
+func migrationsForRun() []*gormigrate.Migration {
+	migrations := allMigrations()
+	if !config.ConnectorRetirementDeferred() {
+		return migrations
+	}
+	filtered := make([]*gormigrate.Migration, 0, len(migrations))
+	for _, migration := range migrations {
+		if migration.ID == connectorfinalize.MigrationID {
+			continue
+		}
+		filtered = append(filtered, migration)
+	}
+	return filtered
+}
+
+// withoutRetirementMigration returns the migrations without the destructive
+// retirement migration, which a deferred run never applies.
+func withoutRetirementMigration(migrations []*gormigrate.Migration) []*gormigrate.Migration {
+	filtered := make([]*gormigrate.Migration, 0, len(migrations))
+	for _, migration := range migrations {
+		if migration.ID != connectorfinalize.MigrationID {
+			filtered = append(filtered, migration)
+		}
+	}
+	return filtered
 }
 
 func migrationOptions(validateUnknownMigrations bool) *gormigrate.Options {
@@ -52,7 +83,11 @@ func Run() error {
 		return err
 	}
 
-	return RunWithDB(db)
+	secrets, err := credentials.NewStore(cfg.Connectors.CredentialActiveKeyID, cfg.Connectors.CredentialKeys)
+	if err != nil {
+		return fmt.Errorf("initialize Connector migration credentials: %w", err)
+	}
+	return RunWithOptions(db, RunOptions{ConnectorCredentials: secrets})
 }
 
 func RunWithDB(db *gorm.DB) error {
@@ -60,6 +95,12 @@ func RunWithDB(db *gorm.DB) error {
 }
 
 func RunWithOptions(db *gorm.DB, options RunOptions) error {
+	// Session advisory locks must be acquired and released on the same physical
+	// PostgreSQL connection, including the final transaction's marker write.
+	return db.Connection(func(conn *gorm.DB) error { return runOnConnection(conn.Session(&gorm.Session{NewDB: true}), options) })
+}
+
+func runOnConnection(db *gorm.DB, options RunOptions) error {
 	normalizeMigrationTableColumns(db)
 
 	unlock, err := migrationLock(db, options.NoLock)
@@ -87,9 +128,7 @@ func RunWithOptions(db *gorm.DB, options RunOptions) error {
 			return err
 		}
 	}
-
-	m := gormigrate.New(db, migrationOptions(plan.validateUnknownMigrations), plan.migrations)
-	if err := m.Migrate(); err != nil {
+	if err := runMigrationChain(db, plan, connectorfinalize.Options{Credentials: options.ConnectorCredentials}); err != nil {
 		log.Printf("migrations failed: %v", err)
 		return err
 	}
@@ -103,6 +142,191 @@ func RunWithOptions(db *gorm.DB, options RunOptions) error {
 
 	log.Println("migrations completed successfully")
 	return nil
+}
+
+func runMigrationChain(db *gorm.DB, plan migrationPlan, verificationOptions ...connectorfinalize.Options) error {
+	verification := connectorfinalize.Options{}
+	if len(verificationOptions) > 0 {
+		verification = verificationOptions[0]
+	}
+	applied, err := appliedMigrationIDs(db)
+	if err != nil {
+		return err
+	}
+	mode := config.ConnectorRetirementMode()
+	switch mode {
+	case config.ConnectorRetirementModeStrict:
+		if err := requireDeferredRetirementExit(applied); err != nil {
+			return err
+		}
+		return runMigrationChainOnce(db, plan, verification, false)
+	case config.ConnectorRetirementModeDeferred:
+		return runMigrationChainOnce(db, plan, verification, true)
+	}
+	// auto: a database that already ran deferred stays deferred until an
+	// operator retires it; otherwise retirement runs when it loses nothing.
+	if connectorfinalize.DeferredByHistory(applied) {
+		log.Printf("Connector retirement remains deferred: legacy Connector storage awaits connector-finalize")
+		return runMigrationChainOnce(db, plan, verification, true)
+	}
+	err = runMigrationChainOnce(db, plan, verification, false)
+	if !errors.Is(err, connectorfinalize.ErrMaintenanceRequired) {
+		return err
+	}
+	// The retirement migration refused before changing anything, and the
+	// migrations after the checkpoint ran in the same rolled-back transaction.
+	// Keep the native runtime available and leave retirement to the operator.
+	log.Printf("Connector retirement deferred: legacy Connector storage holds data that connector-finalize must archive and apply (or discard); continuing without retirement")
+	return runMigrationChainOnce(db, plan, verification, true)
+}
+
+// runMigrationChainOnce runs the plan with retirement deferred or not.
+func runMigrationChainOnce(db *gorm.DB, plan migrationPlan, verification connectorfinalize.Options, deferred bool) error {
+	if deferred {
+		plan.migrations = withoutRetirementMigration(plan.migrations)
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			return connectorfinalize.RepairPendingSetupsCompatibility(tx)
+		}); err != nil {
+			log.Printf("deferred Connector compatibility repair failed: %v", err)
+			return err
+		}
+	}
+	if deferred && plan.validateUnknownMigrations {
+		applied, err := appliedMigrationIDs(db)
+		if err != nil {
+			return err
+		}
+		if err := validateDeferredMigrationHistoryForPlan(plan, applied, deferred); err != nil {
+			return err
+		}
+	}
+	// The destructive retirement migration is intentionally omitted from the
+	// deferred run list. Validate its marker against the complete public list
+	// ourselves so an already-retired database remains valid without allowing
+	// arbitrary unknown migration IDs in a public-chain plan. The legacy bridge
+	// permits historical IDs only after its schema preflight has succeeded;
+	// preserve that policy here instead of rejecting those IDs a second time.
+	options := migrationOptions(plan.validateUnknownMigrations && !deferred)
+	m := gormigrate.New(db, options, plan.migrations)
+	applied, err := appliedMigrationIDs(db)
+	if err != nil {
+		return err
+	}
+	latePlan, lateInstall, err := postRetirementDigitalHumanPlan(db, plan, applied, verification)
+	if err != nil {
+		return err
+	}
+	if lateInstall {
+		log.Println("applying late DigitalHuman migrations to verified retired schema atomically")
+		return db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("SET LOCAL lock_timeout = '10s'").Error; err != nil {
+				return err
+			}
+			if err := gormigrate.New(tx, options, latePlan.migrations).Migrate(); err != nil {
+				return err
+			}
+			if err := clearMigrationStatementCache(db); err != nil {
+				return fmt.Errorf("clear migration query cache: %w", err)
+			}
+			report, err := connectorfinalize.Verify(tx.Statement.Context, tx, verification)
+			if err != nil {
+				return fmt.Errorf("verify completed DigitalHuman install (issues: %v): %w", report.Issues, err)
+			}
+			return assertMilliPointSchema(tx)
+		})
+	}
+	if _, done := applied[connectorfinalize.MigrationID]; !done {
+		if deferred {
+			if _, checkpointDone := applied[connectorfinalize.CheckpointID]; !checkpointDone {
+				if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
+					return err
+				}
+			}
+		} else {
+			// Preserve historical transaction boundaries. Only the final maintenance
+			// step and its migration marker require this additional atomic boundary.
+			if err := m.MigrateTo(connectorfinalize.CheckpointID); err != nil {
+				return err
+			}
+		}
+		options.UseTransaction = true
+		m = gormigrate.New(db, options, plan.migrations)
+	}
+	if err := m.Migrate(); err != nil {
+		return err
+	}
+	// The credit columns must hold milli-points in BIGINT; a fractional column
+	// would make every amount 1000x wrong, so refuse to serve with one.
+	return assertMilliPointSchema(db)
+}
+
+func validateDeferredMigrationHistory(applied map[string]struct{}) error {
+	return validateDeferredMigrationHistoryForPlan(migrationPlan{validateUnknownMigrations: true}, applied, true)
+}
+
+func validateDeferredMigrationHistoryForPlan(plan migrationPlan, applied map[string]struct{}, deferred bool) error {
+	if !deferred || !plan.validateUnknownMigrations {
+		return nil
+	}
+	known := make(map[string]struct{}, len(allMigrations()))
+	for _, migration := range allMigrations() {
+		known[migration.ID] = struct{}{}
+	}
+	for id := range applied {
+		if _, ok := known[id]; !ok {
+			return fmt.Errorf("deferred Connector retirement found unknown migration %s", id)
+		}
+	}
+	return nil
+}
+
+// requireDeferredRetirementExit is the strict-mode check: it refuses to run on
+// a database that ran with Connector retirement deferred (explicitly or in
+// auto mode) and still has legacy storage. Retirement there is an explicit
+// connector-finalize operation, so nothing is migrated, no unrelated pending
+// migration either, until the operator finishes it or allows deferral.
+func requireDeferredRetirementExit(applied map[string]struct{}) error {
+	if !connectorfinalize.DeferredByHistory(applied) {
+		return nil
+	}
+	return fmt.Errorf("Connector maintenance required: this database ran with Connector retirement deferred and still has legacy Connector storage; "+
+		"retire it with connector-finalize (plan, archive, apply and verify, or discard), or unset %s=strict to keep deferring. No migrations were applied",
+		config.ConnectorRetirementModeEnv)
+}
+
+// RunToConnectorCheckpoint supports the two published maintenance boundaries.
+// It never skips unknown migrations or guesses a checkpoint from an ID prefix.
+func RunToConnectorCheckpoint(db *gorm.DB, id string) error {
+	if id != connectorfinalize.DetachCheckpointID && id != connectorfinalize.CheckpointID {
+		return fmt.Errorf("unsupported Connector upgrade checkpoint")
+	}
+	return db.Connection(func(conn *gorm.DB) error {
+		conn = conn.Session(&gorm.Session{NewDB: true})
+		unlock, err := migrationLock(conn, false)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		plan, err := resolveMigrationPlan(conn)
+		if err != nil {
+			return err
+		}
+		applied, err := appliedMigrationIDs(conn)
+		if err != nil {
+			return err
+		}
+		for appliedID := range applied {
+			if appliedID > id && migrationIDPattern.MatchString(appliedID) && !connectorfinalize.CompatibleCheckpointMigration(appliedID) {
+				return fmt.Errorf("database has advanced beyond the requested checkpoint")
+			}
+		}
+		if plan.beforeRun != nil {
+			if err := plan.beforeRun(conn); err != nil {
+				return err
+			}
+		}
+		return gormigrate.New(conn, migrationOptions(plan.validateUnknownMigrations), plan.migrations).MigrateTo(id)
+	})
 }
 
 func migrationLock(db *gorm.DB, noLock bool) (func(), error) {

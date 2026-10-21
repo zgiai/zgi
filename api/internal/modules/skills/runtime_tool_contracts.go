@@ -103,6 +103,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				map[string]interface{}{
 					"file_id":   stringValueSchema("Required file ID from the current page context, attachment context, or governed asset resolution. Do not invent IDs."),
 					"max_chars": numberSchema("Optional maximum returned content characters. Defaults to 4000 and is capped at 12000."),
+					"offset":    numberSchema("Optional zero-based Unicode character offset. Defaults to 0; use next_offset to read subsequent pages."),
 				},
 				[]string{"file_id"},
 			),
@@ -483,8 +484,8 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 				map[string]interface{}{
 					"query":          stringValueSchema("The user question or refined search query."),
 					"dataset_ids":    stringArrayOrCSVSchema("Knowledge base IDs selected from list_accessible_knowledge_bases. Pass a JSON array of IDs when possible."),
-					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
-					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
+					"top_k":          boundedNumberSchema("Maximum number of retrieved chunks. Defaults to 5 and must be between 1 and 10.", 1, 10),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for the default hybrid mode; use vectorAndBM25 for the textual Vector+BM25 route, graph for relationship/entity questions, or hybrid for vectorAndBM25 plus graph.", []string{"hybrid", "vectorAndBM25", "graph"}),
 				},
 				[]string{"query", "dataset_ids"},
 			),
@@ -497,8 +498,8 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			Schema: objectSchema(
 				map[string]interface{}{
 					"query":          stringValueSchema("The user question or refined search query."),
-					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
-					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
+					"top_k":          boundedNumberSchema("Maximum number of retrieved chunks. Defaults to 5 and must be between 1 and 10.", 1, 10),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for the default hybrid mode; use vectorAndBM25 for the textual Vector+BM25 route, graph for relationship/entity questions, or hybrid for vectorAndBM25 plus graph.", []string{"hybrid", "vectorAndBM25", "graph"}),
 				},
 				[]string{"query"},
 			),

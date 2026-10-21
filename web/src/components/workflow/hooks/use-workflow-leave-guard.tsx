@@ -23,7 +23,9 @@ interface WorkflowLeaveGuardOptions {
   confirmOnAnyNavigation?: boolean;
   isValid: boolean;
   isSaving: boolean;
-  onSave: (options?: { silent?: boolean }) => Promise<void> | void;
+  onSave: (
+    options?: { silent?: boolean }
+  ) => Promise<boolean | void> | boolean | void;
 }
 
 interface PendingNavigation {
@@ -250,7 +252,8 @@ export function useWorkflowLeaveGuard({
     if (!navigation) return;
 
     flushWorkflowPendingEdits();
-    await onSave({ silent: true });
+    const saved = await onSave({ silent: true });
+    if (saved === false) return;
 
     const state = useWorkflowStore.getState();
     if (state.isDirty || state.hasLayoutChanges) return;

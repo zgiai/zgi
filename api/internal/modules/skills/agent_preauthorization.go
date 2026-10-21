@@ -58,9 +58,15 @@ func newAgentBindingAuthorizationIndex(params map[string]interface{}) agentBindi
 			accessMode:       authorization.AccessMode,
 		}
 		index.byKey[key] = authorization
-		index.countByType[authorization.BindingType]++
+		if authorizationEvidenceValid(authorization) {
+			index.countByType[authorization.BindingType]++
+		}
 	}
 	return index
+}
+
+func authorizationEvidenceValid(authorization tools.AgentBindingAuthorization) bool {
+	return strings.TrimSpace(authorization.BoundByAccountID) != "" && authorization.BoundAtUnix > 0
 }
 
 func (i agentBindingAuthorizationIndex) authorizationFor(bindingType, parentResourceID, resourceID, accessMode string) (tools.AgentBindingAuthorization, bool) {
@@ -92,7 +98,7 @@ func governanceAgentAuthorization(
 	arguments map[string]interface{},
 ) (toolgovernance.ApprovalMode, *toolgovernance.Preauthorization) {
 	callerType := governanceString(params, governance, "tool_governance_caller_type", "caller_type")
-	if !strings.EqualFold(callerType, SkillCallerAgent) {
+	if !bindingGovernedAutonomousCaller(callerType) {
 		return toolgovernance.ApprovalModeInteractive, nil
 	}
 
@@ -100,77 +106,38 @@ func governanceAgentAuthorization(
 	switch skillID {
 	case SkillAgentKnowledge:
 		authorizationIndex := newAgentBindingAuthorizationIndex(params)
-		return toolgovernance.ApprovalModeNonInteractive, agentKnowledgePreauthorization(params, authorizationIndex, toolName)
+		return toolgovernance.ApprovalModeNonInteractive, localizeBindingPreauthorization(params, agentKnowledgePreauthorization(params, authorizationIndex, toolName))
 	case SkillAgentDatabase:
 		authorizationIndex := newAgentBindingAuthorizationIndex(params)
-		return toolgovernance.ApprovalModeNonInteractive, agentDatabasePreauthorization(params, authorizationIndex, toolName, manifest, arguments)
+		return toolgovernance.ApprovalModeNonInteractive, localizeBindingPreauthorization(params, agentDatabasePreauthorization(params, authorizationIndex, toolName, manifest, arguments))
 	case SkillAgentWorkflow:
 		authorizationIndex := newAgentBindingAuthorizationIndex(params)
-		return toolgovernance.ApprovalModeNonInteractive, agentWorkflowPreauthorization(params, authorizationIndex, toolName, arguments)
-	case SkillExternalApps:
-		if strings.TrimSpace(toolName) != "execute_action" {
-			// Catalog discovery is read-only and the meta-tool itself filters
-			// every result through current Agent binding and shared-grant
-			// checks. The concrete action is preauthorized separately below.
-			return toolgovernance.ApprovalModeNonInteractive, nil
-		}
-		authorizationIndex := newAgentBindingAuthorizationIndex(params)
-		return toolgovernance.ApprovalModeNonInteractive, agentIntegrationPreauthorization(authorizationIndex, manifest, arguments)
+		return toolgovernance.ApprovalModeNonInteractive, localizeBindingPreauthorization(params, agentWorkflowPreauthorization(params, authorizationIndex, toolName, arguments))
+
 	default:
-		return toolgovernance.ApprovalModeNonInteractive, &toolgovernance.Preauthorization{
+		return toolgovernance.ApprovalModeNonInteractive, localizeBindingPreauthorization(params, &toolgovernance.Preauthorization{
 			Source: "agent_runtime",
 			Code:   agentToolNotPreauthorizedCode,
 			Reason: "the current Agent does not have persistent authorization for this tool action",
-		}
+		})
 	}
 }
 
-func agentIntegrationPreauthorization(
-	authorizationIndex agentBindingAuthorizationIndex,
-	manifest toolgovernance.Manifest,
-	arguments map[string]interface{},
-) *toolgovernance.Preauthorization {
-	preauthorization := &toolgovernance.Preauthorization{
-		Required:    true,
-		Source:      agentAuthorizationSourceBinding,
-		BindingType: "integration_connection",
+func localizeBindingPreauthorization(params map[string]interface{}, result *toolgovernance.Preauthorization) *toolgovernance.Preauthorization {
+	callerType := strings.TrimSpace(stringMapValue(params, "runtime_caller_type"))
+	if governance, ok := params[governanceRuntimeParametersKey].(map[string]interface{}); ok && callerType == "" {
+		callerType = strings.TrimSpace(stringMapValue(governance, "caller_type"))
 	}
-	if manifest.Effect != toolgovernance.EffectRead {
-		preauthorization.Code = agentToolNotPreauthorizedCode
-		preauthorization.Reason = "write actions are unavailable in the non-interactive Agent runtime"
-		return preauthorization
+	if result == nil || !strings.EqualFold(callerType, SkillCallerDigitalHuman) {
+		return result
 	}
-	connectionID := strings.ToLower(stringMapValue(arguments, "connection_id"))
-	integrationID := strings.ToLower(stringMapValue(arguments, "integration_id"))
-	actionID := strings.ToLower(stringMapValue(arguments, "action_id"))
-	if connectionID == "" || integrationID == "" || actionID == "" {
-		preauthorization.Code = agentBindingMissingCode
-		preauthorization.Reason = "the requested integration action has no resolved Agent binding"
-		return preauthorization
-	}
-	authorization, ok := authorizationIndex.authorizationFor(
-		"integration_connection",
-		integrationID,
-		connectionID,
-		"read",
-	)
-	if !ok || !authorization.AllowsAction(actionID) {
-		preauthorization.Code = agentResourceNotBoundCode
-		preauthorization.Reason = "the requested integration connection action is not bound to the current Agent"
-		return preauthorization
-	}
-	preauthorization.Matched = true
-	preauthorization.Resources = []toolgovernance.AssetRef{{
-		ID:   connectionID,
-		Type: "integration_connection",
-		Metadata: map[string]interface{}{
-			"integration_id": integrationID,
-			"action_id":      actionID,
-		},
-	}}
-	applyAgentBindingAuthorization(preauthorization, authorization)
-	preauthorization.Reason = "allowed by the current Agent integration connection binding"
-	return preauthorization
+	result.Reason = strings.ReplaceAll(result.Reason, "current Agent", "current DigitalHuman")
+	return result
+}
+
+func bindingGovernedAutonomousCaller(callerType string) bool {
+	return strings.EqualFold(callerType, SkillCallerAgent) ||
+		strings.EqualFold(callerType, SkillCallerDigitalHuman)
 }
 
 func agentKnowledgePreauthorization(params map[string]interface{}, authorizationIndex agentBindingAuthorizationIndex, toolName string) *toolgovernance.Preauthorization {
@@ -248,6 +215,12 @@ func agentDatabasePreauthorization(
 	multiResourceTool := strings.TrimSpace(toolName) == "list_accessible_databases" || strings.TrimSpace(toolName) == "list_database_tables"
 	if authorization, ok := databaseAuthorizationForTool(authorizationIndex, toolName, dataSourceID, tableID, manifest); ok {
 		if !multiResourceTool {
+			if !authorizationEvidenceValid(authorization) {
+				preauthorization.Matched = false
+				preauthorization.Code = agentBindingMissingCode
+				preauthorization.Reason = "the requested database binding has no valid persistent authorization evidence"
+				return preauthorization
+			}
 			applyAgentBindingAuthorization(preauthorization, authorization)
 		}
 	} else if !legacyAgentBindingGrantValid(params, "database") {
@@ -320,7 +293,7 @@ func agentWorkflowPreauthorization(params map[string]interface{}, authorizationI
 			continue
 		}
 		preauthorization.Matched = true
-		if authorization, ok := authorizationIndex.authorizationFor("workflow", binding.AgentID, binding.BindingID, "execute"); ok {
+		if authorization, ok := authorizationIndex.authorizationFor("workflow", binding.AgentID, binding.BindingID, "execute"); ok && authorizationEvidenceValid(authorization) {
 			applyAgentBindingAuthorization(preauthorization, authorization)
 		} else if !legacyAgentBindingGrantValid(params, "workflow") {
 			preauthorization.Matched = false
@@ -401,7 +374,7 @@ func agentKnowledgeBindingAuthorizations(authorizationIndex agentBindingAuthoriz
 	authorizations := make([]tools.AgentBindingAuthorization, 0, len(datasetIDs))
 	for _, datasetID := range datasetIDs {
 		authorization, ok := authorizationIndex.authorizationFor("knowledge_dataset", "", datasetID, "read")
-		if ok {
+		if ok && authorizationEvidenceValid(authorization) {
 			authorizations = append(authorizations, authorization)
 		}
 	}
@@ -413,7 +386,7 @@ func agentDatabaseTableBindingAuthorizations(authorizationIndex agentBindingAuth
 	for _, binding := range bindings {
 		for _, tableID := range binding.TableIDs {
 			authorization, ok := authorizationIndex.authorizationFor("database_table", binding.DataSourceID, tableID, "read")
-			if ok {
+			if ok && authorizationEvidenceValid(authorization) {
 				authorizations = append(authorizations, authorization)
 			}
 		}
@@ -425,7 +398,7 @@ func agentWorkflowBindingAuthorizations(authorizationIndex agentBindingAuthoriza
 	authorizations := make([]tools.AgentBindingAuthorization, 0, len(bindings))
 	for _, binding := range bindings {
 		authorization, ok := authorizationIndex.authorizationFor("workflow", binding.AgentID, binding.BindingID, "execute")
-		if ok {
+		if ok && authorizationEvidenceValid(authorization) {
 			authorizations = append(authorizations, authorization)
 		}
 	}

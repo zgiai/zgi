@@ -19,6 +19,7 @@ const (
 )
 
 type FrozenInvocation struct {
+	ExecutionOrigin         *ExecutionOrigin       `json:"execution_origin,omitempty"`
 	ID                      string                 `json:"id,omitempty"`
 	IdempotencyKey          string                 `json:"idempotency_key,omitempty"`
 	Hash                    string                 `json:"hash,omitempty"`
@@ -44,17 +45,18 @@ type FrozenInvocation struct {
 }
 
 type FrozenInvocationRequest struct {
-	CorrelationID  string
-	Manifest       Manifest
-	SkillID        string
-	ToolName       string
-	ProviderType   string
-	ProviderID     string
-	Arguments      map[string]interface{}
-	Assets         []AssetRef
-	ExpectedAssets []AssetRef
-	Now            time.Time
-	TTL            time.Duration
+	ExecutionOrigin *ExecutionOrigin
+	CorrelationID   string
+	Manifest        Manifest
+	SkillID         string
+	ToolName        string
+	ProviderType    string
+	ProviderID      string
+	Arguments       map[string]interface{}
+	Assets          []AssetRef
+	ExpectedAssets  []AssetRef
+	Now             time.Time
+	TTL             time.Duration
 }
 
 func NewFrozenInvocation(req FrozenInvocationRequest) FrozenInvocation {
@@ -69,6 +71,7 @@ func NewFrozenInvocation(req FrozenInvocationRequest) FrozenInvocation {
 	expiresAt := now.Add(ttl)
 	manifest := NormalizeManifest(req.Manifest)
 	invocation := FrozenInvocation{
+		ExecutionOrigin:         req.ExecutionOrigin,
 		Status:                  FrozenInvocationStatusPending,
 		CorrelationID:           strings.TrimSpace(req.CorrelationID),
 		SkillID:                 firstNonEmptyString(req.SkillID, manifest.SkillID),
@@ -110,6 +113,10 @@ func SealFrozenInvocation(invocation FrozenInvocation) FrozenInvocation {
 }
 
 func NormalizeFrozenInvocation(invocation FrozenInvocation) FrozenInvocation {
+	if invocation.ExecutionOrigin != nil {
+		origin := *invocation.ExecutionOrigin
+		invocation.ExecutionOrigin = &origin
+	}
 	invocation.CorrelationID = strings.TrimSpace(invocation.CorrelationID)
 	invocation.SkillID = strings.TrimSpace(invocation.SkillID)
 	invocation.ToolName = strings.TrimSpace(invocation.ToolName)
@@ -133,6 +140,7 @@ func NormalizeFrozenInvocation(invocation FrozenInvocation) FrozenInvocation {
 func FrozenInvocationHash(invocation FrozenInvocation) string {
 	normalized := NormalizeFrozenInvocation(invocation)
 	payload := frozenInvocationCanonicalPayload{
+		ExecutionOrigin:         normalized.ExecutionOrigin,
 		SkillID:                 normalized.SkillID,
 		ToolName:                normalized.ToolName,
 		ToolID:                  normalized.ToolID,
@@ -166,6 +174,7 @@ func FrozenInvocationHashMatches(invocation FrozenInvocation) bool {
 }
 
 type frozenInvocationCanonicalPayload struct {
+	ExecutionOrigin         *ExecutionOrigin       `json:"execution_origin,omitempty"`
 	SkillID                 string                 `json:"skill_id"`
 	ToolName                string                 `json:"tool_name"`
 	ToolID                  string                 `json:"tool_id,omitempty"`

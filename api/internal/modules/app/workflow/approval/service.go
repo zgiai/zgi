@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,6 +52,11 @@ type Service struct {
 	emailSender      EmailSender
 	smsSender        SMSSender
 	shortLinkService shortlinkcap.Service
+
+	// timeoutScanMu guards timeoutScanAfter, the form the last timeout scan
+	// stopped at, so the next scan resumes past a long failing prefix.
+	timeoutScanMu    sync.Mutex
+	timeoutScanAfter *timeoutScanCursor
 }
 
 func NewService(db *gorm.DB) *Service {
@@ -717,22 +723,126 @@ func (s *Service) GetFormByID(ctx context.Context, formID string) (*Form, error)
 	return &form, nil
 }
 
-func (s *Service) MarkTimedOut(ctx context.Context, formID string) (*Form, error) {
-	var form Form
-	if err := s.db.WithContext(ctx).First(&form, "id = ?", formID).Error; err != nil {
-		return nil, fmt.Errorf("load approval form: %w", err)
+// MarkTimedOut times out a waiting approval form the same way a submission
+// completes it: in one transaction it marks the form, records an
+// approval_expired event and completes the form's pause reason, so a durable
+// pause becomes resumable and its resume is queued through the runtime outbox.
+// The approval node then follows its expired branch. A workflow without a
+// durable pause is reported for a direct resume.
+func (s *Service) MarkTimedOut(ctx context.Context, formID string) (*TimeoutResult, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("approval service is not initialized")
 	}
-	if form.Status != FormStatusWaiting {
-		return &form, nil
+	result := &TimeoutResult{}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var form Form
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&form, "id = ?", formID).Error; err != nil {
+			return fmt.Errorf("load approval form: %w", err)
+		}
+		result.Form = &form
+		if form.Status != FormStatusWaiting {
+			return nil
+		}
+		if err := tx.Model(&Form{}).Where("id = ? AND status = ?", form.ID, FormStatusWaiting).
+			Update("status", FormStatusTimeout).Error; err != nil {
+			return fmt.Errorf("mark approval timeout: %w", err)
+		}
+		form.Status = FormStatusTimeout
+		result.TimedOut = true
+
+		pauseService := workflowpause.NewService(tx)
+		pauseRecord, reasons, _, err := pauseService.GetActiveByWorkflowRunID(ctx, form.WorkflowRunID)
+		if err != nil && !errors.Is(err, workflowpause.ErrPauseNotFound) {
+			return err
+		}
+		if err != nil || !activePauseHasFormID(reasons, form.ID) {
+			// No pause waits on this form: only a workflow without a durable
+			// pause resumes from the form itself.
+			durablePause, protocolErr := workflowRunUsesDurablePauseTx(ctx, tx, form.WorkflowRunID)
+			if protocolErr != nil {
+				return protocolErr
+			}
+			result.LegacyResume = !durablePause
+			return nil
+		}
+		event, err := pauseService.AppendEventPayloadTx(ctx, tx, workflowpause.AppendEventParams{
+			TenantID:                pauseRecord.TenantID,
+			AppID:                   pauseRecord.AppID,
+			WorkflowRunID:           form.WorkflowRunID,
+			EventType:               workflowpause.EventApprovalExpired,
+			EventData:               approvalExpiredEventData(&form),
+			PauseID:                 pauseRecord.ID,
+			PauseGeneration:         &pauseRecord.Generation,
+			ExpectedPauseID:         pauseRecord.ID,
+			ExpectedPauseGeneration: &pauseRecord.Generation,
+			ExpectedPauseRevision:   &pauseRecord.Revision,
+			IdempotencyKey:          "approval-expired:" + form.ID,
+		})
+		if err != nil {
+			return err
+		}
+		outbox, ready, err := pauseService.CompleteReasonsTx(ctx, tx, workflowpause.CompleteReasonsParams{
+			WorkflowRunID:     form.WorkflowRunID,
+			PauseID:           pauseRecord.ID,
+			ReasonType:        workflowpause.ReasonTypeApprovalRequired,
+			FormID:            form.ID,
+			SubmissionEventID: event.EventID,
+			TriggerID:         form.ID,
+		})
+		if err != nil {
+			return err
+		}
+		if !ready {
+			// Other approvals of the same pause are still pending.
+			_, err := pauseService.AppendNextPendingInteractionProjectionTx(ctx, tx, pauseRecord, event.EventID)
+			return err
+		}
+		result.Outbox = &workflowRuntimeOutboxRef{ID: outbox.ID, IdempotencyKey: outbox.IdempotencyKey, PayloadJSON: outbox.PayloadJSON}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	if err := s.db.WithContext(ctx).Model(&form).Update("status", FormStatusTimeout).Error; err != nil {
-		return nil, fmt.Errorf("mark approval timeout: %w", err)
-	}
-	form.Status = FormStatusTimeout
-	return &form, nil
+	return result, nil
 }
 
-func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*Form, error) {
+func approvalExpiredEventData(form *Form) map[string]interface{} {
+	return map[string]interface{}{
+		"form_id":          form.ID,
+		"approval_form_id": form.ID,
+		"workflow_run_id":  form.WorkflowRunID,
+		"node_id":          form.NodeID,
+		"node_title":       form.NodeTitle,
+		"reason":           FormStatusTimeout,
+		"expired_at":       form.ExpirationTime.Unix(),
+	}
+}
+
+// timeoutScanAttemptFactor bounds how many expired forms one timeout scan may
+// try, as a multiple of its batch size, when some of them keep failing.
+const timeoutScanAttemptFactor = 4
+
+type timeoutScanCursor struct {
+	expirationTime time.Time
+	id             string
+}
+
+// TimeoutExpiredForms times out up to limit expired waiting forms. A form that
+// fails to time out (for example a legacy pause without a durable interaction
+// request event) is logged and left waiting, and the scan pages past it by
+// (expiration_time, id) instead of stopping. Paging rather than marking the
+// form failed keeps an unrecoverable form from changing state on a guess.
+// A scan that stops at its attempt cap leaves its position for the next scan,
+// which resumes there; a scan that runs out of forms starts the next one from
+// the oldest again, so skipped forms are retried. Failing forms at the head of
+// the queue therefore cannot starve the expired forms behind them, however
+// many there are. The position is kept in memory: after a restart the scan
+// crosses the failing prefix again within a few runs. Only an error that is
+// not specific to one form fails the scan. Each timeout commits on its own, so
+// when a later page fails to load the forms already timed out are returned
+// with the error: the caller must still resume them, because a timed-out form
+// is never selected again.
+func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*TimeoutResult, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("approval service is not initialized")
 	}
@@ -740,25 +850,51 @@ func (s *Service) TimeoutExpiredForms(ctx context.Context, limit int) ([]*Form, 
 		limit = 100
 	}
 
-	var forms []Form
-	if err := s.db.WithContext(ctx).
-		Where("status = ? AND expiration_time <= ?", FormStatusWaiting, time.Now()).
-		Order("expiration_time ASC").
-		Limit(limit).
-		Find(&forms).Error; err != nil {
-		return nil, fmt.Errorf("load expired approval forms: %w", err)
-	}
+	s.timeoutScanMu.Lock()
+	defer s.timeoutScanMu.Unlock()
 
-	timedOut := make([]*Form, 0, len(forms))
-	for i := range forms {
-		form, err := s.MarkTimedOut(ctx, forms[i].ID)
-		if err != nil {
-			return nil, err
+	now := time.Now()
+	maxAttempts := limit * timeoutScanAttemptFactor
+	attempts := 0
+	after := s.timeoutScanAfter
+	exhausted := false
+	timedOut := make([]*TimeoutResult, 0, limit)
+	for len(timedOut) < limit && attempts < maxAttempts {
+		query := s.db.WithContext(ctx).
+			Where("status = ? AND expiration_time <= ?", FormStatusWaiting, now)
+		if after != nil {
+			query = query.Where("(expiration_time > ? OR (expiration_time = ? AND id > ?))",
+				after.expirationTime, after.expirationTime, after.id)
 		}
-		if form.Status == FormStatusTimeout {
-			timedOut = append(timedOut, form)
+		var forms []Form
+		if err := query.
+			Order("expiration_time ASC, id ASC").
+			Limit(min(limit-len(timedOut), maxAttempts-attempts)).
+			Find(&forms).Error; err != nil {
+			s.timeoutScanAfter = after
+			return timedOut, fmt.Errorf("load expired approval forms: %w", err)
+		}
+		if len(forms) == 0 {
+			exhausted = true
+			break
+		}
+		for i := range forms {
+			attempts++
+			after = &timeoutScanCursor{expirationTime: forms[i].ExpirationTime, id: forms[i].ID}
+			result, err := s.MarkTimedOut(ctx, forms[i].ID)
+			if err != nil {
+				logger.WarnContext(ctx, "approval form timeout failed; skipping it until a later scan", "form_id", forms[i].ID, err)
+				continue
+			}
+			if result.TimedOut {
+				timedOut = append(timedOut, result)
+			}
 		}
 	}
+	if exhausted {
+		after = nil
+	}
+	s.timeoutScanAfter = after
 	return timedOut, nil
 }
 

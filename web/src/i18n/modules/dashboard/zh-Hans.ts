@@ -20,6 +20,7 @@ const messages: DashboardMessages = {
     usageGroup: '分组统计',
     usageDetails: '使用详情',
     invocationLogs: '大模型调用日志',
+    marketCallLogs: '市场调用日志',
     modelChannels: '模型接入',
     llmProviders: '模型管理',
     channel: '渠道管理',
@@ -35,6 +36,7 @@ const messages: DashboardMessages = {
     modelSettings: '默认模型',
     parserSettings: '文档解析',
     marketplace: '插件市场',
+    zgiMarket: 'ZGI 市场',
   },
   modelChannels: {
     navigationLabel: '模型与渠道导航',
@@ -306,6 +308,8 @@ const messages: DashboardMessages = {
       title: '大模型调用日志',
       subtitle: '查看所有通过 Gateway 发起的模型调用，并按来源、业务场景和模型排查问题。',
       description: '按一次业务请求汇总 Gateway 调用；模型重试会合并展示。',
+      supplierLabel: '供应商：{name}',
+      platformChannelName: 'ZGI Cloud',
       loadFailed: '加载调用日志失败',
       loadFailedDescription: '本次请求未成功完成，请检查网络或服务状态后重试。',
       retry: '重试',
@@ -367,6 +371,9 @@ const messages: DashboardMessages = {
         model: '模型',
         provider: '模型厂商',
         channel: '调用渠道',
+        actualChannel: '实际渠道',
+        supplier: '实际供应商',
+        settlementId: '结算编号',
         invocationId: '调用 ID',
         startedAt: '开始时间',
         settledAt: '完成时间',
@@ -406,6 +413,17 @@ const messages: DashboardMessages = {
         perMillionTokens: '{price}/M',
         componentFormula: '{tokens} × {unitPrice}/M',
         componentTotalFormula: '= {cost}',
+        meteredTitle: '按量计费',
+        meteredOperation: '{operation}',
+        meteredUnitPrice: '单价 {price} / {unit}',
+        meteredFormula: '{quantity} {unit} × {price}',
+        meteredTotalFormula: '合计 {cost}',
+        meteredUnitPerImage: '张',
+        meteredUnitPerSecond: '秒',
+        meteredUnitPerMillisecond: '毫秒',
+        meteredUnitPerTrack: '首',
+        meteredUnitPerCharacter: '字符',
+        meteredUnitUnknown: '单位',
         historicalDetailsUnavailable: '历史记录暂无明细',
         error: '错误信息',
         content: '输入与输出',
@@ -1028,6 +1046,7 @@ const messages: DashboardMessages = {
       },
       scriptStatus: {
         runnable: '脚本可运行',
+        session: '控制台 Agent 会话脚本',
         unsupported: '脚本未启用',
       },
       autoSave: {
@@ -1055,6 +1074,7 @@ const messages: DashboardMessages = {
       importPreview: {
         title: '预览 Skill 包',
         description: '导入前先检查包的验证结果。',
+        sessionScript: '控制台 Agent 会话脚本',
         fileCount: '文件',
         totalSize: '大小',
         references: '参考资料',
@@ -1287,6 +1307,7 @@ const messages: DashboardMessages = {
           modules: {
             workspace: '工作空间管理权限',
             agent: '智能体模块',
+            digital_human: '数字人模块',
             workflow: '工作流模块',
             knowledge: '知识库模块',
             database: '数据库模块',
@@ -1326,6 +1347,48 @@ const messages: DashboardMessages = {
             lock: {
               name: '锁定/解锁智能体',
               description: '锁定/解锁智能体，锁定后无法编辑/删除智能体',
+            },
+          },
+          digital_human: {
+            view: {
+              name: '查看数字人',
+              description: '允许进入数字人模块，查看数字人列表、工作台和基础配置。',
+            },
+            create: {
+              name: '新建数字人',
+              description: '允许创建新的数字人并填写首次发布所需的基础信息。',
+            },
+            update: {
+              name: '编辑数字人',
+              description: '允许修改数字人的配置、资源绑定、外部连接和待办设置。',
+            },
+            delete: {
+              name: '删除数字人',
+              description: '允许删除数字人及其关联的可清理数据。',
+            },
+            publish: {
+              name: '发布数字人',
+              description: '允许发布草稿、创建正式运行版本和执行版本回滚后的重新发布。',
+            },
+            run: {
+              name: '运行数字人',
+              description: '允许发起或停止对话与待办运行，并重试或关闭失败的渠道投递。',
+            },
+            logs: {
+              view: {
+                name: '查看数字人运行记录',
+                description: '允许查看数字人运行日志、渠道事件和消息投递记录。',
+              },
+            },
+            memory: {
+              view: {
+                name: '查看数字人记忆',
+                description: '允许查看数字人的长期记忆、证据和历史版本。',
+              },
+              manage: {
+                name: '管理数字人记忆',
+                description: '允许新增、替换、失效、撤销和恢复数字人记忆。',
+              },
             },
           },
           knowledge_base: {
@@ -1671,7 +1734,7 @@ const messages: DashboardMessages = {
       deleteError: '解散工作空间失败',
       deleteConfirm: {
         title: '确认解散',
-        description: '确定要解散工作空间"{workspaceName}"吗？此操作不可撤销。',
+        description: '确定要解散工作空间“{workspaceName}”吗？此操作不可撤销。若已启用外部接入，访问密钥、外部用户、会话和记忆将被永久删除；外部上传文件会立即停止访问，并在保留 30 天后由系统清理。',
         cancel: '取消',
         confirm: '确认解散',
         deleting: '解散中...',

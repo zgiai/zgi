@@ -29,6 +29,7 @@ func newExternalSkillRuntimeWithSandbox(toolEngine *tools.ToolEngine, toolManage
 		Endpoint:                  appconfig.GlobalConfig.CodeExec.Endpoint,
 		APIKey:                    appconfig.GlobalConfig.CodeExec.APIKey,
 		FallbackDependencyProfile: appconfig.GlobalConfig.CodeExec.SystemDataProfile,
+		DependencyScanDisabled:    appconfig.GlobalConfig.CodeExec.SkillDependencyScanDisabled,
 		ConnectTimeout:            externalSecondsDuration(appconfig.GlobalConfig.CodeExec.ConnectTimeoutSeconds),
 		CreateTimeout:             externalSecondsDuration(appconfig.GlobalConfig.CodeExec.CreateTimeoutSeconds),
 		UploadTimeout:             externalSecondsDuration(appconfig.GlobalConfig.CodeExec.UploadTimeoutSeconds),

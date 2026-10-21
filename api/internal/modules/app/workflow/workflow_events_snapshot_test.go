@@ -36,7 +36,7 @@ func TestWorkflowSnapshotPauseReasonsRestoresDurableInteractionPayload(t *testin
 	if err != nil {
 		t.Skipf("sqlite unavailable: %v", err)
 	}
-	if err := db.AutoMigrate(&workflowpause.RunEvent{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &workflowpause.RunEvent{}); err != nil {
 		t.Skipf("sqlite migration unavailable: %v", err)
 	}
 	pauseID := "a81755aa-2dcc-4677-a4af-c83f31092272"

@@ -2,6 +2,9 @@ services:
   sandbox:
     # Reap orphaned interpreter workers after cancellation or process failure.
     init: true
+    # The entrypoint prepares delegated per-execution cgroups, then immediately
+    # drops to the unprivileged zgi user before seeding profiles or starting Go.
+    user: root
     # Nested Bubblewrap namespaces need elevated container isolation support.
     # Keep false for the preview backend; production linux-secure deployments
     # must explicitly opt in or run the Sandbox directly on a Linux worker.
@@ -25,6 +28,7 @@ services:
       ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR: ${ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR:-/opt/zgi/prebuilt-dependency-rootfs}
       ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES: ${ZGI_SANDBOX_REQUIRED_DEPENDENCY_PROFILES:-skill-office,scientific-data}
       ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND: ${ZGI_SANDBOX_DEPENDENCY_BUILD_COMMAND:-/usr/local/bin/zgi-sandbox-build-dependency-profile}
+      ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT: ${ZGI_SANDBOX_SECURE_RUNTIME_CGROUP_ROOT:-/sys/fs/cgroup/zgi-sandbox-executions}
     networks:
       default:
       zgi-network:

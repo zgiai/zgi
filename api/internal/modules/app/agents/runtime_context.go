@@ -7,9 +7,13 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/util"
+	"github.com/zgiai/zgi/api/pkg/apperror"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"net/http"
@@ -18,9 +22,10 @@ import (
 )
 
 type agentRuntimeContext struct {
-	Scope     runtimeservice.Scope
-	Caller    runtimeservice.Caller
-	RunConfig runtimeservice.RunConfig
+	Scope          runtimeservice.Scope
+	Caller         runtimeservice.Caller
+	RunConfig      runtimeservice.RunConfig
+	ExecutionError error
 }
 
 const agentWorkflowBindingUnavailableCode = "agent_workflow_binding_unavailable"
@@ -63,6 +68,14 @@ func (h *AgentsHandler) ListAgentRuntimeMessages(c *gin.Context) {
 		return
 	}
 	h.listRuntimeMessages(c, runtimeCtx)
+}
+
+func (h *AgentsHandler) SubmitAgentRuntimeInput(c *gin.Context) {
+	runtimeCtx, ok := h.agentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.submitRuntimeInput(c, runtimeCtx)
 }
 
 func (h *AgentsHandler) StopAgentRuntimeConversation(c *gin.Context) {
@@ -137,6 +150,14 @@ func (h *AgentsHandler) ListWebAppAgentRuntimeMessages(c *gin.Context) {
 	h.listRuntimeMessages(c, runtimeCtx)
 }
 
+func (h *AgentsHandler) SubmitWebAppAgentRuntimeInput(c *gin.Context) {
+	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
+	if !ok {
+		return
+	}
+	h.submitRuntimeInput(c, runtimeCtx)
+}
+
 func (h *AgentsHandler) StopWebAppAgentRuntimeConversation(c *gin.Context) {
 	runtimeCtx, ok := h.webAppAgentRuntimeContext(c)
 	if !ok {
@@ -184,6 +205,8 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	executionError := h.attachConsoleAgentExecutionTools(&runConfig, scope, agentID, config)
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
 	return agentRuntimeContext{
 		Scope: scope,
 		Caller: runtimeservice.Caller{
@@ -191,7 +214,8 @@ func (h *AgentsHandler) agentRuntimeContext(c *gin.Context) (agentRuntimeContext
 			ID:     &agentID,
 			Source: runtimemodel.ConversationSourceConsole,
 		},
-		RunConfig: runConfig,
+		RunConfig:      runConfig,
+		ExecutionError: executionError,
 	}, true
 }
 
@@ -243,14 +267,16 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		h.failRuntime(c, err)
 		return agentRuntimeContext{}, false
 	}
+	runConfig.RuntimeInputPolicy = runtimeservice.RuntimeInputPolicyCheckpointAndFollowUp
+	caller := runtimeservice.Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID,
+		Source: runtimemodel.ConversationSourceWebApp, SourceWebAppID: &webAppID}
+	if err := h.attachPublishedAgentExecutionTools(c.Request.Context(), &runConfig, scope, caller, published, c.GetBool("is_authenticated"), uuid.Nil); err != nil {
+		h.failRuntime(c, err)
+		return agentRuntimeContext{}, false
+	}
 	return agentRuntimeContext{
-		Scope: scope,
-		Caller: runtimeservice.Caller{
-			Type:           runtimemodel.ConversationCallerAgent,
-			ID:             &agentID,
-			Source:         runtimemodel.ConversationSourceWebApp,
-			SourceWebAppID: &webAppID,
-		},
+		Scope:     scope,
+		Caller:    caller,
 		RunConfig: runConfig,
 	}, true
 }
@@ -306,8 +332,11 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		memoryConfigScope = agentmemory.ConfigScopePublished
 	}
 	return runtimeservice.RunConfig{
-		SystemPrompt:                     cfg.SystemPrompt,
-		SystemPromptVersion:              systemPromptVersion,
+		FileUploadPolicy:     chatfile.Clone(cfg.FileUploadPolicy),
+		FileUploadEnabled:    &cfg.FileUpload,
+		SystemPrompt:         cfg.SystemPrompt,
+		SystemPromptVersion:  systemPromptVersion,
+		ConnectorTargetScope: cfg.ConnectorTargetScope, ConnectorTargetVersionID: cfg.ConnectorTargetVersionID,
 		ModelProvider:                    cfg.ModelProvider,
 		Model:                            cfg.Model,
 		ModelParameters:                  cfg.ModelParameters,
@@ -322,8 +351,6 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		WorkflowBindings:                 agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
 		WorkflowBoundByAccountID:         cfg.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:              cfg.WorkflowBoundAtUnix,
-		IntegrationConnectionIDs:         agentIntegrationRuntimeConnectionIDs(cfg.IntegrationBindings),
-		IntegrationSelectedConnectionIDs: agentIntegrationRuntimeSelectedConnectionIDs(cfg.IntegrationBindings),
 		BindingAuthorizations:            agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
 		UseMemory:                        false,
 		AgentMemoryEnabled:               cfg.AgentMemoryEnabled,
@@ -348,36 +375,9 @@ func agentRuntimeBindingAuthorizations(authorizations []dto.AgentBindingAuthoriz
 			ResourceID:       authorization.ResourceID,
 			ParentResourceID: authorization.ParentResourceID,
 			AccessMode:       authorization.AccessMode,
-			AllowedActionIDs: append([]string(nil), authorization.AllowedActionIDs...),
 			BoundByAccountID: authorization.BoundByAccountID,
 			BoundAtUnix:      authorization.BoundAtUnix,
 		})
-	}
-	return result
-}
-
-func agentIntegrationRuntimeConnectionIDs(bindings []dto.AgentIntegrationBinding) map[string]string {
-	result := make(map[string]string, len(bindings))
-	for _, binding := range normalizeAgentIntegrationBindings(bindings) {
-		if binding.IntegrationID == "" || binding.ConnectionID == "" {
-			continue
-		}
-		result[binding.IntegrationID] = binding.ConnectionID
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
-
-func agentIntegrationRuntimeSelectedConnectionIDs(bindings []dto.AgentIntegrationBinding) map[string][]string {
-	preferred := agentIntegrationRuntimeConnectionIDs(bindings)
-	if len(preferred) == 0 {
-		return nil
-	}
-	result := make(map[string][]string, len(preferred))
-	for integrationID, connectionID := range preferred {
-		result[integrationID] = []string{connectionID}
 	}
 	return result
 }
@@ -563,9 +563,20 @@ func (h *AgentsHandler) listRuntimeMessages(c *gin.Context, runtimeCtx agentRunt
 		h.failRuntime(c, err)
 		return
 	}
+	runtimeInputs, err := h.chatRuntimeService.ListRuntimeInputs(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	inputsByMessage := runtimeInputsByVisibleMessage(runtimeInputs)
 	items := make([]runtimedto.MessageResponse, 0, len(messages))
 	for _, message := range messages {
-		items = append(items, runtimeMessageResponse(message, runtimeCtx.Caller))
+		item := runtimeMessageResponse(message, runtimeCtx.Caller)
+		item.RuntimeInputs = inputsByMessage[message.ID]
+		if item.RuntimeInputs == nil {
+			item.RuntimeInputs = []runtimedto.RuntimeInputResponse{}
+		}
+		items = append(items, item)
 	}
 	response.Success(c, runtimedto.ListResponse[runtimedto.MessageResponse]{
 		Data:    items,
@@ -573,6 +584,46 @@ func (h *AgentsHandler) listRuntimeMessages(c *gin.Context, runtimeCtx agentRunt
 		Limit:   limit,
 		Total:   total,
 		HasMore: int64(page*limit) < total,
+	})
+}
+
+func (h *AgentsHandler) submitRuntimeInput(c *gin.Context, runtimeCtx agentRuntimeContext) {
+	conversationID, ok := uuidParam(c, "conversation_id")
+	if !ok {
+		return
+	}
+	messageID, ok := uuidParam(c, "message_id")
+	if !ok {
+		return
+	}
+	var req runtimedto.SubmitRuntimeInputRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	clientInputID, err := uuid.Parse(strings.TrimSpace(req.ClientInputID))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.chatRuntimeService.SubmitRuntimeInput(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, runtimeCtx.RunConfig, runtimeservice.SubmitRuntimeInputRequest{
+		ConversationID:  conversationID,
+		TargetMessageID: messageID,
+		ClientInputID:   clientInputID,
+		Content:         req.Content,
+	})
+	if err != nil {
+		if errors.Is(err, runtimeservice.ErrConversationIdle) {
+			c.JSON(http.StatusConflict, response.Response{Code: "conversation_idle", Message: "conversation is no longer running"})
+			return
+		}
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, runtimedto.SubmitRuntimeInputResponse{
+		Input:       runtimeInputResponse(result.Input),
+		Disposition: string(result.Disposition),
+		Created:     result.Created,
 	})
 }
 
@@ -642,6 +693,17 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 }
 
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
+	if apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) {
+		if h.appErrorProjector == nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		locale, _ := appcatalog.ParseLocale(c.GetHeader("Accept-Language"))
+		presentation := h.appErrorProjector.Project(err, locale).Presentation
+		c.Header(apptransport.HeaderApplicationErrorCode, presentation.Code.String())
+		c.JSON(presentation.HTTPStatus, gin.H{"code": presentation.Code.String(), "message": presentation.Message})
+		return
+	}
 	externalInvocation := isExternalAgentInvocation(c)
 	var bindingErr *agentBindingAPIError
 	if errors.As(err, &bindingErr) && bindingErr != nil {
@@ -664,7 +726,8 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
 		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
-		errors.Is(err, runtimeservice.ErrConversationWaitingAction):
+		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
+		errors.Is(err, runtimeservice.ErrConversationWaitingBudget):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.Fail(c, response.ErrInvalidParam)
@@ -815,6 +878,62 @@ func runtimeMessageResponse(message *runtimemodel.Message, caller runtimeservice
 		resp.SourceMessageID = stringPtr(message.SourceMessageID.String())
 	}
 	return resp
+}
+
+func runtimeInputsByVisibleMessage(inputs []*runtimemodel.RuntimeInput) map[uuid.UUID][]runtimedto.RuntimeInputResponse {
+	result := make(map[uuid.UUID][]runtimedto.RuntimeInputResponse)
+	for _, input := range inputs {
+		if input == nil {
+			continue
+		}
+		// Once a follow-up message has been created, its query is the canonical
+		// user-visible representation. Keeping the runtime-input projection on
+		// the previous message would render the same user input twice.
+		if input.ConsumedMessageID != nil && input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			continue
+		}
+		result[input.TargetMessageID] = append(result[input.TargetMessageID], runtimeInputResponse(input))
+	}
+	return result
+}
+
+func runtimeInputResponse(input *runtimemodel.RuntimeInput) runtimedto.RuntimeInputResponse {
+	if input == nil {
+		return runtimedto.RuntimeInputResponse{}
+	}
+	resp := runtimedto.RuntimeInputResponse{
+		ID: input.ID.String(), ClientInputID: input.ClientInputID.String(), Content: input.Content,
+		Status: runtimeInputUserStatus(input), TargetMessageID: input.TargetMessageID.String(),
+		Sequence: input.Sequence, CreatedAt: input.CreatedAt.Unix(),
+	}
+	if input.ConsumedMessageID != nil {
+		resp.ConsumedMessageID = stringPtr(input.ConsumedMessageID.String())
+	}
+	return resp
+}
+
+func runtimeInputUserStatus(input *runtimemodel.RuntimeInput) string {
+	if input == nil {
+		return "failed"
+	}
+	switch input.Status {
+	case runtimemodel.RuntimeInputStatusCanceled:
+		return "canceled"
+	case runtimemodel.RuntimeInputStatusFailed:
+		return "failed"
+	case runtimemodel.RuntimeInputStatusClaimed:
+		if input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			return "queued_follow_up"
+		}
+		return "pending"
+	case runtimemodel.RuntimeInputStatusConsumed:
+		if input.ConsumptionMode != nil && *input.ConsumptionMode == runtimemodel.RuntimeInputConsumptionFollowUp {
+			return "applied_follow_up"
+		}
+		return "applied_current_run"
+	default:
+		return "pending"
+	}
 }
 
 func runtimeStopConversationResponse(result *runtimeservice.StopConversationResult) runtimedto.StopConversationResponse {

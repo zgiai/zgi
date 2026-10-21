@@ -21,6 +21,7 @@ import {
   MessageSquareText,
   MoveRight,
   Bot,
+  Tags,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useDeleteAgent } from '@/hooks/agent/use-agents';
@@ -46,6 +47,7 @@ import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bou
 import type { AgentResourceBoundImpact } from '@/services/types/common';
 import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 import { toast } from 'sonner';
+import { AgentCatalogTagsDialog } from './agent-catalog-tags-dialog';
 
 interface AgentCardProps {
   agent: Agent;
@@ -64,6 +66,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [catalogTagsOpen, setCatalogTagsOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
   const [pendingDeleteImpact, setPendingDeleteImpact] = useState<AgentResourceBoundImpact | null>(
@@ -172,6 +175,9 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
     : isPublishedOnline
       ? 'bg-success/10 text-success font-normal border-success'
       : 'bg-muted text-muted-foreground font-normal';
+  const catalogTags = agent.tags ?? [];
+  const visibleCatalogTags = catalogTags.slice(0, 2);
+  const hiddenCatalogTagCount = Math.max(catalogTags.length - visibleCatalogTags.length, 0);
 
   const deleteRuntime = async (impact?: AgentResourceBoundImpact) => {
     if (!canDeleteRuntime) return;
@@ -273,6 +279,32 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
           {agent.description || t('noDescription')}
         </p>
+        {catalogTags.length > 0 ? (
+          <div
+            className="mt-2 flex min-h-6 items-center gap-1 overflow-hidden"
+            aria-label={t('catalogTags.cardLabel')}
+            title={catalogTags.map(tag => tag.name).join(', ')}
+          >
+            <Tags className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            {visibleCatalogTags.map(tag => (
+              <Badge
+                key={tag.id}
+                variant="outline"
+                className="max-w-24 shrink truncate rounded-full border-primary/20 bg-primary/5 px-2 py-0 text-[10px] font-normal text-primary"
+              >
+                {tag.name}
+              </Badge>
+            ))}
+            {hiddenCatalogTagCount > 0 ? (
+              <Badge
+                variant="outline"
+                className="shrink-0 rounded-full px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+              >
+                +{hiddenCatalogTagCount}
+              </Badge>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mt-auto flex items-center gap-2 pr-8 text-xs text-muted-foreground">
           <ModeIcon className="h-4 w-4 shrink-0" />
           <span className="truncate">{modeText}</span>
@@ -282,7 +314,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   );
 
   return (
-    <div className="relative h-48">
+    <div className="relative h-56">
       {canOpenAgentDetail ? (
         <Link href={agentHref} className="block h-full" onClick={onNavigate}>
           {cardContent}
@@ -292,7 +324,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
       )}
       {/* Show only actions backed by the corresponding permission. */}
       {canShowActions && (
-        <div className="absolute bottom-2 right-2">
+        <div className="absolute bottom-2 right-2 z-10">
           <DropdownMenu
             onOpenChange={open => {
               if (open && shouldPrefetchAgentDetail) {
@@ -307,7 +339,11 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
             }}
           >
             <DropdownMenuTrigger asChild>
-              <button className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+              <button
+                type="button"
+                aria-label={t('moreActions')}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
                 <MoreHorizontal className="h-4 w-4" />
               </button>
             </DropdownMenuTrigger>
@@ -316,6 +352,12 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
                 <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
                   <Edit className="h-4 w-4" />
                   {t('actions.edit')}
+                </DropdownMenuItem>
+              )}
+              {canUpdateRuntime && (
+                <DropdownMenuItem inset onSelect={() => setCatalogTagsOpen(true)}>
+                  <Tags className="h-4 w-4" />
+                  {t('catalogTags.manage')}
                 </DropdownMenuItem>
               )}
               {canExportRuntime && (
@@ -351,6 +393,13 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
       )}
       {/* Unified create/edit dialog in edit mode */}
       <AgentDialog open={editOpen} mode="edit" agentId={agent.id} onOpenChange={setEditOpen} />
+      <AgentCatalogTagsDialog
+        open={catalogTagsOpen}
+        onOpenChange={setCatalogTagsOpen}
+        agentId={agent.id}
+        workspaceId={agent.workspace_id ?? agent.tenant_id}
+        assetKind={isWorkflowRuntime ? 'workflow' : 'agent'}
+      />
       <WorkspaceAssetMoveDialog
         open={moveOpen}
         onOpenChange={setMoveOpen}

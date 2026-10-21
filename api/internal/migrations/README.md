@@ -68,15 +68,72 @@ ZGI follows Laravel's production-safety ideas but adapts them to PostgreSQL:
 - Disabling the migration lock requires `ZGI_UNSAFE_NO_MIGRATION_LOCK=1`.
 - `migrate --pretend` / `up -pretend` prints migration status without applying changes.
 - `migrate:status` / `status` shows which migrations are already applied.
-- `go run ./cmd/migrate check` validates migration IDs, filenames, duplicate IDs, source safety, baseline safety, and, when `-db` or `ZGI_MIGRATION_CHECK_DSN` is provided, executes the full chain against a fresh PostgreSQL database.
+- `go run ./cmd/migrate check` validates migration IDs, filenames, duplicate IDs, source safety, baseline safety, and, when `-db` or `ZGI_MIGRATION_CHECK_DSN` is provided, executes the full chain against a fresh PostgreSQL database. Source safety follows only the registered `up`/`Migrate` call graph, so destructive rollback code does not create false positives.
 - `internal/migrations/schema` blocks destructive statements such as `DROP TABLE`, `DROP COLUMN`, `TRUNCATE`, `DELETE`, and `UPDATE` unless `AllowDestructive` is explicitly enabled.
 - Rollbacks created through `registerSchemaMigration` run with `AllowDestructive`, because rollback is the only normal path where dropping a newly created table or column is expected.
+- Data backfills and repairs are valid `up` operations when intentional. Prefer a separately described `schema.DataFix`; source safety continues to reject destructive schema DDL and `AllowDestructive` in every registered `up` path.
 - Rollback commands require the exact latest migration ID via `--confirm`, so AI agents and operators cannot accidentally roll back with a short command.
 - The initial public baseline refuses to run on a non-empty public schema, so existing deployments are not silently overwritten.
 - Recognized legacy databases are bridged into the public migration chain only after schema-shape checks pass.
 - `make` generates a migration whose `up` and `down` both fail with `not implemented` until the author fills in the migration body.
 
 ## Writing Migrations
+
+### Connector retirement mode
+
+Retirement deletes the legacy Connector tables, so it never removes data that
+has not been converted. `ZGI_CONNECTOR_RETIREMENT_MODE` selects how migrations
+and processes treat it; no process needs it set:
+
+- `auto` (default): retirement runs during migration when the legacy storage
+  is empty. When it holds data, the retirement migration refuses before changing
+  anything, the run continues with retirement deferred, and a warning is logged.
+  A database whose ledger already holds migrations after the retirement
+  migration without its marker stays deferred. API and worker startup read the
+  same ledger state, and `/health/status` reports `connector_retirement:
+  deferred`. An operator retires the storage with `connector-finalize` (plan,
+  archive, apply and verify, or discard), after `digital-human-preserve` for
+  channels that still use a legacy Connection.
+- `deferred`: always postpone retirement.
+- `strict`: refuse to migrate or start while retirement needs maintenance; a
+  database that ran deferred is refused before any migration runs. An
+  unrecognized value is treated as `strict`.
+
+### Connector retirement inventory
+
+The retirement checkpoint precedes `20260904160000_connector_pending_setups`.
+Plan, Apply, and Verify omit `connector_pending_setups` from the native inventory
+only while both the table and its creating migration marker are absent. Once
+created, the table is required and its rows are protected by the usual proofs.
+A mismatch between the table and marker fails validation, as does any other
+missing inventory table. Published migration IDs and ordering remain unchanged.
+
+### Connector decision identity repair
+
+`202609070512481192_fix_connector_decision_identity` separates operation audit
+identity (`organization_id`, `logical_operation_id`, `decision`, `status`) from
+lifecycle identity (the same fields with `correlation_id` for records without a
+logical operation). Confirmation finalization is also unique per organization
+and receipt. A correlation identifies a trace and may contain multiple operations.
+
+The migration checks actual index definitions and existing duplicates before
+atomically replacing the old correlation-wide barrier. Correct manually applied
+partial indexes are accepted; conflicting definitions or invalid historical
+identities stop the migration without rewriting audit records. The trigger change
+only advances future, identity-matched durable rejections. The migration source
+check permits state transitions inside trigger definitions, while continuing to
+reject historical data rewrites outside those definitions.
+
+Deploy readers for the new ordinary execution result states first. Run the
+migration in a maintenance window, then switch all API and worker processes to
+the fixed audit/execution code. The table lock has a five-second wait limit;
+measure index creation time against production table size before scheduling the
+window. Mixed application versions can still reject legitimate same-trace calls.
+Existing confirmation preview flags and receipt contracts do not change.
+
+This repair is forward-only. Keep the corrected indexes if rolling application
+code back, and use a build that retains the corrected decision identity. Do not
+delete audit rows or replay historical operations to resolve an unknown result.
 
 Future migrations should follow the Laravel-style structure: one timestamped file, one `up` function, one `down` function, and a schema blueprint for common table work. The migration generator creates the ID and failing `up` / `down` stubs; do not hand-write migration IDs.
 

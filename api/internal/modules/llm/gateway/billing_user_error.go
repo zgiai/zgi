@@ -13,7 +13,13 @@ const (
 	BillingUserErrorKindOrganizationBalanceInsufficient   BillingUserErrorKind = "organization_balance_insufficient"
 	BillingUserErrorKindWorkspaceQuotaInsufficient        BillingUserErrorKind = "workspace_quota_insufficient"
 	BillingUserErrorKindPrivateChannelBalanceInsufficient BillingUserErrorKind = "private_channel_balance_insufficient"
-	BillingUserErrorKindModelPricingNotConfigured         BillingUserErrorKind = "model_pricing_not_configured"
+	// BillingUserErrorKindAPIKeyQuotaInsufficient is the fourth quota cause:
+	// the request-scoped key (or its member grant) has no allowance left. It is
+	// deliberately distinct from the organization, private channel, and
+	// workspace causes so callers never collapse them into a generic
+	// insufficient-quota outcome.
+	BillingUserErrorKindAPIKeyQuotaInsufficient   BillingUserErrorKind = "api_key_quota_insufficient"
+	BillingUserErrorKindModelPricingNotConfigured BillingUserErrorKind = "model_pricing_not_configured"
 )
 
 type BillingUserError struct {
@@ -74,6 +80,13 @@ func workspaceQuotaInsufficientError(cause error) error {
 		cause = ErrInsufficientQuota
 	}
 	return wrapBillingUserError(BillingUserErrorKindWorkspaceQuotaInsufficient, cause)
+}
+
+func apiKeyQuotaInsufficientError(cause error) error {
+	if cause == nil || !errors.Is(cause, ErrInsufficientQuota) {
+		cause = ErrInsufficientQuota
+	}
+	return wrapBillingUserError(BillingUserErrorKindAPIKeyQuotaInsufficient, cause)
 }
 
 func modelPricingNotConfiguredError(cause error, params ...map[string]interface{}) error {

@@ -60,17 +60,31 @@ export function ImgChat({
   }, [currentConversation]);
 
   const [input, setInput] = React.useState('');
-  const [referenceImage, setReferenceImage] = React.useState<ImageReferenceAttachment | null>(null);
+  const [referenceImage, setReferenceImage] = React.useState<ImageReferenceAttachment | null>(
+    null
+  );
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = React.useState(false);
   const isMobile = useIsMobile();
+  const latestGeneratedReference = React.useMemo(
+    () => findLatestGeneratedReference(messages),
+    [messages]
+  );
+  const shouldUseLatestReference = shouldUseImageContextForPrompt(input);
+  const activeReference =
+    referenceImage ?? (shouldUseLatestReference ? latestGeneratedReference : null);
+
+  React.useEffect(() => {
+    setReferenceImage(null);
+  }, [activeId]);
 
   // Local settings state for the toolbar
   const [settings, setImageSettings] = React.useState<ImageSettings>({});
   const currentRuntimeModel = React.useMemo(
     () =>
       imageRuntimeModels?.find(
-        item => item.provider === modelSelectorValue?.provider && item.model === modelSelectorValue?.model
+        item =>
+          item.provider === modelSelectorValue?.provider && item.model === modelSelectorValue?.model
       ),
     [imageRuntimeModels, modelSelectorValue?.model, modelSelectorValue?.provider]
   );
@@ -195,11 +209,17 @@ export function ImgChat({
       setInput('');
       setReferenceImage(null);
     },
-    [controller, isSending, settings, modelSelectorValue, t]
+    [
+      controller,
+      isSending,
+      modelSelectorValue,
+      settings,
+      t,
+    ]
   );
 
   const handleSend = () => {
-    handleSendAction(input, referenceImage);
+    handleSendAction(input, activeReference);
   };
 
   const handleNewChat = () => {
@@ -215,6 +235,20 @@ export function ImgChat({
   const handleSelectChat = (id: string) => {
     controller.select(id);
     setIsMobileSidebarOpen(false);
+  };
+
+  const handleReferenceImageChange = (image: ImageReferenceAttachment | null) => {
+    setReferenceImage(image);
+  };
+
+  const handleUseImageAsReference = (message: ChatTypeMessage, index: number) => {
+    const reference = getGeneratedImageReference(message, index);
+    if (!reference) {
+      toast.error(t('chat.imageInput.referenceUnavailable'));
+      return;
+    }
+    setReferenceImage(reference);
+    toast.success(t('chat.imageInput.referenceApplied'));
   };
 
   const handleDeleteChat = (id: string) => {
@@ -299,6 +333,7 @@ export function ImgChat({
           loadingFallback={<SysChatSkeleton />}
           loadingClassName="bg-background"
           showCopyButton={false}
+          onUseImageAsReference={handleUseImageAsReference}
         />
 
         {/* Home View Layer */}
@@ -341,7 +376,8 @@ export function ImgChat({
               currentRuntimeModel={currentRuntimeModel}
               topNotice={inputTopNotice}
               referenceImage={referenceImage}
-              onReferenceImageChange={setReferenceImage}
+              hasReferenceContext={Boolean(activeReference)}
+              onReferenceImageChange={handleReferenceImageChange}
             />
           </div>
         </div>
@@ -395,4 +431,129 @@ function settingsForProfile(
     return { size, generationMode: 'single' };
   }
   return { size };
+}
+
+function shouldUseImageContextForPrompt(prompt: string): boolean {
+  const normalized = prompt.trim().toLowerCase();
+  if (!normalized) return true;
+  return IMAGE_EDIT_INTENT_TERMS.some(term => normalized.includes(term));
+}
+
+const IMAGE_EDIT_INTENT_TERMS = [
+  '这张',
+  '这张图',
+  '上一张',
+  '上张',
+  '原图',
+  '参考图',
+  '刚才',
+  '继续',
+  '编辑',
+  '修改',
+  '改成',
+  '改为',
+  '换成',
+  '替换',
+  '保持',
+  '保留',
+  '去掉',
+  '删除',
+  '加上',
+  '增加',
+  '添加',
+  '加一个',
+  '加一',
+  '调整',
+  '优化',
+  '修复',
+  '重绘',
+  '局部',
+  '背景换',
+  '风格改',
+  '把它',
+  '让它',
+  '它的',
+  '不要',
+  '变成',
+  'this image',
+  'previous image',
+  'last image',
+  'reference image',
+  'edit',
+  'modify',
+  'change',
+  'replace',
+  'keep',
+  'preserve',
+  'remove',
+  'delete',
+  'add',
+  'continue',
+  'based on',
+  'make it',
+  'turn it',
+];
+
+function getGeneratedImageReference(
+  message: ChatTypeMessage,
+  index: number
+): ImageReferenceAttachment | null {
+  const generatedImage = message.generatedImages?.[index];
+  const metadata =
+    message.messageData?.metadata && typeof message.messageData.metadata === 'object'
+      ? (message.messageData.metadata as Record<string, unknown>)
+      : undefined;
+  const imageGeneration =
+    message.messageData?.image_generation &&
+    typeof message.messageData.image_generation === 'object'
+      ? (message.messageData.image_generation as Record<string, unknown>)
+      : metadata?.image_generation && typeof metadata.image_generation === 'object'
+        ? (metadata.image_generation as Record<string, unknown>)
+        : undefined;
+  const files = Array.isArray(imageGeneration?.files) ? imageGeneration.files : [];
+  const file = files[index];
+  const data = file && typeof file === 'object' ? (file as Record<string, unknown>) : {};
+  const fileId =
+    generatedImage?.fileId?.trim() ||
+    readString(data, 'file_id', 'tool_file_id', 'upload_file_id', 'id');
+  const url =
+    generatedImage?.url?.trim() ||
+    readString(data, 'url', 'download_url');
+  if (!fileId || !url) return null;
+
+  return {
+    fileId,
+    url,
+    filename:
+      generatedImage?.filename?.trim() ||
+      readString(data, 'filename', 'name'),
+    mimeType:
+      generatedImage?.mimeType?.trim() ||
+      readString(data, 'mime_type', 'content_type') ||
+      'image/*',
+  };
+}
+
+function findLatestGeneratedReference(
+  messages: ChatTypeMessage[]
+): ImageReferenceAttachment | null {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex];
+    const images = message.generatedImages ?? [];
+    for (let imageIndex = images.length - 1; imageIndex >= 0; imageIndex -= 1) {
+      if (images[imageIndex]?.isLoading) continue;
+      const reference = getGeneratedImageReference(message, imageIndex);
+      if (reference) return reference;
+    }
+  }
+  return null;
+}
+
+function readString(value: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    if (typeof value[key] === 'string' && value[key].trim()) {
+      return value[key].trim();
+    }
+  }
+  return '';
 }

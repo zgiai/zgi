@@ -43,9 +43,32 @@ const messages: SettingsMessages = {
     saving: '保存中...',
     saved: '已保存',
   },
+  modelRouting: {
+    title: '模型调用策略',
+    description:
+      '统一控制本组织所有平台模型调用。智能体、工作流、知识库和后台任务都会使用这里设置的策略。',
+    save: '保存策略',
+    saving: '保存中...',
+    saved: '已保存',
+    options: {
+      stability: {
+        label: '稳定优先',
+        description: '优先选择近期成功率更高、连续失败更少的渠道。',
+      },
+      speed: {
+        label: '速度优先',
+        description: '优先选择首 Token 更快、生成速度更高的渠道。',
+      },
+      price: {
+        label: '价格优先',
+        description: '按模型对外配置价格和预计用量，优先选择预计费用更低的渠道。',
+      },
+    },
+  },
   pricingFallback: {
     title: '模型缺价计费策略',
-    description: '模型已配置价格时优先使用模型价格；缺少价格时，按管理配置和系统默认策略计费。',
+    description:
+      '模型已配置价格时优先使用模型价格。此项为存量兼容层，用于补齐缺价模型；缺少价格时，按管理配置和系统默认策略计费。',
     enableFallback: '启用缺价计费策略',
     enableFallbackDesc: '关闭后，缺少上游价格的请求会在调用服务商前失败。',
     missingRuleTitle: '未匹配到计费规则',
@@ -58,7 +81,9 @@ const messages: SettingsMessages = {
     effectiveRules: '最终生效规则',
     effectiveSummaryTitle: '生效计费规则',
     effectiveSummaryDesc:
-      '直接修改表格中的价格并保存；未修改的条目继续使用系统默认策略，模型自身价格仍然优先。',
+      '汇总当前实际生效的兜底规则；未覆盖的条目继续使用系统默认策略，模型自身价格仍然优先。此处为只读展示。',
+    readOnlyHint: '兜底价格只读展示，仅在模型未配价时用于兜底计费；如需调整价格，请到模型模块按模型配置。',
+    readOnlyHintLink: '前往模型接入',
     emptyDefaultRules: '暂无系统默认规则。',
     emptyEffectiveRules: '暂无生效规则。',
     emptyOverrideRules: '暂无管理端覆盖规则。可以添加 token 或图片规则。',
@@ -70,6 +95,11 @@ const messages: SettingsMessages = {
     tokenRuleHelp: '适用于聊天、向量化、重排序等按文本用量计费的模型。',
     imageRuleHelp: '适用于图片生成，最终费用会按图片数量 n 相乘。',
     refresh: '刷新',
+    loadTemplate: '载入模板',
+    templateLoaded: '模板已载入，请确认规则后保存生效。',
+    templateEmpty: '当前部署未配置兜底模板价格。',
+    expand: '展开',
+    collapse: '收起',
     save: '保存',
     remove: '删除',
     resetDefault: '恢复默认',

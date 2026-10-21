@@ -54,7 +54,7 @@ func TestTenantAutonomyStrategy_SupportsModel(t *testing.T) {
 			want:          true,
 		},
 		{
-			name: "official_route_rejects_same_name_under_wrong_provider",
+			name: "official_route_keeps_logical_model_visible_across_suppliers",
 			route: &channelmodel.LLMRoute{
 				ID:                     uuid.New(),
 				Type:                   shared.RouteTypeZGICloud,
@@ -64,7 +64,7 @@ func TestTenantAutonomyStrategy_SupportsModel(t *testing.T) {
 			},
 			modelName:     "same-name",
 			modelProvider: "anthropic",
-			want:          false,
+			want:          true,
 		},
 		{
 			name: "private_route_accepts_explicit_model_with_catalog_provider",

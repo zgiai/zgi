@@ -378,13 +378,15 @@ export class WorkflowService extends BaseService {
     agentId: string,
     payload: WorkflowDraftSavePayload
   ): Promise<{
+    graph: WorkflowDraftSavePayload['graph'];
     hash: string;
     result: string;
     updated_at: string;
   }> {
     const response = await this.request<
       ApiResponseData<{
-        hash: string;
+        graph: WorkflowDraftSavePayload['graph'];
+    hash: string;
         result: string;
         updated_at: string;
       }>

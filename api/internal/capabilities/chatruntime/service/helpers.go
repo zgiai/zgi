@@ -77,6 +77,7 @@ func isStoppableMessageStatus(status string) bool {
 	return isActiveMessageStatus(status) ||
 		status == runtimemodel.MessageStatusWaitingApproval ||
 		status == runtimemodel.MessageStatusWaitingQuestion ||
+		status == runtimemodel.MessageStatusWaitingBudget ||
 		status == runtimemodel.MessageStatusWaitingClientAction
 }
 

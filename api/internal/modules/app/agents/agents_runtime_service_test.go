@@ -227,6 +227,86 @@ func TestApplyAgentConfigRequestPersistsWorkflowBindings(t *testing.T) {
 	}
 }
 
+func TestAgentExecutionRuntimeConfigRoundTripAndLegacySave(t *testing.T) {
+	cfg := &AgentsConfig{}
+	homeSnapshotID := " snapshot-1 "
+	want := &dto.AgentExecutionRuntime{Enabled: true}
+	_, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
+		ExecutionRuntime: &dto.AgentExecutionRuntime{
+			Enabled: true, ProfileID: " local-standard ", PolicyID: " offline-standard ",
+			HomeSnapshotID: &homeSnapshotID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply execution runtime config: %v", err)
+	}
+	if got := agentConfigResponse("agent-1", cfg).ExecutionRuntime; !reflect.DeepEqual(got, want) {
+		t.Fatalf("draft execution runtime = %#v, want %#v", got, want)
+	}
+	snapshotJSON, err := json.Marshal(agentConfigSnapshot("agent-1", cfg))
+	if err != nil {
+		t.Fatalf("marshal published snapshot: %v", err)
+	}
+	var publishedSnapshot map[string]interface{}
+	if err := json.Unmarshal(snapshotJSON, &publishedSnapshot); err != nil {
+		t.Fatalf("unmarshal published snapshot: %v", err)
+	}
+	if got := agentConfigResponseFromSnapshot("agent-1", publishedSnapshot).ExecutionRuntime; !reflect.DeepEqual(got, want) {
+		t.Fatalf("published execution runtime = %#v, want %#v", got, want)
+	}
+	if _, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{}); err != nil {
+		t.Fatalf("apply legacy config without execution_runtime: %v", err)
+	}
+	if got := agentConfigResponse("agent-1", cfg).ExecutionRuntime; !reflect.DeepEqual(got, want) {
+		t.Fatalf("execution runtime after legacy save = %#v, want %#v", got, want)
+	}
+	if _, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
+		ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: false},
+	}); err != nil {
+		t.Fatalf("disable execution runtime: %v", err)
+	}
+	if got := agentConfigResponse("agent-1", cfg).ExecutionRuntime; got == nil || got.Enabled {
+		t.Fatalf("execution runtime after explicit disable = %#v, want disabled", got)
+	}
+}
+
+func TestAgentExecutionRuntimeConfigDefaultsOff(t *testing.T) {
+	if got := agentConfigResponse("agent-1", &AgentsConfig{}).ExecutionRuntime; got != nil {
+		t.Fatalf("legacy draft execution runtime = %#v, want nil", got)
+	}
+	if got := agentConfigResponseFromSnapshot("agent-1", map[string]interface{}{}).ExecutionRuntime; got != nil {
+		t.Fatalf("legacy published execution runtime = %#v, want nil", got)
+	}
+}
+
+func TestAgentExecutionRuntimeRollbackRestoresSnapshot(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot *dto.AgentExecutionRuntime
+		want     *dto.AgentExecutionRuntime
+	}{
+		{name: "legacy snapshot", want: &dto.AgentExecutionRuntime{}},
+		{name: "explicitly disabled", snapshot: &dto.AgentExecutionRuntime{Enabled: false}, want: &dto.AgentExecutionRuntime{}},
+		{name: "enabled snapshot", snapshot: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "local-standard", PolicyID: "offline-standard"}, want: &dto.AgentExecutionRuntime{Enabled: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &AgentsConfig{}
+			_, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "current", PolicyID: "current"}})
+			if err != nil {
+				t.Fatalf("apply current config: %v", err)
+			}
+			_, err = applyAgentConfigRequestToDraft(cfg, agentConfigRequestForRollback(dto.AgentConfigResponse{ExecutionRuntime: tt.snapshot}))
+			if err != nil {
+				t.Fatalf("apply rollback config: %v", err)
+			}
+			if got := agentConfigResponse("agent-1", cfg).ExecutionRuntime; !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("rolled-back execution runtime = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHydrateAgentWorkflowBindingRuntimeInputsUsesPinnedVersionSchema(t *testing.T) {
 	db, mock := newRunnableWebAppsMockDB(t)
 	service := &agentsService{db: db}

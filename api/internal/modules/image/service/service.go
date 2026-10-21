@@ -14,6 +14,7 @@ import (
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
 	"github.com/zgiai/zgi/api/internal/dto"
+	workflowfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"github.com/zgiai/zgi/api/internal/modules/image/registry"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -39,6 +40,7 @@ const (
 	maxClientRequestIDRunes = 120
 	imageCreateTimeout      = 10 * time.Minute
 	maxActiveImageTasks     = 2
+	latestImageContextLimit = 50
 )
 
 type Service interface {
@@ -162,15 +164,8 @@ func (s *service) prepareGeneration(ctx context.Context, scope Scope, req Genera
 	if err != nil {
 		return nil, err
 	}
-	if prompt == "" && referenceImage == nil {
-		return nil, ErrPromptRequired
-	}
 	if len([]rune(prompt)) > maxPromptRunes {
 		return nil, ErrPromptTooLong
-	}
-	effectivePrompt := prompt
-	if effectivePrompt == "" {
-		effectivePrompt = defaultReferencePrompt
 	}
 	availableModel, err := s.findAvailableModel(ctx, scope.OrganizationID, req.Provider, req.Model)
 	if err != nil {
@@ -202,9 +197,22 @@ func (s *service) prepareGeneration(ctx context.Context, scope Scope, req Genera
 		AccountID:      scope.AccountID,
 		WorkspaceID:    scope.WorkspaceID,
 	}
-	conversation, err := s.resolveGenerationConversation(ctx, chatScope, strings.TrimSpace(req.ConversationID), effectivePrompt)
+	conversation, err := s.resolveGenerationConversation(ctx, chatScope, strings.TrimSpace(req.ConversationID), prompt)
 	if err != nil {
 		return nil, ErrConversationNotAccessible
+	}
+	if referenceImage == nil && conversation.Existing != nil && hasImageEditIntent(prompt) {
+		referenceImage = s.resolveLatestConversationReference(ctx, scope, conversation.ID)
+	}
+	if prompt == "" && referenceImage == nil {
+		return nil, ErrPromptRequired
+	}
+	effectivePrompt := prompt
+	if effectivePrompt == "" {
+		effectivePrompt = defaultReferencePrompt
+	}
+	if conversation.ShouldCreate && conversation.Title == "" {
+		conversation.Title = effectivePrompt
 	}
 	appCtx, err := buildAppContext(scope, conversation.ID)
 	if err != nil {
@@ -833,6 +841,74 @@ func shouldDownloadReferenceImageBytes(provider string, routes []*channelmodel.R
 	return false
 }
 
+func hasImageEditIntent(prompt string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(prompt))
+	if normalized == "" {
+		return true
+	}
+	for _, term := range imageEditIntentTerms {
+		if strings.Contains(normalized, term) {
+			return true
+		}
+	}
+	return false
+}
+
+var imageEditIntentTerms = []string{
+	"这张",
+	"这张图",
+	"上一张",
+	"上张",
+	"原图",
+	"参考图",
+	"刚才",
+	"继续",
+	"编辑",
+	"修改",
+	"改成",
+	"改为",
+	"换成",
+	"替换",
+	"保持",
+	"保留",
+	"去掉",
+	"删除",
+	"加上",
+	"增加",
+	"添加",
+	"加一个",
+	"加一",
+	"调整",
+	"优化",
+	"修复",
+	"重绘",
+	"局部",
+	"背景换",
+	"风格改",
+	"把它",
+	"让它",
+	"它的",
+	"不要",
+	"变成",
+	"this image",
+	"previous image",
+	"last image",
+	"reference image",
+	"edit",
+	"modify",
+	"change",
+	"replace",
+	"keep",
+	"preserve",
+	"remove",
+	"delete",
+	"add",
+	"continue",
+	"based on",
+	"make it",
+	"turn it",
+}
+
 func (s *service) resolveGenerationConversation(ctx context.Context, scope chatruntime.Scope, rawID string, prompt string) (*generationConversation, error) {
 	if rawID == "" {
 		title := prompt
@@ -897,6 +973,98 @@ func (s *service) resolveReferenceImage(ctx context.Context, scope Scope, input 
 		Filename: strings.TrimSpace(file.Name),
 		MimeType: strings.TrimSpace(file.MimeType),
 	}, nil
+}
+
+func (s *service) resolveLatestConversationReference(ctx context.Context, scope Scope, conversationID uuid.UUID) *ReferenceImage {
+	if s.chatService == nil || s.fileService == nil || conversationID == uuid.Nil {
+		return nil
+	}
+	messages, _, err := s.chatService.ListMessages(ctx, chatruntime.Scope{
+		OrganizationID: scope.OrganizationID,
+		AccountID:      scope.AccountID,
+		WorkspaceID:    scope.WorkspaceID,
+	}, conversationID, 1, latestImageContextLimit)
+	if err != nil {
+		logger.WarnContext(ctx, "image runtime latest conversation reference lookup failed",
+			zap.String("conversation_id", conversationID.String()),
+			zap.Error(err),
+		)
+		return nil
+	}
+
+	// ListMessages is newest-first. Within one generation, prefer the last
+	// returned file so multi-image generations follow the same order as the UI.
+	for _, message := range messages {
+		fileIDs := imageGenerationFileIDs(message)
+		for index := len(fileIDs) - 1; index >= 0; index-- {
+			reference, err := s.resolveReferenceImage(ctx, scope, &ReferenceImage{FileID: fileIDs[index]})
+			if err == nil && reference != nil {
+				return reference
+			}
+		}
+	}
+	return nil
+}
+
+func imageGenerationFileIDs(message *model.Message) []string {
+	if message == nil || message.Metadata == nil {
+		return nil
+	}
+	generation, ok := message.Metadata["image_generation"]
+	if !ok {
+		return nil
+	}
+	switch value := generation.(type) {
+	case ImageGenerationMetadata:
+		return imageFileIDs(value.Files)
+	case *ImageGenerationMetadata:
+		if value == nil {
+			return nil
+		}
+		return imageFileIDs(value.Files)
+	case map[string]any:
+		return imageFileIDsFromAny(value["files"])
+	default:
+		return nil
+	}
+}
+
+func imageFileIDs(files []ImageFile) []string {
+	result := make([]string, 0, len(files))
+	for _, file := range files {
+		fileID := strings.TrimSpace(file.FileID)
+		if fileID == "" {
+			fileID = strings.TrimSpace(file.ToolFileID)
+		}
+		if fileID != "" {
+			result = append(result, fileID)
+		}
+	}
+	return result
+}
+
+func imageFileIDsFromAny(value any) []string {
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		switch file := item.(type) {
+		case map[string]interface{}:
+			for _, key := range []string{"file_id", "tool_file_id", "upload_file_id", "id"} {
+				if fileID, ok := file[key].(string); ok && strings.TrimSpace(fileID) != "" {
+					result = append(result, strings.TrimSpace(fileID))
+					break
+				}
+			}
+		case ImageFile:
+			if fileID := strings.TrimSpace(file.FileID); fileID != "" {
+				result = append(result, fileID)
+			}
+		}
+	}
+	return result
 }
 
 func fileBelongsToScope(file *dto.UploadFile, scope Scope) bool {
@@ -1107,7 +1275,7 @@ func imageRequestPayload(req *adapter.ImageRequest) map[string]any {
 }
 
 func imageTaskFromRecord(record imageTaskRecord) ImageTask {
-	files := imageFilesFromJSON(record.Files)
+	files := refreshImageFileURLs(imageFilesFromJSON(record.Files))
 	referenceImage := referenceImageFromJSON(record.ReferenceImage)
 	status := normalizeImageTaskStatus(record.Status)
 	task := ImageTask{
@@ -1387,7 +1555,7 @@ func buildAppContext(scope Scope, conversationID uuid.UUID) (*llmclient.AppConte
 }
 
 func imageFileFromMeta(meta map[string]interface{}) ImageFile {
-	return ImageFile{
+	file := ImageFile{
 		FileID:         stringValue(meta["file_id"]),
 		ToolFileID:     stringValue(meta["tool_file_id"]),
 		URL:            stringValue(meta["url"]),
@@ -1399,6 +1567,55 @@ func imageFileFromMeta(meta map[string]interface{}) ImageFile {
 		Lifecycle:      stringValue(meta["lifecycle"]),
 		ExpiresAt:      int64PtrValue(meta["expires_at"]),
 	}
+	refreshImageFileURL(&file)
+	return file
+}
+
+func refreshImageFileURLs(files []ImageFile) []ImageFile {
+	for index := range files {
+		refreshImageFileURL(&files[index])
+	}
+	return files
+}
+
+func refreshImageFileURL(file *ImageFile) {
+	if file == nil {
+		return
+	}
+	transferMethod := strings.TrimSpace(file.TransferMethod)
+	if transferMethod != "" && !strings.EqualFold(transferMethod, string(workflowfile.FileTransferMethodToolFile)) {
+		return
+	}
+	fileID := strings.TrimSpace(file.ToolFileID)
+	if fileID == "" {
+		fileID = strings.TrimSpace(file.FileID)
+	}
+	extension := strings.TrimSpace(file.Extension)
+	if fileID == "" || extension == "" {
+		return
+	}
+
+	urlMode := tool_file.ToolFileURLModeSigned
+	if strings.TrimSpace(file.Lifecycle) == "" || strings.EqualFold(strings.TrimSpace(file.Lifecycle), string(tool_file.ToolFileLifecyclePersistent)) {
+		urlMode = tool_file.ToolFileURLModePermanent
+	}
+	url, err := tool_file.SignToolFileGlobalWithMode(fileID, extension, urlMode)
+	if err != nil {
+		return
+	}
+	file.URL = url
+	file.DownloadURL = appendImageDownloadQuery(url)
+}
+
+func appendImageDownloadQuery(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" || strings.Contains(rawURL, "download=") {
+		return rawURL
+	}
+	if strings.Contains(rawURL, "?") {
+		return rawURL + "&download=1"
+	}
+	return rawURL + "?download=1"
 }
 
 func int64PtrValue(value interface{}) *int64 {

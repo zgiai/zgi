@@ -73,6 +73,7 @@ assert.deepEqual(response, {
 assert.equal(buildOptimisticUserInputResponse(undefined, 'request-1', { theme: 'Nature' }), null);
 
 const { optimistic: _optimistic, ...responseFields } = response;
+assert.equal(_optimistic, true);
 const authoritative = { ...responseFields, answered_at: 456 };
 assert.deepEqual(
   upsertUserInputResponse(
@@ -169,8 +170,16 @@ assert.match(selectorsSource, /type: 'user_input_request'/);
 assert.match(selectorsSource, /type: 'user_input_response'/);
 assert.match(timelineSource, /function UserInputRequestTimelineRow/);
 assert.match(timelineSource, /function UserInputResponseTimelineRow/);
-assert.match(messageBubbleSource, /item\.type === 'user_input_request'/);
-assert.match(messageBubbleSource, /item\.type === 'user_input_response'/);
+// Rows are now rendered by the shared timeline, not inline in the message bubble.
+assert.match(messageBubbleSource, /<AIChatAgenticTimeline[\s\S]*?timeline=\{connectorTimeline\}/);
+assert.match(
+  timelineSource,
+  /case 'user_input_request':\s*return <UserInputRequestTimelineRow item=\{item\.item\}/
+);
+assert.match(
+  timelineSource,
+  /case 'user_input_response':\s*return <UserInputResponseTimelineRow item=\{item\.item\}/
+);
 assert.match(messageBubbleSource, /answerBeforeTimelineLength/);
 assert.match(messageBubbleSource, /orderedPresentationTimeline\(/);
 assert.match(messageBubbleSource, /!isPresentationV2 && hasLeadingAnswer/);
@@ -384,7 +393,8 @@ const reducerSource = readFileSync(
 );
 assert.match(reducerSource, /answer_before_timeline_length: answerBeforeTimelineLength/);
 assert.match(reducerSource, /clearAnswerTimelineBoundaryWithoutDurableTimeline/);
-assert.match(reducerSource, /typeof payload\.answer === 'string'/);
+assert.match(reducerSource, /finalPresentationAnswer\(presentationState\.presentationItems\)/);
+assert.match(reducerSource, /answer: liveAnswer \?\? payload\.answer \?\? message\.answer/);
 assert.match(reducerSource, /mergePresentationItems\(/);
 assert.match(reducerSource, /withPresentationItems\(/);
 assert.equal(clearAnswerTimelineBoundaryWithoutDurableTimeline(0, false), undefined);

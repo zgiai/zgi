@@ -2,6 +2,7 @@
 // Copy the necessary shapes to be easily portable to a separate project.
 
 import type { WorkflowPrecheckResult } from './workflow';
+import type { ChatUploadPolicy } from '@/services/upload.service';
 import type { QuestionAnswerRequestedSseData, QuestionAnswerSubmittedSseData } from './workflow';
 
 // Strict unions mirrored from workflow store for compatibility
@@ -42,6 +43,7 @@ export interface WebAppFeatures {
     history_window_size: number;
   };
   file_upload: {
+    effective_policy?: ChatUploadPolicy;
     enabled: boolean;
     allowed_file_types: WebAppFileUploadType[];
     allowed_file_extensions: string[];
@@ -95,8 +97,10 @@ export interface WebAppWorkflowConfig {
   features: WebAppFeatures;
   config: WebAppWorkflowMeta;
   agent_config?: {
+    login_required?: boolean;
     agent_memory_enabled?: boolean;
     file_upload_enabled?: boolean;
+    file_upload_policy?: { allowed_file_types: Array<'document' | 'image'> };
     supports_vision?: boolean;
     home_title?: string;
     opening_statement?: string;

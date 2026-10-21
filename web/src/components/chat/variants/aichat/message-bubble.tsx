@@ -26,11 +26,14 @@ import { useWorkspaceStore } from '@/store/workspace-store';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import type {
   AIChatGeneratedFile,
+  ExecutionFileReader,
   AIChatMessage,
   AIChatMessageFile,
   AIChatPresentationItem,
+  AIChatTokenUsageUpdatedEventData,
 } from '@/services/types/aichat';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
+import { formatTokenCount } from '@/utils/token-format';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import {
   AssistantMessageToolbar,
@@ -42,7 +45,10 @@ import { MarkdownImage } from '@/components/common/markdown-image';
 import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { API_URL } from '@/lib/config';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
-import type { AIChatToolGovernanceDecisionSubmitPayload } from '@/components/chat/variants/aichat/agentic-timeline';
+import type {
+  AIChatToolGovernanceDecisionSubmitPayload,
+  AITaskProposalActionPayload,
+} from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   getAIChatMessageErrorInput,
   resolveAIChatErrorMessage,
@@ -53,7 +59,7 @@ import type {
   AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat';
 import {
-  dedupeTimelineItems,
+  sanitizeTimelineForMessage,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import {
@@ -67,12 +73,23 @@ import {
   splitAnswerAroundTimeline,
 } from '@/components/chat/controllers/aichat/presentation-order';
 import type { AIChatSpeechPlaybackController } from '@/components/chat/variants/aichat/voice/use-agent-speech-playback';
+import type { ConnectorRuntimeDecisionHandler } from '@/components/connectors/runtime';
+import {
+  connectorChatEvents,
+  connectorOwnsWaitingState,
+  mergeConnectorTimeline,
+  withoutSupersededConnectorProgress,
+} from '@/components/connectors/runtime/connector-runtime-source';
+import { useConnectorRuntimeReceipt } from '@/components/connectors/runtime/use-runtime-receipt';
+import { ProtectedGeneratedFileCard } from './protected-generated-file-card';
 
 interface AIChatMessageBubbleProps {
+  readExecutionFile?: ExecutionFileReader;
   message: AIChatMessage;
   isSending?: boolean;
   timeline?: AIChatAgenticTimelineItem[];
   modelProcessing?: AIChatStreamingMessageState['modelProcessing'];
+  tokenUsage?: AIChatTokenUsageUpdatedEventData;
   presentationItems?: AIChatPresentationItem[];
   answerBeforeTimelineLength?: number;
   skillDisplayById: AIChatSkillDisplayMap;
@@ -82,6 +99,9 @@ interface AIChatMessageBubbleProps {
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
+  onTaskProposalAction?: (payload: AITaskProposalActionPayload) => void | Promise<void>;
+  onTaskMutation?: () => void;
+  onConnectorRuntimeDecision?: ConnectorRuntimeDecisionHandler;
   branchNavigation?: ChatBranchNavigation;
   onSwitchBranch?: (messageId: string) => void;
   isEditing?: boolean;
@@ -905,13 +925,13 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
     useFileOriginalPreviewUrl(file.id, {
       enabled: Boolean(file.id),
     });
-  const isFiltered = file.content_status === 'filtered';
   const isError = file.parse_status === 'error' || Boolean(error) || imageLoadFailed;
-  const canPreview = Boolean(previewUrl) && !isError && !isFiltered;
+  // Model input filtering is not a browser preview permission decision.
+  const canPreview = Boolean(previewUrl) && !isError;
   const canRetry =
-    !isLoading && !isFetching && !isFiltered && ((Boolean(error) && !isMissing) || imageLoadFailed);
+    !isLoading && !isFetching && ((Boolean(error) && !isMissing) || imageLoadFailed);
   const canInteract = canPreview || canRetry;
-  const showUnavailableTooltip = !isLoading && !isFetching && (isError || isFiltered);
+  const showUnavailableTooltip = !isLoading && !isFetching && isError;
   const title =
     file.error ||
     error ||
@@ -940,7 +960,7 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
       type="button"
       className={cn(
         'relative size-24 overflow-hidden rounded-lg border bg-background/70 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        isError || isFiltered ? 'border-destructive/40' : 'border-border',
+        isError ? 'border-destructive/40' : 'border-border',
         canPreview
           ? 'cursor-zoom-in'
           : canRetry
@@ -973,7 +993,7 @@ function AIChatHistoryImagePreview({ file }: AIChatHistoryImagePreviewProps) {
         <div className="flex h-full w-full items-center justify-center text-muted-foreground">
           {isLoading || isFetching ? (
             <Loader2 className="size-5 animate-spin" />
-          ) : isError || isFiltered ? (
+          ) : isError ? (
             <AlertCircle className="size-5 text-destructive" />
           ) : (
             <FileImage className="size-5" />
@@ -1209,10 +1229,12 @@ function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsPro
  * <AIChatMessageBubble message={message} />
  */
 export function AIChatMessageBubble({
+  readExecutionFile,
   message,
   isSending = false,
   timeline = [],
   modelProcessing,
+  tokenUsage,
   presentationItems,
   answerBeforeTimelineLength,
   skillDisplayById,
@@ -1220,6 +1242,9 @@ export function AIChatMessageBubble({
   canReplaceRoot = false,
   onRegenerate,
   onToolGovernanceDecision,
+  onTaskProposalAction,
+  onTaskMutation,
+  onConnectorRuntimeDecision,
   branchNavigation,
   onSwitchBranch,
   isEditing = false,
@@ -1238,15 +1263,36 @@ export function AIChatMessageBubble({
   speechPlayback,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
+  const connectorEvents = connectorChatEvents(
+    message.metadata,
+    timeline,
+    message.conversation_id,
+    message.id
+  );
+  const connectorEvent = connectorEvents.at(-1);
+  const connectorReceipt = useConnectorRuntimeReceipt(connectorEvent?.receipt ?? '');
+  const connectorPhase = connectorEvent
+    ? (connectorReceipt.phase ?? connectorEvent.result.state)
+    : undefined;
+  const connectorWaitingResolved =
+    message.status === 'waiting_approval' &&
+    connectorPhase &&
+    connectorPhase !== 'requires_confirmation' &&
+    connectorOwnsWaitingState(message.metadata, timeline);
   const tGlobal = useT();
   const tCommon = useT('common');
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const isStreaming = message.status === 'pending' || message.status === 'streaming';
   const isWaitingForUser =
-    message.status === 'waiting_approval' || message.status === 'waiting_question';
+    (message.status === 'waiting_approval' && !connectorWaitingResolved) ||
+    message.status === 'waiting_question';
   const isWaitingForClientAction = message.status === 'waiting_client_action';
-  const isActiveMessage = isStreaming || isWaitingForUser || isWaitingForClientAction;
+  const isActiveMessage =
+    isStreaming ||
+    isWaitingForUser ||
+    isWaitingForClientAction ||
+    Boolean(connectorWaitingResolved && connectorPhase === 'submitting');
   const isError = message.status === 'error';
   const isStopped = message.status === 'stopped';
   const isSensitiveBlocked =
@@ -1266,6 +1312,7 @@ export function AIChatMessageBubble({
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
+  const hasUserQuery = Boolean(message.query.trim() || files.length > 0);
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
   const visibleGeneratedFiles = generatedFiles;
   const generatedImagePreviewFilesForDisplay = useMemo(
@@ -1276,15 +1323,17 @@ export function AIChatMessageBubble({
   const answer = displayAnswer.trim();
   const userInputRequest = message.metadata?.user_input_request;
   const waitingMessage =
-    message.status === 'waiting_approval'
-      ? t('consoleChat.waitingApprovalMessage')
-      : message.status === 'waiting_question'
-        ? userInputRequest
-          ? null
-          : t('consoleChat.waitingQuestionMessage')
-        : message.status === 'waiting_client_action'
-          ? t('consoleChat.waitingClientActionMessage')
-          : null;
+    connectorEvent && connectorOwnsWaitingState(message.metadata, timeline)
+      ? null
+      : message.status === 'waiting_approval'
+        ? t('consoleChat.waitingApprovalMessage')
+        : message.status === 'waiting_question'
+          ? userInputRequest
+            ? null
+            : t('consoleChat.waitingQuestionMessage')
+          : message.status === 'waiting_client_action'
+            ? t('consoleChat.waitingClientActionMessage')
+            : null;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
   const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
@@ -1294,8 +1343,11 @@ export function AIChatMessageBubble({
   const runtimeTimeline = timeline;
   const displayTimeline = useMemo(
     () =>
-      dedupeTimelineItems(runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline),
-    [historicalTimeline, runtimeTimeline]
+      sanitizeTimelineForMessage(
+        message,
+        runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline
+      ),
+    [historicalTimeline, message, runtimeTimeline]
   );
   useEffect(() => {
     debugAIChatTimeline('render:message_bubble', {
@@ -1331,7 +1383,11 @@ export function AIChatMessageBubble({
         : displayTimeline,
     [displayTimeline, isPresentationV2, resolvedPresentationItems]
   );
-  const hasTimeline = orderedDisplayTimeline.length > 0;
+  const connectorTimeline = mergeConnectorTimeline(
+    withoutSupersededConnectorProgress(orderedDisplayTimeline, connectorEvents),
+    connectorEvents
+  );
+  const hasTimeline = connectorTimeline.length > 0;
   const { leadingAnswer, trailingAnswer } = useMemo(() => {
     if (isPresentationV2) {
       return { leadingAnswer: '', trailingAnswer: displayAnswer };
@@ -1412,6 +1468,23 @@ export function AIChatMessageBubble({
         return t('consoleChat.operationStatus.modelProcessing.initial');
     }
   }, [isStreaming, modelProcessing, t]);
+  const tokenUsageSummary = useMemo(() => {
+    if (!tokenUsage) return null;
+    const budget = tokenUsage.task_token_budget;
+    const usage = tokenUsage.usage ?? {};
+    const count = Math.max(0, budget?.used_tokens ?? usage.total_tokens ?? 0);
+    if (count <= 0) return null;
+    const prompt = Math.max(0, usage.prompt_tokens ?? 0);
+    const completion = Math.max(0, usage.completion_tokens ?? 0);
+    return {
+      count,
+      details: t('consoleChat.tokenUsage.details', {
+        total: formatTokenCount(count),
+        prompt: formatTokenCount(prompt),
+        completion: formatTokenCount(completion),
+      }),
+    };
+  }, [t, tokenUsage]);
   const showInitialPlanningStatus =
     isStreaming &&
     !modelProcessingLabel &&
@@ -1439,118 +1512,124 @@ export function AIChatMessageBubble({
 
   return (
     <div className="group space-y-3">
-      <div className="flex justify-end">
-        <div className={cn('max-w-[82%]', isEditing ? 'w-full max-w-2xl' : '')}>
-          {isEditing ? (
-            <div className="rounded-2xl border bg-background p-2 shadow-sm">
-              <Textarea
-                value={editValue}
-                onChange={event => onEditChange?.(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    onEditSubmit?.(message);
-                  }
-                }}
-                className="max-h-40 min-h-20 resize-none border-0 bg-transparent px-2 py-1 text-sm shadow-none focus-visible:ring-0"
-                autoFocus
-              />
-              <UserEditToolbar
-                canSubmit={Boolean(editValue.trim())}
-                isSending={isSending}
-                onCancel={onEditCancel}
-                onSubmit={() => onEditSubmit?.(message)}
-              />
-            </div>
-          ) : (
-            <>
-              <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-foreground shadow-sm">
-                <div className="whitespace-pre-wrap break-words">{message.query}</div>
-                {files.length > 0 ? (
-                  <div className="mt-2 space-y-2">
-                    {imageFiles.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {imageFiles.map(file => (
-                          <AIChatHistoryImagePreview key={file.id} file={file} />
-                        ))}
-                      </div>
-                    ) : null}
-                    {documentFiles.length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {documentFiles.map(file => {
-                          const isFileParsing =
-                            file.parse_status === 'parsing' ||
-                            (file.content_status === 'pending' && file.parse_status !== 'error');
-                          const isFileError = file.parse_status === 'error';
-                          const isFileEmpty = file.content_status === 'empty' && !isFileError;
-                          const isFileExtracted =
-                            file.content_status === 'extracted' && !isFileError;
-                          const isVisionReady =
-                            file.content_status === 'vision_ready' && !isFileError;
-                          const isFiltered = file.content_status === 'filtered' && !isFileError;
-                          const label = isFileError
-                            ? t('consoleChat.attachments.parseFailed')
-                            : isFileEmpty
-                              ? t('consoleChat.attachments.empty')
-                              : isFiltered
-                                ? t('consoleChat.attachments.filtered')
-                                : isVisionReady
-                                  ? t('consoleChat.attachments.visionReady')
-                                  : isFileExtracted
-                                    ? t('consoleChat.attachments.parsed')
-                                    : t('consoleChat.attachments.parsing');
-
-                          return (
-                            <div
-                              key={file.id}
-                              className={cn(
-                                'inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/70 px-2 py-1 text-xs',
-                                isFileError || isFiltered
-                                  ? 'border-destructive/40 text-destructive'
-                                  : 'border-border text-muted-foreground'
-                              )}
-                              title={
-                                file.error ||
-                                (file.filtered_reason === 'model_without_vision'
-                                  ? t('consoleChat.attachments.filteredModelWithoutVision')
-                                  : file.name)
-                              }
-                            >
-                              {isFileParsing ? (
-                                <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                              ) : isFileError ? (
-                                <AlertCircle className="size-3.5 shrink-0" />
-                              ) : isFileExtracted || isVisionReady ? (
-                                <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
-                              ) : isFiltered ? (
-                                <AlertCircle className="size-3.5 shrink-0" />
-                              ) : file.kind === 'image' ? (
-                                <FileImage className="size-3.5 shrink-0" />
-                              ) : (
-                                <FileText className="size-3.5 shrink-0" />
-                              )}
-                              <span className="max-w-40 truncate text-foreground">{file.name}</span>
-                              <span className="shrink-0">{formatFileSize(file.size)}</span>
-                              <span className="shrink-0">{label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
+      {hasUserQuery ? (
+        <div className="flex justify-end">
+          <div className={cn('max-w-[82%]', isEditing ? 'w-full max-w-2xl' : '')}>
+            {isEditing ? (
+              <div className="rounded-2xl border bg-background p-2 shadow-sm">
+                <Textarea
+                  value={editValue}
+                  onChange={event => onEditChange?.(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      onEditSubmit?.(message);
+                    }
+                  }}
+                  className="max-h-40 min-h-20 resize-none border-0 bg-transparent px-2 py-1 text-sm shadow-none focus-visible:ring-0"
+                  autoFocus
+                />
+                <UserEditToolbar
+                  canSubmit={Boolean(editValue.trim())}
+                  isSending={isSending}
+                  onCancel={onEditCancel}
+                  onSubmit={() => onEditSubmit?.(message)}
+                />
               </div>
-              <UserMessageToolbar
-                query={message.query}
-                canEdit={canEdit}
-                isDisabled={isSending || isActiveMessage}
-                toolbarVisibility={toolbarVisibility}
-                onEdit={() => onEditStart?.(message)}
-              />
-            </>
-          )}
+            ) : (
+              <>
+                <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-foreground shadow-sm">
+                  <div className="whitespace-pre-wrap break-words">{message.query}</div>
+                  {files.length > 0 ? (
+                    <div className="mt-2 space-y-2">
+                      {imageFiles.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {imageFiles.map(file => (
+                            <AIChatHistoryImagePreview key={file.id} file={file} />
+                          ))}
+                        </div>
+                      ) : null}
+                      {documentFiles.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {documentFiles.map(file => {
+                            const isFileParsing =
+                              file.parse_status === 'parsing' ||
+                              (file.content_status === 'pending' && file.parse_status !== 'error');
+                            const isFileError = file.parse_status === 'error';
+                            const isFileEmpty = file.content_status === 'empty' && !isFileError;
+                            const isFileExtracted =
+                              file.content_status === 'extracted' && !isFileError;
+                            const isVisionReady =
+                              file.content_status === 'vision_ready' && !isFileError;
+                            const isFiltered = file.content_status === 'filtered' && !isFileError;
+                            const label = isFileError
+                              ? t('consoleChat.attachments.parseFailed')
+                              : isFileEmpty
+                                ? t('consoleChat.attachments.empty')
+                                : isFiltered
+                                  ? t('consoleChat.attachments.filtered')
+                                  : isVisionReady
+                                    ? t('consoleChat.attachments.visionReady')
+                                    : isFileExtracted
+                                      ? t('consoleChat.attachments.parsed')
+                                      : t('consoleChat.attachments.parsing');
+
+                            return (
+                              <div
+                                key={file.id}
+                                className={cn(
+                                  'inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/70 px-2 py-1 text-xs',
+                                  isFileError
+                                    ? 'border-destructive/40 text-destructive'
+                                    : 'border-border text-muted-foreground'
+                                )}
+                                title={
+                                  file.error ||
+                                  (file.filtered_reason === 'model_without_vision'
+                                    ? t('consoleChat.attachments.filteredModelWithoutVision')
+                                    : isFiltered
+                                      ? t('consoleChat.attachments.filteredContentHint')
+                                      : file.name)
+                                }
+                              >
+                                {isFileParsing ? (
+                                  <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                                ) : isFileError ? (
+                                  <AlertCircle className="size-3.5 shrink-0" />
+                                ) : isFileExtracted || isVisionReady ? (
+                                  <CheckCircle2 className="size-3.5 shrink-0 text-emerald-600" />
+                                ) : isFiltered ? (
+                                  <FileText className="size-3.5 shrink-0" />
+                                ) : file.kind === 'image' ? (
+                                  <FileImage className="size-3.5 shrink-0" />
+                                ) : (
+                                  <FileText className="size-3.5 shrink-0" />
+                                )}
+                                <span className="max-w-40 truncate text-foreground">
+                                  {file.name}
+                                </span>
+                                <span className="shrink-0">{formatFileSize(file.size)}</span>
+                                <span className="shrink-0">{label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <UserMessageToolbar
+                  query={message.query}
+                  canEdit={canEdit}
+                  isDisabled={isSending || isActiveMessage}
+                  toolbarVisibility={toolbarVisibility}
+                  onEdit={() => onEditStart?.(message)}
+                />
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className="min-w-0 max-w-full overflow-hidden">
         <div className="mb-2 flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-sm text-muted-foreground">
@@ -1613,7 +1692,9 @@ export function AIChatMessageBubble({
             key={`${message.id}-${isActiveMessage ? 'active' : 'history'}-${
               shouldOpenTimelineByDefault ? 'open' : 'closed'
             }`}
-            timeline={orderedDisplayTimeline}
+            timeline={connectorTimeline}
+            conversationId={message.conversation_id}
+            messageId={message.id}
             skillDisplayById={skillDisplayById}
             processNarrative={!isPresentationV2 && hasLeadingAnswer ? leadingAnswer : undefined}
             processNarrativeRenderIdentity={`${message.id}:process-narrative`}
@@ -1625,6 +1706,9 @@ export function AIChatMessageBubble({
             suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
             messageStatus={message.status}
             onToolGovernanceDecision={onToolGovernanceDecision}
+            onTaskProposalAction={onTaskProposalAction}
+            onTaskMutation={onTaskMutation}
+            onConnectorRuntimeDecision={onConnectorRuntimeDecision}
           />
         ) : null}
 
@@ -1674,9 +1758,18 @@ export function AIChatMessageBubble({
 
         {visibleGeneratedFiles.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-2">
-            {visibleGeneratedFiles.map(file => (
-              <AIChatGeneratedFileCard key={file.artifact_id || file.file_id} file={file} />
-            ))}
+            {visibleGeneratedFiles.map(file =>
+              file.access_mode === 'authenticated' ? (
+                <ProtectedGeneratedFileCard
+                  key={file.artifact_id || file.file_id}
+                  file={file}
+                  conversationId={message.conversation_id}
+                  readFile={readExecutionFile}
+                />
+              ) : (
+                <AIChatGeneratedFileCard key={file.artifact_id || file.file_id} file={file} />
+              )
+            )}
           </div>
         ) : null}
 
@@ -1704,12 +1797,15 @@ export function AIChatMessageBubble({
           </div>
         ) : null}
 
-        {!shouldHideAssistantToolbar && (answer || canRegenerateMessage) ? (
+        {!shouldHideAssistantToolbar && (tokenUsageSummary || answer || canRegenerateMessage) ? (
           <AssistantMessageToolbar
             answer={answer}
             canRegenerate={canRegenerateMessage}
             isDisabled={isSending || isActiveMessage}
             toolbarVisibility={toolbarVisibility}
+            showActions={!shouldHideAssistantToolbar}
+            tokenCount={tokenUsageSummary?.count}
+            tokenUsageTitle={tokenUsageSummary?.details}
             branchNavigation={branchNavigation}
             canSwitchBranch={canSwitchBranch}
             onRegenerate={() => onRegenerate?.(message)}

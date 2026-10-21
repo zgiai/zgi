@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"gorm.io/gorm"
 )
@@ -19,6 +20,7 @@ type AgentsFilter struct {
 	CreatedBy    string
 	IsPublished  *bool
 	WebAppStatus string
+	TagIDs       []string
 	Internal     *bool
 }
 
@@ -38,6 +40,7 @@ type runnableWebAppFilter struct {
 	WorkspaceID   string
 	WebAppID      string
 	WebAppIDs     []string
+	TagIDs        []string
 	Keyword       string
 	Pagination    runnableWebAppPagination
 	Authorization *runnableWebAppAuthorizationFilter
@@ -50,6 +53,12 @@ type runnableWebAppAuthorizationFilter struct {
 type runnableWebAppListResult struct {
 	Items      []runnableWebAppItem
 	Pagination runnableWebAppPagination
+}
+
+type runnableWebAppTagFacet struct {
+	TagID uuid.UUID `gorm:"column:tag_id"`
+	Name  string    `gorm:"column:name"`
+	Count int64     `gorm:"column:count"`
 }
 
 // AgentsRepository defines the interface for agent data access operations in agents module
@@ -82,6 +91,7 @@ type AgentsRepository interface {
 	UpdateWorkflowConfig(ctx context.Context, agentID, workflowConfig string) error
 	HasPublishedWorkflow(ctx context.Context, agentID string) (bool, error)
 	ListRunnableWebApps(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) (runnableWebAppListResult, error)
+	ListRunnableWebAppTagFacets(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) ([]runnableWebAppTagFacet, error)
 }
 
 // agentsRepository implements AgentsRepository
@@ -175,47 +185,7 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 		return result, nil
 	}
 
-	query := r.db.WithContext(ctx).
-		Table("agents").
-		Where("agents.deleted_at IS NULL").
-		Where("agents.web_app_status = ?", AgentWebAppStatusActive).
-		Where("agents.tenant_id IN ?", workspaceIDs).
-		Where(`
-			(
-				agents.agent_type = ?
-				AND EXISTS (
-					SELECT 1
-					FROM agent_published_versions
-					WHERE agent_published_versions.agent_id = agents.id
-					  AND agent_published_versions.deleted_at IS NULL
-				)
-			)
-			OR (
-				agents.agent_type != ?
-				AND EXISTS (
-					SELECT 1
-					FROM workflows
-					WHERE workflows.agent_id = agents.id
-					  AND workflows.version != ?
-				)
-			)
-		`, "AGENT", "AGENT", "draft")
-
-	if filter.WorkspaceID != "" {
-		query = query.Where("agents.tenant_id = ?", filter.WorkspaceID)
-	}
-	if webAppID := strings.TrimSpace(filter.WebAppID); webAppID != "" {
-		query = query.Where("agents.web_app_id = ?", webAppID)
-	} else if len(filter.WebAppIDs) > 0 {
-		query = query.Where("agents.web_app_id IN ?", filter.WebAppIDs)
-	}
-	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
-		pattern := "%" + keyword + "%"
-		query = query.Where("(agents.name ILIKE ? OR agents.description ILIKE ?)", pattern, pattern)
-	}
-	if filter.Authorization != nil {
-		query = applyRunnableWebAppAuthorizationFilter(query, filter.Authorization.Audience)
-	}
+	query := r.runnableWebAppsQuery(ctx, workspaceIDs, filter)
 
 	offset := 0
 	if result.Pagination.enabled {
@@ -254,6 +224,94 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 		result.Pagination.hasMore = offset+len(items) < result.Pagination.total
 	}
 	return result, nil
+}
+
+func (r *agentsRepository) ListRunnableWebAppTagFacets(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) ([]runnableWebAppTagFacet, error) {
+	if len(workspaceIDs) == 0 {
+		return []runnableWebAppTagFacet{}, nil
+	}
+	filter.TagIDs = nil
+	filter.Pagination = runnableWebAppPagination{}
+	var facets []runnableWebAppTagFacet
+	query := r.runnableWebAppsQuery(ctx, workspaceIDs, filter).
+		Joins("JOIN agent_catalog_tag_bindings AS catalog_bindings ON catalog_bindings.agent_id = agents.id").
+		Joins("JOIN agent_catalog_tags AS catalog_tags ON catalog_tags.id = catalog_bindings.tag_id")
+	if filter.Authorization != nil {
+		query = query.Where("catalog_tags.organization_id = ?", filter.Authorization.Audience.OrganizationID)
+	}
+	err := query.
+		Select("catalog_tags.id AS tag_id, catalog_tags.name AS name, COUNT(DISTINCT agents.id) AS count").
+		Group("catalog_tags.id, catalog_tags.name").
+		Order("catalog_tags.name ASC, catalog_tags.id ASC").
+		Scan(&facets).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runnable web app tag facets: %w", err)
+	}
+	return facets, nil
+}
+
+func (r *agentsRepository) runnableWebAppsQuery(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) *gorm.DB {
+	query := r.db.WithContext(ctx).
+		Table("agents").
+		Where("agents.deleted_at IS NULL").
+		Where("agents.web_app_status = ?", AgentWebAppStatusActive).
+		Where("agents.tenant_id IN ?", workspaceIDs).
+		Where(`
+			(
+				agents.agent_type = ?
+				AND EXISTS (
+					SELECT 1
+					FROM agent_published_versions
+					WHERE agent_published_versions.agent_id = agents.id
+					  AND agent_published_versions.deleted_at IS NULL
+				)
+			)
+			OR (
+				agents.agent_type != ?
+				AND EXISTS (
+					SELECT 1
+					FROM workflows
+					WHERE workflows.agent_id = agents.id
+					  AND workflows.version != ?
+				)
+			)
+		`, "AGENT", "AGENT", "draft")
+
+	if filter.WorkspaceID != "" {
+		query = query.Where("agents.tenant_id = ?", filter.WorkspaceID)
+	}
+	if webAppID := strings.TrimSpace(filter.WebAppID); webAppID != "" {
+		query = query.Where("agents.web_app_id = ?", webAppID)
+	} else if len(filter.WebAppIDs) > 0 {
+		query = query.Where("agents.web_app_id IN ?", filter.WebAppIDs)
+	}
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
+		pattern := "%" + keyword + "%"
+		query = query.Where("(agents.name ILIKE ? OR agents.description ILIKE ?)", pattern, pattern)
+	}
+	if len(filter.TagIDs) > 0 {
+		if filter.Authorization != nil {
+			query = query.Where(`EXISTS (
+				SELECT 1
+				FROM agent_catalog_tag_bindings AS catalog_filter_bindings
+				JOIN agent_catalog_tags AS catalog_filter_tags ON catalog_filter_tags.id = catalog_filter_bindings.tag_id
+				WHERE catalog_filter_bindings.agent_id = agents.id
+				  AND catalog_filter_bindings.tag_id IN ?
+				  AND catalog_filter_tags.organization_id = ?
+			)`, filter.TagIDs, filter.Authorization.Audience.OrganizationID)
+		} else {
+			query = query.Where(`EXISTS (
+				SELECT 1
+				FROM agent_catalog_tag_bindings AS catalog_filter_bindings
+				WHERE catalog_filter_bindings.agent_id = agents.id
+				  AND catalog_filter_bindings.tag_id IN ?
+			)`, filter.TagIDs)
+		}
+	}
+	if filter.Authorization != nil {
+		query = applyRunnableWebAppAuthorizationFilter(query, filter.Authorization.Audience)
+	}
+	return query
 }
 
 func applyRunnableWebAppAuthorizationFilter(query *gorm.DB, audience runtimeauth.RuntimeAudience) *gorm.DB {
@@ -402,6 +460,14 @@ func (r *agentsRepository) applyFiltersMultipleTenants(query *gorm.DB, filter Ag
 	if filter.WebAppStatus != "" {
 		query = query.Where("web_app_status = ?", filter.WebAppStatus)
 	}
+	if len(filter.TagIDs) > 0 {
+		query = query.Where(`EXISTS (
+			SELECT 1
+			FROM agent_catalog_tag_bindings AS catalog_filter
+			WHERE catalog_filter.agent_id = agents.id
+			  AND catalog_filter.tag_id IN ?
+		)`, filter.TagIDs)
+	}
 	if filter.Internal != nil {
 		query = query.Where("internal = ?", *filter.Internal)
 	}
@@ -519,6 +585,14 @@ func (r *agentsRepository) GetLatestAgentPublishedVersion(ctx context.Context, a
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get latest agent published version: %w", err)
+	}
+	return &version, nil
+}
+
+func (r *agentsRepository) getAgentPublishedVersionByUUID(ctx context.Context, agentID, versionUUID uuid.UUID) (*AgentPublishedVersion, error) {
+	var version AgentPublishedVersion
+	if err := r.db.WithContext(ctx).Where("agent_id = ? AND version_uuid = ? AND deleted_at IS NULL", agentID, versionUUID).Take(&version).Error; err != nil {
+		return nil, fmt.Errorf("get frozen agent publication: %w", err)
 	}
 	return &version, nil
 }

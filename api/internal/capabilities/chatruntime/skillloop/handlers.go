@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -40,6 +41,27 @@ func (r *Runner) handleProgressiveSkillCall(
 		trace := invalidToolArgumentsFeedbackTrace(call.Function.Name, err, args)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, stringArg(args, "next_action"))), false, false)
 	}
+	// Tool visibility is scoped to the current skill session. A model may carry
+	// a previously visible tool name into a new user turn; require explicit
+	// activation instead of restoring the skill from conversation history.
+	if !isSkillMetaToolName(call.Function.Name) {
+		if skillID, ok := uniqueResolvedSkillForToolName(resolved, call.Function.Name); ok {
+			if _, active := loadedSkills[skillID]; !active {
+				err := fmt.Errorf("%w: skill %s is not active", ErrInvalidInput, skillID)
+				trace := failedSkillTrace("tool_call", call.Function.Name, err)
+				trace.SkillID = skillID
+				trace.Status = "blocked"
+				trace.Arguments = summarizeSkillToolArgumentsForResolved(resolved, skillID, call.Function.Name, args)
+				trace.Arguments["reason_code"] = "skill_not_active"
+				nextAction := fmt.Sprintf("call activate_skills with skill_ids [\"%s\"], then retry %s", skillID, call.Function.Name)
+				payload := recoverableSkillToolErrorPayload(err, nextAction, skillID, call.Function.Name, resolved)
+				payload["error_code"] = "skill_not_active"
+				payload["skill_id"] = skillID
+				payload["tool_name"] = call.Function.Name
+				return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, payload), false, false)
+			}
+		}
+	}
 	if normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, loadedSkills, call, args); ok {
 		call = normalizedCall
 		args = normalizedArgs
@@ -48,7 +70,7 @@ func (r *Runner) handleProgressiveSkillCall(
 	case contextArtifactToolName:
 		return r.handleReadContextArtifactCall(ctx, call.ID, args)
 	case skills.MetaToolLoadSkill:
-		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent)
+		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent, execCtx)
 	case skills.MetaToolReadSkillReference:
 		if _, ok := loadedSkills[normalizedSkillArg(args, "skill_id")]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), "", "skill must be loaded before reading references")
@@ -96,6 +118,9 @@ func (r *Runner) handleProgressiveSkillCall(
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
 		}
+		if isAgentKnowledgeRetrievalCall(skillID, toolName) && skillToolCallCounts[skillID] >= maxBusinessToolCallsForSkill(resolved, skillID) {
+			return knowledgeRetrievalBudgetStep(call.ID, skillID, toolName, toolArgs, skillToolCallCounts[skillID]+1, maxBusinessToolCallsForSkill(resolved, skillID))
+		}
 		if currentToolCalls >= maxBusinessToolCalls(resolved) {
 			err := fmt.Errorf("%w: too many skill tool calls", ErrInvalidInput)
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
@@ -105,9 +130,6 @@ func (r *Runner) handleProgressiveSkillCall(
 			err := fmt.Errorf("%w: too many skill tool calls for skill %s", ErrInvalidInput, skillID)
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
-		}
-		if issue := projectedExternalActionPlanIssue(runtimeState, strings.TrimSpace(stringArg(args, "plan_phase_id")), skillID, toolName, toolArgs); issue != "" {
-			return projectedExternalActionPlanIncompleteStep(call.ID, issue)
 		}
 		planPhaseID, enforcePlanPhase, phaseErr := resolveOperationPlanPhaseForSkillCall(
 			runtimeState,
@@ -124,29 +146,17 @@ func (r *Runner) handleProgressiveSkillCall(
 		} else {
 			delete(args, "plan_phase_id")
 		}
-		delete(args, operationPlanServerTargetKey)
-		if target := projectedExternalActionCallTarget(runtimeState, skillID, toolName, toolArgs); len(target) > 0 {
-			args[operationPlanServerTargetKey] = target
-		}
-		delete(args, operationPlanServerProjectedLedgerEpochKey)
-		delete(args, planExpectedActionServerBindingFingerprintKey)
-		delete(args, operationPlanServerProjectedConnectionBindingKey)
-		if actionKey := projectedExternalActionKeyFromCall(skillID, toolName, toolArgs); actionKey != "" {
-			if _, projected := projectedExternalActionKeys(runtimeState)[actionKey]; projected {
-				if epoch := operationPlanProjectedLedgerEpoch(runtimeState, planPhaseID); epoch != "" {
-					args[operationPlanServerProjectedLedgerEpochKey] = epoch
-				}
-				if fingerprint := operationPlanProjectedBindingFingerprint(runtimeState, planPhaseID); fingerprint != "" {
-					args[planExpectedActionServerBindingFingerprintKey] = fingerprint
-					if candidate := projectedExternalActionCandidateByFingerprint(runtimeState, fingerprint); len(candidate) > 0 {
-						if connectionBinding := strings.TrimSpace(evidenceStringFromAny(candidate[operationPlanServerProjectedConnectionBindingKey])); connectionBinding != "" {
-							args[operationPlanServerProjectedConnectionBindingKey] = connectionBinding
-						}
-					}
-				}
+		callExecCtx := execCtx
+		if isAgentKnowledgeRetrievalCall(skillID, toolName) {
+			callExecCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
+			if callExecCtx.RuntimeParameters == nil {
+				callExecCtx.RuntimeParameters = map[string]interface{}{}
 			}
+			callExecCtx.RuntimeParameters["knowledge_retrieval_round"] = runtimeKnowledgeRetrievalRound(runtimeState, skillID)
+			callExecCtx.RuntimeParameters["knowledge_retrieval_budget"] = runtimeKnowledgeRetrievalBudget(runtimeState, skillID)
+			callExecCtx.RuntimeParameters["knowledge_retrieval_history"] = runtimeState[runtimeStateKnowledgeRetrievalHistoryKey]
 		}
-		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, runtimeState, onEvent)
+		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, callExecCtx, runtimeState, onEvent)
 	case skills.MetaToolRequestUserInput:
 		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolTurnState:
@@ -201,6 +211,57 @@ func runtimeControlToolAllowed(runtimeState map[string]interface{}, key string) 
 	return !ok || allowed
 }
 
+func isAgentKnowledgeRetrievalCall(skillID, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentKnowledge) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "retrieve_agent_knowledge")
+}
+
+func runtimeKnowledgeRetrievalRound(runtimeState map[string]interface{}, _ string) int {
+	if runtimeState != nil {
+		if value, ok := runtimeState["knowledge_retrieval_round"].(int); ok && value > 0 {
+			return value
+		}
+		if history := runtimeState[runtimeStateKnowledgeRetrievalHistoryKey]; history != nil {
+			if calls, ok := history.([]map[string]interface{}); ok && len(calls) > 0 {
+				return len(calls) + 1
+			}
+		}
+	}
+	return 1
+}
+
+func runtimeKnowledgeRetrievalBudget(runtimeState map[string]interface{}, _ string) int {
+	if runtimeState != nil {
+		if value, ok := runtimeState["knowledge_retrieval_budget"].(int); ok && value > 0 {
+			return value
+		}
+	}
+	return defaultMaxBusinessToolCallsPerSkill
+}
+
+func knowledgeRetrievalBudgetStep(callID, skillID, toolName string, args map[string]interface{}, round int, budget int) skillStepResult {
+	trace := plannerFeedbackTrace(skillID, toolName, nil)
+	trace.Kind = "tool_call"
+	trace.Status = "blocked"
+	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+	trace.Arguments["reason_code"] = "retrieval_round_limit"
+	trace.Arguments["next_step"] = "answer from the evidence already retrieved; do not call retrieve_agent_knowledge again in this execution"
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"query":               stringArg(args, "query"),
+		"status":              "blocked",
+		"result_count":        0,
+		"retriever_resources": []interface{}{},
+		"warnings":            []string{"retrieval execution budget reached; answer from the evidence already retrieved"},
+		"control": map[string]interface{}{
+			"continuation_allowed": false,
+			"remaining_rounds":     0,
+			"round":                round,
+			"new_evidence_count":   0,
+			"stop_reason":          "retrieval_round_limit",
+		},
+	}), true, false)
+}
+
 func skippedControlToolStep(callID string, toolName string, nextAction string) skillStepResult {
 	trace := plannerFeedbackTrace("", toolName, nil)
 	trace.Error = "control tool is not required for the current execution segment"
@@ -225,6 +286,8 @@ func invalidSkillToolArgumentsStep(
 	trace := failedSkillTrace("tool_call", toolName, err)
 	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
 	trace.Arguments = rawSkillToolArgumentsFingerprint(rawArguments)
+	trace.Arguments["failure_category"] = "arguments"
+	trace.Arguments["provider_request_sent"] = false
 	var argumentErr *skillToolArgumentsError
 	if errors.As(err, &argumentErr) && argumentErr != nil {
 		trace.Arguments["reason_code"] = argumentErr.Code
@@ -323,6 +386,29 @@ func uniqueLoadedSkillForToolName(resolved *skills.ResolvedSkills, loadedSkills 
 		}
 	}
 	return matchedSkillID, matchedSkillID != ""
+}
+
+func uniqueResolvedSkillForToolName(resolved *skills.ResolvedSkills, toolName string) (string, bool) {
+	if resolved == nil || strings.TrimSpace(toolName) == "" {
+		return "", false
+	}
+	matched := ""
+	for _, doc := range resolved.Skills {
+		for _, tool := range doc.Tools {
+			if !strings.EqualFold(strings.TrimSpace(tool.Name), strings.TrimSpace(toolName)) {
+				continue
+			}
+			skillID := strings.ToLower(strings.TrimSpace(doc.Metadata.ID))
+			if skillID == "" {
+				continue
+			}
+			if matched != "" && matched != skillID {
+				return "", false
+			}
+			matched = skillID
+		}
+	}
+	return matched, matched != ""
 }
 
 func injectedContextPseudoToolFeedbackStep(callID string, toolName string) skillStepResult {
@@ -493,6 +579,7 @@ func (r *Runner) handleLoadSkillCall(
 	args map[string]interface{},
 	loadedSkills map[string]struct{},
 	onEvent func(Event) error,
+	executions ...skills.ExecutionContext,
 ) skillStepResult {
 	skillID := stringArg(args, "skill_id")
 	doc, ok := resolved.Get(skillID)
@@ -504,6 +591,12 @@ func (r *Runner) handleLoadSkillCall(
 		canonicalSkillID = strings.TrimSpace(skillID)
 	}
 	if _, alreadyLoaded := loadedSkills[canonicalSkillID]; alreadyLoaded {
+		if len(doc.Metadata.ConnectorRequirements) > 0 {
+			if _, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, canonicalSkillID, executions...); err != nil {
+				delete(loadedSkills, canonicalSkillID)
+				return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "repair the required Connector binding before using this skill")), false, false)
+			}
+		}
 		attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
 		trace := skills.SkillTrace{
 			Kind:     "skill_load_attempt",
@@ -515,7 +608,7 @@ func (r *Runner) handleLoadSkillCall(
 				"created_at_ms":      time.Now().UnixMilli(),
 				"requested_skill_id": canonicalSkillID,
 				"instruction_digest": skillInstructionDigest(doc.Instructions),
-				"effective_version":  skillInstructionDigest(doc.Instructions),
+				"effective_version":  skillEffectiveVersion(doc),
 				"policy_state":       "allowed",
 				"access_status":      "authorized",
 				"outcome":            "already_loaded",
@@ -534,7 +627,7 @@ func (r *Runner) handleLoadSkillCall(
 	}
 	r.emitEvent(prepared, EventSkillLoadStart, skillLoadPayload(prepared, skillID))
 	attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
-	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID)
+	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID, executions...)
 	if err != nil {
 		if trace.Arguments == nil {
 			trace.Arguments = map[string]interface{}{}
@@ -550,7 +643,7 @@ func (r *Runner) handleLoadSkillCall(
 		"outcome":            "first_load",
 		"instruction_digest": skillInstructionDigest(doc.Instructions),
 		"instruction_chars":  len([]rune(strings.TrimSpace(doc.Instructions))),
-		"effective_version":  skillInstructionDigest(doc.Instructions),
+		"effective_version":  skillEffectiveVersion(doc),
 		"policy_state":       "allowed",
 		"access_status":      "authorized",
 	}
@@ -630,22 +723,10 @@ func (r *Runner) handleCallSkillTool(
 	toolArgs := mapArg(args, "arguments")
 	planPhaseID := strings.TrimSpace(stringArg(args, "plan_phase_id"))
 	completionIntent := normalizeSkillToolCompletionIntent(stringArg(args, "completion_intent"))
-	planTarget := copyStringAnyMap(evidenceMapFromAny(args[operationPlanServerTargetKey]))
-	if len(planTarget) == 0 {
-		planTarget = operationPlanSkillCallTarget(toolArgs)
-	}
+	planTarget := operationPlanSkillCallTarget(toolArgs)
 	argumentSummary := summarizeSkillToolArgumentsForResolved(resolved, skillID, toolName, toolArgs)
 	if len(planTarget) > 0 {
 		argumentSummary["operation_plan_target"] = copyStringAnyMap(planTarget)
-	}
-	if ledgerEpoch := strings.TrimSpace(stringArg(args, operationPlanServerProjectedLedgerEpochKey)); ledgerEpoch != "" {
-		argumentSummary[operationPlanServerProjectedLedgerEpochKey] = ledgerEpoch
-	}
-	if fingerprint := strings.TrimSpace(stringArg(args, planExpectedActionServerBindingFingerprintKey)); fingerprint != "" {
-		argumentSummary[planExpectedActionServerBindingFingerprintKey] = fingerprint
-	}
-	if connectionBinding := strings.TrimSpace(stringArg(args, operationPlanServerProjectedConnectionBindingKey)); connectionBinding != "" {
-		argumentSummary[operationPlanServerProjectedConnectionBindingKey] = connectionBinding
 	}
 	if planPhaseID != "" {
 		argumentSummary["plan_phase_id"] = planPhaseID
@@ -707,10 +788,7 @@ func (r *Runner) handleCallSkillTool(
 			r.emitEvent(prepared, event.Type, payload)
 		})
 	}
-	execCtx.RuntimeParameters = skills.WithExternalActionOperationItemID(execCtx.RuntimeParameters, "")
-	if operationItemID := projectedExternalActionPhaseOperationItemID(runtimeState, planPhaseID, skillID, toolName, toolArgs); operationItemID != "" {
-		execCtx.RuntimeParameters = skills.WithExternalActionOperationItemID(execCtx.RuntimeParameters, operationItemID)
-	}
+	ctx = connectordispatch.WithActionPlanPhase(ctx, planPhaseID)
 	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
@@ -722,6 +800,13 @@ func (r *Runner) handleCallSkillTool(
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName, resolved)), true, false)
+	}
+	if invocation.Trace.ConnectorNative {
+		invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
+		if terminal := connectorTerminalStep(invocation.Trace, callID, runtimeState); terminal != nil {
+			r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
+			return *terminal
+		}
 	}
 	if err != nil {
 		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
@@ -738,6 +823,22 @@ func (r *Runner) handleCallSkillTool(
 			invocation.Trace.Arguments["completion_intent"] = completionIntent
 		}
 		applyPublicToolErrorRecoveryTrace(&invocation.Trace, err)
+		if invocation.Trace.ConnectorNative {
+			invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
+		}
+		if blockedResult := summarizeSkillToolResult(
+			invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages,
+		); strings.EqualFold(strings.TrimSpace(stringFromInterface(blockedResult["state"])), "blocked") {
+			// This is a server-authored terminal control result, not provider
+			// output. Surface it once and end the unattended run so the model
+			// cannot automatically retry a consequential operation.
+			invocation.Trace.Result = blockedResult
+			toolMessage := skills.ToolResultMessage(callID, blockedResult)
+			r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
+			terminal := terminalSkillStep(invocation.Trace, toolMessage, true, true)
+			terminal.toolResult = blockedResult
+			return terminal
+		}
 		if invocation.Trace.Governance != nil {
 			r.emitEvent(prepared, EventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 		}
@@ -796,23 +897,10 @@ func (r *Runner) handleCallSkillTool(
 	applyStateHandoffAdvisoryToToolMessage(invocation)
 	applyPageContextInvalidationAdvisory(invocation)
 	guardToolResult := skillToolResultForGuard(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages, invocation.Trace.Result)
-	if guardToolResult != nil {
-		// Provider output is untrusted. This private evidence key is written only
-		// from the server-owned preparation contract below.
-		delete(guardToolResult, projectedExternalObservedPreparationTargetsKey)
-	}
-	if observedTargets := projectedExternalActionObservedPreparationTargets(
-		runtimeState,
-		toolArgs,
-		planPhaseID,
-		strings.TrimSpace(stringArg(args, operationPlanServerProjectedLedgerEpochKey)),
-		strings.TrimSpace(stringArg(args, planExpectedActionServerBindingFingerprintKey)),
-		firstJSONToolInvokePayload(invocation.Messages),
-	); len(observedTargets) > 0 {
-		if guardToolResult == nil {
-			guardToolResult = map[string]interface{}{}
+	if isAgentKnowledgeRetrievalCall(invocation.Trace.SkillID, invocation.Trace.ToolName) {
+		if payload := firstJSONToolInvokePayload(invocation.Messages); len(payload) > 0 {
+			guardToolResult = copyStringAnyMap(payload)
 		}
-		guardToolResult[projectedExternalObservedPreparationTargetsKey] = observedTargets
 	}
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),
@@ -831,6 +919,18 @@ func (r *Runner) handleCallSkillTool(
 		// Saving a temporary artifact must update continuation metadata without
 		// emitting a second public file card for the same user-visible file.
 		r.recordArtifact(artifact)
+	}
+	if invocation.ConnectorConfirmation != nil {
+		payload := connectorConfirmationRequiredPayload(prepared, invocation.ConnectorConfirmation)
+		payload["skill_id"] = invocation.Trace.SkillID
+		payload["tool_name"] = invocation.Trace.ToolName
+		r.emitEvent(prepared, EventConnectorConfirmation, payload)
+		// Connector confirmation uses the durable waiting-client-action host
+		// state, while its action type remains reserved for the one-shot opaque
+		// receipt endpoint. It never becomes a reusable governance grant.
+		return connectorConfirmationPendingStep(
+			invocation.Trace, invocation.ToolMessage, guardToolResult, payload,
+		)
 	}
 	if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
 		r.emitEvent(prepared, EventClientActionRequired, payload)

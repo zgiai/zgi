@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"strings"
 	"time"
 
@@ -11,34 +12,34 @@ import (
 )
 
 type videoTaskRecord struct {
-	ID               uuid.UUID      `gorm:"column:id;type:uuid;default:public.uuid_generate_v4();primaryKey"`
-	OrganizationID   uuid.UUID      `gorm:"column:organization_id;type:uuid;not null"`
-	AccountID        uuid.UUID      `gorm:"column:account_id;type:uuid;not null"`
-	WorkspaceID      *uuid.UUID     `gorm:"column:workspace_id;type:uuid"`
-	TaskID           string         `gorm:"column:task_id"`
-	ClientRequestID  string         `gorm:"column:client_request_id"`
-	UpstreamTaskID   string         `gorm:"column:upstream_task_id"`
-	Provider         string         `gorm:"column:provider"`
-	Model            string         `gorm:"column:model"`
-	ModelLabel       string         `gorm:"column:model_label"`
-	Prompt           string         `gorm:"column:prompt"`
-	Status           string         `gorm:"column:status"`
-	VideoURL         string         `gorm:"column:video_url"`
-	PosterURL        string         `gorm:"column:poster_url"`
-	ErrorMessage     string         `gorm:"column:error_message"`
-	DurationSeconds  int            `gorm:"column:duration_seconds"`
-	Resolution       string         `gorm:"column:resolution"`
-	Ratio            string         `gorm:"column:ratio"`
-	HasInputVideo    bool           `gorm:"column:has_input_video"`
-	GenerateAudio    bool           `gorm:"column:generate_audio"`
-	Voice            string         `gorm:"column:voice"`
-	EstimatedCredits int64          `gorm:"column:estimated_credits"`
-	ActualCredits    int64          `gorm:"column:actual_credits"`
-	RequestPayload   datatypes.JSON `gorm:"column:request_payload;type:jsonb"`
-	ResponsePayload  datatypes.JSON `gorm:"column:response_payload;type:jsonb"`
-	CreatedAt        time.Time      `gorm:"column:created_at"`
-	UpdatedAt        time.Time      `gorm:"column:updated_at"`
-	CompletedAt      *time.Time     `gorm:"column:completed_at"`
+	ID               uuid.UUID               `gorm:"column:id;type:uuid;default:public.uuid_generate_v4();primaryKey"`
+	OrganizationID   uuid.UUID               `gorm:"column:organization_id;type:uuid;not null"`
+	AccountID        uuid.UUID               `gorm:"column:account_id;type:uuid;not null"`
+	WorkspaceID      *uuid.UUID              `gorm:"column:workspace_id;type:uuid"`
+	TaskID           string                  `gorm:"column:task_id"`
+	ClientRequestID  string                  `gorm:"column:client_request_id"`
+	UpstreamTaskID   string                  `gorm:"column:upstream_task_id"`
+	Provider         string                  `gorm:"column:provider"`
+	Model            string                  `gorm:"column:model"`
+	ModelLabel       string                  `gorm:"column:model_label"`
+	Prompt           string                  `gorm:"column:prompt"`
+	Status           string                  `gorm:"column:status"`
+	VideoURL         string                  `gorm:"column:video_url"`
+	PosterURL        string                  `gorm:"column:poster_url"`
+	ErrorMessage     string                  `gorm:"column:error_message"`
+	DurationSeconds  int                     `gorm:"column:duration_seconds"`
+	Resolution       string                  `gorm:"column:resolution"`
+	Ratio            string                  `gorm:"column:ratio"`
+	HasInputVideo    bool                    `gorm:"column:has_input_video"`
+	GenerateAudio    bool                    `gorm:"column:generate_audio"`
+	Voice            string                  `gorm:"column:voice"`
+	EstimatedCredits millipoints.MilliPoints `gorm:"column:estimated_credits"`
+	ActualCredits    millipoints.MilliPoints `gorm:"column:actual_credits"`
+	RequestPayload   datatypes.JSON          `gorm:"column:request_payload;type:jsonb"`
+	ResponsePayload  datatypes.JSON          `gorm:"column:response_payload;type:jsonb"`
+	CreatedAt        time.Time               `gorm:"column:created_at"`
+	UpdatedAt        time.Time               `gorm:"column:updated_at"`
+	CompletedAt      *time.Time              `gorm:"column:completed_at"`
 }
 
 func (videoTaskRecord) TableName() string {

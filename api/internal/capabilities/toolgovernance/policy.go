@@ -86,7 +86,8 @@ func Decide(req Request, policy Policy) Decision {
 		return finalizeDecision(decision, tier, req)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyAlwaysAsk {
-		return finalizeDecision(base.needsApproval(tier, req, "tool manifest requires approval"), tier, req)
+		reason := firstNonEmptyString(manifest.ApprovalReason, "tool manifest requires approval")
+		return finalizeDecision(base.needsApproval(tier, req, reason), tier, req)
 	}
 	if manifest.DefaultApprovalPolicy == ApprovalPolicyNeverAsk && !policy.hardRequiresApproval(manifest) {
 		decision := base.withStatus(DecisionStatusAllowed, "allowed by manifest approval policy", false)
@@ -500,7 +501,9 @@ func matchingSessionGrant(req Request, manifest Manifest, assets []AssetRef) (Se
 			!grantScopeMatches(strings.TrimSpace(req.UserID), grant.UserID) ||
 			!grantScopeMatches(strings.TrimSpace(req.SkillID), grant.SkillID) ||
 			!grantScopeMatches(strings.TrimSpace(req.ProviderType), grant.ProviderType) ||
-			!grantScopeMatches(strings.TrimSpace(req.ProviderID), grant.ProviderID) {
+			!grantScopeMatches(strings.TrimSpace(req.ProviderID), grant.ProviderID) ||
+			!grantScopeMatches(strings.TrimSpace(req.ConnectionID), grant.ConnectionID) ||
+			!grantScopeMatches(strings.TrimSpace(req.BindingID), grant.BindingID) {
 			continue
 		}
 		if grant.ToolID != manifest.ToolID || grant.Effect != manifest.Effect || grant.AssetType != manifest.AssetType ||
@@ -556,11 +559,23 @@ func requiresScopedGrantExpiry(req Request, grant SessionGrant) bool {
 		strings.TrimSpace(req.SkillID) != "" ||
 		strings.TrimSpace(req.ProviderType) != "" ||
 		strings.TrimSpace(req.ProviderID) != "" ||
+		strings.TrimSpace(req.ConnectionID) != "" ||
+		strings.TrimSpace(req.BindingID) != "" ||
 		strings.TrimSpace(grant.OrganizationID) != "" ||
 		strings.TrimSpace(grant.UserID) != "" ||
 		strings.TrimSpace(grant.SkillID) != "" ||
 		strings.TrimSpace(grant.ProviderType) != "" ||
-		strings.TrimSpace(grant.ProviderID) != ""
+		strings.TrimSpace(grant.ProviderID) != "" ||
+		strings.TrimSpace(grant.ConnectionID) != "" ||
+		strings.TrimSpace(grant.BindingID) != ""
+}
+
+// MatchSessionGrant evaluates only the reusable session-grant portion of the
+// governance policy. Connector execution uses this narrow helper after it has
+// resolved its own trusted operation contract; it does not bypass the rest of
+// the Connector execution or audit pipeline.
+func MatchSessionGrant(req Request, manifest Manifest, assets []AssetRef) (SessionGrant, bool) {
+	return matchingSessionGrant(req, NormalizeManifest(manifest), normalizeAssets(assets))
 }
 
 func firstNonEmptyString(values ...string) string {

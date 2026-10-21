@@ -27,7 +27,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
 import type { ProviderItem } from '@/services/types/provider';
 
-const createSchema = (t: any) =>
+const createSchema = (t: ReturnType<typeof useT<'aiProviders'>>) =>
   z.object({
     provider: z
       .string()
@@ -45,7 +45,7 @@ interface CustomProviderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialData?: ProviderItem;
-  onSubmit: (data: any) => Promise<void>;
+  onSubmit: (data: z.infer<ReturnType<typeof createSchema>>) => Promise<void>;
   isSubmitting?: boolean;
 }
 

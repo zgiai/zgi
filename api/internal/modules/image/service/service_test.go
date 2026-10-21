@@ -10,11 +10,13 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/config"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntimerepository "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/imageasset"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	"github.com/zgiai/zgi/api/internal/modules/image/registry"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -194,6 +196,48 @@ func TestImageFileFromMetaIncludesLifecycleFields(t *testing.T) {
 	}
 }
 
+func TestImageFileFromMetaRefreshesPersistentURLPermanently(t *testing.T) {
+	restoreImageFileSignature(t)
+	file := imageFileFromMeta(map[string]interface{}{
+		"file_id":         "file-persistent",
+		"tool_file_id":    "file-persistent",
+		"url":             "https://example.com/stale.png?expires_at=1",
+		"download_url":    "https://example.com/stale.png?expires_at=1&download=1",
+		"filename":        "generated-image.png",
+		"extension":       ".png",
+		"mime_type":       "image/png",
+		"transfer_method": "tool_file",
+		"lifecycle":       "persistent",
+	})
+
+	if !strings.HasPrefix(file.URL, "http://files.example/console/api/files/tools/file-persistent.png?") {
+		t.Fatalf("url = %q, want refreshed tool file url", file.URL)
+	}
+	if !strings.Contains(file.URL, "expires_at=0") {
+		t.Fatalf("url = %q, want permanent expires_at=0", file.URL)
+	}
+	if file.DownloadURL != file.URL+"&download=1" {
+		t.Fatalf("download_url = %q, want preview url plus download=1", file.DownloadURL)
+	}
+}
+
+func restoreImageFileSignature(t *testing.T) {
+	t.Helper()
+	previous := tool_file.GlobalFileSignature
+	previousConfig := config.GlobalConfig
+	cfg := &config.Config{App: config.AppConfig{
+		SecretKey:          "test-secret",
+		FilesURL:           "http://files.example",
+		FilesAccessTimeout: 3600,
+	}}
+	config.GlobalConfig = cfg
+	tool_file.InitFileSignature(cfg)
+	t.Cleanup(func() {
+		tool_file.GlobalFileSignature = previous
+		config.GlobalConfig = previousConfig
+	})
+}
+
 type fakeImageLLMClient struct {
 	llmclient.LLMClient
 	createImageCalls    int
@@ -229,7 +273,9 @@ func (f *fakeImageLLMClient) AppCreateImage(_ context.Context, appCtx *llmclient
 type fakeImageChatService struct {
 	chatruntime.Service
 	conversation            *runtimemodel.Conversation
+	messages                []*runtimemodel.Message
 	getConversationErr      error
+	listMessagesErr         error
 	createConversationCalls int
 	atomicCreateCalls       int
 	pendingAtomicCalls      int
@@ -329,6 +375,13 @@ func (f *fakeImageChatService) GetConversationByCaller(context.Context, chatrunt
 		return nil, f.getConversationErr
 	}
 	return f.conversation, nil
+}
+
+func (f *fakeImageChatService) ListMessages(context.Context, chatruntime.Scope, uuid.UUID, int, int) ([]*runtimemodel.Message, int64, error) {
+	if f.listMessagesErr != nil {
+		return nil, 0, f.listMessagesErr
+	}
+	return f.messages, int64(len(f.messages)), nil
 }
 
 func (f *fakeImageChatService) CreateConversationWithPendingMessage(_ context.Context, scope chatruntime.Scope, caller chatruntime.Caller, req chatruntime.CreateConversationWithPendingMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
@@ -973,6 +1026,167 @@ func TestGeneratePassesReferenceImageURLToLLM(t *testing.T) {
 	}
 	if result.ImageGeneration.ReferenceImage.FileID != fileID {
 		t.Fatalf("reference file id = %q, want %q", result.ImageGeneration.ReferenceImage.FileID, fileID)
+	}
+}
+
+func TestGenerateAutomaticallyUsesLatestImageFromConversation(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	conversationID := uuid.New()
+	fileID := uuid.New().String()
+	workspaceIDText := workspaceID.String()
+	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{
+		conversation: &runtimemodel.Conversation{
+			ID:               conversationID,
+			OrganizationID:   organizationID,
+			AccountID:        accountID,
+			WorkspaceID:      &workspaceID,
+			ConversationType: runtimemodel.ConversationTypeImage,
+		},
+		messages: []*runtimemodel.Message{
+			{
+				ConversationID: conversationID,
+				Metadata: map[string]interface{}{
+					"image_generation": map[string]interface{}{
+						"files": []interface{}{
+							map[string]interface{}{
+								"file_id": fileID,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	files := &fakeImageReferenceFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID.String(),
+			TenantID:       organizationID.String(),
+			WorkspaceID:    &workspaceIDText,
+			Name:           "latest.png",
+			Extension:      "png",
+			MimeType:       "image/png",
+		},
+		url: "https://files.example.com/latest.png?sign=1",
+	}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "doubao", Name: "doubao-seedream-4-0-250828"}}},
+		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
+			"doubao-seedream-4-0-250828": {
+				{RouteID: uuid.New(), ChannelProvider: "doubao", Models: []string{"doubao-seedream-4-0-250828"}},
+			},
+		}},
+		llm,
+		chat,
+		&fakeImageAssetService{},
+		files,
+	)
+
+	_, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:         "把背景换成海边",
+		Provider:       "doubao",
+		Model:          "doubao-seedream-4-0-250828",
+		ConversationID: conversationID.String(),
+		Options:        GenerateOptions{Size: "1024x1024"},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if llm.lastImageReq == nil {
+		t.Fatal("image request is nil")
+	}
+	if llm.lastImageReq.ReferenceImageURL != files.url {
+		t.Fatalf("ReferenceImageURL = %q, want %q", llm.lastImageReq.ReferenceImageURL, files.url)
+	}
+}
+
+func TestGenerateDoesNotUseLatestImageWithoutEditIntent(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	workspaceID := uuid.New()
+	conversationID := uuid.New()
+	fileID := uuid.New().String()
+	workspaceIDText := workspaceID.String()
+	llm := &fakeImageLLMClient{}
+	chat := &fakeImageChatService{
+		conversation: &runtimemodel.Conversation{
+			ID:               conversationID,
+			OrganizationID:   organizationID,
+			AccountID:        accountID,
+			WorkspaceID:      &workspaceID,
+			ConversationType: runtimemodel.ConversationTypeImage,
+		},
+		messages: []*runtimemodel.Message{
+			{
+				ConversationID: conversationID,
+				Metadata: map[string]interface{}{
+					"image_generation": map[string]interface{}{
+						"files": []interface{}{
+							map[string]interface{}{
+								"file_id": fileID,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	files := &fakeImageReferenceFileService{
+		file: &dto.UploadFile{
+			ID:             fileID,
+			OrganizationID: organizationID.String(),
+			TenantID:       organizationID.String(),
+			WorkspaceID:    &workspaceIDText,
+			Name:           "latest.png",
+			Extension:      "png",
+			MimeType:       "image/png",
+		},
+		url: "https://files.example.com/latest.png?sign=1",
+	}
+	svc := NewService(
+		registry.NewRegistry(),
+		&fakeAvailableModels{items: []*llmmodelsvc.AvailableModel{{Provider: "doubao", Name: "doubao-seedream-4-0-250828"}}},
+		fakeRouteLister{routes: map[string][]*channelmodel.RouteQueryResult{
+			"doubao-seedream-4-0-250828": {
+				{RouteID: uuid.New(), ChannelProvider: "doubao", Models: []string{"doubao-seedream-4-0-250828"}},
+			},
+		}},
+		llm,
+		chat,
+		&fakeImageAssetService{},
+		files,
+	)
+
+	result, err := svc.Generate(t.Context(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+		WorkspaceID:    &workspaceID,
+	}, GenerateRequest{
+		Prompt:         "生成一辆越野车",
+		Provider:       "doubao",
+		Model:          "doubao-seedream-4-0-250828",
+		ConversationID: conversationID.String(),
+		Options:        GenerateOptions{Size: "1024x1024"},
+	})
+	if err != nil {
+		t.Fatalf("Generate returned error: %v", err)
+	}
+	if llm.lastImageReq == nil {
+		t.Fatal("image request is nil")
+	}
+	if llm.lastImageReq.ReferenceImageURL != "" {
+		t.Fatalf("ReferenceImageURL = %q, want empty", llm.lastImageReq.ReferenceImageURL)
+	}
+	if result.ImageGeneration.ReferenceImage != nil {
+		t.Fatalf("result reference image = %#v, want nil", result.ImageGeneration.ReferenceImage)
 	}
 }
 

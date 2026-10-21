@@ -21,6 +21,7 @@ import (
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
@@ -43,6 +44,7 @@ type WorkflowRouteDeps struct {
 	OrganizationService         interfaces.OrganizationService
 	LLMClient                   interface{}
 	ToolEngine                  interface{}
+	ConnectorCatalog            connectorexecution.DefinitionCatalog
 	GraphFlowService            *graphflow.Service
 	PromptResolver              promptservice.PromptService
 	AutomationDefinitionService automationdefinition.Service
@@ -52,10 +54,13 @@ type WorkflowRouteDeps struct {
 	EngineFactory               *graph_engine.EngineFactory
 	AutomationRunnerSetter      automationWorkflowRunnerSetter
 	ShortLinkService            shortlinkcap.Service
+	// ApprovalResumeHosts lets the conversation that waits on a workflow
+	// approval resume together with it.
+	ApprovalResumeHosts *approvalruntime.ResumeHosts
 }
 
 // RegisterWorkflowRoutes now uses modular services.
-func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
+func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) *workflowHandlerPkg.WorkflowService {
 	validateWorkflowRouteDeps(deps)
 
 	// Initialize workflow repository
@@ -86,6 +91,7 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 		deps.AutomationDefinitionService,
 		deps.EngineFactory,
 	)
+	workflowService.SetConnectorCatalog(deps.ConnectorCatalog)
 	deps.AutomationRunnerSetter.SetAutomationWorkflowRunner(workflowService)
 
 	// Initialize user migration service
@@ -180,8 +186,8 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	apps.GET("/:agent_id/workflow-runs/:run_id/nodes", runtimeLogHandler.GetWorkflowRunNodeLogs)
 
 	approvalService := approvalruntime.NewServiceWithShortLinkService(deps.DB, deps.ShortLinkService)
-	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler)
-	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler, deps.TaskManager)
+	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler, deps.ApprovalResumeHosts)
+	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler, deps.TaskManager, deps.ApprovalResumeHosts)
 
 	approvalHandler := approvalruntime.NewHandler(approvalService, deps.TaskManager)
 	approvalRoutes := router.Group("/approval")
@@ -251,6 +257,8 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) {
 	builtInWorkflowRuntimeSurfaces.PATCH("/:scenario/runtime-surfaces", builtInHandler.UpdateBuiltInWorkflowRuntimeSurfaces)
 
 	builtInWorkflows.GET("/:scenario", builtInHandler.GetBuiltInWorkflowByScenario)
+
+	return workflowService
 }
 
 func validateWorkflowRouteDeps(deps WorkflowRouteDeps) {
@@ -277,6 +285,9 @@ func validateWorkflowRouteDeps(deps WorkflowRouteDeps) {
 	}
 	if deps.ToolEngine == nil {
 		panic("workflow routes require tool engine")
+	}
+	if deps.ConnectorCatalog == nil {
+		panic("workflow routes require connector catalog")
 	}
 	if deps.GraphFlowService == nil {
 		panic("workflow routes require graph flow service")

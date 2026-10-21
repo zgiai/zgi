@@ -1,10 +1,13 @@
 ---
 name: agent-knowledge
-description: Retrieve from knowledge bases explicitly configured on the current Agent.
+description: Retrieve from knowledge bases explicitly bound to the current Agent or DigitalHuman.
 when_to_use: Use this skill when a published or agent-scoped assistant needs context from its configured knowledge bases.
 provider_type: builtin
 provider_id: knowledge
 runtime_type: tool
+supported_callers:
+  - agent
+  - digital_human
 tools:
   - retrieve_agent_knowledge
 max_calls_per_turn: 20
@@ -61,22 +64,124 @@ Knowledge access is authorized when the editor binds the knowledge bases to the 
 
 ## Workflow
 
-1. Call `retrieve_agent_knowledge` when the answer depends on the Agent's configured knowledge, product facts, policy, documentation, or other long-lived source material.
-2. Use a concise query derived from the user's intent. Do not enumerate all user-accessible knowledge bases.
-3. Do not ask for, guess, or pass dataset IDs. The backend reads configured knowledge bases from the Agent config.
-4. Inspect `status`, `source_summary`, `context_blocks`, and scores before answering:
-   - If `status` is `success` and the retrieved blocks answer the user, answer from those blocks.
-   - If results are missing, weak, or off-topic, rewrite the query once using clearer entities, synonyms, or constraints from the user question and retry.
-   - After two retrieval attempts, if the relevant answer is still unclear, ask the user for clarification or say that no configured relevant knowledge was found.
-5. When the user asks for original wording, definitions, synopsis text, policy clauses, exact wording, or "what does it say", quote or closely excerpt the retrieved source text first and cite the source. Summarize only when the user asks for a summary or the original text is too long.
-6. When retrieved context is used, cite source names from `source_summary` or `retriever_resources` when useful.
-7. Never expose internal IDs such as dataset ID, document ID, or segment ID to the user.
-8. Never invent a knowledge-base answer when no relevant configured context was found.
+### 1. Decide whether retrieval is necessary
+
+Retrieve only when the answer depends on information that may exist in the Agent's
+configured knowledge bases and is not already available in the conversation. Typical
+cases include internal policies, product facts, procedures, historical records,
+definitions, exact clauses, and source-grounded wording.
+
+Do not retrieve for general knowledge, casual conversation, or a request that only
+transforms content already supplied by the user. Do not retrieve again when evidence
+already collected in the current user turn is sufficient.
+
+### 2. Identify the evidence needed
+
+Before the first call, identify the key claim or relationship that requires evidence.
+For a simple question, use one query. For a complex or multi-part question, decompose
+the task into a short internal checklist of independent claims, entities, time ranges,
+or relationships. Order the sub-questions by dependency and importance, then retrieve
+one focused query per unresolved item. Do not split a simple question into artificial
+sub-questions. Do not enumerate knowledge bases, ask for dataset IDs, guess dataset
+IDs, or pass dataset IDs.
+
+For example, a request to explain Apple's relationship with Intel, including its
+history, processor supply, and current status, can become three focused evidence
+items: historical cooperation, processor-supply facts, and current relationship
+status. Retrieve those items separately and synthesize them only after checking the
+evidence for each item.
+
+### 3. Write a standalone query
+
+Preserve the user's intent, named entities, relationships, time range, scope, and
+conditions. Prefer the user's language and any source-specific terminology. You may
+add a useful synonym or paraphrase, but do not change the meaning or reduce a
+relationship question to unrelated keywords.
+
+Good: `business and processor-supply relationship between Apple and Intel`
+Bad: `Apple Intel`
+
+Each query should express one coherent information need and remain understandable
+without the surrounding conversation. Do not repeat a query already used in the
+current user turn. Distinguish decomposition from rewriting: decomposition creates a
+new query for a different evidence item, while rewriting changes wording for the same
+unresolved item.
+
+### 4. Choose the smallest sufficient parameters
+
+- `top_k`: omit it to use the default value of 5. When supplied, it must be an
+  integer from 1 to 10. Use a value above 5 only when the answer is likely to require
+  evidence from several chunks or sources. Never request more than 10.
+- `retrieval_mode`: omit it to use the default `hybrid` mode. Use
+  `vectorAndBM25` for textual facts, passages, definitions, or exact wording; use
+  `graph` for entity relationships, dependencies, or topology; use `hybrid` when the
+  question needs both textual evidence and relationship evidence, or when the best
+  route is uncertain.
+
+The modes have these fixed meanings:
+
+- `vectorAndBM25`: Vector and BM25 recall, followed by RRF and textual reranking.
+- `graph`: graph retrieval.
+- `hybrid`: `vectorAndBM25` plus `graph`.
+
+### 5. Evaluate the returned evidence
+
+Inspect `status`, `result_count`, `source_summary`, `context_blocks`, scores,
+`warnings`, and `control` when present. A high score alone does not make the evidence
+sufficient. Check whether the returned content covers the key claim, is relevant to
+the requested scope and time, and conflicts with another source.
+
+- `status = no_config`: stop; the Agent has no configured knowledge bases.
+- `status = no_results`: retry only if a materially different query or retrieval mode
+  can target a still-valid evidence gap.
+- `status = blocked`: obey `control`; for `duplicate_query`, `query_too_long`, or
+  `query_required`, make one corrected, materially different call only when
+  `control.continuation_allowed` is true. Otherwise answer from evidence already
+  collected.
+- `control.continuation_allowed = false`: stop immediately.
+- A rerank or retrieval degradation warning is not, by itself, a reason to repeat the
+  same query. Evaluate the fallback results that were returned.
+
+### 6. Choose the next action
+
+| Evidence state | Next action |
+|---|---|
+| The key question is covered | Stop retrieving and answer with citations |
+| A specific part is missing | Query only that missing part |
+| Results are off-topic | Clarify the entities, relationship, scope, or time constraint |
+| No results were found | Try one materially different wording or a suitable mode |
+| Sources conflict | Run one focused query for the disputed claim |
+| No new evidence was added | Stop and report the remaining uncertainty |
+
+Every additional call must have a distinct evidence goal. Reformulate at most once
+for the same evidence gap. The maximum is twenty retrieval tool calls in one Agent
+execution, including calls issued together in the same model step. A normal Agent
+execution corresponds to one user turn; this is not a conversation-wide quota.
+
+### 7. Stop and answer
+
+Stop retrieving when any of the following is true:
+
+- The key claims are supported by the collected evidence.
+- No distinct, useful next query remains.
+- A retry did not add relevant evidence.
+- Twenty retrieval calls have been used in the current Agent execution.
+- `control.continuation_allowed` is false or `control.stop_reason` indicates a hard
+  stop such as `retrieval_round_limit`, `no_new_evidence`, `rate_limited`,
+  `context_budget_exhausted`, or `no_config`.
+
+Answer from the evidence collected across the current user turn. Cite source names
+from `source_summary` or `retriever_resources`, distinguish confirmed information
+from unresolved or inferred points, and preserve exact wording when the user asks for
+it. Never expose dataset, document, or segment IDs. If no relevant evidence was found,
+say so instead of inventing an answer.
 
 ## Tool Usage
 
 `retrieve_agent_knowledge` accepts:
 
 - `query`: the user question or refined search query.
-- `top_k`: optional maximum retrieved chunks. Defaults to 5 and is capped at 20.
-- `retrieval_mode`: optional `hybrid`, `vector`, or `graph`. Omit it for the default hybrid mode; use `graph` only for relationship or entity questions.
+- `top_k`: optional maximum retrieved chunks. Defaults to 5 and must be between 1 and 10.
+- `retrieval_mode`: optional `hybrid`, `vectorAndBM25`, or `graph`. Omit it for the
+  default `hybrid`; use `vectorAndBM25` for the textual Vector + BM25 route, `graph`
+  for relationship/entity questions, and `hybrid` for `vectorAndBM25 + graph`.

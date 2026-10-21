@@ -37,6 +37,22 @@ func TestSummarizeArgumentsRedactsStructuredArtifactContent(t *testing.T) {
 	}
 }
 
+func TestSummarizeToolArgumentsAlwaysRedactsConnectorNativeInput(t *testing.T) {
+	const sentinel = "private-provider-input-sentinel"
+
+	summary := summarizeToolArguments(SkillToolDefinition{ConnectorNative: true}, map[string]interface{}{
+		"query":  sentinel,
+		"nested": map[string]interface{}{"token": sentinel},
+	})
+	encoded := toJSONString(summary)
+	if strings.Contains(encoded, sentinel) {
+		t.Fatalf("Connector-native argument summary leaked provider input: %s", encoded)
+	}
+	if summary["schema_bound_arguments_redacted"] != true || summary["argument_count"] != 2 {
+		t.Fatalf("Connector-native argument summary = %#v", summary)
+	}
+}
+
 func toJSONString(value interface{}) string {
 	data, _ := json.Marshal(value)
 	return string(data)

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -75,6 +76,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", effectiveReq.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, effectiveReq.Model, organizationID.String(), shadowOrganizationID.String())
@@ -110,13 +112,14 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			startTime,
 			requestID,
 			attemptID,
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.EstimatedInputTokens = promptTokens
+		billingCtx.EstimatedOutputTokens = completionTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.responses")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -220,13 +223,20 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 	if err != nil {
 		return nil, err
 	}
-	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, 0, PricingOperationEmbedding)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationEmbeddings)
+	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, req.Provider, req.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
 		return nil, reportedNoProviderAvailableError(ctx, req.Model, organizationID.String(), shadowOrganizationID.String())
+	}
+	// Passthrough models have no catalog capabilities and keep the legacy
+	// behavior; catalog and custom models must declare embeddings.
+	if selection := providerSelections[0]; selection.ModelSource != PricingModelSourcePassthrough && !selection.Model.Embeddings {
+		return nil, fmt.Errorf("%w: model %q does not support embeddings", adapter.ErrCapabilityUnsupported, req.Model)
 	}
 
 	// 5. Try each provider selection
@@ -257,14 +267,14 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			startTime,
 			requestID,
 			attemptID,
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		billingCtx.PricingOperation = PricingOperationEmbedding
-		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.EstimatedInputTokens = promptTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.embeddings")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -353,6 +363,8 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, 0, PricingOperationRerank)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationRerank)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, req.Model, organizationID.String(), shadowOrganizationID.String())
@@ -390,14 +402,14 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			startTime,
 			requestID,
 			attemptID,
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		billingCtx.PricingOperation = PricingOperationRerank
-		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.EstimatedInputTokens = promptTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.rerank")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 

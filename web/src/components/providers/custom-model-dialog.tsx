@@ -68,12 +68,28 @@ import { USE_CASE_BADGE_COLORS, USE_CASE_ORDER } from '@/config/model-colors';
 import { resolveModelConfigParameterCopy } from '@/utils/model-config-parameter-i18n';
 import { CUSTOM_MODEL_ID_PATTERN } from '@/utils/model-id';
 import {
+  type BillingDisplaySettings,
   billingDisplayInputToUSD,
   billingDisplayInputValueFromUSD,
   getBillingCurrencySymbol,
   getBillingDisplaySettings,
 } from '@/utils/billing-display';
 import { useOrganizationStore } from '@/store/organization-store';
+import {
+  buildCustomModelPricing,
+  getRealtimeAudioBillingMode,
+  readCustomModelMeteredPrice,
+  getImageBillingMode,
+  readCustomModelPricePerImage,
+  readCustomModelVideoRates,
+  readImageTokenPrice,
+  readRealtimeAudioPrice,
+} from '@/utils/build-custom-model-pricing';
+import { hasCacheBillingCapability } from '@/utils/model-price';
+import {
+  MISSING_PRICING_FIELD_LABELS,
+  missingModelPricing,
+} from '@/utils/model-pricing-requirements';
 
 const useCases: ModelUseCase[] = USE_CASE_ORDER;
 const EXCLUSIVE_USE_CASES: string[] = ['text-chat', 'embedding', 'rerank'];
@@ -223,6 +239,18 @@ function parseNumericConfigValue(value: string): number | undefined {
   return parsed;
 }
 
+/**
+ * Converts a canonical USD price from the stored pricing JSON into the
+ * organization's display-currency input value. Media prices are persisted in
+ * USD, so the editor must apply the current rate here to stay symmetric with
+ * billingDisplayInputToUSD on submit; otherwise a CNY organization would divide
+ * the already-USD amount a second time.
+ */
+function displayPriceInputValue(usdValue: string, billingDisplay: BillingDisplaySettings): string {
+  if (usdValue.trim() === '') return '';
+  return billingDisplayInputValueFromUSD(usdValue, true, billingDisplay);
+}
+
 function normalizeTier(value?: string): 'standard' | 'premium' | 'enterprise' {
   if (value === 'premium' || value === 'enterprise' || value === 'standard') {
     return value;
@@ -307,6 +335,25 @@ const createSchema = (t: (key: string, values?: Record<string, string | number>)
       cache_write_price: z.string().optional(),
       cache_write_5m_price: z.string().optional(),
       cache_write_1h_price: z.string().optional(),
+      price_per_image: z.string().optional(),
+      image_billing_mode: z.enum(['per_image', 'token']).default('per_image'),
+      image_token_text_price: z.string().optional(),
+      image_token_image_price: z.string().optional(),
+      image_token_output_price: z.string().optional(),
+      video_rates: z
+        .array(
+          z.object({
+            resolution: z.string().optional(),
+            price_per_second: z.string().optional(),
+          })
+        )
+        .default([{ resolution: '720p', price_per_second: '' }]),
+      speech_to_text_price: z.string().optional(),
+      text_to_speech_price: z.string().optional(),
+      music_price_per_track: z.string().optional(),
+      realtime_audio_billing_mode: z.enum(['text', 'audio']).default('text'),
+      realtime_audio_input_price: z.string().optional(),
+      realtime_audio_output_price: z.string().optional(),
 
       input_modalities: z.array(z.string()).min(1),
       output_modalities: z.array(z.string()).min(1),
@@ -393,7 +440,36 @@ const createSchema = (t: (key: string, values?: Record<string, string | number>)
         message: t('aiProviders.models.errors.exclusiveUseCase'),
         path: ['use_cases'],
       }
-    );
+    )
+    .superRefine((data, ctx) => {
+      // Required price gate: a selected capability must carry a usable price
+      // before the model can be saved. Mirrors backend MissingPricingForUseCases.
+      const missing = missingModelPricing({
+        useCases: data.use_cases ?? [],
+        realtimeAudioBillingMode: data.realtime_audio_billing_mode,
+        inputPrice: data.input_price,
+        outputPrice: data.output_price,
+        pricePerImage: data.price_per_image,
+        imageBillingMode: data.image_billing_mode,
+        imageTokenTextPrice: data.image_token_text_price,
+        imageTokenImagePrice: data.image_token_image_price,
+        imageTokenOutputPrice: data.image_token_output_price,
+        videoRates: data.video_rates,
+        speechToTextPrice: data.speech_to_text_price,
+        textToSpeechPrice: data.text_to_speech_price,
+        musicPricePerTrack: data.music_price_per_track,
+        realtimeAudioInputPrice: data.realtime_audio_input_price,
+        realtimeAudioOutputPrice: data.realtime_audio_output_price,
+      });
+      for (const item of missing) {
+        const field = MISSING_PRICING_FIELD_LABELS[item.field] ?? String(item.field);
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: t('aiProviders.models.validation.requiredPrice', { useCase: item.useCase, field }),
+        });
+      }
+    });
 
 interface CustomModelDialogProps {
   open: boolean;
@@ -424,6 +500,7 @@ export function CustomModelDialog({
       ? 'aiProviders.models.priceDialog.cnyPerMillion'
       : 'aiProviders.models.priceDialog.usdPerMillion'
   );
+  const pointsPerUsd = currentOrganization?.points_per_usd ?? 1000;
   const formSchema = createSchema((key, values) => t(key as never, values));
   type CustomModelFormInput = z.input<typeof formSchema>;
   type CustomModelFormValues = z.output<typeof formSchema>;
@@ -449,6 +526,18 @@ export function CustomModelDialog({
       cache_write_price: '',
       cache_write_5m_price: '',
       cache_write_1h_price: '',
+      price_per_image: '',
+      image_billing_mode: 'per_image',
+      image_token_text_price: '',
+      image_token_image_price: '',
+      image_token_output_price: '',
+      video_rates: [{ resolution: '720p', price_per_second: '' }],
+      speech_to_text_price: '',
+      text_to_speech_price: '',
+      music_price_per_track: '',
+      realtime_audio_billing_mode: 'text',
+      realtime_audio_input_price: '',
+      realtime_audio_output_price: '',
       input_modalities: ['text'],
       output_modalities: ['text'],
       knowledge_cutoff: '',
@@ -480,6 +569,14 @@ export function CustomModelDialog({
     name: 'config_parameters',
     keyName: 'fieldId',
   });
+  const {
+    fields: videoRateFields,
+    append: appendVideoRate,
+    remove: removeVideoRate,
+  } = useFieldArray({
+    control: form.control,
+    name: 'video_rates',
+  });
   const configParameterValues = form.watch('config_parameters');
   const currentSchemaProvider = initialData?.provider || providerId;
   const currentSchemaModel = initialData?.model;
@@ -497,6 +594,27 @@ export function CustomModelDialog({
 
   // Auto-adjust modalities based on use cases
   const useCasesValue = form.watch('use_cases');
+  const realtimeAudioBillingMode = form.watch('realtime_audio_billing_mode') ?? 'text';
+  const hasRealtimeAudio = Boolean(useCasesValue?.includes('realtime-audio'));
+  const realtimeAudioUsesTextTokens = hasRealtimeAudio && realtimeAudioBillingMode !== 'audio';
+  const hasTokenPricing =
+    Boolean(
+      useCasesValue?.some(useCase =>
+        ['text-chat', 'vision', 'reasoning', 'function-calling', 'agent'].includes(useCase)
+      )
+    ) || realtimeAudioUsesTextTokens;
+  const isInputOnlyPricing =
+    !hasTokenPricing &&
+    Boolean(useCasesValue?.some(useCase => ['embedding', 'rerank'].includes(useCase)));
+  const showInputPrice = hasTokenPricing || isInputOnlyPricing;
+  const showOutputPrice = hasTokenPricing;
+  const showRealtimeAudioFields = hasRealtimeAudio && realtimeAudioBillingMode === 'audio';
+  const imageBillingMode = form.watch('image_billing_mode') ?? 'per_image';
+  // Cache billing is opt-in: only a model that already advertises cache meters
+  // may expose cache prices, matching the model-price override dialog.
+  const showCachePricing = Boolean(
+    initialData && hasCacheBillingCapability(initialData.pricing) && hasTokenPricing
+  );
 
   useEffect(() => {
     if (!useCasesValue) return;
@@ -592,6 +710,48 @@ export function CustomModelDialog({
         cache_write_1h_price: billingDisplayInputValueFromUSD(
           initialData.cache_write_1h_price,
           initialData.cache_write_1h_price_configured,
+          billingDisplay
+        ),
+        price_per_image: displayPriceInputValue(
+          readCustomModelPricePerImage(initialData.pricing),
+          billingDisplay
+        ),
+        image_billing_mode: getImageBillingMode(initialData.pricing),
+        image_token_text_price: displayPriceInputValue(
+          readImageTokenPrice(initialData.pricing, 'text_input_price_per_million'),
+          billingDisplay
+        ),
+        image_token_image_price: displayPriceInputValue(
+          readImageTokenPrice(initialData.pricing, 'image_input_price_per_million'),
+          billingDisplay
+        ),
+        image_token_output_price: displayPriceInputValue(
+          readImageTokenPrice(initialData.pricing, 'output_price_per_million'),
+          billingDisplay
+        ),
+        video_rates: readCustomModelVideoRates(initialData.pricing).map(rate => ({
+          resolution: rate.resolution,
+          price_per_second: displayPriceInputValue(rate.pricePerSecond, billingDisplay),
+        })),
+        speech_to_text_price: displayPriceInputValue(
+          readCustomModelMeteredPrice(initialData.pricing, 'transcription'),
+          billingDisplay
+        ),
+        text_to_speech_price: displayPriceInputValue(
+          readCustomModelMeteredPrice(initialData.pricing, 'speech_generation'),
+          billingDisplay
+        ),
+        music_price_per_track: displayPriceInputValue(
+          readCustomModelMeteredPrice(initialData.pricing, 'music_generation'),
+          billingDisplay
+        ),
+        realtime_audio_billing_mode: getRealtimeAudioBillingMode(initialData.pricing),
+        realtime_audio_input_price: displayPriceInputValue(
+          readRealtimeAudioPrice(initialData.pricing, 'input_token'),
+          billingDisplay
+        ),
+        realtime_audio_output_price: displayPriceInputValue(
+          readRealtimeAudioPrice(initialData.pricing, 'output_token'),
           billingDisplay
         ),
         input_modalities: initialData.input_modalities || ['text'],
@@ -729,20 +889,62 @@ export function CustomModelDialog({
       max_stop_sequences: parameters?.max_stop_sequences || 4,
     };
 
+    const pricing = buildCustomModelPricing({
+      useCases: values.use_cases,
+      currency: billingDisplay.currency,
+      pricePerImage: billingDisplayInputToUSD(values.price_per_image ?? '', billingDisplay),
+      imageBillingMode: values.image_billing_mode,
+      imageTextInputPricePerMillion: billingDisplayInputToUSD(
+        values.image_token_text_price ?? '',
+        billingDisplay
+      ),
+      imageImageInputPricePerMillion: billingDisplayInputToUSD(
+        values.image_token_image_price ?? '',
+        billingDisplay
+      ),
+      imageOutputPricePerMillion: billingDisplayInputToUSD(
+        values.image_token_output_price ?? '',
+        billingDisplay
+      ),
+      videoRates: (values.video_rates ?? []).map(rate => ({
+        resolution: rate.resolution,
+        pricePerSecond: billingDisplayInputToUSD(rate.price_per_second ?? '', billingDisplay),
+      })),
+      speechToTextPricePerHour: billingDisplayInputToUSD(values.speech_to_text_price ?? '', billingDisplay),
+      textToSpeechPricePer10kChars: billingDisplayInputToUSD(values.text_to_speech_price ?? '', billingDisplay),
+      musicPricePerTrack: billingDisplayInputToUSD(values.music_price_per_track ?? '', billingDisplay),
+      realtimeAudioBillingMode: values.realtime_audio_billing_mode,
+      realtimeAudioInputPricePerMillion: billingDisplayInputToUSD(
+        values.realtime_audio_input_price ?? '',
+        billingDisplay
+      ),
+      realtimeAudioOutputPricePerMillion: billingDisplayInputToUSD(
+        values.realtime_audio_output_price ?? '',
+        billingDisplay
+      ),
+    });
+
     const data = {
       ...rest,
-      input_price: billingDisplayInputToUSD(values.input_price ?? '', billingDisplay),
-      output_price: billingDisplayInputToUSD(values.output_price ?? '', billingDisplay),
-      cache_read_price: billingDisplayInputToUSD(values.cache_read_price ?? '', billingDisplay),
-      cache_write_price: billingDisplayInputToUSD(values.cache_write_price ?? '', billingDisplay),
-      cache_write_5m_price: billingDisplayInputToUSD(
-        values.cache_write_5m_price ?? '',
-        billingDisplay
-      ),
-      cache_write_1h_price: billingDisplayInputToUSD(
-        values.cache_write_1h_price ?? '',
-        billingDisplay
-      ),
+      input_price: showInputPrice
+        ? billingDisplayInputToUSD(values.input_price ?? '', billingDisplay)
+        : '',
+      output_price: showOutputPrice
+        ? billingDisplayInputToUSD(values.output_price ?? '', billingDisplay)
+        : '',
+      cache_read_price: showCachePricing
+        ? billingDisplayInputToUSD(values.cache_read_price ?? '', billingDisplay)
+        : '',
+      cache_write_price: showCachePricing
+        ? billingDisplayInputToUSD(values.cache_write_price ?? '', billingDisplay)
+        : '',
+      cache_write_5m_price: showCachePricing
+        ? billingDisplayInputToUSD(values.cache_write_5m_price ?? '', billingDisplay)
+        : '',
+      cache_write_1h_price: showCachePricing
+        ? billingDisplayInputToUSD(values.cache_write_1h_price ?? '', billingDisplay)
+        : '',
+      pricing,
       use_cases: values.use_cases as ModelUseCase[],
       parameters: mappedParameters,
       config_parameters: buildConfigParameters(config_parameters),
@@ -1077,7 +1279,11 @@ export function CustomModelDialog({
                       <CreditCard className="h-4 w-4 text-primary" />
                       {t('aiProviders.models.sections.pricing')}
                     </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {t('aiProviders.models.fields.pointsPerUsdHint', { points: pointsPerUsd })}
+                    </p>
                     <div className="grid grid-cols-2 gap-4">
+                      {showInputPrice && (
                       <FormField
                         control={form.control}
                         name="input_price"
@@ -1108,6 +1314,8 @@ export function CustomModelDialog({
                           </FormItem>
                         )}
                       />
+                      )}
+                      {showOutputPrice && (
                       <FormField
                         control={form.control}
                         name="output_price"
@@ -1138,6 +1346,9 @@ export function CustomModelDialog({
                           </FormItem>
                         )}
                       />
+                      )}
+                      {showCachePricing && (
+                        <>
                       <FormField
                         control={form.control}
                         name="cache_read_price"
@@ -1262,7 +1473,318 @@ export function CustomModelDialog({
                           </FormItem>
                         )}
                       />
+                        </>
+                      )}
                     </div>
+
+                    {hasRealtimeAudio && (
+                      <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                        <FormField
+                          control={form.control}
+                          name="realtime_audio_billing_mode"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {t('aiProviders.models.fields.realtimeAudioBillingMode')}
+                              </FormLabel>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={field.value === 'text' ? 'default' : 'outline'}
+                                  onClick={() => field.onChange('text')}
+                                >
+                                  {t('aiProviders.models.fields.realtimeAudioBillingText')}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={field.value === 'audio' ? 'default' : 'outline'}
+                                  onClick={() => field.onChange('audio')}
+                                >
+                                  {t('aiProviders.models.fields.realtimeAudioBillingAudio')}
+                                </Button>
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        {showRealtimeAudioFields && (
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <FormField
+                              control={form.control}
+                              name="realtime_audio_input_price"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('aiProviders.models.fields.realtimeAudioInputPrice')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <div className="relative">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                        {currencySymbol}
+                                      </span>
+                                      <Input className="pl-6 pr-24" type="number" min="0" step="any" {...field} />
+                                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                        {perMillionUnit}
+                                      </span>
+                                    </div>
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="realtime_audio_output_price"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>
+                                    {t('aiProviders.models.fields.realtimeAudioOutputPrice')}
+                                  </FormLabel>
+                                  <FormControl>
+                                    <div className="relative">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                        {currencySymbol}
+                                      </span>
+                                      <Input className="pl-6 pr-24" type="number" min="0" step="any" {...field} />
+                                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                        {perMillionUnit}
+                                      </span>
+                                    </div>
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {useCasesValue?.includes('image-gen') && (
+                      <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                        <FormField
+                          control={form.control}
+                          name="image_billing_mode"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('aiProviders.models.fields.imageBillingMode')}</FormLabel>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={field.value === 'per_image' ? 'default' : 'outline'}
+                                  onClick={() => field.onChange('per_image')}
+                                >
+                                  {t('aiProviders.models.fields.imageBillingPerImage')}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={field.value === 'token' ? 'default' : 'outline'}
+                                  onClick={() => field.onChange('token')}
+                                >
+                                  {t('aiProviders.models.fields.imageBillingToken')}
+                                </Button>
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        {imageBillingMode === 'token' ? (
+                          <div className="space-y-3">
+                            {(
+                              [
+                                { name: 'image_token_text_price', label: t('aiProviders.models.fields.imageTokenTextPrice') },
+                                { name: 'image_token_image_price', label: t('aiProviders.models.fields.imageTokenImagePrice') },
+                                { name: 'image_token_output_price', label: t('aiProviders.models.fields.imageTokenOutputPrice') },
+                              ] as const
+                            ).map(item => (
+                              <FormField
+                                key={item.name}
+                                control={form.control}
+                                name={item.name}
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>{item.label}</FormLabel>
+                                    <FormControl>
+                                      <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                          {currencySymbol}
+                                        </span>
+                                        <Input
+                                          className="pl-6 pr-24"
+                                          type="number"
+                                          min="0"
+                                          step="any"
+                                          {...field}
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                          {perMillionUnit}
+                                        </span>
+                                      </div>
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <FormField
+                            control={form.control}
+                            name="price_per_image"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>{t('aiProviders.models.fields.pricePerImage')}</FormLabel>
+                                <FormControl>
+                                  <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                      {currencySymbol}
+                                    </span>
+                                    <Input className="pl-6" type="number" min="0" step="any" {...field} />
+                                  </div>
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
+                      </div>
+                    )}
+
+                    {useCasesValue?.includes('video-gen') && (
+                      <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <FormLabel>{t('aiProviders.models.fields.videoPricePerSecond')}</FormLabel>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => appendVideoRate({ resolution: '', price_per_second: '' })}
+                          >
+                            {t('aiProviders.models.actions.addResolution')}
+                          </Button>
+                        </div>
+                        {videoRateFields.map((rateField, index) => (
+                          <div
+                            key={rateField.id}
+                            className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end"
+                          >
+                            <FormField
+                              control={form.control}
+                              name={`video_rates.${index}.resolution` as const}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('aiProviders.models.fields.resolution')}</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="720p" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name={`video_rates.${index}.price_per_second` as const}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>{t('aiProviders.models.fields.perSecondPrice')}</FormLabel>
+                                  <FormControl>
+                                    <div className="relative">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                        {currencySymbol}
+                                      </span>
+                                      <Input className="pl-6" type="number" min="0" step="any" {...field} />
+                                    </div>
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={videoRateFields.length <= 1}
+                              onClick={() => removeVideoRate(index)}
+                            >
+                              {t('aiProviders.models.actions.remove')}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {useCasesValue?.includes('speech-to-text') && (
+                      <FormField
+                        control={form.control}
+                        name="speech_to_text_price"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {t('aiProviders.models.fields.speechToTextPricePerHour')}
+                            </FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input className="pl-6" type="number" min="0" step="any" {...field} />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
+                    {useCasesValue?.includes('text-to-speech') && (
+                      <FormField
+                        control={form.control}
+                        name="text_to_speech_price"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {t('aiProviders.models.fields.textToSpeechPricePer10kChars')}
+                            </FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input className="pl-6" type="number" min="0" step="any" {...field} />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
+                    {useCasesValue?.includes('music-gen') && (
+                      <FormField
+                        control={form.control}
+                        name="music_price_per_track"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {t('aiProviders.models.fields.musicPricePerTrack')}
+                            </FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                                  {currencySymbol}
+                                </span>
+                                <Input className="pl-6" type="number" min="0" step="any" {...field} />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
                   </div>
 
                   <div className="space-y-4 border-t pt-4">

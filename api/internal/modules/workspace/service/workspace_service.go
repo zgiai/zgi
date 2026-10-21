@@ -108,19 +108,37 @@ func (s *WorkspaceServiceImpl) UpdateWorkspace(ctx context.Context, workspaceID,
 				return nil, fmt.Errorf("workspace name '%s' already exists in the organization", name)
 			}
 		}
-
-		err = s.workspaceRepo.UpdateWorkspaceName(ctx, workspaceID, name)
-		if err != nil {
-			return nil, err
-		}
-		workspace.Name = name
 	}
 
-	if statusChanged {
-		err = s.workspaceRepo.UpdateWorkspaceStatus(ctx, workspaceID, *status)
-		if err != nil {
-			return nil, err
+	db := s.workspaceRepo.GetDB()
+	if db == nil {
+		return nil, errors.New("workspace repository database is unavailable")
+	}
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := s.workspaceRepo.WithTx(tx)
+		if nameChanged {
+			if err := txRepo.UpdateWorkspaceName(ctx, workspaceID, name); err != nil {
+				return err
+			}
 		}
+		if statusChanged {
+			if err := txRepo.UpdateWorkspaceStatus(ctx, workspaceID, *status); err != nil {
+				return err
+			}
+			if *status == model.WorkspaceStatusArchived {
+				if err := tx.WithContext(ctx).Table("runtime_workspaces").Where("workspace_id = ?", workspaceID).Updates(map[string]any{"status": "disabled", "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
+					return fmt.Errorf("disable Runtime Workspace before archive: %w", err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if nameChanged {
+		workspace.Name = name
+	}
+	if statusChanged {
 		workspace.Status = *status
 	}
 	if workspace.OrganizationID != nil && *workspace.OrganizationID != "" {

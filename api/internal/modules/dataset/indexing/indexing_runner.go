@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,7 +47,10 @@ const (
 	defaultContentParseShadowConcurrency = 2
 )
 
-var contentParseShadowSlots = make(chan struct{}, contentParseShadowConcurrencyLimit())
+var (
+	contentParseShadowSlots     chan struct{}
+	contentParseShadowSlotsOnce sync.Once
+)
 
 // IndexingRunner handles document indexing and embedding operations.
 type IndexingRunner struct {
@@ -957,8 +961,9 @@ func contentParseChunkShadowPartitionSize() int {
 }
 
 func tryAcquireContentParseShadowSlot() bool {
+	slots := contentParseShadowSlotChannel()
 	select {
-	case contentParseShadowSlots <- struct{}{}:
+	case slots <- struct{}{}:
 		return true
 	default:
 		return false
@@ -966,10 +971,25 @@ func tryAcquireContentParseShadowSlot() bool {
 }
 
 func releaseContentParseShadowSlot() {
+	slots := contentParseShadowSlotChannel()
 	select {
-	case <-contentParseShadowSlots:
+	case <-slots:
 	default:
 	}
+}
+
+// contentParseShadowSlotChannel is initialized on first use so importing the
+// indexing package does not force the full application configuration to load.
+// This keeps package tests runnable without unrelated credential environment.
+func contentParseShadowSlotChannel() chan struct{} {
+	contentParseShadowSlotsOnce.Do(func() {
+		limit := contentParseShadowConcurrencyLimit()
+		if limit < 1 {
+			limit = defaultContentParseShadowConcurrency
+		}
+		contentParseShadowSlots = make(chan struct{}, limit)
+	})
+	return contentParseShadowSlots
 }
 
 func (ir *IndexingRunner) persistContentParseRunShadow(
@@ -1681,7 +1701,7 @@ func (ir *IndexingRunner) ensureVectorClass(ctx context.Context, className strin
 		{
 			"name":            "text",
 			"dataType":        []string{"text"},
-			"tokenization":    "gse_ch",
+			"tokenization":    "word",
 			"indexSearchable": true,
 		},
 	}

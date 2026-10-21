@@ -144,6 +144,23 @@ function ImagePageContent() {
     user?.id,
   ]);
 
+  // Do not let a stale localStorage value remain visible while the runtime
+  // catalog is empty (or no longer contains that model). ModelSelector is a
+  // controlled component and will otherwise render the old value even though
+  // its dropdown correctly shows the empty state.
+  const selectedModelIsAvailable = React.useMemo(
+    () =>
+      Boolean(modelSelectorValue.model) &&
+      imageRuntimeModels.some(
+        item =>
+          item.provider === modelSelectorValue.provider && item.model === modelSelectorValue.model
+      ),
+    [imageRuntimeModels, modelSelectorValue.model, modelSelectorValue.provider]
+  );
+  const effectiveModelSelectorValue = selectedModelIsAvailable
+    ? modelSelectorValue
+    : { provider: '', model: '', params: {} };
+
   const { transport } = useImageRuntimeTransport({ models: imageRuntimeModels });
 
   // Use a ref to store the controller instance to prevent unnecessary re-instantiation
@@ -232,7 +249,7 @@ function ImagePageContent() {
       <SysImage
         controller={controller}
         isLoading={isLoading}
-        modelSelectorValue={modelSelectorValue}
+        modelSelectorValue={effectiveModelSelectorValue}
         onModelChange={handleModelChange}
         conversationSearchKey={IMAGE_RUNTIME_KEYS.search}
         imageRuntimeModels={imageRuntimeModels}

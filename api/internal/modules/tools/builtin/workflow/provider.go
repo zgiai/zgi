@@ -29,9 +29,12 @@ const (
 
 	agentRuntimeSourceParameter = "agent_runtime_source"
 	workflowApprovalUIAllowed   = "ui_approval_allowed"
-	publishedWorkflowError      = "workflow run failed"
-	workflowErrorVisibilityKey  = "error_visibility"
-	workflowErrorGeneric        = "generic"
+	// Mirrors chatruntime's runtime_caller_type for DigitalHuman runs.
+	workflowRuntimeCallerTypeParameter = "runtime_caller_type"
+	workflowDigitalHumanCallerType     = "digital_human"
+	publishedWorkflowError             = "workflow run failed"
+	workflowErrorVisibilityKey         = "error_visibility"
+	workflowErrorGeneric               = "generic"
 )
 
 type RunnerProvider func() automationaction.AutomationWorkflowRunner
@@ -99,8 +102,8 @@ func newWorkflowTool(runnerProvider RunnerProvider, kind string) tools.Tool {
 func (t *workflowTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
 	_ = appID
 	runtime := t.Runtime()
-	if runtime == nil || runtime.InvokeFrom != tools.ToolInvokeFromAgent {
-		return nil, fmt.Errorf("%s is only available to Agent skill runtimes", t.kind)
+	if runtime == nil || !tools.IsBoundRuntimeCaller(runtime.InvokeFrom) {
+		return nil, fmt.Errorf("%s is only available to bound Agent or DigitalHuman skill runtimes", t.kind)
 	}
 	scope, err := workflowScopeFromRuntime(runtime, userID)
 	if err != nil {
@@ -267,7 +270,11 @@ func (t *workflowTool) getWorkflowRunStatus(ctx context.Context, scope workflowS
 		}
 		targetBinding, allowed := workflowBindingForRun(result, bindings)
 		if !allowed {
-			lastErr = fmt.Errorf("workflow_run_id %s is not part of the current Agent workflow bindings", workflowRunID)
+			invokeFrom := tools.ToolInvokeFromAIChat
+			if current := t.Runtime(); current != nil {
+				invokeFrom = current.InvokeFrom
+			}
+			lastErr = fmt.Errorf("workflow_run_id %s is not part of the current %s workflow bindings", workflowRunID, tools.RuntimeCallerLabel(invokeFrom))
 			continue
 		}
 		targetScope := workflowScopeForBinding(t.Runtime(), scope, targetBinding)
@@ -675,6 +682,13 @@ func workflowApprovalUIAccessAllowed(runtime *tools.ToolRuntime, payload map[str
 	case "webapp", "external-api":
 		// Published applications must honor the workflow's configured channel.
 		return workflowApprovalWebAppEnabled(payload)
+	case "channel":
+		// A DigitalHuman channel user may approve in the conversation only when
+		// the workflow allows in-conversation approval. Otherwise the approval
+		// belongs to the designated email/SMS approvers and the channel user
+		// is told to wait.
+		return strings.EqualFold(runtimeStringParameter(runtime, workflowRuntimeCallerTypeParameter), workflowDigitalHumanCallerType) &&
+			workflowApprovalWebAppEnabled(payload)
 	default:
 		return false
 	}
@@ -903,7 +917,7 @@ func workflowScopeFromRuntime(runtime *tools.ToolRuntime, userID string) (workfl
 }
 
 func workflowScopeForBinding(runtime *tools.ToolRuntime, scope workflowScope, binding workflowBinding) workflowScope {
-	if runtime == nil || runtime.InvokeFrom != tools.ToolInvokeFromAgent {
+	if runtime == nil || !tools.IsBoundRuntimeCaller(runtime.InvokeFrom) {
 		return scope
 	}
 	if authorization, ok := tools.AgentBindingAuthorizationFor(

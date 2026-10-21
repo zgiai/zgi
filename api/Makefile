@@ -1,4 +1,4 @@
-.PHONY: all build run test test-skill-script-e2e clean swagger migrate seed seed-prod seed-list generate air docker-up docker-down docker-logs
+.PHONY: all build run test test-skill-script-e2e clean swagger migrate seed seed-prod seed-list generate air docker-up docker-down docker-logs ratingcore-test ratingcore-verify
 
 # Build executable
 build:
@@ -16,6 +16,14 @@ air:
 test:
 	go test -v ./...
 
+# ratingcore is mirrored byte-for-byte from zgi-console. The in-package test
+# enforces the frozen vectors and the sha256 contract lock.
+ratingcore-test:
+	go test ./internal/modules/llm/gateway/ratingcore/...
+
+ratingcore-verify:
+	./scripts/verify-ratingcore.sh
+
 test-skill-script-e2e:
 	./scripts/test-skill-script-e2e
 
@@ -25,10 +33,10 @@ swagger:
 
 # Database migration (Note: Please create PostgreSQL database first: CREATE DATABASE zgi_ginkit;)
 migrate:
-	go run cmd/migrate/main.go up
+	go run ./cmd/migrate up
 
 seed:
-	go run cmd/migrate/main.go seed
+	go run ./cmd/migrate seed
 # Clean build files
 clean:
 	rm -rf bin/

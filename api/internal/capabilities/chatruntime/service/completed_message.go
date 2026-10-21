@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -33,6 +34,31 @@ func (s *service) CreateCompletedMessage(ctx context.Context, scope Scope, req C
 		return nil, err
 	}
 	return message, nil
+}
+
+// CreateCompletedMessageIfAbsent appends one completed message while treating
+// SourceMessageID as an idempotency key. Scheduled task reconciliation can be
+// retried after a worker crash without duplicating the result in a chat.
+func (s *service) CreateCompletedMessageIfAbsent(ctx context.Context, scope Scope, req CreateCompletedMessageRequest) (*runtimemodel.Message, error) {
+	if req.SourceMessageID != nil && *req.SourceMessageID != uuid.Nil {
+		var existing runtimemodel.Message
+		if err := s.repos.DB.WithContext(ctx).Where("source_message_id = ? AND deleted_at IS NULL", *req.SourceMessageID).Take(&existing).Error; err == nil {
+			return &existing, nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+	message, err := s.CreateCompletedMessage(ctx, scope, req)
+	if err == nil || req.SourceMessageID == nil || *req.SourceMessageID == uuid.Nil {
+		return message, err
+	}
+	// A concurrent retry may win the unique source_message_id insert. Reload
+	// the winner and return it as a successful idempotent delivery.
+	var existing runtimemodel.Message
+	if lookupErr := s.repos.DB.WithContext(ctx).Where("source_message_id = ? AND deleted_at IS NULL", *req.SourceMessageID).Take(&existing).Error; lookupErr == nil {
+		return &existing, nil
+	}
+	return nil, err
 }
 
 func (s *service) CreatePendingMessage(ctx context.Context, scope Scope, req CreatePendingMessageRequest) (*runtimemodel.Message, error) {
@@ -88,7 +114,7 @@ func (s *service) CreateConversationWithCompletedMessage(ctx context.Context, sc
 		Source:           source,
 		SourceWebAppID:   sourceWebAppID,
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		conversation.Metadata = conversationMetadataWithTitleStatus(conversation.Metadata, conversationTitleStatusPending)
 	}
 	messageReq := req.Message
@@ -107,7 +133,7 @@ func (s *service) CreateConversationWithCompletedMessage(ctx context.Context, sc
 	}); err != nil {
 		return nil, nil, err
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
 			Messages:      conversationTitleMessagesFromQuery(message.Query),
 			FallbackTitle: conversation.Title,
@@ -147,7 +173,7 @@ func (s *service) CreateConversationWithPendingMessage(ctx context.Context, scop
 		Source:           source,
 		SourceWebAppID:   sourceWebAppID,
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		conversation.Metadata = conversationMetadataWithTitleStatus(conversation.Metadata, conversationTitleStatusPending)
 	}
 	messageReq := req.Message
@@ -166,7 +192,7 @@ func (s *service) CreateConversationWithPendingMessage(ctx context.Context, scop
 	}); err != nil {
 		return nil, nil, err
 	}
-	if s.titleGen != nil {
+	if s.titleGen != nil && conversationTitleGenerationEnabled(caller) {
 		s.enqueueConversationTitleGeneration(ctx, scope, caller, conversation, conversationTitleGenerationInput{
 			Messages:      conversationTitleMessagesFromQuery(message.Query),
 			FallbackTitle: conversation.Title,
@@ -317,6 +343,7 @@ func completedMessageForConversation(conversation *runtimemodel.Conversation, re
 		BillingReasonSource: optionalStringPtr(runtimemodel.MessageBillingReasonSourceAIChat),
 		ModelParameters:     req.ModelParameters,
 		Metadata:            req.Metadata,
+		SourceMessageID:     req.SourceMessageID,
 	}
 	if message.ModelParameters == nil {
 		message.ModelParameters = map[string]interface{}{}

@@ -40,8 +40,13 @@ const (
 	SkillAgentDatabase          = "agent-database"
 	SkillAgentWorkflow          = "agent-workflow"
 	SkillAgentMemory            = "agent-memory"
+	SkillDigitalHumanMemory     = "digital-human-memory"
+	SkillDigitalHumanTasks      = "digital-human-tasks"
 	SkillUserMemory             = "user-memory"
-	SkillExternalApps           = "external-apps"
+	SkillConnectorRuntime       = "connector-runtime"
+	// SkillZGIMarketTools is the request-scoped Skill of the ZGI Market tools bound to the
+	// current agent or digital human. It is built per run and never stored.
+	SkillZGIMarketTools = "zgi-market-tools"
 
 	SkillSourceSystem = "system"
 	SkillSourceCustom = "custom"
@@ -55,9 +60,10 @@ const (
 
 	SkillScriptToolRun = "run_script"
 
-	SkillCallerAIChat   = "aichat"
-	SkillCallerAgent    = "agent"
-	SkillCallerWorkflow = "workflow"
+	SkillCallerAIChat       = "aichat"
+	SkillCallerAgent        = "agent"
+	SkillCallerDigitalHuman = "digital_human"
+	SkillCallerWorkflow     = "workflow"
 
 	SkillRequiredConfigAgentKnowledge = "agent_knowledge"
 	SkillRequiredConfigAgentDatabase  = "agent_database"
@@ -66,7 +72,7 @@ const (
 
 // retiredWebSearchSkillID is retained only to discard historical Agent and
 // cached client configuration. Web search is exposed exclusively through the
-// external-apps runtime and is no longer a Skill.
+// Connector runtime and is no longer a Skill.
 const retiredWebSearchSkillID = "web-search"
 
 func isRetiredSkillID(skillID string) bool {
@@ -86,16 +92,16 @@ const (
 	SkillGovernanceRiskHigh      = "high"
 	SkillGovernanceRiskMixed     = "mixed"
 	SkillDependencyStandalone    = "standalone"
-	SkillDependencyIntegration   = "external_integration"
+	SkillDependencyConnector     = "connector"
 )
 
-// SkillIntegrationRequirement declares an external integration capability a
+// SkillConnectorRequirement declares an external integration capability a
 // Skill depends on. It is discovery metadata only: connection authorization,
 // action policy, and credential checks remain server-side execution concerns.
-type SkillIntegrationRequirement struct {
-	IntegrationID string   `json:"integration_id" yaml:"integration_id"`
-	ActionIDs     []string `json:"action_ids,omitempty" yaml:"required_actions,omitempty"`
-	Required      bool     `json:"required" yaml:"required"`
+type SkillConnectorRequirement struct {
+	ConnectorID  string   `json:"connector_id" yaml:"connector_id"`
+	OperationIDs []string `json:"operation_ids,omitempty" yaml:"required_operations,omitempty"`
+	Required     bool     `json:"required" yaml:"required"`
 }
 
 type SkillExposureProfile struct {
@@ -109,7 +115,7 @@ type SkillExposureProfile struct {
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillUserMemory, SkillExternalApps:
+	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillDigitalHumanMemory, SkillUserMemory, SkillConnectorRuntime:
 		return true
 	default:
 		return false
@@ -190,7 +196,16 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			PageContextRequired: false,
 			GovernanceRisk:      SkillGovernanceRiskLow,
 		}
-	case SkillExternalApps:
+	case SkillDigitalHumanMemory:
+		return SkillExposureProfile{
+			Category:            SkillExposureHiddenRuntime,
+			UserSelectable:      false,
+			RuntimeManaged:      true,
+			SystemAsset:         false,
+			PageContextRequired: false,
+			GovernanceRisk:      SkillGovernanceRiskLow,
+		}
+	case SkillConnectorRuntime:
 		return SkillExposureProfile{
 			Category:            SkillExposureHiddenRuntime,
 			UserSelectable:      false,
@@ -272,24 +287,35 @@ type SkillToolDefinition struct {
 	InputSchema        map[string]interface{}   `json:"-" yaml:"-"`
 	OutputSchema       map[string]interface{}   `json:"-" yaml:"-"`
 	RuntimeDescription string                   `json:"-" yaml:"-"`
+	// ConnectorNative marks a request-scoped operation projected from an
+	// authoritative Connector Target Binding. It is internal runtime state,
+	// never member-authored Skill metadata.
+	ConnectorNative      bool   `json:"-" yaml:"-"`
+	ConnectorOperationID string `json:"-" yaml:"-"`
+	// ConnectorBindingInstanceID is the exact persisted Target Binding
+	// instance selected by the server-side projection. It is required to build
+	// a DigitalHuman target and is never member-authored.
+	ConnectorBindingInstanceID string `json:"-" yaml:"-"`
+	ConnectorOwnerAccountID    string `json:"-" yaml:"-"`
+	ConnectorBindingID         string `json:"-" yaml:"-"`
 }
 
 type SkillFrontmatter struct {
-	ScriptInputSchema       map[string]interface{}             `yaml:"script_input_schema"`
-	Name                    string                             `yaml:"name"`
-	Description             string                             `yaml:"description"`
-	WhenToUse               string                             `yaml:"when_to_use"`
-	ProviderType            tools.ToolProviderType             `yaml:"provider_type"`
-	ProviderID              string                             `yaml:"provider_id"`
-	Tools                   []string                           `yaml:"tools"`
-	ToolGovernance          map[string]toolgovernance.Manifest `yaml:"tool_governance"`
-	RuntimeType             string                             `yaml:"runtime_type"`
-	MaxCallsPerTurn         int                                `yaml:"max_calls_per_turn"`
-	TimeoutSeconds          int                                `yaml:"timeout_seconds"`
-	Display                 SkillDisplayMetadata               `yaml:"display"`
-	SupportedCallers        []string                           `yaml:"supported_callers"`
-	RequiredConfig          []string                           `yaml:"required_config"`
-	IntegrationRequirements []SkillIntegrationRequirement      `yaml:"integration_requirements"`
+	ScriptInputSchema     map[string]interface{}             `yaml:"script_input_schema"`
+	Name                  string                             `yaml:"name"`
+	Description           string                             `yaml:"description"`
+	WhenToUse             string                             `yaml:"when_to_use"`
+	ProviderType          tools.ToolProviderType             `yaml:"provider_type"`
+	ProviderID            string                             `yaml:"provider_id"`
+	Tools                 []string                           `yaml:"tools"`
+	ToolGovernance        map[string]toolgovernance.Manifest `yaml:"tool_governance"`
+	RuntimeType           string                             `yaml:"runtime_type"`
+	MaxCallsPerTurn       int                                `yaml:"max_calls_per_turn"`
+	TimeoutSeconds        int                                `yaml:"timeout_seconds"`
+	Display               SkillDisplayMetadata               `yaml:"display"`
+	SupportedCallers      []string                           `yaml:"supported_callers"`
+	RequiredConfig        []string                           `yaml:"required_config"`
+	ConnectorRequirements []SkillConnectorRequirement        `yaml:"connector_requirements"`
 }
 
 type SkillDisplayMetadata struct {
@@ -303,24 +329,25 @@ type SkillDisplayMetadata struct {
 }
 
 type SkillMetadata struct {
-	ID                      string                        `json:"skill_id"`
-	Source                  string                        `json:"source"`
-	Name                    string                        `json:"name"`
-	Description             string                        `json:"description"`
-	WhenToUse               string                        `json:"when_to_use"`
-	Display                 SkillDisplayMetadata          `json:"display"`
-	Tools                   []string                      `json:"tools"`
-	RuntimeType             string                        `json:"runtime_type"`
-	References              []SkillReference              `json:"references,omitempty"`
-	HasScripts              bool                          `json:"has_scripts"`
-	ScriptsSupported        bool                          `json:"scripts_supported"`
-	MaxCallsPerTurn         int                           `json:"max_calls_per_turn"`
-	TimeoutSeconds          int                           `json:"timeout_seconds"`
-	RootPath                string                        `json:"-"`
-	SupportedCallers        []string                      `json:"supported_callers,omitempty"`
-	RequiredConfig          []string                      `json:"required_config,omitempty"`
-	DependencyType          string                        `json:"dependency_type"`
-	IntegrationRequirements []SkillIntegrationRequirement `json:"integration_requirements,omitempty"`
+	ID                    string                      `json:"skill_id"`
+	Source                string                      `json:"source"`
+	Name                  string                      `json:"name"`
+	Description           string                      `json:"description"`
+	WhenToUse             string                      `json:"when_to_use"`
+	Display               SkillDisplayMetadata        `json:"display"`
+	Tools                 []string                    `json:"tools"`
+	RuntimeType           string                      `json:"runtime_type"`
+	References            []SkillReference            `json:"references,omitempty"`
+	HasScripts            bool                        `json:"has_scripts"`
+	ScriptsSupported      bool                        `json:"scripts_supported"`
+	ScriptExecutionMode   string                      `json:"script_execution_mode,omitempty"`
+	MaxCallsPerTurn       int                         `json:"max_calls_per_turn"`
+	TimeoutSeconds        int                         `json:"timeout_seconds"`
+	RootPath              string                      `json:"-"`
+	SupportedCallers      []string                    `json:"supported_callers,omitempty"`
+	RequiredConfig        []string                    `json:"required_config,omitempty"`
+	DependencyType        string                      `json:"dependency_type"`
+	ConnectorRequirements []SkillConnectorRequirement `json:"connector_requirements,omitempty"`
 }
 
 type SkillPromptMetadata struct {
@@ -348,27 +375,28 @@ type SkillMetadataPromptStats struct {
 }
 
 type SkillDiscoveryMetadata struct {
-	ID                      string                        `json:"skill_id"`
-	Source                  string                        `json:"source"`
-	Name                    string                        `json:"name"`
-	Description             string                        `json:"description"`
-	WhenToUse               string                        `json:"when_to_use"`
-	Display                 SkillDisplayMetadata          `json:"display"`
-	RuntimeType             string                        `json:"runtime_type"`
-	Enabled                 bool                          `json:"enabled"`
-	HasTools                bool                          `json:"has_tools"`
-	HasReferences           bool                          `json:"has_references"`
-	HasScripts              bool                          `json:"has_scripts"`
-	ScriptsSupported        bool                          `json:"scripts_supported"`
-	MaxCallsPerTurn         int                           `json:"max_calls_per_turn"`
-	TimeoutSeconds          int                           `json:"timeout_seconds"`
-	Status                  string                        `json:"status"`
-	ValidationError         string                        `json:"validation_error,omitempty"`
-	SupportedCallers        []string                      `json:"supported_callers,omitempty"`
-	RequiredConfig          []string                      `json:"required_config,omitempty"`
-	DependencyType          string                        `json:"dependency_type"`
-	IntegrationRequirements []SkillIntegrationRequirement `json:"integration_requirements,omitempty"`
-	Exposure                SkillExposureProfile          `json:"exposure"`
+	ID                    string                      `json:"skill_id"`
+	Source                string                      `json:"source"`
+	Name                  string                      `json:"name"`
+	Description           string                      `json:"description"`
+	WhenToUse             string                      `json:"when_to_use"`
+	Display               SkillDisplayMetadata        `json:"display"`
+	RuntimeType           string                      `json:"runtime_type"`
+	Enabled               bool                        `json:"enabled"`
+	HasTools              bool                        `json:"has_tools"`
+	HasReferences         bool                        `json:"has_references"`
+	HasScripts            bool                        `json:"has_scripts"`
+	ScriptsSupported      bool                        `json:"scripts_supported"`
+	ScriptExecutionMode   string                      `json:"script_execution_mode,omitempty"`
+	MaxCallsPerTurn       int                         `json:"max_calls_per_turn"`
+	TimeoutSeconds        int                         `json:"timeout_seconds"`
+	Status                string                      `json:"status"`
+	ValidationError       string                      `json:"validation_error,omitempty"`
+	SupportedCallers      []string                    `json:"supported_callers,omitempty"`
+	RequiredConfig        []string                    `json:"required_config,omitempty"`
+	DependencyType        string                      `json:"dependency_type"`
+	ConnectorRequirements []SkillConnectorRequirement `json:"connector_requirements,omitempty"`
+	Exposure              SkillExposureProfile        `json:"exposure"`
 }
 
 type SkillDocument struct {
@@ -398,6 +426,10 @@ type SkillTrace struct {
 	Governance   *toolgovernance.Decision `json:"governance,omitempty"`
 	Error        string                   `json:"error,omitempty"`
 	ErrorCode    string                   `json:"error_code,omitempty"`
+	// ConnectorNative is request-scoped provenance used by persistence
+	// boundaries to enforce argument redaction even if a trace producer
+	// regresses. It is never serialized as member-visible trace data.
+	ConnectorNative bool `json:"-"`
 }
 
 type ToolGovernanceRequest struct {
@@ -526,35 +558,36 @@ func copyStringAnyMap(values map[string]interface{}) map[string]interface{} {
 func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 	metadata := skill.Metadata
 	return SkillDiscoveryMetadata{
-		ID:                      metadata.ID,
-		Source:                  metadata.Source,
-		Name:                    metadata.Name,
-		Description:             metadata.Description,
-		WhenToUse:               metadata.WhenToUse,
-		Display:                 metadata.Display,
-		RuntimeType:             metadata.RuntimeType,
-		HasTools:                len(skill.Tools) > 0,
-		HasReferences:           len(metadata.References) > 0,
-		HasScripts:              metadata.HasScripts,
-		ScriptsSupported:        metadata.ScriptsSupported,
-		MaxCallsPerTurn:         metadata.MaxCallsPerTurn,
-		TimeoutSeconds:          metadata.TimeoutSeconds,
-		Status:                  SkillStatusActive,
-		SupportedCallers:        copyStringSlice(metadata.SupportedCallers),
-		RequiredConfig:          copyStringSlice(metadata.RequiredConfig),
-		DependencyType:          metadata.DependencyType,
-		IntegrationRequirements: copySkillIntegrationRequirements(metadata.IntegrationRequirements),
-		Exposure:                SystemSkillExposureProfile(metadata.ID),
+		ID:                    metadata.ID,
+		Source:                metadata.Source,
+		Name:                  metadata.Name,
+		Description:           metadata.Description,
+		WhenToUse:             metadata.WhenToUse,
+		Display:               metadata.Display,
+		RuntimeType:           metadata.RuntimeType,
+		HasTools:              len(skill.Tools) > 0,
+		HasReferences:         len(metadata.References) > 0,
+		HasScripts:            metadata.HasScripts,
+		ScriptsSupported:      metadata.ScriptsSupported,
+		ScriptExecutionMode:   metadata.ScriptExecutionMode,
+		MaxCallsPerTurn:       metadata.MaxCallsPerTurn,
+		TimeoutSeconds:        metadata.TimeoutSeconds,
+		Status:                SkillStatusActive,
+		SupportedCallers:      copyStringSlice(metadata.SupportedCallers),
+		RequiredConfig:        copyStringSlice(metadata.RequiredConfig),
+		DependencyType:        metadata.DependencyType,
+		ConnectorRequirements: copySkillConnectorRequirements(metadata.ConnectorRequirements),
+		Exposure:              SystemSkillExposureProfile(metadata.ID),
 	}
 }
 
-func copySkillIntegrationRequirements(input []SkillIntegrationRequirement) []SkillIntegrationRequirement {
+func copySkillConnectorRequirements(input []SkillConnectorRequirement) []SkillConnectorRequirement {
 	if len(input) == 0 {
 		return nil
 	}
-	out := make([]SkillIntegrationRequirement, 0, len(input))
+	out := make([]SkillConnectorRequirement, 0, len(input))
 	for _, item := range input {
-		item.ActionIDs = copyStringSlice(item.ActionIDs)
+		item.OperationIDs = copyStringSlice(item.OperationIDs)
 		out = append(out, item)
 	}
 	return out

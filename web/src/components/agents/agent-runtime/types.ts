@@ -6,11 +6,12 @@ export type AgentRuntimeSaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'err
 export type AgentConfigSection =
   | 'experience'
   | 'model'
+  | 'execution'
   | 'skills'
   | 'knowledge'
   | 'databases'
   | 'workflows'
-  | 'integrations'
+  | 'connectors'
   | 'files'
   | 'memory';
 

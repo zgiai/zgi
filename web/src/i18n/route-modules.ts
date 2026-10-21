@@ -12,6 +12,17 @@ const WEBAPP_MODULES: ModuleName[] = [
   'agents',
   'nodes',
 ];
+const DIGITAL_HUMAN_WEBAPP_MODULES: ModuleName[] = [
+  'common',
+  'ui',
+  'navigation',
+  'datasets',
+  'webapp',
+  'files',
+  'agents',
+  'nodes',
+  'digitalHumans',
+];
 const APP_TOKEN_MODULES: ModuleName[] = [
   'common',
   'ui',
@@ -46,8 +57,11 @@ const CONSOLE_MODULES: ModuleName[] = [
   'channels',
   'apikeys',
   'settings',
-  'integrations',
+  'connectors',
   'music',
+  'digitalHumans',
+  // The ZGI Market tools section of the agent and digital human editors.
+  'market',
 ];
 
 const DASHBOARD_MODULES: ModuleName[] = [
@@ -63,7 +77,8 @@ const DASHBOARD_MODULES: ModuleName[] = [
   'apikeys',
   'market',
   'settings',
-  'integrations',
+  // The markdown viewer of a market listing's introduction reads its chat strings.
+  'webapp',
 ];
 
 const AUTH_SEGMENTS = new Set([
@@ -92,6 +107,7 @@ function normalizePathname(pathname: string): string {
       'activate',
       'console',
       'dashboard',
+      'digital-human',
       'forgot-password',
       'init',
       'invite',
@@ -121,6 +137,7 @@ export function getModulesForPathname(pathname: string): ModuleName[] {
   if (AUTH_SEGMENTS.has(firstSegment)) return AUTH_MODULES;
   if (firstSegment === 'console') return uniqueModules(CONSOLE_MODULES);
   if (firstSegment === 'dashboard') return uniqueModules(DASHBOARD_MODULES);
+  if (firstSegment === 'digital-human') return uniqueModules(DIGITAL_HUMAN_WEBAPP_MODULES);
   if (firstSegment === 'webapp') return uniqueModules(WEBAPP_MODULES);
   if (firstSegment === 'a') return uniqueModules(APP_TOKEN_MODULES);
   if (firstSegment === 'n') return uniqueModules(ANNOUNCEMENT_TOKEN_MODULES);

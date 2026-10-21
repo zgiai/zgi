@@ -10,7 +10,12 @@ import type {
   AIChatRecoveryMode,
   AIChatSetControllerState,
 } from '@/components/chat/controllers/aichat';
-import { getNextActiveSendingState } from '@/components/chat/controllers/aichat/selectors';
+import {
+  getNextActiveSendingState,
+  mergeRuntimeTimelineWithMessageTimeline,
+  sanitizeTimelineForMessage,
+  timelineFromAIChatMessage,
+} from '@/components/chat/controllers/aichat/selectors';
 import type { AIChatRuntimeTransport } from '@/components/chat/transports/aichat-transport';
 import {
   createStreamingAIChatMessage,
@@ -150,6 +155,16 @@ export function useChatRuntimeStreamRecovery({
           const replayPlaceholder = replayingFromStart
             ? clearStreamingRuntimeMessageMetadata(placeholder)
             : placeholder;
+          const historicalTimeline = existingMessage
+            ? timelineFromAIChatMessage(existingMessage)
+            : [];
+          const preservedTimeline = sanitizeTimelineForMessage(
+            replayPlaceholder,
+            mergeRuntimeTimelineWithMessageTimeline(
+              historicalTimeline,
+              previousStreaming?.timeline
+            )
+          );
           const nextMessage: AIChatMessage = {
             ...replayPlaceholder,
             answer: !afterId && !preservedAnswer ? '' : preservedAnswer,
@@ -179,7 +194,12 @@ export function useChatRuntimeStreamRecovery({
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
-                timeline: previousStreaming?.timeline ?? [],
+                // Replaying the stream must not discard the durable timeline
+                // just because the replay starts from the beginning. Keep
+                // historical events, then let incoming events merge into this
+                // clean snapshot; only generic task-governance placeholders
+                // are removed by the sanitizer above.
+                timeline: preservedTimeline,
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer
@@ -278,6 +298,10 @@ export function useChatRuntimeStreamRecovery({
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyAgentProgress(payload, eventId);
               },
+              onTokenUsageUpdated: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyTokenUsageUpdated(payload, eventId);
+              },
               onIntermediateAnswer: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyIntermediateAnswer(payload, eventId);
@@ -342,6 +366,10 @@ export function useChatRuntimeStreamRecovery({
                 if (abortController.signal.aborted) return;
                 eventAppliers.applyMemoryMutation(payload, eventId);
                 refreshAccountMemoryAfterMemoryMutation(payload);
+              },
+              onRuntimeInputApplied: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyRuntimeInputApplied(payload, eventId);
               },
               onWorkflowStarted: (payload, eventId) => {
                 if (abortController.signal.aborted) return;

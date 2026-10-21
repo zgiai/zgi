@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/zgi/api/config"
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -14,9 +16,7 @@ import (
 )
 
 const (
-	contextBudgetSafetyNumerator   = 9
-	contextBudgetSafetyDenominator = 10
-	maxContextCandidateMessages    = 100
+	maxContextCandidateMessages = 100
 
 	contextControlStrategyTokenBudget = "token_budget"
 
@@ -60,6 +60,9 @@ func (s *service) buildTokenBudgetMessages(
 	systemPrompt string,
 	parentMessages []*runtimemodel.Message,
 ) (*contextBudgetResult, error) {
+	if spec.ContextWindow <= 0 {
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
+	}
 	if s.tokenEstimator == nil {
 		s.tokenEstimator = newTokenEstimator()
 	}
@@ -103,22 +106,15 @@ func (s *service) buildTokenBudgetMessages(
 	}
 	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, extraContextTokens)
 
-	groups, err := s.historyMessageGroupsForCurrentRequest(ctx, parentMessages, parts)
+	historyMessages, err := s.conversationHistoryMessages(ctx, parentMessages, parts)
 	if err != nil {
 		return nil, err
 	}
-	historyBefore := countAdapterMessages(groups)
-	selected := groups
-	for _, group := range selected {
-		estimatedPromptTokens += s.tokenEstimator.EstimateMessages(group, parts.ModelName).Tokens
-	}
+	historyBefore := len(historyMessages)
+	estimatedPromptTokens += s.tokenEstimator.EstimateMessages(historyMessages, parts.ModelName).Tokens
 
 	systemMessage := adapter.Message{Role: "system", Content: systemPrompt}
 	currentUserMessage := adapter.Message{Role: "user", Content: currentContent}
-	historyMessages := make([]adapter.Message, 0, historyBefore)
-	for _, group := range selected {
-		historyMessages = append(historyMessages, group...)
-	}
 	messages := make([]adapter.Message, 0, 2+historyBefore)
 	messages = append(messages, systemMessage)
 	messages = append(messages, historyMessages...)
@@ -163,14 +159,16 @@ func (s *service) buildBudgetedCurrentUserContent(
 	}
 
 	attachmentTokensBefore := s.estimateAttachmentTokens(parts, fullSections)
-	fullContent := userContentWithAttachments(parts.Query, fullSections)
+	previewSections := parts.Attachments.previewContentSections()
+	previewTokens := s.estimateAttachmentTokens(parts, previewSections)
+	fullContent := userContentWithAttachments(parts.Query, previewSections)
 	fullUserContent := s.currentUserContent(parts, fullContent)
 	fullEstimate := s.estimateCurrentPromptTokens(systemPrompt, fullUserContent, parts.ModelName) + extraPromptTokens
 	if fullEstimate <= budget.PromptBudget {
 		return fullUserContent, map[string]interface{}{
 			"attachment_tokens_before": attachmentTokensBefore,
-			"attachment_tokens_after":  attachmentTokensBefore,
-			"attachments_truncated":    false,
+			"attachment_tokens_after":  previewTokens,
+			"attachments_truncated":    attachmentPreviewsTruncated(parts.Attachments.promptFiles()),
 		}, fullEstimate
 	}
 
@@ -187,49 +185,17 @@ func (s *service) buildBudgetedCurrentUserContent(
 }
 
 func (s *service) fitAttachmentSectionsToBudget(parts *chatRequestParts, systemPrompt string, promptBudget int) (string, bool) {
-	selected := make([]attachmentFile, 0, len(parts.Attachments.Files))
-	for _, file := range parts.Attachments.Files {
-		candidate := appendAttachmentFile(selected, file)
-		sections := formatAttachmentSections(candidate, func(item attachmentFile) string {
-			return item.Content
+	files := parts.Attachments.promptFiles()
+	render := func(limit int) string {
+		return formatAttachmentSections(files, func(file attachmentFile) string {
+			return truncateRunes(file.Content, limit)
 		})
-		content := userContentWithAttachments(parts.Query, sections)
-		if s.estimateCurrentPromptTokens(systemPrompt, s.currentUserContent(parts, content), parts.ModelName) <= promptBudget {
-			selected = candidate
-			continue
-		}
-
-		partial, ok := s.truncateAttachmentFileToBudget(parts, systemPrompt, promptBudget, selected, file)
-		if ok {
-			selected = appendAttachmentFile(selected, partial)
-		}
-		return formatAttachmentSections(selected, func(item attachmentFile) string {
-			return item.Content
-		}), true
 	}
-	return formatAttachmentSections(selected, func(item attachmentFile) string {
-		return item.Content
-	}), false
-}
-
-func (s *service) truncateAttachmentFileToBudget(
-	parts *chatRequestParts,
-	systemPrompt string,
-	promptBudget int,
-	selected []attachmentFile,
-	file attachmentFile,
-) (attachmentFile, bool) {
-	runes := []rune(file.Content)
-	low, high := 0, len(runes)
-	best := -1
+	// Reduce previews together, never discard the later files' references.
+	low, high, best := 0, attachmentPreviewRuneLimit, 0
 	for low <= high {
 		mid := (low + high) / 2
-		partial := file
-		partial.Content = string(runes[:mid])
-		candidate := appendAttachmentFile(selected, partial)
-		sections := formatAttachmentSections(candidate, func(item attachmentFile) string {
-			return item.Content
-		})
+		sections := render(mid)
 		content := userContentWithAttachments(parts.Query, sections)
 		if s.estimateCurrentPromptTokens(systemPrompt, s.currentUserContent(parts, content), parts.ModelName) <= promptBudget {
 			best = mid
@@ -238,12 +204,7 @@ func (s *service) truncateAttachmentFileToBudget(
 		}
 		high = mid - 1
 	}
-	if best < 0 {
-		return attachmentFile{}, false
-	}
-	partial := file
-	partial.Content = string(runes[:best])
-	return partial, true
+	return render(best), best < attachmentPreviewRuneLimit || attachmentPreviewsTruncated(files)
 }
 
 func (s *service) estimateCurrentPromptTokens(systemPrompt string, currentContent interface{}, modelName string) int {
@@ -267,24 +228,8 @@ func (s *service) buildFallbackCurrentUserContent(parts *chatRequestParts) (inte
 		return s.currentUserContent(parts, parts.Query), nil
 	}
 
-	selected := make([]attachmentFile, 0, len(parts.Attachments.Files))
-	remaining := fallbackAttachmentContextRuneLimit
-	truncated := false
-	for _, file := range parts.Attachments.Files {
-		contentRunes := []rune(file.Content)
-		if remaining <= 0 {
-			truncated = true
-			break
-		}
-		partial := file
-		if len(contentRunes) > remaining {
-			partial.Content = string(contentRunes[:remaining])
-			truncated = true
-		}
-		selected = append(selected, partial)
-		remaining -= len([]rune(partial.Content))
-	}
-
+	selected := parts.Attachments.promptFiles()
+	truncated := attachmentPreviewsTruncated(selected)
 	sections := formatAttachmentSections(selected, func(item attachmentFile) string {
 		return item.Content
 	})
@@ -301,11 +246,13 @@ func (s *service) buildFallbackCurrentUserContent(parts *chatRequestParts) (inte
 	}
 }
 
-func appendAttachmentFile(files []attachmentFile, file attachmentFile) []attachmentFile {
-	output := make([]attachmentFile, 0, len(files)+1)
-	output = append(output, files...)
-	output = append(output, file)
-	return output
+func attachmentPreviewsTruncated(files []attachmentFile) bool {
+	for _, file := range files {
+		if !file.isImage() && file.ContentChars > runeCount(file.Content) {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeAttachmentContextMetadata(target map[string]interface{}, source map[string]interface{}) {
@@ -319,14 +266,12 @@ func mergeAttachmentContextMetadata(target map[string]interface{}, source map[st
 
 func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, baseMessages []adapter.Message) (*budgetComputation, error) {
 	if spec.ContextWindow <= 0 {
-		return nil, fmt.Errorf("%w: model context_window is required", ErrInvalidInput)
+		spec.ContextWindow = contextmgr.DefaultModelContextWindowTokens
 	}
-	agentWindowK := 256
-	if config.GlobalConfig != nil && config.GlobalConfig.ChatRuntime.AgentContextWindowK > 0 {
-		agentWindowK = config.GlobalConfig.ChatRuntime.AgentContextWindowK
-	}
-	configuredAgentWindow := agentWindowK * 1000
-	agentContextWindow := min(configuredAgentWindow, spec.ContextWindow)
+	// The effective Agent window follows the selected model's physical context
+	// window. The old configurable cap was removed by the mainline context
+	// manager; keep the diagnostic fields populated for existing telemetry.
+	agentContextWindow := spec.ContextWindow
 	safeLimit := agentContextWindow
 	minOutput := minOutputReserve(agentContextWindow)
 	if safeLimit <= minOutput {
@@ -386,9 +331,9 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}
 
 	return &budgetComputation{
-		ConfiguredAgentWindowK: agentWindowK,
+		ConfiguredAgentWindowK: agentContextWindow / 1000,
 		AgentContextWindow:     agentContextWindow,
-		AgentWindowClamped:     agentContextWindow < configuredAgentWindow,
+		AgentWindowClamped:     false,
 		SafeLimit:              safeLimit,
 		PromptBudget:           promptBudget,
 		ReservedOutputTokens:   reservedOutput,
@@ -398,6 +343,58 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 		MaxTokensClamped:       maxTokensClamped,
 		Tokenizer:              baseEstimate.Tokenizer,
 	}, nil
+}
+
+// conversationHistoryMessages rebuilds the conversation region of the current
+// turn: the newest summary plus every transcript entry after its boundary, which
+// is the whole point of the durable log. A conversation without entries yet (a
+// legacy turn) falls back to the message-row history, and a turn that isolates
+// its history keeps none.
+func (s *service) conversationHistoryMessages(ctx context.Context, branch []*runtimemodel.Message, parts *chatRequestParts) ([]adapter.Message, error) {
+	if shouldIsolateHistoryForCurrentTurn(parts) {
+		return nil, nil
+	}
+	includeImages := false
+	if parts != nil {
+		includeImages = parts.ModelSupportsVision
+	}
+	tip := conversationBranchTip(branch)
+	if tip != nil && s != nil && s.repos != nil && s.repos.TranscriptEntry != nil {
+		if tip.TranscriptHeadEntryID != nil && *tip.TranscriptHeadEntryID != uuid.Nil {
+			byID := make(map[uuid.UUID]*runtimemodel.Message, len(branch))
+			for _, row := range branch {
+				if row != nil {
+					byID[row.ID] = row
+				}
+			}
+			region, ok, regionErr := s.projectTranscriptChain(ctx, *tip.TranscriptHeadEntryID, byID, includeImages)
+			if regionErr != nil {
+				return nil, regionErr
+			}
+			if ok {
+				return region.Messages, nil
+			}
+		}
+	}
+	groups, err := s.historyMessageGroups(ctx, branch, includeImages)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]adapter.Message, 0, countAdapterMessages(groups))
+	for _, group := range groups {
+		messages = append(messages, group...)
+	}
+	return messages, nil
+}
+
+// conversationBranchTip returns the newest message of a loaded branch.
+func conversationBranchTip(branch []*runtimemodel.Message) *runtimemodel.Message {
+	for index := len(branch) - 1; index >= 0; index-- {
+		if branch[index] != nil {
+			return branch[index]
+		}
+	}
+	return nil
 }
 
 func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemodel.Message, includeImages bool) ([][]adapter.Message, error) {
@@ -415,7 +412,7 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemod
 			group = append(group, *userMessage)
 		}
 		if isUsableAgentTranscriptHistoryStatus(item.Status) {
-			group = append(group, agentTranscriptFromMetadata(item.Metadata, item.Answer)...)
+			group = append(group, s.historicalAgentTranscript(ctx, item)...)
 		}
 		if isUsableAssistantHistoryStatus(item.Status) && item.Answer != "" {
 			group = append(group, adapter.Message{Role: "assistant", Content: item.Answer})
@@ -431,6 +428,7 @@ func (s *service) historyMessageGroupsForCurrentRequest(ctx context.Context, bra
 	if shouldIsolateHistoryForCurrentTurn(parts) {
 		return nil, nil
 	}
+	branch = supplementalHistoryBranch(branch, parts)
 	includeImages := false
 	if parts != nil {
 		includeImages = parts.ModelSupportsVision
@@ -438,7 +436,38 @@ func (s *service) historyMessageGroupsForCurrentRequest(ctx context.Context, bra
 	return s.historyMessageGroups(ctx, branch, includeImages)
 }
 
+func supplementalHistoryBranch(branch []*runtimemodel.Message, parts *chatRequestParts) []*runtimemodel.Message {
+	if parts == nil || parts.HistoryPolicy == nil || parts.HistoryPolicy.Mode != runtimedto.ConversationHistoryModeSupplemental {
+		return branch
+	}
+	excluded := make(map[string]struct{}, len(parts.HistoryPolicy.ExcludedTexts))
+	for _, value := range parts.HistoryPolicy.ExcludedTexts {
+		if value = normalizedHistoryContent(value); value != "" {
+			excluded[value] = struct{}{}
+		}
+	}
+	filtered := make([]*runtimemodel.Message, 0, len(branch))
+	for _, message := range branch {
+		if message == nil {
+			continue
+		}
+		_, queryExcluded := excluded[normalizedHistoryContent(message.Query)]
+		_, answerExcluded := excluded[normalizedHistoryContent(message.Answer)]
+		if queryExcluded || answerExcluded {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	if limit := parts.HistoryPolicy.MaxTurns; limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return filtered
+}
+
 func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
+	if parts != nil && parts.HistoryPolicy != nil && parts.HistoryPolicy.Mode == runtimedto.ConversationHistoryModeIsolated {
+		return true
+	}
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}

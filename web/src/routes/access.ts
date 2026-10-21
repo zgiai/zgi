@@ -8,8 +8,9 @@ export interface ConsoleRouteAccess {
 export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
   '/console',
   '/console/skills',
-  '/console/integrations',
   '/console/model',
+  '/console/market',
+  '/console/connectors',
   '/console/work',
   '/console/work/chat',
   '/console/work/image',
@@ -19,7 +20,8 @@ export const ORGANIZATION_SCOPED_CONSOLE_ROUTES = [
 ] as const;
 
 export const ORGANIZATION_SCOPED_CONSOLE_ROUTE_PREFIXES = [
-  '/console/integrations/',
+  '/console/connectors/',
+  '/console/market/',
   '/console/work/app/',
 ] as const;
 

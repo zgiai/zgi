@@ -1,6 +1,7 @@
 'use client';
 
-import { useT, DbSuffix } from '@/i18n';
+import type { DbSuffix } from '@/i18n';
+import { useT } from '@/i18n';
 import { StepsProgressBar, type StepInfo } from '@/components/common/steps-progress-bar';
 
 export interface TableIngestProgressBarProps {

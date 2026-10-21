@@ -3,7 +3,6 @@ module github.com/zgiai/zgi/api
 go 1.26.2
 
 require (
-	baliance.com/gooxml v1.0.1
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/PuerkitoBio/goquery v1.10.3
 	github.com/alicebob/miniredis/v2 v2.35.0
@@ -13,23 +12,26 @@ require (
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/disintegration/imaging v1.6.2
 	github.com/emersion/go-imap v1.2.1
+	github.com/emersion/go-imap-id v0.0.0-20190926060100-f94a56b9ecde
 	github.com/emersion/go-message v0.18.2
 	github.com/extrame/xls v0.0.1
 	github.com/flosch/pongo2/v6 v6.0.0
-	github.com/fumiama/go-docx v0.0.0-20250506085032-0c30fd09304b
 	github.com/getsentry/sentry-go v0.40.0
 	github.com/getsentry/sentry-go/gin v0.40.0
 	github.com/gin-contrib/cors v1.7.5
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-gormigrate/gormigrate/v2 v2.1.4
 	github.com/go-playground/validator/v10 v10.26.0
-	github.com/golang-jwt/jwt/v5 v5.2.2
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hibiken/asynq v0.25.1
+	github.com/larksuite/oapi-sdk-go/v3 v3.11.0
 	github.com/lib/pq v1.10.9
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/nyaruka/phonenumbers v1.2.2
+	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.0
 	github.com/openai/openai-go/v3 v3.35.0
 	github.com/pdfcpu/pdfcpu v0.12.1
 	github.com/qiniu/go-sdk/v7 v7.22.0
@@ -47,17 +49,23 @@ require (
 	github.com/swaggo/gin-swagger v1.6.0
 	github.com/tiktoken-go/tokenizer v0.7.0
 	github.com/xuri/excelize/v2 v2.9.1
+	github.com/yuin/goldmark v1.8.5
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.54.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.54.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.54.0
 	go.opentelemetry.io/otel v1.39.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.39.0
+	go.opentelemetry.io/otel/metric v1.39.0
 	go.opentelemetry.io/otel/sdk v1.39.0
 	go.opentelemetry.io/otel/trace v1.39.0
+	go.opentelemetry.io/proto/otlp v1.9.0
 	go.uber.org/fx v1.24.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/image v0.39.0
+	golang.org/x/oauth2 v0.35.0
+	golang.org/x/sync v0.20.0
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217
 	google.golang.org/grpc v1.79.3
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/datatypes v1.2.7
@@ -103,6 +111,7 @@ require (
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3 // indirect
@@ -132,6 +141,8 @@ require (
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/samber/go-type-to-string v1.8.0 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect
@@ -149,17 +160,14 @@ require (
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.1 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.39.0 // indirect
-	go.opentelemetry.io/otel/metric v1.39.0 // indirect
-	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	go.uber.org/dig v1.19.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	google.golang.org/genproto v0.0.0-20240213162025-012b6fc9bca9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gorm.io/driver/mysql v1.5.6 // indirect
@@ -175,7 +183,6 @@ require (
 	github.com/cloudwego/base64x v0.1.5 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/fumiama/imgsz v0.0.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.0.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
@@ -210,10 +217,10 @@ require (
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/arch v0.15.0 // indirect
-	golang.org/x/net v0.52.0 // indirect
+	golang.org/x/net v0.52.0
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0
-	golang.org/x/time v0.12.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1

@@ -23,6 +23,11 @@ type Profile struct {
 	Description        string    `json:"description"`
 	Packages           []Package `json:"packages"`
 	RequiredFiles      []string  `json:"required_files"`
+	// RuntimeDependencyInstallation is an operator-owned capability. When it
+	// is enabled, standard Skills may use pip/npm (and the runtime's guarded
+	// apt facade) through the package-only network mode.
+	RuntimeDependencyInstallation bool   `json:"runtime_dependency_installation,omitempty"`
+	PackageNetworkMode            string `json:"package_network_mode,omitempty"`
 }
 
 type Package struct {
@@ -121,6 +126,13 @@ func Validate(source fs.FS, dir string, profile Profile) error {
 		if err := validatePackage(profile.Name, item); err != nil {
 			return err
 		}
+	}
+	packageMode := strings.ToLower(strings.TrimSpace(profile.PackageNetworkMode))
+	if packageMode != "" && packageMode != "package-install" {
+		return fmt.Errorf("profile %s package network mode is not supported: %s", profile.Name, packageMode)
+	}
+	if profile.RuntimeDependencyInstallation && packageMode != "package-install" {
+		return fmt.Errorf("profile %s runtime dependency installation requires package-install network mode", profile.Name)
 	}
 	return nil
 }

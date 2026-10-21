@@ -14,6 +14,7 @@ export type FeatureLabels = Record<string, string>;
 // Provider group structure for display
 export interface ProviderGroup {
   provider: string;
+  label: string;
   models: ModelItem[];
 }
 

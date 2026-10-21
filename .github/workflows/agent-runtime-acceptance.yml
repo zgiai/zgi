@@ -1,0 +1,63 @@
+name: Agent runtime real backend acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: Dedicated backend to test (creates and removes test compute)
+        required: true
+        type: choice
+        options:
+          - e2b
+          - local-gvisor
+
+permissions:
+  contents: read
+
+# Never interrupt a real allocation merely because another run was requested.
+concurrency:
+  group: agent-runtime-acceptance-${{ inputs.backend }}
+  cancel-in-progress: false
+
+jobs:
+  e2b:
+    if: inputs.backend == 'e2b'
+    runs-on: ubuntu-latest
+    environment: agent-runtime-acceptance
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: '1'
+      ZGI_RUNTIME_REAL_TESTS: '1'
+      ZGI_AGENT_RUNTIME_E2B_API_KEY: ${{ secrets.ZGI_AGENT_RUNTIME_E2B_API_KEY }}
+      ZGI_AGENT_RUNTIME_E2B_TEST_PACKAGE_TEMPLATE: ${{ vars.ZGI_AGENT_RUNTIME_E2B_TEST_PACKAGE_TEMPLATE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sandbox/go.mod
+          cache-dependency-path: sandbox/go.sum
+      - name: Run real E2B package and recovery contract
+        run: bash scripts/check-runtime-delivery.sh --real-e2b
+
+  local:
+    if: inputs.backend == 'local-gvisor'
+    # Use a dedicated native Linux node with containerd/runsc, never the CI host's
+    # ordinary Docker daemon or an application Worker.
+    runs-on: ${{ fromJSON(vars.AGENT_RUNTIME_LOCAL_RUNNER_LABELS || '["zgi-runtime-acceptance-linux"]') }}
+    environment: agent-runtime-acceptance
+    timeout-minutes: 35
+    env:
+      CGO_ENABLED: '1'
+      ZGI_RUNTIME_REAL_TESTS: '1'
+      ZGI_AGENT_RUNTIME_TEST_IMAGE: ${{ vars.ZGI_AGENT_RUNTIME_TEST_IMAGE }}
+      ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS: ${{ vars.ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sandbox/go.mod
+          cache-dependency-path: sandbox/go.sum
+      - name: Run real native gVisor contracts
+        run: |
+          sudo --preserve-env=PATH,CGO_ENABLED,ZGI_RUNTIME_REAL_TESTS,ZGI_AGENT_RUNTIME_TEST_IMAGE,ZGI_AGENT_RUNTIME_CONTAINERD_ADDRESS \
+            bash scripts/check-runtime-delivery.sh --real-local

@@ -291,6 +291,7 @@ const messages = {
     },
     runtime: {
       waitingAnswer: 'Waiting for answer',
+      continue: 'Continue',
       chooseOne: 'Choose one option',
       submitting: 'Submitting',
       submitted: 'Answer submitted',
@@ -1737,6 +1738,8 @@ const messages = {
       selectedTables: 'Selected tables',
     },
     hints: {
+      restrictedSql:
+        'Only one SELECT, INSERT, UPDATE, or DELETE against tables in the selected data source is allowed. DDL, multiple statements, locking reads, and CTEs are rejected. Workflow variables are passed as bound parameters.',
       timeoutSeconds: '0 uses the backend default (30s).',
       maxRetries: '0 means no retry. Recommended: 0-3.',
     },
@@ -1750,16 +1753,19 @@ const messages = {
       noTables: 'No tables found for this database.',
       noColumns: 'No columns available',
       selectorHintTitle: 'No data source selected',
-      selectorHintDesc: 'Click to choose data source and tables',
+      selectorHintDesc: 'Choose a data source and optionally restrict tables',
     },
     validation: {
       dataSourceRequired: 'Data source is required',
-      tableSelectionRequired: 'At least one table must be selected',
       sqlRequired: 'SQL is required',
       timeoutPositive: 'Timeout should be a positive number',
     },
   },
   sqlGenerator: {
+    tableSelectionMode: {
+      manual: 'Select tables manually',
+      automatic: 'Select tables automatically',
+    },
     section: {
       model: 'Model',
       dataSource: 'Data Source',
@@ -1776,10 +1782,13 @@ const messages = {
       prompt: "Enter prompt, press '/' to insert variable",
     },
     hints: {
+      automaticTableSelection: 'Select a data source and tables will be chosen at runtime.',
       timeoutSeconds: '0 uses the backend default (30s).',
       maxRetries: '0 means no retry. Recommended: 0-3.',
     },
     empty: {
+      dataSourceRequired: 'No data source selected',
+      dataSourceHint: 'Click to choose a data source',
       selectorHintTitle: 'No data source or tables',
       selectorHintDesc: 'Click to choose data source and tables',
     },
@@ -1788,6 +1797,7 @@ const messages = {
       promptRequired: 'Prompt is required',
       dataSourceRequired: 'Data source is required',
       tableSelectionRequired: 'At least one table must be selected',
+      tableSelectionModeInvalid: 'Table selection mode is invalid',
       timeoutPositive: 'Timeout should be a positive number',
       retriesPositive: 'Max retries should be a positive number',
     },
@@ -1799,10 +1809,20 @@ const messages = {
     form: {
       constant: 'Constant',
       variable: 'Variable',
+      invalidJson: 'Enter a valid JSON object or array',
+      stringListPlaceholder: 'Enter one item per line, or separate items with commas',
+    },
+    connection: {
+      label: 'Connection',
+      placeholder: 'Select a shared connection',
+      hint: 'The workflow stores only the connection reference. Credentials remain encrypted.',
+      empty: 'No available shared connection supports this external app.',
+      loadFailed: 'Unable to load available connections.',
     },
     validation: {
       providerRequired: 'Provider is required',
       toolRequired: 'Tool name is required',
+      connectionRequired: 'Select a connection',
       paramBindingMissing: 'Configure {name}',
       paramValueRequired: 'Fill in {name}',
       paramVariableRequired: 'Bind a variable for {name}',

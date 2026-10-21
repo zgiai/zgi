@@ -23,6 +23,18 @@ func TestAllMigrationsStartsAtPublicInitialSchema(t *testing.T) {
 	}
 }
 
+func TestValidateDeferredMigrationHistoryAllowsRetirementMarker(t *testing.T) {
+	if err := validateDeferredMigrationHistory(map[string]struct{}{
+		initialSchemaMigrationID:                           {},
+		"202609031410353961_finalize_connector_detachment": {},
+	}); err != nil {
+		t.Fatalf("retirement marker should be recognized: %v", err)
+	}
+	if err := validateDeferredMigrationHistory(map[string]struct{}{"20260101000000_unknown": {}}); err == nil {
+		t.Fatal("unknown migration marker was accepted")
+	}
+}
+
 func TestRegisteredMigrationsAreValid(t *testing.T) {
 	migrations := allMigrations()
 	seen := make(map[string]struct{}, len(migrations))
@@ -569,6 +581,11 @@ func TestNoClosedSourceMigrationHistoryFilesRemain(t *testing.T) {
 			return nil
 		}
 		name := entry.Name()
+		// These are public inventory/checksum modules, not timestamped private
+		// migration history. Keep the historical-file check for all other paths.
+		if filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(root, "connectorfinalize", "manifest.go")) || filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(root, "migration_source_history.go")) {
+			return nil
+		}
 		if strings.HasPrefix(name, "m") && strings.HasSuffix(name, ".go") {
 			historical = append(historical, filepath.ToSlash(path))
 		}

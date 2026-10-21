@@ -19,7 +19,7 @@ const (
 )
 
 type customSkillStorage interface {
-	SavePreviewPackage(ctx context.Context, organizationID uuid.UUID, importID string, data []byte) (*storedSkillPreview, error)
+	SavePreviewPackage(ctx context.Context, organizationID uuid.UUID, importID string, data []byte, filename ...string) (*storedSkillPreview, error)
 	LoadPreview(ctx context.Context, organizationID uuid.UUID, importID string) (*storedSkillPreview, error)
 	PublishPreview(ctx context.Context, preview *storedSkillPreview, skillID string) (*publishedCustomSkillDirectory, string, error)
 	DeletePreview(ctx context.Context, organizationID uuid.UUID, importID string) error
@@ -33,19 +33,20 @@ type filesystemCustomSkillStorage struct {
 }
 
 type storedSkillPreview struct {
-	ImportID  string               `json:"import_id"`
-	Root      string               `json:"root"`
-	FileCount int                  `json:"file_count"`
-	TotalSize int64                `json:"total_size"`
-	Files     []extractedSkillFile `json:"files"`
-	ExpiresAt time.Time            `json:"expires_at"`
+	ImportID    string               `json:"import_id"`
+	Root        string               `json:"root"`
+	PackageName string               `json:"package_name,omitempty"`
+	FileCount   int                  `json:"file_count"`
+	TotalSize   int64                `json:"total_size"`
+	Files       []extractedSkillFile `json:"files"`
+	ExpiresAt   time.Time            `json:"expires_at"`
 }
 
 func newFilesystemCustomSkillStorage(root string) customSkillStorage {
 	return &filesystemCustomSkillStorage{root: strings.TrimSpace(root)}
 }
 
-func (s *filesystemCustomSkillStorage) SavePreviewPackage(ctx context.Context, organizationID uuid.UUID, importID string, data []byte) (*storedSkillPreview, error) {
+func (s *filesystemCustomSkillStorage) SavePreviewPackage(ctx context.Context, organizationID uuid.UUID, importID string, data []byte, filename ...string) (*storedSkillPreview, error) {
 	_ = ctx
 	s.CleanupOrganizationExpiredPreviews(ctx, organizationID, time.Now())
 	tempRoot := s.previewRoot(organizationID, importID)
@@ -58,12 +59,16 @@ func (s *filesystemCustomSkillStorage) SavePreviewPackage(ctx context.Context, o
 		return nil, err
 	}
 	preview := &storedSkillPreview{
-		ImportID:  importID,
-		Root:      extracted.Root,
-		FileCount: extracted.FileCount,
-		TotalSize: extracted.TotalSize,
-		Files:     append([]extractedSkillFile(nil), extracted.FileDetails...),
-		ExpiresAt: time.Now().Add(customSkillImportTTL),
+		ImportID:    importID,
+		Root:        extracted.Root,
+		PackageName: extracted.PackageName,
+		FileCount:   extracted.FileCount,
+		TotalSize:   extracted.TotalSize,
+		Files:       append([]extractedSkillFile(nil), extracted.FileDetails...),
+		ExpiresAt:   time.Now().Add(customSkillImportTTL),
+	}
+	if preview.PackageName == "" && len(filename) > 0 {
+		preview.PackageName = strings.TrimSuffix(filepath.Base(filename[0]), filepath.Ext(filename[0]))
 	}
 	if err := s.writePreviewState(preview); err != nil {
 		_ = os.RemoveAll(tempRoot)

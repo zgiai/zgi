@@ -13,7 +13,9 @@ import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { getModelDisplayName } from '@/utils/model-label';
+import { isModelPricingConfigured } from '@/utils/model-price';
 import { AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
 
 import type {
   ModelSelectorValue,
@@ -22,7 +24,13 @@ import type {
   FlatRow,
   FeatureLabels,
 } from './types';
-import { deserializeValue, prioritizeModelsByUseCase, serializeValue } from './utils';
+import {
+  aggregatePlatformModels,
+  deserializeValue,
+  modelDisplayVendor,
+  prioritizeModelsByUseCase,
+  serializeValue,
+} from './utils';
 import {
   LoadingSkeleton,
   EmptyState,
@@ -229,19 +237,37 @@ export function ModelSelector({
     });
   }, [models, capabilityFilter]);
 
-  // Group models by provider
+  const displayModels = useMemo(
+    () => aggregatePlatformModels(filteredModelsByCapability),
+    [filteredModelsByCapability]
+  );
+
+  // Platform models are grouped by their actual model vendor. Custom models
+  // retain their existing provider grouping and selection values.
   const providerGroups = useMemo<ProviderGroup[]>(() => {
     const groupMap = new Map<string, ModelItem[]>();
-    filteredModelsByCapability.forEach(model => {
-      const existing = groupMap.get(model.provider) || [];
+    displayModels.forEach(model => {
+      const displayProvider = modelDisplayVendor(model);
+      const existing = groupMap.get(displayProvider) || [];
       existing.push(model);
-      groupMap.set(model.provider, existing);
+      groupMap.set(displayProvider, existing);
     });
-    return Array.from(groupMap.entries()).map(([provider, items]) => ({
-      provider,
-      models: prioritizeModelsByUseCase(items, preferredUseCase),
-    }));
-  }, [filteredModelsByCapability, preferredUseCase]);
+    return Array.from(groupMap.entries()).map(([provider, items]) => {
+      const catalogLabel =
+        locale === 'zh-Hans'
+          ? items.find(item => item.vendor_cn_name)?.vendor_cn_name ||
+            items.find(item => item.vendor_name)?.vendor_name ||
+            items.find(item => item.vendor_en_name)?.vendor_en_name
+          : items.find(item => item.vendor_en_name)?.vendor_en_name ||
+            items.find(item => item.vendor_name)?.vendor_name ||
+            items.find(item => item.vendor_cn_name)?.vendor_cn_name;
+      return {
+        provider,
+        label: catalogLabel || getProviderName(provider),
+        models: prioritizeModelsByUseCase(items, preferredUseCase),
+      };
+    });
+  }, [displayModels, getProviderName, locale, preferredUseCase]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -254,7 +280,7 @@ export function ModelSelector({
   const searchIndex = useMemo(() => {
     const idx = new Map<string, { providerLower: string; modelLower: Map<string, string> }>();
     providerGroups.forEach(p => {
-      const providerLabel = getProviderName(p.provider);
+      const providerLabel = p.label;
       const providerLower = `${p.provider.toLowerCase()} ${providerLabel.toLowerCase()}`.trim();
       const modelLower = new Map<string, string>();
       p.models.forEach(m => {
@@ -264,7 +290,7 @@ export function ModelSelector({
       idx.set(p.provider, { providerLower, modelLower });
     });
     return idx;
-  }, [getProviderName, locale, providerGroups]);
+  }, [locale, providerGroups]);
 
   // Filter providers and models based on search query
   const filteredProviders = useMemo(() => {
@@ -306,7 +332,7 @@ export function ModelSelector({
       rows.push({
         type: 'header',
         providerId: p.provider,
-        providerLabel: getProviderName(p.provider),
+        providerLabel: p.label,
         modelCount: p.models.length,
       });
       const isCollapsed = collapsible && collapsedProviders.has(p.provider);
@@ -315,7 +341,7 @@ export function ModelSelector({
       }
     });
     return rows;
-  }, [filteredProviders, collapsedProviders, collapsible, getProviderName]);
+  }, [filteredProviders, collapsedProviders, collapsible]);
 
   // Row heights for windowing
   const rowHeights = useMemo<number[]>(
@@ -439,16 +465,32 @@ export function ModelSelector({
     setCollapsedProviders(new Set(allProviderIds));
   }, [filteredProviders]);
 
-  // Build index for fast display lookup
-  const modelIndex = useMemo(() => {
-    const byProvider = new Map<string, Map<string, ModelItem>>();
-    providerGroups.forEach(p => {
-      const inner = new Map<string, ModelItem>();
-      p.models.forEach(m => inner.set(m.model, m));
-      byProvider.set(p.provider, inner);
-    });
-    return byProvider;
-  }, [providerGroups]);
+  // Selection remains provider + model for backwards compatibility even
+  // though platform grouping is vendor + model.
+  const selectionIndex = useMemo(() => {
+    const index = new Map<string, ModelItem>();
+    displayModels.forEach(model => index.set(serializeValue(model), model));
+    return index;
+  }, [displayModels]);
+
+  const resolveSelectedModel = useCallback(
+    (selected: ModelSelectorValue): ModelItem | null => {
+      const exact = selectionIndex.get(serializeValue(selected));
+      if (exact) return exact;
+      const equivalents = displayModels.filter(
+        model =>
+          !model.is_custom &&
+          model.model === selected.model &&
+          (modelDisplayVendor(model) === selected.provider || model.provider === selected.provider)
+      );
+      if (equivalents.length === 1) return equivalents[0];
+      const sameLogicalModel = displayModels.filter(
+        model => !model.is_custom && model.model === selected.model
+      );
+      return sameLogicalModel.length === 1 ? sameLogicalModel[0] : null;
+    },
+    [displayModels, selectionIndex]
+  );
 
   const emitModelPropsChange = useCallback(
     (props: ModelSelectorModelProps | null) => {
@@ -474,7 +516,7 @@ export function ModelSelector({
         if (value === undefined && modelProps === undefined) {
           setInternalSelected(parsed);
         }
-        const item = modelIndex.get(parsed.provider)?.get(parsed.model);
+        const item = resolveSelectedModel(parsed);
         if (item) {
           emitModelPropsChange(item);
         } else {
@@ -484,7 +526,7 @@ export function ModelSelector({
         emitModelPropsChange(null);
       }
     },
-    [emitModelPropsChange, onChange, modelIndex, value, modelProps]
+    [emitModelPropsChange, onChange, resolveSelectedModel, value, modelProps]
   );
 
   const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -537,16 +579,16 @@ export function ModelSelector({
       return;
     }
 
-    emitModelPropsChange(modelIndex.get(selected.provider)?.get(selected.model) ?? null);
+    emitModelPropsChange(resolveSelectedModel(selected));
   }, [
     emitModelPropsChange,
     internalSelected,
     isControlledByModelProps,
     isControlledByValue,
-    modelIndex,
     modelProps,
     onModelPropsChange,
     value,
+    resolveSelectedModel,
   ]);
 
   useEffect(() => {
@@ -566,8 +608,7 @@ export function ModelSelector({
     } else selected = internalSelected;
 
     if (!selected || !selected.model) return null;
-    const p = modelIndex.get(selected.provider);
-    const m = p?.get(selected.model);
+    const m = resolveSelectedModel(selected);
     const label = m ? getModelDisplayName(m, locale) : selected.model;
     const features = m
       ? Object.entries(m.features || {})
@@ -575,7 +616,12 @@ export function ModelSelector({
           .slice(0, 6)
           .map(([key]) => key)
       : [];
-    return { modelId: selected.model, label, features };
+    return {
+      modelId: selected.model,
+      label,
+      features,
+      pricingConfigured: m ? isModelPricingConfigured(m) : true,
+    };
   }, [
     isControlledByValue,
     isControlledByModelProps,
@@ -583,8 +629,14 @@ export function ModelSelector({
     modelProps,
     internalSelected,
     locale,
-    modelIndex,
+    resolveSelectedModel,
   ]);
+
+  const pricingMissingWarning =
+    selectedResolved && selectedResolved.pricingConfigured === false
+      ? t('models.selector.pricingMissingHint')
+      : undefined;
+  const effectiveSelectedModelWarning = selectedModelWarning || pricingMissingWarning;
 
   return (
     <div className="relative">
@@ -595,12 +647,12 @@ export function ModelSelector({
         onOpenChange={handleOpenChange}
       >
         <SelectTrigger
-          data-model-warning={selectedModelWarning ? 'true' : undefined}
-          title={selectedModelWarning}
+          data-model-warning={effectiveSelectedModelWarning ? 'true' : undefined}
+          title={effectiveSelectedModelWarning}
           className={cn(
             'w-full',
             className,
-            selectedModelWarning &&
+            effectiveSelectedModelWarning &&
               'border-warning/50 bg-warning/5 hover:bg-warning/10 focus:ring-warning/30',
             hasError && 'border-destructive focus:ring-destructive'
           )}
@@ -616,10 +668,10 @@ export function ModelSelector({
                   size={20}
                 />
                 <span className="truncate text-[13px]">{selectedResolved.label}</span>
-                {selectedModelWarning ? (
+                {effectiveSelectedModelWarning ? (
                   <>
                     <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
-                    <span className="sr-only">{selectedModelWarning}</span>
+                    <span className="sr-only">{effectiveSelectedModelWarning}</span>
                   </>
                 ) : null}
                 {showCapabilities &&
@@ -710,6 +762,7 @@ export function ModelSelector({
                             'models.selector.tooltip.replacementSuggestion'
                           )}
                           useCaseLabel={t('models.selector.tooltip.useCases')}
+                          pricingMissingHint={t('models.selector.pricingMissingHint')}
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}
                           locale={locale}
@@ -723,6 +776,7 @@ export function ModelSelector({
                                 ? useCaseLabels[preferredUseCase]
                                 : undefined
                           }
+                          pricingMissingLabel={t('models.selector.pricingMissing')}
                         />
                       );
                     })}
@@ -759,6 +813,20 @@ export function ModelSelector({
           </div>
         </SelectContent>
       </Select>
+      {pricingMissingWarning ? (
+        <p className="mt-1 text-[11px] leading-4 text-warning">
+          {canManageModelConfig ? (
+            <>
+              {t('models.selector.pricingMissingHint')}{' '}
+              <Link href="/dashboard/provider" className="underline-offset-2 hover:underline">
+                {t('models.selector.pricingMissingConfigure')}
+              </Link>
+            </>
+          ) : (
+            t('models.selector.pricingMissingContactAdmin')
+          )}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
@@ -181,6 +182,11 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		}
 		filter.WebAppStatus = string(webAppStatus)
 	}
+	tagIDs, err := parseRunnableWebAppTagIDs(req.TagIDs)
+	if err != nil {
+		return nil, err
+	}
+	filter.TagIDs = tagIDs
 
 	// Log filter details for debugging
 	// Requirement 11.5: Add structured logging with context
@@ -202,6 +208,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		"created_by":      filter.CreatedBy,
 		"is_published":    filter.IsPublished,
 		"web_app_status":  filter.WebAppStatus,
+		"tag_count":       len(filter.TagIDs),
 		"internal":        internalStr,
 		"page":            page,
 		"limit":           limit,
@@ -275,6 +282,15 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		permissionResults = make(map[string]bool)
 	}
 
+	agentIDs := make([]uuid.UUID, 0, len(list))
+	for _, agent := range list {
+		agentIDs = append(agentIDs, agent.ID)
+	}
+	tagsByAgent, err := s.agentCatalogTagsByAgentIDs(ctx, agentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load agent list categories: %w", err)
+	}
+
 	// Step 5: Transform repository results to DTOs with can_edit field
 	items := make([]dto.AgentListItem, 0, len(list))
 	for _, a := range list {
@@ -336,6 +352,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 			UpdatedAt:    a.UpdatedAt.Unix(),
 			Internal:     a.Internal,
 			CanEdit:      canEdit,
+			Tags:         tagsByAgent[a.ID],
 		})
 	}
 

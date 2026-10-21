@@ -150,6 +150,18 @@ type SubmitResult struct {
 	Outbox                   *workflowRuntimeOutboxRef
 }
 
+// TimeoutResult reports how a timed-out approval form resumes its workflow.
+type TimeoutResult struct {
+	Form *Form
+	// TimedOut is false when the form was no longer waiting.
+	TimedOut bool
+	// Outbox is the durable resume of a pause whose approvals are all complete;
+	// it is dispatched like a submission's.
+	Outbox *workflowRuntimeOutboxRef
+	// LegacyResume asks for a direct resume of a workflow without a durable pause.
+	LegacyResume bool
+}
+
 type workflowRuntimeOutboxRef struct {
 	ID             string
 	IdempotencyKey string

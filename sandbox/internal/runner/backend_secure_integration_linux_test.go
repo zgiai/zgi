@@ -262,6 +262,73 @@ func TestLinuxSecureBackendReportsSignalTermination(t *testing.T) {
 	}
 }
 
+func TestLinuxSecureBackendProcessLimitIsPerExecution(t *testing.T) {
+	rootfs := os.Getenv("ZGI_SANDBOX_TEST_SECURE_ROOTFS")
+	if strings.TrimSpace(rootfs) == "" {
+		t.Skip("ZGI_SANDBOX_TEST_SECURE_ROOTFS is not set")
+	}
+	if _, err := exec.LookPath(defaultBwrap(os.Getenv("ZGI_SANDBOX_TEST_BWRAP_BINARY"))); err != nil {
+		t.Skipf("bubblewrap unavailable: %v", err)
+	}
+
+	siblings := make([]*exec.Cmd, 0, 12)
+	for range 12 {
+		cmd := exec.Command("sleep", "10")
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start same-UID sibling process: %v", err)
+		}
+		siblings = append(siblings, cmd)
+	}
+	defer func() {
+		for _, cmd := range siblings {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+
+	cfg := config.FromEnv()
+	cfg.RuntimeBackend = "linux-secure"
+	cfg.SecureRootFS = rootfs
+	cfg.BwrapBinary = defaultBwrap(os.Getenv("ZGI_SANDBOX_TEST_BWRAP_BINARY"))
+	cfg.SecureRuntimeProcessLimit = 8
+	cfg.TimeoutSeconds = 10
+
+	service, err := NewServiceFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("new linux-secure service: %v", err)
+	}
+
+	result, err := service.Run(context.Background(), Request{
+		Language: "python3",
+		Code:     "print('isolated-process-limit-ok')",
+	})
+	if err != nil {
+		t.Fatalf("run with same-UID sibling processes: %v", err)
+	}
+	if result.ExitCode != 0 || strings.TrimSpace(result.Stdout) != "isolated-process-limit-ok" {
+		t.Fatalf("same-UID siblings affected execution: stdout=%q stderr=%q exit=%d", result.Stdout, result.Error, result.ExitCode)
+	}
+
+	limited, err := service.Run(context.Background(), Request{
+		Language: "python3",
+		Code: strings.Join([]string{
+			"import subprocess",
+			"children = []",
+			"for _ in range(32):",
+			"    children.append(subprocess.Popen(['sleep', '1']))",
+		}, "\n"),
+	})
+	if err != nil {
+		t.Fatalf("run process limit check: %v", err)
+	}
+	if limited.ExitCode == 0 {
+		t.Fatalf("expected fork-heavy execution to hit pids.max, got stdout=%q stderr=%q", limited.Stdout, limited.Error)
+	}
+	if !strings.Contains(strings.ToLower(limited.Error), "resource temporarily unavailable") {
+		t.Fatalf("expected process limit diagnostic, got stderr=%q", limited.Error)
+	}
+}
+
 func defaultBwrap(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "bwrap"

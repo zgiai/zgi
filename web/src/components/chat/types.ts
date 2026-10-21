@@ -92,6 +92,9 @@ export interface GeneratedImage {
   alt?: string;
   width?: number;
   height?: number;
+  fileId?: string;
+  filename?: string;
+  mimeType?: string;
   isLoading?: boolean;
 }
 

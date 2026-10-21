@@ -38,8 +38,8 @@ func TestParentChildSubchunkSplitterUsesPunctuationFallbacks(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, chunks, 1)
 	require.Len(t, chunks[0].Children, 3)
-	require.Equal(t, "第一句内容很多", chunks[0].Children[0].Content)
-	require.Equal(t, "第二句内容很多", chunks[0].Children[1].Content)
+	require.Equal(t, "第一句内容很多。", chunks[0].Children[0].Content)
+	require.Equal(t, "第二句内容很多。", chunks[0].Children[1].Content)
 	require.Equal(t, "第三句内容很多。", chunks[0].Children[2].Content)
 }
 

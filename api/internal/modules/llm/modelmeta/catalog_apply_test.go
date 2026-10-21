@@ -10,10 +10,24 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestRefreshPublishedCatalogProjectionRestoresVendorAfterRestart(t *testing.T) {
+	catalogvendor.Replace(nil)
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	RefreshPublishedCatalogProjection(PublishedCatalog{Models: []PublishedModel{{
+		Provider: "siliconflow",
+		Model:    "deepseek-v4-pro",
+		Vendor:   "deepseek",
+	}}})
+
+	require.Equal(t, "deepseek", catalogvendor.Lookup("siliconflow", "deepseek-v4-pro"))
+}
 
 type catalogApplyCacheInvalidatorFake struct {
 	calls int
@@ -39,6 +53,30 @@ func TestEndpointColumnsForPublishedModelIncludesMusicGeneration(t *testing.T) {
 	)
 
 	require.True(t, values["music_generation"])
+}
+
+func TestEndpointColumnsForPublishedModelCanonicalUseCasesWinOverFalseAuthoritativeEndpoints(t *testing.T) {
+	tests := []struct {
+		name     string
+		useCase  llmmodel.UseCase
+		endpoint string
+	}{
+		{name: "embedding", useCase: llmmodel.UseCaseEmbedding, endpoint: "embeddings"},
+		{name: "image", useCase: llmmodel.UseCaseImageGen, endpoint: "image_generation"},
+		{name: "video", useCase: llmmodel.UseCaseVideoGen, endpoint: "videos"},
+		{name: "music", useCase: llmmodel.UseCaseMusicGen, endpoint: "music_generation"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values := endpointColumnsForPublishedModel(
+				[]string{string(tt.useCase)},
+				&llmmodel.ModelEndpoints{},
+				true,
+			)
+			require.True(t, values[tt.endpoint])
+		})
+	}
 }
 
 func TestApplyPublishedCatalogStoresMusicGenerationEndpoint(t *testing.T) {
@@ -75,6 +113,133 @@ func TestApplyPublishedCatalogStoresMusicGenerationEndpoint(t *testing.T) {
 		Where("provider = ? AND name = ?", "minimax", "music-3.0").
 		Scan(&musicGeneration).Error)
 	require.True(t, musicGeneration)
+}
+
+func TestApplyPublishedCatalogCreatesGenericVendorOwnedModelIdentity(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	svc := NewService(db)
+
+	err := svc.ApplyPublishedCatalog(t.Context(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{{
+			Provider:        "supplier-cloud",
+			ProviderName:    "Supplier Cloud",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+		Vendors: []PublishedVendor{{
+			Vendor:     "model-owner",
+			VendorName: "Model Owner",
+		}},
+		Models: []PublishedModel{{
+			Provider:              "supplier-cloud",
+			Vendor:                "model-owner",
+			Model:                 "general-chat-model",
+			ModelName:             "General Chat Model",
+			Status:                "active",
+			IsActive:              true,
+			IsSystemEnabled:       true,
+			InputPrice:            0.2,
+			OutputPrice:           0.5,
+			InputPriceConfigured:  true,
+			OutputPriceConfigured: true,
+		}},
+	})
+	require.NoError(t, err)
+
+	var provider struct {
+		ID              string
+		ProviderName    string `gorm:"column:provider_name"`
+		Status          string
+		IsActive        bool `gorm:"column:is_active"`
+		IsSystemEnabled bool `gorm:"column:is_system_enabled"`
+	}
+	require.NoError(t, db.Table("llm_providers").
+		Where("provider = ?", "model-owner").Take(&provider).Error)
+	require.NotEmpty(t, provider.ID)
+	require.Equal(t, "Model Owner", provider.ProviderName)
+	require.Equal(t, llmmodel.ModelStatusDeprecated, provider.Status)
+	require.False(t, provider.IsActive)
+	require.False(t, provider.IsSystemEnabled)
+
+	var identity struct {
+		ID                    string
+		Status                string
+		IsActive              bool `gorm:"column:is_active"`
+		IsSystemEnabled       bool `gorm:"column:is_system_enabled"`
+		InputPrice            float64
+		OutputPrice           float64
+		InputPriceConfigured  bool `gorm:"column:input_price_configured"`
+		OutputPriceConfigured bool `gorm:"column:output_price_configured"`
+	}
+	require.NoError(t, db.Table("llm_models").
+		Where("provider = ? AND name = ?", "model-owner", "general-chat-model").Take(&identity).Error)
+	require.NotEmpty(t, identity.ID)
+	require.Equal(t, llmmodel.ModelStatusDeprecated, identity.Status)
+	require.False(t, identity.IsActive)
+	require.False(t, identity.IsSystemEnabled)
+	require.Zero(t, identity.InputPrice)
+	require.Zero(t, identity.OutputPrice)
+	require.False(t, identity.InputPriceConfigured)
+	require.False(t, identity.OutputPriceConfigured)
+
+	firstProviderID := provider.ID
+	firstModelID := identity.ID
+	err = svc.ApplyPublishedCatalog(t.Context(), PublishedCatalog{
+		Version:     2,
+		PublishedAt: time.Now().UTC(),
+		Providers:   []PublishedProvider{{Provider: "supplier-cloud", ProviderName: "Supplier Cloud", Status: "active", IsActive: true, IsSystemEnabled: true}},
+		Vendors:     []PublishedVendor{{Vendor: "model-owner", VendorName: "Model Owner"}},
+		Models: []PublishedModel{{
+			Provider: "supplier-cloud", Vendor: "model-owner", Model: "general-chat-model", ModelName: "General Chat Model",
+			Status: "active", IsActive: true, IsSystemEnabled: true,
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Table("llm_providers").Where("provider = ?", "model-owner").Take(&provider).Error)
+	require.NoError(t, db.Table("llm_models").Where("provider = ? AND name = ?", "model-owner", "general-chat-model").Take(&identity).Error)
+	require.Equal(t, firstProviderID, provider.ID)
+	require.Equal(t, firstModelID, identity.ID)
+
+	var supplierCount int64
+	require.NoError(t, db.Table("llm_models").
+		Where("provider = ? AND name = ? AND is_active = ?", "supplier-cloud", "general-chat-model", true).
+		Count(&supplierCount).Error)
+	require.EqualValues(t, 1, supplierCount)
+}
+
+func TestApplyPublishedCatalogDoesNotDowngradeExistingOwnerModel(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	insertCatalogApplyProvider(t, db, "model-owner", false)
+	insertCatalogApplyModel(t, db, "model-owner", "general-chat-model", llmmodel.ModelStatusActive, false)
+
+	svc := NewService(db)
+	err := svc.ApplyPublishedCatalog(t.Context(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{
+			{Provider: "supplier-cloud", ProviderName: "Supplier Cloud", Status: "active", IsActive: true, IsSystemEnabled: true},
+			{Provider: "model-owner", ProviderName: "Model Owner", Status: "active", IsActive: true, IsSystemEnabled: true},
+		},
+		Models: []PublishedModel{
+			{Provider: "supplier-cloud", Vendor: "model-owner", Model: "general-chat-model", ModelName: "General Chat Model", Status: "active", IsActive: true, IsSystemEnabled: true},
+			{Provider: "model-owner", Vendor: "model-owner", Model: "general-chat-model", ModelName: "General Chat Model", Status: "active", IsActive: true, IsSystemEnabled: true},
+		},
+	})
+	require.NoError(t, err)
+
+	var model struct {
+		Status          string
+		IsActive        bool `gorm:"column:is_active"`
+		IsSystemEnabled bool `gorm:"column:is_system_enabled"`
+	}
+	require.NoError(t, db.Table("llm_models").
+		Where("provider = ? AND name = ?", "model-owner", "general-chat-model").Take(&model).Error)
+	require.Equal(t, llmmodel.ModelStatusActive, model.Status)
+	require.True(t, model.IsActive)
+	require.True(t, model.IsSystemEnabled)
 }
 
 func openCatalogApplyTestDB(t *testing.T) *gorm.DB {
@@ -607,6 +772,8 @@ func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
 			knowledge_cutoff TEXT,
 			input_price NUMERIC,
 			output_price NUMERIC,
+			input_price_configured BOOLEAN DEFAULT false,
+			output_price_configured BOOLEAN DEFAULT false,
 			cached_input_price NUMERIC,
 			pricing TEXT,
 			music_generation BOOLEAN DEFAULT false,
@@ -678,6 +845,47 @@ func insertCatalogApplyProvider(t *testing.T, db *gorm.DB, provider string, dele
 		"updated_at":        time.Now().UTC(),
 		"deleted_at":        deletedAt,
 	}).Error)
+}
+
+func TestApplyPublishedCatalogPreservesRulesInPricingJSON(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	svc := NewService(db)
+	pricing := `{"deployment_scope":"global","price_per_image":0.02,"rules":[{"operation":"image_generation","meter":"image","unit":"per_image","price":"0.02","configured":true}]}`
+
+	err := svc.ApplyPublishedCatalog(t.Context(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{{
+			Provider:        "qwen",
+			ProviderName:    "Qwen",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+		Models: []PublishedModel{{
+			Provider:               "qwen",
+			Model:                  "qwen-image",
+			ModelName:              "Qwen Image",
+			Status:                 "active",
+			IsActive:               true,
+			IsSystemEnabled:        true,
+			UseCases:               []string{"image-gen"},
+			Pricing:                []byte(pricing),
+			InputPriceConfigured:   true,
+			OutputPriceConfigured:  true,
+			EndpointsAuthoritative: true,
+			Endpoints:              &llmmodel.ModelEndpoints{ImageGeneration: true},
+		}},
+	})
+	require.NoError(t, err)
+
+	var stored string
+	require.NoError(t, db.Table("llm_models").
+		Select("pricing").
+		Where("provider = ? AND name = ?", "qwen", "qwen-image").
+		Scan(&stored).Error)
+	require.Contains(t, stored, `"rules"`)
+	require.Contains(t, stored, `"price_per_image"`)
 }
 
 func insertCatalogApplyModel(t *testing.T, db *gorm.DB, provider, name, status string, deleted bool) {

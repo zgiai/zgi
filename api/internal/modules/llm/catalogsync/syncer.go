@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
+	"github.com/zgiai/zgi/api/internal/modules/llm/billingsettings"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/modelmeta"
 	"github.com/zgiai/zgi/api/internal/observability"
@@ -15,7 +18,6 @@ import (
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"gorm.io/gorm"
 )
 
@@ -63,6 +65,10 @@ type Synchronizer struct {
 	newClient      func(addr string) (catalogRPCClient, io.Closer, error)
 	reconnectDelay time.Duration
 	catalogLoaded  atomic.Bool
+	settings       *billingsettings.Store
+
+	reportMu   sync.RWMutex
+	lastReport *modelmeta.CatalogApplyReport
 }
 
 func NewSynchronizer(db *gorm.DB, grpcAddr string) *Synchronizer {
@@ -86,7 +92,12 @@ func newSynchronizerWithClient(db *gorm.DB, client catalogRPCClient) *Synchroniz
 }
 
 func (s *Synchronizer) Start(ctx context.Context) error {
-	if s == nil || s.db == nil || s.grpcAddr == "" {
+	if s == nil || s.db == nil {
+		return nil
+	}
+
+	s.ensureSettings(ctx)
+	if s.grpcAddr == "" {
 		return nil
 	}
 
@@ -149,6 +160,29 @@ func (s *Synchronizer) connect(ctx context.Context) (catalogRPCClient, io.Closer
 	lastSeenVersion, err := s.loadLastAppliedVersion(ctx)
 	if err != nil {
 		return nil, closer, nil, err
+	}
+	if lastSeenVersion > 0 {
+		resp, err := client.GetPublishedCatalog(ctx, &pb.GetPublishedCatalogRequest{Version: lastSeenVersion})
+		if err != nil {
+			return nil, closer, nil, err
+		}
+		// Reapply the immutable current snapshot on startup. Besides restoring
+		// in-memory projections, this lets idempotent schema/data invariants added
+		// by newer Pre versions backfill from an already-published catalog without
+		// requiring Console to publish an unrelated new version.
+		catalog := catalogFromResponse(resp)
+		service := modelmeta.NewService(s.db)
+		report, err := service.ApplyPublishedCatalogWithReport(ctx, catalog)
+		if err != nil {
+			_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
+			logger.WarnContext(ctx, "Catalog reapply failed, continuing to watch for newer publishes",
+				zap.Int64("version", lastSeenVersion),
+				zap.Error(err),
+			)
+		} else {
+			s.recordCatalogApplyReport(ctx, report)
+			s.applyBillingSettings(ctx, catalog)
+		}
 	}
 
 	stream, err := client.WatchCatalogPublishes(ctx, &pb.WatchCatalogPublishesRequest{
@@ -220,13 +254,52 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 	catalog := catalogFromResponse(resp)
 
 	service := modelmeta.NewService(s.db)
-	if err := service.ApplyPublishedCatalog(ctx, catalog); err != nil {
+	report, err := service.ApplyPublishedCatalogWithReport(ctx, catalog)
+	if err != nil {
 		_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
 		return err
 	}
+	s.recordCatalogApplyReport(ctx, report)
+	s.applyBillingSettings(ctx, catalog)
 	s.catalogLoaded.Store(true)
 
 	return nil
+}
+
+// recordCatalogApplyReport keeps the most recent normalization report and
+// emits it so operational reconciliation can locate price/unit/currency/identity
+// diffs by model+provider.
+func (s *Synchronizer) recordCatalogApplyReport(ctx context.Context, report modelmeta.CatalogApplyReport) {
+	if s == nil {
+		return
+	}
+	s.reportMu.Lock()
+	s.lastReport = &report
+	s.reportMu.Unlock()
+
+	if report.Normalized == 0 && len(report.Models) == 0 {
+		return
+	}
+	logger.InfoContext(ctx, "Applied catalog snapshot normalization diff",
+		zap.Int64("version", report.Version),
+		zap.Int("normalized_models", report.Normalized),
+		zap.Int("diff_models", len(report.Models)),
+	)
+}
+
+// LastCatalogApplyReport returns the diff report from the most recently
+// applied catalog snapshot, or nil when no snapshot has been applied yet.
+func (s *Synchronizer) LastCatalogApplyReport() *modelmeta.CatalogApplyReport {
+	if s == nil {
+		return nil
+	}
+	s.reportMu.RLock()
+	defer s.reportMu.RUnlock()
+	if s.lastReport == nil {
+		return nil
+	}
+	report := *s.lastReport
+	return &report
 }
 
 // watchStartVersion forces the latest published catalog to be replayed once
@@ -239,13 +312,37 @@ func (s *Synchronizer) watchStartVersion(lastAppliedVersion int64) int64 {
 	return lastAppliedVersion
 }
 
+// ensureSettings installs the local billing settings store used for offline
+// private/custom lane billing. Safe to call once per synchronizer.
+func (s *Synchronizer) ensureSettings(ctx context.Context) {
+	if s == nil || s.settings != nil {
+		return
+	}
+	s.settings = billingsettings.Init(ctx, s.db)
+}
+
+// applyBillingSettings mirrors the rate carried by the catalog into Pre's local
+// copy. It is a no-op when the catalog predates the points_per_usd field.
+func (s *Synchronizer) applyBillingSettings(ctx context.Context, catalog modelmeta.PublishedCatalog) {
+	if s == nil || s.settings == nil || catalog.PointsPerUSD <= 0 {
+		return
+	}
+	if err := s.settings.StoreCatalogRate(ctx, catalog.PointsPerUSD); err != nil {
+		logger.WarnContext(ctx, "Failed to persist points_per_usd from published catalog",
+			zap.Int64("points_per_usd", catalog.PointsPerUSD),
+			zap.Error(err),
+		)
+	}
+}
+
 func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.PublishedCatalog {
 	catalog := modelmeta.PublishedCatalog{
-		Version:     resp.GetVersion(),
-		PublishedAt: time.UnixMilli(resp.GetPublishedAt()).UTC(),
-		Providers:   make([]modelmeta.PublishedProvider, 0, len(resp.GetProviders())),
-		Models:      make([]modelmeta.PublishedModel, 0, len(resp.GetModels())),
-		Vendors:     make([]modelmeta.PublishedVendor, 0, len(resp.GetVendors())),
+		Version:      resp.GetVersion(),
+		PublishedAt:  time.UnixMilli(resp.GetPublishedAt()).UTC(),
+		PointsPerUSD: resp.GetPointsPerUsd(),
+		Providers:    make([]modelmeta.PublishedProvider, 0, len(resp.GetProviders())),
+		Models:       make([]modelmeta.PublishedModel, 0, len(resp.GetModels())),
+		Vendors:      make([]modelmeta.PublishedVendor, 0, len(resp.GetVendors())),
 	}
 
 	for _, vendor := range resp.GetVendors() {
@@ -284,6 +381,11 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 
 	for _, model := range resp.GetModels() {
 		configParameters, defaultParameters := decodeCatalogModelConfigPayload(model.GetConfigParametersJson())
+		contextWindow, maxOutputTokens := normalizePublishedModelLimits(
+			model.GetModel(),
+			int(model.GetContextWindow()),
+			int(model.GetMaxOutputTokens()),
+		)
 		catalog.Models = append(catalog.Models, modelmeta.PublishedModel{
 			Provider:               model.GetProvider(),
 			Vendor:                 model.GetVendor(),
@@ -300,8 +402,8 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 			IsNew:                  model.GetIsNew(),
 			AccessType:             model.GetAccessType(),
 			Currency:               model.GetCurrency(),
-			ContextWindow:          int(model.GetContextWindow()),
-			MaxOutputTokens:        int(model.GetMaxOutputTokens()),
+			ContextWindow:          contextWindow,
+			MaxOutputTokens:        maxOutputTokens,
 			InputPrice:             model.GetInputPrice(),
 			OutputPrice:            model.GetOutputPrice(),
 			CachedInputPrice:       model.GetCachedInputPrice(),
@@ -330,6 +432,22 @@ func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.Publish
 	}
 
 	return catalog
+}
+
+// normalizePublishedModelLimits protects pre from reapplying a known stale
+// Console catalog snapshot after the model limit correction migration. Keep the
+// override deliberately narrow: smaller limits for other models may be valid.
+func normalizePublishedModelLimits(model string, contextWindow, maxOutputTokens int) (int, int) {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "qwen3.5-plus", "qwen3.5-plus-2026-02-15":
+		if contextWindow == 0 || contextWindow == 100000 {
+			contextWindow = 1000000
+		}
+		if maxOutputTokens == 0 || maxOutputTokens <= 4096 {
+			maxOutputTokens = 65536
+		}
+	}
+	return contextWindow, maxOutputTokens
 }
 
 func publishedModelEndpoints(source *pb.CatalogModelEndpoints) *llmmodel.ModelEndpoints {
@@ -426,7 +544,11 @@ func (s *Synchronizer) loadLastAppliedVersion(ctx context.Context) (int64, error
 }
 
 func newGRPCCatalogClient(addr string) (catalogRPCClient, io.Closer, error) {
-	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	transportCredentials, err := consolecred.TransportCredentials(addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(transportCredentials)}
 	dialOptions = append(dialOptions, observability.GRPCDialOptions()...)
 	conn, err := grpc.Dial(addr, dialOptions...)
 	if err != nil {

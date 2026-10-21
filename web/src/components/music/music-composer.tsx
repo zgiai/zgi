@@ -72,7 +72,7 @@ export function MusicComposer({
   const [prompts, setPrompts] = React.useState<Record<MusicMode, string>>(createEmptyPrompts);
   const [lyrics, setLyrics] = React.useState('');
   const [activeVoiceField, setActiveVoiceField] = React.useState<MusicVoiceField | null>(null);
-  const [variantCount, setVariantCount] = React.useState<MusicVariantCount>(2);
+  const [variantCount, setVariantCount] = React.useState<MusicVariantCount>(1);
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const [isSubmitCoolingDown, setIsSubmitCoolingDown] = React.useState(false);
   React.useEffect(

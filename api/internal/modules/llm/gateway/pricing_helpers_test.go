@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
@@ -126,6 +127,70 @@ func TestQuoteTokenPricingForSelectionUsesReasoningFloorAndPlatformSlack(t *test
 	}
 }
 
+func TestQuoteTokenPricingForSelectionPrivateNeverUsesPlatformAuthority(t *testing.T) {
+	billing := &fakeBillingProvider{platformQuote: PricingQuote{TotalCredits: 999, ReservationPolicy: reservationPolicyAuthoritativeQuoteV1}}
+	engine := &fakePricingEngine{tokenQuote: PricingQuote{TotalCredits: 42}}
+	svc := &llmGatewayServiceImpl{billing: billing, pricingEngine: engine}
+	selection := &ProviderSelection{
+		UseSystemProvider: false,
+		BillingLane:       UsageBillingLanePrivate,
+	}
+
+	quote, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "openai", Model: "gpt-4o-mini"},
+		10,
+		5,
+	)
+	if err != nil {
+		t.Fatalf("quoteTokenPricingForSelection() error = %v", err)
+	}
+	if quote.TotalCredits != 42 || quote.ReservationPolicy != "" {
+		t.Fatalf("quote = %#v, want local private quote without reservation policy", quote)
+	}
+	if billing.platformPrompt != 0 || billing.platformCompletion != 0 {
+		t.Fatalf("platform authority was consulted: tokens = (%d, %d)", billing.platformPrompt, billing.platformCompletion)
+	}
+	if engine.tokenCalls != 1 {
+		t.Fatalf("local pricing calls = %d, want 1", engine.tokenCalls)
+	}
+}
+
+func TestQuoteTokenPricingForSettlementUsagePrefersLockedCacheQuote(t *testing.T) {
+	engine := &fakePricingEngine{tokenErr: errors.New("pricing changed during request")}
+	svc := &llmGatewayServiceImpl{pricingEngine: engine}
+	bc := &BillingContext{}
+	lockTokenPricingQuote(bc, PricingQuote{
+		PricingSource:            PricingSourceUpstreamModelPrice,
+		UsageSource:              UsageSourceEstimatedUsage,
+		InputTokenPriceUSDPer1M:  decimal.RequireFromString("1"),
+		OutputTokenPriceUSDPer1M: decimal.RequireFromString("2"),
+		CacheReadPriceUSDPer1M:   decimal.RequireFromString("0.25"),
+		CacheWritePriceUSDPer1M:  decimal.RequireFromString("1.25"),
+		InputTokenPriceResolved:  true,
+		OutputTokenPriceResolved: true,
+		CacheReadPriceResolved:   true,
+		CacheWritePriceResolved:  true,
+	})
+
+	quote, err := svc.quoteTokenPricingForSettlementUsage(
+		context.Background(),
+		bc,
+		PricingModelRef{Provider: "openai", Model: "gpt-4o-mini"},
+		TokenUsage{InputTokens: 400, CacheReadTokens: 300, CacheWriteTokens: 100, OutputTokens: 200},
+	)
+	if err != nil {
+		t.Fatalf("quoteTokenPricingForSettlementUsage() error = %v", err)
+	}
+	if engine.tokenCalls != 0 {
+		t.Fatalf("pricing engine calls = %d, want 0 when locked cache quote is reused", engine.tokenCalls)
+	}
+	if quote.TotalCredits != 1000 {
+		t.Fatalf("total credits = %d, want 1000", quote.TotalCredits)
+	}
+}
+
 func TestQuoteTokenPricingForSelectionRequiresLocalPricingForPrivateRoute(t *testing.T) {
 	engine := &fakePricingEngine{tokenErr: ErrPricingNotConfigured}
 	svc := &llmGatewayServiceImpl{pricingEngine: engine}
@@ -186,12 +251,42 @@ func TestQuoteTokenPricingForSelectionUsesConservativeReasoningReservation(t *te
 	); err != nil {
 		t.Fatal(err)
 	}
-	if engine.lastPromptTokens != 100 || engine.lastCompletionTokens != 0 {
-		t.Fatalf("non-generation quote tokens = (%d, %d), want (100, 0)", engine.lastPromptTokens, engine.lastCompletionTokens)
+	if engine.lastPromptTokens != 100 || engine.lastCompletionTokens != reasoningCompletionReservationFloor {
+		t.Fatalf("zero-completion reasoning quote tokens = (%d, %d), want (100, %d)", engine.lastPromptTokens, engine.lastCompletionTokens, reasoningCompletionReservationFloor)
 	}
 }
 
-func TestQuoteImagePricingForSelectionSkipsLocalPricingForOfficialRoute(t *testing.T) {
+func TestQuoteTokenPricingForSelectionUsesCatalogMaxOutputForDoubaoReasoning(t *testing.T) {
+	billing := &fakeBillingProvider{platformQuote: PricingQuote{TotalCredits: 1}}
+	svc := &llmGatewayServiceImpl{billing: billing}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		BillingLane:       UsageBillingLanePlatform,
+		Model: llmmodel.LLMModel{
+			ID:                uuid.New(),
+			SupportsReasoning: true,
+			MaxOutputTokens:   32768,
+			Provider:          "doubao",
+			Model:             "doubao-seed-2-0-mini-260215",
+		},
+	}
+
+	if _, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{ModelID: selection.Model.ID, Provider: "doubao", Model: "doubao-seed-2-0-mini-260215"},
+		12,
+		8,
+	); err != nil {
+		t.Fatal(err)
+	}
+	wantCompletion := min(32768, reasoningCompletionReservationCap)
+	if billing.platformPrompt != 80 || billing.platformCompletion != wantCompletion {
+		t.Fatalf("doubao reasoning quote tokens = (%d, %d), want (80, %d)", billing.platformPrompt, billing.platformCompletion, wantCompletion)
+	}
+}
+
+func TestQuoteImagePricingForSelectionUsesRemoteAuthorityForOfficialRoute(t *testing.T) {
 	svc := &llmGatewayServiceImpl{pricingEngine: &fakePricingEngine{imageErr: ErrPricingNotConfigured}}
 	selection := &ProviderSelection{
 		UseSystemProvider: true,
@@ -207,8 +302,8 @@ func TestQuoteImagePricingForSelectionSkipsLocalPricingForOfficialRoute(t *testi
 	if err != nil {
 		t.Fatalf("quoteImagePricingForSelection() error = %v, want nil", err)
 	}
-	if !reflect.DeepEqual(quote, PricingQuote{}) {
-		t.Fatalf("quote = %#v, want zero quote", quote)
+	if quote.TotalCredits != 0 || !quote.TotalUSD.IsZero() || quote.PricingSource != PricingSourcePlatformRemoteAuthority {
+		t.Fatalf("quote = %#v, want zero local quote owned by remote authority", quote)
 	}
 }
 
@@ -252,6 +347,27 @@ func TestPricingModelRefFromSelectionIncludesProviderAndModel(t *testing.T) {
 		ref.Provider != "qwen" ||
 		ref.Model != "qwen-plus" {
 		t.Fatalf("ref = %#v, want provider and model from selection", ref)
+	}
+}
+
+func TestPricingModelRefFromOfficialSelectionKeepsSupplierModelID(t *testing.T) {
+	routeModelID := uuid.New()
+	vendorModelID := uuid.New()
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			ID:       routeModelID,
+			Provider: "agicto 供应商",
+			Model:    "doubao/doubao-seedance-2-0-mini-260615",
+		},
+		ModelSource:        PricingModelSourceGlobal,
+		ModelVendor:        "doubao",
+		ModelVendorModelID: vendorModelID,
+	}
+
+	ref := pricingModelRefFromSelection(selection)
+	if ref.ModelID != routeModelID {
+		t.Fatalf("ref.ModelID = %s, want supplier model ID %s", ref.ModelID, routeModelID)
 	}
 }
 

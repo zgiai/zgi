@@ -54,6 +54,50 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 	if err != nil {
 		return fmt.Errorf("load workflow run for approval resume: %w", err)
 	}
+	return h.resumeReadyWorkflowContinuation(ctx, workflowService, run, onEvent)
+}
+
+func (h *WorkflowHandler) ResumeConnectorWorkflow(ctx context.Context, workflowRunID string) error {
+	return h.resumeConnectorWorkflow(ctx, workflowRunID, nil)
+}
+
+func (h *WorkflowHandler) ResumeConnectorWorkflowStream(
+	ctx context.Context,
+	workflowRunID string,
+	onEvent func(string, map[string]interface{}) error,
+) error {
+	return h.resumeConnectorWorkflow(ctx, workflowRunID, onEvent)
+}
+
+func (h *WorkflowHandler) resumeConnectorWorkflow(
+	ctx context.Context,
+	workflowRunID string,
+	onEvent func(string, map[string]interface{}) error,
+) error {
+	workflowService, ok := h.workflowService.(*WorkflowService)
+	if !ok || workflowService == nil || workflowService.workflowRunLogRepo == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return fmt.Errorf("workflow_run_id is required")
+	}
+	run, err := workflowService.workflowRunLogRepo.GetByID(ctx, workflowRunID)
+	if err != nil {
+		return fmt.Errorf("load workflow run for Connector resume: %w", err)
+	}
+	return h.resumeReadyWorkflowContinuation(ctx, workflowService, run, onEvent)
+}
+
+func (h *WorkflowHandler) resumeReadyWorkflowContinuation(
+	ctx context.Context,
+	workflowService *WorkflowService,
+	run *WorkflowRunLog,
+	onEvent func(string, map[string]interface{}) error,
+) error {
+	if workflowService == nil || run == nil {
+		return fmt.Errorf("workflow service is not available")
+	}
 
 	pauseService := workflowpause.NewService(database.GetDB())
 	pauseRecord, _, pauseState, err := pauseService.GetActiveByWorkflowRunID(ctx, run.ID)
@@ -134,7 +178,7 @@ func (h *WorkflowHandler) resumeApprovalWorkflow(ctx context.Context, form *appr
 
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom, nil)
 	}()
 
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
@@ -183,51 +227,58 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	for key, value := range resumeInputs {
 		inputs[key] = value
 	}
+	targetOpenQuestion(inputs, resumeInputs, reasons)
 	responseMode := pauseState.Request.ResponseMode
 	if responseMode == "" {
 		responseMode = "streaming"
 	}
 	var submittedEvent *workflowpause.RunEventPayload
 	if run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
-		submission, submitErr := pauseService.SubmitInteraction(
-			ctx,
-			run.ID,
-			pauseRecord.ID,
-			"question-answer",
-			workflowpause.EventQuestionAnswerSubmitted,
-			buildQuestionAnswerSubmittedEvent(run.ID, pauseState, inputs),
-			questionAnswerSubmissionIdempotencyKey(pauseRecord.ID, pauseRecord.Generation, pauseState, inputs),
-		)
-		if submitErr != nil {
-			return submitErr
-		}
-		if submission != nil {
-			submittedEvent = submission.Event
-			publishWorkflowCommittedTail(ctx, run.ID, submission.Event)
-			for _, pendingEvent := range submission.PendingEvents {
-				publishWorkflowCommittedTail(ctx, run.ID, pendingEvent)
+		// A pause that is already resume-ready has recorded every interaction:
+		// this is the queued resume of a pause whose approval completed after
+		// its question was answered. Submitting the answer again would target
+		// the pause's first node rather than the question, so resume as is.
+		if !questionResumeAlreadyRecorded(pauseRecord) {
+			submission, submitErr := pauseService.SubmitInteraction(
+				ctx,
+				run.ID,
+				pauseRecord.ID,
+				"question-answer",
+				workflowpause.EventQuestionAnswerSubmitted,
+				buildQuestionAnswerSubmittedEvent(run.ID, pauseState, inputs),
+				questionAnswerSubmissionIdempotencyKey(pauseRecord.ID, pauseRecord.Generation, pauseState, inputs),
+			)
+			if submitErr != nil {
+				return submitErr
 			}
-			if !submission.ResumeReady {
-				if onEvent != nil && submission.Event != nil {
-					data := copyWorkflowAnyMap(submission.Event.Data)
-					data["sequence"] = submission.Event.Sequence
-					data["event_id"] = submission.Event.EventID
-					if err := onEvent(workflowpause.EventQuestionAnswerSubmitted, data); err != nil {
-						return err
-					}
-				}
+			if submission != nil {
+				submittedEvent = submission.Event
+				publishWorkflowCommittedTail(ctx, run.ID, submission.Event)
 				for _, pendingEvent := range submission.PendingEvents {
-					if onEvent == nil || pendingEvent == nil {
-						continue
-					}
-					data := copyWorkflowAnyMap(pendingEvent.Data)
-					data["sequence"] = pendingEvent.Sequence
-					data["event_id"] = pendingEvent.EventID
-					if err := onEvent(pendingEvent.Event, data); err != nil {
-						return err
-					}
+					publishWorkflowCommittedTail(ctx, run.ID, pendingEvent)
 				}
-				return nil
+				if !submission.ResumeReady {
+					if onEvent != nil && submission.Event != nil {
+						data := copyWorkflowAnyMap(submission.Event.Data)
+						data["sequence"] = submission.Event.Sequence
+						data["event_id"] = submission.Event.EventID
+						if err := onEvent(workflowpause.EventQuestionAnswerSubmitted, data); err != nil {
+							return err
+						}
+					}
+					for _, pendingEvent := range submission.PendingEvents {
+						if onEvent == nil || pendingEvent == nil {
+							continue
+						}
+						data := copyWorkflowAnyMap(pendingEvent.Data)
+						data["sequence"] = pendingEvent.Sequence
+						data["event_id"] = pendingEvent.EventID
+						if err := onEvent(pendingEvent.Event, data); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
 			}
 		}
 		inputs, err = loadDurableWorkflowResumeInputs(ctx, pauseService, run.ID, pauseRecord, inputs)
@@ -294,9 +345,54 @@ func (h *WorkflowHandler) resumeQuestionAnswerWorkflow(ctx context.Context, work
 	}
 	go func() {
 		defer close(doneChan)
-		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom)
+		h.executeWorkflowStream(ctx, run.TenantID, run.AgentID, req, run.CreatedBy, run.ID, run.ID, run.WorkflowID, systemInputs, run.SequenceNumber, resultChan, errorChan, doneChan, isDraft, runType, run.TriggeredFrom, nil)
 	}()
 	return h.drainApprovalResumeStream(ctx, pauseService, workflowService, run, resultChan, errorChan, doneChan, resumeStartedAt, runType, systemInputs, inputs, eventDispatcher)
+}
+
+// targetOpenQuestion sets the question this answer is for in the merged
+// inputs: the node the answer names, or else the pause's only open question.
+// It decides from this answer alone, because the merged inputs also carry the
+// request inputs saved with the pause, which can still name the question a
+// previous answer resolved; the node is written to the canonical field, which
+// the submission reads first, and the alias is dropped. Without a node the
+// answer would fall back to the pause's first node, which may be the approval
+// of a mixed pause.
+func targetOpenQuestion(inputs, answer map[string]interface{}, reasons []workflowpause.RunPauseReason) {
+	if inputs == nil {
+		return
+	}
+	nodeID := questionAnswerInputNodeID(answer)
+	if nodeID == "" {
+		nodeID = pendingQuestionReasonNodeID(reasons)
+	}
+	if nodeID == "" {
+		return
+	}
+	inputs["question_answer_node_id"] = nodeID
+	delete(inputs, "inputs.question_answer_node_id")
+}
+
+// pendingQuestionReasonNodeID is the node of the pause's single pending
+// question, or empty when there is none or more than one.
+func pendingQuestionReasonNodeID(reasons []workflowpause.RunPauseReason) string {
+	nodeID := ""
+	for _, reason := range reasons {
+		if reason.Type != workflowpause.ReasonTypeQuestionAnswerRequired || reason.Status == workflowpause.RunPauseReasonStatusCompleted {
+			continue
+		}
+		if nodeID != "" {
+			return ""
+		}
+		nodeID = strings.TrimSpace(reason.NodeID)
+	}
+	return nodeID
+}
+
+// questionResumeAlreadyRecorded reports whether every interaction of the pause
+// is already recorded, so a question resume only has to run the workflow.
+func questionResumeAlreadyRecorded(pause *workflowpause.RunPause) bool {
+	return pause != nil && (pause.Status == workflowpause.RunPauseStatusResumeReady || pause.Status == workflowpause.RunPauseStatusResuming)
 }
 
 func loadDurableWorkflowResumeInputs(
@@ -449,7 +545,7 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if selection.event.EventType == workflowpause.EventApprovalExpired {
 				approvalExpired = true
 			}
-			eventData := sanitizeWorkflowEventData(selection.event.Data)
+			eventData := keepWorkflowEventStoredMarkers(sanitizeWorkflowEventData(selection.event.Data), selection.event.Data)
 			if selection.event.EventType == workflowpause.EventWorkflowFinished && run.RuntimeProtocolVersion >= workflowRuntimeProtocolVersionV2 {
 				// The executor terminal signal is transient. The done branch owns the
 				// durable FinalizeRun transaction and only publishes after it commits.
@@ -494,6 +590,14 @@ func (h *WorkflowHandler) drainApprovalResumeStream(ctx context.Context, pauseSe
 			if err := eventDispatcher.Dispatch(ctx, selection.event.EventType, eventData); err != nil {
 				if workflowResumeRunIsDurablyStopped(ctx, workflowService, run) {
 					return persistStoppedWorkflowAnswerAfterResume(ctx, answerSnapshots, conversationAnswer.String())
+				}
+				if workflowResumeEventLostToNewPause(ctx, pauseService, run, err) {
+					// The resumed workflow already saved its next pause, which
+					// released this execution before the drain reached an event it
+					// emitted earlier. The pause's own events are stored, so keep
+					// draining to deliver them, as the live stream does.
+					logger.WarnContext(ctx, "workflow event emitted before the next pause was not recorded", "workflow_run_id", run.ID, "event", selection.event.EventType, err)
+					continue
 				}
 				return err
 			}
@@ -563,6 +667,38 @@ func workflowResumeRunIsDurablyStopped(ctx context.Context, workflowService *Wor
 	defer cancel()
 	current, err := workflowService.workflowRunLogRepo.GetByID(lookupCtx, run.ID)
 	return err == nil && current != nil && strings.EqualFold(strings.TrimSpace(string(current.Status)), string(dto.WorkflowRunStatusStopped))
+}
+
+// keepWorkflowEventStoredMarkers restores the markers of an event that is
+// already stored (the pause events a resumed workflow saves with its next
+// pause). Sanitizing drops them, and the dispatcher would then try to store the
+// event again after the pause released this execution. The dispatcher strips
+// them before publishing.
+func keepWorkflowEventStoredMarkers(sanitized, source map[string]interface{}) map[string]interface{} {
+	for _, key := range []string{"__stored_sequence", "__stored_event_id", "__stored_event_payload"} {
+		if value, ok := source[key]; ok && value != nil {
+			sanitized[key] = value
+		}
+	}
+	return sanitized
+}
+
+// workflowResumeEventLostToNewPause reports whether a resumed execution lost
+// ownership because the workflow already saved a newer pause: another pause
+// than the one this execution claimed is active.
+func workflowResumeEventLostToNewPause(ctx context.Context, pauseService *workflowpause.Service, run *WorkflowRunLog, err error) bool {
+	if pauseService == nil || run == nil || !errors.Is(err, workflowpause.ErrExecutionOwnershipLost) {
+		return false
+	}
+	owner, ok := workflowExecutionOwnerFromContext(ctx)
+	resumedPauseID := strings.TrimSpace(owner.PauseID)
+	if !ok || resumedPauseID == "" {
+		return false
+	}
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	pause, _, _, loadErr := pauseService.GetActiveByWorkflowRunID(lookupCtx, run.ID)
+	return loadErr == nil && pause != nil && pause.ID != resumedPauseID && pause.Status == workflowpause.RunPauseStatusPaused
 }
 
 func persistStoppedWorkflowAnswerAfterResume(ctx context.Context, snapshots *answerSnapshotWriter, answer string) error {

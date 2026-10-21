@@ -19,6 +19,7 @@ export interface ChannelItem {
   created_at: number;
   updated_at: number;
   supported_protocols?: string[];
+  model_operations?: Record<string, string[]>;
   api_base_url?: string;
   api_key_masked?: string;
   auto_ban?: boolean;
@@ -44,6 +45,7 @@ export interface ChannelDetail {
   provider?: string;
   channel_provider?: string;
   supported_protocols?: string[];
+  model_operations?: Record<string, string[]>;
   api_key?: string;
   api_key_masked?: string;
   api_base_url?: string;
@@ -145,6 +147,7 @@ export interface UpdateChannelRequest {
   channel_provider?: string;
   provider?: string;
   models?: string[];
+  model_operations?: Record<string, string[]>;
   priority?: number;
   weight?: number;
   is_enabled?: boolean;
@@ -166,6 +169,7 @@ export interface CreateChannelRequest {
   provider?: string;
   api_key: string;
   models?: string[];
+  model_operations?: Record<string, string[]>;
   api_base_url?: string;
   initial_funds?: number;
   priority?: number;

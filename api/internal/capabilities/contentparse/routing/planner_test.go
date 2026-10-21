@@ -176,7 +176,7 @@ func TestFileExtensionProviderOrder(t *testing.T) {
 	}{
 		{"report.pdf", ".pdf", []string{"reducto", "mineru", "local"}},
 		{"lesson.docx", ".docx", []string{"reducto", "mineru", "local"}},
-		{"deck.ppt", ".ppt", []string{"reducto", "mineru"}},
+		{"deck.ppt", ".ppt", []string{"reducto", "mineru", "local"}},
 		{"sheet.csv", ".csv", []string{"local"}},
 		{"scan.png", ".png", []string{"vlm", "mineru"}},
 		{"notes.md", ".md", []string{"local"}},

@@ -135,15 +135,23 @@ Copy-IfMissing -SourcePath (Join-Path $Root 'runner/.env.example') -TargetPath (
 $apiEnv = Join-Path $Root 'api/.env'
 $apiDockerEnv = Join-Path $Root 'api/.env.docker'
 $dockerEnv = Join-Path $Root 'docker/.env'
+$apiConnectorKeysJson = '{"local":"' + (New-Secret32) + '"}'
+$apiDockerConnectorKeysJson = '{"local":"' + (New-Secret32) + '"}'
 $postgresPassword = New-Secret32
 $redisPassword = New-Secret32
 $runnerApiKey = New-Secret32
 $sandboxPostgresPassword = New-Secret32
 Ensure-EnvValue -TargetPath $apiEnv -Key 'SECRET_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Secret32)
+Ensure-EnvValue -TargetPath $apiEnv -Key 'CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID' -Value 'local'
+Ensure-EnvValue -TargetPath $apiEnv -Key 'CONNECTOR_CREDENTIAL_KEYS_JSON' -Value $apiConnectorKeysJson
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'SECRET_KEY' -Value (New-Secret32)
 Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'API_KEY_ENCRYPTION_KEY' -Value (New-Secret32)
+Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID' -Value 'local'
+Ensure-EnvValue -TargetPath $apiDockerEnv -Key 'CONNECTOR_CREDENTIAL_KEYS_JSON' -Value $apiDockerConnectorKeysJson
 Replace-EnvValueIfCurrent -TargetPath $apiDockerEnv -Key 'SQL_BASE_INTERNAL_DB' -OldValue 'zgi' -NewValue 'zgi_sql_base'
+Ensure-EnvValue -TargetPath $dockerEnv -Key 'CONNECTOR_CREDENTIAL_ACTIVE_KEY_ID' -Value 'local'
+Ensure-EnvValue -TargetPath $dockerEnv -Key 'CONNECTOR_CREDENTIAL_KEYS_JSON' -Value $apiDockerConnectorKeysJson
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_PORT' -Value '2679'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'PUBLIC_URL' -Value 'http://localhost:2679'
 Ensure-EnvValue -TargetPath $dockerEnv -Key 'POSTGRES_PASSWORD' -Value $postgresPassword

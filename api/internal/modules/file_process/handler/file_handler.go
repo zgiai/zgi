@@ -20,6 +20,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	hyperparseengine "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/hyperparse"
 	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	datalibrarymodel "github.com/zgiai/zgi/api/internal/modules/datalibrary/model"
 	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
@@ -400,6 +401,17 @@ func (h *FileHandler) CancelUploadAttempt(c *gin.Context) {
 // UploadFile handles file upload
 // POST /files/upload
 func (h *FileHandler) UploadFile(c *gin.Context) {
+	config := h.fileService.GetUploadConfig()
+	requestLimit := chatfile.MaxRequestBytes
+	if config != nil {
+		requestLimit = max(requestLimit, max(config.FileSizeLimit, config.ImageFileSizeLimit, config.AudioFileSizeLimit, config.VideoFileSizeLimit)*chatfile.MiB+chatfile.MiB)
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, requestLimit)
+	defer func() {
+		if c.Request.MultipartForm != nil {
+			_ = c.Request.MultipartForm.RemoveAll()
+		}
+	}()
 	// Get current user information
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -511,9 +523,23 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		fileSource := interfaces.FileSourceDatasets
 		source = &fileSource
 	}
+	if sourceStr == "chat" {
+		fileSource := interfaces.FileSourceChat
+		source = &fileSource
+	}
 
 	// Read file content
-	content, err := io.ReadAll(file)
+	if source != nil && *source == interfaces.FileSourceChat {
+		if err := config.ChatPolicy(nil).ValidateFile(fileExtension, header.Size); err != nil {
+			if errors.Is(err, chatfile.ErrUnsupportedType) {
+				h.businessError(c, response.ErrUnsupportedFileType)
+			} else {
+				h.businessError(c, response.ErrFileTooLarge)
+			}
+			return
+		}
+	}
+	content, err := io.ReadAll(io.LimitReader(file, requestLimit))
 	if err != nil {
 		h.businessError(c, response.ErrFileReadFailed)
 		return

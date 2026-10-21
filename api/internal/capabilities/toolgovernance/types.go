@@ -83,6 +83,10 @@ type Manifest struct {
 	AllowedPermissionTiers  []PermissionTier `json:"allowed_permission_tiers,omitempty" yaml:"allowed_permission_tiers"`
 	AuditRequired           bool             `json:"audit_required" yaml:"audit_required"`
 	IdempotencyRequired     bool             `json:"idempotency_required" yaml:"idempotency_required"`
+	// ApprovalReason says why a manifest whose policy is ApprovalPolicyAlwaysAsk asks, when the
+	// reason is its own and not one the policy knows: the decision carries it instead of the
+	// general "tool manifest requires approval". Empty leaves the general reason.
+	ApprovalReason string `json:"approval_reason,omitempty" yaml:"approval_reason"`
 }
 
 type AssetRef struct {
@@ -101,6 +105,8 @@ type SessionGrant struct {
 	SkillID               string     `json:"skill_id,omitempty"`
 	ProviderType          string     `json:"provider_type,omitempty"`
 	ProviderID            string     `json:"provider_id,omitempty"`
+	ConnectionID          string     `json:"connection_id,omitempty"`
+	BindingID             string     `json:"binding_id,omitempty"`
 	ToolID                string     `json:"tool_id"`
 	Effect                Effect     `json:"effect"`
 	AssetType             string     `json:"asset_type,omitempty"`
@@ -179,6 +185,8 @@ type Request struct {
 	SkillID          string
 	ProviderType     string
 	ProviderID       string
+	ConnectionID     string
+	BindingID        string
 	Assets           []AssetRef
 	ExpectedAssets   []AssetRef
 	SessionGrants    []SessionGrant

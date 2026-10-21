@@ -225,10 +225,16 @@ func TestFinalizePreparedErrorOwnershipLossDoesNotClearOrEmit(t *testing.T) {
 		Continuation: true,
 	}
 
+	// The error identity is recorded first; the run no longer owns the
+	// message, so the ownership-scoped metadata write matches no row.
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .*metadata.* WHERE .*id = .*status IN.*runtime_run_id = .*`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
 	mock.ExpectBegin()
 	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE .*id = .*status IN.*runtime_run_id = .*`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
+	mock.ExpectRollback()
 
 	emitted := 0
 	err := svc.finalizePreparedError(

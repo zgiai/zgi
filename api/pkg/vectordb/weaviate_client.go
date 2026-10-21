@@ -356,6 +356,187 @@ func (c *WeaviateClient) SearchVectors(ctx context.Context, className string, ve
 	return c.searchVectors(ctx, className, "", vector, limit, false)
 }
 
+// SearchVectorsByFields performs similarity search within one data source and returns only the requested properties.
+func (c *WeaviateClient) SearchVectorsByFields(ctx context.Context, className, dataSourceID string, vector []float64, limit int, returnFields []string) ([]map[string]interface{}, error) {
+	if strings.TrimSpace(dataSourceID) == "" {
+		return nil, fmt.Errorf("data source id is required")
+	}
+	fields, err := graphQLFields(returnFields)
+	if err != nil {
+		return nil, err
+	}
+	actualClassName, err := c.resolveClassName(ctx, className)
+	if err != nil {
+		return nil, err
+	}
+	encodedDataSourceID, err := json.Marshal(dataSourceID)
+	if err != nil {
+		return nil, fmt.Errorf("encode data source id: %w", err)
+	}
+	query := fmt.Sprintf(`{
+		Get {
+			%s(
+				nearVector: {vector: %v}
+				where: {path: ["data_source_id"] operator: Equal valueText: %s}
+				limit: %d
+			) {
+				_additional { id distance }
+				%s
+			}
+		}
+	}`, actualClassName, vector, encodedDataSourceID, limit, fields)
+	return c.executeGraphQLGet(ctx, actualClassName, query)
+}
+
+// SearchByFullTextField performs BM25 search within one data source and returns only the requested properties.
+func (c *WeaviateClient) SearchByFullTextField(ctx context.Context, className, dataSourceID, searchField, queryText string, limit int, returnFields []string) ([]map[string]interface{}, error) {
+	if strings.TrimSpace(dataSourceID) == "" {
+		return nil, fmt.Errorf("data source id is required")
+	}
+	if !validGraphQLIdentifier(searchField) {
+		return nil, fmt.Errorf("invalid GraphQL field %q", searchField)
+	}
+	fields, err := graphQLFields(returnFields)
+	if err != nil {
+		return nil, err
+	}
+	actualClassName, err := c.resolveClassName(ctx, className)
+	if err != nil {
+		return nil, err
+	}
+	encodedQuery, err := json.Marshal(queryText)
+	if err != nil {
+		return nil, fmt.Errorf("encode BM25 query: %w", err)
+	}
+	encodedDataSourceID, err := json.Marshal(dataSourceID)
+	if err != nil {
+		return nil, fmt.Errorf("encode data source id: %w", err)
+	}
+	query := fmt.Sprintf(`{
+		Get {
+			%s(
+				bm25: {properties: [%q] query: %s}
+				where: {path: ["data_source_id"] operator: Equal valueText: %s}
+				limit: %d
+			) {
+				_additional { id score }
+				%s
+			}
+		}
+	}`, actualClassName, searchField, encodedQuery, encodedDataSourceID, limit, fields)
+	return c.executeGraphQLGet(ctx, actualClassName, query)
+}
+
+func (c *WeaviateClient) resolveClassName(ctx context.Context, className string) (string, error) {
+	if c.endpoint == "" {
+		return "", fmt.Errorf("weaviate endpoint not configured")
+	}
+	cleanClassName := strings.ReplaceAll(className, "-", "_")
+	actualClassName, err := c.findActualClassName(ctx, cleanClassName)
+	if err != nil {
+		return "", fmt.Errorf("resolve weaviate class %q: %w", className, err)
+	}
+	if !validGraphQLIdentifier(actualClassName) {
+		return "", fmt.Errorf("invalid GraphQL class %q", actualClassName)
+	}
+	return actualClassName, nil
+}
+
+func (c *WeaviateClient) executeGraphQLGet(ctx context.Context, className, query string) ([]map[string]interface{}, error) {
+	payload, err := json.Marshal(map[string]string{"query": query})
+	if err != nil {
+		return nil, fmt.Errorf("encode weaviate GraphQL query: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/v1/graphql", c.endpoint), bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("create weaviate GraphQL request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute weaviate GraphQL request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("weaviate GraphQL returned status code %d", resp.StatusCode)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode weaviate GraphQL response: %w", err)
+	}
+	if graphQLErr := weaviateGraphQLError(result); graphQLErr != nil {
+		return nil, graphQLErr
+	}
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid weaviate GraphQL response: missing data")
+	}
+	get, ok := data["Get"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid weaviate GraphQL response: missing Get")
+	}
+	items, ok := get[className].([]interface{})
+	if !ok {
+		return []map[string]interface{}{}, nil
+	}
+	results := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		if properties, ok := item.(map[string]interface{}); ok {
+			results = append(results, properties)
+		}
+	}
+	return results, nil
+}
+
+func graphQLFields(fields []string) (string, error) {
+	if len(fields) == 0 {
+		return "", fmt.Errorf("return fields are required")
+	}
+	for _, field := range fields {
+		if !validGraphQLIdentifier(field) {
+			return "", fmt.Errorf("invalid GraphQL field %q", field)
+		}
+	}
+	return strings.Join(fields, "\n"), nil
+}
+
+func validGraphQLIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '_' || (i > 0 && char >= '0' && char <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func weaviateGraphQLError(result map[string]interface{}) error {
+	entries, ok := result["errors"].([]interface{})
+	if !ok || len(entries) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		item, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if message, ok := item["message"].(string); ok && strings.TrimSpace(message) != "" {
+			messages = append(messages, strings.TrimSpace(message))
+		}
+	}
+	if len(messages) == 0 {
+		return fmt.Errorf("weaviate GraphQL request failed")
+	}
+	return fmt.Errorf("weaviate GraphQL request failed: %s", strings.Join(messages, "; "))
+}
+
 // SearchVectorsWithQuestions performs similarity search in Weaviate, including both regular segments and questions
 func (c *WeaviateClient) SearchVectorsWithQuestions(ctx context.Context, className, questionClassName string, vector []float64, limit int) ([]map[string]interface{}, error) {
 	return c.searchVectors(ctx, className, questionClassName, vector, limit, true)

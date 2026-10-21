@@ -31,7 +31,7 @@ func TestEnsureConversationAllowsNewTurnRejectsWaitingApprovalLeaf(t *testing.T)
 	err := svc.ensureConversationAllowsNewTurn(context.Background(), Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
-	}, conversation)
+	}, conversation, false)
 	if !errors.Is(err, ErrConversationWaitingApproval) {
 		t.Fatalf("ensureConversationAllowsNewTurn() error = %v, want ErrConversationWaitingApproval", err)
 	}
@@ -57,7 +57,7 @@ func TestEnsureConversationAllowsNewTurnRejectsWaitingClientActionLeaf(t *testin
 	err := svc.ensureConversationAllowsNewTurn(context.Background(), Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
-	}, conversation)
+	}, conversation, false)
 	if !errors.Is(err, ErrConversationWaitingAction) {
 		t.Fatalf("ensureConversationAllowsNewTurn() error = %v, want ErrConversationWaitingAction", err)
 	}
@@ -83,10 +83,69 @@ func TestEnsureConversationAllowsNewTurnRejectsWaitingQuestionLeaf(t *testing.T)
 	err := svc.ensureConversationAllowsNewTurn(context.Background(), Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
-	}, conversation)
+	}, conversation, false)
 	if !errors.Is(err, ErrConversationWaitingQuestion) {
 		t.Fatalf("ensureConversationAllowsNewTurn() error = %v, want ErrConversationWaitingQuestion", err)
 	}
+}
+
+func TestEnsureConversationAllowsNewTurnRejectsQueuedRuntimeInputFollowUp(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	messageID := uuid.New()
+	conversation := &runtimemodel.Conversation{
+		ID:                   uuid.New(),
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+	}
+	svc := &service{repos: &repository.Repositories{
+		Message:      fakeWaitingMessageRepo{messageID: messageID, status: runtimemodel.MessageStatusCompleted},
+		RuntimeInput: fakePendingRuntimeInputRepo{hasPending: true},
+	}}
+
+	err := svc.ensureConversationAllowsNewTurn(context.Background(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversation, false)
+	if !errors.Is(err, ErrConversationRunning) {
+		t.Fatalf("ensureConversationAllowsNewTurn() error = %v, want ErrConversationRunning", err)
+	}
+}
+
+func TestEnsureConversationAllowsNewTurnLetsClaimedFollowUpUseReservedSlot(t *testing.T) {
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	messageID := uuid.New()
+	conversation := &runtimemodel.Conversation{
+		ID:                   uuid.New(),
+		OrganizationID:       organizationID,
+		AccountID:            accountID,
+		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
+		CurrentLeafMessageID: &messageID,
+	}
+	svc := &service{repos: &repository.Repositories{
+		Message:      fakeWaitingMessageRepo{messageID: messageID, status: runtimemodel.MessageStatusCompleted},
+		RuntimeInput: fakePendingRuntimeInputRepo{hasPending: true},
+	}}
+
+	err := svc.ensureConversationAllowsNewTurn(context.Background(), Scope{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}, conversation, true)
+	if err != nil {
+		t.Fatalf("ensureConversationAllowsNewTurn() error = %v, want nil", err)
+	}
+}
+
+type fakePendingRuntimeInputRepo struct {
+	repository.RuntimeInputRepository
+	hasPending bool
+}
+
+func (f fakePendingRuntimeInputRepo) HasPendingFollowUp(context.Context, uuid.UUID) (bool, error) {
+	return f.hasPending, nil
 }
 
 type fakeWaitingMessageRepo struct {
@@ -183,6 +242,10 @@ func (f fakeWaitingMessageRepo) UpdateWaitingClientAction(context.Context, uuid.
 	panic("not implemented")
 }
 
+func (f fakeWaitingMessageRepo) GetStatus(context.Context, uuid.UUID) (string, error) {
+	return f.status, nil
+}
+
 func (f fakeWaitingMessageRepo) UpdateError(context.Context, uuid.UUID, string) error {
 	panic("not implemented")
 }
@@ -209,4 +272,8 @@ func (f fakeWaitingMessageRepo) ListStaleActiveIDs(context.Context, time.Time) (
 
 func (f fakeWaitingMessageRepo) MarkStaleActiveAsError(context.Context, time.Time, string) (int64, error) {
 	panic("not implemented")
+}
+
+func (f fakeWaitingMessageRepo) CountChildren(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
 }

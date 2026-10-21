@@ -40,15 +40,14 @@ func TestWriteAgentContextPromptDumpUsesPerRequestMetricsAndSequentialFiles(t *t
 		Estimator:          "o200k_base",
 		EstimateScale:      1,
 		Budget: contextmgr.Budget{
-			ModelContextWindow:        1_000_000,
-			ConfiguredAgentWindowK:    256,
-			AgentContextWindow:        256_000,
-			AgentContextWindowClamped: true,
-			PromptBudget:              240_000,
-			SoftLimit:                 223_000,
-			HardLimit:                 240_000,
-			TargetTokens:              144_000,
-			ContextPressure:           float64(93434) / 240000,
+			ModelContextWindow:   1_000_000,
+			AgentContextWindow:   1_000_000,
+			PromptBudget:         800_000,
+			SoftLimit:            800_000,
+			HardLimit:            800_000,
+			TargetTokens:         800_000,
+			SummaryOutputReserve: 20_000,
+			ContextPressure:      float64(93434) / 800000,
 		},
 	}
 
@@ -70,9 +69,9 @@ func TestWriteAgentContextPromptDumpUsesPerRequestMetricsAndSequentialFiles(t *t
 	content := string(encoded)
 	for _, expected := range []string{
 		"AgentRunID: run-1", "API Round: 4", "请求类型: main", "模型: gpt-5", "模型物理上下文窗口: 1000000",
-		"配置 Agent 工作窗口(k): 256", "有效 Agent 工作窗口 Token: 256000", "PromptBudget: 240000",
-		"固定请求 Token: 18104", "可压缩区 Token: 75330", "最终 Prompt Token: 93434", "总上下文压力: 38.93%",
-		"SoftLimit: 223000", "HardLimit: 240000", "TargetTokens: 144000", "本次决策: semantic_compact",
+		"80% 上下文触发阈值: 800000", "摘要最大输出 Token: 20000",
+		"固定请求 Token: 18104", "可压缩区 Token: 75330", "最终 Prompt Token: 93434", "总上下文压力: 11.68%",
+		"最终上下文上限: 800000", "本次决策: semantic_compact",
 		"【最终完整 ChatRequest】", `"provider": "openai"`, `"messages": [`, "system text", "summary text",
 		"old question", "old answer", "current question", `"tools": [`, `"name": "read_file"`,
 	} {

@@ -13,18 +13,21 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
-	"github.com/zgiai/zgi/api/internal/modules/integrations"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/internal/modules/zgimarket"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -32,7 +35,7 @@ import (
 )
 
 // RegisterAPIKeyRoutes registers external API routes with API key authentication
-func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, integrationRegistry *integrations.Registry, actionProjections integrationmetatools.ActionProjectionResolver) {
+func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, connectorDispatcher connectordispatch.Dispatcher, connectorRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorCatalog connectorexecution.DefinitionCatalog) {
 	// Create repositories
 	workflowRepo := workflow.NewWorkflowRepository(db)
 	workflowRunLogRepo := workflow.NewWorkflowRunLogRepository(db)
@@ -57,6 +60,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		nil,
 		engineFactory,
 	)
+	workflowService.SetConnectorCatalog(connectorCatalog)
 
 	// Create user migration service
 	userMigrationService := workflow.NewUserMigrationServiceFromDB()
@@ -68,6 +72,11 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	}
 
 	agentMemoryService := agentmemory.NewService(db)
+	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
+	var runtimeAgentMemory any = agentMemoryService
+	if relationshipmemory.RuntimeEnabled() {
+		runtimeAgentMemory = userRelationshipMemory
+	}
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,
@@ -78,14 +87,15 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		enterpriseService,
 		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolver),
 		memoryService,
-		agentMemoryService,
-		actionProjections,
+		runtimeAgentMemory,
+		connectorRuntime, connectorConfirmationStore,
+		zgimarket.RuntimeResolver(),
 	)
 	var defaultModelResolver llmdefaultservice.DefaultModelResolver
 	if graphFlowService != nil {
 		defaultModelResolver = graphFlowService.DefaultModelSvc
 	}
-	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db, integrationRegistry)
+	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	agentHandler := agents.NewAgentsHandler(agentService, nil, accountService, enterpriseService, db, chatRuntimeService)
 	agentHandler.SetFileService(fileService)
 	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)
@@ -187,16 +197,29 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		externalGroup.DELETE("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryValue))
 		externalGroup.DELETE("/agents/memory", withAgentAPIKeyContext(agentHandler.DeleteAllAPIKeyAgentMemory))
 		externalGroup.POST("/agents/memory/operations/:operation_id/undo", withAgentAPIKeyContext(agentHandler.UndoAPIKeyAgentMemoryOperation))
+		externalGroup.GET("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemorySettings))
+		externalGroup.PATCH("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.PatchAPIKeyAgentMemorySettings))
 		externalGroup.GET("/agents/conversations", withAgentAPIKeyContext(agentHandler.ListAPIKeyAgentRuntimeConversations))
 		externalGroup.GET("/agents/conversations/search", withAgentAPIKeyContext(agentHandler.SearchAPIKeyAgentRuntimeConversations))
 		externalGroup.GET("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentRuntimeConversation))
 		externalGroup.PATCH("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.UpdateAPIKeyAgentRuntimeConversation))
 		externalGroup.DELETE("/agents/conversations/:conversation_id", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentRuntimeConversation))
 		externalGroup.GET("/agents/conversations/:conversation_id/messages", withAgentAPIKeyContext(agentHandler.ListAPIKeyAgentRuntimeMessages))
+		externalGroup.GET("/agents/conversations/:conversation_id/files/:file_id", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentRuntimeExecutionFile))
 		externalGroup.GET("/agents/conversations/:conversation_id/events", withAgentAPIKeyContext(agentHandler.StreamAPIKeyAgentRuntimeEvents))
 		externalGroup.POST("/agents/conversations/:conversation_id/stop", withAgentAPIKeyContext(agentHandler.StopAPIKeyAgentRuntimeConversation))
 		externalGroup.POST("/agents/messages/:message_id/regenerate", withAgentAPIKeyContext(agentHandler.RegenerateAPIKeyAgentRuntimeMessage))
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/workflow-continuation", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation))
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeUserInput))
+		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeToolGovernance))
+		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeTokenBudget))
 	}
+
+	// Runtime Workspace exposes the same published Agent runtime through one
+	// rotatable group credential while keeping the legacy /v1 contract intact.
+	RegisterRuntimeWorkspaceRoutes(r, RuntimeWorkspaceRouteDeps{
+		DB:           db,
+		FileService:  fileService,
+		AgentHandler: agentHandler,
+	})
 }

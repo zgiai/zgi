@@ -3,7 +3,6 @@
 
 import type { WorkflowEdge, WorkflowNode } from '../type';
 import type { Viewport } from '@xyflow/react';
-import { deepClone } from '@/utils/object';
 
 // Graph snapshot for undo/redo stack
 export interface GraphSnapshot {

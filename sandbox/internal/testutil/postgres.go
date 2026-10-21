@@ -1,10 +1,10 @@
 package testutil
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"math/rand"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -15,38 +15,60 @@ import (
 
 func CreateTestPostgresDSN(t *testing.T) string {
 	t.Helper()
+	admin, adminDSN := openTestAdmin(t)
+	return createOwnedTestDatabase(t, admin, adminDSN, "")
+}
 
+// openTestAdmin connects to the administrative database, skipping the test
+// when no PostgreSQL is available unless one was explicitly configured.
+func openTestAdmin(t *testing.T) (*sql.DB, string) {
+	t.Helper()
 	adminDSN := defaultAdminDSN()
 	admin, err := sql.Open("pgx", adminDSN)
 	if err != nil {
+		if strings.TrimSpace(os.Getenv("ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN")) != "" {
+			t.Fatalf("configured test postgres unavailable: %v", err)
+		}
 		t.Skipf("postgres unavailable: %v", err)
 	}
-	defer admin.Close()
+	t.Cleanup(func() {
+		if err := admin.Close(); err != nil {
+			t.Errorf("close test database administrator: %v", err)
+		}
+	})
 
 	if err := admin.Ping(); err != nil {
+		if strings.TrimSpace(os.Getenv("ZGI_SANDBOX_TEST_POSTGRES_ADMIN_DSN")) != "" {
+			t.Fatalf("configured test postgres unavailable: %v", err)
+		}
 		t.Skipf("postgres unavailable: %v", err)
 	}
+	return admin, adminDSN
+}
 
+// createOwnedTestDatabase creates a database the test owns, with the given
+// CREATE DATABASE options, and drops it when the test ends.
+func createOwnedTestDatabase(t *testing.T, admin *sql.DB, adminDSN string, options string) string {
+	t.Helper()
 	dbName := fmt.Sprintf("zgi_sandbox_test_%d_%d", time.Now().UnixNano(), rand.New(rand.NewSource(time.Now().UnixNano())).Intn(1000))
-	if _, err := admin.Exec(`CREATE DATABASE ` + quoteIdentifier(dbName)); err != nil {
+	statement := `CREATE DATABASE ` + quoteIdentifier(dbName)
+	if options != "" {
+		statement += " " + options
+	}
+	if _, err := admin.Exec(statement); err != nil {
 		t.Fatalf("create test database: %v", err)
 	}
 
 	t.Cleanup(func() {
-		_, _ = admin.Exec(`
-			SELECT pg_terminate_backend(pid)
-			FROM pg_stat_activity
-			WHERE datname = $1 AND pid <> pg_backend_pid()
-		`, dbName)
-		_, _ = admin.Exec(`DROP DATABASE IF EXISTS ` + quoteIdentifier(dbName))
+		// Keep the administrator open until this LIFO cleanup has dropped only
+		// the database allocated above, including idle application connections.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := admin.ExecContext(ctx, `DROP DATABASE IF EXISTS `+quoteIdentifier(dbName)+` WITH (FORCE)`); err != nil {
+			t.Errorf("remove owned test database: %v", err)
+		}
 	})
-
-	parsed, err := url.Parse(adminDSN)
-	if err != nil {
-		t.Fatalf("parse admin dsn: %v", err)
-	}
-	parsed.Path = "/" + dbName
-	return parsed.String()
+	return databaseDSN(t, adminDSN, dbName)
 }
 
 func defaultAdminDSN() string {

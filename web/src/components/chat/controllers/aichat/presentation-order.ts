@@ -101,9 +101,7 @@ export function removePresentationSegment(
   segmentId: string | undefined
 ): AIChatPresentationItem[] {
   if (!segmentId) return [...(items ?? [])];
-  return (items ?? []).filter(
-    item => item.kind !== 'text' || item.segment_id !== segmentId
-  );
+  return (items ?? []).filter(item => item.kind !== 'text' || item.segment_id !== segmentId);
 }
 
 export function mergePresentationItems(
@@ -202,15 +200,13 @@ function timelineReferences(item: AIChatAgenticTimelineItem): string[] {
     case 'user_input_request':
       return item.request_id ? [item.request_id] : [];
     case 'user_input_response':
-      return item.request_id
-        ? [`user_input_response:${item.request_id}`, item.request_id]
-        : [];
+      return item.request_id ? [`user_input_response:${item.request_id}`, item.request_id] : [];
+    case 'runtime_input':
+      return [item.input_id];
     case 'tool_governance_decision':
       return [
         item.event.correlation_id,
-        item.event.correlation_id
-          ? `tool_governance:${item.event.correlation_id}`
-          : undefined,
+        item.event.correlation_id ? `tool_governance:${item.event.correlation_id}` : undefined,
         item.event.request_id,
         item.event.approval_id,
       ].filter((value): value is string => Boolean(value));
@@ -233,10 +229,11 @@ export function optimisticUserInputResponsePresentationPosition(
   const normalizedRequestId = requestId.trim();
   if (!projection || !normalizedMessageId || !normalizedRequestId) return undefined;
 
-  const presentationSequence = Math.max(
-    projection.last_sequence ?? 0,
-    ...(projection.items ?? []).map(item => item.presentation_sequence ?? 0)
-  ) + 1;
+  const presentationSequence =
+    Math.max(
+      projection.last_sequence ?? 0,
+      ...(projection.items ?? []).map(item => item.presentation_sequence ?? 0)
+    ) + 1;
   return {
     presentation_version: PRESENTATION_VERSION,
     presentation_id: `message:${normalizedMessageId}:event:user_input_response:${normalizedRequestId}`,
@@ -252,11 +249,7 @@ export function withOptimisticUserInputResponsePresentation(
   metadata: AIChatMessageMetadata;
   position?: AIChatPresentationPosition;
 } {
-  const position = optimisticUserInputResponsePresentationPosition(
-    metadata,
-    messageId,
-    requestId
-  );
+  const position = optimisticUserInputResponsePresentationPosition(metadata, messageId, requestId);
   if (!position) return { metadata };
 
   const projection = presentationProjectionFromMetadata(metadata);
@@ -282,6 +275,7 @@ export function withOptimisticUserInputResponsePresentation(
 }
 
 function eventTypeMatchesTimelineItem(eventType: string, item: AIChatAgenticTimelineItem): boolean {
+  if (eventType === 'runtime_input_applied') return item.type === 'runtime_input';
   if (eventType.startsWith('skill_')) return item.type === 'skill_event';
   if (eventType.includes('user_input')) {
     return item.type === 'user_input_request' || item.type === 'user_input_response';

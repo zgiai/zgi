@@ -18,6 +18,7 @@ coverage/
 *.exe
 vendor/
 tmp/
+sandbox/e2b-template-build/
 .tmp/
 docker/docker-compose.yaml
 .qa-state.json
@@ -28,6 +29,10 @@ outputs/
 .*-run-*.ps1
 %SystemDrive%/
 specs/
+!specs/
+specs/*
+!specs/005-digital-human-long-term-memory/
+!specs/005-digital-human-long-term-memory/*.md
 /plan/
 %SystemDrive%/
 scripts/rag_evaluation/.env
@@ -36,3 +41,7 @@ scripts/rag_evaluation/input/
 scripts/rag_evaluation/middle/
 scripts/rag_evaluation/result/
 scripts/rag_evaluation/graph_evaluation/
+# Private runtime deployment configuration (keep only maintained examples).
+sandbox/deploy/*.env
+sandbox/deploy/settings.json
+.turbo/

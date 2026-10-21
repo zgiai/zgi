@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -37,11 +44,12 @@ const (
 var ErrSkillNotFound = errors.New("skill not found")
 
 type Runtime struct {
-	engine       *tools.ToolEngine
-	manager      *tools.ToolManager
-	catalogDir   string
-	scriptRunner SkillScriptRunner
-	governance   ToolGovernanceGateway
+	connectorDispatcher connectordispatch.Dispatcher
+	engine              *tools.ToolEngine
+	manager             *tools.ToolManager
+	catalogDir          string
+	scriptRunner        SkillScriptRunner
+	governance          ToolGovernanceGateway
 }
 
 type SkillScriptRunner interface {
@@ -57,9 +65,24 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
+	// PlatformExecutionOrigin is supplied only by the admitted runtime bridge.
+	PlatformExecutionOrigin *toolgovernance.ExecutionOrigin `json:"-"`
+	// PlatformInteractiveApproval is set only by a first-party console CLI
+	// bridge. It cannot be supplied through Skill arguments or runtime JSON.
+	PlatformInteractiveApproval bool `json:"-"`
 	// ScriptModel is server-owned and never serialized into tool arguments.
-	ScriptModel       *ScriptModelChannel `json:"-"`
-	scriptModelPath   string
+	ScriptModel              *ScriptModelChannel `json:"-"`
+	scriptModelPath          string
+	PresentationLocale       string           `json:"-"`
+	ConnectorTargetScope     core.TargetScope `json:"-"`
+	ConnectorTargetVersionID string           `json:"-"`
+	// ConnectorTargetType selects the DigitalHuman host boundary. It is empty
+	// for Chat, Agent, and Workflow callers, whose target is derived from
+	// InvokeFrom.
+	ConnectorTargetType  core.TargetType `json:"-"`
+	ConnectorInteractive bool            `json:"-"`
+	// ConnectorRunID identifies the DigitalHuman run a confirmation belongs to.
+	ConnectorRunID    string `json:"-"`
 	OrganizationID    string
 	UserID            string
 	ConversationID    string
@@ -69,13 +92,17 @@ type ExecutionContext struct {
 	RuntimeParameters map[string]interface{}
 	// ExternalUserID is the server-derived external caller identity. It is
 	// distinct from UserID, which remains the internal account/API-key identity.
-	ExternalUserID string `json:"-"`
+	ExternalUserID             string                                           `json:"-"`
+	ConnectorIdentityResolver  connectordispatch.IdentityResolver               `json:"-"`
+	ConnectorActionResolver    connectordispatch.ActionInstanceResolver         `json:"-"`
+	ConnectorConfirmationStore connectorexecution.ConfirmationContinuationStore `json:"-"`
 }
 
 type ToolInvocationResult struct {
-	ToolMessage llmadapter.Message
-	Trace       SkillTrace
-	Messages    []tools.ToolInvokeMessage
+	ToolMessage           llmadapter.Message
+	Trace                 SkillTrace
+	Messages              []tools.ToolInvokeMessage
+	ConnectorConfirmation *ConnectorConfirmationPending `json:"-"`
 }
 
 func NewRuntime(engine *tools.ToolEngine, manager *tools.ToolManager) *Runtime {
@@ -332,6 +359,12 @@ func (r *Runtime) ValidateCatalog(ctx context.Context) error {
 }
 
 func LoadCustomSkillDocument(root string) (SkillDocument, error) {
+	return LoadCustomSkillDocumentWithName(root, "")
+}
+
+// LoadCustomSkillDocumentWithName accepts the package directory name as a
+// fallback for skills whose frontmatter omits name.
+func LoadCustomSkillDocumentWithName(root, packageName string) (SkillDocument, error) {
 	raw, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("custom skill SKILL.md not found: %w", err)
@@ -340,8 +373,11 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse custom skill: %w", err)
 	}
+	if strings.TrimSpace(frontmatter.Name) == "" {
+		frontmatter.Name = strings.ToLower(strings.TrimSpace(packageName))
+	}
 	id := normalizeSkillID(frontmatter.Name)
-	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasScripts(root))
+	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasCustomScripts(root))
 	if err != nil {
 		return SkillDocument{}, err
 	}
@@ -351,8 +387,76 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	return doc, nil
 }
 
+// ValidateCustomSkillScriptPackage performs the structural checks required
+// before a custom script skill can be imported. It intentionally does not
+// grant execution-time dependency or model-call capabilities.
+func ValidateCustomSkillScriptPackage(root string, fallbackTimeoutSeconds int) error {
+	mode, err := CustomSkillScriptExecutionMode(root)
+	if err != nil {
+		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	if mode == SkillScriptExecutionSession {
+		raw, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
+		if err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+		frontmatter, _, err := parseSkillMarkdown(raw)
+		if err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+		if len(frontmatter.ScriptInputSchema) > 0 {
+			return fmt.Errorf("invalid custom skill script package: script_input_schema requires scripts/run.py or skill.manifest.json")
+		}
+		return nil
+	}
+	prepared, err := prepareSkillScriptManifest(root, fallbackTimeoutSeconds, true)
+	if err != nil {
+		return fmt.Errorf("invalid custom skill script package: %w", err)
+	}
+	if mode == SkillScriptExecutionManifest {
+		if err := validateSkillPackageUploadSize(root, prepared.Raw); err != nil {
+			return fmt.Errorf("invalid custom skill script package: %w", err)
+		}
+	}
+	return nil
+}
+
+const (
+	SkillScriptExecutionSession  = "session_script"
+	SkillScriptExecutionLegacy   = "legacy_script"
+	SkillScriptExecutionManifest = "zgi_script"
+)
+
+// CustomSkillScriptExecutionMode classifies the existing one-shot protocol
+// separately from portable scripts that run in an approved Agent workspace.
+func CustomSkillScriptExecutionMode(root string) (string, error) {
+	hasManifest, err := hasSkillManifest(root)
+	if err != nil {
+		return "", err
+	}
+	if hasManifest {
+		return SkillScriptExecutionManifest, nil
+	}
+	entrypoint := filepath.Join(root, "scripts", "run.py")
+	info, err := os.Lstat(entrypoint)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("scripts/run.py must be a regular file")
+		}
+		return SkillScriptExecutionLegacy, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	return SkillScriptExecutionSession, nil
+}
+
 func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
-	doc, err := LoadCustomSkillDocument(root)
+	return r.LoadCustomSkillDocumentWithName(root, "")
+}
+
+func (r *Runtime) LoadCustomSkillDocumentWithName(root, packageName string) (SkillDocument, error) {
+	doc, err := LoadCustomSkillDocumentWithName(root, packageName)
 	if err != nil {
 		return SkillDocument{}, err
 	}
@@ -360,7 +464,7 @@ func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	return doc, nil
 }
 
-func (r *Runtime) LoadSkill(ctx context.Context, resolved *ResolvedSkills, skillID string) (*SkillDocument, SkillTrace, error) {
+func (r *Runtime) LoadSkill(ctx context.Context, resolved *ResolvedSkills, skillID string, executions ...ExecutionContext) (*SkillDocument, SkillTrace, error) {
 	_ = ctx
 	start := time.Now()
 	doc, ok := resolved.Get(skillID)
@@ -377,6 +481,16 @@ func (r *Runtime) LoadSkill(ctx context.Context, resolved *ResolvedSkills, skill
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return nil, trace, err
 	}
+	execution := ExecutionContext{}
+	if len(executions) > 0 {
+		execution = executions[0]
+	}
+	if err := requireConnectorRequirements(ctx, *doc, execution, "skill-requirements:"+skillID); err != nil {
+		trace.Status = "error"
+		trace.Error, trace.ErrorCode = skillTraceError(err)
+		return nil, trace, err
+	}
+
 	trace.DurationMS = time.Since(start).Milliseconds()
 	return doc, trace, nil
 }
@@ -441,6 +555,9 @@ func (r *Runtime) CallSkillTool(
 	if !ok {
 		return nil, fmt.Errorf("skill %s is not enabled", normalizeSkillID(skillID))
 	}
+	if err := requireConnectorRequirements(ctx, *doc, execCtx, callID); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(toolName) == SkillScriptToolRun {
 		toolDef, ok := findSkillTool(*doc, toolName)
 		if !ok {
@@ -474,15 +591,35 @@ func (r *Runtime) CallSkillTool(
 		executionArguments = rewritten
 		governanceArgumentRewrite = rewriteSummary
 	}
+	connectorIdentity, identityErr := resolveConnectorToolIdentity(ctx, doc.Metadata.ID, toolDef, execCtx, callID)
+	if identityErr != nil {
+		trace := SkillTrace{
+			Kind:            "tool_call",
+			SkillID:         doc.Metadata.ID,
+			ToolName:        toolDef.Name,
+			Status:          "error",
+			Arguments:       summarizeToolArguments(toolDef, executionArguments),
+			ConnectorNative: toolDef.ConnectorNative,
+		}
+		trace.Error, trace.ErrorCode = skillTraceError(identityErr)
+		return &ToolInvocationResult{Trace: trace}, identityErr
+	}
+	if toolDef.ConnectorNative {
+		if connectorIdentity == nil {
+			return nil, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+		}
+		return r.callConnectorTool(ctx, *doc, toolDef, executionArguments, execCtx, callID, *connectorIdentity)
+	}
 	enrichedArguments, enrichErr := r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
 	if enrichErr != nil {
 		trace := SkillTrace{
-			Kind:      "tool_governance",
-			SkillID:   doc.Metadata.ID,
-			ToolName:  toolDef.Name,
-			Status:    "error",
-			Arguments: summarizeToolArguments(toolDef, executionArguments),
-			Error:     enrichErr.Error(),
+			Kind:            "tool_governance",
+			SkillID:         doc.Metadata.ID,
+			ToolName:        toolDef.Name,
+			Status:          "error",
+			Arguments:       summarizeToolArguments(toolDef, executionArguments),
+			Error:           enrichErr.Error(),
+			ConnectorNative: toolDef.ConnectorNative,
 		}
 		return &ToolInvocationResult{Trace: trace}, enrichErr
 	}
@@ -493,12 +630,13 @@ func (r *Runtime) CallSkillTool(
 			traceArguments = dynamicSchemaValidationTraceArguments(toolDef, executionArguments)
 		}
 		trace := SkillTrace{
-			Kind:      "tool_call",
-			SkillID:   doc.Metadata.ID,
-			ToolName:  toolDef.Name,
-			Status:    "error",
-			Arguments: traceArguments,
-			Error:     err.Error(),
+			Kind:            "tool_call",
+			SkillID:         doc.Metadata.ID,
+			ToolName:        toolDef.Name,
+			Status:          "error",
+			Arguments:       traceArguments,
+			Error:           err.Error(),
+			ConnectorNative: toolDef.ConnectorNative,
 		}
 		return &ToolInvocationResult{Trace: trace}, err
 	}
@@ -517,6 +655,13 @@ func (r *Runtime) CallSkillTool(
 	timeout := docTimeoutSeconds(*doc)
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
+	if execCtx.PlatformExecutionOrigin != nil {
+		protected, err := tool_file.WithExecutionOrigin(runCtx, *execCtx.PlatformExecutionOrigin)
+		if err != nil {
+			return nil, err
+		}
+		runCtx = protected
+	}
 
 	start := time.Now()
 	result, err := r.engine.Invoke(runCtx, tools.InvokeRequest{
@@ -533,12 +678,13 @@ func (r *Runtime) CallSkillTool(
 		RuntimeParameters: copyStringAnyMap(execCtx.RuntimeParameters),
 	})
 	trace := SkillTrace{
-		Kind:       "tool_call",
-		SkillID:    doc.Metadata.ID,
-		ToolName:   toolDef.Name,
-		Status:     "success",
-		DurationMS: time.Since(start).Milliseconds(),
-		Arguments:  summarizeToolArguments(toolDef, executionArguments),
+		Kind:            "tool_call",
+		SkillID:         doc.Metadata.ID,
+		ToolName:        toolDef.Name,
+		Status:          "success",
+		DurationMS:      time.Since(start).Milliseconds(),
+		Arguments:       summarizeToolArguments(toolDef, executionArguments),
+		ConnectorNative: toolDef.ConnectorNative,
 	}
 	if len(governanceArgumentRewrite) > 0 {
 		trace.Arguments["governance_argument_rewrite"] = governanceArgumentRewrite
@@ -549,7 +695,24 @@ func (r *Runtime) CallSkillTool(
 	if err != nil {
 		trace.Status = "error"
 		trace.Error, trace.ErrorCode = skillTraceError(err)
-		return &ToolInvocationResult{Trace: trace}, err
+		invocation := &ToolInvocationResult{Trace: trace}
+		if result != nil && blockedConnectorRuntimeMessages(result.Messages) {
+			invocation.Trace.ErrorCode = string(core.ErrorCodeConfirmationRequired)
+			callID = strings.TrimSpace(callID)
+			if callID == "" {
+				callID = "call_" + toolDef.Name
+			}
+			// ToolEngine has already rebuilt these messages from the typed,
+			// server-owned blocked marker. Keep them attached to the terminal
+			// error so Chat and Agent hosts can render the shared blocked state.
+			invocation.Messages = result.Messages
+			invocation.ToolMessage = llmadapter.Message{
+				Role:       "tool",
+				ToolCallID: callID,
+				Content:    toolMessagesContent(result.Messages),
+			}
+		}
+		return invocation, err
 	}
 	if result == nil || !result.Success {
 		message := "tool invocation failed"
@@ -566,15 +729,151 @@ func (r *Runtime) CallSkillTool(
 		callID = "call_" + toolDef.Name
 	}
 	messages := appendGovernanceRewriteObservation(result.Messages, governanceDecision, governanceArgumentRewrite)
-	return &ToolInvocationResult{
-		Messages: messages,
-		Trace:    trace,
+	connectorConfirmation, pending, confirmationErr := freezeConnectorConfirmation(
+		ctx, toolDef, connectorIdentity, executionArguments, execCtx, messages,
+	)
+	if confirmationErr != nil {
+		trace.Status = "error"
+		trace.Error, trace.ErrorCode = skillTraceError(confirmationErr)
+		return &ToolInvocationResult{Trace: trace}, confirmationErr
+	}
+	if pending {
+		trace.Status = "pending_confirmation"
+	}
+	invocation = &ToolInvocationResult{
+		Messages:              messages,
+		Trace:                 trace,
+		ConnectorConfirmation: connectorConfirmation,
 		ToolMessage: llmadapter.Message{
 			Role:       "tool",
 			ToolCallID: callID,
 			Content:    toolMessagesContent(messages),
 		},
-	}, nil
+	}
+	return invocation, nil
+}
+
+func resolveConnectorToolIdentity(
+	ctx context.Context,
+	skillID string,
+	toolDef SkillToolDefinition,
+	execCtx ExecutionContext,
+	callID string,
+) (*connectordispatch.Identity, error) {
+	if !toolDef.ConnectorNative {
+		if tools.NormalizeToolProviderType(toolDef.ProviderType) == tools.ToolProviderTypeConnector {
+			return nil, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil)
+		}
+		return nil, nil
+	}
+	if execCtx.ConnectorIdentityResolver == nil {
+		return nil, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil)
+	}
+	organizationID, err := uuid.Parse(strings.TrimSpace(execCtx.OrganizationID))
+	if err != nil || organizationID == uuid.Nil {
+		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	ownerID, err := uuid.Parse(strings.TrimSpace(execCtx.UserID))
+	if err != nil || ownerID == uuid.Nil {
+		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	connectorID := core.Identifier(strings.TrimSpace(toolDef.ProviderID))
+	operationID := core.Identifier(strings.TrimSpace(toolDef.ConnectorOperationID))
+	if !connectorID.Valid() || !operationID.Valid() || strings.TrimSpace(execCtx.MessageID) == "" {
+		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+
+	var target core.TargetRef
+	interactive := false
+	switch execCtx.InvokeFrom {
+	case tools.ToolInvokeFromAIChat:
+		target = core.TargetRef{Type: core.TargetTypeChat, ID: strings.TrimSpace(execCtx.ConversationID)}
+		interactive = true
+	case tools.ToolInvokeFromAgent:
+		target = core.TargetRef{Type: core.TargetTypeAgent, ID: strings.TrimSpace(execCtx.AppID), Scope: execCtx.ConnectorTargetScope, VersionID: execCtx.ConnectorTargetVersionID}
+		interactive = connectorAgentRuntimeInteractive(execCtx.RuntimeParameters)
+	case tools.ToolInvokeFromDigitalHuman:
+		// The DigitalHuman target is resolved from the server-owned execution
+		// context below; an incomplete context fails target validation.
+	case tools.ToolInvokeFromWorkflow:
+		target = core.TargetRef{
+			Type:              core.TargetTypeWorkflow,
+			ID:                strings.TrimSpace(runtimeParameterString(execCtx.RuntimeParameters, "workflow_id")),
+			BindingInstanceID: strings.TrimSpace(runtimeParameterString(execCtx.RuntimeParameters, "node_id")),
+		}
+	default:
+		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	if execCtx.ConnectorTargetType == core.TargetTypeDigitalHuman {
+		// A DigitalHuman host never borrows the Chat or Agent target implied by
+		// InvokeFrom. Its host identity, exact scope/version and persisted
+		// binding instance all come from the server-owned execution context.
+		target = core.TargetRef{
+			Type:              core.TargetTypeDigitalHuman,
+			ID:                strings.TrimSpace(execCtx.AppID),
+			Scope:             execCtx.ConnectorTargetScope,
+			VersionID:         strings.TrimSpace(execCtx.ConnectorTargetVersionID),
+			BindingInstanceID: strings.TrimSpace(toolDef.ConnectorBindingInstanceID),
+		}
+		interactive = execCtx.ConnectorInteractive
+	}
+	if err := target.Validate(); err != nil {
+		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+
+	// These coordinates only authorize the current binding. The host must
+	// persist an action instance before this identity can reach dispatch.
+	logicalOperationID := connectorInvocationDigest(
+		"connector-lookup", execCtx.MessageID,
+		connectorID.String(), operationID.String(), string(target.Type), target.ID, target.BindingInstanceID,
+	)
+	correlationID := "connector-correlation-" + strings.TrimSpace(execCtx.MessageID)
+	request := connectordispatch.IdentityResolutionRequest{
+		ConversationID: execCtx.ConversationID,
+		OrganizationID: organizationID, OwnerAccountID: ownerID, ActingPrincipalID: ownerID,
+		ConnectorID: connectorID, Target: target, OperationID: operationID,
+		LogicalOperationID: logicalOperationID, CorrelationID: correlationID, Interactive: interactive,
+	}
+	identity, err := execCtx.ConnectorIdentityResolver.ResolveConnectorIdentity(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if identity.OrganizationID != request.OrganizationID || identity.OwnerAccountID != request.OwnerAccountID ||
+		identity.ActingPrincipalID != request.ActingPrincipalID || identity.ConnectorID != request.ConnectorID ||
+		identity.Target != request.Target || identity.OperationID != request.OperationID ||
+		identity.LogicalOperationID != request.LogicalOperationID || identity.CorrelationID != request.CorrelationID ||
+		identity.Interactive != request.Interactive || identity.BindingID == uuid.Nil || identity.ConnectionID == uuid.Nil {
+		return nil, core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	}
+	return &identity, nil
+}
+
+func connectorAgentRuntimeInteractive(runtimeParameters map[string]interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(runtimeParameterString(runtimeParameters, "agent_runtime_source"))) {
+	case "console", "webapp":
+		return true
+	default:
+		// Missing, external API, migration, automation, and future sources are
+		// unattended until the server explicitly classifies them as interactive.
+		return false
+	}
+}
+
+func connectorInvocationDigest(prefix string, values ...string) string {
+	payload := prefix
+	for _, value := range values {
+		payload += "\x1f" + strings.TrimSpace(value)
+	}
+	digest := sha256.Sum256([]byte(payload))
+	return prefix + "-" + fmt.Sprintf("%x", digest[:])
+}
+
+func runtimeParameterString(values map[string]interface{}, key string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	value, _ := values[key].(string)
+	return value
 }
 
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {

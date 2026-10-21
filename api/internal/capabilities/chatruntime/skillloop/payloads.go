@@ -42,7 +42,6 @@ func clientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace
 	}
 	return nil
 }
-
 func clientActionRequiresModelContinuation(payload map[string]interface{}) bool {
 	if len(payload) == 0 {
 		return false
@@ -562,7 +561,7 @@ func skillDocumentPayload(doc *skills.SkillDocument) map[string]interface{} {
 	if doc == nil {
 		return map[string]interface{}{}
 	}
-	return map[string]interface{}{
+	payload := map[string]interface{}{
 		"skill_id":     doc.Metadata.ID,
 		"name":         doc.Metadata.Name,
 		"description":  doc.Metadata.Description,
@@ -570,6 +569,35 @@ func skillDocumentPayload(doc *skills.SkillDocument) map[string]interface{} {
 		"instructions": doc.Instructions,
 		"references":   doc.Metadata.References,
 		"tools":        doc.Metadata.Tools,
+	}
+	if sessionScript := portableSessionScriptPayload(doc); sessionScript != nil {
+		payload["session_script"] = sessionScript
+	}
+	return payload
+}
+
+func portableSessionScriptPayload(doc *skills.SkillDocument) map[string]interface{} {
+	if doc == nil || doc.Metadata.Source != skills.SkillSourceCustom || !doc.Metadata.HasScripts {
+		return nil
+	}
+	mode, err := skills.CustomSkillScriptExecutionMode(doc.Metadata.RootPath)
+	if err != nil || mode == skills.SkillScriptExecutionManifest {
+		return nil
+	}
+	digest, err := skills.SkillPackageSHA256(doc.Metadata.RootPath)
+	if err != nil {
+		return nil
+	}
+	workspacePath, err := skills.PortableSkillWorkspacePath(doc.Metadata.ID, digest)
+	if err != nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"package_sha256": digest,
+		"workspace_path": workspacePath,
+		"execution_tool": "shell_exec",
+		"skill_id":       doc.Metadata.ID,
+		"usage":          "In an approved console Agent runtime, pass skill_id and this package_sha256 to shell_exec. $ZGI_SKILL_DIR is the complete package root: use the actual script or local module paths documented by the Skill, including scripts/, core/, or root-level files. For local module imports, run from that directory when required. Reload the Skill if the package changes. Standard Skills may install a missing Python, Node, or approved system package with the runtime's pip/npm/apt-get command; no ZGI dependency declaration is required. Use workspace_prepare_dependencies only when it is explicitly available for a legacy declarative Skill.",
 	}
 }
 

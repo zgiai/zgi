@@ -16,6 +16,19 @@ func compileNextRunAt(
 	return compileNextRunAtFrom(scheduleType, timezone, config, time.Now())
 }
 
+// CompileNextRunAt exposes the scheduler's canonical schedule validation and
+// next-run calculation to subject-owned task facades.
+func CompileNextRunAt(
+	scheduleType automationmodel.AutomationScheduleType,
+	timezone string,
+	config map[string]interface{},
+) (*time.Time, error) {
+	if scheduleType == automationmodel.AutomationScheduleTypeManual {
+		return nil, nil
+	}
+	return compileNextRunAt(scheduleType, timezone, config)
+}
+
 func compileNextRunAtFrom(
 	scheduleType automationmodel.AutomationScheduleType,
 	timezone string,
@@ -23,6 +36,8 @@ func compileNextRunAtFrom(
 	now time.Time,
 ) (*time.Time, error) {
 	switch scheduleType {
+	case automationmodel.AutomationScheduleTypeManual:
+		return nil, nil
 	case automationmodel.AutomationScheduleTypeOnce:
 		runAt, err := parseOnceRunAt(config)
 		if err != nil {

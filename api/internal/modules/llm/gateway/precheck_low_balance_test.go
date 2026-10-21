@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestEvaluateCandidateRouteWarningsReportsOnlyModelLevelUpstreamBalanceRisk(
 				if err := db.Create(&ChannelWallet{
 					ChannelID:      route.ID,
 					OrganizationID: organizationID,
-					Balance:        workflowPrivateChannelLowBalanceThreshold,
+					Balance:        millipoints.MilliPoints(workflowPrivateChannelLowBalanceThreshold),
 					Status:         channelWalletStatusActive,
 				}).Error; err != nil {
 					t.Fatalf("create channel wallet: %v", err)

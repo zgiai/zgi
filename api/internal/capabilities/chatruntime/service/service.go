@@ -14,8 +14,16 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/modelprogress"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	integrationmetatools "github.com/zgiai/zgi/api/internal/modules/integrations/metatools"
+	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
+	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
+	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -40,25 +48,32 @@ const (
 	runtimeLeaseLegacyTTL    = time.Hour
 	defaultModelIdleTimeout  = 5 * time.Minute
 
-	streamEventMessageStart         = "message_start"
-	streamEventMessage              = "message"
-	streamEventMessageRetract       = "message_retract"
-	streamEventMessageEnd           = "message_end"
-	streamEventError                = "error"
-	streamEventAgentProgress        = "agent_progress"
-	streamEventIntermediateAnswer   = "agent_intermediate_answer"
-	streamEventUserInputRequested   = "user_input_requested"
-	streamEventFileParseStart       = "file_parse_start"
-	streamEventFileParseEnd         = "file_parse_end"
-	streamEventFileParseError       = "file_parse_error"
-	streamEventSkillCallStart       = "skill_call_start"
-	streamEventSkillCallEnd         = "skill_call_end"
-	streamEventSkillCallError       = "skill_call_error"
-	streamEventClientActionRequired = "client_action_required"
-	streamEventSkillLoadStart       = "skill_load_start"
-	streamEventSkillLoadEnd         = "skill_load_end"
-	streamEventSkillReferenceRead   = "skill_reference_read"
-	streamEventSkillArtifactCreated = "skill_artifact_created"
+	streamEventMessageStart                = "message_start"
+	streamEventMessage                     = "message"
+	streamEventMessageRetract              = "message_retract"
+	streamEventMessageEnd                  = "message_end"
+	streamEventError                       = "error"
+	streamEventAgentProgress               = "agent_progress"
+	streamEventIntermediateAnswer          = "agent_intermediate_answer"
+	streamEventUserInputRequested          = "user_input_requested"
+	streamEventTokenBudgetRequested        = "token_budget_requested"
+	streamEventTokenUsageUpdated           = "token_usage_updated"
+	streamEventFileParseStart              = "file_parse_start"
+	streamEventFileParseEnd                = "file_parse_end"
+	streamEventFileParseError              = "file_parse_error"
+	streamEventSkillCallStart              = "skill_call_start"
+	streamEventSkillCallEnd                = "skill_call_end"
+	streamEventSkillCallError              = "skill_call_error"
+	streamEventClientActionRequired        = "client_action_required"
+	streamEventSkillLoadStart              = "skill_load_start"
+	streamEventSkillLoadEnd                = "skill_load_end"
+	streamEventSkillReferenceRead          = "skill_reference_read"
+	streamEventSkillArtifactCreated        = "skill_artifact_created"
+	streamEventRuntimeInputAccepted        = "runtime_input_accepted"
+	streamEventRuntimeInputApplied         = "runtime_input_applied"
+	streamEventRuntimeInputFollowUpStarted = "runtime_input_follow_up_started"
+	streamEventRuntimeInputCanceled        = "runtime_input_canceled"
+	streamEventRuntimeInputFailed          = "runtime_input_failed"
 
 	skillModeDisabled = "disabled"
 	skillModeAuto     = "auto"
@@ -73,6 +88,7 @@ const (
 	executionRouteNativeAgent                = "native_agent"
 	executionRouteNativeSkillsAvailable      = "native_skills_available"
 	executionRouteAgentMemoryAvailable       = "agent_memory_available"
+	executionRouteAttachmentReaderAvailable  = "attachment_reader_available"
 	executionRouteNoUsableSkills             = "no_usable_skills"
 	executionRouteFunctionCallingUnavailable = "function_calling_unavailable"
 	executionRoutePersistedMode              = "persisted_mode"
@@ -97,12 +113,41 @@ const (
 )
 
 type Scope struct {
-	OrganizationID    uuid.UUID
-	AccountID         uuid.UUID
-	WorkspaceID       *uuid.UUID
-	ExternalUserID    *uuid.UUID
-	AgentMemoryUserID *uuid.UUID
-	SkipAccessCheck   bool
+	OrganizationID uuid.UUID
+	AccountID      uuid.UUID
+	WorkspaceID    *uuid.UUID
+	// RuntimeWorkspaceID identifies the external exposure group. It is kept
+	// separate from WorkspaceID because the latter owns Runtime data such as
+	// conversations and uploaded files.
+	RuntimeWorkspaceID *uuid.UUID
+	// RuntimeSubjectID identifies the authenticated external user. It is
+	// deliberately separate from AccountID, which is retained as the runtime
+	// caller owner for existing conversation persistence.
+	RuntimeSubjectID *uuid.UUID
+	// ResourceWorkspaceID is the Workspace that owns the published Agent and
+	// its bound capabilities. Runtime data may live in another Workspace.
+	ResourceWorkspaceID   *uuid.UUID
+	ExternalUserID        *uuid.UUID
+	AgentMemoryUserID     *uuid.UUID
+	SkipAccessCheck       bool
+	RuntimeFileAuthorizer RuntimeExternalFileAuthorizer
+}
+
+// RuntimeExternalFileAuthorizer authorizes a permanent Runtime Workspace file
+// for the authenticated Runtime Subject. The chat runtime owns this contract;
+// the Runtime Workspace module supplies the database-backed implementation.
+type RuntimeExternalFileAuthorizer interface {
+	CanReadRuntimeExternalFile(ctx context.Context, runtimeWorkspaceID, subjectID uuid.UUID, fileID string) (bool, error)
+}
+
+// AgentResourceWorkspaceID returns the Workspace that owns Agent capabilities.
+// Ordinary callers use WorkspaceID; Runtime callers can override it for an
+// Agent bound from a different source Workspace.
+func (s Scope) AgentResourceWorkspaceID() *uuid.UUID {
+	if s.ResourceWorkspaceID != nil && *s.ResourceWorkspaceID != uuid.Nil {
+		return s.ResourceWorkspaceID
+	}
+	return s.WorkspaceID
 }
 
 func isNativeExecutionMode(mode string) bool {
@@ -128,12 +173,15 @@ func executionModeModelUseCase(mode string) string {
 type Caller struct {
 	Type             string
 	ID               *uuid.UUID
+	RunID            *uuid.UUID
 	ConversationType string
 	Source           string
 	SourceWebAppID   *uuid.UUID
 }
 
 type RunConfig struct {
+	FileUploadPolicy                 *chatfile.Policy
+	FileUploadEnabled                *bool
 	SystemPrompt                     string
 	SystemPromptVersion              string
 	ModelProvider                    string
@@ -150,30 +198,121 @@ type RunConfig struct {
 	WorkflowBindings                 []AgentWorkflowBinding
 	WorkflowBoundByAccountID         string
 	WorkflowBoundAtUnix              int64
-	IntegrationConnectionIDs         map[string]string
-	IntegrationSelectedConnectionIDs map[string][]string
 	BindingAuthorizations            []ResourceBindingAuthorization
 	UseMemory                        bool
 	AgentMemoryEnabled               bool
 	AgentMemoryAutoExtractionEnabled bool
 	AgentMemorySlots                 []AgentMemorySlotConfig
 	AgentMemoryUserScope             string
-	AgentMemoryConfigScope           string
-	AgentMemoryConfigRevision        string
-	BillingAppID                     string
-	BillingAppType                   string
+	ConnectorTargetScope             string
+	ConnectorTargetVersionID         string
+	// ConnectorToolsDisabled prevents a host adapter from projecting Connector
+	// capabilities when that external surface does not support them. It is
+	// opt-in so existing Chat, Agent API, and DigitalHuman behavior is unchanged.
+	ConnectorToolsDisabled bool
+	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive are
+	// server-owned DigitalHuman host coordinates. They are never populated from
+	// a user-facing request DTO.
+	ConnectorTargetType       connectorcore.TargetType
+	ConnectorRunID            string
+	ConnectorInteractive      bool
+	AgentMemoryConfigScope    string
+	AgentMemoryConfigRevision string
+	BillingAppID              string
+	BillingAppType            string
+	BindingReader             resourcebindings.Reader
+	BindingSnapshot           resourcebindings.SnapshotRef
+	// RuntimeTools are caller-scoped first-party capabilities supplied by a
+	// subject adapter. They remain separate from installable Skills.
+	RuntimeTools []skillloop.RuntimeTool
+	// RuntimeToolFactory binds caller-scoped tools to the prepared conversation.
+	// It is invoked only during execution, after conversation ownership is known.
+	RuntimeToolFactory func(*PreparedChat) []skillloop.RuntimeTool
+	// AttachmentReadAuthorizer rechecks application/entry ownership at read time.
+	// Published adapters supply it independently of Linux enablement. Never
+	// deserialize this server-owned capability from client or stored metadata.
+	AttachmentReadAuthorizer func(context.Context, *PreparedChat, *dto.UploadFile) error `json:"-"`
+	// RuntimeInputPolicy enables durable text submitted while this run is active.
+	// It is opt-in so external APIs, workflows, automations, and autonomous
+	// subjects preserve their existing busy-conversation behavior.
+	RuntimeInputPolicy RuntimeInputPolicy
+	// runtimeInputFollowUp is set only by the durable follow-up worker. It lets
+	// that worker consume the conversation slot reserved by its claimed batch,
+	// while ordinary turns remain blocked until the batch starts.
+	runtimeInputFollowUp bool
+}
+
+type RuntimeInputPolicy string
+
+const (
+	RuntimeInputPolicyDisabled              RuntimeInputPolicy = ""
+	RuntimeInputPolicyCheckpointAndFollowUp RuntimeInputPolicy = "checkpoint_and_follow_up"
+)
+
+type SubmitRuntimeInputRequest struct {
+	ClientInputID   uuid.UUID
+	Content         string
+	ConversationID  uuid.UUID
+	TargetMessageID uuid.UUID
+	AdmissionMode   RuntimeInputAdmissionMode
+}
+
+// RuntimeInputAdmissionMode controls whether a durable input may be claimed at
+// a safe checkpoint in the active turn or must wait for the deterministic
+// follow-up turn. The zero value preserves the existing Agent/WebApp behavior.
+type RuntimeInputAdmissionMode string
+
+const (
+	RuntimeInputAdmissionCurrentOrFollowUp RuntimeInputAdmissionMode = ""
+	RuntimeInputAdmissionFollowUpOnly      RuntimeInputAdmissionMode = "follow_up_only"
+)
+
+type RuntimeInputDisposition string
+
+const (
+	RuntimeInputDispositionCurrentRun RuntimeInputDisposition = "current_run"
+	RuntimeInputDispositionFollowUp   RuntimeInputDisposition = "follow_up"
+)
+
+type SubmitRuntimeInputResult struct {
+	Input       *runtimemodel.RuntimeInput
+	Disposition RuntimeInputDisposition
+	Created     bool
+}
+
+type RuntimeInputFollowUpContext struct {
+	BatchID         uuid.UUID
+	OrganizationID  uuid.UUID
+	WorkspaceID     *uuid.UUID
+	AccountID       uuid.UUID
+	CallerType      string
+	CallerID        uuid.UUID
+	ConversationID  uuid.UUID
+	TargetMessageID uuid.UUID
+	ClientInputIDs  []uuid.UUID
+	Contents        []string
+	Source          string
+	SourceWebAppID  *uuid.UUID
+}
+
+// RuntimeInputFollowUpDispatcher is implemented by the owning product surface.
+// ChatRuntime owns durable batches, while the caller module owns how a fresh
+// run configuration is resolved for the follow-up turn. OwnsCallerType keeps
+// recovery jobs from dispatching another product surface's durable batch.
+type RuntimeInputFollowUpDispatcher interface {
+	OwnsCallerType(string) bool
+	EnqueueRuntimeInputFollowUp(context.Context, uuid.UUID) error
 }
 
 // ResourceBindingAuthorization is the runtime authorization evidence for one
 // concrete Agent resource binding.
 type ResourceBindingAuthorization struct {
-	BindingType      string   `json:"binding_type"`
-	ResourceID       string   `json:"resource_id"`
-	ParentResourceID string   `json:"parent_resource_id,omitempty"`
-	AccessMode       string   `json:"access_mode"`
-	AllowedActionIDs []string `json:"allowed_action_ids,omitempty"`
-	BoundByAccountID string   `json:"bound_by_account_id"`
-	BoundAtUnix      int64    `json:"bound_at_unix"`
+	BindingType      string `json:"binding_type"`
+	ResourceID       string `json:"resource_id"`
+	ParentResourceID string `json:"parent_resource_id,omitempty"`
+	AccessMode       string `json:"access_mode"`
+	BoundByAccountID string `json:"bound_by_account_id"`
+	BoundAtUnix      int64  `json:"bound_at_unix"`
 }
 
 type AgentMemorySlotConfig = agentmemoryruntime.Slot
@@ -215,6 +354,10 @@ type CreateCompletedMessageRequest struct {
 	ModelName       string
 	ModelParameters map[string]interface{}
 	Metadata        map[string]interface{}
+	// SourceMessageID provides an idempotency key for durable system
+	// deliveries (for example, a scheduled task result). It is not exposed
+	// as a user-facing message field.
+	SourceMessageID *uuid.UUID
 }
 
 type CreatePendingMessageRequest struct {
@@ -261,8 +404,10 @@ type StopRuntimeMessageRequest struct {
 }
 
 type Service interface {
+	RecordConnectorConfirmationResolution(ctx context.Context, command connectorconfirmation.Command, result connectorconfirmation.Result) error
 	CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error)
 	CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error)
+	EnsureConversationForCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID, title string) (*runtimemodel.Conversation, error)
 	ListConversations(ctx context.Context, scope Scope, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	ListConversationsByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error)
@@ -287,6 +432,13 @@ type Service interface {
 	StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Message, error)
 	StopConversation(ctx context.Context, scope Scope, id uuid.UUID) (*StopConversationResult, error)
 	StopConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*StopConversationResult, error)
+	SubmitRuntimeInput(ctx context.Context, scope Scope, caller Caller, config RunConfig, req SubmitRuntimeInputRequest) (*SubmitRuntimeInputResult, error)
+	ListRuntimeInputs(ctx context.Context, scope Scope, caller Caller, conversationID uuid.UUID) ([]*runtimemodel.RuntimeInput, error)
+	GetRuntimeInputFollowUpContext(ctx context.Context, batchID uuid.UUID) (*RuntimeInputFollowUpContext, error)
+	PrepareRuntimeInputFollowUp(ctx context.Context, config RunConfig, batchID uuid.UUID) (*PreparedChat, error)
+	FailRuntimeInputFollowUp(ctx context.Context, batchID uuid.UUID, cause error) error
+	RecoverStaleRuntimeInputs(ctx context.Context) (int64, error)
+	EnqueuePendingRuntimeInputFollowUps(ctx context.Context) (int, error)
 	PrepareChat(ctx context.Context, scope Scope, req runtimedto.ChatRequest) (*PreparedChat, error)
 	PrepareConfiguredChat(ctx context.Context, scope Scope, caller Caller, config RunConfig, req runtimedto.ChatRequest) (*PreparedChat, error)
 	PrepareRootRegeneration(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error)
@@ -301,6 +453,7 @@ type Service interface {
 	RunConfiguredClientActionContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunConfiguredTaskTokenBudgetContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.TaskTokenBudgetContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	CreatePendingMessage(ctx context.Context, scope Scope, req CreatePendingMessageRequest) (*runtimemodel.Message, error)
 	CreateConversationWithPendingMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithPendingMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)
 	CompleteMessage(ctx context.Context, scope Scope, req CompleteMessageRequest) (*runtimemodel.Message, error)
@@ -325,6 +478,8 @@ type Service interface {
 	PreviewImportCustomSkill(ctx context.Context, scope Scope, fileHeader *multipart.FileHeader) (*SkillImportPreview, error)
 	ConfirmCustomSkillImport(ctx context.Context, scope Scope, importID string, overwriteConfirmed bool) (*skills.SkillDiscoveryMetadata, error)
 	CancelCustomSkillImportPreview(ctx context.Context, scope Scope, importID string) error
+	ImportCustomSkillPackage(ctx context.Context, scope Scope, data []byte, filename string, origin SkillPackageOrigin, overwrite bool) (*SkillImportPreview, *skills.SkillDiscoveryMetadata, error)
+	ListInstalledSkillPackages(ctx context.Context, scope Scope, source string) ([]InstalledSkillPackage, error)
 	DeleteSkill(ctx context.Context, scope Scope, skillID, agentBindingAction, impactToken string) error
 	CleanupStaleActiveMessages(ctx context.Context) (int64, error)
 	CleanupExpiredCustomSkillImportPreviews(ctx context.Context) error
@@ -346,31 +501,6 @@ type AgentMemoryExtractionScheduler interface {
 	ScheduleExtraction(ctx context.Context, req agentmemory.ScheduleExtractionRequest) (*agentmemory.AgentMemoryExtractionJob, error)
 }
 
-// AIChatIntegrationRuntimePreferences is the trusted, server-side snapshot of
-// external connections selected by the current AIChat user. It is deliberately
-// separate from request DTOs: callers must not be able to grant themselves a
-// connection by supplying these IDs in a chat request.
-type AIChatIntegrationRuntimePreferences struct {
-	SelectedConnectionIDs  map[string][]string
-	PreferredConnectionIDs map[string]string
-}
-
-// AIChatIntegrationPreferenceResolver reloads the current user's external-app
-// selection for every AIChat execution boundary, including continuations.
-// Implementations should read authoritative persisted preferences; individual
-// tools and the integration executor still perform their own current ACL check.
-type AIChatIntegrationPreferenceResolver interface {
-	ResolveAIChatIntegrationPreferences(ctx context.Context, scope Scope) (AIChatIntegrationRuntimePreferences, error)
-}
-
-// AIChatIntegrationPreferenceResolverFunc adapts a function for dependency
-// injection without coupling chatruntime to the integrations persistence model.
-type AIChatIntegrationPreferenceResolverFunc func(context.Context, Scope) (AIChatIntegrationRuntimePreferences, error)
-
-func (f AIChatIntegrationPreferenceResolverFunc) ResolveAIChatIntegrationPreferences(ctx context.Context, scope Scope) (AIChatIntegrationRuntimePreferences, error) {
-	return f(ctx, scope)
-}
-
 type service struct {
 	repos                          *repository.Repositories
 	llmClient                      llmclient.LLMClient
@@ -386,8 +516,13 @@ type service struct {
 	memoryService                  UserMemoryService
 	agentMemoryService             AgentMemoryContextService
 	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
-	integrationPrefs               AIChatIntegrationPreferenceResolver
-	externalActionProjections      integrationmetatools.ActionProjectionResolver
+	connectorChatRuntime           connectorruntimeauth.ChatRuntimeResolver
+	connectorAgentRuntime          connectorruntimeauth.AgentRuntimeResolver
+	connectorDigitalHumanRuntime   connectorruntimeauth.DigitalHumanRuntimeResolver
+	connectorConfirmationStore     connectorexecution.ConfirmationContinuationStore
+	connectorActionResolverFactory repository.ConnectorActionResolverFactory
+	runtimeInputDispatcher         RuntimeInputFollowUpDispatcher
+	marketTools                    MarketToolResolver
 	customSkillStorage             customSkillStorage
 	modelIdleTimeout               time.Duration
 	modelProgressSchedule          modelprogress.Schedule
@@ -437,26 +572,46 @@ func NewServiceWithSkillRuntime(
 ) Service {
 	var agentMemoryService AgentMemoryContextService
 	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
-	var integrationPrefs AIChatIntegrationPreferenceResolver
-	var externalActionProjections integrationmetatools.ActionProjectionResolver
+	var connectorChatRuntime connectorruntimeauth.ChatRuntimeResolver
+	var connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver
+	var connectorDigitalHumanRuntime connectorruntimeauth.DigitalHumanRuntimeResolver
+	var connectorConfirmationStore connectorexecution.ConfirmationContinuationStore
+	var connectorActionResolverFactory repository.ConnectorActionResolverFactory
+	if repos != nil && repos.DB != nil {
+		connectorActionResolverFactory = repository.NewConnectorActionResolverFactory(repos.DB)
+	}
+	var runtimeInputDispatcher RuntimeInputFollowUpDispatcher
+	var marketTools MarketToolResolver
 	for _, item := range optionalServices {
-		switch typed := item.(type) {
-		case AgentMemoryContextService:
-			if agentMemoryService == nil {
-				agentMemoryService = typed
-			}
-		case AgentMemoryExtractionScheduler:
-			if agentMemoryExtractionScheduler == nil {
-				agentMemoryExtractionScheduler = typed
-			}
-		case AIChatIntegrationPreferenceResolver:
-			if integrationPrefs == nil {
-				integrationPrefs = typed
-			}
-		case integrationmetatools.ActionProjectionResolver:
-			if externalActionProjections == nil {
-				externalActionProjections = typed
-			}
+		if typed, ok := item.(MarketToolResolver); ok && marketTools == nil {
+			marketTools = typed
+		}
+		// Optional services may intentionally implement more than one contract
+		// (the memory backend provides both context and extraction scheduling),
+		// so these assertions must not be mutually exclusive.
+		if typed, ok := item.(AgentMemoryContextService); ok && agentMemoryService == nil {
+			agentMemoryService = typed
+		}
+		if typed, ok := item.(AgentMemoryExtractionScheduler); ok && agentMemoryExtractionScheduler == nil {
+			agentMemoryExtractionScheduler = typed
+		}
+		if typed, ok := item.(RuntimeInputFollowUpDispatcher); ok && runtimeInputDispatcher == nil {
+			runtimeInputDispatcher = typed
+		}
+		if typed, ok := item.(connectorruntimeauth.ChatRuntimeResolver); ok && connectorChatRuntime == nil {
+			connectorChatRuntime = typed
+		}
+		if typed, ok := item.(connectorruntimeauth.AgentRuntimeResolver); ok && connectorAgentRuntime == nil {
+			connectorAgentRuntime = typed
+		}
+		if typed, ok := item.(connectorruntimeauth.DigitalHumanRuntimeResolver); ok && connectorDigitalHumanRuntime == nil {
+			connectorDigitalHumanRuntime = typed
+		}
+		if typed, ok := item.(connectorexecution.ConfirmationContinuationStore); ok && connectorConfirmationStore == nil {
+			connectorConfirmationStore = typed
+		}
+		if typed, ok := item.(repository.ConnectorActionResolverFactory); ok {
+			connectorActionResolverFactory = typed
 		}
 	}
 	return &service{
@@ -474,8 +629,13 @@ func NewServiceWithSkillRuntime(
 		memoryService:                  memoryService,
 		agentMemoryService:             agentMemoryService,
 		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
-		integrationPrefs:               integrationPrefs,
-		externalActionProjections:      externalActionProjections,
+		connectorChatRuntime:           connectorChatRuntime,
+		connectorAgentRuntime:          connectorAgentRuntime,
+		connectorDigitalHumanRuntime:   connectorDigitalHumanRuntime,
+		connectorConfirmationStore:     connectorConfirmationStore,
+		connectorActionResolverFactory: connectorActionResolverFactory,
+		runtimeInputDispatcher:         runtimeInputDispatcher,
+		marketTools:                    marketTools,
 		customSkillStorage:             newFilesystemCustomSkillStorage(customSkillStorageRoot),
 		modelIdleTimeout:               configuredModelIdleTimeout(),
 	}
@@ -503,8 +663,11 @@ type PreparedChat struct {
 	RunConfig                      RunConfig
 	ParentID                       *uuid.UUID
 	parts                          *chatRequestParts
+	RuntimeInputFollowUpBatchID    *uuid.UUID
+	runtimeInputClaimedBatches     []claimedRuntimeInputBatch
 	contextBudget                  *contextBudgetResult
 	contextManager                 *contextmgr.Manager
+	contextEntries                 *contextEntrySync
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage
@@ -512,6 +675,7 @@ type PreparedChat struct {
 	usageExecutionStarted  bool
 	usageExecutionBaseline *adapter.Usage
 	usageContinuation      bool
+	taskTokenBudget        *taskTokenBudgetState
 }
 
 type ChatResult struct {
@@ -551,20 +715,21 @@ type SkillImportPreviewFile struct {
 }
 
 type SkillImportPreview struct {
-	ImportID         string
-	ExpiresAt        time.Time
-	Skill            *skills.SkillDiscoveryMetadata
-	WillOverwrite    bool
-	ExistingSkill    *ExistingSkill
-	FileCount        int
-	TotalSize        int64
-	Files            []SkillImportPreviewFile
-	References       []string
-	HasScripts       bool
-	ScriptsSupported bool
-	Warnings         []string
-	ValidationErrors []string
-	CanImport        bool
+	ImportID            string
+	ExpiresAt           time.Time
+	Skill               *skills.SkillDiscoveryMetadata
+	WillOverwrite       bool
+	ExistingSkill       *ExistingSkill
+	FileCount           int
+	TotalSize           int64
+	Files               []SkillImportPreviewFile
+	References          []string
+	HasScripts          bool
+	ScriptsSupported    bool
+	ScriptExecutionMode string
+	Warnings            []string
+	ValidationErrors    []string
+	CanImport           bool
 }
 
 type ExistingSkill struct {
@@ -574,6 +739,7 @@ type ExistingSkill struct {
 }
 
 type chatRequestParts struct {
+	ConversationID                   string
 	Query                            string
 	Surface                          string
 	RuntimeContext                   string
@@ -583,9 +749,13 @@ type chatRequestParts struct {
 	ModelName                        string
 	Provider                         string
 	ProviderPtr                      *string
+	RoutingStrategy                  string
 	Parameters                       map[string]interface{}
 	ContextControl                   map[string]interface{}
 	Attachments                      *attachmentBundle
+	AttachmentReadFiles              map[string]RuntimeAttachmentRef
+	AttachmentReadAllowed            bool
+	AttachmentToolsEnabled           bool
 	RecentAssetCandidates            []ResourceCandidate
 	RecentGeneratedArtifacts         []map[string]interface{}
 	RecentOperationPlans             []map[string]interface{}
@@ -599,6 +769,12 @@ type chatRequestParts struct {
 	ModelCapabilityStatus            string
 	ModelCapabilityError             string
 	ProtocolToolsEnabled             bool
+	BaseSkillIDs                     []string
+	BaseToolSkillIDs                 []string
+	ConnectorSkillIDs                []string
+	MarketSkillIDs                   []string
+	RequiredInitialConnectorBindings []connectorbindings.InitialChatConnection
+	ConnectorToolsEnabled            bool
 	UseMemory                        bool
 	SkillIDs                         []string
 	ToolSkillIDs                     []string
@@ -613,12 +789,24 @@ type chatRequestParts struct {
 	AgentMemoryToolsEnabled          bool
 	AgentMemorySlots                 []AgentMemorySlotConfig
 	AgentMemoryUserScope             string
-	AgentMemoryConfigScope           string
-	AgentMemoryConfigRevision        string
-	AgentMemoryAgentID               string
-	AgentMemoryRuntimeState          *AgentMemoryRuntimeState
-	AgentMemoryContext               string
-	BillingSource                    string
-	ModelTurnIntent                  *AIChatModelTurnIntent
-	ModelTurnIntentError             string
+	ConnectorTargetScope             string
+	ConnectorTargetVersionID         string
+	ConnectorToolsDisabled           bool
+	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive carry
+	// server-owned DigitalHuman host coordinates from RunConfig into the Skill
+	// execution boundary. A user request DTO cannot set them.
+	ConnectorTargetType       connectorcore.TargetType
+	ConnectorRunID            string
+	ConnectorInteractive      bool
+	AgentMemoryConfigScope    string
+	AgentMemoryConfigRevision string
+	AgentMemoryAgentID        string
+	AgentMemoryRuntimeState   *AgentMemoryRuntimeState
+	AgentMemoryContext        string
+	RuntimeTools              []skillloop.RuntimeTool
+	SourceMessageID           *uuid.UUID
+	BillingSource             string
+	ModelTurnIntent           *AIChatModelTurnIntent
+	ModelTurnIntentError      string
+	HistoryPolicy             *runtimedto.ConversationHistoryPolicy
 }

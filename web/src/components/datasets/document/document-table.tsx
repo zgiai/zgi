@@ -127,19 +127,6 @@ export function DocumentTable({
     }
   };
 
-  const mapDocForm = (form?: string) => {
-    switch ((form || '').toLowerCase()) {
-      case 'text_model':
-        return t('docForm.textModel');
-      case 'qa_model':
-        return t('docForm.qaModel');
-      case 'hierarchical_model':
-        return t('docForm.hierarchicalModel');
-      default:
-        return form || '-';
-    }
-  };
-
   const renderSortArrow = useCallback(
     (field: Array<'created_at' | 'updated_at' | '-created_at' | '-updated_at'>) => {
       return (

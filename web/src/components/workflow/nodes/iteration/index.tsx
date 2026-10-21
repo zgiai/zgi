@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import type { IterationNodeData } from './config';
 
 interface IterationContentProps {

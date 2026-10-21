@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/testutil/testdb"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -28,6 +29,9 @@ type pauseTestWorkflowRun struct {
 	Status                  string
 	Error                   *string
 	ExceptionsCount         int
+	ElapsedTime             float64
+	TotalSteps              int
+	TotalTokens             int
 	FinishedAt              *time.Time
 	ConversationID          *string
 	DeletedAt               *time.Time
@@ -70,7 +74,7 @@ func openPauseServiceTestDB(t *testing.T) *gorm.DB {
 		}
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&pauseTestWorkflowRun{}, &pauseTestMessage{}, &pauseTestConversation{}, &RunPause{}, &RunPauseReason{}, &RunEvent{}, &RuntimeOutbox{}); err != nil {
+	if err := testdb.AutoMigrate(db, &pauseTestWorkflowRun{}, &pauseTestMessage{}, &pauseTestConversation{}, &RunPause{}, &RunPauseReason{}, &RunEvent{}, &RuntimeOutbox{}); err != nil {
 		t.Fatalf("migrate pause service tables: %v", err)
 	}
 	return db
@@ -240,15 +244,16 @@ func TestFinalizeExpiredExecutionsFailsOrphanExactlyOnce(t *testing.T) {
 }
 
 func TestAppendEventPayloadSerializesSequencesPerWorkflowRun(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db := openPauseServiceTestDB(t)
+	// SQLite serializes writes on one connection; PostgreSQL locking is exercised
+	// separately by postgres_concurrency_test.go.
+	sqlDB, err := db.DB()
 	if err != nil {
-		if strings.Contains(err.Error(), "requires cgo") {
-			t.Skipf("sqlite driver unavailable without cgo: %v", err)
-		}
-		t.Fatalf("open sqlite: %v", err)
+		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&RunEvent{}); err != nil {
-		t.Fatalf("migrate run events: %v", err)
+	sqlDB.SetMaxOpenConns(1)
+	if err := db.Create(&pauseTestWorkflowRun{ID: "run-1", Status: "running", RuntimeProtocolVersion: 2}).Error; err != nil {
+		t.Fatalf("create event owner run: %v", err)
 	}
 	service := NewService(db)
 	const count = 20
@@ -618,7 +623,15 @@ func TestSubmitInteractionIsIdempotentAndCreatesOneResumeOutbox(t *testing.T) {
 	if err := db.Create(&pauseRecord).Error; err != nil {
 		t.Fatalf("create pause: %v", err)
 	}
+	reason := RunPauseReason{
+		ID: "reason-submit", PauseID: pauseRecord.ID,
+		NodeID: "question", Type: ReasonTypeQuestionAnswerRequired, Status: RunPauseReasonStatusPending,
+	}
+	if err := db.Create(&reason).Error; err != nil {
+		t.Fatalf("create pause reason: %v", err)
+	}
 
+	var eventID, outboxID string
 	for attempt := 0; attempt < 2; attempt++ {
 		result, err := service.SubmitInteraction(context.Background(), run.ID, pauseRecord.ID, "question", EventQuestionAnswerSubmitted,
 			map[string]interface{}{"node_id": "question", "answer": "yes"}, "question-submit:1")
@@ -627,6 +640,11 @@ func TestSubmitInteractionIsIdempotentAndCreatesOneResumeOutbox(t *testing.T) {
 		}
 		if result.Event == nil || result.Outbox == nil {
 			t.Fatalf("submit interaction attempt %d returned incomplete result: %#v", attempt, result)
+		}
+		if attempt == 0 {
+			eventID, outboxID = result.Event.EventID, result.Outbox.ID
+		} else if result.Event.EventID != eventID || result.Outbox.ID != outboxID {
+			t.Fatalf("replay changed durable identities: %#v", result)
 		}
 	}
 	var eventCount int64
@@ -657,6 +675,9 @@ func TestSubmitInteractionIsIdempotentAndCreatesOneResumeOutbox(t *testing.T) {
 	}
 	if replay.Event == nil || replay.Outbox == nil || !replay.ResumeReady {
 		t.Fatalf("closed pause replay = %#v", replay)
+	}
+	if replay.Event.EventID != eventID || replay.Outbox.ID != outboxID {
+		t.Fatalf("closed pause replay changed durable identities: %#v", replay)
 	}
 }
 

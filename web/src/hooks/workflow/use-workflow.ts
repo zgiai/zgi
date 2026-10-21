@@ -1,3 +1,4 @@
+import { mergeSavedConnectorNodes } from '@/components/workflow/store/helpers/merge-saved-connectors';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { workflowService } from '@/services/workflow.service';
 import type {
@@ -26,6 +27,7 @@ function serializeWorkflowForApi(data: WorkflowData): WorkflowDraftSavePayload {
     : [];
   return {
     graph: data.graph,
+    connector_reference_commands: data.connector_reference_commands,
     features: data.features,
     environment_variables: data.environment_variables,
     conversation_variables: conv,
@@ -138,6 +140,7 @@ export function useSaveWorkflowDraft() {
       console.error('Save workflow draft error:', err);
     },
     onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['connectors'] });
       // 1. Partially update the React Query cache with canonical server data
       // This prevents data loss (overwriting nodes with partial response)
       // and eliminates the need for a fresh GET request.
@@ -145,6 +148,7 @@ export function useSaveWorkflowDraft() {
         if (!old) return undefined;
         return {
           ...old,
+          graph: data.graph ?? old.graph,
           hash: data.hash,
           updated_at: new Date(data.updated_at).getTime(),
         };
@@ -154,9 +158,26 @@ export function useSaveWorkflowDraft() {
       // This ensures the next save request carries the correct current hash.
       const currentState = useWorkflowStore.getState();
       if (currentState.workflowData) {
+        const nodes = mergeSavedConnectorNodes(
+          currentState.nodes,
+          variables.workflowData.graph.nodes,
+          data.graph?.nodes ?? []
+        );
+        const acceptedCommands = new Map(
+          (variables.workflowData.connector_reference_commands ?? []).map(command => [
+            command.reference_id,
+            JSON.stringify(command),
+          ])
+        );
+        const remainingCommands = (
+          currentState.workflowData.connector_reference_commands ?? []
+        ).filter(command => acceptedCommands.get(command.reference_id) !== JSON.stringify(command));
         useWorkflowStore.setState({
+          nodes,
           workflowData: {
             ...currentState.workflowData,
+            graph: { ...currentState.workflowData.graph, nodes },
+            connector_reference_commands: remainingCommands,
             hash: data.hash,
           },
           isDirty: false,

@@ -26,8 +26,9 @@ export const AVAILABLE_MODULES = [
   'automation',
   'contentParse',
   'prompts',
-  'integrations',
+  'connectors',
   'music',
+  'digitalHumans',
 ] as const;
 
 export type ModuleName = (typeof AVAILABLE_MODULES)[number];
@@ -148,13 +149,17 @@ const moduleRegistry: ModuleRegistry = {
     'zh-Hans': () => import('./modules/prompts/zh-Hans'),
     'en-US': () => import('./modules/prompts/en-US'),
   },
-  integrations: {
-    'zh-Hans': () => import('./modules/integrations/zh-Hans'),
-    'en-US': () => import('./modules/integrations/en-US'),
+  connectors: {
+    'zh-Hans': () => import('./modules/connectors/zh-Hans'),
+    'en-US': () => import('./modules/connectors/en-US'),
   },
   music: {
     'zh-Hans': () => import('./modules/music/zh-Hans'),
     'en-US': () => import('./modules/music/en-US'),
+  },
+  digitalHumans: {
+    'zh-Hans': () => import('./modules/digitalHumans/zh-Hans'),
+    'en-US': () => import('./modules/digitalHumans/en-US'),
   },
 };
 

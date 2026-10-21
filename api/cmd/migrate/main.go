@@ -76,6 +76,11 @@ func main() {
 	case "down":
 		runRollbackCommand()
 
+	case "digital-human-preserve":
+		if err := runDigitalHumanPreserve(os.Args[2:]); err != nil {
+			logger.Fatal("DigitalHuman preservation failed: %v", err)
+		}
+
 	case "rollback":
 		runRollbackCommand()
 
@@ -86,6 +91,14 @@ func main() {
 
 	case "check":
 		runCheckCommand()
+	case "connector-finalize":
+		if err := runConnectorFinalize(os.Args[2:]); err != nil {
+			logger.Fatal("Connector finalization failed: %v", err)
+		}
+	case "connector-checkpoint":
+		if err := runConnectorCheckpoint(os.Args[2:]); err != nil {
+			logger.Fatal("Connector checkpoint failed: %v", err)
+		}
 
 	case "make":
 		runMakeCommand()
@@ -303,7 +316,7 @@ func printUsage() {
 Database Management Tool
 
 Usage:
-  go run cmd/migrate/main.go <command> [options]
+  go run ./cmd/migrate <command> [options]
 
 Commands:
   up              Execute all pending migrations (upgrade)
@@ -313,6 +326,12 @@ Commands:
   check           Validate migration IDs, filenames, safety rules, and optional fresh PostgreSQL execution
   make <slug>     Create a timestamped migration file with a random suffix
   seed            Execute seed data
+  connector-checkpoint --id ID    Advance to a registered historical Connector checkpoint
+  connector-finalize plan|apply|verify|discard    Review, archive, finalize, verify, or discard legacy Connector storage
+                                          --advanced-checkpoint MIGRATION_ID opts a schema1
+                                          head later than the registered checkpoint into
+                                          plan/apply (rejected by verify)
+  digital-human-preserve plan|apply|verify    Move legacy channel credentials to their installations
 
 Migration Options:
   -pretend        Show migration status without applying changes
@@ -326,19 +345,19 @@ Seed Options:
 
 Examples:
   # Migration
-  go run cmd/migrate/main.go up
-  go run cmd/migrate/main.go up -pretend
-  go run cmd/migrate/main.go status
-  go run cmd/migrate/main.go check
-  go run cmd/migrate/main.go check -db "host=localhost user=postgres password=postgres dbname=zgi_check port=5432 sslmode=disable"
-  go run cmd/migrate/main.go make create_audit_events
-  go run cmd/migrate/main.go rollback -confirm 202606010900000827_create_audit_events
+  go run ./cmd/migrate up
+  go run ./cmd/migrate up -pretend
+  go run ./cmd/migrate status
+  go run ./cmd/migrate check
+  go run ./cmd/migrate check -db "host=localhost user=postgres password=postgres dbname=zgi_check port=5432 sslmode=disable"
+  go run ./cmd/migrate make create_audit_events
+  go run ./cmd/migrate rollback -confirm 202606010900000827_create_audit_events
 
   # Seed
-  go run cmd/migrate/main.go seed                    # Execute development environment seeds
-  go run cmd/migrate/main.go seed -env=production    # Execute production environment seeds
-  go run cmd/migrate/main.go seed -list              # List all seeds
-  go run cmd/migrate/main.go seed -force             # Re-run built-in workflow seeds
+  go run ./cmd/migrate seed                    # Execute development environment seeds
+  go run ./cmd/migrate seed -env=production    # Execute production environment seeds
+  go run ./cmd/migrate seed -list              # List all seeds
+  go run ./cmd/migrate seed -force             # Re-run built-in workflow seeds
 
 Make Commands:
   make migrate     # Execute migrations

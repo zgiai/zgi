@@ -22,10 +22,11 @@ const (
 
 // FileSignature handles file signature generation and verification
 type FileSignature struct {
-	secretKey     []byte
-	accessTimeout int
-	filesURL      string
-	internalURL   string
+	secretKey              []byte
+	accessTimeout          int
+	channelDeliveryTimeout time.Duration
+	filesURL               string
+	internalURL            string
 }
 
 // NewFileSignature creates a new file signature handler
@@ -36,12 +37,20 @@ func NewFileSignature(cfg *config.Config) *FileSignature {
 	if accessTimeout <= 0 {
 		accessTimeout = 3600
 	}
+	channelDeliveryTimeout := time.Duration(cfg.App.ChannelDeliveryFileTTL) * time.Second
+	if channelDeliveryTimeout <= 0 {
+		channelDeliveryTimeout = time.Duration(config.DefaultChannelDeliveryFileTTLSeconds) * time.Second
+	}
+	if channelDeliveryTimeout > maxChannelDeliveryURLTTL {
+		channelDeliveryTimeout = maxChannelDeliveryURLTTL
+	}
 
 	return &FileSignature{
-		secretKey:     secretKey,
-		accessTimeout: accessTimeout,
-		filesURL:      cfg.App.FilesURL,
-		internalURL:   cfg.App.InternalFilesURL,
+		secretKey:              secretKey,
+		accessTimeout:          accessTimeout,
+		channelDeliveryTimeout: channelDeliveryTimeout,
+		filesURL:               cfg.App.FilesURL,
+		internalURL:            cfg.App.InternalFilesURL,
 	}
 }
 

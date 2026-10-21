@@ -751,8 +751,8 @@ func newIntentClassifierAppContext(scope Scope, conversation *runtimemodel.Conve
 		SessionID:          conversation.ID.String(),
 		ConversationID:     conversation.ID.String(),
 	}
-	if scope.WorkspaceID != nil {
-		ctx.WorkspaceID = scope.WorkspaceID.String()
+	if workspaceID := scope.AgentResourceWorkspaceID(); workspaceID != nil {
+		ctx.WorkspaceID = workspaceID.String()
 	} else if conversation.WorkspaceID != nil {
 		ctx.WorkspaceID = conversation.WorkspaceID.String()
 	}

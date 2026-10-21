@@ -1,6 +1,12 @@
 package config
 
-import "time"
+import (
+	"crypto/x509"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+)
 
 // GlobalConfig stores the loaded application configuration.
 var GlobalConfig *Config
@@ -10,62 +16,72 @@ const (
 	MaxChunkSize     = 1000
 	TempFileTenantID = "00000000-0000-0000-0000-000000000000"
 
+	// DefaultChannelDeliveryFileTTLSeconds is the default lifetime of a
+	// channel-delivery bearer download link.
+	DefaultChannelDeliveryFileTTLSeconds = 30 * 24 * 60 * 60
+	// MaxChannelDeliveryFileTTLSeconds bounds channel-delivery links even when
+	// the deployment supplies an invalidly long value.
+	MaxChannelDeliveryFileTTLSeconds = 30 * 24 * 60 * 60
+
 	// DefaultOrgInviteDefaultPassword is the self-hosted fallback password used
 	// when ZGI_ORG_INVITE_DEFAULT_PASSWORD is not configured.
 	DefaultOrgInviteDefaultPassword = "ZGI@Welcome1"
 
 	defaultServerPort = 2670
 	defaultGRPCPort   = 50051
+
+	// defaultOrganizationReportInterval is how often pre reports its organization
+	// inventory to console when CONSOLE_SYNC_ORGANIZATION_REPORT_INTERVAL is unset.
+	defaultOrganizationReportInterval = 5 * time.Minute
 )
 
 type Config struct {
-	Server                 ServerConfig
-	Database               DatabaseConfig
-	Redis                  RedisConfig
-	JWT                    JWTConfig
-	Log                    LogConfig
-	Email                  EmailConfig
-	App                    AppConfig
-	PluginRunner           PluginRunnerConfig
-	TaskQueue              TaskQueueConfig
-	VectorStore            VectorStoreConfig
-	Upload                 UploadConfig
-	ETL                    ETLConfig
-	CodeExec               CodeExecConfig
-	Console                ConsoleConfig
-	Feature                FeatureConfig
-	Workflow               WorkflowConfig
-	WorkflowFileExtraction WorkflowFileExtractionConfig
-	AnswerNodeStreaming    AnswerNodeStreamingConfig
-	Encryption             EncryptionConfig
-	Observability          ObservabilityConfig
-	OpenTelemetry          OpenTelemetryConfig
-	LLMInvocationContent   LLMInvocationContentConfig
-	ModelMeta              ModelMetaConfig
-	Neo4j                  Neo4jConfig
-	Sentry                 SentryConfig
-	Platform               PlatformConfig
-	Storage                StorageConfig
-	Marketplace            MarketplaceConfig
-	SQLBase                SQLBaseConfig
-	Auth                   AuthConfig
-	Knowledge              KnowledgeConfig
-	GraphFlow              GraphFlowConfig
-	ContentParse           ContentParseConfig
-	LLM                    LLMConfig
-	LLMPolicyPrompt        LLMPolicyPromptConfig
-	Automation             AutomationConfig
-	Tooling                ToolingConfig
-	ChatRuntime            ChatRuntimeConfig
-	WebSearch              WebSearchConfig
-	ExternalIntegrations   ExternalIntegrationsConfig
+	Server                  ServerConfig
+	Database                DatabaseConfig
+	Redis                   RedisConfig
+	JWT                     JWTConfig
+	Log                     LogConfig
+	Email                   EmailConfig
+	App                     AppConfig
+	PluginRunner            PluginRunnerConfig
+	TaskQueue               TaskQueueConfig
+	VectorStore             VectorStoreConfig
+	Upload                  UploadConfig
+	ETL                     ETLConfig
+	CodeExec                CodeExecConfig
+	Console                 ConsoleConfig
+	Feature                 FeatureConfig
+	Workflow                WorkflowConfig
+	WorkflowFileExtraction  WorkflowFileExtractionConfig
+	AnswerNodeStreaming     AnswerNodeStreamingConfig
+	Encryption              EncryptionConfig
+	Observability           ObservabilityConfig
+	OpenTelemetry           OpenTelemetryConfig
+	LLMInvocationContent    LLMInvocationContentConfig
+	ModelMeta               ModelMetaConfig
+	Neo4j                   Neo4jConfig
+	Sentry                  SentryConfig
+	Platform                PlatformConfig
+	Storage                 StorageConfig
+	Marketplace             MarketplaceConfig
+	SQLBase                 SQLBaseConfig
+	Auth                    AuthConfig
+	Knowledge               KnowledgeConfig
+	GraphFlow               GraphFlowConfig
+	ContentParse            ContentParseConfig
+	LLM                     LLMConfig
+	LLMPolicyPrompt         LLMPolicyPromptConfig
+	Automation              AutomationConfig
+	Tooling                 ToolingConfig
+	ChatRuntime             ChatRuntimeConfig
+	Connectors              ConnectorsConfig
+	DigitalHumanCredentials DigitalHumanCredentialsConfig
 
 	source *envSource
 }
 
 type ChatRuntimeConfig struct {
 	ModelIdleTimeoutSeconds  int  `json:"model_idle_timeout_seconds"`
-	AgentContextWindowK      int  `json:"agent_context_window_k"`
 	ContextPromptDumpEnabled bool `json:"context_prompt_dump_enabled"`
 }
 
@@ -146,13 +162,69 @@ type AppConfig struct {
 	FilesURL           string `json:"files_url"`
 	InternalFilesURL   string `json:"internal_files_url"`
 	FilesAccessTimeout int    `json:"files_access_timeout"`
+	// ChannelDeliveryFileTTL is server-controlled and intentionally omitted
+	// from public configuration responses.
+	ChannelDeliveryFileTTL int `json:"-"`
 }
 
 type ConsoleConfig struct {
-	APIURL         string `json:"api_url"`
-	GRPCAddr       string `json:"grpc_addr"`
-	InternalAPIKey string `json:"-"`
-	WebURL         string `json:"web_url"`
+	APIURL         string               `json:"api_url"`
+	GRPCAddr       string               `json:"grpc_addr"`
+	GRPCTLS        ConsoleGRPCTLSConfig `json:"grpc_tls"`
+	InternalAPIKey string               `json:"-"`
+	WebURL         string               `json:"web_url"`
+
+	// Per-instance control-plane credential issued by console (Cloud mode).
+	InstanceID     string `json:"instance_id,omitempty"`
+	InstanceSecret string `json:"-"`
+
+	// Control-plane sync loop cadence (Cloud mode only).
+	SyncEnabled     bool `json:"sync_enabled"`
+	SyncIntervalSec int  `json:"sync_interval_sec"`
+	SyncStaleSec    int  `json:"sync_stale_sec"`
+	// Organization inventory report cadence (Cloud mode only). 0 disables the report.
+	SyncOrganizationReportInterval time.Duration `json:"sync_organization_report_interval"`
+
+	// ZGIMarketGatewayURL is the public origin of the ZGI Market gateway. Market tools bound to
+	// an agent or a digital human are called there directly; everything else about the market
+	// goes through the console. Empty leaves market tools off.
+	ZGIMarketGatewayURL string `json:"zgi_market_gateway_url"`
+	// ZGIMarketOAuthRedirectURL is the callback address of this instance for connector
+	// authorizations of the ZGI Market: where a vendor sends the browser back. Each deployment in
+	// front of one market has its own, and the market has to list it. Empty leaves the market's
+	// default, which is the page of another deployment.
+	ZGIMarketOAuthRedirectURL string `json:"zgi_market_oauth_redirect_url"`
+	// ZGIMarketConfirmAbovePoints is the cost of one call, in points, above which a market tool
+	// asks for approval like a tool that writes. Zero never asks for cost.
+	ZGIMarketConfirmAbovePoints int `json:"zgi_market_confirm_above_points"`
+	// ZGIMarketAllowPrivateTargets lets the gateway address resolve to a private or loopback
+	// address. It is for local development only and is refused in production.
+	ZGIMarketAllowPrivateTargets bool `json:"zgi_market_allow_private_targets"`
+}
+
+type ConsoleGRPCTLSConfig struct {
+	Enabled    bool   `json:"enabled"`
+	CAFile     string `json:"ca_file,omitempty"`
+	ServerName string `json:"server_name,omitempty"`
+}
+
+func ValidateConsoleGRPCTLS(cfg ConsoleGRPCTLSConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	caFile := strings.TrimSpace(cfg.CAFile)
+	if caFile == "" {
+		return nil
+	}
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return fmt.Errorf("read console gRPC TLS CA file %q: %w", caFile, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return fmt.Errorf("no certificate found in console gRPC TLS CA file %q", caFile)
+	}
+	return nil
 }
 
 type LLMPolicyPromptConfig struct {
@@ -238,6 +310,7 @@ type CodeExecConfig struct {
 	EnableNetwork                bool   `json:"enable_network"`
 	SystemOfficeProfile          string `json:"system_office_profile"`
 	SystemDataProfile            string `json:"system_data_profile"`
+	SkillDependencyScanDisabled  bool   `json:"skill_dependency_scan_disabled"`
 	MaxNumber                    int64  `json:"max_number"`
 	MinNumber                    int64  `json:"min_number"`
 	MaxStringLength              int    `json:"max_string_length"`
@@ -330,7 +403,8 @@ type LLMInvocationContentConfig struct {
 }
 
 type ModelMetaConfig struct {
-	APIURL string `json:"api_url"`
+	APIURL          string `json:"api_url"`
+	AutoSyncEnabled bool   `json:"auto_sync_enabled"`
 }
 
 type Neo4jConfig struct {
@@ -472,54 +546,11 @@ type ToolingConfig struct {
 	DryRun bool `json:"dry_run"`
 }
 
-// ExternalIntegrationsConfig controls the provider/connection runtime shared
-// by every external application, including Web Search.
-type ExternalIntegrationsConfig struct {
-	Enabled               bool                            `json:"enabled"`
-	OrgDailyLimit         int                             `json:"org_daily_limit"`
-	TimeoutSeconds        int                             `json:"timeout_seconds"`
-	CredentialActiveKeyID string                          `json:"credential_active_key_id"`
-	CredentialKeys        map[string]string               `json:"-"`
-	Health                ExternalIntegrationHealthConfig `json:"health"`
-	OAuth                 ExternalIntegrationOAuthConfig  `json:"oauth"`
-}
-
-type ExternalIntegrationHealthConfig struct {
-	FailureThreshold int `json:"failure_threshold"`
-}
-
-type ExternalIntegrationOAuthConfig struct {
-	RefreshWindowSeconds int `json:"refresh_window_seconds"`
-	FlowTTLSeconds       int `json:"flow_ttl_seconds"`
-	// CallbackURL is the exact, server-owned redirect URI registered with
-	// providers. It must never be derived from an inbound Host header.
-	CallbackURL string `json:"callback_url"`
-	// ResultURL is the console page shown after the server has consumed the
-	// provider callback. It never receives authorization codes or tokens.
-	ResultURL string `json:"result_url"`
-	// Clients are optional deployment-level OAuth applications. Organization
-	// client configurations, when present, take precedence at runtime.
-	Clients map[string]ExternalIntegrationOAuthClientConfig `json:"-"`
-}
-
-type ExternalIntegrationOAuthClientConfig struct {
-	ClientID     string            `json:"-"`
-	ClientSecret string            `json:"-"`
-	Config       map[string]string `json:"-"`
-}
-
-// WebSearchConfig contains Exa-specific runtime limits. Web Search registration
-// follows ExternalIntegrationsConfig.Enabled, and credentials are supplied by
-// encrypted organization or account Connections.
-type WebSearchConfig struct {
-	Provider string    `json:"provider"`
-	Exa      ExaConfig `json:"exa"`
-}
-
-type ExaConfig struct {
-	TimeoutSeconds       int    `json:"timeout_seconds"`
-	MaxResults           int    `json:"max_results"`
-	DefaultSearchType    string `json:"default_search_type"`
-	MaxFetchURLs         int    `json:"max_fetch_urls"`
-	MaxContentCharacters int    `json:"max_content_characters"`
+// ConnectorsConfig configures the always-available Personal Connector runtime. It
+// deliberately does not inherit the legacy external-integrations enable flag
+// or credential keyring.
+type ConnectorsConfig struct {
+	CredentialActiveKeyID string            `json:"credential_active_key_id"`
+	CredentialKeys        map[string]string `json:"-"`
+	PluginDirectories     []string          `json:"-"`
 }

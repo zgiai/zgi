@@ -1,4 +1,79 @@
 const messages = {
+  schemaIndex: {
+    title: 'AI schema index',
+    description:
+      'Help AI find relevant tables for SQL generation. This does not modify your business data.',
+    loading: 'Loading index status…',
+    loadError: 'Could not load the index status. Check your access and try again.',
+    reload: 'Reload',
+    tables: 'Tables',
+    model: 'Embedding model',
+    noModel: 'Not configured',
+    progress: '{ready} of {total} tables ready',
+    background:
+      'Work continues after you leave this page. Pending tasks start automatically in the background.',
+    checkedAt: 'Last catalog check: {time}',
+    failures: '{count} tables failed. View details',
+    consent:
+      'When enabled, table structure changes are indexed with the selected embedding model. Usage is billed to this database’s workspace. This is a table-discovery index, not a SQL performance index.',
+    readOnly: 'Schema management permission is required to build or retry indexes.',
+    startError:
+      'Could not submit the request. Check model configuration and your permissions, then retry.',
+    start: 'Build index',
+    retry: 'Retry unfinished indexes',
+    enable: 'Enable automatic understanding',
+    disable: 'Turn off automatic updates',
+    disableConfirm:
+      'AI will stop selecting tables from this database automatically, and existing indexes will be cleaned up in the background.',
+    configuring: 'Saving…',
+    history: {
+      title: 'Update history',
+      description: 'Index builds and automatic updates, summarized once per run.',
+      loading: 'Loading update history…',
+      loadError: 'Could not load update history. Try again later.',
+      empty: 'No update history. Historical indexes are not backfilled.',
+      loadMore: 'Load more',
+      tableCount: '{count} tables affected',
+      unknownTable: 'Preparation',
+      triggers: {
+        initial: 'Initial build',
+        table_created: 'Table added',
+        table_deleted: 'Table deleted',
+        table_metadata_changed: 'Table details changed',
+        schema_changed: 'Schema changed',
+        model_changed: 'Embedding model changed',
+        manual_retry: 'Manual retry',
+      },
+      statuses: {
+        building: 'In progress',
+        succeeded: 'Completed',
+        failed: 'Failed',
+      },
+    },
+    states: {
+      disabled: 'Not enabled',
+      building: 'Preparing index',
+      ready: 'Ready',
+      failed: 'Needs attention',
+      empty: 'No tables to index',
+      cleanup: 'Turning off and cleaning up indexes',
+    },
+    errors: {
+      timeout: 'This table exceeded its processing time limit.',
+      embedding: 'Embedding generation failed. Check model availability and quota.',
+      storage: 'The vector database could not save the index.',
+      schema: 'The table structure is unavailable or has changed.',
+      scope:
+        'Permissions, workspace, table structure or model configuration changed. Review them before retrying.',
+      interrupted: 'Processing was interrupted. Retry this table.',
+      model:
+        'The selected embedding model is unavailable. Turn off indexing and select another model.',
+      preparation:
+        'Preparation failed. Check database access, model configuration and the task service.',
+      build: 'Indexing failed. Check the server logs for the detailed cause.',
+    },
+  },
+
   title: 'Database Management',
   // confirm, close, refresh, loading moved to common module
   empty: 'No databases',
@@ -90,6 +165,12 @@ const messages = {
     permissionsLabel: 'Permissions',
     advancedSettingsLabel: 'Advanced Settings',
     iconLabel: 'Database Icon',
+    schemaIndexLabel: 'Let AI understand table structures automatically (recommended)',
+    schemaIndexDescription:
+      'Update after tables are created or changed to help AI select the right tables. This uses the selected embedding model.',
+    embeddingModelLabel: 'Embedding model',
+    embeddingModelPlaceholder: 'Select a model',
+    embeddingModelRequired: 'Select an embedding model',
     createButton: 'Create',
     creatingButton: 'Creating...',
   },

@@ -164,6 +164,52 @@ func TestHTTPClientDoesNotRetryTerminalPlatformChannelError(t *testing.T) {
 	}
 }
 
+func TestHTTPClientDoesNotRetryBillingSettlementFailure(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"Response could not be finalized","type":"api_error","code":"billing_settlement_failed"}}`))
+	}))
+	defer server.Close()
+
+	client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+	response, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("DoRequestDetailed() error = %v, want structured terminal response", err)
+	}
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusInternalServerError)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1 because settlement failure must not repeat a billable upstream call", requestCount)
+	}
+}
+
+func TestHTTPClientDoesNotReplayCatalogedSettlementPending(t *testing.T) {
+	for _, body := range []string{
+		`{"error_code":"billing.settle.failed","retryable":true,"error":{"code":"settlement_pending","type":"api_error","message":"pending"}}`,
+		`{"code":"billing.settle.failed","retryable":true,"error":{"code":"settlement_pending"}}`,
+		`{"error":{"code":"billing.settle.failed","message":"pending"}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+			response, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+			if err != nil || response.StatusCode != http.StatusInternalServerError || requests != 1 {
+				t.Fatalf("requests=%d response=%+v error=%v", requests, response, err)
+			}
+		})
+	}
+}
+
 func TestHTTPClientStreamRejectsDomainResolvingToPrivateIP(t *testing.T) {
 	client := NewHTTPClientWithOptions(0, 1, HTTPClientOptions{
 		GuardOutboundURL: true,
@@ -296,5 +342,41 @@ func TestParseSSEAcceptsDataLineWithSpace(t *testing.T) {
 	}
 	if got != "{\"output\":{\"text\":\"ok\"}}" {
 		t.Fatalf("data = %q, want output text JSON", got)
+	}
+}
+
+// A Console envelope that says retryable:false is terminal: repeating the call
+// cannot succeed (here the upstream rejected the platform credential) and only
+// multiplies upstream calls. A retryable 5xx keeps the existing retries.
+func TestHTTPClientHonoursConsoleRetryableFalse(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantCalls int
+	}{
+		{"retryable false is terminal", `{"code":"llm.provider.auth_failed","error_code":"llm.provider.auth_failed","retryable":false,"error":{"code":"upstream_auth_failed","type":"api_error","message":"x"}}`, 1},
+		{"retryable true still retries", `{"code":"llm.invocation.failed","error_code":"llm.invocation.failed","retryable":true,"error":{"code":"upstream_error","type":"api_error","message":"x"}}`, 2},
+		{"plain provider body still retries", `{"retryable":false,"error":{"code":"server_error","message":"x"}}`, 2},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			requestCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requestCount++
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+
+			client := NewHTTPClientWithOptions(time.Second, 1, HTTPClientOptions{})
+			response, _ := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+			if response == nil || response.StatusCode != http.StatusBadGateway {
+				t.Fatalf("response = %#v, want the 502", response)
+			}
+			if requestCount != testCase.wantCalls {
+				t.Fatalf("request count = %d, want %d", requestCount, testCase.wantCalls)
+			}
+		})
 	}
 }

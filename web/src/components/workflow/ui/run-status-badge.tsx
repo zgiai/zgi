@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 interface RunStatusBadgeProps {
   status?: string | null;
   className?: string;
+  label?: string;
 }
 
 type RunStatusKind =
@@ -167,7 +168,7 @@ function normalizeRunStatus(status?: string | null): RunStatusKind {
   if (['stopped', 'cancelled', 'canceled', 'aborted'].includes(normalized)) {
     return 'stopped';
   }
-  if (normalized === 'stopping') return 'stopping';
+  if (['stopping', 'canceling', 'cancelling'].includes(normalized)) return 'stopping';
   if (normalized === 'paused') {
     return 'paused';
   }
@@ -194,11 +195,10 @@ function normalizeRunStatus(status?: string | null): RunStatusKind {
   return 'unknown';
 }
 
-export function RunStatusBadge({ status, className }: RunStatusBadgeProps) {
+export function RunStatusBadge({ status, className, label }: RunStatusBadgeProps) {
   const t = useT('agents');
   const tone = normalizeRunStatus(status);
   const styles = STATUS_CLASSES[tone];
-  const label = t(`workflow.status.${tone}`);
   const rawStatus = status?.trim();
 
   return (
@@ -208,7 +208,7 @@ export function RunStatusBadge({ status, className }: RunStatusBadgeProps) {
       title={tone === 'unknown' && rawStatus ? rawStatus : undefined}
     >
       <span aria-hidden className={cn('size-1.5 rounded-full ring-2', styles.dot)} />
-      <span>{label}</span>
+      <span>{label ?? t(`workflow.status.${tone}`)}</span>
     </Badge>
   );
 }

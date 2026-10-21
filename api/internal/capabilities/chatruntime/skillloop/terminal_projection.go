@@ -2,6 +2,7 @@ package skillloop
 
 import (
 	"encoding/json"
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"sort"
 	"strings"
 
@@ -89,8 +90,14 @@ func terminalOnlyEvidenceSnapshot(metadata map[string]interface{}) map[string]in
 func terminalOnlyLatestSuccessfulInvocation(invocations []map[string]interface{}) map[string]interface{} {
 	for index := len(invocations) - 1; index >= 0; index-- {
 		invocation := invocations[index]
-		if !runtimeInvocationSucceeded(invocation) {
+		if !terminalStateGuardInvocationIsExecutionEvidence(invocation) || !runtimeInvocationSucceeded(invocation) {
 			continue
+		}
+		if proof, native := connectortools.Evidence(invocation); native {
+			if proof.Status != "successful" {
+				continue
+			}
+			return map[string]any{"runtime_source": "connector", "operation": proof.Operation, "outcome_id": proof.OutcomeID.String(), "outcome_status": proof.Status}
 		}
 		out := map[string]interface{}{}
 		for _, key := range []string{

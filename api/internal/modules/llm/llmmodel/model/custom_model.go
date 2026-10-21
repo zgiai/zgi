@@ -24,8 +24,9 @@ type ModelConfig struct {
 	OutputPriceOverride       *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"output_price_override,omitempty"`
 	CacheReadPriceOverride    *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_read_price_override,omitempty"`
 	CacheWritePriceOverride   *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_price_override,omitempty"`
-	CacheWrite5mPriceOverride *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_5m_price_override,omitempty"`
-	CacheWrite1hPriceOverride *decimal.Decimal       `gorm:"type:decimal(24,12)" json:"cache_write_1h_price_override,omitempty"`
+	CacheWrite5mPriceOverride *decimal.Decimal       `gorm:"column:cache_write_5m_price_override;type:decimal(24,12)" json:"cache_write_5m_price_override,omitempty"`
+	CacheWrite1hPriceOverride *decimal.Decimal       `gorm:"column:cache_write_1h_price_override;type:decimal(24,12)" json:"cache_write_1h_price_override,omitempty"`
+	PricingOverride           datatypes.JSON         `gorm:"column:pricing_override;type:jsonb" json:"pricing_override,omitempty"`
 	AccessScope               AccessScope            `gorm:"type:varchar(20);default:'all'" json:"access_scope"`
 	VisibleGroups             []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_groups"`
 	VisibleUsers              []string               `gorm:"type:jsonb;serializer:json;default:'[]'" json:"visible_users"`
@@ -216,12 +217,13 @@ type CustomModel struct {
 	CostCacheWrite              decimal.Decimal `gorm:"column:cost_cache_write;type:decimal(24,12)" json:"cache_write_price"`
 	CostCacheWrite5m            decimal.Decimal `gorm:"column:cost_cache_write_5m;type:decimal(24,12)" json:"cache_write_5m_price"`
 	CostCacheWrite1h            decimal.Decimal `gorm:"column:cost_cache_write_1h;type:decimal(24,12)" json:"cache_write_1h_price"`
-	InputPriceConfigured        bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`
-	OutputPriceConfigured       bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`
-	CacheReadPriceConfigured    bool            `gorm:"column:cache_read_price_configured;default:false" json:"cache_read_price_configured"`
-	CacheWritePriceConfigured   bool            `gorm:"column:cache_write_price_configured;default:false" json:"cache_write_price_configured"`
-	CacheWrite5mPriceConfigured bool            `gorm:"column:cache_write_5m_price_configured;default:false" json:"cache_write_5m_price_configured"`
-	CacheWrite1hPriceConfigured bool            `gorm:"column:cache_write_1h_price_configured;default:false" json:"cache_write_1h_price_configured"`
+	InputPriceConfigured        bool            `gorm:"-" json:"input_price_configured"`
+	OutputPriceConfigured       bool            `gorm:"-" json:"output_price_configured"`
+	CacheReadPriceConfigured    bool            `gorm:"-" json:"cache_read_price_configured"`
+	CacheWritePriceConfigured   bool            `gorm:"-" json:"cache_write_price_configured"`
+	CacheWrite5mPriceConfigured bool            `gorm:"-" json:"cache_write_5m_price_configured"`
+	CacheWrite1hPriceConfigured bool            `gorm:"-" json:"cache_write_1h_price_configured"`
+	Pricing                     datatypes.JSON  `gorm:"column:pricing;type:jsonb;default:'{}'" json:"pricing,omitempty"`
 
 	// Status and ordering
 	IsActive  bool                   `gorm:"default:true;index" json:"is_active"`
@@ -314,6 +316,7 @@ func (m *CustomModel) AfterFind(tx *gorm.DB) error {
 		SupportsStop:             m.SupportsStop,
 		MaxStopSequences:         m.MaxStopSequences,
 	}
+	m.PopulateConfiguredFromPricing()
 	return nil
 }
 
@@ -427,6 +430,7 @@ type ModelView struct {
 	CacheWritePriceOverride     *float64       `json:"cache_write_price_override"`
 	CacheWrite5mPriceOverride   *float64       `json:"cache_write_5m_price_override"`
 	CacheWrite1hPriceOverride   *float64       `json:"cache_write_1h_price_override"`
+	PricingOverride             datatypes.JSON `json:"pricing_override,omitempty"`
 	Pricing                     datatypes.JSON `json:"pricing,omitempty"`
 
 	// Context

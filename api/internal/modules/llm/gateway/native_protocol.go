@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,11 +16,20 @@ import (
 )
 
 const (
+	protocolOpenAIChatCompletions  = "openai_chat_completions"
 	protocolOpenAIResponses        = "openai_responses"
 	protocolAnthropicMessages      = "anthropic_messages"
 	modelCategoryImage             = "image"
 	modelCategoryResponses         = "responses"
 	modelCategoryAnthropicMessages = "anthropic_messages"
+	protocolGeminiGenerateContent  = "gemini_generate_content"
+	modelCategoryGemini            = "gemini_generate_content"
+	// Native protocol providers may report input tokens for protocol framing,
+	// system instructions, or other server-side prompt material that is not
+	// present in the public JSON body. Reservations are refunded to actual usage,
+	// so a small floor prevents a successful response from failing settlement
+	// without increasing the final charge.
+	nativeProtocolInputReservationOverheadTokens = 128
 )
 
 func (s *llmGatewayServiceImpl) CreateResponseRaw(
@@ -39,6 +49,7 @@ func (s *llmGatewayServiceImpl) CreateResponseRaw(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationResponses)
 
 	return s.createNativeResponse(ctx, apiKey, effectiveReq)
 }
@@ -60,6 +71,7 @@ func (s *llmGatewayServiceImpl) CreateResponseStream(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryResponses)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationResponses)
 
 	return s.createNativeResponseStream(ctx, apiKey, effectiveReq)
 }
@@ -81,6 +93,7 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessage(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationAnthropicMessages)
 
 	return s.createNativeAnthropicMessage(ctx, apiKey, effectiveReq)
 }
@@ -102,8 +115,47 @@ func (s *llmGatewayServiceImpl) CreateAnthropicMessageStream(
 		return nil, err
 	}
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryAnthropicMessages)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationAnthropicMessages)
 
 	return s.createNativeAnthropicMessageStream(ctx, apiKey, effectiveReq)
+}
+
+func (s *llmGatewayServiceImpl) CreateGeminiContent(
+	ctx context.Context,
+	apiKey *apikeymodel.TenantAPIKey,
+	req *adapter.GeminiGenerateContentRequest,
+) (*adapter.RawResponse, error) {
+	if err := validateGeminiGenerateContentRequest(req); err != nil {
+		return nil, err
+	}
+	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryGemini)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationGeminiGenerate)
+	return s.runNativeNonStream(ctx, apiKey, req.Model, req.Body, "llm.gemini.generate_content", nativeUsageBodyFormatGemini, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (*adapter.RawResponse, error) {
+		capable, ok := providerAdapter.(adapter.GeminiGenerateContentCapable)
+		if !ok {
+			return nil, fmt.Errorf("%w: selected provider does not support Gemini generateContent", adapter.ErrCapabilityUnsupported)
+		}
+		return capable.CreateGeminiContent(callCtx, req)
+	})
+}
+
+func (s *llmGatewayServiceImpl) CreateGeminiContentStream(
+	ctx context.Context,
+	apiKey *apikeymodel.TenantAPIKey,
+	req *adapter.GeminiGenerateContentRequest,
+) (<-chan adapter.RawStreamEvent, error) {
+	if err := validateGeminiGenerateContentRequest(req); err != nil {
+		return nil, err
+	}
+	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, modelCategoryGemini)
+	ctx = context.WithValue(ctx, shared.ContextKeyModelOperation, operationGeminiGenerate)
+	return s.runNativeStream(ctx, apiKey, req.Model, req.Body, "llm.gemini.stream_generate_content", nativeUsageBodyFormatGemini, func(callCtx context.Context, providerAdapter adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error) {
+		capable, ok := providerAdapter.(adapter.GeminiGenerateContentCapable)
+		if !ok {
+			return nil, fmt.Errorf("%w: selected provider does not support Gemini streamGenerateContent", adapter.ErrCapabilityUnsupported)
+		}
+		return capable.CreateGeminiContentStream(callCtx, req)
+	})
 }
 
 func validateRawResponseRequest(req *adapter.RawResponseRequest) error {
@@ -121,6 +173,20 @@ func validateRawResponseRequest(req *adapter.RawResponseRequest) error {
 }
 
 func validateAnthropicMessageRequest(req *adapter.AnthropicMessageRequest) error {
+	if req == nil {
+		return fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
+	}
+	req.Model = normalizeRequestedModelName(req.Model)
+	if req.Model == "" {
+		return ErrMissingModel
+	}
+	if len(req.Body) == 0 || !json.Valid(req.Body) {
+		return fmt.Errorf("%w: request body must be valid JSON", adapter.ErrInvalidRequest)
+	}
+	return nil
+}
+
+func validateGeminiGenerateContentRequest(req *adapter.GeminiGenerateContentRequest) error {
 	if req == nil {
 		return fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
 	}
@@ -171,6 +237,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	bodyFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (*adapter.RawResponse, error),
 ) (response *adapter.RawResponse, retErr error) {
+	ctx = withRequestedBillingTools(ctx, body)
 	startTime := time.Now()
 	traceCtx := ctx
 	var traceBillingCtx *BillingContext
@@ -192,7 +259,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		return nil, err
 	}
 
-	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model)
+	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model, nil)
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid organizationID: %w", err)
@@ -201,6 +268,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, model, organizationID.String(), shadowOrganizationID.String())
@@ -210,10 +278,11 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		return nil, reportedNoProviderAvailableError(ctx, model, organizationID.String(), shadowOrganizationID.String())
 	}
 
-	requestID := uuid.New().String()
+	requestID := gatewayRequestIDFromContext(ctx)
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		reservedPrompt, reservedCompletion := conservativeReasoningReservationTokens(providerSelection, promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), reservedPrompt, reservedCompletion)
 		if err != nil {
 			lastErr = wrapPricingCalculationError(err)
 			continue
@@ -232,15 +301,16 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		billingCtx.PromptTokens = promptTokens
-		billingCtx.CompletionTokens = completionTokens
-		lockTokenPricingQuote(billingCtx, quote)
+		billingCtx.PromptTokens = reservedPrompt
+		billingCtx.CompletionTokens = reservedCompletion
+		billingCtx.EstimatedInputTokens = reservedPrompt
+		billingCtx.EstimatedOutputTokens = reservedCompletion
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 		traceCtx = ctx
@@ -262,8 +332,18 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			continue
 		}
 		response, err = call(ctx, providerAdapter)
+		observer := s.privateToolObserver(billingCtx, providerSelection, body)
+		if observer != nil {
+			if response != nil {
+				observer.Observe(response.Body)
+			}
+			s.recordPrivateToolObserver(ctx, observer, err != nil, billingCtx)
+		}
 		responseTime := time.Since(startTime).Milliseconds()
 		if err != nil {
+			if billingCtx.UseSystemProvider && errors.Is(err, adapter.ErrBillingSettleFailed) {
+				return nil, s.queuePlatformSettlementRecovery(ctx, billingCtx, err)
+			}
 			if adapter.IsCapabilityUnsupported(err) {
 				if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 					return nil, rollbackErr
@@ -291,6 +371,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			}
 			return nil, fmt.Errorf("all providers failed: %w", lastErr)
 		}
+		response.Body = sanitizePublicNativeBody(response.Body, model)
 		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, response.Settlement, responseTime); err != nil {
 			return nil, err
 		}
@@ -340,6 +421,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	usageFormat nativeUsageBodyFormat,
 	call func(context.Context, adapter.LLMProviderAdapter) (<-chan adapter.RawStreamEvent, error),
 ) (output <-chan adapter.RawStreamEvent, retErr error) {
+	ctx = withRequestedBillingTools(ctx, body)
 	startTime := time.Now()
 	traceCtx := ctx
 	var traceBillingCtx *BillingContext
@@ -365,7 +447,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		return nil, err
 	}
 
-	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model)
+	promptTokens, completionTokens := s.estimateNativeProtocolTokens(body, model, nil)
 	organizationID, err := uuid.Parse(apiKey.OrganizationID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid organizationID: %w", err)
@@ -374,6 +456,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	if err != nil {
 		return nil, err
 	}
+	ctx = withRoutingTokenEstimate(ctx, promptTokens, completionTokens, PricingOperationChat)
 	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", model, 3)
 	if err != nil {
 		reportLLMSelectionFailure(ctx, err, model, organizationID.String(), shadowOrganizationID.String())
@@ -383,10 +466,11 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		return nil, reportedNoProviderAvailableError(ctx, model, organizationID.String(), shadowOrganizationID.String())
 	}
 
-	requestID := uuid.New().String()
+	requestID := gatewayRequestIDFromContext(ctx)
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		reservedPrompt, reservedCompletion := conservativeReasoningReservationTokens(providerSelection, promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), reservedPrompt, reservedCompletion)
 		if err != nil {
 			lastErr = wrapPricingCalculationError(err)
 			continue
@@ -405,15 +489,16 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 			startTime,
 			requestID,
 			buildAttemptID(requestID, attemptIdx),
-			quote.ReservationPolicy,
+			quote,
 		)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		lockTokenPricingQuote(billingCtx, quote)
-		billingCtx.PromptTokens = promptTokens
-		billingCtx.CompletionTokens = completionTokens
+		billingCtx.PromptTokens = reservedPrompt
+		billingCtx.CompletionTokens = reservedCompletion
+		billingCtx.EstimatedInputTokens = reservedPrompt
+		billingCtx.EstimatedOutputTokens = reservedCompletion
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 		traceCtx = ctx
@@ -436,6 +521,9 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 		streamChan, err := call(ctx, providerAdapter)
 		if err != nil {
+			if billingCtx.UseSystemProvider && errors.Is(err, adapter.ErrBillingSettleFailed) {
+				return nil, s.queuePlatformSettlementRecovery(ctx, billingCtx, err)
+			}
 			setBillingFailure(billingCtx, err)
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
@@ -450,7 +538,12 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		}
 
 		outputChan := make(chan adapter.RawStreamEvent)
-		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), streamChan, outputChan, billingCtx, providerSelection, channelID, attemptIdx, startTime, model, body, traceName, usageFormat)
+		// Billing runs on a detached context so a client disconnect cannot abort
+		// settlement, but the goroutine still needs the request context's Done
+		// channel: without it every send on the unbuffered outputChan blocks
+		// forever once the handler stops reading, leaking the goroutine and the
+		// upstream connection behind it.
+		go s.handleNativeStreamBilling(context.WithoutCancel(ctx), ctx.Done(), streamChan, outputChan, billingCtx, providerSelection, channelID, attemptIdx, startTime, model, body, traceName, usageFormat)
 		traceHandedOff = true
 		return outputChan, nil
 	}
@@ -478,6 +571,7 @@ func (s *llmGatewayServiceImpl) settleNativeUsageFallbackError(
 
 func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 	ctx context.Context,
+	clientGone <-chan struct{},
 	inputChan <-chan adapter.RawStreamEvent,
 	outputChan chan<- adapter.RawStreamEvent,
 	billingCtx *BillingContext,
@@ -492,14 +586,42 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 ) {
 	defer close(outputChan)
 
+	// emit never blocks indefinitely. Once the client is gone the remaining
+	// events are dropped, but the loop below keeps draining inputChan so the
+	// upstream reader can finish and settlement still sees the real usage.
+	clientConnected := true
+	emit := func(event adapter.RawStreamEvent) {
+		if !clientConnected {
+			return
+		}
+		select {
+		case outputChan <- event:
+		case <-clientGone:
+			clientConnected = false
+		}
+	}
+
+	observer := s.privateToolObserver(billingCtx, providerSelection, requestBody)
 	var lastUsage *adapter.Usage
 	var lastSettlement *adapter.SettlementResult
+	doneSeen := false
 	var lastError error
 	var pendingTerminal *adapter.RawStreamEvent
+	failureFrameSeen := false
 	var sawUsage bool
 	var collectedText strings.Builder
 	for event := range inputChan {
+		if billingCtx.UseSystemProvider {
+			if sentinel, ok := adapter.ConsoleSentinelFromBody(event.Data); ok && errors.Is(sentinel, adapter.ErrBillingSettleFailed) {
+				lastError = sentinel
+				break
+			}
+		}
+		if observer != nil {
+			observer.Observe(event.Data)
+		}
 		terminal := isNativeTerminalStreamEvent(usageFormat, event)
+		failed := isNativeFailureStreamEvent(usageFormat, event)
 		if event.Usage != nil && (hasBillableTokenUsage(event.Usage) || event.Usage.TotalTokens > 0) {
 			lastUsage = event.Usage
 			sawUsage = true
@@ -521,27 +643,52 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 			break
 		}
 		if event.Done {
+			// Providers/proxies may append settlement metadata after the model
+			// completion frame. Keep draining until the producer closes the
+			// stream; settlement events remain internal and are never emitted.
+			doneSeen = true
+			continue
+		}
+		if doneSeen {
+			continue
+		}
+		if failed {
+			// The upstream failure frame is never relayed: it can carry
+			// provider-internal fields. The handler projects lastError into the
+			// cataloged error frame of the caller's protocol instead.
+			failureFrameSeen = true
+			lastError = fmt.Errorf("%w: provider returned terminal %s event", adapter.ErrUpstreamError, strings.TrimSpace(event.Event))
 			break
 		}
+		event.Data = sanitizePublicNativeBody(event.Data, model)
 		if terminal {
 			pending := event
 			pendingTerminal = &pending
 			continue
 		}
-		outputChan <- event
+		emit(event)
 	}
 
+	s.recordPrivateToolObserver(ctx, observer, lastError != nil, billingCtx)
 	responseTime := time.Since(startTime).Milliseconds()
 	traceOutput := collectedText.String()
 	if lastError != nil {
+		if billingCtx.UseSystemProvider && errors.Is(lastError, adapter.ErrBillingSettleFailed) {
+			emit(adapter.RawStreamEvent{Error: s.queuePlatformSettlementRecovery(ctx, billingCtx, lastError), Done: true})
+			return
+		}
 		reportLLMProviderFailureForSelection(ctx, lastError, "llm.provider.stream_failed", providerSelection, billingCtx, attemptIdx, true)
 		if err := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, lastError); err != nil {
 			s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
-			outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+			if failureFrameSeen {
+				emit(adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage})
+				return
+			}
+			emit(adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage})
 			return
 		}
 		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, lastError)
-		outputChan <- adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage}
+		emit(adapter.RawStreamEvent{Error: lastError, Done: true, Usage: lastUsage})
 		return
 	}
 
@@ -558,36 +705,52 @@ func (s *llmGatewayServiceImpl) handleNativeStreamBilling(
 
 	if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, lastUsage, lastSettlement, responseTime); err != nil {
 		s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, err)
-		outputChan <- adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage}
+		emit(adapter.RawStreamEvent{Error: err, Done: true, Usage: lastUsage})
 		return
 	}
 	s.traceNativeLLMStreamOperation(ctx, traceName, nativeTraceOperation(traceName), requestBody, traceOutput, lastUsage, startTime, time.Time{}, billingCtx, nil)
 	if pendingTerminal != nil {
 		if estimatedUsage {
 			if updated, ok := injectUsageIntoNativeTerminalEvent(*pendingTerminal, model, lastUsage, usageFormat); ok {
-				outputChan <- updated
+				emit(updated)
 			} else {
-				outputChan <- nativeUsageStreamEvent(model, lastUsage, usageFormat)
-				outputChan <- *pendingTerminal
+				emit(nativeUsageStreamEvent(model, lastUsage, usageFormat))
+				emit(*pendingTerminal)
 			}
 		} else {
-			outputChan <- *pendingTerminal
+			emit(*pendingTerminal)
 		}
 	} else if estimatedUsage {
-		outputChan <- nativeUsageStreamEvent(model, lastUsage, usageFormat)
+		emit(nativeUsageStreamEvent(model, lastUsage, usageFormat))
 	}
-	outputChan <- adapter.RawStreamEvent{Done: true, Usage: lastUsage}
+	emit(adapter.RawStreamEvent{Done: true, Usage: lastUsage})
 }
 
-func (s *llmGatewayServiceImpl) estimateNativeProtocolTokens(body json.RawMessage, model string) (int, int) {
+func (s *llmGatewayServiceImpl) estimateNativeProtocolTokens(body json.RawMessage, model string, selection *ProviderSelection) (int, int) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return 1, s.tokenEstimator.EstimateCompletionTokens(nil, model)
+		promptTokens, completionTokens := 1, s.tokenEstimator.EstimateCompletionTokens(nil, model)
+		promptTokens, completionTokens = conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
+		return promptTokens, completionTokens
 	}
 
 	promptTokens := s.tokenEstimator.EstimateTextTokensForModel(model, nativePromptTokenSource(body, payload))
+	promptTokens = saturatingAddPositive(promptTokens, nativeProtocolInputReservationOverheadTokens)
 	completionTokens := s.tokenEstimator.EstimateCompletionTokens(rawMaxTokens(payload), model)
-	return promptTokens, completionTokens
+	return conservativeReasoningReservationTokens(selection, promptTokens, completionTokens)
+}
+
+func saturatingAddPositive(value, overhead int) int {
+	if value < 0 {
+		value = 0
+	}
+	if overhead <= 0 {
+		return value
+	}
+	if value > int(^uint(0)>>1)-overhead {
+		return int(^uint(0) >> 1)
+	}
+	return value + overhead
 }
 
 func nativePromptTokenSource(body json.RawMessage, payload map[string]json.RawMessage) string {
@@ -627,4 +790,13 @@ func logNativeProtocolUnsupported(ctx context.Context, err error) {
 		return
 	}
 	logger.DebugContext(ctx, "native protocol capability rejected", err)
+}
+
+func gatewayRequestIDFromContext(ctx context.Context) string {
+	if ctx != nil {
+		if requestID, ok := ctx.Value(shared.ContextKeyRequestID).(string); ok && strings.TrimSpace(requestID) != "" {
+			return strings.TrimSpace(requestID)
+		}
+	}
+	return uuid.NewString()
 }

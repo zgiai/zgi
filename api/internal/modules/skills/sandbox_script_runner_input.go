@@ -70,7 +70,7 @@ func (r *SandboxScriptRunner) uploadInputFiles(ctx context.Context, sandboxID st
 	if err != nil {
 		return err
 	}
-	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, false); err != nil {
+	if err := r.uploadArchive(ctx, sandboxID, archiveBase64, execCtx, archiveUploadOptions{}); err != nil {
 		return fmt.Errorf("failed to upload skill input files: %w", err)
 	}
 	return nil

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 )
 
@@ -32,12 +32,30 @@ const (
 
 type Runner struct {
 	db        *gorm.DB
-	memory    *agentmemory.Service
+	memory    extractionMemoryService
 	llmClient llmclient.LLMClient
 	estimator *tokenestimate.Estimator
 }
 
-func NewRunner(db *gorm.DB, memory *agentmemory.Service, client llmclient.LLMClient) *Runner {
+type extractionMemoryService interface {
+	ListDueExtractionJobs(context.Context, int) ([]*agentmemory.AgentMemoryExtractionJob, error)
+	ClaimExtractionJob(context.Context, uuid.UUID) (*agentmemory.AgentMemoryExtractionJob, error)
+	FinishExtractionJob(context.Context, uuid.UUID, string, string) error
+	RescheduleExtractionJob(context.Context, uuid.UUID, string, time.Time) error
+	DeleteTerminalExtractionJobs(context.Context, time.Time, int) (int64, error)
+	ReadUserMemory(context.Context, uuid.UUID, uuid.UUID, []agentmemory.RuntimeSlot, string, uuid.UUID) ([]agentmemory.SlotValueResponse, error)
+	MutateValues(context.Context, uuid.UUID, uuid.UUID, []agentmemory.RuntimeSlot, string, uuid.UUID, agentmemory.MutateValuesRequest, agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
+}
+
+type relationshipExtractionBounds interface {
+	ExtractionBounds(context.Context, *agentmemory.AgentMemoryExtractionJob, time.Time) (*time.Time, *time.Time, error)
+}
+
+type relationshipMemoryCleaner interface {
+	CleanupExpiredRelationshipMemory(context.Context, time.Time, time.Duration) error
+}
+
+func NewRunner(db *gorm.DB, memory extractionMemoryService, client llmclient.LLMClient) *Runner {
 	return &Runner{db: db, memory: memory, llmClient: client, estimator: tokenestimate.NewEstimator()}
 }
 
@@ -72,7 +90,11 @@ func (r *Runner) cleanupExpired(ctx context.Context) error {
 		return nil
 	}
 	now := time.Now()
-	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if cleaner, ok := r.memory.(relationshipMemoryCleaner); ok {
+		if err := cleaner.CleanupExpiredRelationshipMemory(ctx, now, auditRetention); err != nil {
+			return err
+		}
+	} else if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			WITH batch AS (
 				SELECT id FROM agent_memory_events
@@ -100,8 +122,7 @@ func (r *Runner) cleanupExpired(ctx context.Context) error {
 }
 
 func globalAutomaticExtractionEnabled() bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("ZGI_AGENT_MEMORY_AUTO_EXTRACTION_ENABLED")))
-	return value == "1" || value == "true" || value == "yes" || value == "on"
+	return relationshipmemory.AutomaticExtractionEnabled()
 }
 
 func (r *Runner) RunJob(ctx context.Context, jobID uuid.UUID) error {
@@ -209,39 +230,48 @@ func (r *Runner) loadCompletedTurns(ctx context.Context, job *agentmemory.AgentM
 	if scope.WorkspaceID != job.WorkspaceID {
 		return nil, scope, agentmemory.ErrUnauthorized
 	}
-	var subject agentmemory.AgentMemorySubjectState
-	if err := r.db.WithContext(ctx).
-		Where("workspace_id = ? AND agent_id = ? AND user_scope = ? AND user_id = ?", job.WorkspaceID, job.AgentID, job.UserScope, job.UserID).
-		Take(&subject).Error; err != nil {
-		return nil, scope, err
-	}
-	if subject.MemoryEpoch != job.MemoryEpoch {
-		return nil, scope, agentmemory.ErrConflict
-	}
 	var watermark struct{ CreatedAt time.Time }
 	if err := r.db.WithContext(ctx).Table("chat_runtime_messages").Select("created_at").
 		Where("id = ? AND conversation_id = ? AND status = ? AND deleted_at IS NULL", job.MessageWatermarkID, job.ConversationID, "completed").Take(&watermark).Error; err != nil {
 		return nil, scope, err
 	}
-	var previous struct{ CreatedAt *time.Time }
-	if err := r.db.WithContext(ctx).Table("agent_memory_extraction_jobs AS jobs").
-		Select("MAX(messages.created_at) AS created_at").
-		Joins("JOIN chat_runtime_messages AS messages ON messages.id = jobs.message_watermark_id").
-		Where("jobs.id <> ? AND jobs.workspace_id = ? AND jobs.agent_id = ? AND jobs.user_scope = ? AND jobs.user_id = ? AND jobs.conversation_id = ? AND jobs.memory_epoch = ? AND jobs.status = ? AND messages.created_at < ?",
-			job.ID, job.WorkspaceID, job.AgentID, job.UserScope, job.UserID, job.ConversationID, job.MemoryEpoch, agentmemory.ExtractionJobCompleted, watermark.CreatedAt).
-		Scan(&previous).Error; err != nil {
-		return nil, scope, err
+	var lowerBound, previousCreatedAt *time.Time
+	if provider, ok := r.memory.(relationshipExtractionBounds); ok {
+		var boundsErr error
+		lowerBound, previousCreatedAt, boundsErr = provider.ExtractionBounds(ctx, job, watermark.CreatedAt)
+		if boundsErr != nil {
+			return nil, scope, boundsErr
+		}
+	} else {
+		var subject agentmemory.AgentMemorySubjectState
+		if err := r.db.WithContext(ctx).
+			Where("workspace_id = ? AND agent_id = ? AND user_scope = ? AND user_id = ?", job.WorkspaceID, job.AgentID, job.UserScope, job.UserID).
+			Take(&subject).Error; err != nil {
+			return nil, scope, err
+		}
+		if subject.MemoryEpoch != job.MemoryEpoch {
+			return nil, scope, agentmemory.ErrConflict
+		}
+		var previous struct{ CreatedAt *time.Time }
+		if err := r.db.WithContext(ctx).Table("agent_memory_extraction_jobs AS jobs").
+			Select("MAX(messages.created_at) AS created_at").
+			Joins("JOIN chat_runtime_messages AS messages ON messages.id = jobs.message_watermark_id").
+			Where("jobs.id <> ? AND jobs.workspace_id = ? AND jobs.agent_id = ? AND jobs.user_scope = ? AND jobs.user_id = ? AND jobs.conversation_id = ? AND jobs.memory_epoch = ? AND jobs.status = ? AND messages.created_at < ?",
+				job.ID, job.WorkspaceID, job.AgentID, job.UserScope, job.UserID, job.ConversationID, job.MemoryEpoch, agentmemory.ExtractionJobCompleted, watermark.CreatedAt).
+			Scan(&previous).Error; err != nil {
+			return nil, scope, err
+		}
+		lowerBound = subject.ExtractionCutoffAt
+		// During a rolling deploy, an older node may increment memory_epoch
+		// without the additive cutoff column. The update time is a safe fence.
+		if lowerBound == nil && subject.MemoryEpoch > 0 && !subject.UpdatedAt.IsZero() {
+			value := subject.UpdatedAt
+			lowerBound = &value
+		}
+		previousCreatedAt = previous.CreatedAt
 	}
-	lowerBound := subject.ExtractionCutoffAt
-	// During a rolling deploy, an older node may increment memory_epoch without
-	// knowing the additive cutoff column. The epoch row's update time is still a
-	// safe delete fence, so new workers do not resurrect pre-delete messages.
-	if lowerBound == nil && subject.MemoryEpoch > 0 && !subject.UpdatedAt.IsZero() {
-		value := subject.UpdatedAt
-		lowerBound = &value
-	}
-	if previous.CreatedAt != nil && (lowerBound == nil || previous.CreatedAt.After(*lowerBound)) {
-		value := *previous.CreatedAt
+	if previousCreatedAt != nil && (lowerBound == nil || previousCreatedAt.After(*lowerBound)) {
+		value := *previousCreatedAt
 		lowerBound = &value
 	}
 	query := r.db.WithContext(ctx).Table("chat_runtime_messages").

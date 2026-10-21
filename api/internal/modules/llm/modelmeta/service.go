@@ -166,8 +166,8 @@ type ModelMetaData struct {
 	Parameters                map[string]interface{} `json:"parameters"`
 	Evaluation                map[string]interface{} `json:"evaluation"`
 	ConfigParameters          json.RawMessage        `json:"config_parameters"`
-	KnowledgeCutoff           string                 `json:"knowledge_cutoff"`
-	ReleaseDate               string                 `json:"release_date"`
+	KnowledgeCutoff           modelMetaDate          `json:"knowledge_cutoff"`
+	ReleaseDate               modelMetaDate          `json:"release_date"`
 	LastUpdated               int64                  `json:"last_updated"`
 	CreatedAt                 int64                  `json:"created_at"`
 	UpdatedAt                 int64                  `json:"updated_at"`
@@ -875,10 +875,10 @@ func mergeModelMetaDetail(base, detail ModelMetaData) ModelMetaData {
 	if len(detail.ConfigParameters) > 0 {
 		base.ConfigParameters = detail.ConfigParameters
 	}
-	if strings.TrimSpace(detail.KnowledgeCutoff) != "" {
+	if strings.TrimSpace(detail.KnowledgeCutoff.String()) != "" {
 		base.KnowledgeCutoff = detail.KnowledgeCutoff
 	}
-	if strings.TrimSpace(detail.ReleaseDate) != "" {
+	if strings.TrimSpace(detail.ReleaseDate.String()) != "" {
 		base.ReleaseDate = detail.ReleaseDate
 	}
 	if detail.LastUpdated > 0 {
@@ -967,7 +967,11 @@ func isUniqueConstraintError(err error) bool {
 
 // createModel creates a new model in the database
 func (s *Service) createModel(ctx context.Context, meta *ModelMetaData, result *SyncResult) error {
-	values := buildPublishedModelColumns(s.db, publishedModelFromMeta(meta))
+	model, err := normalizePublishedModelForWrite(publishedModelFromMeta(meta))
+	if err != nil {
+		return err
+	}
+	values := buildPublishedModelColumns(s.db, model)
 	values["id"] = uuid.NewString()
 	values["created_at"] = time.Now().UTC()
 	values["updated_at"] = values["created_at"]
@@ -982,7 +986,11 @@ func (s *Service) createModel(ctx context.Context, meta *ModelMetaData, result *
 
 // updateModel updates an existing model in the database
 func (s *Service) updateModel(ctx context.Context, existing *llmmodel.LLMModel, meta *ModelMetaData, result *SyncResult) error {
-	updates := buildPublishedModelColumns(s.db, publishedModelFromMeta(meta))
+	model, err := normalizePublishedModelForWrite(publishedModelFromMeta(meta))
+	if err != nil {
+		return err
+	}
+	updates := buildPublishedModelColumns(s.db, model)
 	updates["updated_at"] = time.Now().UTC()
 
 	tx := s.db.WithContext(ctx).Model(existing).Updates(updates)
@@ -1156,7 +1164,7 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 	if useCasesDiffer(local.UseCases, ensureRemoteUseCases(remote)) {
 		return true
 	}
-	if local.KnowledgeCutoff != remote.KnowledgeCutoff {
+	if local.KnowledgeCutoff != remote.KnowledgeCutoff.String() {
 		return true
 	}
 	if !equalStringSlices(normalizeStringValues([]string(local.InputModalities)), normalizeStringValues(remote.InputModalities)) {
@@ -1280,8 +1288,8 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 			NewValue: remoteUseCases,
 		})
 	}
-	if local.KnowledgeCutoff != remote.KnowledgeCutoff {
-		diffs = append(diffs, DiffField{Field: "knowledge_cutoff", OldValue: local.KnowledgeCutoff, NewValue: remote.KnowledgeCutoff})
+	if local.KnowledgeCutoff != remote.KnowledgeCutoff.String() {
+		diffs = append(diffs, DiffField{Field: "knowledge_cutoff", OldValue: local.KnowledgeCutoff, NewValue: remote.KnowledgeCutoff.String()})
 	}
 	if !equalStringSlices(normalizeStringValues([]string(local.InputModalities)), normalizeStringValues(remote.InputModalities)) {
 		diffs = append(diffs, DiffField{
@@ -1385,7 +1393,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		UseCases:               llmmodel.EnsureUseCases(meta.UseCases, endpoints),
 		InputModalities:        normalizeStringValues(meta.InputModalities),
 		OutputModalities:       normalizeStringValues(meta.OutputModalities),
-		KnowledgeCutoff:        strings.TrimSpace(meta.KnowledgeCutoff),
+		KnowledgeCutoff:        strings.TrimSpace(meta.KnowledgeCutoff.String()),
 		IsActive:               isActive,
 		IsSystemEnabled:        isActive,
 		SupportedParameters:    marshalJSONRaw(meta.Parameters),

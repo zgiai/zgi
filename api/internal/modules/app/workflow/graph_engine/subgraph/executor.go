@@ -68,6 +68,7 @@ func New(cfg Config) *Executor {
 
 // Run executes the subgraph for the provided iteration index/item.
 func (e *Executor) Run(ctx context.Context, index int, item any) (Result, error) {
+	ctx = shared.WithExecutionStep(ctx, "iteration", e.cfg.NodeID, index)
 	if e.cfg.StartNodeID == nil || len(*e.cfg.StartNodeID) == 0 {
 		return Result{}, fmt.Errorf("start_node_id is required")
 	}

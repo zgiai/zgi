@@ -404,11 +404,15 @@ func traceLLMOperation(ctx context.Context, payload llmTracePayload) {
 
 func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 	bc := payload.Billing
+	genAISystem := bc.ProviderName
+	if bc.UseSystemProvider {
+		genAISystem = "zgi-cloud"
+	}
 	attrs := []attribute.KeyValue{
 		attribute.String("zgi.llm.schema_version", llmTraceSchemaVersion),
 		attribute.String("zgi.invocation_id", bc.RequestID),
 		attribute.String("gen_ai.operation.name", payload.Operation),
-		attribute.String("gen_ai.system", bc.ProviderName),
+		attribute.String("gen_ai.system", genAISystem),
 		attribute.String("gen_ai.request.model", bc.ModelName),
 		attribute.String("gen_ai.response.model", bc.ModelName),
 		attribute.String("zgi.request_id", bc.RequestID),
@@ -417,6 +421,7 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 		attribute.String("zgi.organization_id", bc.OrganizationID),
 		attribute.String("zgi.api_key_id", bc.APIKeyID),
 		attribute.String("zgi.provider", bc.ProviderName),
+		attribute.String("zgi.model_vendor", bc.ProviderName),
 		attribute.String("zgi.provider_id", bc.ProviderID.String()),
 		attribute.String("zgi.model", bc.ModelName),
 		attribute.String("zgi.model_id", bc.ModelID.String()),
@@ -426,6 +431,10 @@ func baseLLMAttributes(payload llmTracePayload) []attribute.KeyValue {
 		attribute.Int64("zgi.actual_credits", bc.ActualCredits),
 		attribute.String("zgi.status", bc.Status),
 	}
+	if bc.UseSystemProvider {
+		attrs = append(attrs, attribute.String("zgi.logical_channel", "ZGI Cloud"))
+	}
+	attrs = append(attrs, routeAttributionAttributes(bc)...)
 
 	if llmLangfuseAttributesEnabled() {
 		observationType := payload.ObservationType
@@ -707,6 +716,8 @@ func costDetails(bc *BillingContext) string {
 	if !bc.TotalUSD.IsPositive() {
 		return ""
 	}
+	// Explicit boundary: tracing attributes are display-only doubles. Exact USD
+	// decimal stays the billing source of truth.
 	return safeJSONString(map[string]float64{
 		"input":  bc.InputUSD.InexactFloat64(),
 		"output": bc.OutputUSD.InexactFloat64(),

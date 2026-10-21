@@ -53,7 +53,7 @@ func (c *llmClientImpl) Transcribe(ctx context.Context, organizationID string, r
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	result, err := c.gateway.Transcribe(ctx, apiKey, &gateway.TranscriptionRequest{
+	result, err := c.gateway.Transcribe(productInvocationContext(ctx), apiKey, &gateway.TranscriptionRequest{
 		Model: req.Model,
 		Audio: req.Audio,
 	})
@@ -84,7 +84,7 @@ func (c *llmClientImpl) GenerateSpeech(ctx context.Context, organizationID strin
 	if err != nil {
 		return fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.GenerateSpeech(ctx, apiKey, &gateway.SpeechRequest{
+	return c.gateway.GenerateSpeech(productInvocationContext(ctx), apiKey, &gateway.SpeechRequest{
 		Model:          req.Model,
 		Input:          req.Input,
 		Voice:          req.Voice,
@@ -102,7 +102,7 @@ func (c *llmClientImpl) GenerateMusic(ctx context.Context, organizationID string
 	if err != nil {
 		return fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.GenerateMusic(ctx, apiKey, &gateway.MusicRequest{
+	return c.gateway.GenerateMusic(productInvocationContext(ctx), apiKey, &gateway.MusicRequest{
 		RequestID:      req.RequestID,
 		Model:          req.Model,
 		Mode:           req.Mode,
@@ -122,7 +122,7 @@ func (c *llmClientImpl) GenerateLyrics(ctx context.Context, organizationID strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to get system API key: %w", err)
 	}
-	return c.gateway.GenerateLyrics(ctx, apiKey, &gateway.LyricsRequest{
+	return c.gateway.GenerateLyrics(productInvocationContext(ctx), apiKey, &gateway.LyricsRequest{
 		RequestID: req.RequestID,
 		Model:     req.Model,
 		Prompt:    req.Prompt,

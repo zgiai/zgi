@@ -29,6 +29,7 @@ const (
 	ToolProviderTypePluginRunner ToolProviderType = "plugin_runner" // Compatibility value for marketplace tools
 	ToolProviderTypeRunner       ToolProviderType = "runner"        // Preferred public alias for marketplace tools
 	ToolProviderTypeConnector    ToolProviderType = "connector"     // External integration actions
+	ToolProviderTypeMarket       ToolProviderType = "market"        // ZGI Market MCP tools bound to an agent or a digital human
 
 	// Not supported - reserved for future extension
 	// ToolProviderTypeAPI              ToolProviderType = "api"               // Custom OpenAPI tools - not supported
@@ -38,6 +39,23 @@ const (
 	// ToolProviderTypeMCP              ToolProviderType = "mcp"               // MCP protocol tools - not supported
 	// ToolProviderTypePlugin           ToolProviderType = "plugin"            // Legacy plugin type - not supported
 )
+
+// IsBoundRuntimeCaller reports callers that execute against a published,
+// server-owned resource binding.  DigitalHuman is deliberately separate from
+// Agent while sharing the binding authorization checks.
+func IsBoundRuntimeCaller(value ToolInvokeFrom) bool {
+	return value == ToolInvokeFromAgent || value == ToolInvokeFromDigitalHuman
+}
+
+func RuntimeCallerLabel(value ToolInvokeFrom) string {
+	if value == ToolInvokeFromDigitalHuman {
+		return "DigitalHuman"
+	}
+	if value == ToolInvokeFromAgent {
+		return "Agent"
+	}
+	return "AIChat"
+}
 
 // String returns the string representation
 func (t ToolProviderType) String() string {
@@ -66,6 +84,10 @@ const (
 	ToolInvokeFromWorkflow ToolInvokeFrom = "workflow"
 	ToolInvokeFromAPI      ToolInvokeFrom = "api"
 	ToolInvokeFromAIChat   ToolInvokeFrom = "aichat"
+	// ToolInvokeFromDigitalHuman identifies a published DigitalHuman runtime.
+	// It is intentionally distinct from Agent so resource bindings and audit
+	// records cannot silently inherit Agent permissions.
+	ToolInvokeFromDigitalHuman ToolInvokeFrom = "digital_human"
 )
 
 // ============================================
@@ -117,11 +139,15 @@ type ToolIdentity struct {
 type ToolParameterType string
 
 const (
-	ToolParameterTypeString  ToolParameterType = "string"
-	ToolParameterTypeNumber  ToolParameterType = "number"
-	ToolParameterTypeBoolean ToolParameterType = "boolean"
-	ToolParameterTypeSelect  ToolParameterType = "select"
-	ToolParameterTypeFile    ToolParameterType = "file"
+	ToolParameterTypeString     ToolParameterType = "string"
+	ToolParameterTypeNumber     ToolParameterType = "number"
+	ToolParameterTypeBoolean    ToolParameterType = "boolean"
+	ToolParameterTypeSelect     ToolParameterType = "select"
+	ToolParameterTypeFile       ToolParameterType = "file"
+	ToolParameterTypeJSON       ToolParameterType = "json"
+	ToolParameterTypeDate       ToolParameterType = "date"
+	ToolParameterTypeDateTime   ToolParameterType = "date-time"
+	ToolParameterTypeStringList ToolParameterType = "string-list"
 )
 
 // ToolParameterForm represents the form type of tool parameter
@@ -172,16 +198,35 @@ type ToolGovernanceMetadata struct {
 	SensitiveDataAllowed bool   `json:"sensitive_data_allowed"`
 }
 
+// ToolWorkflowOutput describes a stable, typed projection of a structured tool
+// result that can be published to the Workflow variable catalog. Path uses
+// "*" for array item traversal; the runtime materializes such projections as
+// typed arrays, so downstream nodes never need wildcard-aware variable paths.
+type ToolWorkflowOutput struct {
+	ID    string   `json:"id"`
+	Path  []string `json:"path"`
+	Type  string   `json:"type"`
+	Label I18nText `json:"label,omitempty"`
+}
+
 // ToolEntity represents the metadata of a tool
 type ToolEntity struct {
-	Identity     ToolIdentity            `json:"identity"`
-	Description  ToolDescription         `json:"description"`
-	Parameters   []ToolParameter         `json:"parameters,omitempty"`
-	InputSchema  map[string]interface{}  `json:"input_schema,omitempty"`
-	OutputSchema map[string]interface{}  `json:"output_schema,omitempty"`
-	Governance   *ToolGovernanceMetadata `json:"governance,omitempty"`
-	OutputType   string                  `json:"output_type,omitempty"`
-	Tags         []string                `json:"tags,omitempty"`
+	Identity ToolIdentity `json:"identity"`
+	// ConnectorOperationID is the stable operation identity behind a
+	// Connector Tool name. It is empty for non-Connector tools.
+	ConnectorOperationID string `json:"connector_operation_id,omitempty"`
+	// ConnectorOperationEffect is internal catalog metadata for host binding
+	// descriptions, never a runtime authorization or risk decision.
+	ConnectorOperationEffect string                  `json:"-"`
+	Description              ToolDescription         `json:"description"`
+	Parameters               []ToolParameter         `json:"parameters,omitempty"`
+	InputSchema              map[string]interface{}  `json:"input_schema,omitempty"`
+	OutputSchema             map[string]interface{}  `json:"output_schema,omitempty"`
+	WorkflowOutputs          []ToolWorkflowOutput    `json:"workflow_outputs,omitempty"`
+	SupportedCallers         []ToolInvokeFrom        `json:"supported_callers,omitempty"`
+	Governance               *ToolGovernanceMetadata `json:"governance,omitempty"`
+	OutputType               string                  `json:"output_type,omitempty"`
+	Tags                     []string                `json:"tags,omitempty"`
 }
 
 // ============================================
@@ -299,6 +344,14 @@ type Tool interface {
 
 	// ValidateCredentials validates the credentials
 	ValidateCredentials(ctx context.Context, credentials map[string]interface{}) error
+}
+
+// ConnectorNativeTool marks a Tool implementation that can consume the typed
+// Connector dispatch identity carried by ToolEngine. When an invocation has
+// that identity, ToolEngine rejects every unmarked Tool before Invoke so a
+// disabled or missing native provider can never fall through to legacy.
+type ConnectorNativeTool interface {
+	IsConnectorNativeTool() bool
 }
 
 // ToolGovernanceArgumentEnricher is an optional extension for tools that can

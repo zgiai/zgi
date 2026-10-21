@@ -42,7 +42,6 @@ import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
 import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import {
-  imageAttachmentHintTranslationKey,
   type ScopedTranslatorWithHas,
   tAttachmentForSurface,
   type AIChatComposerSurface,
@@ -53,12 +52,16 @@ import { AIChatSpeechAutoPlayControl } from '@/components/chat/variants/aichat/v
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
+  modelProps?: ModelSelectorModelProps | null;
   modelSelectorWarning?: boolean;
   isModelInitializing?: boolean;
   modelMissing: boolean;
   modelCapabilityFilter?: { features_vision: boolean };
   hasImageAttachment: boolean;
   isSending: boolean;
+  allowRuntimeInput?: boolean;
+  hasInput: boolean;
+  runtimeInputQueueFull?: boolean;
   canStop?: boolean;
   isUploading: boolean;
   isStopping: boolean;
@@ -85,6 +88,9 @@ interface AIChatInputToolbarProps {
   connectedAppsLabel?: string;
   connectedAppsSelectedCount?: number;
   connectedAppsAttentionRequired?: boolean;
+  connectedAppsDisabled?: boolean;
+  connectedAppsOpen?: boolean;
+  connectedAppsPopup?: 'menu' | 'dialog';
   showSkillManagement?: boolean;
   skillManagementLabel?: string;
   surface?: AIChatComposerSurface;
@@ -93,7 +99,7 @@ interface AIChatInputToolbarProps {
   onUploadDocument: () => void;
   onUploadImage: () => void;
   onSelectFromFiles: () => void;
-  onOpenConnectedApps?: () => void;
+  onOpenConnectedApps?: (anchorElement: HTMLElement) => void;
   onOpenSkillManagement?: () => void;
   onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
@@ -169,6 +175,9 @@ export function AIChatInputToolbar({
   modelCapabilityFilter,
   hasImageAttachment,
   isSending,
+  allowRuntimeInput = false,
+  hasInput,
+  runtimeInputQueueFull = false,
   canStop,
   isUploading,
   isStopping,
@@ -195,6 +204,9 @@ export function AIChatInputToolbar({
   connectedAppsLabel,
   connectedAppsSelectedCount = 0,
   connectedAppsAttentionRequired = false,
+  connectedAppsDisabled = false,
+  connectedAppsOpen = false,
+  connectedAppsPopup = 'dialog',
   showSkillManagement = false,
   skillManagementLabel,
   surface = 'aichat',
@@ -214,10 +226,16 @@ export function AIChatInputToolbar({
   speechAutoPlay,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
-  const showStopButton = canStop ?? isSending;
+  const showStopButton = (canStop ?? isSending) && !hasInput;
+  const sendTitle =
+    isSending && allowRuntimeInput
+      ? runtimeInputQueueFull
+        ? t('consoleChat.runtimeInput.queueFull')
+        : `${t('consoleChat.runtimeInput.queueAction')} · Enter`
+      : `${t('consoleChat.send')} · Enter`;
+  const stopTitle = `${t('consoleChat.stop')} · Esc`;
   const activeGovernanceTier = getToolGovernanceTierDisplay(toolGovernancePermissionTier, t);
   const ActiveGovernanceIcon = activeGovernanceTier.Icon;
-
   return (
     <div className="flex items-center justify-between gap-2 px-1">
       <div className="flex min-w-0 items-center gap-1.5">
@@ -322,12 +340,7 @@ export function AIChatInputToolbar({
               <Info className="size-4 shrink-0 text-muted-foreground" />
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs">
-              {tAttachmentForSurface(
-                t as unknown as ScopedTranslatorWithHas,
-                surface,
-                imageAttachmentHintTranslationKey(surface),
-                'imageModelLocked'
-              )}
+              {t('consoleChat.attachments.imageFileHint')}
             </TooltipContent>
           </Tooltip>
         ) : null}
@@ -355,7 +368,7 @@ export function AIChatInputToolbar({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div>
-                    <DropdownMenuItem onClick={onUploadDocument}>
+                    <DropdownMenuItem disabled={allowedExtensions.length === 0} onClick={onUploadDocument}>
                       <FileText className="mr-2 size-4" />
                       {t('consoleChat.attachments.uploadDocument')}
                     </DropdownMenuItem>
@@ -391,11 +404,7 @@ export function AIChatInputToolbar({
                           types: formatExtensionsForDisplay(imageExtensions).join(' / '),
                         }
                       )
-                    : tAttachmentForSurface(
-                        t as unknown as ScopedTranslatorWithHas,
-                        surface,
-                        'imageVisionRequired'
-                      )}
+                    : t('consoleChat.attachments.imageDisabled')}
                 </TooltipContent>
               </Tooltip>
               {showFileLibraryPicker ? (
@@ -418,8 +427,11 @@ export function AIChatInputToolbar({
                   'relative size-8 rounded-full',
                   connectedAppsAttentionRequired && 'text-warning'
                 )}
-                onClick={onOpenConnectedApps}
+                onClick={event => onOpenConnectedApps(event.currentTarget)}
+                disabled={connectedAppsDisabled}
                 aria-label={connectedAppsLabel}
+                aria-haspopup={connectedAppsPopup}
+                aria-expanded={connectedAppsOpen}
               >
                 <PlugZap className="size-4" />
                 {connectedAppsSelectedCount > 0 ? (
@@ -488,7 +500,9 @@ export function AIChatInputToolbar({
             className="size-8 rounded-full"
             disabled={isStopping}
             onClick={onStop}
-            title={t('consoleChat.stop')}
+            title={stopTitle}
+            aria-label={stopTitle}
+            aria-keyshortcuts="Escape"
           >
             <Square className="size-3.5 fill-current" />
           </Button>
@@ -498,7 +512,9 @@ export function AIChatInputToolbar({
             className="size-8 rounded-full"
             disabled={!canSend}
             onClick={onSend}
-            title={t('consoleChat.send')}
+            title={sendTitle}
+            aria-label={sendTitle}
+            aria-keyshortcuts="Enter"
           >
             <Send className="size-4" />
           </Button>

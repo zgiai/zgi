@@ -96,7 +96,7 @@ func TestDurableWorkflowResumeInputsReachEveryQuestionInDirectResume(t *testing.
 				}
 				t.Fatalf("open sqlite: %v", err)
 			}
-			if err := db.AutoMigrate(&workflowpause.RuntimeOutbox{}); err != nil {
+			if err := autoMigrateWorkflowTest(db, &workflowpause.RuntimeOutbox{}); err != nil {
 				t.Fatalf("migrate workflow outbox: %v", err)
 			}
 
@@ -184,7 +184,7 @@ func TestWorkflowStreamResumeAppliesDurableInputsBeforeClaim(t *testing.T) {
 		}
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&workflowpause.RuntimeOutbox{}); err != nil {
+	if err := autoMigrateWorkflowTest(db, &workflowpause.RuntimeOutbox{}); err != nil {
 		t.Fatalf("migrate workflow outbox: %v", err)
 	}
 
@@ -381,5 +381,20 @@ func TestQuestionAnswerSubmissionIdempotencyKeyDistinguishesQuestionsAndRounds(t
 		if key == first {
 			t.Fatalf("%s reused first question idempotency key %q", name, key)
 		}
+	}
+}
+
+func TestQueuedQuestionResumeOfAReadyPauseDoesNotSubmitAgain(t *testing.T) {
+	for status, recorded := range map[string]bool{
+		workflowpause.RunPauseStatusPaused:      false,
+		workflowpause.RunPauseStatusResumeReady: true,
+		workflowpause.RunPauseStatusResuming:    true,
+	} {
+		if got := questionResumeAlreadyRecorded(&workflowpause.RunPause{Status: status}); got != recorded {
+			t.Fatalf("pause %s: already recorded = %v, want %v", status, got, recorded)
+		}
+	}
+	if questionResumeAlreadyRecorded(nil) {
+		t.Fatal("a missing pause has nothing recorded")
 	}
 }

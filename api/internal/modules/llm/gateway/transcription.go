@@ -118,6 +118,7 @@ func (s *llmGatewayServiceImpl) Transcribe(
 				APIKeyID:              strings.TrimSpace(apiKey.ID),
 				ModelName:             request.Model,
 				ProviderName:          selection.Provider.Provider,
+				RoutingStrategy:       selection.RoutingStrategy,
 			})
 			result, err := transcriptionAdapter.Transcribe(callContext, &adapter.TranscriptionRequest{
 				RequestID: requestID,
@@ -129,6 +130,9 @@ func (s *llmGatewayServiceImpl) Transcribe(
 			}
 			if result == nil {
 				return nil, fmt.Errorf("%w: transcription provider returned no response", adapter.ErrUpstreamError)
+			}
+			if err := s.mirrorPlatformMediaSettlement(ctx, apiKey, selection, shadowOrganizationID, requestID, requestID, PricingOperationTranscription, false, startedAt, result.Settlement); err != nil {
+				return nil, err
 			}
 			return &TranscriptionResponse{RequestID: result.RequestID, Text: result.Text}, nil
 		}
@@ -150,7 +154,7 @@ func (s *llmGatewayServiceImpl) Transcribe(
 			startedAt,
 			requestID,
 			buildAttemptID(requestID, attemptIndex),
-			"",
+			estimatedQuote,
 		)
 		if err != nil {
 			return nil, err

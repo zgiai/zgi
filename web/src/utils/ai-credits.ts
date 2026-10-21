@@ -30,14 +30,17 @@ import type {
   ModelUsageSummary,
 } from '@/services/types/statistics';
 
-export const AI_CREDITS_SCALE = 1000;
+// @ts-ignore Node's direct TypeScript runner requires an explicit extension.
+import { POINTS_PER_USD } from './billing-units.ts';
+
+export const AI_CREDITS_SCALE = POINTS_PER_USD;
 export const DEFAULT_AI_CREDIT_EDIT_BACKEND_MAX = 99_999_999_000;
 export const DEFAULT_AI_CREDIT_EDIT_MAX = shrinkAiCreditEditMax(DEFAULT_AI_CREDIT_EDIT_BACKEND_MAX);
 export const CHANNEL_INITIAL_CREDIT_BACKEND_MAX = DEFAULT_AI_CREDIT_EDIT_BACKEND_MAX;
 export const CHANNEL_INITIAL_CREDIT_MAX = shrinkAiCreditEditMax(CHANNEL_INITIAL_CREDIT_BACKEND_MAX);
 export const MODEL_USAGE_AI_CREDITS_INTERNAL_PRECISION = 3;
 export const MODEL_USAGE_AI_CREDITS_DISPLAY_PRECISION = 2;
-export const CHANNEL_POINTS_PER_USD = 1_000;
+export const CHANNEL_POINTS_PER_USD = POINTS_PER_USD;
 export const USD_TO_CNY_ESTIMATE_RATE = 7;
 
 // Grants and usage bills store internal credits, like workspace quotas. Preserve

@@ -13,6 +13,7 @@ import { serializeValue } from '../utils';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
 import { hasModelPriceDisplay } from '@/components/model/model-price-summary';
 import { getModelDisplayName } from '@/utils/model-label';
+import { isModelPricingConfigured } from '@/utils/model-price';
 
 export interface ModelRowItemProps {
   model: ModelItem;
@@ -22,38 +23,44 @@ export interface ModelRowItemProps {
   featuresLabel: string;
   replacementSuggestionLabel: string;
   useCaseLabel: string;
+  pricingMissingHint?: string;
   featureLabels: FeatureLabels;
   useCaseLabels: Record<string, string>;
   locale: Locale;
   highlighted?: boolean;
   highlightedLabel?: string;
+  pricingMissingLabel?: string;
 }
 
 // Model row item component with optional tooltip
 export const ModelRowItem = memo(function ModelRowItem({
   model,
-  providerId,
+  providerId: _providerId,
   contextLabel,
   deprecatedUnavailableLabel,
   featuresLabel,
   replacementSuggestionLabel,
   useCaseLabel,
+  pricingMissingHint,
   featureLabels,
   useCaseLabels,
   locale,
   highlighted = false,
   highlightedLabel,
+  pricingMissingLabel,
 }: ModelRowItemProps) {
   const modelLabel = getModelDisplayName(model, locale);
   const hasFeatures = Object.values(model.features || {}).some(Boolean);
   const hasMeta =
     (model.context_window !== undefined && model.context_window > 0) ||
     (model.use_cases && model.use_cases.length > 0);
-  const shouldShowTooltip = hasFeatures || hasMeta || hasModelPriceDisplay(model);
+  const pricingConfigured = isModelPricingConfigured(model);
+  const shouldShowTooltip =
+    hasFeatures || hasMeta || hasModelPriceDisplay(model) || !pricingConfigured;
 
   const itemNode = (
     <SelectItem
-      value={serializeValue({ provider: providerId, model: model.model })}
+      value={serializeValue({ provider: model.provider, model: model.model })}
       className="h-9 cursor-pointer group"
       onMouseDown={e => {
         e.preventDefault();
@@ -70,6 +77,11 @@ export const ModelRowItem = memo(function ModelRowItem({
             <span className="text-xs truncate">{modelLabel}</span>
             {highlighted && highlightedLabel ? (
               <Badge className="h-4 px-1.5 py-0 text-[10px] leading-4">{highlightedLabel}</Badge>
+            ) : null}
+            {!pricingConfigured && pricingMissingLabel ? (
+              <Badge variant="warning" className="h-4 px-1.5 py-0 text-[10px] leading-4">
+                {pricingMissingLabel}
+              </Badge>
             ) : null}
             {shouldShowTooltip && (
               <Info className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -96,6 +108,7 @@ export const ModelRowItem = memo(function ModelRowItem({
             features: featuresLabel,
             replacementSuggestion: replacementSuggestionLabel,
             useCases: useCaseLabel,
+            pricingMissing: pricingMissingHint,
           }}
           featureLabels={featureLabels}
           useCaseLabels={useCaseLabels}

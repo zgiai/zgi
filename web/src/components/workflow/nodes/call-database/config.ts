@@ -70,14 +70,9 @@ export const checkValid = (nodeData: CallDatabaseNodeData): ValidationResult => 
   const warnings: ValidationError[] = [];
 
   const ds = nodeData.data?.data_source;
-  const tables = Array.isArray(nodeData.data?.table_selection) ? nodeData.data.table_selection : [];
 
   if (!ds || !ds.id || ds.id.trim() === '') {
     errors.push({ code: 'callDatabase.validation.dataSourceRequired' });
-  }
-
-  if (tables.length === 0) {
-    errors.push({ code: 'callDatabase.validation.tableSelectionRequired' });
   }
 
   const sql = nodeData.data?.manual_sql ?? '';

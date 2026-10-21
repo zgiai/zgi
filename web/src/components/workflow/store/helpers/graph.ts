@@ -37,6 +37,7 @@ export interface UpstreamExportItem {
   variables: Array<{
     key: string;
     type: PrimitiveType;
+    label?: Record<string, string>;
     writable?: boolean;
     description?: string;
     descriptionKey?: NodesSuffix;
@@ -352,8 +353,25 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
         { key: 'text', type: 'string', descriptionKey: 'outputDescriptions.tool.text' },
         { key: 'files', type: 'array[file]', descriptionKey: 'outputDescriptions.tool.files' },
         { key: 'json', type: 'array[object]', descriptionKey: 'outputDescriptions.tool.json' },
+        { key: 'result', type: 'object' },
       ];
-      base.variables = standard;
+      const data = node.data as unknown as {
+        workflow_outputs?: Array<{
+          id: string;
+          type: PrimitiveType;
+          label?: Record<string, string>;
+        }>;
+      };
+      const seen = new Set(standard.map(item => item.key));
+      const projected = (data.workflow_outputs || [])
+        .filter(item => Boolean(item.id) && !seen.has(item.id))
+        .map(item => ({
+          key: item.id,
+          type: item.type,
+          label: item.label,
+          description: item.id.replaceAll('__', ' → ').replace(/^result → /, ''),
+        }));
+      base.variables = [...standard, ...projected];
       break;
     }
     case 'create-scheduled-task': {
@@ -1099,8 +1117,7 @@ export const CONTAINER_HEADER_HEIGHT = 40;
 export const CONTAINER_PADDING_X = 12;
 export const CONTAINER_PADDING_Y = 12;
 export const CONTAINER_RUNTIME_FOOTER_HEIGHT = 40;
-export const CONTAINER_BOTTOM_SAFE_INSET =
-  CONTAINER_RUNTIME_FOOTER_HEIGHT + CONTAINER_PADDING_Y;
+export const CONTAINER_BOTTOM_SAFE_INSET = CONTAINER_RUNTIME_FOOTER_HEIGHT + CONTAINER_PADDING_Y;
 
 export interface WorkflowNodeLayoutSize {
   width: number;
@@ -1251,10 +1268,8 @@ export function adjustContainerLayout(
     const childH = nodeDim.height;
 
     const effectiveParentSize = effectiveContainerSizes.get(parent.id);
-    const parentW =
-      effectiveParentSize?.width ?? (parent as Partial<WorkflowNode>).width ?? 600;
-    const parentH =
-      effectiveParentSize?.height ?? (parent as Partial<WorkflowNode>).height ?? 420;
+    const parentW = effectiveParentSize?.width ?? (parent as Partial<WorkflowNode>).width ?? 600;
+    const parentH = effectiveParentSize?.height ?? (parent as Partial<WorkflowNode>).height ?? 420;
     const minX = CONTAINER_PADDING_X;
     const minY = CONTAINER_HEADER_HEIGHT + CONTAINER_PADDING_Y;
     const maxX = Math.max(minX, parentW - childW - CONTAINER_PADDING_X);

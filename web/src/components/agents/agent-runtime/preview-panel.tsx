@@ -1,5 +1,6 @@
 'use client';
 
+import type { FileUploadSelection } from '@/services/upload.service';
 import { useCallback, useId } from 'react';
 import { Eye, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,7 @@ interface AgentRuntimePreviewPanelProps {
   modelProps?: ModelSelectorModelProps | null;
   useMemory: boolean;
   fileUploadEnabled: boolean;
+  fileUploadPolicy?: FileUploadSelection | null;
   suggestions: string[];
   inputPlaceholder: string;
   openingGuideBrand: OpeningGuideBrand;
@@ -52,6 +54,7 @@ export function AgentRuntimePreviewPanel({
   modelProps,
   useMemory,
   fileUploadEnabled,
+  fileUploadPolicy,
   suggestions,
   inputPlaceholder,
   openingGuideBrand,
@@ -145,6 +148,7 @@ export function AgentRuntimePreviewPanel({
           showMemoryToggle={false}
           forcedUseMemory={useMemory}
           enableUpload={fileUploadEnabled}
+          fileUploadPolicy={fileUploadPolicy}
           suggestions={suggestions}
           inputPlaceholder={inputPlaceholder}
           embeddedConversationMode="drawer"

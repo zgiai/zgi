@@ -3,11 +3,37 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
 )
+
+// RawProtocolError keeps a provider-native error body/status intact so the
+// public protocol handler can return it without converting error schemas.
+type RawProtocolError struct {
+	StatusCode  int
+	ContentType string
+	Body        []byte
+	Cause       error
+}
+
+func (e *RawProtocolError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func (e *RawProtocolError) Error() string {
+	if e == nil {
+		return "native protocol request failed"
+	}
+	return fmt.Sprintf("native protocol request failed with status %d", e.StatusCode)
+}
 
 // ProviderAdapter defines the provider-level contract shared by all adapters.
 type ProviderAdapter interface {
@@ -39,6 +65,13 @@ type RawResponseCapable interface {
 type AnthropicMessagesCapable interface {
 	CreateAnthropicMessage(ctx context.Context, request *AnthropicMessageRequest) (*RawResponse, error)
 	CreateAnthropicMessageStream(ctx context.Context, request *AnthropicMessageRequest) (<-chan RawStreamEvent, error)
+}
+
+// GeminiGenerateContentCapable preserves the Google Gemini generateContent
+// and streamGenerateContent wire contract.
+type GeminiGenerateContentCapable interface {
+	CreateGeminiContent(ctx context.Context, request *GeminiGenerateContentRequest) (*RawResponse, error)
+	CreateGeminiContentStream(ctx context.Context, request *GeminiGenerateContentRequest) (<-chan RawStreamEvent, error)
 }
 
 // EmbeddingCapable defines embedding generation capability.
@@ -87,6 +120,7 @@ type LLMProviderAdapter interface {
 // ChatRequest platform standard chat request format
 type ChatRequest struct {
 	Provider         string             `json:"-"`
+	RoutingStrategy  string             `json:"-"`
 	Model            string             `json:"model"`
 	Messages         []Message          `json:"messages"`
 	Temperature      *float64           `json:"temperature,omitempty"`
@@ -153,6 +187,13 @@ type AnthropicMessageRequest struct {
 	Headers map[string]string `json:"-"`
 }
 
+type GeminiGenerateContentRequest struct {
+	Model   string            `json:"-"`
+	Stream  bool              `json:"-"`
+	Body    json.RawMessage   `json:"-"`
+	Headers map[string]string `json:"-"`
+}
+
 // RawResponse carries a provider-native JSON response plus parsed usage for billing.
 type RawResponse struct {
 	Body       json.RawMessage   `json:"-"`
@@ -173,6 +214,7 @@ type RawStreamEvent struct {
 // EmbeddingsRequest embeddings request format
 type EmbeddingsRequest struct {
 	Input          interface{} `json:"input"` // string or []string or []int or [][]int
+	Provider       string      `json:"-"`
 	Model          string      `json:"model"`
 	EncodingFormat string      `json:"encoding_format,omitempty"` // float or base64
 	Dimensions     int         `json:"dimensions,omitempty"`
@@ -270,6 +312,9 @@ type Message struct {
 	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
 	ToolCallID       string        `json:"tool_call_id,omitempty"`
 	ReasoningContent string        `json:"reasoning_content,omitempty"` // DeepSeek thinking-mode round trip
+	// EntryID is the durable transcript identity used to record the exact
+	// compaction boundary. It is never part of the provider protocol.
+	EntryID string `json:"-"`
 }
 
 // MessageContentPart represents a content part in multimodal messages (OpenAI format)
@@ -353,6 +398,8 @@ type Usage struct {
 	PromptTokens            int                     `json:"prompt_tokens"`
 	CompletionTokens        int                     `json:"completion_tokens"`
 	TotalTokens             int                     `json:"total_tokens"`
+	InputTokens             int                     `json:"input_tokens,omitempty"`
+	OutputTokens            int                     `json:"output_tokens,omitempty"`
 	PromptTokensDetails     PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	UncachedInputTokens     int                     `json:"uncached_input_tokens,omitempty"`
@@ -360,6 +407,19 @@ type Usage struct {
 	CacheWriteTokens        int                     `json:"cache_write_tokens,omitempty"`
 	CacheWrite5mTokens      int                     `json:"cache_write_5m_tokens,omitempty"`
 	CacheWrite1hTokens      int                     `json:"cache_write_1h_tokens,omitempty"`
+	// AudioInputTokens / AudioOutputTokens carry upstream audio token usage for
+	// realtime/audio models so the gateway can bill the realtime_audio operation.
+	AudioInputTokens  int `json:"audio_input_tokens,omitempty"`
+	AudioOutputTokens int `json:"audio_output_tokens,omitempty"`
+	// InputTokensDetails carries the OpenAI input_tokens_details split
+	// (text_tokens / image_tokens) used to bill image generation by token.
+	InputTokensDetails InputTokensDetails `json:"input_tokens_details,omitempty"`
+}
+
+// InputTokensDetails is the text/image split of an image response input tokens.
+type InputTokensDetails struct {
+	TextTokens  int `json:"text_tokens,omitempty"`
+	ImageTokens int `json:"image_tokens,omitempty"`
 }
 
 type PromptTokensDetails struct {
@@ -442,6 +502,21 @@ type SettlementResult struct {
 	CacheWrite5mCostUSD             string `json:"cache_write_5m_cost_usd,omitempty"`
 	CacheWrite1hCostUSD             string `json:"cache_write_1h_cost_usd,omitempty"`
 	OutputCostUSD                   string `json:"output_cost_usd,omitempty"`
+	ActualChannelID                 string `json:"actual_channel_id,omitempty"`
+	ActualChannelName               string `json:"actual_channel_name,omitempty"`
+	ActualProvider                  string `json:"actual_provider,omitempty"`
+	ActualProtocol                  string `json:"actual_protocol,omitempty"`
+	ActualUpstreamModel             string `json:"actual_upstream_model,omitempty"`
+	PromptTokens                    int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens                int    `json:"completion_tokens,omitempty"`
+	TotalTokens                     int    `json:"total_tokens,omitempty"`
+	CacheReadTokens                 int    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens                int    `json:"cache_write_tokens,omitempty"`
+	CacheWrite5mTokens              int    `json:"cache_write_5m_tokens,omitempty"`
+	CacheWrite1hTokens              int    `json:"cache_write_1h_tokens,omitempty"`
+	ReasoningOutputTokens           int    `json:"reasoning_output_tokens,omitempty"`
+	AudioInputTokens                int    `json:"audio_input_tokens,omitempty"`
+	AudioOutputTokens               int    `json:"audio_output_tokens,omitempty"`
 }
 
 // SettlementError carries console-api settlement failure data for official streams.
@@ -478,6 +553,10 @@ type Model struct {
 	Type                string                 `json:"type,omitempty"`
 	Description         string                 `json:"description,omitempty"`
 	ContextLength       int                    `json:"context_length"`
+	MaxInputTokens      int                    `json:"max_input_tokens,omitempty"`
+	MaxOutputTokens     int                    `json:"max_output_tokens,omitempty"`
+	InputModalities     []string               `json:"input_modalities,omitempty"`
+	ParallelToolCalls   bool                   `json:"parallel_tool_calls,omitempty"`
 	Capabilities        []string               `json:"capabilities,omitempty"`
 	Pricing             *Pricing               `json:"pricing,omitempty"`
 	Created             int64                  `json:"created,omitempty"`
@@ -490,6 +569,7 @@ type Model struct {
 	IsModerated         bool                   `json:"is_moderated,omitempty"`
 	Endpoints           []string               `json:"endpoints,omitempty"`    // Supported API endpoints (e.g., ["chat", "embed", "rerank"])
 	IsFinetuned         bool                   `json:"is_finetuned,omitempty"` // Whether model is a fine-tuned version
+	SupportedProtocols  []string               `json:"supported_protocols,omitempty"`
 }
 
 // ModelArchitecture model architecture info
@@ -605,6 +685,7 @@ type ImageRequest struct {
 type ImageResponse struct {
 	Created    int64             `json:"created"`
 	Data       []ImageItem       `json:"data"`
+	Usage      *Usage            `json:"usage,omitempty"`
 	Settlement *SettlementResult `json:"-"`
 }
 
@@ -698,10 +779,93 @@ type VideoResponse struct {
 	Provider         string                 `json:"-"`
 	Protocol         string                 `json:"-"`
 	ChannelID        string                 `json:"-"`
+
+	// ActualDurationSeconds is the duration in seconds the upstream provider
+	// reports for the finished video. The zero value means the provider did not
+	// report one. It is only ever populated from the provider response and never
+	// from the request, so by-second settlement can fail closed instead of
+	// charging the requested/declared duration.
+	ActualDurationSeconds float64 `json:"-"`
 }
 
 // VideoItem represents a generated video artifact.
 type VideoItem struct {
 	URL     string `json:"url,omitempty"`
 	B64JSON string `json:"b64_json,omitempty"`
+}
+
+// VideoActualDurationSeconds returns the upstream-reported video duration in
+// seconds. It prefers the typed field and then recursively searches the raw
+// provider payload for a duration key. Zero means the provider reported no
+// usable duration and the caller must fail closed for by-second settlement.
+func (r *VideoResponse) VideoActualDurationSeconds() float64 {
+	if r == nil {
+		return 0
+	}
+	if r.ActualDurationSeconds > 0 {
+		return r.ActualDurationSeconds
+	}
+	if r.Raw == nil {
+		return 0
+	}
+	if found, ok := findVideoRawValueByKeys(r.Raw, videoRawDurationKeys); ok {
+		if seconds, ok := videoRawFloat(found); ok && seconds > 0 {
+			return seconds
+		}
+	}
+	return 0
+}
+
+// videoRawDurationKeys lists the upstream response keys that may carry the
+// actual generated video duration. Providers vary between snake_case and
+// camelCase, so both are accepted.
+var videoRawDurationKeys = map[string]struct{}{
+	"duration_seconds": {},
+	"duration":         {},
+	"video_duration":   {},
+	"durationseconds":  {},
+}
+
+func findVideoRawValueByKeys(value interface{}, keys map[string]struct{}) (interface{}, bool) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			if _, ok := keys[strings.ToLower(strings.TrimSpace(key))]; ok {
+				return item, true
+			}
+		}
+		for _, item := range typed {
+			if found, ok := findVideoRawValueByKeys(item, keys); ok {
+				return found, true
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if found, ok := findVideoRawValueByKeys(item, keys); ok {
+				return found, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func videoRawFloat(value interface{}) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }

@@ -206,6 +206,115 @@ func TestRunnerLegacyToolChatUsesSimpleToolContract(t *testing.T) {
 	}
 }
 
+func TestRunnerInjectsRuntimeInputBeforeModelRoundInOrder(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "updated answer"}}},
+	}}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-runtime-input", "msg-runtime-input", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "original request"}},
+	})
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
+	}}}
+	hookCalls := 0
+	afterHookCalls := 0
+	modelAccepted := false
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:       prepared,
+		Resolved:       resolved,
+		LegacyToolChat: true,
+		BeforeModelRound: func(_ context.Context, round int) ([]adapter.Message, error) {
+			hookCalls++
+			if round != 0 {
+				return nil, nil
+			}
+			return []adapter.Message{
+				{Role: "system", Content: "runtime input instruction"},
+				{Role: "user", Content: "first supplement"},
+				{Role: "user", Content: "second supplement"},
+			}, nil
+		},
+		AfterModelRound: func(_ context.Context, round int, accepted bool) error {
+			afterHookCalls++
+			if round != 0 {
+				t.Fatalf("AfterModelRound() round = %d, want 0", round)
+			}
+			modelAccepted = accepted
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "updated answer" || hookCalls != 1 || afterHookCalls != 1 || !modelAccepted {
+		t.Fatalf("answer = %q, before calls = %d, after calls = %d, accepted = %v", answer, hookCalls, afterHookCalls, modelAccepted)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("model requests = %d, want 1", len(fakeLLM.appChatRequests))
+	}
+	messages := fakeLLM.appChatRequests[0].Messages
+	positions := map[string]int{}
+	for _, content := range []string{"original request", "runtime input instruction", "first supplement", "second supplement"} {
+		for index, message := range messages {
+			if strings.Contains(messageContent(message.Content), content) {
+				positions[content] = index
+				break
+			}
+		}
+		if _, ok := positions[content]; !ok {
+			t.Fatalf("messages = %#v, missing %q", messages, content)
+		}
+	}
+	if !(positions["runtime input instruction"] < positions["original request"] &&
+		positions["original request"] < positions["first supplement"] &&
+		positions["first supplement"] < positions["second supplement"]) {
+		t.Fatalf("runtime input order = %#v", positions)
+	}
+}
+
+func TestRunnerReportsRejectedRuntimeInputModelRound(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatErrors: []error{errors.New("provider unavailable")}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-runtime-input-error", "msg-runtime-input-error", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "original request"}},
+	})
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
+	}}}
+	afterHookCalls := 0
+	modelAccepted := true
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:       prepared,
+		Resolved:       resolved,
+		LegacyToolChat: true,
+		BeforeModelRound: func(context.Context, int) ([]adapter.Message, error) {
+			return []adapter.Message{{Role: "user", Content: "supplement"}}, nil
+		},
+		AfterModelRound: func(_ context.Context, _ int, accepted bool) error {
+			afterHookCalls++
+			modelAccepted = accepted
+			return nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected model error")
+	}
+	if afterHookCalls != 1 || modelAccepted {
+		t.Fatalf("after calls = %d, accepted = %v; want one rejected round", afterHookCalls, modelAccepted)
+	}
+}
+
 func TestRunnerTerminalOnlyUsesOneFinalAnswerModelCall(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
 		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The approved update was completed."}}},
@@ -862,6 +971,44 @@ func TestInitialLoadedSkillsRejectsChangedInstructionDigest(t *testing.T) {
 	loaded := initialLoadedSkillsForRun(req, resolved)
 	if _, ok := loaded[skills.SkillAgentManagement]; ok {
 		t.Fatalf("loaded = %#v, changed instructions must require load_skill", loaded)
+	}
+}
+
+func TestLoadedPortableSkillRequiresReloadWhenScriptChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-example\ndescription: Example.\n---\nRun the script.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(root, "scripts", "task.py")
+	if err := os.WriteFile(script, []byte("print('first')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := skills.SkillDocument{Metadata: skills.SkillMetadata{ID: "portable-example", Source: skills.SkillSourceCustom, HasScripts: true, RootPath: root}, Instructions: "Run the script."}
+	version := skillEffectiveVersion(&doc)
+	if err := os.WriteFile(script, []byte("print('second')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if current := skillEffectiveVersion(&doc); current == version {
+		t.Fatalf("effective version = %q after script change, want a new version", current)
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{doc}}
+	req := RunRequest{CurrentMetadata: func() map[string]interface{} {
+		return map[string]interface{}{
+			"loaded_skill_ids": []interface{}{"portable-example"},
+			"loaded_skill_state": []interface{}{map[string]interface{}{
+				"skill_id": "portable-example", "instruction_digest": skillInstructionDigest(doc.Instructions), "effective_version": version,
+			}},
+		}
+	}}
+	if loaded := initialLoadedSkillsForRun(req, resolved); len(loaded) != 0 {
+		t.Fatalf("loaded = %#v after script change, want reload required", loaded)
+	}
+	loaded, traces := validatedHistoricalLoadedSkillsForRun(t.Context(), req, resolved)
+	if len(loaded) != 0 || len(traces) != 1 || traces[0].Status != "reload_required" {
+		t.Fatalf("loaded = %#v, traces = %#v, want version_changed reload", loaded, traces)
 	}
 }
 
@@ -1712,57 +1859,19 @@ func TestRunnerAcceptsFinalAnswerWithoutPlanSnapshotWhenCurrentPlanHasOpenPhases
 	}
 }
 
-func TestRunnerExplicitFinalAnswerUsesSafeTerminalAfterExternalRetryExhaustion(t *testing.T) {
-	finalCall := func(callID string, answer string) adapter.ToolCall {
-		arguments, err := json.Marshal(map[string]interface{}{"answer": answer})
-		if err != nil {
-			t.Fatalf("marshal final answer: %v", err)
-		}
-		return adapter.ToolCall{
-			ID:   callID,
-			Type: "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: string(arguments),
-			},
-		}
-	}
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-1", "消息已经发送。")}}}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{finalCall("final-2", "消息确实已经发送。")}}}}},
+func TestRunnerExplicitFinalAnswerReportsUnknownConnectorOutcome(t *testing.T) {
+	client := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "final-1", Type: "function", Function: adapter.FunctionCall{Name: skills.MetaToolFinalAnswer, Arguments: `{"answer":"消息已经发送。"}`}}}}}}},
 	}}
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
-		AppContext:   &llmclient.AppContext{},
-	}
-	prepared := NewPreparedChat("conv-explicit-exhausted", "msg-explicit-exhausted", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "发送企业微信消息"}},
-	})
-	evidence := map[string]interface{}{
-		"latest_user_request": "发送企业微信消息",
-		"skill_invocations": []interface{}{map[string]interface{}{
-			"invocation_id": "guide-send", "skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
-			"result": map[string]interface{}{
-				"integration_id": "wecom", "action_id": "wecom.message.send", "can_execute": true,
-			},
-		}},
-	}
-
+	evidence := nativeRunnerTestState("unknown")
+	runner := &Runner{LLMClient: client, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
+		Prepared: NewPreparedChat("conv-explicit", "msg-explicit", "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "发送消息"}}}),
+		Resolved: runnerTestResolvedSkills(), PreferExplicitFinalAnswer: true,
+		RuntimeStateSnapshot: func() map[string]interface{} { return evidence },
 	})
-	if err != nil {
-		t.Fatalf("Run() exposed terminal guard error after explicit retry exhaustion: %v", err)
-	}
-	if !strings.Contains(answer, "外部操作未完成") || !strings.Contains(answer, "不能视为已发送或已完成") {
-		t.Fatalf("answer = %q, want safe explicit final answer", answer)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want exactly one retry", fakeLLM.appChatCalls)
+	if err != nil || !strings.Contains(answer, "结果未知") || strings.Contains(answer, "消息已经发送") || client.appChatCalls != 1 {
+		t.Fatalf("answer=%q err=%v calls=%d", answer, err, client.appChatCalls)
 	}
 }
 
@@ -4171,7 +4280,7 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 		}
 	}
 	providerFailure := func(argumentFingerprint string) skills.SkillTrace {
-		value := trace("external-apps", "execute_action", "arguments", argumentFingerprint, "object")
+		value := trace("ordinary-skill", "perform_task", "arguments", argumentFingerprint, "object")
 		value.Arguments["recovery_kind"] = "provider_validation"
 		value.Arguments["provider_error_code"] = "99992402"
 		value.Arguments["invalid_fields"] = []string{"page_size"}
@@ -4237,7 +4346,7 @@ func TestRecoverableSkillFailureMadeProgress(t *testing.T) {
 func TestRepeatedProviderValidationFailureRequiresSameCodeAndFields(t *testing.T) {
 	trace := func(code string, fields []string) skills.SkillTrace {
 		return skills.SkillTrace{
-			Kind: "tool_call", SkillID: "external-apps", ToolName: "execute_action", Status: "error",
+			Kind: "tool_call", SkillID: "ordinary-skill", ToolName: "perform_task", Status: "error",
 			Arguments: map[string]interface{}{
 				"recovery_kind": "provider_validation", "provider_error_code": code, "invalid_fields": fields,
 			},
@@ -6133,52 +6242,6 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 			Name:      skills.MetaToolCallSkillTool,
 			Arguments: string(payload),
 		},
-	}
-}
-
-func TestRunnerRetriesWhenReadyExternalGuideWasNotExecuted(t *testing.T) {
-	ctx := context.Background()
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The DingTalk role function is unavailable."}}}},
-		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Please provide the role search criteria required by the selected action."}}}},
-	}}
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: skills.NewRuntime(nil, nil),
-		AppContext:   &llmclient.AppContext{},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "query DingTalk notification status"}},
-	})
-
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: runnerTestResolvedSkills(),
-		RuntimeStateSnapshot: func() map[string]interface{} {
-			return map[string]interface{}{
-				"latest_user_request": "query DingTalk notification status",
-				"skill_invocations": []interface{}{map[string]interface{}{
-					"skill_id": "external-apps", "tool_name": "get_action_guide", "status": "success",
-					"result": map[string]interface{}{
-						"integration_id": "dingtalk", "action_id": "dingtalk.message.delivery.get", "availability": "ready",
-						"required_arguments": []interface{}{map[string]interface{}{"name": "message_ref", "type": "string"}},
-					},
-				}},
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "Please provide the role search criteria required by the selected action." {
-		t.Fatalf("answer = %q", answer)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
-	}
-	if len(fakeLLM.appChatRequests) < 2 ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "external-apps/execute_action") {
-		t.Fatal("second request did not contain the external-action completion correction")
 	}
 }
 

@@ -73,7 +73,7 @@ func (a *DeepSeekAdapter) ChatCompletion(ctx context.Context, request *adapter.C
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
 	headers := a.buildHeaders()
 
-	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, request)
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, shapeDeepSeekChatRequest(request))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -92,11 +92,12 @@ func (a *DeepSeekAdapter) ChatCompletion(ctx context.Context, request *adapter.C
 
 // ChatCompletionStream executes streaming chat completion request
 func (a *DeepSeekAdapter) ChatCompletionStream(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	request.Stream = true
+	shaped := shapeDeepSeekChatRequest(request)
+	shaped.Stream = true
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
 	headers := a.buildHeaders()
 
-	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, headers, request)
+	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, headers, shaped)
 	if err != nil {
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
@@ -303,6 +304,15 @@ func (a *DeepSeekAdapter) GetBalance(ctx context.Context, apiKey string) (*adapt
 		Items:     items,
 		Spendable: &spendable,
 	}, nil
+}
+
+func shapeDeepSeekChatRequest(request *adapter.ChatRequest) *adapter.ChatRequest {
+	if request == nil {
+		return nil
+	}
+	cloned := *request
+	cloned.ToolChoice = adapter.NormalizeChatToolChoice(request.ToolChoice)
+	return &cloned
 }
 
 // ValidateConfig validates configuration

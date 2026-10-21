@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"math"
 	"slices"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -1971,6 +1973,9 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 	if req.USDToCNYRate != nil && (*req.USDToCNYRate <= 0 || math.IsNaN(*req.USDToCNYRate) || math.IsInf(*req.USDToCNYRate, 0)) {
 		return nil, ErrInvalidOrganizationBillingDisplayConfig
 	}
+	if req.LLMRoutingStrategy != nil && !isValidLLMRoutingStrategy(*req.LLMRoutingStrategy) {
+		return nil, ErrInvalidOrganizationBillingDisplayConfig
+	}
 
 	organization, err := s.organizationRepo.GetByID(ctx, id)
 	if err != nil {
@@ -2015,6 +2020,9 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 	if req.USDToCNYRate != nil {
 		organization.USDToCNYRate = decimal.NewFromFloat(*req.USDToCNYRate)
 	}
+	if req.LLMRoutingStrategy != nil {
+		organization.LLMRoutingStrategy = *req.LLMRoutingStrategy
+	}
 
 	if err := s.organizationRepo.Update(ctx, organization); err != nil {
 		return nil, fmt.Errorf("failed to update organization: %w", err)
@@ -2026,6 +2034,19 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 
 func isValidBillingDisplayCurrency(currency model.BillingDisplayCurrency) bool {
 	return currency == model.BillingDisplayCurrencyUSD || currency == model.BillingDisplayCurrencyCNY
+}
+
+func isValidLLMRoutingStrategy(strategy model.LLMRoutingStrategy) bool {
+	return strategy == model.LLMRoutingStrategySpeed ||
+		strategy == model.LLMRoutingStrategyPrice ||
+		strategy == model.LLMRoutingStrategyStability
+}
+
+func organizationLLMRoutingStrategy(organization *model.Organization) model.LLMRoutingStrategy {
+	if organization == nil || !isValidLLMRoutingStrategy(organization.LLMRoutingStrategy) {
+		return model.LLMRoutingStrategyStability
+	}
+	return organization.LLMRoutingStrategy
 }
 
 func organizationBillingDisplayCurrency(organization *model.Organization) model.BillingDisplayCurrency {
@@ -2054,6 +2075,7 @@ func organizationWithRoleResponse(organization *model.Organization, role model.O
 		Status:                 organization.Status,
 		BillingDisplayCurrency: organizationBillingDisplayCurrency(organization),
 		USDToCNYRate:           organizationUSDToCNYRate(organization),
+		LLMRoutingStrategy:     organizationLLMRoutingStrategy(organization),
 		CreatedAt:              organization.CreatedAt.Unix(),
 		OrganizationRole:       role,
 	}
@@ -2067,6 +2089,8 @@ func currentOrganizationResponse(organization *model.Organization, role model.Or
 		Status:                 organization.Status,
 		BillingDisplayCurrency: organizationBillingDisplayCurrency(organization),
 		USDToCNYRate:           organizationUSDToCNYRate(organization),
+		PointsPerUSD:           gateway.NormalizedPointsPerUSD(),
+		LLMRoutingStrategy:     organizationLLMRoutingStrategy(organization),
 		CreatedAt:              organization.CreatedAt.Unix(),
 		OrganizationRole:       role,
 	}
@@ -3020,10 +3044,10 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 	}
 
 	type workspaceQuotaInfo struct {
-		WorkspaceID string `gorm:"column:workspace_id"`
-		UsedQuota   int64  `gorm:"column:used_quota"`
-		RemainQuota int64  `gorm:"column:remain_quota"`
-		QuotaLimit  *int64 `gorm:"column:quota_limit"`
+		WorkspaceID string                   `gorm:"column:workspace_id"`
+		UsedQuota   millipoints.MilliPoints  `gorm:"column:used_quota"`
+		RemainQuota millipoints.MilliPoints  `gorm:"column:remain_quota"`
+		QuotaLimit  *millipoints.MilliPoints `gorm:"column:quota_limit"`
 	}
 
 	var quotas []workspaceQuotaInfo
@@ -3083,9 +3107,15 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 			APIKeyName:      apiKeyNamePtr,
 			MemberCount:     memberCountByWorkspace[workspace.ID],
 			QuotaConfigured: quotaConfigured,
-			UsedQuota:       quota.UsedQuota,
-			RemainQuota:     quota.RemainQuota,
-			QuotaLimit:      quota.QuotaLimit,
+			UsedQuota:       quota.UsedQuota.Int64(),
+			RemainQuota:     quota.RemainQuota.Int64(),
+			QuotaLimit: func() *int64 {
+				if quota.QuotaLimit == nil {
+					return nil
+				}
+				value := quota.QuotaLimit.Int64()
+				return &value
+			}(),
 		}
 
 		items = append(items, item)

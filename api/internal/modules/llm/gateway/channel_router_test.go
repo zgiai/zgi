@@ -12,7 +12,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 	"github.com/zgiai/zgi/api/config"
+	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
+	"github.com/zgiai/zgi/api/internal/modules/llm/catalogvendor"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
@@ -92,6 +95,14 @@ func (f *fakeCandidateRouteRepo) GetPlatformChannels(context.Context) ([]*channe
 
 type fakePrivateModelLookup struct {
 	model *llmmodel.CustomModel
+}
+
+type fakeOfficialChannelProvider struct {
+	channels []*platformchannel.OfficialChannel
+}
+
+func (f *fakeOfficialChannelProvider) ListChannels(context.Context, string) ([]*platformchannel.OfficialChannel, error) {
+	return f.channels, nil
 }
 
 type sqliteCatalogProvider struct {
@@ -236,6 +247,72 @@ func insertGatewayCatalogModel(t *testing.T, db *gorm.DB, id uuid.UUID, provider
 	}
 }
 
+func TestHydratePlatformModelIdentityUsesGenericCatalogVendorMapping(t *testing.T) {
+	db := openGatewayCatalogDB(t)
+	ownerModelID := uuid.New()
+	insertGatewayCatalogModel(t, db, ownerModelID, "model-owner", "general-chat-model")
+	catalogvendor.Replace([]catalogvendor.Entry{{
+		Provider: "supplier-cloud",
+		Model:    "general-chat-model",
+		Vendor:   "model-owner",
+	}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			Provider: "supplier-cloud",
+			Model:    "general-chat-model",
+		},
+	}
+	require.NoError(t, hydratePlatformModelIdentity(t.Context(), db, selection))
+	require.Equal(t, "model-owner", selection.ModelVendor)
+	require.NotEqual(t, uuid.Nil, selection.ModelVendorProviderID)
+	require.Equal(t, ownerModelID, selection.ModelVendorModelID)
+}
+
+func TestHydratePlatformModelIdentityFallsBackToSelectionProvider(t *testing.T) {
+	db := openGatewayCatalogDB(t)
+	modelID := uuid.New()
+	insertGatewayCatalogModel(t, db, modelID, "doubao", "doubao-seedream-4-0-250828")
+	catalogvendor.Replace(nil)
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			Provider: "doubao",
+			Model:    "doubao-seedream-4-0-250828",
+		},
+	}
+	require.NoError(t, hydratePlatformModelIdentity(t.Context(), db, selection))
+	require.Equal(t, "doubao", selection.ModelVendor)
+	require.Equal(t, modelID, selection.ModelVendorModelID)
+}
+
+func TestHydratePlatformModelIdentityFallsBackWhenVendorIdentityIsMissing(t *testing.T) {
+	db := openGatewayCatalogDB(t)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-cloud", "general-chat-model")
+	catalogvendor.Replace([]catalogvendor.Entry{{
+		Provider: "supplier-cloud",
+		Model:    "general-chat-model",
+		Vendor:   "missing-vendor",
+	}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		Model: llmmodel.LLMModel{
+			Provider: "supplier-cloud",
+			Model:    "general-chat-model",
+		},
+	}
+	require.NoError(t, hydratePlatformModelIdentity(t.Context(), db, selection))
+	require.Empty(t, selection.ModelVendor)
+	require.Equal(t, uuid.Nil, selection.ModelVendorProviderID)
+	require.Equal(t, uuid.Nil, selection.ModelVendorModelID)
+}
+
 func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
@@ -246,6 +323,7 @@ func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 		APIBaseURL:      "https://api.agicto.cn/v1",
 		Models:          []string{"gpt-4o", "deepseek-v3"},
 		IsEnabled:       true,
+		AutoBan:         true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),
@@ -270,6 +348,9 @@ func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 	}
 	if selection.ModelSource != channelModelSourceGlobal {
 		t.Fatalf("selection.ModelSource = %q, want %q", selection.ModelSource, channelModelSourceGlobal)
+	}
+	if !selection.AutoBan {
+		t.Fatal("selection.AutoBan = false, want route auto_ban")
 	}
 }
 
@@ -661,7 +742,7 @@ func TestSelectChannelsForProviderRejectsWrongOfficialProviderForSameName(t *tes
 	}
 }
 
-func TestSelectChannelsForProviderRejectsAmbiguousProviderlessCatalogModel(t *testing.T) {
+func TestSelectChannelsForProviderResolvesProviderlessCatalogModelFromEnabledRoute(t *testing.T) {
 	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
 	db := openGatewayCatalogDB(t)
 	organizationID := uuid.New()
@@ -690,12 +771,94 @@ func TestSelectChannelsForProviderRejectsAmbiguousProviderlessCatalogModel(t *te
 		modelName,
 		1,
 	)
-	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("SelectChannelsForProvider = (%#v, %v), want ambiguous provider error", selections, err)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
 	}
-	if selections != nil {
-		t.Fatalf("selections = %#v, want nil", selections)
+	if len(selections) != 1 || selections[0].Model == nil {
+		t.Fatalf("selections = %#v, want one catalog model", selections)
 	}
+	if selections[0].Model.Provider != "openai" {
+		t.Fatalf("selection provider = %q, want enabled route provider openai", selections[0].Model.Provider)
+	}
+}
+
+func TestSelectChannelsForProviderKeepsSupplierIdentityWithinSameVendor(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "general-chat-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-a", modelName)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-b", modelName)
+	catalogvendor.Replace([]catalogvendor.Entry{
+		{Provider: "supplier-a", Model: modelName, Vendor: "model-owner"},
+		{Provider: "supplier-b", Model: modelName, Vendor: "model-owner"},
+	})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-b", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(t.Context(), organizationID, "supplier-a", modelName, 1)
+	require.NoError(t, err)
+	require.Len(t, selections, 1)
+	require.NotNil(t, selections[0].Model)
+	// Routing matches the advertised same-vendor adapter pair, but the
+	// selected model keeps the requested supplier so billing and price lookup
+	// stay on the supplier row.
+	require.Equal(t, "supplier-a", selections[0].Model.Provider)
+	require.Equal(t, UsageBillingLanePlatform, selections[0].BillingLane)
+}
+
+func TestSelectChannelsForProviderMatchesSupplierToAdapterByVendor(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	const (
+		modelName = "doubao-seedance-2-0-mini-260615"
+		supplier  = "agicto 供应商"
+		adapter   = "doubao"
+	)
+	insertGatewayCatalogModel(t, db, uuid.New(), supplier, modelName)
+	catalogvendor.Replace([]catalogvendor.Entry{{
+		Provider: supplier,
+		Model:    modelName,
+		Vendor:   adapter,
+	}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: adapter, Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(t.Context(), organizationID, "", modelName, 1)
+	require.NoError(t, err)
+	require.Len(t, selections, 1)
+	require.NotNil(t, selections[0].Model)
+	require.Equal(t, supplier, selections[0].Model.Provider)
+	require.Equal(t, UsageBillingLanePlatform, selections[0].BillingLane)
 }
 
 func TestSelectChannelsForProviderUsesHintForAmbiguousCatalogModel(t *testing.T) {
@@ -832,6 +995,28 @@ func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testi
 	}
 }
 
+func TestFilterRoutesForNativeProtocolHonorsModelCapabilityForCustomRoutes(t *testing.T) {
+	model := &llmmodel.LLMModel{Model: "image-only", ChatCompletions: false}
+	routes := []*channelmodel.LLMRoute{
+		{ID: uuid.New(), Type: shared.RouteTypePrivate, IsOfficial: false},
+	}
+
+	got := filterRoutesForNativeProtocol(routes, model, "chat")
+	if len(got) != 0 {
+		t.Fatalf("chat routes = %d, want 0 for a model with Chat Completions disabled", len(got))
+	}
+}
+
+func TestFilterRoutesForNativeProtocolKeepsChatWhenModelCapabilityEnabled(t *testing.T) {
+	model := &llmmodel.LLMModel{Model: "chat-model", ChatCompletions: true}
+	route := &channelmodel.LLMRoute{ID: uuid.New(), Type: shared.RouteTypePrivate}
+
+	got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, "chat")
+	if len(got) != 1 || got[0] != route {
+		t.Fatalf("chat routes = %#v, want the enabled route", got)
+	}
+}
+
 func TestCandidateRoutesForResolvedModelKeepsExplicitHintForOfficialPassthrough(t *testing.T) {
 	organizationID := uuid.New()
 	modelName := "new-official-model"
@@ -906,6 +1091,128 @@ func TestCandidateRoutesForModelsLoadsEnabledRoutesOnce(t *testing.T) {
 	if len(routesByModel["model-b"]) != 1 {
 		t.Fatalf("model-b routes = %d, want 1", len(routesByModel["model-b"]))
 	}
+}
+
+func TestCandidateRoutesForModelsHydratesOfficialModelProtocols(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "claude-sonnet-4-6"
+	insertGatewayCatalogModel(t, db, uuid.New(), "agicto", modelName)
+	route := &channelmodel.LLMRoute{
+		ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypeZGICloud,
+		ChannelProvider: "zgi-cloud", IsEnabled: true, IsOfficial: true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+		channelProvider: &fakeOfficialChannelProvider{channels: []*platformchannel.OfficialChannel{{
+			Provider: "agicto", Models: []string{modelName}, ModelProtocols: map[string][]string{
+				modelName: {protocolOpenAIChatCompletions, protocolAnthropicMessages},
+			},
+		}}},
+	}
+
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{modelName}, 1)
+	require.NoError(t, err)
+	require.Len(t, routesByModel[modelName], 1)
+	require.Equal(t, []string{protocolOpenAIChatCompletions, protocolAnthropicMessages}, routesByModel[modelName][0].OfficialModelProtocols[modelName])
+}
+
+func TestCandidateRoutesForModelsResolvesAmbiguousCatalogModelFromEnabledRoute(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "shared-logical-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-a", modelName)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-b", modelName)
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-b", Model: modelName}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+	}
+
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{modelName}, 1)
+	require.NoError(t, err)
+	require.Len(t, routesByModel[modelName], 1)
+	require.Equal(t, route.ID, routesByModel[modelName][0].ID)
+}
+
+func TestCandidateRoutesForModelsSkipsAmbiguousCatalogModelUnavailableOnEnabledRoute(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	availableModel := "available-model"
+	unavailableModel := "unavailable-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-c", availableModel)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-a", unavailableModel)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-b", unavailableModel)
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{availableModel},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-c", Model: availableModel}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+	}
+
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{unavailableModel, availableModel}, 1)
+	require.NoError(t, err)
+	require.Empty(t, routesByModel[unavailableModel])
+	require.Len(t, routesByModel[availableModel], 1)
+}
+
+// TestCandidateRoutesForModelsSkipsCatalogModelWithoutRoutableChannel pins
+// G2: one catalog model that no enabled route serves must be left out of the
+// listing instead of failing the whole directory with provider unavailable.
+func TestCandidateRoutesForModelsSkipsCatalogModelWithoutRoutableChannel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	availableModel := "available-model"
+	channellessModel := "channelless-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-c", availableModel)
+	insertGatewayCatalogModel(t, db, uuid.New(), "supplier-d", channellessModel)
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{availableModel},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "supplier-c", Model: availableModel}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{
+		db:                      db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{route}},
+		strategyFactory:         NewStrategyFactory(),
+	}
+
+	_, singleErr := router.CandidateRoutesForModels(t.Context(), organizationID, []string{channellessModel}, 1)
+	require.NoError(t, singleErr)
+	routesByModel, err := router.CandidateRoutesForModels(t.Context(), organizationID, []string{channellessModel, availableModel}, 1)
+	require.NoError(t, err)
+	require.Empty(t, routesByModel[channellessModel])
+	require.Len(t, routesByModel[availableModel], 1)
 }
 
 func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *testing.T) {
@@ -1756,6 +2063,31 @@ func TestFilterRoutesForNativeProtocol_ResponsesSkipsChatOnlyRoutes(t *testing.T
 	}
 }
 
+func TestFilterRoutesForNativeProtocol_UsesConsoleModelCapabilityForOfficialRoute(t *testing.T) {
+	route := &channelmodel.LLMRoute{
+		ID: uuid.New(), Type: shared.RouteTypeZGICloud, ChannelProvider: "zgi-cloud", IsOfficial: true,
+		OfficialModelProtocols: map[string][]string{"console-model": {protocolOpenAIResponses, protocolGeminiGenerateContent}},
+	}
+	model := &llmmodel.LLMModel{Model: "console-model", Provider: "openai", Responses: false}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryResponses); len(got) != 1 {
+		t.Fatalf("Responses routes = %d, want Console-declared official route", len(got))
+	}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryGemini); len(got) != 1 {
+		t.Fatalf("Gemini routes = %d, want Console-declared official route", len(got))
+	}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryAnthropicMessages); len(got) != 0 {
+		t.Fatalf("Messages routes = %d, want protocol filtered", len(got))
+	}
+}
+
+func TestFilterRoutesForNativeProtocol_DoesNotExposeOfficialGeminiBeforeConsoleCapabilitySync(t *testing.T) {
+	route := &channelmodel.LLMRoute{ID: uuid.New(), Type: shared.RouteTypeZGICloud, ChannelProvider: "zgi-cloud", IsOfficial: true}
+	model := &llmmodel.LLMModel{Model: "gemini-model", Provider: "google"}
+	if got := filterRoutesForNativeProtocol([]*channelmodel.LLMRoute{route}, model, modelCategoryGemini); len(got) != 0 {
+		t.Fatalf("Gemini routes = %d, want no route before Console capability sync", len(got))
+	}
+}
+
 func TestFilterRoutesForNativeProtocol_OpenAICompatibleRequiresExplicitResponsesConfig(t *testing.T) {
 	routes := []*channelmodel.LLMRoute{
 		{
@@ -1798,10 +2130,11 @@ func TestFilterRoutesForNativeProtocol_ResponsesRequiresModelCapabilityForKnownM
 			},
 		},
 		{
-			ID:              uuid.New(),
-			Type:            shared.RouteTypeZGICloud,
-			ChannelProvider: "zgi-cloud",
-			IsOfficial:      true,
+			ID:                     uuid.New(),
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			IsOfficial:             true,
+			OfficialModelProtocols: map[string][]string{"chat-only-model": {protocolOpenAIChatCompletions}},
 		},
 	}
 	model := &llmmodel.LLMModel{
@@ -1946,4 +2279,102 @@ func TestLLMModelFromPrivateModelPreservesAudioCapabilities(t *testing.T) {
 			converted.Transcription,
 		)
 	}
+}
+
+// TestSelectChannelsForProviderUnknownModelMatrix pins how a name missing from
+// both the catalog and the global registry is answered: when no enabled route
+// names it, it is an unknown model (404); a "*" route keeps passthrough
+// routing; and a route that names the model but cannot serve this request
+// (an official route without a provider hint) must not be reported as unknown.
+func TestSelectChannelsForProviderUnknownModelMatrix(t *testing.T) {
+	const modelName = "no-such-model-zz"
+	cases := []struct {
+		name         string
+		route        *channelmodel.LLMRoute
+		wantSelected bool
+		wantNotFound bool
+	}{
+		{
+			name: "no route names the model",
+			route: &channelmodel.LLMRoute{
+				Type: shared.RouteTypePrivate, ChannelProvider: "openai-compatible", Models: []string{"some-other-model"},
+			},
+			wantNotFound: true,
+		},
+		{
+			name: "wildcard route keeps passthrough",
+			route: &channelmodel.LLMRoute{
+				Type: shared.RouteTypePrivate, ChannelProvider: "openai-compatible", Models: []string{"*"},
+			},
+			wantSelected: true,
+		},
+		{
+			name: "official route names the model but needs a provider",
+			route: &channelmodel.LLMRoute{
+				Type: shared.RouteTypeZGICloud, ChannelProvider: "zgi-cloud", Models: []string{modelName},
+				OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+				IsEnabled:              true, IsOfficial: true,
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+			db, mock := openGatewayModelLookupDB(t)
+			organizationID := uuid.New()
+			mock.ExpectQuery(`(?s)SELECT DISTINCT llm_models\.provider FROM "llm_models" JOIN llm_providers`).
+				WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
+				WillReturnRows(sqlmock.NewRows([]string{"provider"}))
+			mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
+				WithArgs(modelName).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			testCase.route.ID = uuid.New()
+			testCase.route.OrganizationID = organizationID
+			router := &ChannelRouter{
+				db:                      db,
+				organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{testCase.route}},
+				strategyFactory:         NewStrategyFactory(),
+			}
+
+			selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, "", modelName, 1)
+			if testCase.wantSelected {
+				if err != nil || len(selections) != 1 || selections[0].ModelSource != channelModelSourcePassthrough {
+					t.Fatalf("selections = %#v err = %v, want one passthrough selection", selections, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("selections = %#v, want an error", selections)
+			}
+			if gotNotFound := errors.Is(err, llmerrors.DomainErrModelNotFound); gotNotFound != testCase.wantNotFound {
+				t.Fatalf("model-not-found = %v, want %v (err %v)", gotNotFound, testCase.wantNotFound, err)
+			}
+		})
+	}
+}
+
+func TestSelectChannelsHydratesUnmappedSupplierAndPreservesCatalogPriceIdentity(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	org := uuid.New()
+	modelID := uuid.New()
+	const name = "qwen3.8-max"
+	insertGatewayCatalogModel(t, db, modelID, "qwen", name)
+	catalogvendor.Replace([]catalogvendor.Entry{{Provider: "qwen", Model: name, Vendor: "qwen"}})
+	t.Cleanup(func() { catalogvendor.Replace(nil) })
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID: uuid.New(), OrganizationID: org, Type: shared.RouteTypeZGICloud,
+			ChannelProvider: "zgi-cloud", IsEnabled: true, IsOfficial: true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+		channelProvider: &fakeOfficialChannelProvider{channels: []*platformchannel.OfficialChannel{{Provider: "agicto 供应商", Models: []string{name}}}},
+	}
+	selected, err := router.SelectChannelsForProvider(t.Context(), org, "qwen", name, 1)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, modelID, selected[0].Model.ID)
+	require.Equal(t, "qwen", selected[0].Model.Provider)
+	require.Equal(t, UsageBillingLanePlatform, selected[0].BillingLane)
 }

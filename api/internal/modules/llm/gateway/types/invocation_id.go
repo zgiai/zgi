@@ -2,8 +2,10 @@ package types
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 )
 
 // InvocationIDHeader identifies the gateway invocation recorded in usage audit.
@@ -19,11 +21,19 @@ func WithInvocationIDObserver(ctx context.Context, observer func(string)) contex
 	return context.WithValue(ctx, invocationIDObserverKey{}, observer)
 }
 
-// NewInvocationID creates a fresh identity for each invocation, including when
-// the parent context or a client request header is reused. Provider retries keep
-// this ID and have separate attempt IDs within the invocation.
+// NewInvocationID keeps the authenticated HTTP request ID as the invocation
+// identity when the gateway context carries one. Provider retries keep this
+// request ID and have separate attempt IDs within the invocation.
 func NewInvocationID(ctx context.Context) string {
-	id := uuid.NewString()
+	id := ""
+	if ctx != nil {
+		if requestID, ok := ctx.Value(shared.ContextKeyRequestID).(string); ok {
+			id = strings.TrimSpace(requestID)
+		}
+	}
+	if id == "" {
+		id = uuid.NewString()
+	}
 	if observer, ok := ctx.Value(invocationIDObserverKey{}).(func(string)); ok && observer != nil {
 		observer(id)
 	}

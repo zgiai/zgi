@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"time"
 )
 
@@ -171,13 +172,14 @@ type FileUploadResponse struct {
 }
 
 type FileUploadConfigResponse struct {
-	FileSizeLimit           int64 `json:"file_size_limit"`
-	BatchCountLimit         int   `json:"batch_count_limit"`
-	UploadQueueLimit        int   `json:"upload_queue_limit"`
-	ImageFileSizeLimit      int64 `json:"image_file_size_limit"`
-	VideoFileSizeLimit      int64 `json:"video_file_size_limit"`
-	AudioFileSizeLimit      int64 `json:"audio_file_size_limit"`
-	WorkflowFileUploadLimit int   `json:"workflow_file_upload_limit"`
+	ChatUploadPolicy        chatfile.Effective `json:"chat_upload_policy"`
+	FileSizeLimit           int64              `json:"file_size_limit"`
+	BatchCountLimit         int                `json:"batch_count_limit"`
+	UploadQueueLimit        int                `json:"upload_queue_limit"`
+	ImageFileSizeLimit      int64              `json:"image_file_size_limit"`
+	VideoFileSizeLimit      int64              `json:"video_file_size_limit"`
+	AudioFileSizeLimit      int64              `json:"audio_file_size_limit"`
+	WorkflowFileUploadLimit int                `json:"workflow_file_upload_limit"`
 }
 
 type FilePreviewResponse struct {

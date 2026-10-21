@@ -1,9 +1,9 @@
 import type {
+  AgentConnectorBinding,
   AgentDatabaseBinding,
   AgentWorkflowBinding,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
-import type { AgentIntegrationConnectionBinding } from '@/services/types/integration';
 import { normalizeAgentDatabaseBindings } from './database-binding-draft';
 
 function normalizeIDs(ids: string[] | undefined): string[] {
@@ -55,27 +55,59 @@ export function normalizeAgentWorkflowBindings(
   );
 }
 
-export function normalizeAgentIntegrationBindings(
-  bindings: AgentIntegrationConnectionBinding[]
-): AgentIntegrationConnectionBinding[] {
-  const byIntegrationID = new Map<string, AgentIntegrationConnectionBinding>();
+export function normalizeAgentConnectorBindings(
+  bindings: AgentConnectorBinding[]
+): AgentConnectorBinding[] {
+  const byConnectorID = new Map<string, AgentConnectorBinding>();
   bindings.forEach(binding => {
-    const connectionId = binding.connection_id.trim().toLowerCase();
-    const integrationId = binding.integration_id.trim().toLowerCase();
-    const accessMode = binding.access_mode || 'read';
-    const allowedActionIds = normalizeIDs(binding.allowed_action_ids).sort();
-    if (!connectionId || !integrationId || allowedActionIds.length === 0) return;
-    if (accessMode !== 'read' && accessMode !== 'write') return;
-    byIntegrationID.set(integrationId, {
-      connection_id: connectionId,
-      integration_id: integrationId,
-      access_mode: accessMode,
-      allowed_action_ids: allowedActionIds,
+    const connectorID = binding.connector_id.trim().toLowerCase();
+    const connectionID = binding.connection_id.trim().toLowerCase();
+    if (!connectorID || !connectionID) return;
+    byConnectorID.set(connectorID, {
+      ...(binding.binding_id ? { binding_id: binding.binding_id } : {}),
+      ...(binding.revision !== undefined ? { revision: binding.revision } : {}),
+      ...(binding.authorization_mode
+        ? { authorization_mode: binding.authorization_mode }
+        : {}),
+      connector_id: connectorID,
+      connection_id: connectionID,
     });
   });
-  return Array.from(byIntegrationID.values()).sort((left, right) =>
-    left.integration_id.localeCompare(right.integration_id)
+  return Array.from(byConnectorID.values()).sort((left, right) =>
+    left.connector_id.localeCompare(right.connector_id)
   );
+}
+
+// A confirmation is tied to the previously selected connection. Replaying it
+// over a different server selection would silently confirm a different switch.
+export function getAgentConnectorBindingConflicts(
+  baseline: Pick<UpdateAgentRuntimeConfigRequest, 'connector_bindings'>,
+  current: Pick<UpdateAgentRuntimeConfigRequest, 'connector_bindings'>,
+  saved: Pick<UpdateAgentRuntimeConfigRequest, 'connector_bindings'>
+): string[] {
+  const byConnector = (payload: Pick<UpdateAgentRuntimeConfigRequest, 'connector_bindings'>) =>
+    new Map(
+      normalizeAgentConnectorBindings(payload.connector_bindings ?? []).map(binding => [
+        binding.connector_id,
+        binding.connection_id,
+      ])
+    );
+  const baselineMap = byConnector(baseline);
+  const currentMap = byConnector(current);
+  const savedMap = byConnector(saved);
+  const connectorIDs = new Set([...baselineMap.keys(), ...currentMap.keys(), ...savedMap.keys()]);
+  return Array.from(connectorIDs)
+    .filter(connectorID => {
+      const baselineConnection = baselineMap.get(connectorID);
+      const currentConnection = currentMap.get(connectorID);
+      const savedConnection = savedMap.get(connectorID);
+      return (
+        currentConnection !== baselineConnection &&
+        savedConnection !== baselineConnection &&
+        currentConnection !== savedConnection
+      );
+    })
+    .sort();
 }
 
 function mergeDatabaseBindingDelta(
@@ -160,32 +192,42 @@ function mergeWorkflowBindingDelta(
   );
 }
 
-function mergeIntegrationBindingDelta(
-  submitted: AgentIntegrationConnectionBinding[],
-  current: AgentIntegrationConnectionBinding[],
-  saved: AgentIntegrationConnectionBinding[]
-): AgentIntegrationConnectionBinding[] {
+function mergeConnectorBindingDelta(
+  submitted: AgentConnectorBinding[],
+  current: AgentConnectorBinding[],
+  saved: AgentConnectorBinding[]
+): AgentConnectorBinding[] {
   const submittedMap = new Map(
-    normalizeAgentIntegrationBindings(submitted).map(binding => [binding.integration_id, binding])
+    normalizeAgentConnectorBindings(submitted).map(binding => [binding.connector_id, binding])
   );
   const currentMap = new Map(
-    normalizeAgentIntegrationBindings(current).map(binding => [binding.integration_id, binding])
+    normalizeAgentConnectorBindings(current).map(binding => [binding.connector_id, binding])
   );
   const resultMap = new Map(
-    normalizeAgentIntegrationBindings(saved).map(binding => [binding.integration_id, binding])
+    normalizeAgentConnectorBindings(saved).map(binding => [binding.connector_id, binding])
+  );
+  const conflictingConnectorIDs = new Set(
+    getAgentConnectorBindingConflicts(
+      { connector_bindings: submitted },
+      { connector_bindings: current },
+      { connector_bindings: saved }
+    )
   );
 
-  submittedMap.forEach((_, integrationID) => {
-    if (!currentMap.has(integrationID)) resultMap.delete(integrationID);
+  submittedMap.forEach((_, connectorID) => {
+    if (!currentMap.has(connectorID) && !conflictingConnectorIDs.has(connectorID)) {
+      resultMap.delete(connectorID);
+    }
   });
-  currentMap.forEach((currentBinding, integrationID) => {
-    const submittedBinding = submittedMap.get(integrationID);
+  currentMap.forEach((currentBinding, connectorID) => {
+    if (conflictingConnectorIDs.has(connectorID)) return;
+    const submittedBinding = submittedMap.get(connectorID);
     if (!submittedBinding || JSON.stringify(submittedBinding) !== JSON.stringify(currentBinding)) {
-      resultMap.set(integrationID, currentBinding);
+      resultMap.set(connectorID, currentBinding);
     }
   });
   return Array.from(resultMap.values()).sort((left, right) =>
-    left.integration_id.localeCompare(right.integration_id)
+    left.connector_id.localeCompare(right.connector_id)
   );
 }
 
@@ -200,6 +242,11 @@ export function mergeSupersededAgentRuntimePayload(
   return {
     ...saved,
     ...current,
+    execution_runtime:
+      JSON.stringify(submitted.execution_runtime ?? null) ===
+      JSON.stringify(current.execution_runtime ?? null)
+        ? saved.execution_runtime
+        : current.execution_runtime,
     enabled_skill_ids: mergeIDDelta(
       submitted.enabled_skill_ids,
       current.enabled_skill_ids,
@@ -220,10 +267,16 @@ export function mergeSupersededAgentRuntimePayload(
       current.workflow_bindings ?? [],
       saved.workflow_bindings ?? []
     ),
-    integration_bindings: mergeIntegrationBindingDelta(
-      submitted.integration_bindings ?? [],
-      current.integration_bindings ?? [],
-      saved.integration_bindings ?? []
+    connector_bindings: mergeConnectorBindingDelta(
+      submitted.connector_bindings ?? [],
+      current.connector_bindings ?? [],
+      saved.connector_bindings ?? []
+    ),
+    connector_reference_commands: (current.connector_reference_commands ?? []).filter(
+      command =>
+        !(submitted.connector_reference_commands ?? []).some(
+          previous => JSON.stringify(previous) === JSON.stringify(command)
+        )
     ),
     binding_revision: saved.binding_revision,
   };

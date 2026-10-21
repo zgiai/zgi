@@ -66,7 +66,9 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	// Initialize handler
 	llmHandler := gatewayhandler.NewLLMHandler(gatewayService, errorProjector)
 	transcriptionHandler := gatewayhandler.NewTranscriptionHandler(gatewayService)
+	transcriptionHandler.SetErrorProjector(errorProjector)
 	speechHandler := gatewayhandler.NewSpeechHandler(gatewayService)
+	speechHandler.SetErrorProjector(errorProjector)
 
 	// Create middleware
 	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo, errorProjector)
@@ -74,6 +76,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	// Register routes with authentication middleware
 	// OpenAI-compatible endpoints
 	v1 := router.Group("/v1")
+	v1.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
 	v1.Use(authMiddleware)
 	{
 		// OpenAI-compatible endpoints
@@ -86,6 +89,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 		v1.POST("/audio/transcriptions", transcriptionHandler.Transcribe)
 		v1.POST("/audio/speech", speechHandler.Generate)
 		v1.GET("/models", llmHandler.ListModels)
+		v1.GET("/models/:model_id", llmHandler.GetModel)
 		// Anthropic-compatible endpoint, matching New API and Anthropic Messages format.
 		v1.POST("/messages", llmHandler.CreateAnthropicMessage)
 	}
@@ -93,9 +97,18 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 
 	// Anthropic-compatible endpoints
 	anthropic := router.Group("/anthropic")
+	anthropic.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
 	anthropic.Use(authMiddleware)
 	{
 		anthropic.POST("/v1/messages", llmHandler.CreateAnthropicMessage)
 	}
 	logger.Info("Anthropic-compatible gateway routes registered", "path", "/anthropic/*")
+
+	gemini := router.Group("/v1beta")
+	gemini.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
+	gemini.Use(authMiddleware)
+	{
+		gemini.POST("/models/*modelAction", llmHandler.CreateGeminiContent)
+	}
+	logger.Info("Gemini-compatible gateway routes registered", "path", "/v1beta/models/*")
 }

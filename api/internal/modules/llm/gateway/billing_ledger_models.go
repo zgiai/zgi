@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +25,9 @@ const (
 	billingAttemptStatusCompensationPending = "COMPENSATION_PENDING"
 	billingAttemptStatusPredeductFailed     = "PREDEDUCT_FAILED"
 	billingAttemptStatusDeadLetter          = "DEAD_LETTER"
+	billingAttemptStatusSettling            = "SETTLING"
+	billingAttemptStatusFailedRetryable     = "FAILED_RETRYABLE"
+	billingAttemptStatusFailedFinal         = "FAILED_FINAL"
 	billingAttemptStatusCompensated         = "COMPENSATED"
 
 	billingEntryTypeSubject = "subject"
@@ -61,33 +65,43 @@ func billingAttemptStatusIsFinalized(status string) bool {
 }
 
 type BillingAttempt struct {
-	AttemptID                 string           `gorm:"column:attempt_id;primaryKey;size:120"`
-	RequestID                 string           `gorm:"column:request_id;size:100;not null;index"`
-	OrganizationID            uuid.UUID        `gorm:"column:organization_id;type:uuid;not null;index"`
-	Lane                      string           `gorm:"column:lane;size:20;not null"`
-	RouteID                   *uuid.UUID       `gorm:"column:route_id;type:uuid"`
-	ProviderID                *uuid.UUID       `gorm:"column:provider_id;type:uuid"`
-	ModelID                   *uuid.UUID       `gorm:"column:model_id;type:uuid"`
-	InvocationSource          InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
-	QuotaSubjectType          string           `gorm:"column:quota_subject_type;size:20;not null"`
-	QuotaSubjectID            string           `gorm:"column:quota_subject_id;size:64;not null"`
-	APIKeyID                  *uuid.UUID       `gorm:"column:api_key_id;type:uuid"`
-	WorkspaceID               *uuid.UUID       `gorm:"column:workspace_id;type:uuid"`
-	AccountID                 *uuid.UUID       `gorm:"column:account_id;type:uuid"`
-	PrincipalType             *string          `gorm:"column:principal_type;size:32"`
-	PrincipalID               *string          `gorm:"column:principal_id;size:255"`
-	AccessGrantID             *uuid.UUID       `gorm:"column:access_grant_id;type:uuid"`
-	GrantAuthorizationVersion *int64           `gorm:"column:grant_authorization_version"`
-	AuthMethod                string           `gorm:"column:auth_method;size:32;not null;default:'legacy_api_key'"`
-	Status                    string           `gorm:"column:status;size:30;not null;index"`
-	InvocationResult          *string          `gorm:"column:invocation_result;size:20"`
-	ErrorCode                 *string          `gorm:"column:error_code;size:100"`
-	ErrorMessage              *string          `gorm:"column:error_message;type:text"`
-	ReconcileAttempts         int              `gorm:"column:reconcile_attempts;not null;default:0"`
-	NextReconcileAt           *time.Time       `gorm:"column:next_reconcile_at"`
-	LastReconcileAt           *time.Time       `gorm:"column:last_reconcile_at"`
-	CreatedAt                 time.Time        `gorm:"column:created_at;not null"`
-	UpdatedAt                 time.Time        `gorm:"column:updated_at;not null"`
+	AttemptID                  string           `gorm:"column:attempt_id;primaryKey;size:120"`
+	RequestID                  string           `gorm:"column:request_id;size:100;not null;index"`
+	OrganizationID             uuid.UUID        `gorm:"column:organization_id;type:uuid;not null;index"`
+	Lane                       string           `gorm:"column:lane;size:20;not null"`
+	RouteID                    *uuid.UUID       `gorm:"column:route_id;type:uuid"`
+	ProviderID                 *uuid.UUID       `gorm:"column:provider_id;type:uuid"`
+	ModelID                    *uuid.UUID       `gorm:"column:model_id;type:uuid"`
+	InvocationSource           InvocationSource `gorm:"column:invocation_source;size:20;not null;default:'unknown'"`
+	QuotaSubjectType           string           `gorm:"column:quota_subject_type;size:20;not null"`
+	QuotaSubjectID             string           `gorm:"column:quota_subject_id;size:64;not null"`
+	APIKeyID                   *uuid.UUID       `gorm:"column:api_key_id;type:uuid"`
+	WorkspaceID                *uuid.UUID       `gorm:"column:workspace_id;type:uuid"`
+	AccountID                  *uuid.UUID       `gorm:"column:account_id;type:uuid"`
+	PrincipalType              *string          `gorm:"column:principal_type;size:32"`
+	PrincipalID                *string          `gorm:"column:principal_id;size:255"`
+	AccessGrantID              *uuid.UUID       `gorm:"column:access_grant_id;type:uuid"`
+	GrantAuthorizationVersion  *int64           `gorm:"column:grant_authorization_version"`
+	AuthMethod                 string           `gorm:"column:auth_method;size:32;not null;default:'legacy_api_key'"`
+	Status                     string           `gorm:"column:status;size:30;not null;index"`
+	InvocationResult           *string          `gorm:"column:invocation_result;size:20"`
+	ErrorCode                  *string          `gorm:"column:error_code;size:100"`
+	ErrorMessage               *string          `gorm:"column:error_message;type:text"`
+	ReconcileAttempts          int              `gorm:"column:reconcile_attempts;not null;default:0"`
+	SettlementState            string           `gorm:"column:settlement_state;size:32;not null;default:'INIT';index"`
+	ConsoleSettlementID        *string          `gorm:"column:console_settlement_id;size:120"`
+	ConsoleSettlementStatus    *string          `gorm:"column:console_settlement_status;size:32"`
+	SettlementLastErrorCode    *string          `gorm:"column:settlement_last_error_code;size:100"`
+	SettlementLastErrorMessage *string          `gorm:"column:settlement_last_error_message;type:text"`
+	SettlementNextRetryAt      *time.Time       `gorm:"column:settlement_next_retry_at"`
+	SettlementRetryCount       int              `gorm:"column:settlement_retry_count;not null;default:0"`
+	SettlementVersion          int64            `gorm:"column:settlement_version;not null;default:1"`
+	SettlementClaimedBy        *string          `gorm:"column:settlement_claimed_by;size:120"`
+	SettlementClaimedUntil     *time.Time       `gorm:"column:settlement_claimed_until"`
+	NextReconcileAt            *time.Time       `gorm:"column:next_reconcile_at"`
+	LastReconcileAt            *time.Time       `gorm:"column:last_reconcile_at"`
+	CreatedAt                  time.Time        `gorm:"column:created_at;not null"`
+	UpdatedAt                  time.Time        `gorm:"column:updated_at;not null"`
 }
 
 func restoreBillingContextAttribution(bc *BillingContext, attempt *BillingAttempt) {
@@ -125,20 +139,20 @@ func (BillingAttempt) TableName() string {
 }
 
 type BillingAttemptEntry struct {
-	ID             uuid.UUID `gorm:"column:id;type:uuid;primaryKey"`
-	AttemptID      string    `gorm:"column:attempt_id;size:120;not null;index"`
-	EntryType      string    `gorm:"column:entry_type;size:20;not null"`
-	LedgerType     string    `gorm:"column:ledger_type;size:30;not null"`
-	LedgerRefID    string    `gorm:"column:ledger_ref_id;size:120;not null"`
-	ReservedAmount int64     `gorm:"column:reserved_amount;not null;default:0"`
-	ActualAmount   int64     `gorm:"column:actual_amount;not null;default:0"`
-	RefundedAmount int64     `gorm:"column:refunded_amount;not null;default:0"`
-	Status         string    `gorm:"column:status;size:20;not null;index"`
-	ErrorCode      *string   `gorm:"column:error_code;size:100"`
-	ErrorMessage   *string   `gorm:"column:error_message;type:text"`
-	IdempotencyKey *string   `gorm:"column:idempotency_key;size:160"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;not null"`
+	ID             uuid.UUID               `gorm:"column:id;type:uuid;primaryKey"`
+	AttemptID      string                  `gorm:"column:attempt_id;size:120;not null;index"`
+	EntryType      string                  `gorm:"column:entry_type;size:20;not null"`
+	LedgerType     string                  `gorm:"column:ledger_type;size:30;not null"`
+	LedgerRefID    string                  `gorm:"column:ledger_ref_id;size:120;not null"`
+	ReservedAmount millipoints.MilliPoints `gorm:"column:reserved_amount;not null;default:0"`
+	ActualAmount   millipoints.MilliPoints `gorm:"column:actual_amount;not null;default:0"`
+	RefundedAmount millipoints.MilliPoints `gorm:"column:refunded_amount;not null;default:0"`
+	Status         string                  `gorm:"column:status;size:20;not null;index"`
+	ErrorCode      *string                 `gorm:"column:error_code;size:100"`
+	ErrorMessage   *string                 `gorm:"column:error_message;type:text"`
+	IdempotencyKey *string                 `gorm:"column:idempotency_key;size:160"`
+	CreatedAt      time.Time               `gorm:"column:created_at;not null"`
+	UpdatedAt      time.Time               `gorm:"column:updated_at;not null"`
 }
 
 func (BillingAttemptEntry) TableName() string {
@@ -153,12 +167,12 @@ func (e *BillingAttemptEntry) BeforeCreate(tx *gorm.DB) error {
 }
 
 type ChannelWallet struct {
-	ChannelID      uuid.UUID `gorm:"column:channel_id;type:uuid;primaryKey"`
-	OrganizationID uuid.UUID `gorm:"column:organization_id;type:uuid;not null;index"`
-	Balance        int64     `gorm:"column:balance;not null;default:0"`
-	Status         string    `gorm:"column:status;size:20;not null;default:'ACTIVE';index"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;not null"`
+	ChannelID      uuid.UUID               `gorm:"column:channel_id;type:uuid;primaryKey"`
+	OrganizationID uuid.UUID               `gorm:"column:organization_id;type:uuid;not null;index"`
+	Balance        millipoints.MilliPoints `gorm:"column:balance;not null;default:0"`
+	Status         string                  `gorm:"column:status;size:20;not null;default:'ACTIVE';index"`
+	CreatedAt      time.Time               `gorm:"column:created_at;not null"`
+	UpdatedAt      time.Time               `gorm:"column:updated_at;not null"`
 }
 
 func (ChannelWallet) TableName() string {
@@ -166,15 +180,15 @@ func (ChannelWallet) TableName() string {
 }
 
 type ChannelWalletTransaction struct {
-	ID            uuid.UUID              `gorm:"column:id;type:uuid;primaryKey"`
-	ChannelID     uuid.UUID              `gorm:"column:channel_id;type:uuid;not null;index"`
-	AttemptID     *string                `gorm:"column:attempt_id;size:120;index"`
-	Type          string                 `gorm:"column:type;size:40;not null"`
-	Amount        int64                  `gorm:"column:amount;not null"`
-	BalanceBefore int64                  `gorm:"column:balance_before;not null"`
-	BalanceAfter  int64                  `gorm:"column:balance_after;not null"`
-	Metadata      map[string]interface{} `gorm:"column:metadata;type:jsonb;serializer:json"`
-	CreatedAt     time.Time              `gorm:"column:created_at;not null"`
+	ID            uuid.UUID               `gorm:"column:id;type:uuid;primaryKey"`
+	ChannelID     uuid.UUID               `gorm:"column:channel_id;type:uuid;not null;index"`
+	AttemptID     *string                 `gorm:"column:attempt_id;size:120;index"`
+	Type          string                  `gorm:"column:type;size:40;not null"`
+	Amount        millipoints.MilliPoints `gorm:"column:amount;not null"`
+	BalanceBefore millipoints.MilliPoints `gorm:"column:balance_before;not null"`
+	BalanceAfter  millipoints.MilliPoints `gorm:"column:balance_after;not null"`
+	Metadata      map[string]interface{}  `gorm:"column:metadata;type:jsonb;serializer:json"`
+	CreatedAt     time.Time               `gorm:"column:created_at;not null"`
 }
 
 func (ChannelWalletTransaction) TableName() string {
@@ -190,13 +204,13 @@ func (tx *ChannelWalletTransaction) BeforeCreate(db *gorm.DB) error {
 
 // WorkspaceQuota stores LLM quota limits and usage for workspace-subject billing.
 type WorkspaceQuota struct {
-	WorkspaceID    string    `gorm:"column:workspace_id;type:varchar(255);primaryKey"`
-	OrganizationID uuid.UUID `gorm:"column:organization_id;type:uuid;not null;index"`
-	UsedQuota      int64     `gorm:"column:used_quota;not null;default:0"`
-	RemainQuota    int64     `gorm:"column:remain_quota;not null;default:0"`
-	QuotaLimit     *int64    `gorm:"column:quota_limit"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;not null"`
+	WorkspaceID    string                   `gorm:"column:workspace_id;type:varchar(255);primaryKey"`
+	OrganizationID uuid.UUID                `gorm:"column:organization_id;type:uuid;not null;index"`
+	UsedQuota      millipoints.MilliPoints  `gorm:"column:used_quota;not null;default:0"`
+	RemainQuota    millipoints.MilliPoints  `gorm:"column:remain_quota;not null;default:0"`
+	QuotaLimit     *millipoints.MilliPoints `gorm:"column:quota_limit"`
+	CreatedAt      time.Time                `gorm:"column:created_at;not null"`
+	UpdatedAt      time.Time                `gorm:"column:updated_at;not null"`
 }
 
 func (WorkspaceQuota) TableName() string {

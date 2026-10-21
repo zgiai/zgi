@@ -1,0 +1,52 @@
+{
+  "entrypoint": "scripts/run.py",
+  "language": "python3",
+  "bundled_packages": [
+    {
+      "name": "zgi_skill_template",
+      "path": "scripts/zgi_skill_template"
+    }
+  ],
+  "timeout_ms": 30000,
+  "allowed_artifact_paths": [
+    "artifacts/result.json"
+  ],
+  "max_artifact_count": 1,
+  "max_artifact_bytes": 1048576,
+  "result_mode": "mixed",
+  "input_files": [
+    {
+      "name": "source",
+      "argument": "source_file_id",
+      "required": false,
+      "multiple": false,
+      "extensions": [
+        ".txt",
+        ".md"
+      ],
+      "mime_types": [
+        "text/plain",
+        "text/markdown"
+      ],
+      "max_bytes": 1048576
+    },
+    {
+      "name": "attachments",
+      "argument": "attachment_file_ids",
+      "required": false,
+      "multiple": true,
+      "max_count": 3,
+      "extensions": [
+        ".txt",
+        ".md",
+        ".json"
+      ],
+      "mime_types": [
+        "text/plain",
+        "text/markdown",
+        "application/json"
+      ],
+      "max_bytes": 1048576
+    }
+  ]
+}

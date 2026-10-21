@@ -503,6 +503,9 @@ func (s *Service) prepareResumeTx(ctx context.Context, tx *gorm.DB, workflowRunI
 		return nil, fmt.Errorf("create workflow resume outbox: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
+		// First includes a populated destination's primary key in its predicate.
+		// The generated ID belongs to the rejected insert, not the existing row.
+		outbox = RuntimeOutbox{}
 		if err := tx.Where("idempotency_key = ?", idempotencyKey).First(&outbox).Error; err != nil {
 			return nil, fmt.Errorf("load workflow resume outbox: %w", err)
 		}
@@ -901,14 +904,15 @@ func runEventPayloadFromModel(event RunEvent) (*RunEventPayload, error) {
 }
 
 type CompleteReasonsParams struct {
-	WorkflowRunID     string
-	PauseID           string
-	ReasonType        string
-	NodeID            string
-	FormID            string
-	SubmissionEventID string
-	TriggerID         string
-	ResumeInputs      map[string]interface{}
+	WorkflowRunID         string
+	PauseID               string
+	ReasonType            string
+	ResumeInteractionType string
+	NodeID                string
+	FormID                string
+	SubmissionEventID     string
+	TriggerID             string
+	ResumeInputs          map[string]interface{}
 }
 
 // CompleteReasons marks the matching reasons as completed and only makes the
@@ -1072,6 +1076,9 @@ func completedReasonResumePayloadTx(
 		for key, value := range eventData {
 			resumeInputs[key] = value
 		}
+	}
+	if strings.TrimSpace(params.ResumeInteractionType) != "" {
+		interactionType = strings.TrimSpace(params.ResumeInteractionType)
 	}
 	resumeInputs["interaction_submissions"] = submissions
 	return triggerID, interactionType, resumeInputs, nil

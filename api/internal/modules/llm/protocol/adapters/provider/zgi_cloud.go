@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -33,25 +34,39 @@ const (
 	zgiCloudMP3Format             = "mp3"
 	zgiCloudImageEditFidelity     = "high"
 
-	headerSettlementID       = "X-ZGI-Settlement-ID"
-	headerOfficialPoints     = "X-ZGI-Official-Points"
-	headerRemainingBalance   = "X-ZGI-Remaining-Balance"
-	headerSettlementStatus   = "X-ZGI-Settlement-Status"
-	headerTotalCostUSD       = "X-ZGI-Total-Cost-USD"
-	headerTotalCostCNY       = "X-ZGI-Total-Cost-CNY"
-	headerCNYPerUSD          = "X-ZGI-CNY-Per-USD"
-	headerInputPriceUSD      = "X-ZGI-Input-Price-USD-Per-1M-Tokens"
-	headerCacheReadPriceUSD  = "X-ZGI-Cache-Read-Price-USD-Per-1M-Tokens"
-	headerCacheWritePriceUSD = "X-ZGI-Cache-Write-Price-USD-Per-1M-Tokens"
-	headerOutputPriceUSD     = "X-ZGI-Output-Price-USD-Per-1M-Tokens"
-	headerInputCostUSD       = "X-ZGI-Input-Cost-USD"
-	headerCacheReadCostUSD   = "X-ZGI-Cache-Read-Cost-USD"
-	headerCacheWriteCostUSD  = "X-ZGI-Cache-Write-Cost-USD"
-	headerOutputCostUSD      = "X-ZGI-Output-Cost-USD"
-	headerZGIRequestID       = "X-ZGI-Request-ID"
-	headerZGIModelName       = "X-ZGI-Model-Name"
-	headerZGIStreamStatus    = "X-ZGI-Stream-Status"
-	zgiStreamStatusComplete  = "complete"
+	headerSettlementID        = "X-ZGI-Settlement-ID"
+	headerOfficialPoints      = "X-ZGI-Official-Points"
+	headerRemainingBalance    = "X-ZGI-Remaining-Balance"
+	headerSettlementStatus    = "X-ZGI-Settlement-Status"
+	headerTotalCostUSD        = "X-ZGI-Total-Cost-USD"
+	headerTotalCostCNY        = "X-ZGI-Total-Cost-CNY"
+	headerCNYPerUSD           = "X-ZGI-CNY-Per-USD"
+	headerInputPriceUSD       = "X-ZGI-Input-Price-USD-Per-1M-Tokens"
+	headerCacheReadPriceUSD   = "X-ZGI-Cache-Read-Price-USD-Per-1M-Tokens"
+	headerCacheWritePriceUSD  = "X-ZGI-Cache-Write-Price-USD-Per-1M-Tokens"
+	headerOutputPriceUSD      = "X-ZGI-Output-Price-USD-Per-1M-Tokens"
+	headerInputCostUSD        = "X-ZGI-Input-Cost-USD"
+	headerCacheReadCostUSD    = "X-ZGI-Cache-Read-Cost-USD"
+	headerCacheWriteCostUSD   = "X-ZGI-Cache-Write-Cost-USD"
+	headerOutputCostUSD       = "X-ZGI-Output-Cost-USD"
+	headerPromptTokens        = "X-ZGI-Prompt-Tokens"
+	headerCompletionTokens    = "X-ZGI-Completion-Tokens"
+	headerTotalTokens         = "X-ZGI-Total-Tokens"
+	headerCacheReadTokens     = "X-ZGI-Cache-Read-Tokens"
+	headerCacheWriteTokens    = "X-ZGI-Cache-Write-Tokens"
+	headerCacheWrite5mTokens  = "X-ZGI-Cache-Write-5m-Tokens"
+	headerCacheWrite1hTokens  = "X-ZGI-Cache-Write-1h-Tokens"
+	headerReasoningTokens     = "X-ZGI-Reasoning-Output-Tokens"
+	headerActualChannelID     = "X-ZGI-Actual-Channel-ID"
+	headerActualChannelName   = "X-ZGI-Actual-Channel-Name"
+	headerActualProvider      = "X-ZGI-Actual-Provider"
+	headerActualProtocol      = "X-ZGI-Actual-Protocol"
+	headerActualUpstreamModel = "X-ZGI-Actual-Upstream-Model"
+	headerZGIRequestID        = "X-ZGI-Request-ID"
+	headerZGIModelName        = "X-ZGI-Model-Name"
+	headerZGIStreamStatus     = "X-ZGI-Stream-Status"
+	zgiStreamStatusComplete   = "complete"
+	zgiSettlementGracePeriod  = 15 * time.Second
 
 	eventZGISettlement      = "zgi.settlement"
 	eventZGISettlementError = "zgi.settlement_error"
@@ -72,7 +87,7 @@ func NewZGICloudAdapter(config *adapter.AdapterConfig) (*ZGICloudAdapter, error)
 
 	timeout := config.Timeout
 	if timeout == 0 {
-		timeout = 60 * time.Second
+		timeout = 120 * time.Second
 	}
 
 	maxRetries := config.MaxRetries
@@ -106,7 +121,7 @@ func (a *ZGICloudAdapter) Name() string {
 
 func (a *ZGICloudAdapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
-	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", url, a.buildHeaders(), buildOpenAICompatibleChatPayload(request))
+	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", url, a.buildHeaders(), buildCompatibleProviderChatPayload(request))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -125,8 +140,18 @@ func (a *ZGICloudAdapter) ChatCompletion(ctx context.Context, request *adapter.C
 func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
 	request.Stream = true
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
-	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildHeaders(), buildOpenAICompatibleChatPayload(request))
+	transportCtx, cancelTransport := context.WithCancel(context.WithoutCancel(ctx))
+	var modelFinished atomic.Bool
+	stopTransportCancellation := context.AfterFunc(ctx, func() {
+		if !modelFinished.Load() {
+			cancelTransport()
+		}
+	})
+
+	resp, err := a.httpClient.DoStreamRequest(transportCtx, "POST", url, a.buildHeaders(), buildCompatibleProviderChatPayload(request))
 	if err != nil {
+		stopTransportCancellation()
+		cancelTransport()
 		return nil, handleZGICloudStreamError(err)
 	}
 
@@ -134,10 +159,12 @@ func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *ada
 	dataChan := make(chan string, 10)
 	errChan := make(chan error, 1)
 
-	go adapter.ParseSSE(resp.Body, dataChan, errChan)
+	go adapter.ParseSSEToEOF(resp.Body, dataChan, errChan)
 
 	go func() {
 		defer close(respChan)
+		defer stopTransportCancellation()
+		defer cancelTransport()
 		defer func() {
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
@@ -145,72 +172,124 @@ func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *ada
 
 		var lastUsage *adapter.Usage
 		var settlement *adapter.SettlementResult
+		callerDone := ctx.Done()
+		var settlementTimer *time.Timer
+		var settlementDeadline <-chan time.Time
+		defer func() {
+			if settlementTimer != nil {
+				settlementTimer.Stop()
+			}
+		}()
 
 		for {
+			// Prefer already parsed terminal events over a concurrently expiring
+			// caller deadline. Once the model emits finish_reason, keep the
+			// transport alive briefly so Console can return its settlement event.
+			var (
+				data     string
+				ok       bool
+				haveData bool
+			)
 			select {
-			case <-ctx.Done():
+			case data, ok = <-dataChan:
+				haveData = true
+			default:
+			}
+
+			if !haveData {
+				select {
+				case <-callerDone:
+					respChan <- adapter.StreamResponse{
+						Error:      ctx.Err(),
+						Done:       true,
+						Usage:      lastUsage,
+						Settlement: settlement,
+					}
+					return
+				case <-settlementDeadline:
+					respChan <- adapter.StreamResponse{
+						Error:      context.DeadlineExceeded,
+						Done:       true,
+						Usage:      lastUsage,
+						Settlement: settlement,
+					}
+					return
+				case err := <-errChan:
+					if err != nil {
+						respChan <- adapter.StreamResponse{
+							Error:      err,
+							Done:       true,
+							Usage:      lastUsage,
+							Settlement: settlement,
+						}
+					}
+					return
+				case data, ok = <-dataChan:
+				}
+			}
+
+			if !ok {
+				if parsed := settlementFromHeaders(resp.Trailer); parsed != nil {
+					settlement = parsed
+				} else if parsed := settlementFromHeaders(resp.Header); parsed != nil {
+					settlement = parsed
+				}
 				respChan <- adapter.StreamResponse{
-					Error:      ctx.Err(),
 					Done:       true,
 					Usage:      lastUsage,
 					Settlement: settlement,
 				}
 				return
-			case err := <-errChan:
-				if err != nil {
-					respChan <- adapter.StreamResponse{
-						Error:      err,
-						Done:       true,
-						Usage:      lastUsage,
-						Settlement: settlement,
-					}
+			}
+
+			if parsedSettlement := settlementFromRawData(data); parsedSettlement != nil {
+				settlement = parsedSettlement
+				continue
+			}
+			if parsedSettlementErr := settlementErrorFromRawData(data); parsedSettlementErr != nil {
+				respChan <- adapter.StreamResponse{
+					Error:      settlementErrorToError(parsedSettlementErr),
+					Done:       true,
+					Usage:      lastUsage,
+					Settlement: settlement,
 				}
 				return
-			case data, ok := <-dataChan:
-				if !ok {
-					respChan <- adapter.StreamResponse{
-						Done:       true,
-						Usage:      lastUsage,
-						Settlement: settlement,
-					}
-					return
-				}
-
-				if parsedSettlement := settlementFromRawData(data); parsedSettlement != nil {
-					settlement = parsedSettlement
-					continue
-				}
-				if parsedSettlementErr := settlementErrorFromRawData(data); parsedSettlementErr != nil {
-					respChan <- adapter.StreamResponse{
-						Error:      settlementErrorToError(parsedSettlementErr),
-						Done:       true,
-						Usage:      lastUsage,
-						Settlement: settlement,
-					}
-					return
-				}
-
-				var streamResp adapter.StreamResponse
-				if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
-					respChan <- adapter.StreamResponse{
-						Error:      fmt.Errorf("failed to parse stream data: %w", err),
-						Done:       true,
-						Usage:      lastUsage,
-						Settlement: settlement,
-					}
-					return
-				}
-
-				if streamResp.Usage != nil {
-					lastUsage = streamResp.Usage
-				}
-
-				respChan <- streamResp
 			}
+
+			var streamResp adapter.StreamResponse
+			if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+				respChan <- adapter.StreamResponse{
+					Error:      fmt.Errorf("failed to parse stream data: %w", err),
+					Done:       true,
+					Usage:      lastUsage,
+					Settlement: settlement,
+				}
+				return
+			}
+
+			if streamResp.Usage != nil {
+				lastUsage = streamResp.Usage
+			}
+			if streamResponseFinished(streamResp) && modelFinished.CompareAndSwap(false, true) {
+				callerDone = nil
+				settlementTimer = time.NewTimer(zgiSettlementGracePeriod)
+				settlementDeadline = settlementTimer.C
+			}
+
+			respChan <- streamResp
 		}
 	}()
 
 	return respChan, nil
+}
+
+func streamResponseFinished(response adapter.StreamResponse) bool {
+	for _, choice := range response.Choices {
+		if choice.FinishReason != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *ZGICloudAdapter) CreateResponse(context.Context, *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {
@@ -231,7 +310,10 @@ func (a *ZGICloudAdapter) CreateResponseRaw(ctx context.Context, request *adapte
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
+		return nil, rawProtocolError(httpResp)
+	}
+	if err := embeddedRawProtocolError(httpResp.Body, httpResp.Header.Get("Content-Type")); err != nil {
+		return nil, err
 	}
 
 	return &adapter.RawResponse{
@@ -250,12 +332,12 @@ func (a *ZGICloudAdapter) CreateResponseStream(ctx context.Context, request *ada
 	url := fmt.Sprintf("%s/responses", a.baseURL)
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildHeaders(), body)
 	if err != nil {
-		return nil, handleZGICloudStreamError(err)
+		return nil, handleZGICloudRawStreamError(err)
 	}
 
 	return streamRawHTTPEvents(ctx, resp.Body, func(raw json.RawMessage, _ *adapter.Usage) *adapter.Usage {
 		return openAIUsageFromRaw(raw)
-	}), nil
+	}, resp), nil
 }
 
 func (a *ZGICloudAdapter) CreateAnthropicMessage(ctx context.Context, request *adapter.AnthropicMessageRequest) (*adapter.RawResponse, error) {
@@ -270,7 +352,10 @@ func (a *ZGICloudAdapter) CreateAnthropicMessage(ctx context.Context, request *a
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, handleOpenAICompatibleError(httpResp.StatusCode, httpResp.Body)
+		return nil, rawProtocolError(httpResp)
+	}
+	if err := embeddedRawProtocolError(httpResp.Body, httpResp.Header.Get("Content-Type")); err != nil {
+		return nil, err
 	}
 
 	return &adapter.RawResponse{
@@ -289,10 +374,97 @@ func (a *ZGICloudAdapter) CreateAnthropicMessageStream(ctx context.Context, requ
 	url := fmt.Sprintf("%s/anthropic/v1/messages", a.baseURL)
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, a.buildAnthropicHeaders(request.Headers), body)
 	if err != nil {
-		return nil, handleZGICloudStreamError(err)
+		return nil, handleZGICloudRawStreamError(err)
 	}
 
-	return streamRawHTTPEvents(ctx, resp.Body, anthropicUsageFromRaw), nil
+	return streamRawHTTPEvents(ctx, resp.Body, anthropicUsageFromRaw, resp), nil
+}
+
+func (a *ZGICloudAdapter) CreateGeminiContent(ctx context.Context, request *adapter.GeminiGenerateContentRequest) (*adapter.RawResponse, error) {
+	body, err := rawRequestBody(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(a.baseURL, "/"), url.PathEscape(request.Model))
+	httpResp, err := a.httpClient.DoRequestDetailed(ctx, http.MethodPost, endpoint, a.buildHeaders(), body)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, rawProtocolError(httpResp)
+	}
+	if err := embeddedRawProtocolError(httpResp.Body, httpResp.Header.Get("Content-Type")); err != nil {
+		return nil, err
+	}
+	return &adapter.RawResponse{Body: httpResp.Body, Usage: geminiUsageFromRaw(httpResp.Body, nil), Settlement: settlementFromHeaders(httpResp.Header)}, nil
+}
+
+func (a *ZGICloudAdapter) CreateGeminiContentStream(ctx context.Context, request *adapter.GeminiGenerateContentRequest) (<-chan adapter.RawStreamEvent, error) {
+	body, err := rawRequestBody(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", strings.TrimRight(a.baseURL, "/"), url.PathEscape(request.Model))
+	resp, err := a.httpClient.DoStreamRequest(ctx, http.MethodPost, endpoint, a.buildHeaders(), body)
+	if err != nil {
+		return nil, handleZGICloudRawStreamError(err)
+	}
+	return streamRawHTTPEvents(ctx, resp.Body, geminiUsageFromRaw, resp), nil
+}
+
+func rawProtocolError(resp *adapter.HTTPResponse) error {
+	if resp == nil {
+		return &adapter.RawProtocolError{StatusCode: http.StatusBadGateway, ContentType: "application/json"}
+	}
+	return newRawProtocolError(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Body)
+}
+
+// embeddedRawProtocolError protects rolling deployments from an older Console
+// (or another upstream) that returns a JSON error envelope with HTTP 200. Such
+// a body must never be settled as a successful model response.
+func embeddedRawProtocolError(body []byte, contentType string) error {
+	if len(body) == 0 || !json.Valid(body) {
+		return nil
+	}
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Error) == 0 || string(envelope.Error) == "null" {
+		return nil
+	}
+
+	var detail struct {
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(envelope.Error, &detail); err != nil {
+		var message string
+		if json.Unmarshal(envelope.Error, &message) == nil {
+			detail.Message = message
+		}
+	}
+	classification := strings.ToLower(strings.Join([]string{detail.Type, detail.Code, detail.Message}, " "))
+	status := http.StatusBadGateway
+	switch {
+	case strings.Contains(classification, "not implemented"),
+		strings.Contains(classification, "unsupported"),
+		strings.Contains(classification, "not supported"):
+		status = http.StatusNotImplemented
+	case strings.Contains(classification, "rate_limit"), strings.Contains(classification, "rate limit"):
+		status = http.StatusTooManyRequests
+	case strings.Contains(classification, "overload"):
+		status = http.StatusServiceUnavailable
+	case strings.Contains(classification, "unauthorized"), strings.Contains(classification, "authentication"):
+		status = http.StatusUnauthorized
+	case strings.Contains(classification, "permission"), strings.Contains(classification, "forbidden"):
+		status = http.StatusForbidden
+	case strings.Contains(classification, "not_found"), strings.Contains(classification, "not found"):
+		status = http.StatusNotFound
+	case strings.Contains(classification, "invalid_request"), strings.Contains(classification, "bad_request"):
+		status = http.StatusBadRequest
+	}
+	return newRawProtocolError(status, contentType, body)
 }
 
 func handleZGICloudStreamError(err error) error {
@@ -301,6 +473,35 @@ func handleZGICloudStreamError(err error) error {
 		return handleOpenAICompatibleError(statusErr.StatusCode, statusErr.Body)
 	}
 	return fmt.Errorf("stream request failed: %w", err)
+}
+
+func handleZGICloudRawStreamError(err error) error {
+	var statusErr *adapter.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		return newRawProtocolError(statusErr.StatusCode, "application/json", statusErr.Body)
+	}
+	return fmt.Errorf("stream request failed: %w", err)
+}
+
+func newRawProtocolError(status int, contentType string, body []byte) error {
+	var cause error
+	var payload struct {
+		Error struct {
+			Code    string `json:"code"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil {
+		classification := strings.ToLower(strings.Join([]string{payload.Error.Code, payload.Error.Type, payload.Error.Message}, " "))
+		switch {
+		case payload.Error.Code == adapter.ErrorCodePlatformChannelUnavailable || payload.Error.Type == adapter.ErrorCodePlatformChannelUnavailable:
+			cause = adapter.ErrPlatformChannelUnavailable
+		case strings.Contains(classification, "not implemented"), strings.Contains(classification, "unsupported"), strings.Contains(classification, "not supported"):
+			cause = adapter.ErrCapabilityUnsupported
+		}
+	}
+	return &adapter.RawProtocolError{StatusCode: status, ContentType: contentType, Body: append([]byte(nil), body...), Cause: cause}
 }
 
 func (a *ZGICloudAdapter) CreateEmbeddings(ctx context.Context, request *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
@@ -609,8 +810,9 @@ func (a *ZGICloudAdapter) Transcribe(ctx context.Context, request *adapter.Trans
 	}
 
 	return &adapter.TranscriptionResponse{
-		RequestID: envelope.Data.RequestID,
-		Text:      envelope.Data.Text,
+		RequestID:  envelope.Data.RequestID,
+		Text:       envelope.Data.Text,
+		Settlement: settlementFromHeaders(httpResp.Header),
 	}, nil
 }
 
@@ -654,6 +856,10 @@ func (a *ZGICloudAdapter) GenerateSpeech(ctx context.Context, request *adapter.S
 	if written == 0 {
 		return fmt.Errorf("%w: speech provider returned empty audio", adapter.ErrUpstreamError)
 	}
+	request.Settlement = settlementFromHeaders(resp.Trailer)
+	if request.Settlement == nil {
+		request.Settlement = settlementFromHeaders(resp.Header)
+	}
 	return nil
 }
 
@@ -695,6 +901,10 @@ func (a *ZGICloudAdapter) GenerateMusic(ctx context.Context, request *adapter.Mu
 	}
 	if strings.TrimSpace(resp.Trailer.Get(headerZGIStreamStatus)) != zgiStreamStatusComplete {
 		return adapter.ErrMusicStreamIncomplete
+	}
+	request.Settlement = settlementFromHeaders(resp.Trailer)
+	if request.Settlement == nil {
+		request.Settlement = settlementFromHeaders(resp.Header)
 	}
 	return nil
 }
@@ -738,6 +948,7 @@ func (a *ZGICloudAdapter) GenerateLyrics(ctx context.Context, request *adapter.L
 	if envelope.Code != 0 || envelope.Data == nil || strings.TrimSpace(envelope.Data.Title) == "" || strings.TrimSpace(envelope.Data.Lyrics) == "" {
 		return nil, fmt.Errorf("%w: console returned invalid lyrics", adapter.ErrUpstreamError)
 	}
+	envelope.Data.Settlement = settlementFromHeaders(httpResp.Header)
 	return envelope.Data, nil
 }
 
@@ -946,6 +1157,7 @@ func settlementFromHeaders(headers http.Header) *adapter.SettlementResult {
 	}
 	points, _ := strconv.ParseInt(pointsRaw, 10, 64)
 	remaining, _ := strconv.ParseInt(strings.TrimSpace(headers.Get(headerRemainingBalance)), 10, 64)
+	parseToken := func(name string) int { value, _ := strconv.Atoi(strings.TrimSpace(headers.Get(name))); return value }
 	return &adapter.SettlementResult{
 		SettlementID:                  settlementID,
 		OfficialPoints:                points,
@@ -962,6 +1174,19 @@ func settlementFromHeaders(headers http.Header) *adapter.SettlementResult {
 		CacheReadCostUSD:              strings.TrimSpace(headers.Get(headerCacheReadCostUSD)),
 		CacheWriteCostUSD:             strings.TrimSpace(headers.Get(headerCacheWriteCostUSD)),
 		OutputCostUSD:                 strings.TrimSpace(headers.Get(headerOutputCostUSD)),
+		PromptTokens:                  parseToken(headerPromptTokens),
+		CompletionTokens:              parseToken(headerCompletionTokens),
+		TotalTokens:                   parseToken(headerTotalTokens),
+		CacheReadTokens:               parseToken(headerCacheReadTokens),
+		CacheWriteTokens:              parseToken(headerCacheWriteTokens),
+		CacheWrite5mTokens:            parseToken(headerCacheWrite5mTokens),
+		CacheWrite1hTokens:            parseToken(headerCacheWrite1hTokens),
+		ReasoningOutputTokens:         parseToken(headerReasoningTokens),
+		ActualChannelID:               strings.TrimSpace(headers.Get(headerActualChannelID)),
+		ActualChannelName:             strings.TrimSpace(headers.Get(headerActualChannelName)),
+		ActualProvider:                strings.TrimSpace(headers.Get(headerActualProvider)),
+		ActualProtocol:                strings.TrimSpace(headers.Get(headerActualProtocol)),
+		ActualUpstreamModel:           strings.TrimSpace(headers.Get(headerActualUpstreamModel)),
 	}
 }
 

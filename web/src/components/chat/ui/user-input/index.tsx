@@ -17,6 +17,7 @@ import {
   formatExtensionsForDisplay,
   getEffectiveChatUploadExtensions,
   isAllowedUploadExtension,
+  isImageExtension,
 } from '@/utils/file-helpers';
 import { useT } from '@/i18n';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -103,6 +104,7 @@ interface AttachmentUIItem {
   status: 'uploading' | 'uploaded' | 'error';
   error?: string;
   attachment?: ChatAttachment;
+  size?: number;
 }
 
 // Use shared extension constants for consistent filtering
@@ -136,6 +138,7 @@ const UserInput: React.FC<UserInputProps> = ({
   className,
 }) => {
   const t = useT();
+  const tWebapp = useT('webapp');
   const [value, setValue] = useState('');
   const isComposingRef = useRef<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -248,15 +251,37 @@ const UserInput: React.FC<UserInputProps> = ({
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload === true && !isUploadLoginRequired,
   });
-  const maxSizeMB = Math.max(uploadConfig?.file_size_limit ?? 50, 50);
+  const effectivePolicy = uploadFeature?.effective_policy ?? uploadConfig?.chat_upload_policy;
+  const maxSizeMB =
+    (effectivePolicy?.document_max_bytes ?? (uploadConfig?.file_size_limit ?? 50) * 1024 * 1024) /
+    1024 /
+    1024;
+  const imageMaxSizeMB =
+    (effectivePolicy?.image_max_bytes ??
+      (uploadConfig?.image_file_size_limit ?? 10) * 1024 * 1024) /
+    1024 /
+    1024;
+  const turnMaxBytes = effectivePolicy?.turn_max_bytes ?? 100 * 1024 * 1024;
+  const currentBytes = attachments
+    .filter(item => item.status !== 'error')
+    .reduce((sum, item) => sum + (item.size ?? 0), 0);
+  const fileLimitBytes = useCallback(
+    (extension: string | undefined) =>
+      (isImageExtension(extension) ? imageMaxSizeMB : maxSizeMB) * 1024 * 1024,
+    [imageMaxSizeMB, maxSizeMB]
+  );
   const supportedExtensionsFromServer = useMemo<string[]>(
     () =>
-      Array.isArray(supportedTypes.allowed_extensions) ? supportedTypes.allowed_extensions : [],
-    [supportedTypes.allowed_extensions]
+      uploadConfig?.chat_upload_policy?.allowed_extensions ??
+      (Array.isArray(supportedTypes.allowed_extensions) ? supportedTypes.allowed_extensions : []),
+    [supportedTypes.allowed_extensions, uploadConfig?.chat_upload_policy]
   );
   const effectiveAllowedExtensions = useMemo<string[]>(() => {
     if (hasAllowedExtensionsOverride) {
       return filterLowercaseExtensions(allowedExtensions ?? []);
+    }
+    if (uploadFeature?.effective_policy) {
+      return uploadFeature.effective_policy.allowed_extensions;
     }
 
     if (!uploadFeature) {
@@ -289,10 +314,15 @@ const UserInput: React.FC<UserInputProps> = ({
     })}`;
   }, [effectiveAllowedExtensions, t]);
   const totalLimit = useMemo(() => {
-    const configuredLimit = uploadConfig?.batch_count_limit ?? Number.POSITIVE_INFINITY;
-    const featureLimit = uploadFeature?.number_limits ?? Number.POSITIVE_INFINITY;
+    if (uploadFeature?.effective_policy) return uploadFeature.effective_policy.number_limit;
+    const configuredLimit = uploadConfig?.workflow_file_upload_limit ?? 10;
+    const featureLimit = uploadFeature?.number_limits ?? 5;
     return Math.max(1, Math.min(configuredLimit, featureLimit));
-  }, [uploadConfig?.batch_count_limit, uploadFeature?.number_limits]);
+  }, [
+    uploadConfig?.workflow_file_upload_limit,
+    uploadFeature?.number_limits,
+    uploadFeature?.effective_policy,
+  ]);
   const remainingSlots = useMemo(
     () =>
       Number.isFinite(totalLimit)
@@ -346,6 +376,26 @@ const UserInput: React.FC<UserInputProps> = ({
     if (isUploading) return;
     // Block only sending while running; keep other controls active
     if (sendDisabled) return;
+    const readyAttachments = attachments.filter(a => a.status === 'uploaded' && a.attachment);
+    if (readyAttachments.length > totalLimit) {
+      toast.error(t('ui.fileUpload.exceedCount', { max: totalLimit }));
+      return;
+    }
+    if (readyAttachments.some(a => !isFileAllowed(a.extension))) {
+      toast.error(invalidExtensionReason);
+      return;
+    }
+    const oversized = readyAttachments.find(a => (a.size ?? 0) > fileLimitBytes(a.extension));
+    if (oversized) {
+      toast.error(t('ui.fileUpload.tooLarge', { max: fileLimitBytes(oversized.extension) / 1024 / 1024 }));
+      return;
+    }
+    if (currentBytes > turnMaxBytes) {
+      toast.error(
+        tWebapp('consoleChat.attachments.turnTooLarge', { max: turnMaxBytes / 1024 / 1024 })
+      );
+      return;
+    }
 
     let currentFormValues = formValues ?? {};
 
@@ -443,6 +493,13 @@ const UserInput: React.FC<UserInputProps> = ({
     attachments,
     isUploading,
     sendDisabled,
+    currentBytes,
+    totalLimit,
+    isFileAllowed,
+    invalidExtensionReason,
+    fileLimitBytes,
+    turnMaxBytes,
+    tWebapp,
     toolbarForm,
     formValues,
     isFormOpen,
@@ -494,8 +551,27 @@ const UserInput: React.FC<UserInputProps> = ({
         return;
       }
 
-      const allowedFiles = files.filter(file => isFileAllowed(file.extension));
-      if (allowedFiles.length < files.length) {
+      const existingIDs = new Set(attachments.map(item => item.attachment?.upload_file_id));
+      let totalBytes = currentBytes;
+      const allowedFiles = files.filter(file => {
+        if (existingIDs.has(file.id) || !isFileAllowed(file.extension)) return false;
+        existingIDs.add(file.id);
+        if (file.size > fileLimitBytes(file.extension)) {
+          toast.error(
+            t('ui.fileUpload.tooLarge', { max: fileLimitBytes(file.extension) / 1024 / 1024 })
+          );
+          return false;
+        }
+        if (file.size > turnMaxBytes - totalBytes) {
+          toast.error(
+            tWebapp('consoleChat.attachments.turnTooLarge', { max: turnMaxBytes / 1024 / 1024 })
+          );
+          return false;
+        }
+        totalBytes += file.size;
+        return true;
+      });
+      if (files.some(file => !isFileAllowed(file.extension))) {
         toast.error(disallowedReason);
         appendErrorAttachments(
           files
@@ -527,6 +603,7 @@ const UserInput: React.FC<UserInputProps> = ({
         id: file.id,
         filename: file.name,
         extension: file.extension,
+        size: file.size,
         progress: 100,
         status: 'uploaded' as const,
         attachment: {
@@ -546,7 +623,19 @@ const UserInput: React.FC<UserInputProps> = ({
         return [...prev, ...uniqueNewItems];
       });
     },
-    [appendErrorAttachments, invalidExtensionReason, isFileAllowed, remainingSlots, t, totalLimit]
+    [
+      appendErrorAttachments,
+      invalidExtensionReason,
+      isFileAllowed,
+      remainingSlots,
+      t,
+      totalLimit,
+      attachments,
+      currentBytes,
+      fileLimitBytes,
+      turnMaxBytes,
+      tWebapp,
+    ]
   );
 
   const handleFilesSelected = useCallback(
@@ -556,7 +645,6 @@ const UserInput: React.FC<UserInputProps> = ({
       const files: File[] = Array.from(filesList);
       const exceedCountReason = t('ui.fileUpload.exceedCount', { max: totalLimit });
       const disallowedReason = invalidExtensionReason;
-      const tooLargeReason = t('ui.fileUpload.tooLarge', { max: maxSizeMB });
       if (remainingSlots <= 0) {
         toast.error(exceedCountReason);
         appendErrorAttachments(
@@ -589,15 +677,20 @@ const UserInput: React.FC<UserInputProps> = ({
         return;
       }
 
-      const sizeAllowedFiles = allowedFiles.filter(file => file.size <= maxSizeMB * 1024 * 1024);
+      const sizeAllowedFiles = allowedFiles.filter(
+        file => file.size <= fileLimitBytes(file.name.split('.').pop())
+      );
       if (sizeAllowedFiles.length < allowedFiles.length) {
-        toast.error(tooLargeReason);
+        const oversizedFiles = allowedFiles.filter(file => file.size > fileLimitBytes(file.name.split('.').pop()));
+        const tooLargeReason = (file: File) => t('ui.fileUpload.tooLarge', {
+          max: fileLimitBytes(file.name.split('.').pop()) / 1024 / 1024,
+        });
+        toast.error(tooLargeReason(oversizedFiles[0]));
         appendErrorAttachments(
-          allowedFiles
-            .filter(file => file.size > maxSizeMB * 1024 * 1024)
+          oversizedFiles
             .map(file => ({
               filename: file.name,
-              error: tooLargeReason,
+              error: tooLargeReason(file),
             }))
         );
       }
@@ -606,9 +699,20 @@ const UserInput: React.FC<UserInputProps> = ({
         return;
       }
 
-      const toUse = Number.isFinite(remainingSlots)
+      const countAllowed = Number.isFinite(remainingSlots)
         ? sizeAllowedFiles.slice(0, Math.max(0, remainingSlots))
         : sizeAllowedFiles;
+      let totalBytes = currentBytes;
+      const toUse = countAllowed.filter(file => {
+        if (file.size > turnMaxBytes - totalBytes) {
+          toast.error(
+            tWebapp('consoleChat.attachments.turnTooLarge', { max: turnMaxBytes / 1024 / 1024 })
+          );
+          return false;
+        }
+        totalBytes += file.size;
+        return true;
+      });
       if (toUse.length < sizeAllowedFiles.length) {
         toast.error(t('ui.fileUpload.partialDueToLimit', { count: toUse.length }));
         appendErrorAttachments(
@@ -625,6 +729,7 @@ const UserInput: React.FC<UserInputProps> = ({
           id: ids[idx] ?? `${Date.now()}-${idx}`,
           filename: f.name,
           extension: (f.name.split('.').pop() || '').toLowerCase(),
+          size: f.size,
           progress: 0,
           status: 'uploading' as const,
         }));
@@ -639,7 +744,10 @@ const UserInput: React.FC<UserInputProps> = ({
       appendErrorAttachments,
       invalidExtensionReason,
       isFileAllowed,
-      maxSizeMB,
+      fileLimitBytes,
+      currentBytes,
+      turnMaxBytes,
+      tWebapp,
       remainingSlots,
       t,
       totalLimit,

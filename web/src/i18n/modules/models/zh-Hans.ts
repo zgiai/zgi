@@ -95,6 +95,9 @@ const messages: ModelsMessages = {
     retryLater: '请稍后再试。',
     searchPlaceholder: '搜索模型名称、厂商或能力',
     modelCount: '共 {count} 个模型',
+    pricingIssuesTitle: '{count} 个能力价格未配置',
+    pricingIssuesDescription: '点击模型进入价格配置。数量与后端 MissingPricing 口径一致。',
+    configurePricing: '配置价格',
     useCase: '使用场景',
     manufacturer: '模型厂商',
     all: '全部',
@@ -197,6 +200,10 @@ const messages: ModelsMessages = {
     tags: {
       agent: '推荐',
     },
+    pricingMissing: '未定价',
+    pricingMissingHint: '该模型未配置价格，调用将无法正确计费。请先在模型管理中配置价格。',
+    pricingMissingConfigure: '去配置价格',
+    pricingMissingContactAdmin: '请联系管理员配置价格后再使用该模型。',
     empty: {
       noModelsTitle: '需要先配置模型',
       noResults: '没有符合搜索条件的模型',

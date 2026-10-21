@@ -110,7 +110,7 @@ func (s *stubModelRepo) ListAvailableFiltered(ctx context.Context, provider stri
 func (s *stubModelRepo) GetByProviderAndName(ctx context.Context, provider string, name string) (*llmmodelmodel.LLMModel, error) {
 	return nil, gorm.ErrRecordNotFound
 }
-func (s *stubModelRepo) List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, isActive *bool, offset, limit int) ([]*llmmodelmodel.LLMModel, int64, error) {
+func (s *stubModelRepo) List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, status string, isActive *bool, offset, limit int) ([]*llmmodelmodel.LLMModel, int64, error) {
 	return s.list, int64(len(s.list)), nil
 }
 func (s *stubModelRepo) Update(ctx context.Context, m *llmmodelmodel.LLMModel) error { return nil }

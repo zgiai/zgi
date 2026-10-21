@@ -18,6 +18,7 @@ const messages = {
     usageGroup: 'Group Statistics',
     usageDetails: 'Usage Details',
     invocationLogs: 'LLM Invocation Log',
+    marketCallLogs: 'Market Call Log',
     modelChannels: 'Model Access',
     llmProviders: 'Model Management',
     channel: 'Channel Management',
@@ -33,6 +34,7 @@ const messages = {
     modelSettings: 'Default Models',
     parserSettings: 'Document Parsing',
     marketplace: 'Marketplace',
+    zgiMarket: 'ZGI Market',
   },
   modelChannels: {
     navigationLabel: 'Models and channels navigation',
@@ -148,6 +150,8 @@ const messages = {
       subtitle:
         'Inspect every model call routed through the Gateway by source, business area, and model.',
       description: 'Gateway attempts are grouped into logical business calls.',
+      supplierLabel: 'Supplier: {name}',
+      platformChannelName: 'ZGI Cloud',
       loadFailed: 'Failed to load invocation log',
       loadFailedDescription:
         'The request did not complete successfully. Check the connection and try again.',
@@ -216,6 +220,9 @@ const messages = {
         model: 'Model',
         provider: 'Provider',
         channel: 'Channel',
+        actualChannel: 'Actual channel',
+        supplier: 'Actual supplier',
+        settlementId: 'Settlement ID',
         invocationId: 'Invocation ID',
         startedAt: 'Started at',
         settledAt: 'Finished at',
@@ -255,6 +262,17 @@ const messages = {
         perMillionTokens: '{price}/M',
         componentFormula: '{tokens} × {unitPrice}/M',
         componentTotalFormula: '= {cost}',
+        meteredTitle: 'Usage based',
+        meteredOperation: '{operation}',
+        meteredUnitPrice: 'Unit price {price} / {unit}',
+        meteredFormula: '{quantity} {unit} × {price}',
+        meteredTotalFormula: 'Total {cost}',
+        meteredUnitPerImage: 'image(s)',
+        meteredUnitPerSecond: 'second(s)',
+        meteredUnitPerMillisecond: 'millisecond(s)',
+        meteredUnitPerTrack: 'track(s)',
+        meteredUnitPerCharacter: 'character(s)',
+        meteredUnitUnknown: 'unit(s)',
         historicalDetailsUnavailable: 'Details are unavailable for this historical record.',
         error: 'Error',
         content: 'Input and output',
@@ -1071,6 +1089,7 @@ const messages = {
       },
       scriptStatus: {
         runnable: 'Scripts runnable',
+        session: 'Console Agent session scripts',
         unsupported: 'Scripts disabled',
       },
       autoSave: {
@@ -1098,6 +1117,7 @@ const messages = {
       importPreview: {
         title: 'Review Skill package',
         description: 'Check the package validation result before importing it.',
+        sessionScript: 'Console Agent workspace script',
         fileCount: 'Files',
         totalSize: 'Size',
         references: 'References',
@@ -1353,6 +1373,7 @@ const messages = {
           modules: {
             workspace: 'Workspace Management Permissions',
             agent: 'Agent Module',
+            digital_human: 'Digital Human Module',
             workflow: 'Workflow Module',
             knowledge: 'Knowledge Base Module',
             database: 'Database Module',
@@ -1394,6 +1415,56 @@ const messages = {
             lock: {
               name: 'Lock/Unlock Agent',
               description: 'Lock/unlock agents. Locked agents cannot be edited/deleted.',
+            },
+          },
+          digital_human: {
+            view: {
+              name: 'View digital humans',
+              description:
+                'Allows access to the digital human module, including lists, workbenches, and basic configuration.',
+            },
+            create: {
+              name: 'Create digital humans',
+              description:
+                'Allows creating digital humans and entering the required information for their first publication.',
+            },
+            update: {
+              name: 'Edit digital humans',
+              description:
+                'Allows editing configuration, resource bindings, external channels, and task settings.',
+            },
+            delete: {
+              name: 'Delete digital humans',
+              description: 'Allows deleting digital humans and their associated removable data.',
+            },
+            publish: {
+              name: 'Publish digital humans',
+              description:
+                'Allows publishing drafts, creating production versions, and republishing restored versions.',
+            },
+            run: {
+              name: 'Run digital humans',
+              description:
+                'Allows starting or stopping conversations and tasks, and retrying or closing failed channel deliveries.',
+            },
+            logs: {
+              view: {
+                name: 'View digital human runs',
+                description:
+                  'Allows viewing digital human run logs, channel events, and message delivery records.',
+              },
+            },
+            memory: {
+              view: {
+                name: 'View digital human memory',
+                description:
+                  'Allows viewing long-term memory, evidence, and historical versions for digital humans.',
+              },
+              manage: {
+                name: 'Manage digital human memory',
+                description:
+                  'Allows creating, replacing, invalidating, undoing, and restoring digital human memory.',
+              },
             },
           },
           knowledge_base: {
@@ -1738,7 +1809,7 @@ const messages = {
       quotaCustom: 'Custom',
       quotaUsed: 'Used {used}',
       quotaRemain: 'Remaining {remain} / {limit}',
-      quotaRemaining: 'Remaining {remain} credits',
+      quotaRemaining: 'Remaining {remain} points',
       quotaFiatApprox: '≈ {amount}',
       department: 'Department',
       resourceConfig: 'Resource Config (API Token)',
@@ -1760,7 +1831,7 @@ const messages = {
       deleteConfirm: {
         title: 'Confirm Disband',
         description:
-          'Are you sure you want to disband workspace "{workspaceName}"? This action cannot be undone.',
+          'Disband workspace "{workspaceName}"? This cannot be undone. If external access was enabled, access keys, external users, conversations, and memories are permanently removed. External uploads become unavailable immediately and are deleted after a 30-day retention period.',
         cancel: 'Cancel',
         confirm: 'Confirm Disband',
         deleting: 'Disbanding...',

@@ -1,8 +1,5 @@
 import type { ScopedTranslations } from '@/i18n/translations';
-import {
-  integrationErrorTranslationKey,
-  looksLikeIntegrationErrorCode,
-} from '@/services/integration-error-i18n';
+import { applicationErrorCopy } from '@/services/application-error-i18n';
 import {
   formatTimelineDebugValue,
   sanitizeTimelineDisplayString,
@@ -146,9 +143,15 @@ export function localizeAIChatRuntimeErrorCode(value: unknown, t: WebappTranslat
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
-  const key = integrationErrorTranslationKey(normalized, 'webapp');
-  if (key) return t(key);
-  return normalized.startsWith('integration_')
+  // Pre application codes (billing.*, llm.*, video.*, image.*, music.*) share
+  // the common error catalog so the streaming path renders them by code.
+  const applicationCopy = applicationErrorCopy(normalized);
+  if (applicationCopy) {
+    return applicationCopy.action
+      ? `${applicationCopy.title} ${applicationCopy.action}`
+      : applicationCopy.title;
+  }
+  return normalized.startsWith('connector_')
     ? t('consoleChat.skills.trace.errors.externalAppFailed')
     : null;
 }
@@ -178,9 +181,7 @@ export function localizeAIChatRuntimeMessage(
   ) {
     return t('consoleChat.skills.trace.errors.invalidArguments');
   }
-  const integrationErrorKey = integrationErrorTranslationKey(normalized, 'webapp');
-  if (integrationErrorKey) return t(integrationErrorKey);
-  if (looksLikeIntegrationErrorCode(normalized)) {
+  if (/^connector_[a-z_]+$/.test(normalized)) {
     return t('consoleChat.skills.trace.errors.externalAppFailed');
   }
   if (/preferred connection|connection.*selected|selected.*connection/i.test(normalized)) {

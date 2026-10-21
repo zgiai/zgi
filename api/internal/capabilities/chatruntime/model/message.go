@@ -11,6 +11,7 @@ const (
 	MessageStatusStreaming           = "streaming"
 	MessageStatusWaitingApproval     = "waiting_approval"
 	MessageStatusWaitingQuestion     = "waiting_question"
+	MessageStatusWaitingBudget       = "waiting_budget"
 	MessageStatusWaitingClientAction = "waiting_client_action"
 	MessageStatusCompleted           = "completed"
 	MessageStatusError               = "error"
@@ -36,9 +37,12 @@ type Message struct {
 	SourceMessageID     *uuid.UUID             `gorm:"type:uuid;uniqueIndex:idx_chat_runtime_messages_source_message" json:"source_message_id,omitempty"`
 	RuntimeRunID        *uuid.UUID             `gorm:"type:uuid" json:"-"`
 	RuntimeHeartbeatAt  *time.Time             `json:"-"`
-	CreatedAt           time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_chat_runtime_messages_conversation_created,priority:2" json:"created_at"`
-	UpdatedAt           time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
-	DeletedAt           *time.Time             `gorm:"index" json:"deleted_at,omitempty"`
+	// TranscriptHeadEntryID is the latest durable entry reachable from this
+	// message. It is the recovery cursor for the append-only transcript chain.
+	TranscriptHeadEntryID *uuid.UUID `gorm:"type:uuid;index" json:"-"`
+	CreatedAt             time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;index:idx_chat_runtime_messages_conversation_created,priority:2" json:"created_at"`
+	UpdatedAt             time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	DeletedAt             *time.Time `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (Message) TableName() string {

@@ -37,12 +37,16 @@ import type {
   AgentApiKeyCreateResponse,
   RunnableWebAppsData,
   RunnableWebAppsParams,
+  AgentCatalogTagsData,
+  ReplaceAgentCatalogTagsRequest,
+  RunnableWebAppTagFacetsData,
+  AgentCatalogTagFacetsData,
+  AgentCatalogTagFacetsParams,
   GenerateAgentSuggestedQuestionsRequest,
   GenerateAgentSuggestedQuestionsResponse,
   AgentRuntimeSurfaceAuthorizationResponse,
   UpdateAgentRuntimeSurfacesRequest,
 } from './types/agent';
-import type { AgentIntegrationConnectionCandidatesResponse } from './types/integration';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
 import type {
   AgentBindingMutationConfirmation,
@@ -96,6 +100,24 @@ class AgentService extends BaseService {
     );
   }
 
+  getRunnableWebAppTagFacets(
+    params?: Pick<RunnableWebAppsParams, 'workspace_id' | 'keyword'>
+  ): Promise<ApiResponseData<RunnableWebAppTagFacetsData>> {
+    return this.request('get', '/agents/runnable-webapps/tags', undefined, {
+      params,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentCatalogTagFacets(
+    params?: AgentCatalogTagFacetsParams
+  ): Promise<ApiResponseData<AgentCatalogTagFacetsData>> {
+    return this.request('get', '/agents/catalog-tags', undefined, {
+      params,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   /**
    * Create a new agent
    * POST /console/api/agents
@@ -120,6 +142,21 @@ class AgentService extends BaseService {
     agentId: string
   ): Promise<ApiResponseData<AgentRuntimeSurfaceAuthorizationResponse>> {
     return this.request('get', `/agents/${agentId}/runtime-surfaces`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentCatalogTags(agentId: string): Promise<ApiResponseData<AgentCatalogTagsData>> {
+    return this.request('get', `/agents/${agentId}/tags`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  replaceAgentCatalogTags(
+    agentId: string,
+    data: ReplaceAgentCatalogTagsRequest
+  ): Promise<ApiResponseData<AgentCatalogTagsData>> {
+    return this.request('put', `/agents/${agentId}/tags`, data, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -208,22 +245,6 @@ class AgentService extends BaseService {
     params?: { query?: string; page?: number; limit?: number }
   ): Promise<ApiResponseData<AgentWorkflowBindingCandidatesResponse>> {
     return this.request('get', `/agents/${agentId}/candidates/workflows`, undefined, {
-      headers: { 'Content-Type': 'application/json' },
-      params,
-    });
-  }
-
-  getAgentIntegrationConnectionCandidates(
-    agentId: string,
-    params?: {
-      query?: string;
-      integration_id?: string;
-      page?: number;
-      limit?: number;
-      include_selected?: boolean;
-    }
-  ): Promise<ApiResponseData<AgentIntegrationConnectionCandidatesResponse>> {
-    return this.request('get', `/agents/${agentId}/candidates/integration-connections`, undefined, {
       headers: { 'Content-Type': 'application/json' },
       params,
     });

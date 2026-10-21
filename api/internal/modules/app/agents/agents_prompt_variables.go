@@ -174,8 +174,8 @@ func (h *AgentsHandler) agentPromptDatasets(ctx context.Context, scope runtimese
 	if scope.OrganizationID != uuid.Nil {
 		query = query.Where("organization_id = ?", scope.OrganizationID.String())
 	}
-	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
-		query = query.Where("workspace_id = ?", scope.WorkspaceID.String())
+	if workspaceID := scope.AgentResourceWorkspaceID(); workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("workspace_id = ?", workspaceID.String())
 	}
 
 	var rows []agentPromptDatasetSummary
@@ -233,8 +233,8 @@ func (h *AgentsHandler) agentPromptDatabases(ctx context.Context, scope runtimes
 	if scope.OrganizationID != uuid.Nil {
 		query = query.Where("organization_id = ?", scope.OrganizationID.String())
 	}
-	if scope.WorkspaceID != nil && *scope.WorkspaceID != uuid.Nil {
-		query = query.Where("workspace_id = ?", scope.WorkspaceID.String())
+	if workspaceID := scope.AgentResourceWorkspaceID(); workspaceID != nil && *workspaceID != uuid.Nil {
+		query = query.Where("workspace_id = ?", workspaceID.String())
 	}
 	if err := query.Find(&dbRows).Error; err != nil {
 		logger.WarnContext(ctx, "failed to resolve agent prompt database variables", err)

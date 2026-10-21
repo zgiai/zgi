@@ -26,8 +26,9 @@ func runSecureProcess(ctx context.Context, cmd *exec.Cmd, bwrapArgIndex int) err
 	defer writer.Close()
 	fd := 3 + len(cmd.ExtraFiles)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, writer)
-	// prlimit, when present, precedes bubblewrap. The information option must
-	// be inserted after its -- separator, immediately after the bwrap binary.
+	// Resource-limit and cgroup launchers can precede bubblewrap. The caller
+	// supplies its final argument index so the information option still lands
+	// immediately after the bwrap binary.
 	insert := bwrapArgIndex + 1
 	args := append([]string(nil), cmd.Args[:insert]...)
 	args = append(args, "--info-fd", strconv.Itoa(fd))

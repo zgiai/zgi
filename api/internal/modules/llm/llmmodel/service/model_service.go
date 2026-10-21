@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,10 +14,12 @@ import (
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	modelpricing "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/pricing"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	officialmodel "github.com/zgiai/zgi/api/internal/modules/llm/officialmodel"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +45,109 @@ func parseOptionalModelPrice(value string, field string) (decimal.Decimal, error
 
 func modelPriceConfigured(value string) bool {
 	return strings.TrimSpace(value) != ""
+}
+
+func optionalCustomModelScalar(value string) (*float64, error) {
+	return modelpricing.OptionalFloatFromString(value)
+}
+
+// customModelScalarsFromModel collects the model's current scalar prices using
+// the configured flags as presence.
+func customModelScalarsFromModel(m *model.CustomModel) modelpricing.CustomModelScalars {
+	if m == nil {
+		return modelpricing.CustomModelScalars{}
+	}
+	return modelpricing.ScalarsFromDecimalPrices(
+		m.InputPrice,
+		m.OutputPrice,
+		m.CostCacheRead,
+		m.CostCacheWrite,
+		m.CostCacheWrite5m,
+		m.CostCacheWrite1h,
+		m.InputPriceConfigured,
+		m.OutputPriceConfigured,
+		m.CacheReadPriceConfigured,
+		m.CacheWritePriceConfigured,
+		m.CacheWrite5mPriceConfigured,
+		m.CacheWrite1hPriceConfigured,
+	)
+}
+
+// customModelScalarOverrides collects only the scalar prices explicitly present
+// in an update request; those are authoritative over stored rules.
+func customModelScalarOverrides(req *dto.UpdateCustomModelRequest) (modelpricing.CustomModelScalars, error) {
+	overrides := modelpricing.CustomModelScalars{}
+	var err error
+	if req.InputPrice != nil {
+		if overrides.InputPrice, err = modelpricing.OptionalFloatFromString(*req.InputPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.OutputPrice != nil {
+		if overrides.OutputPrice, err = modelpricing.OptionalFloatFromString(*req.OutputPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheReadPrice != nil {
+		if overrides.CacheReadPrice, err = modelpricing.OptionalFloatFromString(*req.CacheReadPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheWritePrice != nil {
+		if overrides.CacheWritePrice, err = modelpricing.OptionalFloatFromString(*req.CacheWritePrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheWrite5mPrice != nil {
+		if overrides.CacheWrite5mPrice, err = modelpricing.OptionalFloatFromString(*req.CacheWrite5mPrice); err != nil {
+			return overrides, err
+		}
+	}
+	if req.CacheWrite1hPrice != nil {
+		if overrides.CacheWrite1hPrice, err = modelpricing.OptionalFloatFromString(*req.CacheWrite1hPrice); err != nil {
+			return overrides, err
+		}
+	}
+	return overrides, nil
+}
+
+func applyCustomModelPricing(m *model.CustomModel, raw []byte, useCases []string, overrides modelpricing.CustomModelScalars) error {
+	if m == nil {
+		return nil
+	}
+	scalars := customModelScalarsFromModel(m)
+	prepared, derivedScalars, err := modelpricing.PrepareCustomModelPricing(raw, m.Currency, useCases, scalars, overrides)
+	if err != nil {
+		return fmt.Errorf("invalid pricing: %w", err)
+	}
+	if len(prepared) == 0 || string(prepared) == "null" {
+		return nil
+	}
+	m.Pricing = datatypes.JSON(prepared)
+	applyDerivedCustomScalars(m, derivedScalars)
+	m.PopulateConfiguredFromPricing()
+	return nil
+}
+
+func applyDerivedCustomScalars(m *model.CustomModel, scalars modelpricing.CustomModelScalars) {
+	if scalars.InputPrice != nil {
+		m.InputPrice = decimal.NewFromFloat(*scalars.InputPrice)
+	}
+	if scalars.OutputPrice != nil {
+		m.OutputPrice = decimal.NewFromFloat(*scalars.OutputPrice)
+	}
+	if scalars.CacheReadPrice != nil {
+		m.CostCacheRead = decimal.NewFromFloat(*scalars.CacheReadPrice)
+	}
+	if scalars.CacheWritePrice != nil {
+		m.CostCacheWrite = decimal.NewFromFloat(*scalars.CacheWritePrice)
+	}
+	if scalars.CacheWrite5mPrice != nil {
+		m.CostCacheWrite5m = decimal.NewFromFloat(*scalars.CacheWrite5mPrice)
+	}
+	if scalars.CacheWrite1hPrice != nil {
+		m.CostCacheWrite1h = decimal.NewFromFloat(*scalars.CacheWrite1hPrice)
+	}
 }
 
 func parseOptionalModelPriceOverride(value string, field string) (*decimal.Decimal, error) {
@@ -358,6 +465,16 @@ func (s *modelService) ConfigureModel(ctx context.Context, organizationID uuid.U
 		}
 		config.CacheWrite1hPriceOverride = cost
 	}
+	if req.PricingOverride != nil {
+		raw := bytes.TrimSpace(*req.PricingOverride)
+		if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+			config.PricingOverride = nil
+		} else if !json.Valid(raw) {
+			return nil, fmt.Errorf("pricing_override must be valid JSON")
+		} else {
+			config.PricingOverride = datatypes.JSON(raw)
+		}
+	}
 	if req.SortOrder != nil {
 		config.SortOrder = *req.SortOrder
 	}
@@ -508,6 +625,10 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 		ConfigParameters:            configParameters,
 	}
 
+	if err := applyCustomModelPricing(m, req.Pricing, useCases, customModelScalarsFromModel(m)); err != nil {
+		return nil, err
+	}
+
 	if err := s.customRepo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to create custom model: %w", err)
 	}
@@ -644,6 +765,24 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		m.ConfigParameters = configParameters
 	}
 	m.UseCases = model.StringArray(model.EnsureUseCases([]string(m.UseCases), m.Endpoints))
+
+	pricingChanged := len(req.Pricing) > 0
+	priceFieldsChanged := req.InputPrice != nil || req.OutputPrice != nil ||
+		req.CacheReadPrice != nil || req.CacheWritePrice != nil ||
+		req.CacheWrite5mPrice != nil || req.CacheWrite1hPrice != nil
+	if pricingChanged || priceFieldsChanged {
+		pricingRaw := req.Pricing
+		if !pricingChanged {
+			pricingRaw = m.Pricing
+		}
+		overrides, err := customModelScalarOverrides(req)
+		if err != nil {
+			return nil, err
+		}
+		if err := applyCustomModelPricing(m, pricingRaw, []string(m.UseCases), overrides); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := s.customRepo.Update(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to update custom model: %w", err)
@@ -962,6 +1101,9 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 				view.CacheWrite1hPrice = override
 				view.CacheWrite1hPriceConfigured = true
 			}
+			if len(cfg.PricingOverride) > 0 && string(cfg.PricingOverride) != "null" {
+				view.PricingOverride = append(datatypes.JSON(nil), cfg.PricingOverride...)
+			}
 		}
 		view.Callable = view.IsAvailable && view.IsEnabled
 
@@ -1030,6 +1172,7 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			CacheWritePriceConfigured:   m.CacheWritePriceConfigured,
 			CacheWrite5mPriceConfigured: m.CacheWrite5mPriceConfigured,
 			CacheWrite1hPriceConfigured: m.CacheWrite1hPriceConfigured,
+			Pricing:                     append([]byte(nil), m.Pricing...),
 
 			// Context
 			ContextWindow:   m.ContextWindow,
@@ -1261,15 +1404,15 @@ func (s *modelService) ListOfficialModels(ctx context.Context) ([]*model.LLMMode
 		return nil, fmt.Errorf("failed to hydrate official route models: %w", err)
 	}
 
-	// Collect exact provider-model pairs while retaining names for the compatibility query.
+	// Collect advertised model names for the compatibility query. Exact
+	// supplier/model membership is validated per route below so a catalog row
+	// from a same-vendor supplier is not hidden.
 	modelNameSet := make(map[string]bool)
-	providerModelSet := make(map[channelmodel.ProviderModel]struct{})
 	for _, route := range routes {
 		for _, pair := range route.OfficialProviderModels {
 			if pair.Provider == "" || pair.Model == "" {
 				continue
 			}
-			providerModelSet[pair] = struct{}{}
 			modelNameSet[pair.Model] = true
 		}
 	}
@@ -1297,8 +1440,14 @@ func (s *modelService) ListOfficialModels(ctx context.Context) ([]*model.LLMMode
 
 	filtered := make([]*model.LLMModel, 0, len(models))
 	for _, candidate := range models {
-		if _, ok := providerModelSet[channelmodel.ProviderModel{Provider: candidate.Provider, Model: candidate.Model}]; ok {
-			filtered = append(filtered, candidate)
+		for i := range routes {
+			// Match by logical vendor as well as exact supplier: a route may
+			// advertise the model owner's adapter while the catalog row is
+			// keyed by the supplier that fronts that vendor.
+			if routes[i].SupportsPlatformModel(candidate.Provider, candidate.Model) {
+				filtered = append(filtered, candidate)
+				break
+			}
 		}
 	}
 	return filtered, nil
@@ -1325,26 +1474,27 @@ func boolPtr(b bool) *bool {
 }
 
 type routeModelAvailability struct {
-	privateModels          map[string]bool
-	officialProviderModels map[channelmodel.ProviderModel]struct{}
+	privateModels  map[string]bool
+	officialModels map[string]bool
 }
 
 func newRouteModelAvailability() routeModelAvailability {
 	return routeModelAvailability{
-		privateModels:          make(map[string]bool),
-		officialProviderModels: make(map[channelmodel.ProviderModel]struct{}),
+		privateModels:  make(map[string]bool),
+		officialModels: make(map[string]bool),
 	}
 }
 
-func (a routeModelAvailability) Supports(provider, modelName string) bool {
+func (a routeModelAvailability) Supports(_ string, modelName string) bool {
 	if a.privateModels[modelName] || a.privateModels["*"] {
 		return true
 	}
-	_, ok := a.officialProviderModels[channelmodel.ProviderModel{Provider: provider, Model: modelName}]
-	return ok
+	return a.officialModels[modelName] || a.officialModels["*"]
 }
 
-// getAvailableModelsFromRoutes returns private model names and exact official pairs available to the tenant.
+// getAvailableModelsFromRoutes returns private route models and logical platform
+// models available to the tenant. Platform channel providers are suppliers and
+// therefore do not constrain the catalog provider/model identity.
 // Checks both system channels and user-owned routes
 func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organizationID uuid.UUID) routeModelAvailability {
 	availableModels := newRouteModelAvailability()
@@ -1362,10 +1512,8 @@ func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organiz
 
 	for _, route := range routes {
 		if route.IsOfficial || route.Type == shared.RouteTypeZGICloud {
-			for _, pair := range route.OfficialProviderModels {
-				if pair.Provider != "" && pair.Model != "" {
-					availableModels.officialProviderModels[pair] = struct{}{}
-				}
+			for _, modelName := range route.GetEffectiveModels() {
+				availableModels.officialModels[modelName] = true
 			}
 			continue
 		}
@@ -1377,7 +1525,7 @@ func (s *modelService) getAvailableModelsFromRoutes(ctx context.Context, organiz
 	return availableModels
 }
 
-// getSystemAvailableModels returns exact provider-model pairs available in official routes.
+// getSystemAvailableModels returns logical model names available in official routes.
 // This is independent of tenant configuration - shows what's available system-wide via official channels
 func (s *modelService) getSystemAvailableModels(ctx context.Context) routeModelAvailability {
 	systemModels := newRouteModelAvailability()
@@ -1394,10 +1542,8 @@ func (s *modelService) getSystemAvailableModels(ctx context.Context) routeModelA
 	_ = officialmodel.HydrateRouteValues(ctx, s.db, routes)
 
 	for _, route := range routes {
-		for _, pair := range route.OfficialProviderModels {
-			if pair.Provider != "" && pair.Model != "" {
-				systemModels.officialProviderModels[pair] = struct{}{}
-			}
+		for _, modelName := range route.GetEffectiveModels() {
+			systemModels.officialModels[modelName] = true
 		}
 	}
 

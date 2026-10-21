@@ -38,9 +38,15 @@ var corsAllowHeaders = []string{
 	"Authorization",
 	"X-API-Key",
 	"X-External-User-ID",
+	"X-Workspace-ID",
+	"X-ZGI-External-User-ID",
 	"X-Requested-With",
 	"X-Request-ID",
 	"X-User-Account-Id",
+	// Connector mutations use these headers for replay protection and
+	// confirmation of the current disconnection impact.
+	"Idempotency-Key",
+	"X-Impact-Token",
 	"Cache-Control",
 	"Connection",
 }
@@ -224,6 +230,7 @@ func provideGinEngine(cfg *config.Config, reporter *observability.ZGIReporter, o
 			apptransport.HeaderApplicationErrorCode,
 			"X-ZGI-Conversation-ID",
 			"X-ZGI-Message-ID",
+			"Idempotent-Replayed",
 		},
 		AllowCredentials: true,
 	}))

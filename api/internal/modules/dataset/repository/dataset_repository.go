@@ -78,7 +78,7 @@ func (r *datasetRepository) CreateWithTx(ctx context.Context, tx *gorm.DB, datas
 
 func (r *datasetRepository) GetByID(ctx context.Context, id string) (*model.Dataset, error) {
 	var dataset model.Dataset
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&dataset).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", id).First(&dataset).Error
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func (r *datasetRepository) GetByID(ctx context.Context, id string) (*model.Data
 
 func (r *datasetRepository) GetByName(ctx context.Context, name string) (*model.Dataset, error) {
 	var dataset model.Dataset
-	err := r.db.WithContext(ctx).Where("name = ?", name).First(&dataset).Error
+	err := r.db.WithContext(ctx).Where("name = ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", name).First(&dataset).Error
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,10 @@ func (r *datasetRepository) Delete(ctx context.Context, id string) error {
 
 func (r *datasetRepository) GetByTenantID(ctx context.Context, workspaceID string) ([]*model.Dataset, error) {
 	var datasets []*model.Dataset
-	err := r.db.WithContext(ctx).Where("workspace_id = ?", workspaceID).Find(&datasets).Error
+	err := r.db.WithContext(ctx).
+		Where("workspace_id = ?", workspaceID).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
+		Find(&datasets).Error
 	return datasets, err
 }
 
@@ -118,6 +121,7 @@ func (r *datasetRepository) GetByTenantIDs1(ctx context.Context, workspaceIDs []
 	var datasets []*model.Dataset
 	err := r.db.WithContext(ctx).
 		Where("workspace_id IN ?", workspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory).
 		Offset(offset).Limit(limit).
 		Find(&datasets).Error
 	return datasets, err
@@ -128,7 +132,9 @@ func (r *datasetRepository) GetPaginatedByTenantIDs(ctx context.Context, workspa
 	var total int64
 
 	// Build base query
-	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", workspaceIDs)
+	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("workspace_id IN ?", workspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	// Add search filter if provided
 	if search != "" {
@@ -178,7 +184,9 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 	_ = allGroupTenantIDs
 	_ = accountID
 
-	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", queryWorkspaceIDs)
+	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("workspace_id IN ?", queryWorkspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	// Add search filter if provided
 	if search != "" {
@@ -202,19 +210,19 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 
 func (r *datasetRepository) GetByIDs(ctx context.Context, ids []string) ([]*model.Dataset, error) {
 	var datasets []*model.Dataset
-	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&datasets).Error
+	err := r.db.WithContext(ctx).Where("id IN ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", ids).Find(&datasets).Error
 	return datasets, err
 }
 
 func (r *datasetRepository) List(ctx context.Context, offset, limit int) ([]*model.Dataset, error) {
 	var datasets []*model.Dataset
-	err := r.db.WithContext(ctx).Offset(offset).Limit(limit).Find(&datasets).Error
+	err := r.db.WithContext(ctx).Where("provider <> '" + model.ProviderDigitalHumanMemory + "'").Offset(offset).Limit(limit).Find(&datasets).Error
 	return datasets, err
 }
 
 func (r *datasetRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.Dataset{}).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("provider <> '" + model.ProviderDigitalHumanMemory + "'").Count(&count).Error
 	return count, err
 }
 
@@ -265,7 +273,9 @@ func (r *datasetRepository) GetByTenantIDs(
 	var datasets []*model.Dataset
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", workspaceIDs)
+	query := r.db.WithContext(ctx).Model(&model.Dataset{}).
+		Where("workspace_id IN ?", workspaceIDs).
+		Where("LOWER(provider) <> ?", model.ProviderDigitalHumanMemory)
 
 	if search != "" {
 		query = query.Where("name ILIKE ?", "%"+search+"%")
@@ -294,7 +304,7 @@ func (r *datasetRepository) GetByTenantIDs(
 func (r *datasetRepository) GetDatasetWithPermissionCheck(ctx context.Context, datasetID, accountID, workspaceID string) (*model.Dataset, error) {
 	var dataset model.Dataset
 
-	if err := r.db.WithContext(ctx).Where("id = ? AND workspace_id = ?", datasetID, workspaceID).First(&dataset).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ? AND workspace_id = ? AND provider <> '"+model.ProviderDigitalHumanMemory+"'", datasetID, workspaceID).First(&dataset).Error; err != nil {
 		return nil, err
 	}
 	logger.DebugContext(ctx, "dataset loaded with permission check",

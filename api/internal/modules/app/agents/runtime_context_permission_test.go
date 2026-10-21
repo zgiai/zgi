@@ -464,6 +464,44 @@ func TestAgentRuntimeEventsPassCallerToStreamService(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeReadRemainsAvailableWhenExecutionGatewayIsUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(), workspaceID: uuid.New(), accountID: uuid.New(),
+		agentID: uuid.New(), conversationID: uuid.New(), messageID: uuid.New(),
+	}
+	appService := newAgentRuntimePermissionAppService(ids)
+	appService.executionRuntime = &dto.AgentExecutionRuntime{Enabled: true, ProfileID: "standard", PolicyID: "offline"}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(appService, nil, nil, nil, nil, runtimeSvc)
+	handler.executionApprovals = agentExecutionApprovals{}
+	handler.executionGateway = nil
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/apps/"+ids.agentID.String()+"/runtime/conversations/"+ids.conversationID.String(), nil)
+	c.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}, {Key: "conversation_id", Value: ids.conversationID.String()}}
+	c.Set("account_id", ids.accountID.String())
+	c.Set("organization_id", ids.organizationID.String())
+	handler.GetAgentRuntimeConversation(c)
+	if !runtimeSvc.getConversationCalled || w.Code != http.StatusOK {
+		t.Fatalf("read endpoint was blocked by unavailable Worker: called=%v status=%d body=%s", runtimeSvc.getConversationCalled, w.Code, w.Body.String())
+	}
+
+	runtimeSvc.prepareRegenerationCalled = false
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/apps/"+ids.agentID.String()+"/runtime/messages/"+ids.messageID.String()+"/regenerate", strings.NewReader(`{}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "agent_id", Value: ids.agentID.String()}, {Key: "message_id", Value: ids.messageID.String()}}
+	c.Set("account_id", ids.accountID.String())
+	c.Set("organization_id", ids.organizationID.String())
+	handler.RegenerateAgentRuntimeMessage(c)
+	if runtimeSvc.prepareRegenerationCalled {
+		t.Fatal("execution proceeded without approved Worker")
+	}
+}
+
 func TestAgentRuntimeEventsRequireCallerScopedConversationBeforeMessageIDValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -956,9 +994,11 @@ func (s *webAppRuntimePermissionAppService) GetWebAppRuntimeCapability(_ context
 
 type agentRuntimePermissionAppService struct {
 	AgentsService
-	ids          webAppRuntimePermissionIDs
-	published    *dto.AgentWebAppRuntimeConfigResponse
-	publishedErr error
+	ids                webAppRuntimePermissionIDs
+	agentMemoryEnabled bool
+	executionRuntime   *dto.AgentExecutionRuntime
+	published          *dto.AgentWebAppRuntimeConfigResponse
+	publishedErr       error
 }
 
 func (s *agentRuntimePermissionAppService) GetPublishedAgentRuntimeConfig(_ context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
@@ -979,8 +1019,9 @@ func (s *agentRuntimePermissionAppService) GetPublishedAgentRuntimeConfig(_ cont
 		Version:        "v1",
 		VersionUUID:    uuid.NewString(),
 		Config: dto.AgentConfigResponse{
-			AgentID:         s.ids.agentID.String(),
-			ModelParameters: map[string]interface{}{},
+			AgentID:            s.ids.agentID.String(),
+			ModelParameters:    map[string]interface{}{},
+			AgentMemoryEnabled: s.agentMemoryEnabled,
 		},
 	}, nil
 }
@@ -997,8 +1038,9 @@ func (s *agentRuntimePermissionAppService) GetAgentDraftRuntimeConfig(_ context.
 		AgentID:     s.ids.agentID.String(),
 		WorkspaceID: s.ids.workspaceID.String(),
 		Config: dto.AgentConfigResponse{
-			AgentID:         s.ids.agentID.String(),
-			ModelParameters: map[string]interface{}{},
+			AgentID:          s.ids.agentID.String(),
+			ModelParameters:  map[string]interface{}{},
+			ExecutionRuntime: s.executionRuntime,
 		},
 	}, nil
 }
@@ -1006,42 +1048,44 @@ func (s *agentRuntimePermissionAppService) GetAgentDraftRuntimeConfig(_ context.
 type webAppRuntimePermissionService struct {
 	runtimeservice.Service
 
-	getConversationErr          error
-	beginContinuationErr        error
-	enforceContinuationBinding  bool
-	continuationBindingID       string
-	continuationAgentID         string
-	prepareRegenerationErr      error
-	userInputContinuationErr    error
-	getConversationCalled       bool
-	updateConversationCalled    bool
-	deleteConversationCalled    bool
-	listMessagesCalled          bool
-	stopConversationCalled      bool
-	streamCalled                bool
-	streamForCallerCalled       bool
-	beginContinuationCalled     bool
-	prepareRegenerationCalled   bool
-	runPreparedStreamCalled     bool
-	userInputContinuationCalled bool
-	toolGovernanceCalled        bool
-	clientActionCalled          bool
-	toolGovernanceErr           error
-	clientActionErr             error
-	streamForCallerErr          error
-	lastScope                   runtimeservice.Scope
-	lastCaller                  runtimeservice.Caller
-	lastRunConfig               runtimeservice.RunConfig
-	lastConversationID          uuid.UUID
-	lastMessageID               uuid.UUID
-	lastRequestID               string
-	lastCorrelationID           string
-	lastActionID                string
-	lastUserInputRequest        runtimedto.UserInputContinuationRequest
-	lastToolGovernanceRequest   runtimedto.ToolGovernanceDecisionRequest
-	lastClientActionRequest     runtimedto.ClientActionResultRequest
-	activeMessageID             *uuid.UUID
-	messageMetadata             map[string]interface{}
+	getConversationErr            error
+	beginContinuationErr          error
+	enforceContinuationBinding    bool
+	continuationBindingID         string
+	continuationAgentID           string
+	prepareRegenerationErr        error
+	userInputContinuationErr      error
+	getConversationCalled         bool
+	updateConversationCalled      bool
+	deleteConversationCalled      bool
+	listMessagesCalled            bool
+	stopConversationCalled        bool
+	streamCalled                  bool
+	streamForCallerCalled         bool
+	beginContinuationCalled       bool
+	prepareRegenerationCalled     bool
+	runPreparedStreamCalled       bool
+	userInputContinuationCalled   bool
+	tokenBudgetContinuationCalled bool
+	toolGovernanceCalled          bool
+	clientActionCalled            bool
+	toolGovernanceErr             error
+	clientActionErr               error
+	streamForCallerErr            error
+	lastScope                     runtimeservice.Scope
+	lastCaller                    runtimeservice.Caller
+	lastRunConfig                 runtimeservice.RunConfig
+	lastConversationID            uuid.UUID
+	lastMessageID                 uuid.UUID
+	lastRequestID                 string
+	lastCorrelationID             string
+	lastActionID                  string
+	lastUserInputRequest          runtimedto.UserInputContinuationRequest
+	lastTokenBudgetRequest        runtimedto.TaskTokenBudgetContinuationRequest
+	lastToolGovernanceRequest     runtimedto.ToolGovernanceDecisionRequest
+	lastClientActionRequest       runtimedto.ClientActionResultRequest
+	activeMessageID               *uuid.UUID
+	messageMetadata               map[string]interface{}
 }
 
 func (s *webAppRuntimePermissionService) GetConversationByCaller(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
@@ -1208,6 +1252,28 @@ func (s *webAppRuntimePermissionService) RunConfiguredUserInputContinuationStrea
 	if s.userInputContinuationErr != nil {
 		return nil, s.userInputContinuationErr
 	}
+	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
+}
+
+func (s *webAppRuntimePermissionService) RunConfiguredTaskTokenBudgetContinuationStream(
+	_ context.Context,
+	scope runtimeservice.Scope,
+	caller runtimeservice.Caller,
+	config runtimeservice.RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	requestID string,
+	req runtimedto.TaskTokenBudgetContinuationRequest,
+	_ func(runtimeservice.StreamEvent) error,
+) (*runtimeservice.ChatResult, error) {
+	s.tokenBudgetContinuationCalled = true
+	s.lastScope = scope
+	s.lastCaller = caller
+	s.lastRunConfig = config
+	s.lastConversationID = conversationID
+	s.lastMessageID = messageID
+	s.lastRequestID = requestID
+	s.lastTokenBudgetRequest = req
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
 }
 

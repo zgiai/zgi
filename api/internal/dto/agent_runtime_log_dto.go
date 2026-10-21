@@ -58,6 +58,7 @@ type AgentRuntimeRunDetail struct {
 	Error           string                 `json:"error,omitempty"`
 	Source          string                 `json:"source"`
 	SourceWebAppID  *string                `json:"source_web_app_id,omitempty"`
+	CallerType      string                 `json:"caller_type,omitempty"`
 }
 
 // AgentRuntimeStepsResponse represents the ordered steps for one agent runtime run.

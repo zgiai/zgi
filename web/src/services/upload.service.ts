@@ -1,5 +1,5 @@
 import { BaseService } from '@/lib/http/services';
-import { webappHttp } from '@/lib/http';
+import { createDigitalHumanWebAppHttp, webappHttp } from '@/lib/http';
 import { UPLOAD_TIMEOUT_MS } from '@/lib/http/config';
 import type { ApiResponseData } from './types/common';
 import type { FileParseProviderKey, FileUploadProcessingMode } from './types/file';
@@ -20,6 +20,7 @@ export interface UploadResponse {
 }
 
 export interface UploadConfig {
+  chat_upload_policy?: ChatUploadPolicy;
   file_size_limit: number;
   batch_count_limit: number;
   upload_queue_limit: number;
@@ -27,6 +28,19 @@ export interface UploadConfig {
   video_file_size_limit: number;
   audio_file_size_limit: number;
   workflow_file_upload_limit: number;
+}
+
+export interface ChatUploadPolicy {
+  allowed_file_types: Array<'document' | 'image'>;
+  allowed_extensions: string[];
+  number_limit: number;
+  document_max_bytes: number;
+  image_max_bytes: number;
+  turn_max_bytes: number;
+}
+
+export interface FileUploadSelection {
+  allowed_file_types: Array<'document' | 'image'>;
 }
 
 export interface MultipleUploadResponse {
@@ -70,6 +84,7 @@ export class UploadService extends BaseService {
       workspace_id?: string;
       is_temporary?: boolean;
       is_icon?: boolean;
+      source?: 'chat';
       processing_mode?: FileUploadProcessingMode;
       parse_provider?: FileParseProviderKey;
       upload_attempt_id?: string;
@@ -88,6 +103,7 @@ export class UploadService extends BaseService {
           ...(options.public !== undefined && { public: String(options.public) }),
           ...(options.is_temporary !== undefined && { is_temporary: String(options.is_temporary) }),
           ...(options.is_icon !== undefined && { is_icon: String(options.is_icon) }),
+          ...(options.source && { source: options.source }),
           ...(options.processing_mode && { processing_mode: options.processing_mode }),
           ...(options.parse_provider && { parse_provider: options.parse_provider }),
           ...(options.upload_attempt_id && { upload_attempt_id: options.upload_attempt_id }),
@@ -153,6 +169,33 @@ export class UploadService extends BaseService {
     throw new Error(response.message || 'Failed to upload file');
   }
 
+  async uploadDigitalHumanWebAppSingle(
+    webAppId: string,
+    file: File,
+    options: { onProgress?: (progress: number) => void; signal?: AbortSignal } = {}
+  ): Promise<UploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await createDigitalHumanWebAppHttp(webAppId).post<
+      ApiResponseData<UploadResponse>
+    >(`/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/files/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      // Same upload budget as the other multipart paths; see uploadWebAppSingle.
+      timeout: UPLOAD_TIMEOUT_MS,
+      signal: options.signal,
+      onUploadProgress: options.onProgress
+        ? progressEvent => {
+            // Guard against an unknown body size; see BaseService.uploadFile.
+            const total = progressEvent.total || 0;
+            const progress = total > 0 ? Math.round((progressEvent.loaded * 98) / total) : 0;
+            options.onProgress?.(progress);
+          }
+        : undefined,
+    });
+    if (response.code === '0' && response.data) return response.data;
+    throw new Error(response.message || 'Failed to upload file');
+  }
+
   async cancelUploadAttempt(attemptID: string): Promise<void> {
     await this.request('delete', `/upload-attempts/${encodeURIComponent(attemptID)}`);
   }
@@ -182,6 +225,14 @@ export class UploadService extends BaseService {
     if (response.code === '0' && response.data) {
       return response.data;
     }
+    throw new Error(response.message || 'Failed to get upload config');
+  }
+
+  async getDigitalHumanWebAppConfig(webAppId: string): Promise<UploadConfig> {
+    const response = await createDigitalHumanWebAppHttp(webAppId).get<
+      ApiResponseData<UploadConfig>
+    >(`/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/files/upload`);
+    if (response.code === '0' && response.data) return response.data;
     throw new Error(response.message || 'Failed to get upload config');
   }
 
