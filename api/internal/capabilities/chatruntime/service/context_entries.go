@@ -27,8 +27,12 @@ type contextEntrySync struct {
 	organizationID uuid.UUID
 	head           *uuid.UUID
 	persisted      int
-	ordered        []contextEntryOrigin
-	bootstrap      []adapter.Message
+	// base is the number of stored entries that precede this run's
+	// transcript. It is zero for a new turn and the stored entry count for a
+	// continuation, whose transcript holds only what the resumed run produced.
+	base      int
+	ordered   []contextEntryOrigin
+	bootstrap []adapter.Message
 }
 
 // contextEntryOrigin tracks where one transcript message lives in the durable
@@ -89,6 +93,12 @@ func (s *service) agentContextEntrySync(ctx context.Context, prepared *PreparedC
 		}
 	}
 	writer.persisted = len(existing)
+	if prepared.Continuation {
+		// A continuation resumes a paused turn whose question and earlier
+		// exchange are already stored. Its context manager starts with an
+		// empty turn transcript, so its positions start after those entries.
+		writer.base = len(existing)
+	}
 	prepared.contextEntries = writer
 	return writer, nil
 }
@@ -123,6 +133,13 @@ func (s *service) persistTurnTranscriptEntries(ctx context.Context, prepared *Pr
 	turnStart := 0
 	if strings.TrimSpace(prepared.Message.Query) != "" {
 		turnStart = 1
+	}
+	if writer.base > 0 {
+		// The question is already stored ahead of the continuation. What
+		// resumed the turn is stored first, then what the resumed run produced.
+		resumed := append(append([]adapter.Message(nil), prepared.continuationTranscript...), transcript...)
+		turn = turnTranscriptWithAnswer(prepared, resumed)
+		turnStart = len(prepared.continuationTranscript)
 	}
 	if writer.persisted == 0 && len(writer.bootstrap) > 0 {
 		turn = append(append([]adapter.Message{}, writer.bootstrap...), turn...)
@@ -202,7 +219,14 @@ func turnTranscriptWithQuery(prepared *PreparedChat, transcript []adapter.Messag
 }
 
 func turnTranscriptWithQueryAndAnswer(prepared *PreparedChat, transcript []adapter.Message) []adapter.Message {
-	messages := turnTranscriptWithQuery(prepared, transcript)
+	return appendTurnAnswer(prepared, turnTranscriptWithQuery(prepared, transcript))
+}
+
+func turnTranscriptWithAnswer(prepared *PreparedChat, transcript []adapter.Message) []adapter.Message {
+	return appendTurnAnswer(prepared, append([]adapter.Message(nil), transcript...))
+}
+
+func appendTurnAnswer(prepared *PreparedChat, messages []adapter.Message) []adapter.Message {
 	if prepared == nil || prepared.Message == nil || strings.TrimSpace(prepared.Message.Answer) == "" {
 		return messages
 	}
@@ -242,27 +266,33 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 		payloads[index], sizes[index] = payload, len(encoded)
 		fingerprints[index] = protocolMessageFingerprint(payload)
 	}
-	stored := w.persisted
+	// Positions are relative to base: a continuation's transcript starts
+	// after the entries its paused run already stored.
+	persisted := w.persisted - w.base
+	if persisted < 0 {
+		persisted = 0
+	}
+	stored := persisted
 	if stored > len(transcript) {
 		stored = len(transcript)
 	}
 	matched := 0
-	for matched < stored && fingerprints[matched] == w.ordered[matched].fingerprint {
+	for matched < stored && fingerprints[matched] == w.ordered[w.base+matched].fingerprint {
 		matched++
 	}
 	if matched < stored {
 		w.refreshRewrittenPreviews(ctx, repos, payloads, sizes, fingerprints, matched, stored)
 	}
-	if w.persisted >= len(transcript) {
+	if persisted >= len(transcript) {
 		origins := make([]contextEntryOrigin, len(transcript))
-		copy(origins, w.ordered[:len(transcript)])
+		copy(origins, w.ordered[w.base:w.base+len(transcript)])
 		return origins, nil
 	}
 
 	head := cloneUUID(w.head)
-	entries := make([]*runtimemodel.TranscriptEntry, 0, len(transcript)-w.persisted)
-	origins := make([]contextEntryOrigin, 0, len(transcript)-w.persisted)
-	for index := w.persisted; index < len(transcript); index++ {
+	entries := make([]*runtimemodel.TranscriptEntry, 0, len(transcript)-persisted)
+	origins := make([]contextEntryOrigin, 0, len(transcript)-persisted)
+	for index := persisted; index < len(transcript); index++ {
 		kind, storable := transcriptEntryKindForRole(transcript[index].Role)
 		if !storable {
 			origins = append(origins, contextEntryOrigin{fingerprint: fingerprints[index]})
@@ -275,7 +305,7 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 			ConversationID: w.conversationID,
 			OrganizationID: w.organizationID,
 			ParentEntryID:  cloneUUID(head),
-			EventID:        fmt.Sprintf("%s:%d:%s", w.messageID, index, fingerprints[index]),
+			EventID:        fmt.Sprintf("%s:%d:%s", w.messageID, w.base+index, fingerprints[index]),
 			Kind:           kind,
 			Preview:        pruneTranscriptMessageForWrite(id, payloads[index], kind),
 			Payload:        payloads[index],
@@ -298,8 +328,8 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 		}
 	}
 	w.ordered = append(w.ordered, origins...)
-	w.persisted = len(transcript)
-	return append([]contextEntryOrigin(nil), w.ordered[:len(transcript)]...), nil
+	w.persisted = w.base + len(transcript)
+	return append([]contextEntryOrigin(nil), w.ordered[w.base:w.base+len(transcript)]...), nil
 }
 
 // refreshRewrittenPreviews replaces the canonical stored form of entries whose
@@ -310,7 +340,7 @@ func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repositor
 // divergence. The log is append-only, so the stored entry is kept and reported.
 func (w *contextEntrySync) refreshRewrittenPreviews(ctx context.Context, repos *repository.Repositories, payloads []map[string]interface{}, sizes []int, fingerprints []string, from, to int) {
 	for index := from; index < to; index++ {
-		origin := w.ordered[index]
+		origin := w.ordered[w.base+index]
 		if origin.id == uuid.Nil {
 			continue
 		}
@@ -326,7 +356,7 @@ func (w *contextEntrySync) refreshRewrittenPreviews(ctx context.Context, repos *
 				"message_id", w.messageID.String(), "entry_id", origin.id.String(), err)
 			continue
 		}
-		w.ordered[index].fingerprint = fingerprints[index]
+		w.ordered[w.base+index].fingerprint = fingerprints[index]
 	}
 }
 

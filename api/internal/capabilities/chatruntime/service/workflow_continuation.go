@@ -1385,8 +1385,9 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
-	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode))
-	return &PreparedChat{
+	resolution := continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode)
+	llmRequest.Messages = append(llmRequest.Messages, resolution)
+	prepared := &PreparedChat{
 		Conversation:     conversation,
 		Message:          message,
 		LLMRequest:       llmRequest,
@@ -1399,7 +1400,9 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		parts:            parts,
 		contextBudget:    contextResult,
 		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
-	}, nil
+	}
+	prepared.continuationTranscript = []adapter.Message{resolution}
+	return prepared, nil
 }
 
 func workflowTaskContinuationMessage(continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest) adapter.Message {

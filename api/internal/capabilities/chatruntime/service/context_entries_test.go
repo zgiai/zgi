@@ -75,6 +75,69 @@ func TestPersistTurnTranscriptEntriesBindsEntryIDsForCurrentRun(t *testing.T) {
 	}
 }
 
+func TestContinuationAppendsAfterStoredTurnEntries(t *testing.T) {
+	svc, message, conversation := newContextEntryTestService(t, "context-entry-continuation")
+	scope := Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}
+	// The paused run stored the question, the tool call, and its pending result.
+	paused := &PreparedChat{Message: message, Conversation: conversation, Scope: scope}
+	svc.persistTurnTranscriptEntries(context.Background(), paused, []adapter.Message{
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Type: "function", Function: adapter.FunctionCall{Name: "manage_task"}}}},
+		{Role: "tool", ToolCallID: "call-1", Content: `{"status":"approval_required"}`},
+	})
+
+	// The continuation run starts with an empty turn transcript: only what it
+	// produces is new. It must be appended after the stored entries.
+	message.Answer = "已修改完成"
+	resumed := &PreparedChat{Message: message, Conversation: conversation, Scope: scope, Continuation: true}
+	resumed.continuationTranscript = []adapter.Message{{Role: "user", Content: `Workflow task result JSON: {"status":"applied"}`}}
+	bound := svc.persistTurnTranscriptEntries(context.Background(), resumed, []adapter.Message{
+		{Role: "assistant", Content: "已修改完成"},
+	})
+	if len(bound) != 1 || strings.TrimSpace(bound[0].EntryID) == "" {
+		t.Fatalf("continuation transcript not bound to a stored entry: %+v", bound)
+	}
+	entries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(context.Background(), message.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		kinds = append(kinds, entry.Kind)
+	}
+	want := []string{
+		runtimemodel.TranscriptEntryKindUser,
+		runtimemodel.TranscriptEntryKindAssistant,
+		runtimemodel.TranscriptEntryKindTool,
+		runtimemodel.TranscriptEntryKindUser,
+		runtimemodel.TranscriptEntryKindAssistant,
+	}
+	if len(kinds) != len(want) {
+		t.Fatalf("entry kinds = %v, want %v", kinds, want)
+	}
+	for index := range want {
+		if kinds[index] != want[index] {
+			t.Fatalf("entry kinds = %v, want %v", kinds, want)
+		}
+	}
+	if entries[3].ParentEntryID == nil || *entries[3].ParentEntryID != entries[2].ID {
+		t.Fatalf("continuation entry is not linked after the stored tool result: %+v", entries[3])
+	}
+	// The resolution the model was given is part of the record, so a later
+	// turn does not see only the pending tool result.
+	if !strings.Contains(messageContentText(entries[3].Preview["content"]), `"status":"applied"`) {
+		t.Fatalf("continuation resolution was not stored: %+v", entries[3].Preview)
+	}
+
+	// A later checkpoint of the same continuation must not duplicate entries.
+	svc.persistTurnTranscriptEntries(context.Background(), resumed, []adapter.Message{
+		{Role: "assistant", Content: "已修改完成"},
+	})
+	again, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(context.Background(), message.ID)
+	if err != nil || len(again) != len(want) {
+		t.Fatalf("entries after repeated checkpoint = %d/%v, want %d", len(again), err, len(want))
+	}
+}
+
 func TestProjectTranscriptChainUsesSummaryBoundary(t *testing.T) {
 	svc, message, conversation := newContextEntryTestService(t, "context-entry-projection-new")
 	prepared := &PreparedChat{Message: message, Conversation: conversation, Scope: Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}}
