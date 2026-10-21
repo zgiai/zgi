@@ -39,6 +39,7 @@ func (h *ExternalHandler) registerAPIReportRoutes(group *gin.RouterGroup) {
 	group.GET("/reports", h.ListAPITaskReports)
 	group.GET("/reports/:report_id", h.GetAPITaskReport)
 	group.POST("/reports/:report_id/review", h.ReviewAPITaskReport)
+	group.GET("/reports/:report_id/files/:file_id", h.GetAPITaskReportFile)
 	group.GET("/notifications", h.ListAPINotifications)
 	group.POST("/notifications/read", h.ReadAPINotifications)
 }
@@ -51,6 +52,7 @@ func (h *ExternalHandler) registerWebAppReportRoutes(group *gin.RouterGroup) {
 	group.GET("/task-reports", h.ListWebAppTaskReports)
 	group.GET("/task-reports/:report_id", h.GetWebAppTaskReport)
 	group.POST("/task-reports/:report_id/review", h.ReviewWebAppTaskReport)
+	group.GET("/task-reports/:report_id/files/:file_id", h.GetWebAppTaskReportFile)
 }
 
 func (h *ExternalHandler) ListAPITaskReports(c *gin.Context) {
@@ -67,6 +69,43 @@ func (h *ExternalHandler) GetAPITaskReport(c *gin.Context) {
 		return
 	}
 	h.getReport(c, access, "digital_human.external.task_report.get")
+}
+
+// GetAPITaskReportFile downloads a file one of the end user's reports carries.
+func (h *ExternalHandler) GetAPITaskReportFile(c *gin.Context) {
+	access, ok := h.apiTaskScope(c, userFromQuery(c))
+	if !ok {
+		return
+	}
+	h.reportFile(c, access, "digital_human.external.task_report.file")
+}
+
+// GetWebAppTaskReportFile downloads a file one of the end user's reports carries.
+func (h *ExternalHandler) GetWebAppTaskReportFile(c *gin.Context) {
+	access, ok := h.webAppTaskScope(c)
+	if !ok {
+		return
+	}
+	h.reportFile(c, access, "digital_human.webapp.task_report.file")
+}
+
+func (h *ExternalHandler) reportFile(c *gin.Context, access TaskAccessContext, operation string) {
+	reportID, ok := parseExternalReportID(c)
+	if !ok {
+		h.writeTaskApplicationError(c, ErrInvalidRequest, operation)
+		return
+	}
+	report, err := h.tasks.(TaskReportService).GetTaskReport(c.Request.Context(), access, reportID)
+	if err != nil {
+		h.writeTaskApplicationError(c, err, operation)
+		return
+	}
+	serveTaskReportFile(c, h.base, h.runtime, accessScope(access), report)
+}
+
+// accessScope is the workspace a task reader works in.
+func accessScope(access TaskAccessContext) Scope {
+	return Scope{OrganizationID: access.OrganizationID, WorkspaceID: access.WorkspaceID}
 }
 
 func (h *ExternalHandler) ReviewAPITaskReport(c *gin.Context) {
@@ -178,6 +217,7 @@ func (h *ExternalHandler) listReports(c *gin.Context, access TaskAccessContext, 
 		return
 	}
 	for _, report := range result.Items {
+		withReportFiles(c, h.runtime, accessScope(access), report)
 		hideRunForEndUser(report)
 	}
 	writeExternalData(c, http.StatusOK, result)
@@ -194,6 +234,8 @@ func (h *ExternalHandler) getReport(c *gin.Context, access TaskAccessContext, op
 		h.writeTaskApplicationError(c, err, operation)
 		return
 	}
+	// Files are resolved from the run before its identifier is hidden.
+	result = withReportFiles(c, h.runtime, accessScope(access), result)
 	hideRunForEndUser(result)
 	writeExternalData(c, http.StatusOK, result)
 }

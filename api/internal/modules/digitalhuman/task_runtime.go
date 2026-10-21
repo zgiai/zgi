@@ -462,6 +462,7 @@ type submitTaskReportArguments struct {
 	Body     string                `json:"body"`
 	Criteria []TaskReportCriterion `json:"criteria"`
 	Issues   string                `json:"issues"`
+	Files    []string              `json:"files"`
 }
 
 // reportTool lets a scheduled run hand back its report (ADR 0008).
@@ -477,14 +478,25 @@ func (p *DefaultTaskRuntimeProvider) reportTool(run *Run, boundary taskRuntimeBo
 			"note":      map[string]any{"type": "string"},
 		}, "required": []string{"criterion", "status"}, "additionalProperties": false}},
 		"issues": map[string]any{"type": "string", "description": "What blocked the work and what the requester must decide. Empty when nothing did."},
+		"files": map[string]any{"type": "array", "maxItems": MaxTaskReportFiles, "description": "Files this run produced that belong in the report, by file ID (a tool_file:<id> artifact ID also works). Leave it out to attach every file this run produced.",
+			"items": map[string]any{"type": "string"}},
 	}, "required": []string{"outcome", "summary"}, "additionalProperties": false}}}
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 		var args submitTaskReportArguments
 		if decodeStrict(call.Function.Arguments, &args) != nil {
 			return taskToolFailure("invalid_arguments", true)
 		}
+		fileIDs := make([]uuid.UUID, 0, len(args.Files))
+		for _, value := range args.Files {
+			id, err := uuid.Parse(strings.TrimPrefix(strings.TrimSpace(value), "tool_file:"))
+			if err != nil {
+				return taskToolFailure("invalid_arguments", true)
+			}
+			fileIDs = append(fileIDs, id)
+		}
 		report, err := reporter.SubmitTaskReport(ctx, boundary.access, SubmitTaskReportRequest{
 			TaskRunID: boundary.currentTaskRunID, RunID: run.ID, Outcome: args.Outcome, Summary: args.Summary, Body: args.Body, Criteria: args.Criteria, Issues: args.Issues,
+			FileIDs: fileIDs,
 		})
 		if err != nil {
 			return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))

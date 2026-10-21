@@ -17,6 +17,7 @@ type TaskHandler struct {
 	service TaskHandlerService
 	base    *Handler
 	pending TaskPendingChangeSource
+	files   TaskReportFileSource
 }
 
 func NewTaskHandler(service TaskHandlerService, projector *apptransport.Projector) *TaskHandler {
@@ -30,6 +31,12 @@ func NewTaskHandler(service TaskHandlerService, projector *apptransport.Projecto
 // the reader's approval, so the task panel can point to the approval card.
 func (h *TaskHandler) WithPendingChanges(source TaskPendingChangeSource) *TaskHandler {
 	h.pending = source
+	return h
+}
+
+// WithReportFiles lets reports carry and serve their run's files.
+func (h *TaskHandler) WithReportFiles(source TaskReportFileSource) *TaskHandler {
+	h.files = source
 	return h
 }
 

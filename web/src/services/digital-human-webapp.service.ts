@@ -85,4 +85,10 @@ export const digitalHumanWebAppService = {
       request
     );
   },
+  downloadTaskReportFile(webAppId: string, reportId: string, fileId: string, signal?: AbortSignal): Promise<Blob> {
+    return createDigitalHumanWebAppHttp(webAppId).get<Blob>(
+      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/task-reports/${encodeURIComponent(reportId)}/files/${encodeURIComponent(fileId)}`,
+      { responseType: 'blob', signal }
+    );
+  },
 };

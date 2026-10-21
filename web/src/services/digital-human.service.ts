@@ -583,6 +583,15 @@ class DigitalHumanService extends BaseService {
   ): Promise<ApiResponseData<DigitalHumanTaskReport>> {
     return this.request('post', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}/review`, request);
   }
+
+  downloadTaskReportFile(id: string, reportId: string, fileId: string, mine = false, signal?: AbortSignal) {
+    return this.request<Blob>(
+      'get',
+      `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}/files/${fileId}`,
+      undefined,
+      { responseType: 'blob', signal }
+    );
+  }
 }
 
 export const digitalHumanService = new DigitalHumanService();

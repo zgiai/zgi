@@ -16,6 +16,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ProtectedGeneratedFileCard } from '@/components/chat/variants/aichat/protected-generated-file-card';
+import { digitalHumanService } from '@/services/digital-human.service';
 import { Textarea } from '@/components/ui/textarea';
 import { useDigitalHumanTaskReport, useDigitalHumanTaskReportReview, useDigitalHumanTaskReports } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useInboxMutations } from '@/hooks/use-inbox';
@@ -23,8 +25,10 @@ import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type { ApiResponseData } from '@/services/types/common';
+import type { AIChatGeneratedFile } from '@/services/types/aichat';
 import type {
   DigitalHumanTaskReport,
+  DigitalHumanTaskReportFile,
   DigitalHumanTaskReportList,
   ReviewDigitalHumanTaskReportRequest,
   DigitalHumanTaskReportOutcome,
@@ -106,6 +110,7 @@ export function TaskReportDetail({
     <TaskReportDetailView
       report={report}
       pending={review.isPending}
+      readFile={(fileId, signal) => digitalHumanService.downloadTaskReportFile(digitalHumanId, report.id, fileId, mine, signal)}
       onOpenRun={runId && !mine && onOpenRun ? () => onOpenRun(runId) : undefined}
       onReview={async request => {
         await review.mutateAsync({ reportId: report.id, request });
@@ -114,16 +119,29 @@ export function TaskReportDetail({
   );
 }
 
+// A report file shown with the card that previews and downloads protected
+// generated files; its bytes always come from the report's own endpoint.
+function reportGeneratedFile(file: DigitalHumanTaskReportFile): AIChatGeneratedFile {
+  const extension = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
+  return {
+    file_id: file.id, filename: file.name, mime_type: file.mime_type || 'application/octet-stream', size: file.size,
+    artifact_type: 'file', access_mode: 'authenticated', skill_id: '', tool_name: '', extension, url: '', transfer_method: 'tool_file', created_at: 0,
+  };
+}
+
 /** A report and its review actions, independent of where it was loaded. */
 export function TaskReportDetailView({
   report,
   pending = false,
   onOpenRun,
+  readFile,
   onReview,
 }: {
   report: DigitalHumanTaskReport;
   pending?: boolean;
   onOpenRun?: () => void;
+  // Reads a file the report carries through the surface's own API.
+  readFile?: (fileId: string, signal?: AbortSignal) => Promise<Blob>;
   onReview: (request: { action: 'accept' } | { action: 'rework'; feedback: string }) => Promise<void>;
 }) {
   const t = useT('digitalHumans');
@@ -180,6 +198,21 @@ export function TaskReportDetailView({
           <h4 className="text-sm font-semibold">{t('tasks.reports.result')}</h4>
           <div className="mt-2 rounded-md border bg-muted/30 p-3 text-sm">
             <MarkdownViewer content={body} />
+          </div>
+        </section>
+      ) : null}
+      {report.files?.length ? (
+        <section>
+          <h4 className="text-sm font-semibold">{t('tasks.reports.files')}</h4>
+          <div className="mt-2 space-y-2">
+            {report.files.map(file => (
+              <ProtectedGeneratedFileCard
+                key={file.id}
+                conversationId={report.id}
+                readFile={readFile ? (_, id, signal) => readFile(id, signal) : undefined}
+                file={reportGeneratedFile(file)}
+              />
+            ))}
           </div>
         </section>
       ) : null}
@@ -374,6 +407,7 @@ export function TaskReportFeed({
 
 /** Loads and reviews reports through the surface's own API (console or WebApp). */
 export interface TaskReportClient {
+  readFile?: (reportId: string, fileId: string, signal?: AbortSignal) => Promise<Blob>;
   list: (taskId: string) => Promise<ApiResponseData<DigitalHumanTaskReportList>>;
   review: (reportId: string, request: ReviewDigitalHumanTaskReportRequest) => Promise<ApiResponseData<DigitalHumanTaskReport>>;
   // Called when the reader opens a report, for example to mark its notice read.
@@ -400,6 +434,7 @@ export function TaskPanelReports({
   const [reload, setReload] = useState(0);
   const clientRef = useRef(client);
   clientRef.current = client;
+  const readReportFile = client.readFile;
 
   useEffect(() => {
     let active = true;
@@ -458,6 +493,7 @@ export function TaskPanelReports({
               <TaskReportDetailView
                 report={report}
                 pending={pending}
+                readFile={readReportFile ? (fileId, signal) => readReportFile(report.id, fileId, signal) : undefined}
                 onReview={async request => {
                   setPending(true);
                   try {

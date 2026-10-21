@@ -120,7 +120,9 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewAccessHandler(deps.Access, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
-	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges)
+	// The runtime serves the files a task report carries when it can.
+	reportFiles, _ := deps.Runtime.(digitalhuman.TaskReportFileSource)
+	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges).WithReportFiles(reportFiles)
 	taskHandler.RegisterRoutes(group)
 	taskHandler.RegisterReportRoutes(group)
 	if deps.NotificationChannels != nil {

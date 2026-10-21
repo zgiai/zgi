@@ -72,9 +72,25 @@ type TaskReport struct {
 	ReviewedAt        *time.Time            `json:"reviewed_at,omitempty"`
 	// CanReview tells the reader whether it may accept the report or ask for
 	// rework: only the task's requester or a task center manager may.
-	CanReview bool      `json:"can_review"`
-	CreatedAt time.Time `json:"created_at"`
+	CanReview bool `json:"can_review"`
+	// FileIDs are the run files the DigitalHuman chose to attach. When empty,
+	// the report carries every file its run produced.
+	FileIDs []uuid.UUID `json:"-"`
+	// Files are the run files the report carries, filled in when it is read.
+	Files     []TaskReportFile `json:"files"`
+	CreatedAt time.Time        `json:"created_at"`
 }
+
+// TaskReportFile is a file a report carries, downloaded through the report.
+type TaskReportFile struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	MimeType string `json:"mime_type"`
+	Size     int64  `json:"size"`
+}
+
+// MaxTaskReportFiles bounds the files one report carries.
+const MaxTaskReportFiles = 8
 
 // TaskReportSummary is the latest report shown with a task.
 type TaskReportSummary struct {
@@ -95,6 +111,8 @@ type SubmitTaskReportRequest struct {
 	Body      string
 	Criteria  []TaskReportCriterion
 	Issues    string
+	// FileIDs attach chosen run files; empty attaches every run file.
+	FileIDs []uuid.UUID
 }
 
 // TaskReportListQuery filters a report feed. TaskID narrows it to one task.

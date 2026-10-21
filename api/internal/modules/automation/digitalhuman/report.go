@@ -97,7 +97,7 @@ func (s *Service) SubmitTaskReport(ctx context.Context, access digitalhuman.Task
 			ID: uuid.NewString(), OrganizationID: task.OrganizationID, WorkspaceID: task.WorkspaceID, DigitalHumanID: pointerValue(task.SubjectID),
 			TaskID: task.ID, TaskRunID: req.TaskRunID.String(), DigitalHumanRunID: &runID, Attempt: taskRunAttempt(&taskRun),
 			Outcome: string(req.Outcome), Summary: strings.TrimSpace(req.Summary), Body: strings.TrimSpace(req.Body),
-			Criteria: normalizeCriteria(req.Criteria), Issues: strings.TrimSpace(req.Issues), Files: []map[string]any{},
+			Criteria: normalizeCriteria(req.Criteria), Issues: strings.TrimSpace(req.Issues), Files: reportFileRefs(req.FileIDs),
 			Source: reportSourceTool, ReviewState: string(digitalhuman.TaskReportNew), CreatedAt: now, UpdatedAt: now,
 		}
 		if err == nil {
@@ -107,7 +107,7 @@ func (s *Service) SubmitTaskReport(ctx context.Context, access digitalhuman.Task
 			row.ID, row.CreatedAt = existing.ID, existing.CreatedAt
 			if err := tx.Model(&taskReportRow{}).Where("id = ?", existing.ID).Updates(map[string]any{
 				"outcome": row.Outcome, "summary": row.Summary, "body": row.Body, "criteria": row.Criteria, "issues": row.Issues,
-				"digital_human_run_id": runID, "updated_at": now,
+				"files": row.Files, "digital_human_run_id": runID, "updated_at": now,
 			}).Error; err != nil {
 				return err
 			}
@@ -393,6 +393,12 @@ func publicTaskReport(row *taskReportRow, task *automationmodel.AutomationTask, 
 	if report.Criteria == nil {
 		report.Criteria = []digitalhuman.TaskReportCriterion{}
 	}
+	report.Files = []digitalhuman.TaskReportFile{}
+	for _, ref := range row.Files {
+		if id, err := uuid.Parse(fmt.Sprint(ref["id"])); err == nil {
+			report.FileIDs = append(report.FileIDs, id)
+		}
+	}
 	if row.DigitalHumanRunID != nil {
 		if id, err := uuid.Parse(*row.DigitalHumanRunID); err == nil {
 			report.DigitalHumanRunID = &id
@@ -519,4 +525,19 @@ func reportNotice(row *taskReportRow, task *automationmodel.AutomationTask) (dig
 		return notice, false
 	}
 	return notice, true
+}
+
+// reportFileRefs stores the run files a report chose, at most
+// MaxTaskReportFiles of them, once each.
+func reportFileRefs(ids []uuid.UUID) []map[string]any {
+	refs := []map[string]any{}
+	seen := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		if id == uuid.Nil || seen[id] || len(refs) == digitalhuman.MaxTaskReportFiles {
+			continue
+		}
+		seen[id] = true
+		refs = append(refs, map[string]any{"id": id.String()})
+	}
+	return refs
 }

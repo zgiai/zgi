@@ -1414,6 +1414,7 @@ const messages: DigitalHumansMessages = {
       tasksTab: '任务',
       sheetDescription: '数字人执行任务后交回的成果。你可以采纳，或者带意见要求返工。',
       openTask: '打开任务',
+      files: '文件',
       collapse: '收起',
       nextUnread: '下一份',
       unreadLeft: '还有 {count} 份未读汇报',

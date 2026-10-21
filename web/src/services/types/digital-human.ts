@@ -917,7 +917,17 @@ export interface DigitalHumanTaskReportSummary {
 }
 
 /** What one task run hands back (ADR 0008). */
+/** A file a task report carries, downloaded through the report. */
+export interface DigitalHumanTaskReportFile {
+  id: string;
+  name: string;
+  mime_type: string;
+  size: number;
+}
+
 export interface DigitalHumanTaskReport {
+  /** Files the run produced that the report carries. */
+  files?: DigitalHumanTaskReportFile[];
   id: string;
   digital_human_id: string;
   task_id: string;

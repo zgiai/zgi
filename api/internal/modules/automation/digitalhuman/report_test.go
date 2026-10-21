@@ -228,3 +228,17 @@ func TestReportsAreListedReviewedAndReworked(t *testing.T) {
 		t.Fatalf("another member reviewing: %v", err)
 	}
 }
+
+func TestReportKeepsChosenFilesOnceAndBounded(t *testing.T) {
+	ids := make([]uuid.UUID, 0, digitalhuman.MaxTaskReportFiles+2)
+	first := uuid.New()
+	ids = append(ids, first, first, uuid.Nil)
+	for len(ids) < digitalhuman.MaxTaskReportFiles+3 {
+		ids = append(ids, uuid.New())
+	}
+	row := &taskReportRow{ID: uuid.NewString(), DigitalHumanID: uuid.NewString(), TaskID: uuid.NewString(), TaskRunID: uuid.NewString(), Files: reportFileRefs(ids)}
+	report := publicTaskReport(row, nil, digitalhuman.TaskAccessContext{})
+	if len(report.FileIDs) != digitalhuman.MaxTaskReportFiles || report.FileIDs[0] != first || report.Files == nil {
+		t.Fatalf("file ids = %v, files = %#v", report.FileIDs, report.Files)
+	}
+}

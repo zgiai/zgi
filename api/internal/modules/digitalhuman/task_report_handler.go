@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	toolfile "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 )
 
 // RegisterReportRoutes serves task reports (ADR 0008): the task center feed
@@ -19,10 +20,57 @@ func (h *TaskHandler) RegisterReportRoutes(router *gin.RouterGroup) {
 	shared.GET("", h.reportList(false))
 	shared.GET("/:report_id", h.reportGet(false))
 	shared.POST("/:report_id/review", h.reportReview(false))
+	shared.GET("/:report_id/files/:file_id", h.reportFile(false))
 	private := router.Group("/digital-humans/:id/my-task-reports")
 	private.GET("", h.reportList(true))
 	private.GET("/:report_id", h.reportGet(true))
 	private.POST("/:report_id/review", h.reportReview(true))
+	private.GET("/:report_id/files/:file_id", h.reportFile(true))
+}
+
+// reportFile serves a file the report carries to whoever may read the report.
+func (h *TaskHandler) reportFile(mine bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		access, scope, ok := h.reportAccess(c, mine)
+		if !ok {
+			return
+		}
+		reportID, ok := h.reportID(c)
+		if !ok {
+			return
+		}
+		report, err := h.service.(TaskReportService).GetTaskReport(c.Request.Context(), access, reportID)
+		if err != nil {
+			h.base.writeError(c, taskApplicationError(err, "digital_human.task_report.file"))
+			return
+		}
+		serveTaskReportFile(c, h.base, h.files, scope, report)
+	}
+}
+
+// serveTaskReportFile streams one of an authorized report's files.
+func serveTaskReportFile(c *gin.Context, base *Handler, files TaskReportFileSource, scope Scope, report *TaskReport) {
+	if files == nil {
+		base.writeError(c, applicationError(ErrNotFound, "digital_human.task_report.file"))
+		return
+	}
+	file, data, err := files.ReadTaskReportFile(c.Request.Context(), scope, report, strings.TrimSpace(c.Param("file_id")))
+	if err != nil || file == nil {
+		base.writeError(c, applicationError(ErrNotFound, "digital_human.task_report.file"))
+		return
+	}
+	toolfile.WriteExecutionFile(c, file, data)
+}
+
+// withReportFiles fills in the files a report carries.
+func withReportFiles(c *gin.Context, files TaskReportFileSource, scope Scope, report *TaskReport) *TaskReport {
+	if files == nil || report == nil {
+		return report
+	}
+	if resolved, err := files.TaskReportFiles(c.Request.Context(), scope, report); err == nil {
+		report.Files = resolved
+	}
+	return report
 }
 
 func (h *TaskHandler) reportAccess(c *gin.Context, mine bool) (TaskAccessContext, Scope, bool) {
@@ -38,7 +86,7 @@ func (h *TaskHandler) reportAccess(c *gin.Context, mine bool) (TaskAccessContext
 
 func (h *TaskHandler) reportList(mine bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		access, _, ok := h.reportAccess(c, mine)
+		access, scope, ok := h.reportAccess(c, mine)
 		if !ok {
 			return
 		}
@@ -51,13 +99,16 @@ func (h *TaskHandler) reportList(mine bool) gin.HandlerFunc {
 			h.base.writeError(c, taskApplicationError(err, "digital_human.task_report.list"))
 			return
 		}
+		for _, report := range result.Items {
+			withReportFiles(c, h.files, scope, report)
+		}
 		writeDigitalHumanData(c, http.StatusOK, result)
 	}
 }
 
 func (h *TaskHandler) reportGet(mine bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		access, _, ok := h.reportAccess(c, mine)
+		access, scope, ok := h.reportAccess(c, mine)
 		if !ok {
 			return
 		}
@@ -70,7 +121,7 @@ func (h *TaskHandler) reportGet(mine bool) gin.HandlerFunc {
 			h.base.writeError(c, taskApplicationError(err, "digital_human.task_report.get"))
 			return
 		}
-		writeDigitalHumanData(c, http.StatusOK, result)
+		writeDigitalHumanData(c, http.StatusOK, withReportFiles(c, h.files, scope, result))
 	}
 }
 

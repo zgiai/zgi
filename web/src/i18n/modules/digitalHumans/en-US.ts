@@ -1535,6 +1535,7 @@ const messages = {
       tasksTab: 'Tasks',
       sheetDescription: 'What the digital human handed back from a task run. Accept it, or ask for rework with feedback.',
       openTask: 'Open task',
+      files: 'Files',
       collapse: 'Collapse',
       nextUnread: 'Next',
       unreadLeft: 'Unread reports left: {count}',

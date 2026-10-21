@@ -61,6 +61,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
       reports: {
         list: taskId => digitalHumanService.listTaskReports(id, { task_id: taskId }, true),
         review: (reportId, request) => digitalHumanService.reviewTaskReport(id, reportId, request, true),
+        readFile: (reportId, fileId, signal) => digitalHumanService.downloadTaskReportFile(id, reportId, fileId, true, signal),
         viewed: reportId => void inboxService.markRead({ source_type: 'digital_human_task_report', source_id: reportId }).catch(() => undefined),
       },
     }),

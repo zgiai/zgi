@@ -83,6 +83,8 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodPost, "/console/api/digital-humans/:id/my-task-reports/:report_id/review", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodGet, "/console/api/digital-humans/:id/notification-channels", workspacemodel.WorkspacePermissionDigitalHumanPublish},
 		{http.MethodGet, "/console/api/team-notification-channels/options", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/task-reports/:report_id/files/:file_id", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodGet, "/console/api/digital-humans/:id/my-task-reports/:report_id/files/:file_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPost, "/console/api/team-notification-channels/options", ""},
 		{http.MethodGet, "/console/api/team-notification-channels", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodPost, "/console/api/team-notification-channels/:channel_id/test", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
