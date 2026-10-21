@@ -21,6 +21,7 @@ const (
 	taskListToolName           = "list_digital_human_tasks"
 	taskGetToolName            = "get_digital_human_task"
 	taskManageToolName         = "manage_digital_human_task"
+	taskReportToolName         = "submit_digital_human_task_report"
 	taskListViewOpen           = "open"
 	taskListViewCompleted      = "completed"
 	taskListViewCanceled       = "canceled"
@@ -64,6 +65,7 @@ type taskRuntimeBoundary struct {
 	conversationType string
 	replyTo          *invocation.ReplyAddress
 	currentTaskID    uuid.UUID
+	currentTaskRunID uuid.UUID
 	access           TaskAccessContext
 	writable         bool
 }
@@ -94,10 +96,11 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		return nil, err
 	}
 	boundary.access = access
-	return &TaskRuntimePreparation{
-		SystemPromptAddendum: taskRuntimeGuidance(boundary),
-		Tools:                []skillloop.RuntimeTool{p.listTool(run, boundary), p.getTool(run, boundary), p.manageTool(run, boundary)},
-	}, nil
+	tools := []skillloop.RuntimeTool{p.listTool(run, boundary), p.getTool(run, boundary), p.manageTool(run, boundary)}
+	if reporter, ok := p.service.(TaskReportService); ok && boundary.currentTaskID != uuid.Nil && boundary.currentTaskRunID != uuid.Nil {
+		tools = append(tools, p.reportTool(run, boundary, reporter))
+	}
+	return &TaskRuntimePreparation{SystemPromptAddendum: taskRuntimeGuidance(boundary), Tools: tools}, nil
 }
 
 func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
@@ -117,6 +120,9 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 	}
 	if boundary.currentTaskID != uuid.Nil {
 		guidance = append(guidance, "This is a scheduled execution. The scheduler owns successful completion: do not mark the task completed. You may only update the current task to waiting or blocked when the work genuinely cannot finish; do not create, confirm, reschedule, rerun, or cancel tasks from this run.")
+		if boundary.currentTaskRunID != uuid.Nil {
+			guidance = append(guidance, "Before your final answer, submit this run's report with "+taskReportToolName+": the outcome, a one-line summary, the full result, each success criterion assessed as met, not met, or unknown with a short reason, and any issues or decisions the requester must make. Be honest: report partial or not done when the goal was not fully reached. Your final answer must agree with the report.")
+		}
 	} else if TaskVisibilityEnabled() && boundary.access.Viewer.Mode == TaskViewMember {
 		guidance = append(guidance,
 			"Visible tasks are the tasks the current user requested plus tasks shared with the workspace. Tasks with can_change false are read-only: explain that only their requester or a task manager can change them, and never propose a change to them.",
@@ -171,6 +177,9 @@ func taskBoundary(event invocation.Event) taskRuntimeBoundary {
 		result.source = "schedule"
 		if raw, ok := event.Context["task_id"].(string); ok {
 			result.currentTaskID, _ = uuid.Parse(raw)
+		}
+		if raw, ok := event.Context["task_run_id"].(string); ok {
+			result.currentTaskRunID, _ = uuid.Parse(raw)
 		}
 	}
 	if event.Origin.Kind == invocation.OriginAPI {
@@ -443,6 +452,44 @@ func (p *DefaultTaskRuntimeProvider) getTool(run *Run, boundary taskRuntimeBound
 			return taskToolFailure(taskErrorCode(err), false)
 		}
 		return taskToolSuccess(call, result)
+	}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
+}
+
+type submitTaskReportArguments struct {
+	Outcome  TaskReportOutcome     `json:"outcome"`
+	Summary  string                `json:"summary"`
+	Body     string                `json:"body"`
+	Criteria []TaskReportCriterion `json:"criteria"`
+	Issues   string                `json:"issues"`
+}
+
+// reportTool lets a scheduled run hand back its report (ADR 0008).
+func (p *DefaultTaskRuntimeProvider) reportTool(run *Run, boundary taskRuntimeBoundary, reporter TaskReportService) skillloop.RuntimeTool {
+	description := "Submit the report of this scheduled task run before the final answer. The requester reads it, accepts it, or asks for rework. Submitting again replaces the earlier report of this run."
+	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: taskReportToolName, Description: description, Parameters: map[string]any{"type": "object", "properties": map[string]any{
+		"outcome": map[string]any{"type": "string", "enum": []string{string(TaskReportDone), string(TaskReportPartial), string(TaskReportNotDone)}, "description": "done when the goal was reached, partial when only part of it was, not_done when it was not."},
+		"summary": map[string]any{"type": "string", "description": "One or two sentences stating the result."},
+		"body":    map[string]any{"type": "string", "description": "The full result in Markdown."},
+		"criteria": map[string]any{"type": "array", "description": "One entry per success criterion of the task.", "items": map[string]any{"type": "object", "properties": map[string]any{
+			"criterion": map[string]any{"type": "string"},
+			"status":    map[string]any{"type": "string", "enum": []string{string(TaskCriterionMet), string(TaskCriterionNotMet), string(TaskCriterionUnknown)}},
+			"note":      map[string]any{"type": "string"},
+		}, "required": []string{"criterion", "status"}, "additionalProperties": false}},
+		"issues": map[string]any{"type": "string", "description": "What blocked the work and what the requester must decide. Empty when nothing did."},
+	}, "required": []string{"outcome", "summary"}, "additionalProperties": false}}}
+	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+		var args submitTaskReportArguments
+		if decodeStrict(call.Function.Arguments, &args) != nil {
+			return taskToolFailure("invalid_arguments", true)
+		}
+		report, err := reporter.SubmitTaskReport(ctx, boundary.access, SubmitTaskReportRequest{
+			TaskRunID: boundary.currentTaskRunID, RunID: run.ID, Outcome: args.Outcome, Summary: args.Summary, Body: args.Body, Criteria: args.Criteria, Issues: args.Issues,
+		})
+		if err != nil {
+			return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))
+		}
+		return taskToolSuccess(call, map[string]any{"status": "submitted", "report_id": report.ID})
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
 }

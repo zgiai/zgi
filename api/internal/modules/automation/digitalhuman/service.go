@@ -135,12 +135,21 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	if err != nil {
 		return nil, err
 	}
+	taskIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		taskIDs = append(taskIDs, row.ID)
+	}
+	reports, err := s.latestReports(ctx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]*digitalhuman.Task, 0, len(rows))
 	for _, row := range rows {
 		item, err := publicTaskForAccess(row, access)
 		if err != nil {
 			return nil, err
 		}
+		item.LatestReport = reports[row.ID]
 		items = append(items, item)
 	}
 	return &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
@@ -255,7 +264,16 @@ func (s *Service) GetTask(ctx context.Context, access digitalhuman.TaskAccessCon
 	if err != nil {
 		return nil, err
 	}
-	return publicTaskForAccess(task, access)
+	result, err := publicTaskForAccess(task, access)
+	if err != nil {
+		return nil, err
+	}
+	reports, err := s.latestReports(ctx, []string{task.ID})
+	if err != nil {
+		return nil, err
+	}
+	result.LatestReport = reports[task.ID]
+	return result, nil
 }
 
 func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, req digitalhuman.UpdateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {

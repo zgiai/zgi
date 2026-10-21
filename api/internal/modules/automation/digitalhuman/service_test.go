@@ -424,7 +424,7 @@ func newTaskService(t *testing.T) (*Service, *recordingDispatcher, digitalhuman.
 		&usersubject.Subject{},
 		&automationmodel.AutomationTask{}, &automationmodel.AutomationTaskAction{},
 		&automationmodel.AutomationTaskRun{}, &automationmodel.AutomationActionRun{},
-		&automationmodel.AutomationTaskActivity{},
+		&automationmodel.AutomationTaskActivity{}, &taskReportRow{},
 	); err != nil {
 		t.Fatalf("migrate task service: %v", err)
 	}

@@ -512,7 +512,7 @@ func (s *RuntimeService) GetRun(ctx context.Context, scope Scope, digitalHumanID
 func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDeliveryRequest) error {
 	if s == nil || s.chat == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil ||
 		req.DigitalHumanID == uuid.Nil || req.TaskID == uuid.Nil || req.TaskRunID == uuid.Nil ||
-		req.ConversationID == uuid.Nil || strings.TrimSpace(req.Answer) == "" {
+		req.ConversationID == uuid.Nil || (strings.TrimSpace(req.Answer) == "" && req.Report == nil) {
 		return ErrInvalidRequest
 	}
 	writer, ok := s.chat.(idempotentCompletedMessageWriter)
@@ -537,16 +537,45 @@ func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDe
 	if name := strings.TrimSpace(req.TaskName); name != "" {
 		query = "任务执行结果：" + name
 	}
+	answer := strings.TrimSpace(req.Answer)
+	if report := req.Report; report != nil {
+		query = "任务汇报"
+		if name := strings.TrimSpace(req.TaskName); name != "" {
+			query = "任务汇报：" + name
+		}
+		answer = taskReportMessage(report)
+		metadata["digital_human_task_report"] = map[string]interface{}{
+			"report_id": report.ID.String(), "task_id": req.TaskID.String(), "task_name": strings.TrimSpace(req.TaskName),
+			"outcome": string(report.Outcome), "summary": report.Summary,
+		}
+	}
 	_, err := writer.CreateCompletedMessageIfAbsent(ctx, scope, chatruntime.CreateCompletedMessageRequest{
 		ConversationID:  req.ConversationID,
 		Query:           query,
-		Answer:          strings.TrimSpace(req.Answer),
+		Answer:          answer,
 		ModelProvider:   "digital-human-task",
 		ModelName:       "task-result",
 		Metadata:        metadata,
 		SourceMessageID: &req.TaskRunID,
 	})
 	return err
+}
+
+// taskReportMessage renders a final report as the delivered message text. The
+// report card in the client reads the structured metadata; this text keeps the
+// conversation readable everywhere else.
+func taskReportMessage(report *TaskReportDelivery) string {
+	outcome := map[TaskReportOutcome]string{
+		TaskReportDone: "已完成", TaskReportPartial: "部分完成", TaskReportNotDone: "未完成", TaskReportFailed: "执行失败",
+	}[report.Outcome]
+	parts := []string{"**结论：" + outcome + "**", strings.TrimSpace(report.Summary)}
+	if body := strings.TrimSpace(report.Body); body != "" && body != strings.TrimSpace(report.Summary) {
+		parts = append(parts, body)
+	}
+	if issues := strings.TrimSpace(report.Issues); issues != "" {
+		parts = append(parts, "**问题：**\n"+issues)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // GetRunRuntimeLog loads the ChatRuntime message linked to a durable run and

@@ -76,6 +76,11 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodPost, "/console/api/digital-humans/:id/my-tasks", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPatch, "/console/api/digital-humans/:id/my-tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPost, "/console/api/digital-humans/:id/my-tasks/:task_id/actions/:action", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/task-reports", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodGet, "/console/api/digital-humans/:id/task-reports/:report_id", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans/:id/task-reports/:report_id/review", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/my-task-reports", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodPost, "/console/api/digital-humans/:id/my-task-reports/:report_id/review", workspacemodel.WorkspacePermissionDigitalHumanRun},
 	}
 	for _, test := range tests {
 		if got := digitalHumanPermissionForRequest(test.method, test.path); got != test.want {

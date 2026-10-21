@@ -279,6 +279,8 @@ type Task struct {
 	Revision                int64                    `json:"revision"`
 	ProposalExpiresAt       *time.Time               `json:"proposal_expires_at,omitempty"`
 	ConfirmedAt             *time.Time               `json:"confirmed_at,omitempty"`
+	// LatestReport is the newest final report of the task, if any.
+	LatestReport *TaskReportSummary `json:"latest_report,omitempty"`
 	// CanChange tells the reader whether it may change this task. A visible
 	// workspace task requested by someone else is read-only.
 	CanChange bool `json:"can_change"`
@@ -451,6 +453,40 @@ type TaskResultDeliveryRequest struct {
 	Source          string
 	TaskName        string
 	Answer          string
+	// Report is the run's final report. When present it is delivered as a
+	// report card instead of the plain answer, including for failed runs.
+	Report *TaskReportDelivery
+}
+
+// TaskReportDelivery is the part of a final report shown in a conversation.
+type TaskReportDelivery struct {
+	ID      uuid.UUID
+	Outcome TaskReportOutcome
+	Summary string
+	Body    string
+	Issues  string
+}
+
+// TaskReportNotice tells a task's requester that a final report exists.
+type TaskReportNotice struct {
+	OrganizationID uuid.UUID
+	WorkspaceID    uuid.UUID
+	DigitalHumanID uuid.UUID
+	TaskID         uuid.UUID
+	TaskName       string
+	ReportID       uuid.UUID
+	Outcome        TaskReportOutcome
+	Summary        string
+	// RecipientKind is the requester's user subject kind (account or
+	// api_end_user); RecipientID is that subject.
+	RecipientKind string
+	RecipientID   uuid.UUID
+}
+
+// TaskReportNotifier is implemented by the in-app inbox and injected into the
+// scheduler reconciler.
+type TaskReportNotifier interface {
+	NotifyTaskReport(context.Context, TaskReportNotice) error
 }
 
 // TaskResultDeliverer is implemented by the DigitalHuman runtime and injected

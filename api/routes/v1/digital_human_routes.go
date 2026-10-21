@@ -116,7 +116,9 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewAccessHandler(deps.Access, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
-	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges).RegisterRoutes(group)
+	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges)
+	taskHandler.RegisterRoutes(group)
+	taskHandler.RegisterReportRoutes(group)
 	channelHandler.RegisterAuthenticatedRoutes(group)
 }
 
@@ -168,7 +170,7 @@ func digitalHumanPermissionMiddleware(organizationService interfaces.Organizatio
 // isDigitalHumanTaskCenterPath matches the shared task center routes, not the
 // personal my-tasks view.
 func isDigitalHumanTaskCenterPath(routePath string) bool {
-	return strings.Contains(routePath, "/digital-humans/:id/tasks")
+	return strings.Contains(routePath, "/digital-humans/:id/tasks") || strings.Contains(routePath, "/digital-humans/:id/task-reports")
 }
 
 func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.WorkspacePermissionCode {
@@ -188,8 +190,21 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	// Private tasks are part of the formal run surface. A user who can run a
 	// DigitalHuman may manage only their own task namespace from chat; viewers
 	// must not discover it through a direct URL.
-	if strings.Contains(path, "/my-tasks") {
+	if strings.Contains(path, "/my-tasks") || strings.Contains(path, "/my-task-reports") {
 		return workspacemodel.WorkspacePermissionDigitalHumanRun
+	}
+	// Task reports are read with view permission. Reviewing one may rerun its
+	// task, so it needs run permission; the task service then requires the
+	// reader to be the task's requester or a task center manager.
+	if strings.Contains(path, "/task-reports") {
+		switch method {
+		case http.MethodGet:
+			return workspacemodel.WorkspacePermissionDigitalHumanView
+		case http.MethodPost:
+			return workspacemodel.WorkspacePermissionDigitalHumanRun
+		default:
+			return ""
+		}
 	}
 	if strings.Contains(path, "/tasks") || strings.Contains(path, "/my-tasks") {
 		switch method {
