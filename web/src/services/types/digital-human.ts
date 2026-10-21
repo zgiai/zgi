@@ -818,7 +818,8 @@ export interface DigitalHumanTask {
   visibility?: DigitalHumanTaskVisibility;
   /** False when the task is visible to the reader but requested by someone else. */
   can_change?: boolean;
-  can_change_visibility?: boolean;
+  /** Visibilities this reader may set; empty when they cannot change it. */
+  visibility_options?: DigitalHumanTaskVisibility[];
   // Set in the personal view when a proposed change to this task waits for
   // the reader's approval in one of their conversations.
   pending_change?: DigitalHumanTaskPendingChange;

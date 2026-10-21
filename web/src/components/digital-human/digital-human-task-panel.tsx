@@ -49,6 +49,7 @@ import type {
   DigitalHumanTaskPage,
   DigitalHumanTaskRun,
   UpdateDigitalHumanTaskRequest,
+  DigitalHumanTaskVisibility,
 } from '@/services/types/digital-human';
 import type { ApiResponseData } from '@/services/types/common';
 
@@ -269,6 +270,21 @@ export function DigitalHumanTaskPanel({
       });
       toast.success(t('tasks.updated'));
       setEditing(false);
+      await load();
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('tasks.loadError'));
+      await load();
+    }
+  };
+
+  const changeVisibility = async (visibility: DigitalHumanTaskVisibility) => {
+    if (!selected) return;
+    try {
+      await clientRef.current.update(selected.id, {
+        expected_revision: selected.revision,
+        visibility,
+      });
+      toast.success(t('tasks.visibilityControl.updated'));
       await load();
     } catch (error) {
       toast.error(getErrorMessage(error) || t('tasks.loadError'));
@@ -564,6 +580,7 @@ export function DigitalHumanTaskPanel({
               onUpdate={update}
               onCancelEdit={() => setEditing(false)}
               onAction={action}
+              onChangeVisibility={changeVisibility}
               allowProposalApproval
               allowDirectMutations={allowDirectMutations}
               allowDirectEdit={allowDirectEdit}
@@ -594,6 +611,7 @@ export function DigitalHumanTaskPanel({
                 onUpdate={update}
                 onCancelEdit={() => setEditing(false)}
                 onAction={action}
+                onChangeVisibility={changeVisibility}
                 allowProposalApproval={false}
                 allowDirectMutations={allowDirectMutations}
                 allowDirectEdit={allowDirectEdit}
@@ -626,6 +644,38 @@ interface TaskHistoryState {
   onRetry: () => void;
 }
 
+// The requester shares their task with the team or keeps it to themselves.
+// The server lists the visibilities this reader may set; without a choice the
+// row only states who can see the task.
+function TaskShareRow({
+  task,
+  onChange,
+}: {
+  task: DigitalHumanTask;
+  onChange: (visibility: DigitalHumanTaskVisibility) => Promise<void>;
+}) {
+  const t = useT('digitalHumans');
+  const options = task.visibility_options ?? [];
+  const shared = task.visibility === 'workspace';
+  const next = shared
+    ? options.find(option => option !== 'workspace')
+    : options.includes('workspace')
+      ? 'workspace'
+      : undefined;
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+      <span className="text-xs text-muted-foreground">
+        {shared ? t('tasks.share.shared') : t('tasks.share.private')}
+      </span>
+      {next ? (
+        <Button size="sm" variant="outline" onClick={() => void onChange(next)}>
+          {shared ? t('tasks.share.withdraw') : t('tasks.share.toTeam')}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function TaskDetailContent({
   selected,
   editing,
@@ -637,6 +687,7 @@ function TaskDetailContent({
   onUpdate,
   onCancelEdit,
   onAction,
+  onChangeVisibility,
   allowProposalApproval,
   allowDirectMutations,
   allowDirectEdit,
@@ -652,6 +703,7 @@ function TaskDetailContent({
   onUpdate: () => Promise<void>;
   onCancelEdit: () => void;
   onAction: (name: string) => Promise<void>;
+  onChangeVisibility: (visibility: DigitalHumanTaskVisibility) => Promise<void>;
   allowProposalApproval: boolean;
   allowDirectMutations: boolean;
   allowDirectEdit: boolean;
@@ -716,6 +768,7 @@ function TaskDetailContent({
         <h3 className="font-semibold">{selected.name}</h3>
         <p className="mt-1 text-sm text-muted-foreground">{selected.goal}</p>
       </div>
+      <TaskShareRow task={selected} onChange={onChangeVisibility} />
       <div className="flex flex-wrap gap-2">
         <Badge>{t(`tasks.status.${digitalHumanTaskDisplayStatus(selected)}`)}</Badge>
         {allowDirectMutations && selected.work_status === 'proposed' && allowProposalApproval ? (

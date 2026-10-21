@@ -216,6 +216,26 @@ func (v TaskVisibility) Valid() bool {
 	}
 }
 
+// TaskVisibilityOptions lists the visibilities a task of this owner kind can
+// take: kept to its requester, or shared with the team. A shared task's
+// requester is its creator, so `restricted` is its requester-only option.
+func TaskVisibilityOptions(kind TaskOwnerKind) []TaskVisibility {
+	switch kind {
+	case TaskOwnerUserSubject:
+		return []TaskVisibility{TaskVisibilityRequester, TaskVisibilityWorkspace}
+	case TaskOwnerConversation:
+		return []TaskVisibility{TaskVisibilityConversation, TaskVisibilityWorkspace}
+	default:
+		return []TaskVisibility{TaskVisibilityWorkspace, TaskVisibilityRestricted}
+	}
+}
+
+// Widens reports whether changing visibility from v to next lets more people
+// read the task.
+func (v TaskVisibility) Widens(next TaskVisibility) bool {
+	return v != TaskVisibilityWorkspace && next == TaskVisibilityWorkspace
+}
+
 // DefaultTaskVisibility is the visibility of a task created in an owner
 // namespace, and of rows written by builds that predate visibility.
 func DefaultTaskVisibility(kind TaskOwnerKind) TaskVisibility {
@@ -265,12 +285,13 @@ type Task struct {
 	// PendingChange is set in the personal task view when a proposed change
 	// to this task waits for the reader's approval in their own conversation.
 	PendingChange *TaskPendingChange `json:"pending_change,omitempty"`
-	// CanChangeVisibility tells the reader whether it may change who sees
-	// this task. Only task center managers may, and only while task
-	// visibility is enabled.
-	CanChangeVisibility bool      `json:"can_change_visibility,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	// VisibilityOptions lists the visibilities this reader may set. It is
+	// empty unless the reader is a task center manager and task visibility is
+	// enabled. On a task someone else requested it holds only narrower
+	// options, because widening would share that requester's work.
+	VisibilityOptions []TaskVisibility `json:"visibility_options,omitempty"`
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
 }
 
 // TaskListQuery contains bounded task filters.

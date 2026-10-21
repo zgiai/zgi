@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -284,11 +285,11 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 		}
 		changes := map[string]any{}
 		if req.Visibility != nil {
-			if !taskCenterManager(access) {
-				return digitalhuman.ErrTaskVisibilityForbidden
-			}
-			if !req.Visibility.Valid() {
+			if !slices.Contains(digitalhuman.TaskVisibilityOptions(digitalhuman.TaskOwnerKind(pointerValue(task.OwnerKind))), *req.Visibility) {
 				return digitalhuman.ErrInvalidRequest
+			}
+			if !slices.Contains(taskVisibilityChoices(task, access), *req.Visibility) {
+				return digitalhuman.ErrTaskVisibilityForbidden
 			}
 			v := string(*req.Visibility)
 			task.Visibility = &v
@@ -816,8 +817,31 @@ func publicTaskForAccess(row *automationmodel.AutomationTask, access digitalhuma
 		return nil, err
 	}
 	task.CanChange = access.CurrentTaskID != nil || taskCenterManager(access) || taskRequestedBy(row, access)
-	task.CanChangeVisibility = taskCenterManager(access)
+	task.VisibilityOptions = taskVisibilityChoices(row, access)
 	return task, nil
+}
+
+// taskVisibilityChoices lists the visibilities access may set on row. In the
+// console a requester may share their task with the team or withdraw it. A
+// task center manager may narrow anyone's task but never widen someone
+// else's, which would publish that requester's work without them. External
+// end users never share tasks with the team.
+func taskVisibilityChoices(row *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) []digitalhuman.TaskVisibility {
+	if !digitalhuman.TaskVisibilityEnabled() || access.CurrentTaskID != nil {
+		return nil
+	}
+	requestedByReader := access.Surface == digitalhuman.SurfaceConsole && taskRequestedBy(row, access)
+	if !requestedByReader && !taskCenterManager(access) {
+		return nil
+	}
+	current := storedTaskVisibility(row)
+	var choices []digitalhuman.TaskVisibility
+	for _, option := range digitalhuman.TaskVisibilityOptions(digitalhuman.TaskOwnerKind(pointerValue(row.OwnerKind))) {
+		if requestedByReader || option == current || !current.Widens(option) {
+			choices = append(choices, option)
+		}
+	}
+	return choices
 }
 
 // taskRequestedBy mirrors mutationOwnerPredicate for one loaded row.

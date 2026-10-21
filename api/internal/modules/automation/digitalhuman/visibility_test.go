@@ -2,6 +2,7 @@ package digitalhumantask
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -173,8 +174,12 @@ func TestTaskVisibilityReadRulesAndMutationScope(t *testing.T) {
 		t.Fatalf("manager pause(private B) error = %v", err)
 	}
 
+	// A task center user who neither requested the task nor manages tasks
+	// cannot change who sees it.
 	restricted := digitalhuman.TaskVisibilityRestricted
-	if _, err := service.UpdateTask(t.Context(), fixture.taskCenter, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &restricted}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskPolicyRejected) {
+	bystander := fixture.taskCenter
+	bystander.Principal.ID = uuid.NewString()
+	if _, err := service.UpdateTask(t.Context(), bystander, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &restricted}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskPolicyRejected) && !errors.Is(err, digitalhuman.ErrTaskNotFound) {
 		t.Fatalf("non-manager visibility update error = %v", err)
 	}
 	invalid := digitalhuman.TaskVisibility("everyone")
@@ -258,12 +263,78 @@ func TestVisibleTasksReportWhetherTheReaderCanChangeThem(t *testing.T) {
 	if err != nil || shared.CanChange {
 		t.Fatalf("member A GetTask(shared) = %#v, %v", shared, err)
 	}
-	// Only task center managers may change who sees a task.
-	for label, access := range map[string]digitalhuman.TaskAccessContext{"manager": fixture.manager, "task center": fixture.taskCenter, "member A": fixture.memberA} {
-		task, err := fixture.service.GetTask(t.Context(), access, fixture.shared.ID)
-		if err != nil || task.CanChangeVisibility != (label == "manager") {
-			t.Fatalf("%s GetTask(shared) can_change_visibility = %#v, %v", label, task, err)
+}
+
+func TestTaskVisibilityChoicesLetRequestersShareAndManagersOnlyNarrow(t *testing.T) {
+	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
+	fixture := newVisibilityFixture(t)
+	service := fixture.service
+	choices := func(access digitalhuman.TaskAccessContext, taskID uuid.UUID) []digitalhuman.TaskVisibility {
+		t.Helper()
+		task, err := service.GetTask(t.Context(), access, taskID)
+		if err != nil {
+			t.Fatalf("GetTask(%s): %v", taskID, err)
 		}
+		return task.VisibilityOptions
+	}
+	setVisibility := func(access digitalhuman.TaskAccessContext, taskID uuid.UUID, visibility digitalhuman.TaskVisibility) error {
+		t.Helper()
+		task, err := service.GetTask(t.Context(), access, taskID)
+		if err != nil {
+			t.Fatalf("GetTask(%s): %v", taskID, err)
+		}
+		_, err = service.UpdateTask(t.Context(), access, taskID, digitalhuman.UpdateTaskRequest{ExpectedRevision: task.Revision, Visibility: &visibility},
+			digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New()})
+		return err
+	}
+	same := func(got []digitalhuman.TaskVisibility, want ...digitalhuman.TaskVisibility) bool {
+		return slices.Equal(got, want)
+	}
+	otherManager := fixture.manager
+	otherManager.Principal.ID = uuid.NewString()
+
+	// The requester of a private task shares it with the team and withdraws it.
+	if got := choices(fixture.memberA, fixture.privateA.ID); !same(got, digitalhuman.TaskVisibilityRequester, digitalhuman.TaskVisibilityWorkspace) {
+		t.Fatalf("requester choices = %v", got)
+	}
+	if err := setVisibility(fixture.memberA, fixture.privateA.ID, digitalhuman.TaskVisibilityWorkspace); err != nil {
+		t.Fatalf("requester shares their task: %v", err)
+	}
+	// A manager may narrow someone else's task but not widen it again.
+	if got := choices(fixture.manager, fixture.privateA.ID); !same(got, digitalhuman.TaskVisibilityRequester, digitalhuman.TaskVisibilityWorkspace) {
+		t.Fatalf("manager choices on a shared private task = %v", got)
+	}
+	if err := setVisibility(fixture.manager, fixture.privateA.ID, digitalhuman.TaskVisibilityRequester); err != nil {
+		t.Fatalf("manager narrows: %v", err)
+	}
+	if got := choices(fixture.manager, fixture.privateA.ID); !same(got, digitalhuman.TaskVisibilityRequester) {
+		t.Fatalf("manager choices after narrowing = %v", got)
+	}
+	if err := setVisibility(fixture.manager, fixture.privateA.ID, digitalhuman.TaskVisibilityWorkspace); !errors.Is(err, digitalhuman.ErrTaskVisibilityForbidden) {
+		t.Fatalf("manager widens someone else's task: %v", err)
+	}
+	if err := setVisibility(fixture.memberA, fixture.privateA.ID, digitalhuman.TaskVisibilityWorkspace); err != nil {
+		t.Fatalf("requester shares again after a manager narrowed: %v", err)
+	}
+	// A shared task's creator chooses freely; another manager only narrows it.
+	if got := choices(fixture.manager, fixture.shared.ID); !same(got, digitalhuman.TaskVisibilityWorkspace, digitalhuman.TaskVisibilityRestricted) {
+		t.Fatalf("creator choices = %v", got)
+	}
+	if err := setVisibility(otherManager, fixture.shared.ID, digitalhuman.TaskVisibilityRestricted); err != nil {
+		t.Fatalf("another manager narrows a shared task: %v", err)
+	}
+	if got := choices(otherManager, fixture.shared.ID); !same(got, digitalhuman.TaskVisibilityRestricted) {
+		t.Fatalf("other manager choices on a narrowed task = %v", got)
+	}
+	// Other members, external end users, and unsupported options get nothing.
+	if got := choices(fixture.memberB, fixture.privateA.ID); got != nil {
+		t.Fatalf("member B choices on member A's task = %v", got)
+	}
+	if got := choices(fixture.external, fixture.privateA.ID); got != nil {
+		t.Fatalf("external end user choices = %v", got)
+	}
+	if err := setVisibility(fixture.memberA, fixture.privateA.ID, digitalhuman.TaskVisibilityRestricted); !errors.Is(err, digitalhuman.ErrInvalidRequest) {
+		t.Fatalf("unsupported visibility for a private task: %v", err)
 	}
 }
 
@@ -272,7 +343,7 @@ func TestTaskVisibilityCannotChangeWhileVisibilityIsDisabled(t *testing.T) {
 	fixture := newVisibilityFixture(t)
 	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "false")
 	task, err := fixture.service.GetTask(t.Context(), fixture.manager, fixture.shared.ID)
-	if err != nil || task.CanChangeVisibility {
+	if err != nil || len(task.VisibilityOptions) != 0 {
 		t.Fatalf("manager GetTask(shared) with visibility disabled = %#v, %v", task, err)
 	}
 }

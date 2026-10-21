@@ -61,10 +61,12 @@ var (
 	ErrTaskConflict = errors.New("digital human task conflict")
 	// ErrTaskPolicyRejected indicates that the invocation cannot manage tasks.
 	ErrTaskPolicyRejected = errors.New("digital human task policy rejected")
-	// ErrTaskVisibilityForbidden indicates that only a task center manager may
-	// change who can see a task. It is a task policy rejection that is
-	// reported as missing permission rather than as an unsupported surface.
-	ErrTaskVisibilityForbidden = fmt.Errorf("%w: task visibility requires a task center manager", ErrTaskPolicyRejected)
+	// ErrTaskVisibilityForbidden indicates that the reader may not set the
+	// requested visibility: only the requester shares or withdraws a task, and
+	// a task center manager only narrows someone else's. It is a task policy
+	// rejection that is reported as missing permission rather than as an
+	// unsupported surface.
+	ErrTaskVisibilityForbidden = fmt.Errorf("%w: this reader may not set that task visibility", ErrTaskPolicyRejected)
 	// ErrChannelInstallationNotFound indicates a missing scoped channel installation.
 	ErrChannelInstallationNotFound = errors.New("digital human channel installation not found")
 	// ErrChannelCredentialNotFound indicates that an installation does not own

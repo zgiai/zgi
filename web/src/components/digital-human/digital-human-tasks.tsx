@@ -170,7 +170,9 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             <ListTodo className="size-5 text-primary" />
             <h1 className="text-2xl font-semibold tracking-tight">{t('tasks.title')}</h1>
           </div>
-          <p className="max-w-3xl text-sm text-muted-foreground">{t('tasks.description')}</p>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            {canUpdate ? t('tasks.descriptionManager') : t('tasks.description')}
+          </p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -563,7 +565,15 @@ function TaskDetailSheet({
   // account requested. The server reports it per task, because it also
   // depends on whether task visibility is enabled.
   const changeVisibility = async (visibility: DigitalHumanTaskVisibility) => {
-    if (!open || !task || !task.can_change_visibility || visibility === effectiveTaskVisibility(task) || actionPendingRef.current) return;
+    if (
+      !open ||
+      !task ||
+      !task.visibility_options?.includes(visibility) ||
+      visibility === effectiveTaskVisibility(task) ||
+      actionPendingRef.current
+    ) {
+      return;
+    }
     actionPendingRef.current = true;
     try {
       const latest = await detail.task.refetch();
@@ -641,7 +651,6 @@ function TaskDetailSheet({
                   value={
                     <TaskVisibilityControl
                       task={task}
-                      editable={!!task.can_change_visibility}
                       onChange={visibility => void changeVisibility(visibility)}
                     />
                   }
@@ -796,21 +805,6 @@ function TaskDetailSheet({
   );
 }
 
-// The requester-scoped option depends on where the task came from: a channel
-// task belongs to its conversation, other conversational tasks to a user. A
-// shared task has no separate requester option: its requester is its creator,
-// which `restricted` already limits it to.
-function taskVisibilityOptions(task: DigitalHumanTask): DigitalHumanTaskVisibility[] {
-  switch (task.owner_kind) {
-    case 'conversation':
-      return ['conversation', 'workspace', 'restricted'];
-    case 'user_subject':
-      return ['requester', 'workspace', 'restricted'];
-    default:
-      return ['workspace', 'restricted'];
-  }
-}
-
 function effectiveTaskVisibility(task: DigitalHumanTask): DigitalHumanTaskVisibility {
   if (task.visibility) return task.visibility;
   if (task.owner_kind === 'conversation') return 'conversation';
@@ -818,19 +812,25 @@ function effectiveTaskVisibility(task: DigitalHumanTask): DigitalHumanTaskVisibi
   return 'workspace';
 }
 
+// The server lists the visibilities this reader may set: the requester shares
+// or withdraws their task, and a task manager only narrows someone else's.
 function TaskVisibilityControl({
   task,
-  editable,
   onChange,
 }: {
   task: DigitalHumanTask;
-  editable: boolean;
   onChange: (visibility: DigitalHumanTaskVisibility) => void;
 }) {
   const t = useT('digitalHumans');
-  const current = effectiveTaskVisibility(task);
+  const options = task.visibility_options ?? [];
+  const stored = effectiveTaskVisibility(task);
+  // A requester-only visibility from an older build shows as this task's
+  // requester-only option.
+  const current = options.includes(stored)
+    ? stored
+    : (options.find(option => option !== 'workspace' && stored !== 'workspace') ?? stored);
   const hint = t(`tasks.visibilityControl.hint.${current}`);
-  if (!editable) {
+  if (options.length < 2) {
     return (
       <div>
         <span>{t(`tasks.visibility.${current}`)}</span>
@@ -845,7 +845,7 @@ function TaskVisibilityControl({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {taskVisibilityOptions(task).map(option => (
+          {options.map(option => (
             <SelectItem key={option} value={option}>
               {t(`tasks.visibility.${option}`)}
             </SelectItem>
