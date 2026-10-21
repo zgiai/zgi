@@ -1396,6 +1396,8 @@ const messages: DigitalHumansMessages = {
     sharedBadge: '共享',
     sharedReadOnly: '与工作空间共享。只有发起人或任务管理员可以修改。',
     visibilityNote: '除任务管理员外，还有谁能看到这个任务',
+    pendingChange: '有修改待你确认',
+    pendingChangeOpen: '打开待确认修改所在的会话',
     visibility: {
       requester: '仅发起人',
       conversation: '仅本会话',

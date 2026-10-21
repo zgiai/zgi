@@ -1517,6 +1517,8 @@ const messages = {
     sharedBadge: 'Shared',
     sharedReadOnly: 'Shared with the workspace. Only its requester or a task manager can change it.',
     visibilityNote: 'Who besides task managers can see this task',
+    pendingChange: 'Change awaiting your approval',
+    pendingChangeOpen: 'Open the conversation with this approval',
     visibility: {
       requester: 'Requester only',
       conversation: 'Conversation only',

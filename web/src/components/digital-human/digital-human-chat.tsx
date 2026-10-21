@@ -243,39 +243,58 @@ export function DigitalHumanChat({ id }: { id: string }) {
           onSelectConversation={selectConversation}
           onStartNewConversation={handleStartNewConversation}
           headerRightAction={
-            <Button variant="ghost" size="sm" asChild>
-              <Link
-                href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
-              >
-                <Brain className="mr-2 size-4" />
-                {t('chat.manageMemory')}
-              </Link>
-            </Button>
+            <div className="flex items-center gap-1">
+              {canRun ? (
+                // Below xl the task panel is a sheet. A floating button sat
+                // under the composer on phones, so it lives in the header.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="xl:hidden"
+                  onClick={() => setMobileTasksOpen(true)}
+                  aria-label={t('tasks.myTitle')}
+                  title={t('tasks.myTitle')}
+                >
+                  <ListTodo className="size-4 sm:mr-2" />
+                  <span className="hidden sm:inline">{t('tasks.myTitle')}</span>
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" asChild>
+                <Link
+                  href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
+                >
+                  <Brain className="mr-2 size-4" />
+                  {t('chat.manageMemory')}
+                </Link>
+              </Button>
+            </div>
           }
           onTaskMutation={handleTaskMutation}
         />
       </div>
       {canRun ? (
         <div className="hidden w-[22rem] shrink-0 xl:block">
-          <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+          <DigitalHumanTaskPanel
+            client={taskClient}
+            compact
+            refreshKey={taskRefreshKey}
+            onOpenPendingChange={change => selectConversation(change.conversation_id)}
+          />
         </div>
-      ) : null}
-      {canRun ? (
-        <Button
-          variant="outline"
-          size="sm"
-          className="absolute bottom-4 right-4 z-10 gap-2 shadow-md xl:hidden"
-          onClick={() => setMobileTasksOpen(true)}
-        >
-          <ListTodo className="size-4" />
-          {t('tasks.myTitle')}
-        </Button>
       ) : null}
       {canRun ? (
         <Sheet open={mobileTasksOpen} onOpenChange={setMobileTasksOpen}>
           <SheetContent side="right" className="w-full max-w-none p-0 sm:max-w-lg">
             <SheetTitle className="sr-only">{t('tasks.myTitle')}</SheetTitle>
-            <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+            <DigitalHumanTaskPanel
+              client={taskClient}
+              compact
+              refreshKey={taskRefreshKey}
+              onOpenPendingChange={change => {
+                setMobileTasksOpen(false);
+                selectConversation(change.conversation_id);
+              }}
+            />
           </SheetContent>
         </Sheet>
       ) : null}

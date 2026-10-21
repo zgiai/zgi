@@ -43,6 +43,7 @@ import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHuma
 import type {
   CreateDigitalHumanTaskRequest,
   DigitalHumanTask,
+  DigitalHumanTaskPendingChange,
   DigitalHumanTaskActivity,
   DigitalHumanTaskList,
   DigitalHumanTaskPage,
@@ -88,11 +89,14 @@ export function DigitalHumanTaskPanel({
   title = 'my',
   compact = false,
   refreshKey = 0,
+  onOpenPendingChange,
 }: {
   client: DigitalHumanTaskPanelClient;
   title?: 'my' | 'shared';
   compact?: boolean;
   refreshKey?: number;
+  // Opens the conversation that holds a task's pending approval card.
+  onOpenPendingChange?: (change: DigitalHumanTaskPendingChange) => void;
 }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
@@ -473,50 +477,54 @@ export function DigitalHumanTaskPanel({
               const displayStatus = digitalHumanTaskDisplayStatus(task);
               const statusTone = taskStatusTone(displayStatus);
               return (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => select(task)}
-                  className={`group mb-1 w-full rounded-lg border p-2.5 text-left text-sm transition-colors hover:border-primary/30 hover:bg-muted/70 ${selected?.id === task.id ? 'border-primary/40 bg-muted shadow-sm' : 'border-transparent'}`}
-                  aria-label={`${task.name}, ${t(`tasks.status.${displayStatus}`)}`}
-                >
-                  <div className="flex min-w-0 items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{task.name}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusTone.text}`}>
-                          <span className={`size-1.5 shrink-0 rounded-full ${statusTone.dot}`} aria-hidden="true" />
-                          {t(`tasks.status.${displayStatus}`)}
-                        </span>
-                        {task.priority !== 'normal' ? (
-                          <Badge variant="secondary" className="text-[11px]" title={t('tasks.priorityNote')}>
-                            {t(`tasks.priority.${task.priority}`)}
-                          </Badge>
-                        ) : null}
-                        {title === 'my' && task.can_change === false ? (
-                          <Badge variant="subtle" className="text-[11px]" title={t('tasks.sharedReadOnly')}>
-                            {t('tasks.sharedBadge')}
-                          </Badge>
-                        ) : null}
+                <div key={task.id} className="mb-1">
+                  <button
+                    type="button"
+                    onClick={() => select(task)}
+                    className={`group w-full rounded-lg border p-2.5 text-left text-sm transition-colors hover:border-primary/30 hover:bg-muted/70 ${selected?.id === task.id ? 'border-primary/40 bg-muted shadow-sm' : 'border-transparent'}`}
+                    aria-label={`${task.name}, ${t(`tasks.status.${displayStatus}`)}`}
+                  >
+                    <div className="flex min-w-0 items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{task.name}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusTone.text}`}>
+                            <span className={`size-1.5 shrink-0 rounded-full ${statusTone.dot}`} aria-hidden="true" />
+                            {t(`tasks.status.${displayStatus}`)}
+                          </span>
+                          {task.priority !== 'normal' ? (
+                            <Badge variant="secondary" className="text-[11px]" title={t('tasks.priorityNote')}>
+                              {t(`tasks.priority.${task.priority}`)}
+                            </Badge>
+                          ) : null}
+                          {title === 'my' && task.can_change === false ? (
+                            <Badge variant="subtle" className="text-[11px]" title={t('tasks.sharedReadOnly')}>
+                              {t('tasks.sharedBadge')}
+                            </Badge>
+                          ) : null}
+                        </div>
                       </div>
+                      <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
                     </div>
-                    <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-                  </div>
-                  <div className="mt-1.5 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                    <CalendarClock className="size-3.5 shrink-0" />
-                    <span className="truncate">{digitalHumanTaskScheduleSummary(task, t, locale)}</span>
-                  </div>
-                  {task.next_run_at ? (
-                    <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground">
-                      {t('tasks.fields.nextRun')} · {formatTaskDate(task.next_run_at, task.schedule.timezone)}
+                    <div className="mt-1.5 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                      <CalendarClock className="size-3.5 shrink-0" />
+                      <span className="truncate">{digitalHumanTaskScheduleSummary(task, t, locale)}</span>
                     </div>
+                    {task.next_run_at ? (
+                      <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground">
+                        {t('tasks.fields.nextRun')} · {formatTaskDate(task.next_run_at, task.schedule.timezone)}
+                      </div>
+                    ) : null}
+                    {task.last_run_at ? (
+                      <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground/80">
+                        {t('tasks.fields.lastRun')} · {formatTaskDate(task.last_run_at, task.schedule.timezone)}
+                      </div>
+                    ) : null}
+                  </button>
+                  {task.pending_change ? (
+                    <TaskPendingChangeLink change={task.pending_change} onOpen={onOpenPendingChange} />
                   ) : null}
-                  {task.last_run_at ? (
-                    <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground/80">
-                      {t('tasks.fields.lastRun')} · {formatTaskDate(task.last_run_at, task.schedule.timezone)}
-                    </div>
-                  ) : null}
-                </button>
+                </div>
               );
             })
           )}
@@ -908,6 +916,38 @@ function formatTaskDate(value: string, timezone?: string): string {
     }
   }
   return new Date(timestamp).toLocaleString(undefined, options);
+}
+
+// The approval card lives in a conversation, so the task card only points
+// to it. Surfaces that cannot switch conversations show the notice alone.
+function TaskPendingChangeLink({
+  change,
+  onOpen,
+}: {
+  change: DigitalHumanTaskPendingChange;
+  onOpen?: (change: DigitalHumanTaskPendingChange) => void;
+}) {
+  const t = useT('digitalHumans');
+  const content = (
+    <>
+      <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />
+      <span className="truncate">{t('tasks.pendingChange')}</span>
+    </>
+  );
+  if (!onOpen) {
+    return <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-warning-foreground">{content}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(change)}
+      className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-xs font-medium text-warning-foreground hover:bg-warning/10"
+      aria-label={t('tasks.pendingChangeOpen')}
+    >
+      {content}
+      <ChevronRight className="ml-auto size-3.5 shrink-0" aria-hidden="true" />
+    </button>
+  );
 }
 
 function taskStatusTone(status: string): { dot: string; text: string } {

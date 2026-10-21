@@ -261,9 +261,12 @@ type Task struct {
 	ConfirmedAt             *time.Time               `json:"confirmed_at,omitempty"`
 	// CanChange tells the reader whether it may change this task. A visible
 	// workspace task requested by someone else is read-only.
-	CanChange bool      `json:"can_change"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CanChange bool `json:"can_change"`
+	// PendingChange is set in the personal task view when a proposed change
+	// to this task waits for the reader's approval in their own conversation.
+	PendingChange *TaskPendingChange `json:"pending_change,omitempty"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 // TaskListQuery contains bounded task filters.

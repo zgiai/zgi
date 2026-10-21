@@ -16,6 +16,7 @@ import (
 type TaskHandler struct {
 	service TaskHandlerService
 	base    *Handler
+	pending TaskPendingChangeSource
 }
 
 func NewTaskHandler(service TaskHandlerService, projector *apptransport.Projector) *TaskHandler {
@@ -23,6 +24,13 @@ func NewTaskHandler(service TaskHandlerService, projector *apptransport.Projecto
 		panic("digital human task handler requires service and projector")
 	}
 	return &TaskHandler{service: service, base: &Handler{projector: projector}}
+}
+
+// WithPendingChanges marks personal-view tasks whose proposed change waits for
+// the reader's approval, so the task panel can point to the approval card.
+func (h *TaskHandler) WithPendingChanges(source TaskPendingChangeSource) *TaskHandler {
+	h.pending = source
+	return h
 }
 
 func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
@@ -235,6 +243,9 @@ func (h *TaskHandler) myList(c *gin.Context) {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.list"))
 		return
 	}
+	if result != nil {
+		withPendingChanges(c.Request.Context(), h.pending, scope, id, result.Items)
+	}
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
@@ -265,6 +276,7 @@ func (h *TaskHandler) myGet(c *gin.Context) {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.get"))
 		return
 	}
+	withPendingChanges(c.Request.Context(), h.pending, scope, id, []*Task{result})
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
