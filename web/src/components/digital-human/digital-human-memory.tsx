@@ -169,20 +169,25 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const rescope = async (memory: DigitalHumanMemoryRecord, target: 'self' | 'workspace') => {
     const state = data?.state;
     if (!state) return;
-    await mutations.rescopeMemory.mutateAsync({
-      digitalHumanId: id,
-      memoryId: memory.id,
-      request: {
-        operation_id: crypto.randomUUID(),
-        expected_revision: memory.revision,
-        config_revision: state.config_revision,
-        memory_epoch: state.memory_epoch,
-        // The server always uses the current workspace as the scope.
-        ...(target === 'self'
-          ? { memory_class: 'self' as const }
-          : { memory_class: 'business' as const, scope: { type: 'workspace' as const, id: '' } }),
-      },
-    });
+    try {
+      await mutations.rescopeMemory.mutateAsync({
+        digitalHumanId: id,
+        memoryId: memory.id,
+        request: {
+          operation_id: crypto.randomUUID(),
+          expected_revision: memory.revision,
+          config_revision: state.config_revision,
+          memory_epoch: state.memory_epoch,
+          // The server always uses the current workspace as the scope.
+          ...(target === 'self'
+            ? { memory_class: 'self' as const }
+            : { memory_class: 'business' as const, scope: { type: 'workspace' as const, id: '' } }),
+        },
+      });
+    } catch {
+      // The mutation already reports the error.
+      return;
+    }
     toast.success(t('memory.rescope.done'));
     setSelected(null);
   };
