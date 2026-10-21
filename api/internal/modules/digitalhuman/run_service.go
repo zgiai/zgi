@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"maps"
 	"slices"
 	"strconv"
@@ -977,6 +978,8 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	if s.linux != nil {
 		factory, prepareErr := s.linux.Prepare(ctx, run, resolved, event)
 		if prepareErr != nil {
+			// The public message stays generic; operators need the cause.
+			logger.WarnContext(ctx, "DigitalHuman Linux execution preparation failed", "run_id", run.ID.String(), "surface", run.Surface, prepareErr)
 			_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "The DigitalHuman Linux execution environment is not approved or available.", s.now())
 			return prepareErr
 		}
