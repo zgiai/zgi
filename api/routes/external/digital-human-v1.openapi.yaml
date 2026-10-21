@@ -951,6 +951,8 @@ components:
         id: {type: string, format: uuid, description: Task identifier.}
         digital_human_id: {type: string, format: uuid, description: DigitalHuman that owns the task capability.}
         owner_kind: {type: string, enum: [user_subject], description: Private task ownership model.}
+        visibility: {type: string, enum: [requester, conversation, workspace, restricted], description: Who besides the DigitalHuman's task managers may read the task. API tasks are visible only to their requester.}
+        can_change: {type: boolean, description: Whether the supplied user may change the task.}
         name: {type: string, description: User-visible task name.}
         goal: {type: string, description: Work assigned to the DigitalHuman.}
         success_criteria: {type: array, items: {type: string}, description: Verifiable completion criteria.}
@@ -963,6 +965,7 @@ components:
         last_run_at: {type: string, format: date-time, description: Most recent execution timestamp.}
         last_run_status: {type: string, description: Most recent execution state.}
         revision: {type: integer, description: Monotonic task revision.}
+        confirmed_at: {type: string, format: date-time, description: When the task proposal was approved.}
         created_at: {type: string, format: date-time, description: Task creation timestamp.}
         updated_at: {type: string, format: date-time, description: Most recent task update timestamp.}
     DigitalHumanTaskListEnvelope:

@@ -145,8 +145,27 @@ func digitalHumanPermissionMiddleware(organizationService interfaces.Organizatio
 			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodePermissionDenied, apperror.WithOperation("digital_human.permission.check")))
 			return
 		}
+		if isDigitalHumanTaskCenterPath(c.FullPath()) && digitalhuman.TaskVisibilityEnabled() {
+			manager := permission == workspacemodel.WorkspacePermissionDigitalHumanUpdate
+			if !manager {
+				manager, err = organizationService.CheckWorkspacePermission(
+					c.Request.Context(), util.GetOrganizationID(c), util.GetWorkspaceID(c), util.GetAccountID(c), workspacemodel.WorkspacePermissionDigitalHumanUpdate,
+				)
+				if err != nil {
+					writeDigitalHumanRouteError(c, projector, apperror.Wrap(err, appcatalog.CodeInternal, apperror.WithOperation("digital_human.permission.check")))
+					return
+				}
+			}
+			c.Set(digitalhuman.TaskManagerContextKey, manager)
+		}
 		c.Next()
 	}
+}
+
+// isDigitalHumanTaskCenterPath matches the shared task center routes, not the
+// personal my-tasks view.
+func isDigitalHumanTaskCenterPath(routePath string) bool {
+	return strings.Contains(routePath, "/digital-humans/:id/tasks")
 }
 
 func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.WorkspacePermissionCode {
@@ -326,14 +345,15 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 	)
 	dispatcher := digitalhuman.NewAsynqRunDispatcher(deps.TaskManager)
 	memoryService := digitalhuman.NewService(repository)
+	memoryPromotionAuthorizer := digitalhuman.MemoryPromotionAuthorizerFunc(
+		func(ctx context.Context, organizationID, workspaceID, actorID uuid.UUID) (bool, error) {
+			return deps.OrganizationService.CheckWorkspacePermission(
+				ctx, organizationID.String(), workspaceID.String(), actorID.String(), workspacemodel.WorkspacePermissionDigitalHumanMemoryManage,
+			)
+		},
+	)
 	memoryOptions := []digitalhuman.MemoryRuntimeProviderOption{
-		digitalhuman.WithMemoryPromotionAuthorizer(digitalhuman.MemoryPromotionAuthorizerFunc(
-			func(ctx context.Context, organizationID, workspaceID, actorID uuid.UUID) (bool, error) {
-				return deps.OrganizationService.CheckWorkspacePermission(
-					ctx, organizationID.String(), workspaceID.String(), actorID.String(), workspacemodel.WorkspacePermissionDigitalHumanMemoryManage,
-				)
-			},
-		)),
+		digitalhuman.WithMemoryPromotionAuthorizer(memoryPromotionAuthorizer),
 	}
 	var memoryRetriever digitalhuman.DigitalHumanMemoryRetriever
 	if deps.MemoryRetriever != nil {
@@ -373,6 +393,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
 		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
 		digitalhuman.WithLinuxExecutionRuntime(newDigitalHumanLinuxExecution(deps)),
+		digitalhuman.WithSourceTrustAuthorizer(memoryPromotionAuthorizer),
 	)
 	if deps.WorkflowService != nil {
 		runtimeOption := digitalhuman.WithWorkflowContinuationRunner(deps.DB,

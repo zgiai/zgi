@@ -775,6 +775,7 @@ export type DigitalHumanTaskStatus =
 export type DigitalHumanTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type DigitalHumanTaskScheduleType = 'manual' | 'once' | 'cron';
 export type DigitalHumanTaskOwnerKind = 'digital_human' | 'user_subject' | 'conversation';
+export type DigitalHumanTaskVisibility = 'requester' | 'conversation' | 'workspace' | 'restricted';
 
 export interface DigitalHumanTaskSchedule {
   type: DigitalHumanTaskScheduleType;
@@ -799,6 +800,9 @@ export interface DigitalHumanTask {
   id: string;
   digital_human_id: string;
   owner_kind: DigitalHumanTaskOwnerKind;
+  visibility?: DigitalHumanTaskVisibility;
+  /** False when the task is visible to the reader but requested by someone else. */
+  can_change?: boolean;
   name: string;
   goal: string;
   success_criteria: string[];
@@ -818,6 +822,7 @@ export interface DigitalHumanTask {
   source_conversation_type?: 'direct' | 'group';
   revision: number;
   proposal_expires_at?: string;
+  confirmed_at?: string;
   created_at: string;
   updated_at: string;
 }

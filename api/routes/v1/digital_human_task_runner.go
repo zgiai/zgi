@@ -66,12 +66,24 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 		criteria = "\nSuccess criteria:\n- " + strings.Join(req.SuccessCriteria, "\n- ")
 	}
 	query := fmt.Sprintf("Execute the confirmed task %q.\nGoal: %s%s\nWhen finished, provide the final result and any generated files.", req.Name, req.Goal, criteria)
-	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: map[string]any{"task_id": req.TaskID, "task_run_id": req.TaskRunID, "action_run_id": req.ActionRunID, "task_owner_kind": req.OwnerKind, "origin_surface": req.OriginSurface, "task_name": req.Name, "delivery_mode": req.DeliveryMode}, ReplyTo: req.ReplyTo}
+	eventContext := scheduledTaskEventContext(req, owner)
+	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: eventContext, ReplyTo: req.ReplyTo}
 	run, _, err := r.runtime.SubmitInvocation(ctx, scope, event, query, nil)
 	if err != nil {
 		return nil, err
 	}
 	return &automationaction.DigitalHumanRunResult{RunID: run.ID.String()}, nil
+}
+
+// scheduledTaskEventContext is the signed context of a scheduled task run.
+func scheduledTaskEventContext(req automationaction.DigitalHumanRunRequest, owner digitalhuman.TaskOwnerRef) map[string]any {
+	eventContext := map[string]any{"task_id": req.TaskID, "task_run_id": req.TaskRunID, "action_run_id": req.ActionRunID, "task_owner_kind": req.OwnerKind, "origin_surface": req.OriginSurface, "task_name": req.Name, "delivery_mode": req.DeliveryMode}
+	if owner.Kind == digitalhuman.TaskOwnerConversation {
+		// Preflight verified this identifier against the task's channel source,
+		// so memory scope does not depend on the result delivery address.
+		eventContext[digitalhuman.TaskOwnerConversationContextKey] = owner.ConversationID.String()
+	}
+	return eventContext
 }
 
 func taskRunScope(organizationID, workspaceID uuid.UUID, owner digitalhuman.TaskOwnerRef, executionAccountID uuid.UUID) digitalhuman.Scope {

@@ -116,13 +116,18 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 	}
 	if boundary.currentTaskID != uuid.Nil {
 		guidance = append(guidance, "This is a scheduled execution. The scheduler owns successful completion: do not mark the task completed. You may only update the current task to waiting or blocked when the work genuinely cannot finish; do not create, confirm, reschedule, rerun, or cancel tasks from this run.")
+	} else if TaskVisibilityEnabled() && boundary.access.Viewer.Mode == TaskViewMember {
+		guidance = append(guidance,
+			"Visible tasks are the tasks the current user requested plus tasks shared with the workspace. Tasks with can_change false are read-only: explain that only their requester or a task manager can change them, and never propose a change to them.",
+			"Open tasks requested by others appear only in other_open_work as time, status, and priority. Use them to reason about workload and schedule conflicts, but never guess, ask about, or reveal their content or requester.",
+		)
 	} else if boundary.access.Owner.Kind == TaskOwnerUserSubject {
 		guidance = append(guidance,
 			"Task visibility is restricted to the current signed-in user. Shared DigitalHuman tasks and other users' private tasks are intentionally hidden.",
 			"When answering a task list or status question, describe the result as the current user's tasks, not the DigitalHuman's complete shared todo list.",
 		)
 	}
-	if boundary.conversationID != "" {
+	if boundary.conversationID != "" && (!TaskVisibilityEnabled() || boundary.access.Viewer.Mode == TaskViewChannel) {
 		conversationScope := "current external conversation"
 		switch boundary.conversationType {
 		case "group":
@@ -134,6 +139,9 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 			"Task visibility is restricted to the "+conversationScope+". Tasks created in other private chats, groups, or the console are intentionally hidden.",
 			"When answering a task list or status question, explicitly describe the result as belonging to the "+conversationScope+". Never imply it is the DigitalHuman's complete todo list.",
 		)
+		if taskOccupancyEnabled(boundary) && boundary.access.Viewer.Mode == TaskViewChannel {
+			guidance = append(guidance, "Other open work of this DigitalHuman appears only in other_open_work as time, status, and priority. Use it to reason about workload and schedule conflicts, but never guess or reveal its content or requester.")
+		}
 	}
 	return strings.Join(guidance, "\n")
 }
@@ -193,6 +201,7 @@ func taskAccessForRun(run *Run, event invocation.Event, boundary taskRuntimeBoun
 		}
 		access.Owner = UserTaskOwner(usersubject.Ref{Kind: usersubject.Kind(run.UserSubjectKind), ID: *run.UserSubjectID})
 		access.Surface = SurfaceConsole
+		access.Viewer = TaskViewer{Mode: TaskViewMember}
 	case invocation.OriginAPI:
 		if run.UserSubjectID == nil || *run.UserSubjectID == uuid.Nil {
 			return TaskAccessContext{}, ErrTaskPolicyRejected
@@ -206,6 +215,7 @@ func taskAccessForRun(run *Run, event invocation.Event, boundary taskRuntimeBoun
 		}
 		access.Owner = UserTaskOwner(usersubject.Ref{Kind: kind, ID: *run.UserSubjectID})
 		access.Surface = run.Surface
+		access.Viewer = TaskViewer{Mode: TaskViewExternal}
 	case invocation.OriginChannel:
 		conversationID, err := ChannelTaskConversationID(run.OrganizationID, run.WorkspaceID, run.DigitalHumanID, event.Origin.Provider, event.Origin.InstallationID, boundary.conversationID)
 		if err != nil {
@@ -213,6 +223,7 @@ func taskAccessForRun(run *Run, event invocation.Event, boundary taskRuntimeBoun
 		}
 		access.Owner = ConversationTaskOwner(conversationID)
 		access.Surface = SurfaceChannel
+		access.Viewer = TaskViewer{Mode: TaskViewChannel}
 	case invocation.OriginSchedule:
 		if boundary.currentTaskID == uuid.Nil || event.Sender.Type != invocation.PrincipalSystem {
 			return TaskAccessContext{}, ErrTaskPolicyRejected
@@ -280,7 +291,17 @@ func (p *DefaultTaskRuntimeProvider) listTool(run *Run, boundary taskRuntimeBoun
 		for _, item := range result.Items {
 			items = append(items, newTaskListToolItem(item))
 		}
-		return taskToolSuccess(call, map[string]any{"view": view, "scope": taskListScope(boundary), "items": items, "total": result.Total, "has_more": result.HasMore})
+		payload := map[string]any{"view": view, "scope": taskListScope(boundary), "items": items, "total": result.Total, "has_more": result.HasMore}
+		if view == taskListViewOpen && taskOccupancyEnabled(boundary) {
+			if reader, ok := p.service.(TaskOccupancyReader); ok {
+				occupancy, err := reader.ListTaskOccupancy(ctx, boundary.access, 0)
+				if err != nil {
+					return taskToolFailure(taskErrorCode(err), false)
+				}
+				payload["other_open_work"] = occupancy
+			}
+		}
+		return taskToolSuccess(call, payload)
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
 }
@@ -292,15 +313,28 @@ type taskListToolScope struct {
 
 func taskListToolDescription(boundary taskRuntimeBoundary) string {
 	description := "List this DigitalHuman's visible tasks. Omit view to return unfinished work. Use completed or canceled only when relevant history is needed."
-	if boundary.conversationID != "" {
+	if boundary.conversationID != "" && (!TaskVisibilityEnabled() || boundary.access.Viewer.Mode == TaskViewChannel) {
 		description += " This channel call returns only tasks from the current conversation, not the DigitalHuman's complete todo list."
 	}
 	return description
 }
 
+// taskOccupancyEnabled reports whether the list tool reports hidden open work.
+// External end users never receive it.
+func taskOccupancyEnabled(boundary taskRuntimeBoundary) bool {
+	if !TaskVisibilityEnabled() || boundary.currentTaskID != uuid.Nil {
+		return false
+	}
+	mode := boundary.access.Viewer.Mode
+	return mode == TaskViewMember || mode == TaskViewChannel
+}
+
 func taskListScope(boundary taskRuntimeBoundary) taskListToolScope {
 	if boundary.currentTaskID != uuid.Nil {
 		return taskListToolScope{Visibility: "current_task"}
+	}
+	if TaskVisibilityEnabled() && boundary.access.Viewer.Mode == TaskViewMember {
+		return taskListToolScope{Visibility: "current_user_and_shared"}
 	}
 	if boundary.conversationID != "" {
 		return taskListToolScope{Visibility: "current_conversation", ConversationType: boundary.conversationType}
@@ -308,8 +342,13 @@ func taskListScope(boundary taskRuntimeBoundary) taskListToolScope {
 	return taskListToolScope{Visibility: "current_user"}
 }
 
+// taskReadOnlyErrorCode reports a change request for a task the current user
+// can see but did not request.
+const taskReadOnlyErrorCode = "digital_human.task.read_only"
+
 type taskListToolItem struct {
 	ID            uuid.UUID      `json:"id"`
+	CanChange     bool           `json:"can_change"`
 	Name          string         `json:"name"`
 	Goal          string         `json:"goal"`
 	WorkStatus    TaskWorkStatus `json:"work_status"`
@@ -322,7 +361,7 @@ type taskListToolItem struct {
 }
 
 func newTaskListToolItem(task *Task) taskListToolItem {
-	return taskListToolItem{ID: task.ID, Name: task.Name, Goal: task.Goal, WorkStatus: task.WorkStatus, Priority: task.Priority, NextRunAt: task.NextRunAt, LastRunAt: task.LastRunAt, LastRunStatus: task.LastRunStatus, Revision: task.Revision, UpdatedAt: task.UpdatedAt}
+	return taskListToolItem{ID: task.ID, CanChange: task.CanChange, Name: task.Name, Goal: task.Goal, WorkStatus: task.WorkStatus, Priority: task.Priority, NextRunAt: task.NextRunAt, LastRunAt: task.LastRunAt, LastRunStatus: task.LastRunStatus, Revision: task.Revision, UpdatedAt: task.UpdatedAt}
 }
 
 func (p *DefaultTaskRuntimeProvider) taskListQuery(view, keyword, historySince, historyUntil string, limit int) (TaskListQuery, string, error) {
@@ -466,6 +505,11 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			result, err := p.service.GetTask(ctx, boundary.access, *args.TaskID)
 			if err != nil {
 				return taskToolFailure(taskErrorCode(err), false)
+			}
+			// A visible task requested by someone else is read-only. Never ask
+			// the user to approve a change the approval could not apply.
+			if !result.CanChange {
+				return taskToolFailure(taskReadOnlyErrorCode, false)
 			}
 			approvalAction := taskApprovalActionForTask(args, result)
 			return taskToolSuccessWithApproval(call,
@@ -755,6 +799,18 @@ func taskApprovalDiff(task *Task, requestedInputs map[string]interface{}, action
 		}
 		after[key] = value
 	}
+	// The stored next run belongs to the old schedule. The scheduler computes
+	// the new one when the change is applied, so the preview must not present
+	// the stale value as the outcome.
+	nextRunRecalculated := false
+	if _, requested := requestedInputs["next_run_at"]; !requested {
+		beforeSchedule, _ := json.Marshal(before["schedule"])
+		afterSchedule, _ := json.Marshal(after["schedule"])
+		if string(beforeSchedule) != string(afterSchedule) {
+			delete(after, "next_run_at")
+			nextRunRecalculated = true
+		}
+	}
 	changes := make([]map[string]interface{}, 0)
 	labels := map[string]string{
 		"name": "任务名称", "goal": "任务目标", "success_criteria": "成功标准",
@@ -763,6 +819,9 @@ func taskApprovalDiff(task *Task, requestedInputs map[string]interface{}, action
 		"work_status": "工作状态", "lifecycle_status": "运行状态", "next_run_at": "下次执行时间",
 	}
 	for key, label := range labels {
+		if key == "next_run_at" && nextRunRecalculated {
+			continue
+		}
 		beforeValue := before[key]
 		afterValue := after[key]
 		beforeJSON, _ := json.Marshal(beforeValue)

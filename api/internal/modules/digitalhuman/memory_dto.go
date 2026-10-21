@@ -10,6 +10,8 @@ import (
 type MemorySourceContext struct {
 	PrivateConversation       bool `json:"private_conversation"`
 	PromotedByAuthorizedActor bool `json:"promoted_by_authorized_actor"`
+	// SourceTrust is set only by the runtime for audit; clients cannot supply it.
+	SourceTrust SourceTrust `json:"-"`
 }
 
 type MemoryProposalRequest struct {

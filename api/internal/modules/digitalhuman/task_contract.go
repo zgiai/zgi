@@ -64,9 +64,57 @@ type TaskAccessContext struct {
 	WorkspaceID    uuid.UUID
 	DigitalHumanID uuid.UUID
 	Principal      invocation.PrincipalRef
-	Owner          TaskOwnerRef
-	Surface        string
-	CurrentTaskID  *uuid.UUID
+	// Owner is the requester namespace. Mutations stay limited to it unless
+	// the viewer is a task center manager.
+	Owner         TaskOwnerRef
+	Surface       string
+	CurrentTaskID *uuid.UUID
+	// Viewer selects the read visibility rules (ADR 0005). The zero value keeps
+	// the legacy owner-namespace reads.
+	Viewer TaskViewer
+}
+
+// TaskViewMode identifies which visibility rules apply to a reader.
+type TaskViewMode string
+
+const (
+	// TaskViewTaskCenter is the console task center.
+	TaskViewTaskCenter TaskViewMode = "task_center"
+	// TaskViewMember is a workspace member in a console conversation or the
+	// personal task view.
+	TaskViewMember TaskViewMode = "member"
+	// TaskViewChannel is one external channel conversation.
+	TaskViewChannel TaskViewMode = "channel"
+	// TaskViewExternal is an external API or public WebApp end user.
+	TaskViewExternal TaskViewMode = "external"
+)
+
+// TaskViewer describes the reader of a task namespace.
+type TaskViewer struct {
+	Mode TaskViewMode
+	// Manager is set only for task center users holding the DigitalHuman
+	// update permission. Managers read and change every task.
+	Manager bool
+}
+
+// TaskManagerContextKey carries the task center manager decision from the
+// route permission check to the task handler.
+const TaskManagerContextKey = "digital_human_task_manager"
+
+// TaskOccupancy is a task the reader cannot see, reduced to the fields a
+// DigitalHuman needs to reason about its workload. It never carries the
+// task's name, goal, requester, or result.
+type TaskOccupancy struct {
+	NextRunAt       *time.Time     `json:"next_run_at,omitempty"`
+	WorkStatus      TaskWorkStatus `json:"work_status"`
+	LifecycleStatus string         `json:"lifecycle_status"`
+	Priority        TaskPriority   `json:"priority"`
+}
+
+// TaskOccupancyReader is implemented by task services that can summarize
+// hidden open work for the runtime task tools.
+type TaskOccupancyReader interface {
+	ListTaskOccupancy(context.Context, TaskAccessContext, int) ([]TaskOccupancy, error)
 }
 
 // TaskWorkStatus is the operator-visible state of a DigitalHuman-owned task.
@@ -147,11 +195,46 @@ type TaskSchedulePreview struct {
 	NextRunAt *time.Time   `json:"next_run_at,omitempty"`
 }
 
-// Task is the product-facing projection of a subject-owned automation task.
+// TaskVisibility decides who besides the task center may read a task. The
+// DigitalHuman owns every task; the owner fields identify its requester.
+type TaskVisibility string
+
+const (
+	TaskVisibilityRequester    TaskVisibility = "requester"
+	TaskVisibilityConversation TaskVisibility = "conversation"
+	TaskVisibilityWorkspace    TaskVisibility = "workspace"
+	TaskVisibilityRestricted   TaskVisibility = "restricted"
+)
+
+// Valid reports whether v is a supported visibility.
+func (v TaskVisibility) Valid() bool {
+	switch v {
+	case TaskVisibilityRequester, TaskVisibilityConversation, TaskVisibilityWorkspace, TaskVisibilityRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
+// DefaultTaskVisibility is the visibility of a task created in an owner
+// namespace, and of rows written by builds that predate visibility.
+func DefaultTaskVisibility(kind TaskOwnerKind) TaskVisibility {
+	switch kind {
+	case TaskOwnerUserSubject:
+		return TaskVisibilityRequester
+	case TaskOwnerConversation:
+		return TaskVisibilityConversation
+	default:
+		return TaskVisibilityWorkspace
+	}
+}
+
+// Task is the product-facing projection of a DigitalHuman-owned task.
 type Task struct {
 	ID               uuid.UUID            `json:"id"`
 	DigitalHumanID   uuid.UUID            `json:"digital_human_id"`
 	OwnerKind        TaskOwnerKind        `json:"owner_kind"`
+	Visibility       TaskVisibility       `json:"visibility"`
 	Name             string               `json:"name"`
 	Goal             string               `json:"goal"`
 	SuccessCriteria  []string             `json:"success_criteria"`
@@ -175,8 +258,12 @@ type Task struct {
 	SourceConversationType  string                   `json:"source_conversation_type,omitempty"`
 	Revision                int64                    `json:"revision"`
 	ProposalExpiresAt       *time.Time               `json:"proposal_expires_at,omitempty"`
-	CreatedAt               time.Time                `json:"created_at"`
-	UpdatedAt               time.Time                `json:"updated_at"`
+	ConfirmedAt             *time.Time               `json:"confirmed_at,omitempty"`
+	// CanChange tells the reader whether it may change this task. A visible
+	// workspace task requested by someone else is read-only.
+	CanChange bool      `json:"can_change"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // TaskListQuery contains bounded task filters.
@@ -233,6 +320,8 @@ type UpdateTaskRequest struct {
 	LifecycleStatus         *string `json:"lifecycle_status,omitempty"`
 	ExecutionTimeoutSeconds *int    `json:"execution_timeout_seconds,omitempty"`
 	MaxAttempts             *int    `json:"max_attempts,omitempty"`
+	// Visibility may be changed only by a task center manager.
+	Visibility *TaskVisibility `json:"visibility,omitempty"`
 }
 
 // TaskAction identifies an explicit lifecycle operation.

@@ -240,3 +240,16 @@ func taskRunnerMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	}
 	return db, mock
 }
+
+func TestScheduledTaskEventContextCarriesVerifiedChannelOwner(t *testing.T) {
+	conversationID := uuid.New()
+	req := automationaction.DigitalHumanRunRequest{TaskID: "task", OriginSurface: digitalhuman.SurfaceChannel, DeliveryMode: "task_only"}
+	channel := scheduledTaskEventContext(req, digitalhuman.ConversationTaskOwner(conversationID))
+	if channel[digitalhuman.TaskOwnerConversationContextKey] != conversationID.String() {
+		t.Fatalf("channel task context = %#v", channel)
+	}
+	console := scheduledTaskEventContext(req, digitalhuman.SharedTaskOwner())
+	if _, ok := console[digitalhuman.TaskOwnerConversationContextKey]; ok {
+		t.Fatalf("shared task context carries a channel owner: %#v", console)
+	}
+}

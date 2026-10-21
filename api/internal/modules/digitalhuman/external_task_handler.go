@@ -336,6 +336,7 @@ func externalTaskAccess(scope Scope, digitalHumanID uuid.UUID, surface string) T
 		Principal:      invocation.PrincipalRef{Type: invocation.PrincipalType(scope.PrincipalType), ID: scope.PrincipalID.String()},
 		Owner:          owner,
 		Surface:        surface,
+		Viewer:         TaskViewer{Mode: TaskViewExternal},
 	}
 }
 

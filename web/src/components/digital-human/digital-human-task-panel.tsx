@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -112,6 +113,7 @@ export function DigitalHumanTaskPanel({
   const [status, setStatus] = useState('open');
   const [priority, setPriority] = useState('all');
   const [page, setPage] = useState(1);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const loadSequenceRef = useRef(0);
   const deferredSearch = useDeferredValue(search);
   const loadErrorText = t('tasks.loadError');
@@ -124,6 +126,10 @@ export function DigitalHumanTaskPanel({
     () => tasks?.items.find(item => item.id === selectedId) ?? null,
     [selectedId, tasks]
   );
+
+  const filtersActive = search.trim() !== '' || status !== 'open' || priority !== 'all';
+  // A short personal list does not need permanent filter controls.
+  const filtersVisible = !compact || filtersOpen || filtersActive || (tasks?.total ?? 0) > 5;
 
   const load = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
@@ -282,8 +288,10 @@ export function DigitalHumanTaskPanel({
   // Lifecycle operations are deterministic user controls. Keep content edits
   // and proposal confirmation in the conversation, where the model can
   // explain the change and collect any missing details.
-  const allowDirectMutations = title === 'shared' || title === 'my';
-  const allowDirectEdit = title === 'shared' || !compact;
+  // A shared task shown in the personal view is read-only for this reader.
+  const selectedChangeable = selected?.can_change !== false;
+  const allowDirectMutations = (title === 'shared' || title === 'my') && selectedChangeable;
+  const allowDirectEdit = (title === 'shared' || !compact) && selectedChangeable;
   return (
     <section
       className={
@@ -297,6 +305,11 @@ export function DigitalHumanTaskPanel({
               <ListTodo className="size-4" />
             </span>
             <h2 className="truncate font-semibold">{titleText}</h2>
+            {tasks && tasks.total > 0 ? (
+              <span className="shrink-0 rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
+                {tasks.total}
+              </span>
+            ) : null}
             {compact && title === 'my' ? (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -322,6 +335,18 @@ export function DigitalHumanTaskPanel({
           ) : null}
         </div>
         <div className="flex shrink-0 gap-1">
+          {compact ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={filtersVisible ? 'h-8 w-8 bg-muted p-0' : 'h-8 w-8 p-0'}
+              onClick={() => setFiltersOpen(value => !value)}
+              aria-label={t('tasks.filters.toggle')}
+              aria-expanded={filtersVisible}
+            >
+              <SlidersHorizontal className="size-4" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="sm"
@@ -352,57 +377,59 @@ export function DigitalHumanTaskPanel({
           ) : null}
         </div>
       </div>
-      <div
-        className={
-          compact
-            ? 'grid gap-2 border-b p-3'
-            : 'grid gap-2 border-b p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]'
-        }
-      >
-        <Input
-          value={search}
-          onChange={event => {
-            setSearch(event.target.value);
-            setPage(1);
-          }}
-          placeholder={t('tasks.filters.search')}
-          aria-label={t('tasks.filters.search')}
-        />
-        <div className={compact ? 'grid grid-cols-2 gap-2' : 'contents'}>
-          <Select value={status} onValueChange={value => {
-            setStatus(value);
-            setPage(1);
-          }}>
-            <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.status')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('tasks.filters.allStatuses')}</SelectItem>
-              {taskStatusFilters.map(value => (
-                <SelectItem key={value} value={value}>
-                  {t(`tasks.status.${value}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={priority} onValueChange={value => {
-            setPriority(value);
-            setPage(1);
-          }}>
-            <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.priority')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('tasks.filters.allPriorities')}</SelectItem>
-              {taskPriorityFilters.map(value => (
-                <SelectItem key={value} value={value}>
-                  {t(`tasks.priority.${value}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {filtersVisible ? (
+        <div
+          className={
+            compact
+              ? 'grid gap-2 border-b p-3'
+              : 'grid gap-2 border-b p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]'
+          }
+        >
+          <Input
+            value={search}
+            onChange={event => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
+            placeholder={t('tasks.filters.search')}
+            aria-label={t('tasks.filters.search')}
+          />
+          <div className={compact ? 'grid grid-cols-2 gap-2' : 'contents'}>
+            <Select value={status} onValueChange={value => {
+              setStatus(value);
+              setPage(1);
+            }}>
+              <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.status')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('tasks.filters.allStatuses')}</SelectItem>
+                {taskStatusFilters.map(value => (
+                  <SelectItem key={value} value={value}>
+                    {t(`tasks.status.${value}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={priority} onValueChange={value => {
+              setPriority(value);
+              setPage(1);
+            }}>
+              <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.priority')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('tasks.filters.allPriorities')}</SelectItem>
+                {taskPriorityFilters.map(value => (
+                  <SelectItem key={value} value={value}>
+                    {t(`tasks.priority.${value}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
-      </div>
+      ) : null}
       <div
         className={
           compact
@@ -444,6 +471,7 @@ export function DigitalHumanTaskPanel({
           ) : (
             visibleTasks.map(task => {
               const displayStatus = digitalHumanTaskDisplayStatus(task);
+              const statusTone = taskStatusTone(displayStatus);
               return (
                 <button
                   key={task.id}
@@ -455,38 +483,44 @@ export function DigitalHumanTaskPanel({
                   <div className="flex min-w-0 items-start gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium">{task.name}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1">
-                        <Badge variant="outline" className="text-[10px]">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusTone.text}`}>
+                          <span className={`size-1.5 shrink-0 rounded-full ${statusTone.dot}`} aria-hidden="true" />
                           {t(`tasks.status.${displayStatus}`)}
-                        </Badge>
+                        </span>
                         {task.priority !== 'normal' ? (
-                          <Badge variant="secondary" className="text-[10px]" title={t('tasks.priorityNote')}>
+                          <Badge variant="secondary" className="text-[11px]" title={t('tasks.priorityNote')}>
                             {t(`tasks.priority.${task.priority}`)}
+                          </Badge>
+                        ) : null}
+                        {title === 'my' && task.can_change === false ? (
+                          <Badge variant="subtle" className="text-[11px]" title={t('tasks.sharedReadOnly')}>
+                            {t('tasks.sharedBadge')}
                           </Badge>
                         ) : null}
                       </div>
                     </div>
                     <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
                   </div>
-                  <div className="mt-1.5 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
-                    <CalendarClock className="size-3 shrink-0" />
+                  <div className="mt-1.5 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                    <CalendarClock className="size-3.5 shrink-0" />
                     <span className="truncate">{digitalHumanTaskScheduleSummary(task, t, locale)}</span>
                   </div>
                   {task.next_run_at ? (
-                    <div className="mt-0.5 truncate pl-4 text-[11px] text-muted-foreground/80">
-                      {t('tasks.fields.nextRun')} · {formatTaskDate(task.next_run_at)}
+                    <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground">
+                      {t('tasks.fields.nextRun')} · {formatTaskDate(task.next_run_at, task.schedule.timezone)}
                     </div>
                   ) : null}
                   {task.last_run_at ? (
-                    <div className="mt-0.5 truncate pl-4 text-[11px] text-muted-foreground/70">
-                      {t('tasks.fields.lastRun')} · {formatTaskDate(task.last_run_at)}
+                    <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground/80">
+                      {t('tasks.fields.lastRun')} · {formatTaskDate(task.last_run_at, task.schedule.timezone)}
                     </div>
                   ) : null}
                 </button>
               );
             })
           )}
-          {tasks && (tasks.total > 0 || page > 1) ? (
+          {tasks && (page > 1 || tasks.has_more) ? (
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t px-1 pt-3 text-xs text-muted-foreground">
               <span>{t('tasks.pagination.range', {
                 from: tasks.items.length ? (page - 1) * 100 + 1 : 0,
@@ -857,11 +891,39 @@ function TaskScheduleDetail({ label, value }: { label: string; value: string }) 
   );
 }
 
-function formatTaskDate(value: string): string {
+function formatTaskDate(value: string, timezone?: string): string {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return value;
-  return new Date(timestamp).toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
+  if (timezone) {
+    // Show the task's own zone so the time matches its schedule label.
+    try {
+      // dateStyle/timeStyle cannot be combined with timeZoneName.
+      return new Date(timestamp).toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+        timeZone: timezone, timeZoneName: 'short',
+      });
+    } catch {
+      // Unknown zone in this browser: fall back to the viewer's zone.
+    }
+  }
+  return new Date(timestamp).toLocaleString(undefined, options);
+}
+
+function taskStatusTone(status: string): { dot: string; text: string } {
+  switch (status) {
+    case 'proposed':
+    case 'waiting':
+      return { dot: 'bg-warning', text: 'text-warning-foreground' };
+    case 'blocked':
+      return { dot: 'bg-destructive', text: 'text-destructive' };
+    case 'in_progress':
+      return { dot: 'bg-primary', text: 'text-primary' };
+    case 'recurring_active':
+    case 'manual_ready':
+    case 'pending':
+      return { dot: 'bg-success', text: 'text-success-foreground' };
+    default:
+      return { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground' };
+  }
 }
