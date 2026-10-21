@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { CheckCircle2, ChevronDown, CircleDashed, FileText, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -89,13 +88,25 @@ const criterionIcon = {
 };
 
 /** The full report with its review actions, for the task center. */
-export function TaskReportDetail({ digitalHumanId, report, mine }: { digitalHumanId: string; report: DigitalHumanTaskReport; mine: boolean }) {
+export function TaskReportDetail({
+  digitalHumanId,
+  report,
+  mine,
+  onOpenRun,
+}: {
+  digitalHumanId: string;
+  report: DigitalHumanTaskReport;
+  mine: boolean;
+  // Shows the run that produced the report in place, for readers of run logs.
+  onOpenRun?: (runId: string) => void;
+}) {
   const review = useDigitalHumanTaskReportReview(digitalHumanId, mine);
+  const runId = report.digital_human_run_id;
   return (
     <TaskReportDetailView
       report={report}
       pending={review.isPending}
-      logHref={report.digital_human_run_id && !mine ? `/console/digital-humans/${digitalHumanId}/runs?run=${report.digital_human_run_id}` : undefined}
+      onOpenRun={runId && !mine && onOpenRun ? () => onOpenRun(runId) : undefined}
       onReview={async request => {
         await review.mutateAsync({ reportId: report.id, request });
       }}
@@ -107,12 +118,12 @@ export function TaskReportDetail({ digitalHumanId, report, mine }: { digitalHuma
 export function TaskReportDetailView({
   report,
   pending = false,
-  logHref,
+  onOpenRun,
   onReview,
 }: {
   report: DigitalHumanTaskReport;
   pending?: boolean;
-  logHref?: string;
+  onOpenRun?: () => void;
   onReview: (request: { action: 'accept' } | { action: 'rework'; feedback: string }) => Promise<void>;
 }) {
   const t = useT('digitalHumans');
@@ -197,12 +208,10 @@ export function TaskReportDetailView({
             {t('tasks.reports.rework')}
           </Button>
         ) : null}
-        {logHref ? (
-          <Button size="sm" variant="ghost" asChild>
-            <Link href={logHref}>
-              <FileText className="mr-1 size-4" />
-              {t('tasks.detail.viewLog')}
-            </Link>
+        {onOpenRun ? (
+          <Button size="sm" variant="ghost" onClick={onOpenRun}>
+            <FileText className="mr-1 size-4" />
+            {t('tasks.runTrace.open')}
           </Button>
         ) : null}
       </div>
@@ -236,7 +245,17 @@ export function TaskReportDetailView({
 }
 
 /** Loads one report, marks its notification read, and shows it in place. */
-export function TaskReportView({ digitalHumanId, reportId, mine }: { digitalHumanId: string; reportId: string; mine: boolean }) {
+export function TaskReportView({
+  digitalHumanId,
+  reportId,
+  mine,
+  onOpenRun,
+}: {
+  digitalHumanId: string;
+  reportId: string;
+  mine: boolean;
+  onOpenRun?: (runId: string) => void;
+}) {
   const t = useT('digitalHumans');
   const query = useDigitalHumanTaskReport(digitalHumanId, reportId, mine);
   const { markRead } = useInboxMutations();
@@ -254,7 +273,7 @@ export function TaskReportView({ digitalHumanId, reportId, mine }: { digitalHuma
     );
   }
   return report ? (
-    <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} />
+    <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} onOpenRun={onOpenRun} />
   ) : (
     <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
   );

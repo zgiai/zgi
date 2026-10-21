@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
@@ -60,6 +59,7 @@ import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import { TaskLatestReport, TaskReportFeed, TaskReportView } from '@/components/digital-human/digital-human-task-reports';
 import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
+import { DigitalHumanRunTimeline } from '@/components/digital-human/digital-human-run-timeline';
 import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
 import { TEAM_NOTIFICATION_CHANNELS_PATH } from '@/services/notification-channel.service';
 import { useLocale } from '@/hooks/use-locale';
@@ -585,7 +585,10 @@ function TaskDetailSheet({
   // A report opens inside this sheet, in place of the task, rather than in a
   // second sheet stacked over it.
   const [reportView, setReportView] = useState<string | null>(null);
-  useEffect(() => { setRunPage(1); setActivityPage(1); setReportView(null); }, [taskId]);
+  // A run opens the same way, over the report or task it was opened from.
+  const [runView, setRunView] = useState<string | null>(null);
+  const canViewLogs = useAccountPermissions().hasPermission('digital_human.logs.view');
+  useEffect(() => { setRunPage(1); setActivityPage(1); setReportView(null); setRunView(null); }, [taskId]);
   const detail = useDigitalHumanTaskDetail(id, taskId, runPage, activityPage);
   const mutations = useDigitalHumanTaskMutations(id);
   const task = detail.task.data?.data;
@@ -698,14 +701,24 @@ function TaskDetailSheet({
           <SheetTitle>{task?.name ?? t('tasks.detail.title')}</SheetTitle>
           <SheetDescription>{task?.goal ?? t('tasks.detail.description')}</SheetDescription>
         </SheetHeader>
-        {reportView ? (
+        {runView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="space-y-4 p-6">
+              <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setRunView(null)}>
+                <ArrowLeft className="size-4" />
+                {reportView ? t('tasks.runTrace.backToReport') : t('tasks.reports.backToTask')}
+              </Button>
+              <DigitalHumanRunTimeline digitalHumanId={id} runId={runView} />
+            </div>
+          </div>
+        ) : reportView ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="space-y-4 p-6">
               <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setReportView(null)}>
                 <ArrowLeft className="size-4" />
                 {t('tasks.reports.backToTask')}
               </Button>
-              <TaskReportView digitalHumanId={id} reportId={reportView} mine={false} />
+              <TaskReportView digitalHumanId={id} reportId={reportView} mine={false} onOpenRun={canViewLogs ? setRunView : undefined} />
             </div>
           </div>
         ) : detail.task.isLoading || !task ? (
@@ -802,11 +815,9 @@ function TaskDetailSheet({
                   ) : (
                     (detail.runs.data?.data.items ?? []).map(run => (
                       <DigitalHumanTaskRunSummary key={run.id} run={run} showResult={!task.latest_report}>
-                        {run.digital_human_run_id ? (
-                          <Button asChild variant="ghost" size="sm" className="mt-2">
-                            <Link href={`/console/digital-humans/${id}/runs?run=${run.digital_human_run_id}`}>
-                              {t('tasks.detail.viewLog')}
-                            </Link>
+                        {run.digital_human_run_id && canViewLogs ? (
+                          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setRunView(run.digital_human_run_id ?? null)}>
+                            {t('tasks.runTrace.open')}
                           </Button>
                         ) : null}
                       </DigitalHumanTaskRunSummary>

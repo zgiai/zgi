@@ -1450,6 +1450,14 @@ const messages: DigitalHumansMessages = {
       toTeam: '分享给团队',
       withdraw: '取消分享',
     },
+    runTrace: {
+      open: '查看执行过程',
+      steps: '执行步骤',
+      noSteps: '还没有记录到执行步骤。',
+      fullLog: '查看完整日志',
+      waitingApproval: '这次执行在等待审批，可以在完整日志里处理。',
+      backToReport: '返回汇报',
+    },
     destinations: {
       label: '汇报发送到',
       requester: '发起人的站内通知和通知渠道',

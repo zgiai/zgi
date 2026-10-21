@@ -1571,6 +1571,14 @@ const messages = {
       toTeam: 'Share with team',
       withdraw: 'Stop sharing',
     },
+    runTrace: {
+      open: 'View run',
+      steps: 'Steps',
+      noSteps: 'No steps recorded yet.',
+      fullLog: 'Full log',
+      waitingApproval: 'This run is waiting for approval. Handle it in the full log.',
+      backToReport: 'Back to report',
+    },
     destinations: {
       label: 'Reports go to',
       requester: "The requester's inbox and notification channels",

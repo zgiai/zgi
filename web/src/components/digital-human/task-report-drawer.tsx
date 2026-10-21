@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, ExternalLink } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TaskReportDetail } from '@/components/digital-human/digital-human-task-reports';
+import { DigitalHumanRunTimeline } from '@/components/digital-human/digital-human-run-timeline';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useDigitalHumanTaskReport } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useInboxList, useInboxMutations } from '@/hooks/use-inbox';
 import { useT } from '@/i18n';
@@ -82,6 +84,9 @@ export function TaskReportDrawer() {
 function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: string; reportId: string }) {
   const t = useT('digitalHumans');
   const { report, mine, isLoading, isError } = useReaderTaskReport(digitalHumanId, reportId);
+  // The run behind the report opens in place of it, for readers of run logs.
+  const [runView, setRunView] = useState<string | null>(null);
+  const canViewLogs = useAccountPermissions().hasPermission('digital_human.logs.view');
   const { markRead } = useInboxMutations();
   const markReportRead = markRead.mutate;
   useEffect(() => {
@@ -121,8 +126,16 @@ function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: st
             <Skeleton className="h-6 w-40" />
             <Skeleton className="h-24 w-full" />
           </div>
+        ) : report && runView ? (
+          <div className="space-y-4">
+            <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setRunView(null)}>
+              <ArrowLeft className="size-4" />
+              {t('tasks.runTrace.backToReport')}
+            </Button>
+            <DigitalHumanRunTimeline digitalHumanId={digitalHumanId} runId={runView} />
+          </div>
         ) : report ? (
-          <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} />
+          <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} onOpenRun={canViewLogs ? setRunView : undefined} />
         ) : isError ? (
           <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
         ) : null}
