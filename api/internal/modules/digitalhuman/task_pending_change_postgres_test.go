@@ -29,13 +29,16 @@ func TestPendingTaskChangesPostgresReturnsOnlyTheReadersOwnApprovals(t *testing.
 	reader, other := uuid.New(), uuid.New()
 	digitalHumanID, otherDigitalHuman := uuid.New(), uuid.New()
 	taskID, otherTask := uuid.New(), uuid.New()
-	conversation := func(account, caller uuid.UUID) uuid.UUID {
+	conversationFrom := func(account, caller uuid.UUID, source string) uuid.UUID {
 		row := &runtimemodel.Conversation{ID: uuid.New(), OrganizationID: organizationID, WorkspaceID: &workspaceID, AccountID: account,
-			Title: "pending", CallerType: "digital_human", CallerID: &caller, Metadata: map[string]interface{}{}}
+			Title: "pending", CallerType: "digital_human", CallerID: &caller, Source: source, Metadata: map[string]interface{}{}}
 		if err := tx.Create(row).Error; err != nil {
 			t.Fatal(err)
 		}
 		return row.ID
+	}
+	conversation := func(account, caller uuid.UUID) uuid.UUID {
+		return conversationFrom(account, caller, digitalHumanConversationSource)
 	}
 	message := func(conversationID uuid.UUID, status string, task uuid.UUID) uuid.UUID {
 		row := &runtimemodel.Message{ID: uuid.New(), ConversationID: conversationID, Query: "change it", Status: status, ModelName: "test",
@@ -52,6 +55,8 @@ func TestPendingTaskChangesPostgresReturnsOnlyTheReadersOwnApprovals(t *testing.
 	message(mine, runtimemodel.MessageStatusCompleted, otherTask)
 	message(conversation(other, digitalHumanID), runtimemodel.MessageStatusWaitingApproval, otherTask)
 	message(conversation(reader, otherDigitalHuman), runtimemodel.MessageStatusWaitingApproval, otherTask)
+	// The reader's own WebApp conversation cannot be opened in the console chat.
+	message(conversationFrom(reader, digitalHumanID, digitalHumanWebAppConversationSource), runtimemodel.MessageStatusWaitingApproval, otherTask)
 
 	scope := Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: reader}
 	got, err := NewRepository(tx).PendingTaskChanges(t.Context(), scope, digitalHumanID, []uuid.UUID{taskID, otherTask})

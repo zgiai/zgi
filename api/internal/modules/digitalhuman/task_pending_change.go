@@ -41,8 +41,10 @@ func (r *GormRepository) PendingTaskChanges(ctx context.Context, scope Scope, di
 	err := r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
 		Select("m.id AS message_id, m.conversation_id, m.metadata->'agent_workflow_continuation'->>'task_id' AS task_id").
 		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
-		Where("c.organization_id = ? AND c.workspace_id = ? AND c.account_id = ? AND c.caller_type = ? AND c.caller_id = ? AND c.deleted_at IS NULL",
-			scope.OrganizationID, scope.WorkspaceID, scope.ActorID, "digital_human", digitalHumanID).
+		// Only console conversations open in the console chat; the same account
+		// may also wait on approvals in WebApp or API conversations.
+		Where("c.organization_id = ? AND c.workspace_id = ? AND c.account_id = ? AND c.caller_type = ? AND c.caller_id = ? AND c.source = ? AND c.deleted_at IS NULL",
+			scope.OrganizationID, scope.WorkspaceID, scope.ActorID, "digital_human", digitalHumanID, digitalHumanConversationSource).
 		Where("m.deleted_at IS NULL AND m.status = ?", "waiting_approval").
 		Where("m.metadata->'agent_workflow_continuation'->>'kind' = ?", "digital_human_task").
 		Where("m.metadata->'agent_workflow_continuation'->>'task_id' IN ?", ids).

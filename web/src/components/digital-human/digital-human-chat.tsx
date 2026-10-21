@@ -28,6 +28,7 @@ import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
+import type { DigitalHumanTaskPendingChange } from '@/services/types/digital-human';
 
 const conversationParam = 'conversation';
 
@@ -143,6 +144,33 @@ export function DigitalHumanChat({ id }: { id: string }) {
       replaceConversationParam(conversationId);
     },
     [initialConversationId, replaceConversationParam]
+  );
+
+  // Brings a pending task approval into view once its conversation shows it.
+  const [approvalMessageId, setApprovalMessageId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!approvalMessageId) return;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      const target = document.querySelector<HTMLElement>(
+        `[data-chat-message-id="${CSS.escape(approvalMessageId)}"]`
+      );
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (target || attempts >= 40) {
+        window.clearInterval(timer);
+        setApprovalMessageId(null);
+      }
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [approvalMessageId]);
+
+  const openPendingChange = useCallback(
+    (change: DigitalHumanTaskPendingChange) => {
+      selectConversation(change.conversation_id);
+      setApprovalMessageId(change.message_id);
+    },
+    [selectConversation]
   );
 
   const handleStartNewConversation = useCallback(() => {
@@ -278,7 +306,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
             client={taskClient}
             compact
             refreshKey={taskRefreshKey}
-            onOpenPendingChange={change => selectConversation(change.conversation_id)}
+            onOpenPendingChange={openPendingChange}
           />
         </div>
       ) : null}
@@ -292,7 +320,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
               refreshKey={taskRefreshKey}
               onOpenPendingChange={change => {
                 setMobileTasksOpen(false);
-                selectConversation(change.conversation_id);
+                openPendingChange(change);
               }}
             />
           </SheetContent>
