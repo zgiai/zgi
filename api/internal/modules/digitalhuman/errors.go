@@ -1,6 +1,9 @@
 package digitalhuman
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrInvalidRequest indicates invalid or incomplete DigitalHuman input.
@@ -55,6 +58,10 @@ var (
 	ErrTaskConflict = errors.New("digital human task conflict")
 	// ErrTaskPolicyRejected indicates that the invocation cannot manage tasks.
 	ErrTaskPolicyRejected = errors.New("digital human task policy rejected")
+	// ErrTaskVisibilityForbidden indicates that only a task center manager may
+	// change who can see a task. It is a task policy rejection that is
+	// reported as missing permission rather than as an unsupported surface.
+	ErrTaskVisibilityForbidden = fmt.Errorf("%w: task visibility requires a task center manager", ErrTaskPolicyRejected)
 	// ErrChannelInstallationNotFound indicates a missing scoped channel installation.
 	ErrChannelInstallationNotFound = errors.New("digital human channel installation not found")
 	// ErrChannelCredentialNotFound indicates that an installation does not own

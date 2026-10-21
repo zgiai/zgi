@@ -634,6 +634,12 @@ func (h *ExternalHandler) apiUserScope(c *gin.Context, key *APIKey, access *Publ
 		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.external.user")
 		return Scope{}, false
 	}
+	if h.access != nil {
+		if err := h.access.EnsureAPIEndUserSubject(c.Request.Context(), access.Definition.ID, subject); err != nil {
+			h.writeApplicationError(c, err, "digital_human.external.user")
+			return Scope{}, false
+		}
+	}
 	subjectID := subject.ID
 	return Scope{
 		OrganizationID: access.Definition.OrganizationID, WorkspaceID: access.Definition.WorkspaceID,
