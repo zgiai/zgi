@@ -54,6 +54,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
+import { TaskLatestReport, TaskReportFeed, TaskReportSheet } from '@/components/digital-human/digital-human-task-reports';
 import { useLocale } from '@/hooks/use-locale';
 import {
   useDigitalHumanTaskDetail,
@@ -116,6 +117,8 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const rawPage = Number(searchParams.get('page') ?? 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= 10_000 ? rawPage : 1;
   const selectedTaskID = searchParams.get(taskParam) ?? '';
+  const tab = searchParams.get('tab') === 'reports' ? 'reports' : 'tasks';
+  const selectedReportID = searchParams.get('report');
   const [editorTask, setEditorTask] = useState<DigitalHumanTask | null | undefined>();
   const query = useDigitalHumanTasks(id, {
     page,
@@ -161,6 +164,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
     return () => window.clearTimeout(timer);
   }, [search, updateParams, urlSearch]);
   const setSelectedTaskID = (taskId?: string) => updateParams({ [taskParam]: taskId ?? null });
+  const openReport = (reportId: string) => updateParams({ report: reportId });
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-5 px-4 py-6 md:px-8 md:py-8">
@@ -193,6 +197,29 @@ export function DigitalHumanTasks({ id }: { id: string }) {
         </div>
       </div>
 
+      <div role="tablist" className="flex gap-1 border-b">
+        {(['tasks', 'reports'] as const).map(item => (
+          <button
+            key={item}
+            type="button"
+            role="tab"
+            aria-selected={tab === item}
+            className={cn(
+              '-mb-px border-b-2 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
+              tab === item && 'border-primary text-foreground',
+              tab !== item && 'border-transparent'
+            )}
+            onClick={() => updateParams({ tab: item === 'tasks' ? null : item, page: null })}
+          >
+            {item === 'tasks' ? t('tasks.reports.tasksTab') : t('tasks.reports.tab')}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'reports' ? (
+        <TaskReportFeed digitalHumanId={id} onOpen={openReport} />
+      ) : (
+      <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
         {summaryStatuses.map(item => (
           <button
@@ -311,7 +338,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                 <button
                   key={task.id}
                   type="button"
-                  className="grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_130px] xl:items-center xl:gap-4 xl:px-5"
+                  className="grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_minmax(160px,1fr)] xl:items-center xl:gap-4 xl:px-5"
                   onClick={() => setSelectedTaskID(task.id)}
                 >
                   <div className="min-w-0">
@@ -335,9 +362,13 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                     {task.next_run_at ? formatDate(task.next_run_at) : '—'}
                   </TaskListCell>
                   <TaskListCell label={t('tasks.columns.lastResult')}>
-                    {task.last_run_status
-                      ? t(`tasks.runStatus.${normalizeRunStatus(task.last_run_status)}`)
-                      : t('tasks.neverRun')}
+                    {task.latest_report ? (
+                      <TaskLatestReport report={task.latest_report} onOpen={openReport} />
+                    ) : task.last_run_status ? (
+                      t(`tasks.runStatus.${normalizeRunStatus(task.last_run_status)}`)
+                    ) : (
+                      t('tasks.neverRun')
+                    )}
                   </TaskListCell>
                 </button>
               ))}
@@ -364,7 +395,17 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           </div>
         ) : null}
       </section>
+      </>
+      )}
 
+      <TaskReportSheet
+        digitalHumanId={id}
+        reportId={selectedReportID}
+        mine={false}
+        onOpenChange={open => {
+          if (!open) updateParams({ report: null });
+        }}
+      />
       <TaskEditorDialog
         id={id}
         task={editorTask}
@@ -380,6 +421,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
         canUpdate={canUpdate}
         canRun={canRun}
         onEdit={task => setEditorTask(task)}
+        onOpenReport={openReport}
         onOpenChange={open => {
           if (!open) setSelectedTaskID();
         }}
@@ -507,6 +549,7 @@ function TaskDetailSheet({
   canUpdate,
   canRun,
   onEdit,
+  onOpenReport,
   onOpenChange,
 }: {
   id: string;
@@ -515,6 +558,7 @@ function TaskDetailSheet({
   canUpdate: boolean;
   canRun: boolean;
   onEdit: (task: DigitalHumanTask) => void;
+  onOpenReport: (reportId: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useT('digitalHumans');
@@ -669,6 +713,12 @@ function TaskDetailSheet({
                   </ul>
                 </section>
               ) : null}
+              <section>
+                <h3 className="text-sm font-semibold">{t('tasks.reports.history')}</h3>
+                <div className="mt-3">
+                  <TaskReportFeed digitalHumanId={id} taskId={task.id} onOpen={onOpenReport} />
+                </div>
+              </section>
               <section>
                 <h3 className="text-sm font-semibold">{t('tasks.detail.runs')}</h3>
                 <div className="mt-3 space-y-2">

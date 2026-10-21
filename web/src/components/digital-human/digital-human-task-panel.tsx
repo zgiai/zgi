@@ -39,6 +39,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { translateTimezone } from '@/utils/timezone';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
+import { TaskLatestReport, TaskPanelReports, type TaskReportClient } from '@/components/digital-human/digital-human-task-reports';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import type {
   CreateDigitalHumanTaskRequest,
@@ -79,6 +80,8 @@ export interface DigitalHumanTaskPanelClient {
     revision: number
   ) => Promise<ApiResponseData<DigitalHumanTask>>;
   runs: (taskId: string, page: number) => Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskRun>>>;
+  // Task reports through this surface's API. Without it the panel shows no reports.
+  reports?: TaskReportClient;
   activities: (
     taskId: string,
     page: number
@@ -536,6 +539,11 @@ export function DigitalHumanTaskPanel({
                         {t('tasks.fields.lastRun')} · {formatTaskDate(task.last_run_at, task.schedule.timezone)}
                       </div>
                     ) : null}
+                    {task.latest_report ? (
+                      <div className="mt-1.5 min-w-0">
+                        <TaskLatestReport report={task.latest_report} />
+                      </div>
+                    ) : null}
                   </button>
                   {task.pending_change ? (
                     <TaskPendingChangeLink change={task.pending_change} onOpen={onOpenPendingChange} />
@@ -581,6 +589,8 @@ export function DigitalHumanTaskPanel({
               onCancelEdit={() => setEditing(false)}
               onAction={action}
               onChangeVisibility={changeVisibility}
+              reportClient={client.reports}
+              onReportsChanged={() => void load()}
               allowProposalApproval
               allowDirectMutations={allowDirectMutations}
               allowDirectEdit={allowDirectEdit}
@@ -612,6 +622,8 @@ export function DigitalHumanTaskPanel({
                 onCancelEdit={() => setEditing(false)}
                 onAction={action}
                 onChangeVisibility={changeVisibility}
+                reportClient={client.reports}
+                onReportsChanged={() => void load()}
                 allowProposalApproval={false}
                 allowDirectMutations={allowDirectMutations}
                 allowDirectEdit={allowDirectEdit}
@@ -688,6 +700,8 @@ function TaskDetailContent({
   onCancelEdit,
   onAction,
   onChangeVisibility,
+  reportClient,
+  onReportsChanged,
   allowProposalApproval,
   allowDirectMutations,
   allowDirectEdit,
@@ -704,6 +718,8 @@ function TaskDetailContent({
   onCancelEdit: () => void;
   onAction: (name: string) => Promise<void>;
   onChangeVisibility: (visibility: DigitalHumanTaskVisibility) => Promise<void>;
+  reportClient?: TaskReportClient;
+  onReportsChanged?: () => void;
   allowProposalApproval: boolean;
   allowDirectMutations: boolean;
   allowDirectEdit: boolean;
@@ -905,6 +921,12 @@ function TaskDetailContent({
           ) : null}
         </div>
       </section>
+      {reportClient ? (
+        <div className="border-t pt-3">
+          <h4 className="mb-2 text-xs font-medium text-muted-foreground">{t('tasks.reports.history')}</h4>
+          <TaskPanelReports client={reportClient} taskId={selected.id} onChanged={onReportsChanged} />
+        </div>
+      ) : null}
       <div className="border-t pt-3">
         <h4 className="text-xs font-medium text-muted-foreground">{t('tasks.detail.runs')}</h4>
         {history.historyError ? (

@@ -451,6 +451,10 @@ const messages = {
     },
   },
   consoleChat: {
+    taskReport: {
+      title: 'Task report',
+      outcome: { done: 'Done', partial: 'Partly done', not_done: 'Not done', failed: 'Failed' },
+    },
     title: 'Workbench assistant',
     loading: 'Loading chat service...',
     loadError: 'Failed to load chat service',

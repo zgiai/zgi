@@ -45,6 +45,10 @@ import type {
   DigitalHumanTaskList,
   DigitalHumanTaskRun,
   DigitalHumanTaskActivity,
+  DigitalHumanTaskReport,
+  DigitalHumanTaskReportList,
+  DigitalHumanTaskReportParams,
+  ReviewDigitalHumanTaskReportRequest,
   DigitalHumanTaskPage,
   DigitalHumanTaskSchedulePreview,
   DigitalHumanTaskSchedulePreviewRequest,
@@ -555,6 +559,28 @@ class DigitalHumanService extends BaseService {
     page = 1
   ): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}/activities`, undefined, { params: { page } });
+  }
+
+  // Task reports: `mine` reads the caller's own tasks; otherwise the task center.
+  listTaskReports(
+    id: string,
+    params: DigitalHumanTaskReportParams = {},
+    mine = false
+  ): Promise<ApiResponseData<DigitalHumanTaskReportList>> {
+    return this.request('get', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}`, undefined, { params });
+  }
+
+  getTaskReport(id: string, reportId: string, mine = false): Promise<ApiResponseData<DigitalHumanTaskReport>> {
+    return this.request('get', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}`);
+  }
+
+  reviewTaskReport(
+    id: string,
+    reportId: string,
+    request: ReviewDigitalHumanTaskReportRequest,
+    mine = false
+  ): Promise<ApiResponseData<DigitalHumanTaskReport>> {
+    return this.request('post', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}/review`, request);
   }
 }
 

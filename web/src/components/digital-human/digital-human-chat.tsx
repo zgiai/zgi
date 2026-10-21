@@ -28,6 +28,7 @@ import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
+import { inboxService } from '@/services/inbox.service';
 import type { DigitalHumanTaskPendingChange } from '@/services/types/digital-human';
 
 const conversationParam = 'conversation';
@@ -55,6 +56,11 @@ export function DigitalHumanChat({ id }: { id: string }) {
         digitalHumanService.applyMyTaskAction(id, taskId, action, revision),
       runs: (taskId, page) => digitalHumanService.listMyTaskRuns(id, taskId, page),
       activities: (taskId, page) => digitalHumanService.listMyTaskActivities(id, taskId, page),
+      reports: {
+        list: taskId => digitalHumanService.listTaskReports(id, { task_id: taskId }, true),
+        review: (reportId, request) => digitalHumanService.reviewTaskReport(id, reportId, request, true),
+        viewed: reportId => void inboxService.markRead({ source_type: 'digital_human_task_report', source_id: reportId }).catch(() => undefined),
+      },
     }),
     [id]
   );

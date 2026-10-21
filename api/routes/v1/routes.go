@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -283,9 +284,12 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	if digitalHumanRuntime.Runtime != nil {
 		approvalResumeHosts.Register(digitalHumanRuntime.Runtime)
 	}
+	inboxService := inbox.NewService(db)
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
+		automationBundle.DigitalHumanTaskReconciler.SetReportNotifier(digitalHumanReportInbox{inbox: inboxService})
 	}
+	RegisterInboxRoutes(v1, InboxRouteDeps{Service: inboxService, AccountService: accountService, ApplicationErrorCatalog: applicationErrorCatalog})
 	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 	consoleDigitalHumanService := serviceContainer.GetDigitalHumanService()

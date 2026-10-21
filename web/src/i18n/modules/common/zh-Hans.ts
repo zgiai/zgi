@@ -407,6 +407,12 @@ const messages: CommonMessages = {
     timelineBlocked: '部分内容已被拦截',
   },
 
+  inbox: {
+    title: '通知',
+    markAllRead: '全部已读',
+    empty: '还没有通知。',
+    event: { taskReport: '任务汇报', taskFailed: '任务执行失败' },
+  },
   notificationSms: {
     fields: {
       recipients: '手机号',

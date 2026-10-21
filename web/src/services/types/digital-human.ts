@@ -823,6 +823,8 @@ export interface DigitalHumanTask {
   // Set in the personal view when a proposed change to this task waits for
   // the reader's approval in one of their conversations.
   pending_change?: DigitalHumanTaskPendingChange;
+  /** The newest final report of the task. */
+  latest_report?: DigitalHumanTaskReportSummary;
   name: string;
   goal: string;
   success_criteria: string[];
@@ -895,6 +897,61 @@ export interface DigitalHumanTaskRun {
   started_at?: string;
   finished_at?: string;
   created_at: string;
+}
+
+export type DigitalHumanTaskReportOutcome = 'done' | 'partial' | 'not_done' | 'failed';
+export type DigitalHumanTaskReportReviewState = 'new' | 'accepted' | 'rework_requested';
+export type DigitalHumanTaskCriterionStatus = 'met' | 'not_met' | 'unknown';
+
+export interface DigitalHumanTaskReportSummary {
+  id: string;
+  outcome: DigitalHumanTaskReportOutcome;
+  summary: string;
+  review_state: DigitalHumanTaskReportReviewState;
+  created_at: string;
+}
+
+/** What one task run hands back (ADR 0008). */
+export interface DigitalHumanTaskReport {
+  id: string;
+  digital_human_id: string;
+  task_id: string;
+  task_name: string;
+  task_run_id: string;
+  digital_human_run_id?: string;
+  attempt: number;
+  outcome: DigitalHumanTaskReportOutcome;
+  summary: string;
+  body?: string;
+  criteria: { criterion: string; status: DigitalHumanTaskCriterionStatus; note?: string }[];
+  issues?: string;
+  source: 'report_tool' | 'system';
+  final: boolean;
+  review_state: DigitalHumanTaskReportReviewState;
+  review_feedback?: string;
+  reviewed_at?: string;
+  can_review: boolean;
+  created_at: string;
+}
+
+export interface DigitalHumanTaskReportList {
+  items: DigitalHumanTaskReport[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DigitalHumanTaskReportParams {
+  task_id?: string;
+  'review_state[]'?: DigitalHumanTaskReportReviewState[];
+  'outcome[]'?: DigitalHumanTaskReportOutcome[];
+  page?: number;
+  page_size?: number;
+}
+
+export interface ReviewDigitalHumanTaskReportRequest {
+  action: 'accept' | 'rework';
+  feedback?: string;
 }
 
 export interface DigitalHumanTaskActivity {

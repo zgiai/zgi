@@ -420,6 +420,12 @@ const messages = {
     timelineBlocked: 'Some content was blocked',
   },
 
+  inbox: {
+    title: 'Notifications',
+    markAllRead: 'Mark all read',
+    empty: 'No notifications yet.',
+    event: { taskReport: 'Task report', taskFailed: 'Task failed' },
+  },
   notificationSms: {
     fields: {
       recipients: 'Phone numbers',

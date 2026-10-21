@@ -34,7 +34,7 @@ import {
   useDigitalHumanChannelMutations,
   useDigitalHumanChannels,
 } from '@/hooks/digital-human/use-digital-human-channels';
-import { useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
+import { useDigitalHumanMyTasks, useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useDigitalHuman, useDigitalHumanRuns } from '@/hooks/digital-human/use-digital-humans';
 import { useLocale } from '@/hooks/use-locale';
 import { useMediaQuery } from '@/hooks/use-media-query';
@@ -65,10 +65,13 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const { locale } = useLocale();
   const detail = useDigitalHuman(id);
   const tasks = useDigitalHumanTasks(id, currentLocalDayRunWindow());
+  const permissions = useAccountPermissions();
+  // The reader's own tasks: private tasks are not in the task center list for
+  // members, but their proposals, failures, and reports still need attention.
+  const myTasks = useDigitalHumanMyTasks(id, {}, permissions.hasPermission('digital_human.run'));
   const runs = useDigitalHumanRuns(id);
   const channels = useDigitalHumanChannels(id, true);
   const channelMutations = useDigitalHumanChannelMutations(id);
-  const permissions = useAccountPermissions();
   const canManageDeliveries = permissions.hasPermission('digital_human.run');
   const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>(
     'idle'
@@ -116,6 +119,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
     const results = await Promise.allSettled([
       detail.refetch(),
       tasks.refetch(),
+      myTasks.refetch(),
       runs.refetch(),
       channels.installations.refetch(),
       channels.events.refetch(),
@@ -152,6 +156,11 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const textIcon = getAgentTextIconDisplay(definition.icon_type, definition.icon, definition.name);
   const published = detail.data.data.published;
   const taskItems = tasks.data?.data.items ?? [];
+  const taskCenterIds = new Set(taskItems.map(task => task.id));
+  const ownTaskItems = (myTasks.data?.data.items ?? []).filter(task => !taskCenterIds.has(task.id));
+  const attentionCandidates = [...taskItems, ...ownTaskItems];
+  const taskHref = (task: DigitalHumanTask) =>
+    taskCenterIds.has(task.id) ? `/console/digital-humans/${id}/tasks?task=${task.id}` : `/console/digital-humans/${id}/chat`;
   const taskCounts = tasks.data?.data.counts ?? {};
   const runItems = runs.data?.data.items ?? [];
   const installations = channels.installations.data?.data ?? [];
@@ -164,21 +173,27 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const failedDeliveries = deliveries.filter(delivery =>
     ['failed', 'unknown'].includes(delivery.status)
   );
-  const attentionTasks = taskItems
+  const attentionTasks = attentionCandidates
     .filter(task => ['proposed', 'blocked'].includes(task.work_status))
     .sort((left, right) => taskStatusOrder[left.work_status] - taskStatusOrder[right.work_status]);
   const attentionTaskIds = new Set(attentionTasks.map(task => task.id));
-  const failedTaskRuns = taskItems.filter(
+  const failedTaskRuns = attentionCandidates.filter(
     task =>
       task.lifecycle_status !== 'archived' &&
       normalizeRunStatus(task.last_run_status ?? '') === 'failed' &&
       !attentionTaskIds.has(task.id)
   );
+  const failedTaskRunIds = new Set(failedTaskRuns.map(task => task.id));
+  const reportsToReview = attentionCandidates.filter(
+    task => task.latest_report?.review_state === 'new' && !attentionTaskIds.has(task.id) && !failedTaskRunIds.has(task.id)
+  );
   const allAttentionItems = buildDashboardAttentionItems({
     id,
     attentionTasks,
     failedTaskRuns,
+    reportsToReview,
     failedDeliveries,
+    taskHref,
     t,
   });
   const attentionItems = allAttentionItems.filter(item => !ignoredAttentionKeys.has(item.key));
@@ -899,13 +914,17 @@ function buildDashboardAttentionItems({
   id,
   attentionTasks,
   failedTaskRuns,
+  reportsToReview,
   failedDeliveries,
+  taskHref,
   t,
 }: {
   id: string;
   attentionTasks: DigitalHumanTask[];
   failedTaskRuns: DigitalHumanTask[];
+  reportsToReview: DigitalHumanTask[];
   failedDeliveries: DigitalHumanChannelDelivery[];
+  taskHref: (task: DigitalHumanTask) => string;
   t: ReturnType<typeof useT<'digitalHumans'>>;
 }) {
   const items: DashboardAttentionItem[] = [
@@ -916,7 +935,7 @@ function buildDashboardAttentionItems({
         task.work_status === 'proposed'
           ? t('dashboard.proposalNeedsDecision')
           : t('dashboard.blockedNeedsHelp'),
-      href: `/console/digital-humans/${id}/tasks?task=${task.id}`,
+      href: taskHref(task),
       tone: task.work_status === 'blocked' ? ('danger' as const) : ('warning' as const),
       occurredAt: task.updated_at,
     })),
@@ -924,9 +943,17 @@ function buildDashboardAttentionItems({
       key: `failed-run-${task.id}-${task.last_run_at ?? task.updated_at}`,
       title: task.name,
       description: t('dashboard.taskRunFailedNeedsReview'),
-      href: `/console/digital-humans/${id}/tasks?task=${task.id}`,
+      href: taskHref(task),
       tone: 'danger' as const,
       occurredAt: task.last_run_at ?? task.updated_at,
+    })),
+    ...reportsToReview.map(task => ({
+      key: `report-${task.latest_report?.id}`,
+      title: task.name,
+      description: t('dashboard.reportToReview'),
+      href: taskHref(task),
+      tone: 'warning' as const,
+      occurredAt: task.latest_report?.created_at ?? task.updated_at,
     })),
     ...failedDeliveries.map(delivery => ({
       key: `failed-delivery-${delivery.id}-${delivery.status}-${delivery.updated_at}`,

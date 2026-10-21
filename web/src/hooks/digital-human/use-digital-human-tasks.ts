@@ -4,7 +4,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { digitalHumanService } from '@/services/digital-human.service';
-import type { CreateDigitalHumanTaskRequest, UpdateDigitalHumanTaskRequest } from '@/services/types/digital-human';
+import type {
+  CreateDigitalHumanTaskRequest,
+  DigitalHumanTaskReportParams,
+  ReviewDigitalHumanTaskReportRequest,
+  UpdateDigitalHumanTaskRequest,
+} from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 export interface DigitalHumanTaskFilters {
@@ -26,11 +31,11 @@ export function useDigitalHumanTasks(id: string, filters: DigitalHumanTaskFilter
   });
 }
 
-export function useDigitalHumanMyTasks(id: string, filters: DigitalHumanTaskFilters = {}) {
+export function useDigitalHumanMyTasks(id: string, filters: DigitalHumanTaskFilters = {}, enabled = true) {
   return useQuery({
     queryKey: [...DIGITAL_HUMAN_KEYS.tasks(id), 'mine', filters],
     queryFn: () => digitalHumanService.listMyTasks(id, { page: filters.page ?? 1, page_size: 100, ...filters }),
-    enabled: Boolean(id),
+    enabled: Boolean(id) && enabled,
     refetchInterval: current => current.state.data?.data.items.some(item => item.work_status === 'in_progress') ? 3_000 : 15_000,
   });
 }
@@ -77,4 +82,40 @@ export function useDigitalHumanMyTaskMutations(id: string) {
   const update = useMutation({ mutationFn: ({ taskId, request }: { taskId: string; request: UpdateDigitalHumanTaskRequest }) => digitalHumanService.updateMyTask(id, taskId, request), onSuccess: invalidate, onError: handleError });
   const action = useMutation({ mutationFn: ({ taskId, action, revision }: { taskId: string; action: string; revision: number }) => digitalHumanService.applyMyTaskAction(id, taskId, action, revision), onSuccess: invalidate, onError: handleError });
   return { create, update, action };
+}
+
+// Task reports of the task center, or of the reader's own tasks when `mine`.
+export function useDigitalHumanTaskReports(
+  id: string,
+  params: DigitalHumanTaskReportParams = {},
+  mine = false,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.taskReports(id, { ...params, mine }),
+    queryFn: () => digitalHumanService.listTaskReports(id, params, mine),
+    enabled: Boolean(id) && enabled,
+  });
+}
+
+export function useDigitalHumanTaskReport(id: string, reportId: string | null, mine = false) {
+  return useQuery({
+    queryKey: [...DIGITAL_HUMAN_KEYS.taskReports(id), 'report', reportId, mine],
+    queryFn: () => digitalHumanService.getTaskReport(id, reportId ?? '', mine),
+    enabled: Boolean(id && reportId),
+  });
+}
+
+// Accepting a report or asking for rework changes the report, its task, and
+// the reader's inbox.
+export function useDigitalHumanTaskReportReview(id: string, mine = false) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ reportId, request }: { reportId: string; request: ReviewDigitalHumanTaskReportRequest }) =>
+      digitalHumanService.reviewTaskReport(id, reportId, request, mine),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.detail(id) });
+    },
+    onError: (error: unknown) => toast.error(getErrorMessage(error)),
+  });
 }
