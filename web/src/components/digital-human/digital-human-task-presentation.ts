@@ -24,6 +24,28 @@ export function digitalHumanTaskDisplayStatus(
   return task.work_status;
 }
 
+/** The viewer's own time zone; task times are shown in it. */
+export function viewerTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+/**
+ * A task time in the viewer's zone, such as "Oct 21, 7:30 PM". The year is
+ * shown only when it is not the current one.
+ */
+export function formatTaskTime(value: string | null | undefined, locale?: string): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric';
+  return new Intl.DateTimeFormat(locale, options).format(date);
+}
+
 export function digitalHumanTaskScheduleSummary(
   task: DigitalHumanTask,
   t: ReturnType<typeof useT<'digitalHumans'>>,
@@ -32,16 +54,12 @@ export function digitalHumanTaskScheduleSummary(
   const schedule = task.schedule;
   if (schedule.type === 'manual') return t('tasks.schedule.manual');
   if (schedule.type === 'once') {
-    const runAt = schedule.run_at ? new Date(schedule.run_at) : null;
-    const time = runAt && Number.isFinite(runAt.getTime())
-      ? new Intl.DateTimeFormat(locale, {
-          timeZone: schedule.timezone || 'UTC', dateStyle: 'medium', timeStyle: 'short',
-        }).format(runAt)
-      : '—';
-    return `${t('tasks.schedule.once')} · ${time}`;
+    return `${t('tasks.schedule.once')} · ${formatTaskTime(schedule.run_at, locale)}`;
   }
   const description = describeCronSchedule(schedule.cron, t);
-  return schedule.timezone
+  // A recurring rule keeps its own zone; name it only when it differs from
+  // the viewer's, since every other time on the page is in the viewer's.
+  return schedule.timezone && schedule.timezone !== viewerTimeZone()
     ? `${description} · ${translateTimezone(schedule.timezone, locale)}`
     : description;
 }

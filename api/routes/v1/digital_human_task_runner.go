@@ -82,6 +82,9 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 // scheduledTaskEventContext is the signed context of a scheduled task run.
 func scheduledTaskEventContext(req automationaction.DigitalHumanRunRequest, owner digitalhuman.TaskOwnerRef) map[string]any {
 	eventContext := map[string]any{"task_id": req.TaskID, "task_run_id": req.TaskRunID, "action_run_id": req.ActionRunID, "task_owner_kind": req.OwnerKind, "origin_surface": req.OriginSurface, "task_name": req.Name, "delivery_mode": req.DeliveryMode}
+	if req.Trigger != "" {
+		eventContext["task_trigger"] = req.Trigger
+	}
 	if owner.Kind == digitalhuman.TaskOwnerConversation {
 		// Preflight verified this identifier against the task's channel source,
 		// so memory scope does not depend on the result delivery address.

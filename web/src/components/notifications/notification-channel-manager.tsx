@@ -206,10 +206,15 @@ function ChannelRow({
         <Icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium">{channel.name}</span>
-            <Badge variant={statusVariant}>{t(`notifications.status.${channel.status}`)}</Badge>
+            <span className="break-all text-sm font-medium">{channel.name || channel.target}</span>
+            {/* The switch already shows whether a manageable channel is on. */}
+            {!canManage || channel.status === 'pending' ? (
+              <Badge variant={statusVariant}>{t(`notifications.status.${channel.status}`)}</Badge>
+            ) : null}
           </div>
-          <p className="mt-0.5 break-all text-xs text-muted-foreground">{channel.target}</p>
+          {channel.name && channel.name !== channel.target ? (
+            <p className="mt-0.5 break-all text-xs text-muted-foreground">{channel.target}</p>
+          ) : null}
         </div>
         {canManage && channel.status !== 'pending' ? (
           <div className="flex items-center gap-2">

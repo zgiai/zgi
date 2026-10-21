@@ -19,6 +19,7 @@ import { DigitalHumanBackgroundRunFiles } from './digital-human-background-run-f
 import {
   digitalHumanRunApprovalReceipt,
   isActiveDigitalHumanRunStatus,
+  digitalHumanRunStartedByPerson,
 } from '@/components/digital-human/digital-human-run-presentation';
 import {
   useDigitalHumanRun,
@@ -283,7 +284,9 @@ function normalizedRunSource(run: DigitalHumanRun) {
     (typeof origin?.kind === 'string' && origin.kind) ||
     (typeof run.invocation_event?.type === 'string' && run.invocation_event.type) ||
     'manual';
-  if (source === 'schedule' || source === 'scheduled') return 'scheduled' as const;
+  if (source === 'schedule' || source === 'scheduled') {
+    return digitalHumanRunStartedByPerson(run) ? ('manual' as const) : ('scheduled' as const);
+  }
   if (source === 'email') return 'email' as const;
   if (source === 'channel' || source === 'chat') return 'channel' as const;
   if (source === 'manual') return 'manual' as const;

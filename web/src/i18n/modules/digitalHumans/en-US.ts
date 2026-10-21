@@ -271,7 +271,7 @@ const messages = {
     notPublished: 'No published version',
     currentFocus: 'Current focus',
     nextUp: 'Up next',
-    noCurrentFocus: 'Ready for a new request',
+    noCurrentFocus: 'Nothing is running right now',
     noNextTask: 'No task is scheduled next',
     viewRun: 'View run',
     startRun: 'Start a conversation',
@@ -341,6 +341,7 @@ const messages = {
       working: 'Working on “{name}”',
       responding: 'Processing a request',
       idle: 'Available for work',
+      waitingOnYou: '{count} items are waiting for you',
     },
   },
   sidebar: {
@@ -390,6 +391,11 @@ const messages = {
     confirmDiscard:
       'I understand that the selected version will replace unpublished draft changes.',
     noChanges: 'The current draft already matches this version.',
+    selectHint: 'Select a version to preview it, then restore it to the draft.',
+    confirmTitle: 'Replace the draft with v{version}?',
+    confirmDiscardBody: 'Your unpublished draft changes will be lost.',
+    confirmPublishNote: 'The restored draft goes live only after you publish it.',
+    confirmRestore: 'Restore and replace draft',
     cancelPreview: 'Cancel preview',
     restore: 'Restore to draft',
     restored: 'v{version} was restored to the draft. Publish it to affect runtime behavior.',
@@ -845,6 +851,7 @@ const messages = {
     },
   },
   runs: {
+    taskRun: 'Task: {name}',
     title: 'Run logs',
     description: 'Review results triggered by conversations, external channels, or API calls.',
     empty: 'No runs recorded yet.',

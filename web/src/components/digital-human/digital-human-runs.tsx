@@ -20,6 +20,9 @@ import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 import {
   digitalHumanRunStatusLabelKey,
   isActiveDigitalHumanRunStatus,
+  digitalHumanRunStartedByPerson,
+  digitalHumanRunTaskName,
+  plainTextPreview,
 } from '@/components/digital-human/digital-human-run-presentation';
 import {
   useDigitalHumanMutations,
@@ -36,6 +39,14 @@ type SourceFilter = 'all' | 'manual' | 'channel' | 'scheduled' | 'email' | 'exte
 
 export function DigitalHumanRuns({ id }: { id: string }) {
   const t = useT('digitalHumans');
+  // A task run shows its task, not the instruction written for the model; a
+  // failed run without a result shows why it failed.
+  const runTitle = (run: DigitalHumanRun) => {
+    const task = digitalHumanRunTaskName(run);
+    return task ? t('runs.taskRun', { name: task }) : run.query;
+  };
+  const runOutcome = (run: DigitalHumanRun) =>
+    plainTextPreview(run.result_summary) || (run.status === 'failed' ? run.error_message ?? '' : '');
   const sourceLabels: RunSourceLabels = {
     manual: t('runs.sources.manual'),
     scheduled: t('runs.sources.scheduled'),
@@ -240,11 +251,11 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                           />
                         </div>
                         <p className="mt-3 line-clamp-2 text-sm font-medium leading-6">
-                          {run.query}
+                          {runTitle(run)}
                         </p>
-                        {run.result_summary ? (
+                        {runOutcome(run) ? (
                           <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                            {run.result_summary}
+                            {runOutcome(run)}
                           </p>
                         ) : null}
                         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -313,17 +324,20 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                       <TableCell className="max-w-[420px] py-4 pl-4">
                         <span
                           className="line-clamp-2 text-left text-xs leading-5"
-                          title={run.query}
+                          title={runTitle(run)}
                         >
-                          {run.query || t('runs.details')}
+                          {runTitle(run) || t('runs.details')}
                         </span>
                       </TableCell>
                       <TableCell className="max-w-[360px] py-4">
                         <span
-                          className="line-clamp-2 text-xs leading-5 text-muted-foreground"
-                          title={run.result_summary || undefined}
+                          className={cn(
+                            'line-clamp-2 text-xs leading-5 text-muted-foreground',
+                            run.status === 'failed' && !run.result_summary && 'text-destructive'
+                          )}
+                          title={runOutcome(run) || undefined}
                         >
-                          {run.result_summary || t('runs.resultPending')}
+                          {runOutcome(run) || t('runs.resultPending')}
                         </span>
                       </TableCell>
                       <TableCell className="py-4">
@@ -431,7 +445,8 @@ function normalizedRunSource(run: DigitalHumanRun): Exclude<SourceFilter, 'all'>
   const origin = recordValue(run.invocation_event?.origin);
   const source = stringValue(origin?.kind) ?? stringValue(run.invocation_event?.type) ?? 'manual';
   if (source === 'manual') return 'manual';
-  if (source === 'schedule' || source === 'scheduled') return 'scheduled';
+  // A task run is scheduled unless a person ran it now.
+  if (source === 'schedule' || source === 'scheduled') return digitalHumanRunStartedByPerson(run) ? 'manual' : 'scheduled';
   if (source === 'email') return 'email';
   if (source === 'channel' || source === 'chat') return 'channel';
   return 'external';

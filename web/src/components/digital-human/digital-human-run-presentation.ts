@@ -66,3 +66,35 @@ export function digitalHumanRunApprovalReceipt(run: DigitalHumanRun): string | n
   if (run.status !== 'waiting' || run.waiting_reason !== 'waiting_approval') return null;
   return run.waiting_receipt ?? null;
 }
+
+function runEventContext(run: DigitalHumanRun): Record<string, unknown> | null {
+  const context = run.invocation_event?.context;
+  return context && typeof context === 'object' && !Array.isArray(context) ? (context as Record<string, unknown>) : null;
+}
+
+/**
+ * The name of the task a run executes, or null for other runs. A task run's
+ * query is the instruction written for the model, so people see the task.
+ */
+export function digitalHumanRunTaskName(run: DigitalHumanRun): string | null {
+  const name = runEventContext(run)?.task_name;
+  return typeof name === 'string' && name.trim() ? name.trim() : null;
+}
+
+/** Whether a person, rather than the schedule, started this task run. */
+export function digitalHumanRunStartedByPerson(run: DigitalHumanRun): boolean {
+  return runEventContext(run)?.task_trigger === 'manual_run';
+}
+
+/** A one-line plain-text preview of Markdown, for lists and summaries. */
+export function plainTextPreview(text?: string | null): string {
+  if (!text) return '';
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, '')
+    .replace(/(\*\*|__|\*|_|`|~~)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}

@@ -38,7 +38,7 @@ import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { translateTimezone } from '@/utils/timezone';
-import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
+import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary, formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import { TaskLatestReport, TaskPanelReports, type TaskReportClient } from '@/components/digital-human/digital-human-task-reports';
 import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
@@ -568,14 +568,15 @@ export function DigitalHumanTaskPanel({
                       <CalendarClock className="size-3.5 shrink-0" />
                       <span className="truncate">{digitalHumanTaskScheduleSummary(task, t, locale)}</span>
                     </div>
-                    {task.next_run_at ? (
+                    {/* A one-time task already shows its time in the schedule line. */}
+                    {task.next_run_at && task.schedule.type !== 'once' ? (
                       <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground">
-                        {t('tasks.fields.nextRun')} · {formatTaskDate(task.next_run_at, task.schedule.timezone)}
+                        {t('tasks.fields.nextRun')} · {formatTaskTime(task.next_run_at, locale)}
                       </div>
                     ) : null}
                     {task.last_run_at ? (
                       <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground/80">
-                        {t('tasks.fields.lastRun')} · {formatTaskDate(task.last_run_at, task.schedule.timezone)}
+                        {t('tasks.fields.lastRun')} · {formatTaskTime(task.last_run_at, locale)}
                       </div>
                     ) : null}
                     {task.latest_report ? (
@@ -924,7 +925,7 @@ function TaskDetailContent({
           {selected.schedule.type === 'once' && selected.schedule.run_at ? (
             <TaskScheduleDetail
               label={t('tasks.fields.runAt')}
-              value={formatTaskDate(selected.schedule.run_at)}
+              value={formatTaskTime(selected.schedule.run_at, locale)}
             />
           ) : null}
           {selected.schedule.timezone ? (
@@ -936,7 +937,7 @@ function TaskDetailContent({
           {selected.next_run_at ? (
             <TaskScheduleDetail
               label={t('tasks.fields.nextRun')}
-              value={formatTaskDate(selected.next_run_at)}
+              value={formatTaskTime(selected.next_run_at, locale)}
             />
           ) : null}
         </div>
@@ -1018,24 +1019,6 @@ function TaskScheduleDetail({ label, value }: { label: string; value: string }) 
   );
 }
 
-function formatTaskDate(value: string, timezone?: string): string {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return value;
-  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
-  if (timezone) {
-    // Show the task's own zone so the time matches its schedule label.
-    try {
-      // dateStyle/timeStyle cannot be combined with timeZoneName.
-      return new Date(timestamp).toLocaleString(undefined, {
-        year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-        timeZone: timezone, timeZoneName: 'short',
-      });
-    } catch {
-      // Unknown zone in this browser: fall back to the viewer's zone.
-    }
-  }
-  return new Date(timestamp).toLocaleString(undefined, options);
-}
 
 // The approval card lives in a conversation, so the task card only points
 // to it. Surfaces that cannot switch conversations show the notice alone.

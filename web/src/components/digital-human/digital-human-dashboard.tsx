@@ -29,6 +29,8 @@ import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digita
 import {
   digitalHumanRunStatusLabelKey,
   isActiveDigitalHumanRunStatus,
+  digitalHumanRunTaskName,
+  plainTextPreview,
 } from '@/components/digital-human/digital-human-run-presentation';
 import {
   useDigitalHumanChannelMutations,
@@ -306,7 +308,9 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
                 ? t('dashboard.statusLine.working', { name: currentTask.name })
                 : activeRun
                   ? t('dashboard.statusLine.responding')
-                  : t('dashboard.statusLine.idle')}
+                  : attentionCount > 0
+                    ? t('dashboard.statusLine.waitingOnYou', { count: attentionCount })
+                    : t('dashboard.statusLine.idle')}
             </p>
             <p className="mt-1 truncate text-xs text-muted-foreground">
               {published?.version_number
@@ -331,7 +335,10 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
 
         <FocusBlock
           label={t('dashboard.currentFocus')}
-          title={currentTask?.name ?? activeRun?.query ?? t('dashboard.noCurrentFocus')}
+          title={
+            currentTask?.name ??
+            (activeRun ? (digitalHumanRunTaskName(activeRun) ?? activeRun.query) : t('dashboard.noCurrentFocus'))
+          }
           meta={
             currentTask
               ? t(`tasks.status.${digitalHumanTaskDisplayStatus(currentTask)}`)
@@ -779,8 +786,10 @@ function dashboardRunSummary(run: DigitalHumanRun, scheduledFallback: string) {
     (typeof origin?.kind === 'string' && origin.kind) ||
     (typeof run.invocation_event?.type === 'string' && run.invocation_event.type) ||
     'manual';
+  const task = digitalHumanRunTaskName(run);
+  if (task) return task;
   if (source === 'schedule' || source === 'scheduled') return scheduledFallback;
-  return run.query || run.result_summary || run.error_message || scheduledFallback;
+  return run.query || plainTextPreview(run.result_summary) || run.error_message || scheduledFallback;
 }
 
 function liveEventToneClassName(tone: DashboardLiveEventTone) {
@@ -1172,10 +1181,12 @@ function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; l
       />
       <div className="min-w-0">
         <p className="truncate font-medium text-foreground">
-          {run.query || t('dashboard.automaticRun')}
+          {digitalHumanRunTaskName(run)
+            ? t('runs.taskRun', { name: digitalHumanRunTaskName(run) ?? '' })
+            : run.query || t('dashboard.automaticRun')}
         </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {run.result_summary || run.error_message || statusLabel}
+          {plainTextPreview(run.result_summary) || run.error_message || statusLabel}
         </p>
       </div>
       <span className="hidden text-xs text-muted-foreground sm:block">{statusLabel}</span>
