@@ -138,6 +138,41 @@ func TestContinuationAppendsAfterStoredTurnEntries(t *testing.T) {
 	}
 }
 
+func TestResolvePendingTaskToolResultReplacesTheStaleProposal(t *testing.T) {
+	svc, message, conversation := newContextEntryTestService(t, "context-entry-resolve-task")
+	prepared := &PreparedChat{Message: message, Conversation: conversation, Scope: Scope{OrganizationID: conversation.OrganizationID, AccountID: conversation.AccountID}}
+	taskID := uuid.NewString()
+	otherTaskID := uuid.NewString()
+	svc.persistTurnTranscriptEntries(context.Background(), prepared, []adapter.Message{
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1", Type: "function", Function: adapter.FunctionCall{Name: "manage_task"}}}},
+		{Role: "tool", ToolCallID: "call-1", Content: `{"data":{"approval_required":true,"status":"approval_required","task":{"id":"` + otherTaskID + `","revision":3}}}`},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-2", Type: "function", Function: adapter.FunctionCall{Name: "manage_task"}}}},
+		{Role: "tool", ToolCallID: "call-2", Content: `{"data":{"approval_required":true,"status":"approval_required","task":{"id":"` + taskID + `","revision":9}}}`},
+	})
+
+	svc.resolvePendingTaskToolResult(context.Background(), message.ID, taskID, "approve", "任务已更新")
+
+	entries, err := svc.repos.TranscriptEntry.ListPreviewsByMessage(context.Background(), message.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolved, untouched string
+	for _, entry := range entries {
+		switch messageContentText(entry.Preview["tool_call_id"]) {
+		case "call-2":
+			resolved = messageContentText(entry.Preview["content"])
+		case "call-1":
+			untouched = messageContentText(entry.Preview["content"])
+		}
+	}
+	if !strings.Contains(resolved, `"status":"approval_resolved"`) || !strings.Contains(resolved, `"applied":true`) || strings.Contains(resolved, `"revision":9`) {
+		t.Fatalf("resolved tool result = %s, want the approval outcome without the stale task", resolved)
+	}
+	if !strings.Contains(untouched, `"approval_required":true`) {
+		t.Fatalf("another task's pending result was changed: %s", untouched)
+	}
+}
+
 func TestResumeWithRecordsTheResumingMessage(t *testing.T) {
 	prepared := &PreparedChat{LLMRequest: &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "question"}}}}
 	answer := adapter.Message{Role: "user", Content: "The user answered: yes"}
