@@ -34,6 +34,9 @@ var (
 	ErrRunNotFound = errors.New("digital human run not found")
 	// ErrRunConflict indicates an invalid durable run state transition.
 	ErrRunConflict = errors.New("digital human run state conflict")
+	// ErrEndUserSuspended indicates that an operator suspended this end user's
+	// instance, so the DigitalHuman accepts no new runs for them.
+	ErrEndUserSuspended = errors.New("digital human end user is suspended")
 	// ErrConversationNotFound indicates that a caller-scoped conversation does not exist.
 	ErrConversationNotFound = errors.New("digital human conversation not found")
 	// ErrConsoleFileNotAccessible hides whether a requested console attachment

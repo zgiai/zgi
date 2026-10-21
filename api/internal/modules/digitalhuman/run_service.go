@@ -443,7 +443,14 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		RunID: runID, Status: RunOutboxPending, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.store.CreateRunWithOutbox(ctx, run, outbox); err != nil {
+	var createErr error
+	instanceStore, admitsInstances := s.store.(endUserInstanceStore)
+	if instance := endUserInstanceForRun(scope, run, now); instance != nil && admitsInstances {
+		createErr = instanceStore.CreateRunWithOutboxForEndUser(ctx, run, outbox, instance)
+	} else {
+		createErr = s.store.CreateRunWithOutbox(ctx, run, outbox)
+	}
+	if err := createErr; err != nil {
 		if errors.Is(err, ErrRunConflict) {
 			existing, loadErr := s.store.RunByIdempotency(ctx, scope.OrganizationID, validated.Target.ID, validated.IdempotencyKey)
 			if loadErr == nil {
