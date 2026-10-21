@@ -1423,14 +1423,11 @@ func digitalHumanConversationSourceForEvent(event invocation.Event) string {
 	return digitalHumanConversationSource
 }
 
+// A task run's conversation is its own work record, kept out of the console
+// chat history; reports reach people through the task center and inbox.
 func digitalHumanConversationSourceForRun(run *Run) string {
 	if run != nil && run.Surface == SurfaceTask {
-		var event invocation.Event
-		if json.Unmarshal(run.InvocationEvent, &event) == nil {
-			if entry, _ := stringContextValue(event.Context, backgroundExecutionEntryKey); entry == backgroundTaskEntry {
-				return backgroundTaskEntry
-			}
-		}
+		return runtimemodel.ConversationSourceTask
 	}
 	if run != nil && strings.TrimSpace(run.Surface) != "" {
 		return digitalHumanConversationSourceForSurface(run.Surface)
