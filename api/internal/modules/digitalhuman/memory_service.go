@@ -316,10 +316,14 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 		if err := tx.CreateMemoryUndo(ctx, undo); err != nil {
 			return err
 		}
-		detail, _ := json.Marshal(map[string]any{
+		ledger := map[string]any{
 			"memory_class": memory.MemoryClass, "memory_type": memory.MemoryType,
 			"scope_type": memory.ScopeType, "scope_id": memory.ScopeID, "supersedes_id": memory.SupersedesID,
-		})
+		}
+		if request.rescope {
+			ledger["rescoped_from"] = request.SupersedesID
+		}
+		detail, _ := json.Marshal(ledger)
 		if err := tx.CreateActionLedger(ctx, &ActionLedgerEntry{
 			ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
 			RunID: request.RunID, ActionType: "memory." + string(request.Action), Status: "committed",
@@ -346,38 +350,24 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 		if request.ExpectedRevision != 0 || request.Action == memoryruntime.MutationActionClear {
 			return nil, nil, nil, ErrMemoryConflict
 		}
-		var supersededBefore datatypes.JSON
-		if request.SupersedesID != nil {
-			superseded, targetErr := tx.MemoryByIDForUpdate(ctx, scope, digitalHumanID, *request.SupersedesID)
-			if recordNotFound(targetErr) {
-				return nil, nil, nil, ErrMemoryConflict
-			}
-			if targetErr != nil {
-				return nil, nil, nil, targetErr
-			}
-			if superseded.Status != MemoryStatusActive || superseded.Revision != request.ExpectedSupersededRevision ||
-				superseded.MemoryClass != request.MemoryClass || superseded.ScopeType != scopeType || superseded.ScopeID != scopeID {
-				return nil, nil, nil, ErrMemoryConflict
-			}
-			supersededBefore = mustJSON(superseded)
-			expectedRevision := superseded.Revision
-			superseded.Revision++
-			superseded.Status, superseded.ValidTo = MemoryStatusInvalidated, &now
-			superseded.ConfigRevision, superseded.MemoryEpoch = state.ConfigRevision, state.MemoryEpoch
-			superseded.SourcePrincipalID, superseded.LastOperationID = scope.ActorID.String(), request.OperationID
-			superseded.UpdatedAt = now
-			if err := tx.UpdateMemoryCAS(ctx, superseded, expectedRevision); err != nil {
-				return nil, nil, nil, err
-			}
+		supersededBefore, err := invalidateSupersededMemory(ctx, tx, scope, digitalHumanID, request, scopeType, scopeID, state, now)
+		if err != nil {
+			return nil, nil, nil, err
 		}
 		validFrom := request.OccurredAt
+		supersedesID := request.SupersedesID
+		if request.rescope {
+			// A supersede link stays within one scope. A rescoped memory is
+			// linked to its origin by the undo record and the action ledger.
+			supersedesID = nil
+		}
 		memory := &DigitalHumanMemory{
 			ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
 			MemoryKey: request.Key, MemoryClass: request.MemoryClass, MemoryType: request.MemoryType, ScopeType: scopeType, ScopeID: scopeID,
 			Content: request.Content, ContentDigest: memoryContentDigest(request.Content), Visibility: request.Visibility,
 			Status: MemoryStatusActive, Confidence: request.Confidence, Revision: 1, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence: mustJSON(request.Evidence), SourcePrincipalID: scope.ActorID.String(), LastOperationID: request.OperationID,
-			SupersedesID: request.SupersedesID, ValidFrom: &validFrom, CreatedAt: now, UpdatedAt: now,
+			SupersedesID: supersedesID, ValidFrom: &validFrom, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.CreateMemory(ctx, memory); err != nil {
 			return nil, nil, nil, err
@@ -386,6 +376,19 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 	}
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	var supersededBefore datatypes.JSON
+	if request.rescope {
+		// A rescope may land on a key the target scope used before, for
+		// example after a previous move was undone. An active memory there
+		// is a real conflict; an invalidated one is reactivated in place.
+		if current.Status == MemoryStatusActive {
+			return nil, nil, nil, ErrMemoryConflict
+		}
+		request.ExpectedRevision = current.Revision
+		if supersededBefore, err = invalidateSupersededMemory(ctx, tx, scope, digitalHumanID, request, scopeType, scopeID, state, now); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	if current.Revision != request.ExpectedRevision {
 		return nil, nil, nil, ErrMemoryConflict
@@ -405,7 +408,38 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 	if err := tx.UpdateMemoryCAS(ctx, current, request.ExpectedRevision); err != nil {
 		return nil, nil, nil, err
 	}
-	return current, before, nil, nil
+	return current, before, supersededBefore, nil
+}
+
+// invalidateSupersededMemory invalidates the memory a proposal supersedes and
+// returns its snapshot for undo. A normal supersede stays within one scope; a
+// rescope always crosses scopes.
+func invalidateSupersededMemory(ctx context.Context, tx *GormRepository, scope Scope, digitalHumanID uuid.UUID, request MemoryProposalRequest, scopeType memoryruntime.MemoryScopeType, scopeID string, state *MemoryState, now time.Time) (datatypes.JSON, error) {
+	if request.SupersedesID == nil {
+		return nil, nil
+	}
+	superseded, err := tx.MemoryByIDForUpdate(ctx, scope, digitalHumanID, *request.SupersedesID)
+	if recordNotFound(err) {
+		return nil, ErrMemoryConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	sameScope := superseded.MemoryClass == request.MemoryClass && superseded.ScopeType == scopeType && superseded.ScopeID == scopeID
+	if superseded.Status != MemoryStatusActive || superseded.Revision != request.ExpectedSupersededRevision || sameScope == request.rescope {
+		return nil, ErrMemoryConflict
+	}
+	snapshot := mustJSON(superseded)
+	expectedRevision := superseded.Revision
+	superseded.Revision++
+	superseded.Status, superseded.ValidTo = MemoryStatusInvalidated, &now
+	superseded.ConfigRevision, superseded.MemoryEpoch = state.ConfigRevision, state.MemoryEpoch
+	superseded.SourcePrincipalID, superseded.LastOperationID = scope.ActorID.String(), request.OperationID
+	superseded.UpdatedAt = now
+	if err := tx.UpdateMemoryCAS(ctx, superseded, expectedRevision); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 // UndoMemory restores the exact previous snapshot if the target change is still current.

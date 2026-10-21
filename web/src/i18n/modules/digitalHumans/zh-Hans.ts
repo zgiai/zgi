@@ -1677,6 +1677,12 @@ const messages: DigitalHumansMessages = {
     undoUnavailable: '该变更已不可撤销',
     invalidated: '记忆已失效。',
     undone: '已撤销记忆变更。',
+    rescope: {
+      toSelf: '移到自身记忆',
+      toWorkspace: '移到工作空间记忆',
+      done: '记忆已移动。',
+      hint: '自身记忆塑造数字人本身；工作空间记忆存放共享的业务事实，工作空间成员和渠道都能召回。',
+    },
     details: '查看证据',
     close: '关闭',
     errors: {

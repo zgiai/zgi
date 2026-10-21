@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   AlertCircle,
+  ArrowRightLeft,
   BrainCircuit,
   Clock3,
   ExternalLink,
@@ -162,6 +163,32 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       },
     });
     toast.success(t('memory.invalidated'));
+    setSelected(null);
+  };
+
+  const rescope = async (memory: DigitalHumanMemoryRecord, target: 'self' | 'workspace') => {
+    const state = data?.state;
+    if (!state) return;
+    try {
+      await mutations.rescopeMemory.mutateAsync({
+        digitalHumanId: id,
+        memoryId: memory.id,
+        request: {
+          operation_id: crypto.randomUUID(),
+          expected_revision: memory.revision,
+          config_revision: state.config_revision,
+          memory_epoch: state.memory_epoch,
+          // The server always uses the current workspace as the scope.
+          ...(target === 'self'
+            ? { memory_class: 'self' as const }
+            : { memory_class: 'business' as const, scope: { type: 'workspace' as const, id: '' } }),
+        },
+      });
+    } catch {
+      // The mutation already reports the error.
+      return;
+    }
+    toast.success(t('memory.rescope.done'));
     setSelected(null);
   };
 
@@ -377,8 +404,9 @@ export function DigitalHumanMemory({ id }: { id: string }) {
         canManage={canManage}
         onOpenChange={open => !open && setSelected(null)}
         onInvalidate={invalidate}
+        onRescope={rescope}
         onUndo={undo}
-        invalidating={mutations.applyMemoryProposal.isPending}
+        invalidating={mutations.applyMemoryProposal.isPending || mutations.rescopeMemory.isPending}
         undoing={mutations.undoMemory.isPending}
       />
     </div>
@@ -513,6 +541,7 @@ function MemoryDetail({
   canManage,
   onOpenChange,
   onInvalidate,
+  onRescope,
   onUndo,
   invalidating,
   undoing,
@@ -522,6 +551,7 @@ function MemoryDetail({
   canManage: boolean;
   onOpenChange: (open: boolean) => void;
   onInvalidate: (memory: DigitalHumanMemoryRecord) => Promise<void>;
+  onRescope: (memory: DigitalHumanMemoryRecord, target: 'self' | 'workspace') => Promise<void>;
   onUndo: (memory: DigitalHumanMemoryRecord) => Promise<void>;
   invalidating: boolean;
   undoing: boolean;
@@ -617,6 +647,21 @@ function MemoryDetail({
                       )}
                       {undoing ? t('memory.undoing') : t('memory.undo')}
                     </Button>
+                    {memory.status === 'active'
+                      ? memoryRescopeTargets(memory).map(target => (
+                          <Button
+                            key={target}
+                            variant="outline"
+                            size="sm"
+                            disabled={invalidating || undoing}
+                            title={t('memory.rescope.hint')}
+                            onClick={() => void onRescope(memory, target)}
+                          >
+                            <ArrowRightLeft className="size-4" />
+                            {target === 'self' ? t('memory.rescope.toSelf') : t('memory.rescope.toWorkspace')}
+                          </Button>
+                        ))
+                      : null}
                     {memory.status === 'active' ? (
                       <ConfirmDialog
                         variant="danger"
@@ -692,6 +737,15 @@ function MemoryStatusBadge({ status }: { status: DigitalHumanMemoryStatus }) {
       {t(`memory.status.${status}`)}
     </Badge>
   );
+}
+
+// Memories move between self memory and workspace business memory. Identity
+// always stays self memory; other scopes are resolved by the runtime.
+function memoryRescopeTargets(memory: DigitalHumanMemoryRecord): Array<'self' | 'workspace'> {
+  if (memory.memory_class === 'self') {
+    return memory.memory_type === 'identity' ? [] : ['workspace'];
+  }
+  return memory.scope_type === 'workspace' ? ['self'] : ['self', 'workspace'];
 }
 
 function memoryScopeKey(memory: DigitalHumanMemoryRecord) {
