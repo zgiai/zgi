@@ -40,7 +40,23 @@ func (s *Service) RescopeMemory(ctx context.Context, scope Scope, digitalHumanID
 		return nil, applicationError(err, "digital_human.memory.rescope")
 	}
 	var current *DigitalHumanMemory
+	var replayed *MemoryMutationResult
 	if err := s.repo.Transaction(ctx, func(tx *GormRepository) error {
+		// A retried move has already invalidated its source, so a committed
+		// operation is replayed before the source state is checked.
+		if existing, eventErr := tx.MemoryEventByOperation(ctx, scope, digitalHumanID, request.OperationID); eventErr == nil {
+			if existing.Result != "committed" || existing.MemoryID == nil {
+				return ErrMemoryConflict
+			}
+			memory, memoryErr := tx.MemoryByIDForUpdate(ctx, scope, digitalHumanID, *existing.MemoryID)
+			if memoryErr != nil {
+				return memoryErr
+			}
+			replayed = &MemoryMutationResult{Memory: memory, Event: existing, Replayed: true}
+			return nil
+		} else if !recordNotFound(eventErr) {
+			return eventErr
+		}
 		memory, findErr := tx.MemoryByIDForUpdate(ctx, scope, digitalHumanID, memoryID)
 		current = memory
 		return findErr
@@ -49,6 +65,9 @@ func (s *Service) RescopeMemory(ctx context.Context, scope Scope, digitalHumanID
 			err = ErrMemoryNotFound
 		}
 		return nil, applicationError(err, "digital_human.memory.rescope")
+	}
+	if replayed != nil {
+		return replayed, nil
 	}
 	if current.Status != MemoryStatusActive || current.Revision != request.ExpectedRevision {
 		return nil, applicationError(ErrMemoryConflict, "digital_human.memory.rescope")

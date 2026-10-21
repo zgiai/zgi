@@ -98,6 +98,15 @@ func TestDigitalHumanMemoryRescopePostgres(t *testing.T) {
 		t.Fatalf("original after rescope = %#v, %v", old, err)
 	}
 
+	// A retry with the same operation replays the committed move.
+	retried, err := service.RescopeMemory(t.Context(), scope, digitalHumanID, original.ID, MemoryRescopeRequest{
+		OperationID: moved.Event.OperationID, ExpectedRevision: original.Revision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
+		MemoryClass: memoryruntime.MemoryClassBusiness, Scope: workspace,
+	})
+	if err != nil || !retried.Replayed || retried.Memory.ID != moved.Memory.ID {
+		t.Fatalf("retried rescope = %#v, %v", retried, err)
+	}
+
 	// The move is an ordinary memory operation and can be undone.
 	if _, err := service.UndoMemory(t.Context(), scope, digitalHumanID, moved.Event.OperationID, MemoryUndoRequest{ExpectedRevision: moved.Memory.Revision}); err != nil {
 		t.Fatalf("undo rescope: %v", err)
