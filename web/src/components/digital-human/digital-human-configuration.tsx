@@ -338,58 +338,6 @@ function ConfigurationEditor({
         <section className="min-h-0 min-w-0 border-b lg:h-full lg:overflow-y-auto lg:border-b-0">
           {activePanel === null ? (
             <div className="min-w-0">
-              <section id="configuration-model" className="border-b p-4 md:p-5">
-                <h2 className="mb-3 text-sm font-semibold">{t('settings.modelTitle')}</h2>
-                <ModelSelector
-                  modelType="text-chat"
-                  availabilityUseCase="agent-runtime"
-                  preferredUseCase="agent"
-                  capabilityFilter={{ features_tool_call: true }}
-                  modelsOverride={models}
-                  value={modelValue}
-                  onChange={value => setModel(value.model)}
-                  placeholder={t('settings.modelPlaceholder')}
-                  disabled={!editingEnabled || availableModels.isLoading}
-                  hasError={modelUnavailable}
-                  className="w-full"
-                />
-                {modelUnavailable ? (
-                  <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
-                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                    <span>{t('settings.modelUnavailable')}</span>
-                  </div>
-                ) : null}
-              </section>
-
-              <section id="configuration-runtime" className="border-b p-4 md:p-5">
-                <h2 className="text-sm font-semibold">{t('preferences.runtimeTitle')}</h2>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t('preferences.runtimeDescription')}
-                </p>
-                <div className="mt-3 space-y-3">
-                  <div className="rounded-md border px-3">
-                    <PreferenceSwitch
-                      title={t('preferences.linuxEnvironment')}
-                      description={t('preferences.linuxEnvironmentDescription')}
-                      checked={displayedExecutionEnabled}
-                      onCheckedChange={setExecutionEnabled}
-                      disabled={!editingEnabled || (!executionEnabled && !canEnableExecution)}
-                      compact
-                    />
-                    {executionUnavailable ? (
-                      <p className="-mt-1 pb-3 text-xs text-muted-foreground">
-                        {t(linuxEnvironmentUnavailableKey(executionRuntimeCapability?.reason))}
-                      </p>
-                    ) : null}
-                  </div>
-                  <PolicyFileUploadSettings
-                    value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy}
-                    onChange={setFileUploadPolicy}
-                    disabled={!editingEnabled}
-                  />
-                </div>
-              </section>
-
               <section id="configuration-identity" className="space-y-5 border-b p-4 md:p-5">
                 <div>
                   <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -498,6 +446,57 @@ function ConfigurationEditor({
                 </div>
               </section>
 
+              <section id="configuration-model" className="border-b p-4 md:p-5">
+                <h2 className="mb-3 text-sm font-semibold">{t('settings.modelTitle')}</h2>
+                <ModelSelector
+                  modelType="text-chat"
+                  availabilityUseCase="agent-runtime"
+                  preferredUseCase="agent"
+                  capabilityFilter={{ features_tool_call: true }}
+                  modelsOverride={models}
+                  value={modelValue}
+                  onChange={value => setModel(value.model)}
+                  placeholder={t('settings.modelPlaceholder')}
+                  disabled={!editingEnabled || availableModels.isLoading}
+                  hasError={modelUnavailable}
+                  className="w-full"
+                />
+                {modelUnavailable ? (
+                  <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>{t('settings.modelUnavailable')}</span>
+                  </div>
+                ) : null}
+              </section>
+
+              <section id="configuration-runtime" className="border-b p-4 md:p-5">
+                <h2 className="text-sm font-semibold">{t('preferences.runtimeTitle')}</h2>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t('preferences.runtimeDescription')}
+                </p>
+                <div className="mt-3 space-y-3">
+                  <div className="rounded-md border px-3">
+                    <PreferenceSwitch
+                      title={t('preferences.linuxEnvironment')}
+                      description={t('preferences.linuxEnvironmentDescription')}
+                      checked={displayedExecutionEnabled}
+                      onCheckedChange={setExecutionEnabled}
+                      disabled={!editingEnabled || (!executionEnabled && !canEnableExecution)}
+                      compact
+                    />
+                    {executionUnavailable ? (
+                      <p className="-mt-1 pb-3 text-xs text-muted-foreground">
+                        {t(linuxEnvironmentUnavailableKey(executionRuntimeCapability?.reason))}
+                      </p>
+                    ) : null}
+                  </div>
+                  <PolicyFileUploadSettings
+                    value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy}
+                    onChange={setFileUploadPolicy}
+                    disabled={!editingEnabled}
+                  />
+                </div>
+              </section>
               <div className="p-4 md:p-5">
                 <div className="overflow-hidden rounded-xl border bg-card">
                   <ConfigurationMenuItem

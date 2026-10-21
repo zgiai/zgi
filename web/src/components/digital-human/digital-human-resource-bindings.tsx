@@ -375,7 +375,11 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
             <section
               key={section.key}
               id={`digital-human-bindings-${section.key}`}
-              className="flex h-full min-h-[280px] max-h-[520px] min-w-0 scroll-mt-16 flex-col overflow-hidden rounded-xl border bg-card shadow-sm"
+              // An empty section is one compact row instead of a tall blank card.
+              className={cn(
+                'flex min-w-0 scroll-mt-16 flex-col overflow-hidden rounded-xl border bg-card shadow-sm',
+                (sectionItems.length > 0 || query.isLoading || isPreviewLoading) && 'h-full min-h-[280px] max-h-[520px]'
+              )}
             >
               <div className="flex items-center justify-between gap-3 border-b bg-muted/15 px-3 py-3">
                 <div className="flex min-w-0 items-center gap-2.5">
@@ -413,15 +417,13 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
                 ) : sectionItems.length === 0 ? (
                   <button
                     type="button"
-                    className="flex min-h-full w-full flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-5 py-6 text-center transition-colors hover:border-primary/40 hover:bg-primary/[0.03] disabled:pointer-events-none"
+                    className="flex w-full items-center gap-2 rounded-lg border border-dashed bg-muted/10 px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.03] disabled:pointer-events-none"
                     disabled={!canConfigure || mutations.replaceBindings.isPending}
                     onClick={() => openPicker(section)}
                   >
-                    <Plus className="mb-2 size-5 text-muted-foreground" />
+                    <Plus className="size-4 shrink-0 text-muted-foreground" />
                     <span className="text-sm font-medium text-foreground">{section.add}</span>
-                    <span className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {section.empty}
-                    </span>
+                    <span className="truncate text-xs text-muted-foreground">{section.empty}</span>
                   </button>
                 ) : section.key === 'databases' ? (
                   <DatabaseBindingCards

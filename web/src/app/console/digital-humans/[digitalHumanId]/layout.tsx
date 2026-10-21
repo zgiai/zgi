@@ -102,19 +102,6 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
           },
         ]
       : []),
-    configurationItem,
-    {
-      href: externalHref,
-      label: t('tabs.external'),
-      icon: Server,
-      active: isExternalPage,
-    },
-    {
-      href: `/console/digital-humans/${id}/channels`,
-      label: t('tabs.channels'),
-      icon: RadioTower,
-      active: pathname.startsWith(`/console/digital-humans/${id}/channels`),
-    },
     {
       href: `/console/digital-humans/${id}/tasks`,
       label: t('tabs.tasks'),
@@ -133,11 +120,18 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
       icon: Package,
       active: pathname.startsWith(`/console/digital-humans/${id}/artifacts`),
     },
+    configurationItem,
     {
-      href: `/console/digital-humans/${id}/runs`,
-      label: t('tabs.runs'),
-      icon: History,
-      active: pathname.startsWith(`/console/digital-humans/${id}/runs`),
+      href: `/console/digital-humans/${id}/channels`,
+      label: t('tabs.channels'),
+      icon: RadioTower,
+      active: pathname.startsWith(`/console/digital-humans/${id}/channels`),
+    },
+    {
+      href: externalHref,
+      label: t('tabs.external'),
+      icon: Server,
+      active: isExternalPage,
     },
     ...(permissions.hasPermission('digital_human.memory.view')
       ? [
@@ -149,6 +143,12 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
           },
         ]
       : []),
+    {
+      href: `/console/digital-humans/${id}/runs`,
+      label: t('tabs.runs'),
+      icon: History,
+      active: pathname.startsWith(`/console/digital-humans/${id}/runs`),
+    },
   ];
   const mobileItems = restrictToConfiguration ? [configurationItem] : publishedMobileItems;
   const routeGuardPending = !isConfigurationPage && restrictToConfiguration;

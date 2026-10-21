@@ -82,9 +82,15 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
     versionsOpen && Boolean(selectedVersionId)
   );
   const detail = detailQuery.data?.data;
+  // API keys and docs take effect at once; only the configuration and the
+  // landing page edit the draft that publishing puts live.
+  const isImmediatePage =
+    pathname.startsWith(`/console/digital-humans/${id}/external/keys`) ||
+    pathname.startsWith(`/console/digital-humans/${id}/external/docs`);
   const isDraftEditingPage =
-    pathname.startsWith(`/console/digital-humans/${id}/configuration`) ||
-    pathname.startsWith(`/console/digital-humans/${id}/external`);
+    !isImmediatePage &&
+    (pathname.startsWith(`/console/digital-humans/${id}/configuration`) ||
+      pathname.startsWith(`/console/digital-humans/${id}/external`));
   // The server compares resource bindings too; the revision check is only a
   // fallback for responses that predate the field.
   const hasUnpublishedChanges = Boolean(
@@ -329,7 +335,9 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
             </div>
           ) : null}
 
-          {isDraftEditingPage && draftEditor?.canUpdate ? (
+          {/* Autosave keeps the draft; a manual save is offered only when
+              there is something it has not saved yet. */}
+          {isDraftEditingPage && draftEditor?.canUpdate && (isDirty || saveState === 'error') ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="relative">
@@ -361,7 +369,7 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
             </Tooltip>
           ) : null}
 
-          {detail?.published ? (
+          {detail?.published && isDraftEditingPage ? (
             <DigitalHumanVersionPopover
               open={versionsOpen}
               onOpenChange={nextOpen => {
@@ -398,11 +406,13 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
             </Button>
           ) : null}
 
-          {permissions.hasPermission('digital_human.publish') ? (
+          {permissions.hasPermission('digital_human.publish') && isDraftEditingPage ? (
             <Button
               size="sm"
               className="flex items-center gap-1.5 border border-primary/25 bg-primary/10 px-2 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15 sm:px-3.5"
-              disabled={!detail || mutations.publish.isPending || isVersionPreviewing}
+              // Nothing to publish while the draft matches the live version.
+              disabled={!detail || mutations.publish.isPending || isVersionPreviewing || (Boolean(detail?.published) && !hasUnpublishedChanges && !isDirty)}
+              title={detail?.published && !hasUnpublishedChanges && !isDirty ? t('header.nothingToPublish') : undefined}
               onClick={() => void openPublishDialog()}
             >
               {mutations.publish.isPending ? (

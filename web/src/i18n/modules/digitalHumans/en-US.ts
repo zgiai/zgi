@@ -241,6 +241,7 @@ const messages = {
     download: 'Download',
     loadError: 'The artifact could not be loaded. Try again later.',
   },
+  navGroups: { work: 'Work', setup: 'Setup', operations: 'Operations' },
   tabs: {
     navigation: 'Digital human navigation',
     dashboard: 'Workspace',
@@ -251,7 +252,7 @@ const messages = {
     landingPage: 'Landing page',
     apiKeys: 'API keys',
     apiDocs: 'API docs',
-    channels: 'External connections',
+    channels: 'Channels',
     tasks: 'Tasks',
     reports: 'Reports',
     artifacts: 'Artifacts',
@@ -259,6 +260,13 @@ const messages = {
     memory: 'Memory',
   },
   dashboard: {
+    waitingOnYou: 'Waiting for you',
+    upcoming: 'Up next',
+    noUpcoming: 'No task is scheduled',
+    recentArtifacts: 'Recent artifacts',
+    viewAllArtifacts: 'All artifacts',
+    indicators: { label: 'Work overview', reports: 'Reports to review', attention: 'Needs handling', completed: 'Completed today', artifacts: 'Artifacts' },
+    kind: { proposal: 'To confirm', blocked: 'Blocked', failed: 'Failed', report: 'Report to review', delivery: 'Reply not delivered' },
     title: 'Today’s workspace',
     updatedAt: 'Updated {value}',
     refresh: 'Refresh',
@@ -303,7 +311,7 @@ const messages = {
     attentionPagination: 'Page {page} of {totalPages} · {total} items',
     previousAttentionPage: 'Previous attention page',
     nextAttentionPage: 'Next attention page',
-    connectionsTitle: 'Connections',
+    connectionsTitle: 'Channels',
     manageConnections: 'Manage',
     noConnections: 'No external connection',
     noConnectionsDescription:
@@ -348,11 +356,12 @@ const messages = {
     backToList: 'Digital human list',
   },
   header: {
+    nothingToPublish: 'The draft matches the live version; there is nothing to publish.',
     draft: 'Draft',
     publishedVersion: 'Published v{version}',
     unpublishedChanges: 'Unpublished changes',
-    draftSaved: 'Draft saved',
-    draftSavedPending: 'Draft saved, pending publish',
+    draftSaved: 'Matches the live version',
+    draftSavedPending: 'Saved · unpublished changes',
     versions: 'Versions',
     versionPopoverDescription: 'Review the current draft and active published version.',
     openVersionManagement: 'Open version management',
@@ -953,7 +962,7 @@ const messages = {
     },
   },
   channels: {
-    title: 'External connections',
+    title: 'Channels',
     description:
       'Manage this digital human’s identity and messaging channels across Feishu, DingTalk, and other enterprise platforms.',
     loadErrorTitle: 'Channel data could not be loaded',

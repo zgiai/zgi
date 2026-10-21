@@ -6,14 +6,15 @@ import {
   Activity,
   AlertCircle,
   ArrowRight,
+  CalendarClock,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CircleDashed,
   CircleOff,
   EyeOff,
-  ListTodo,
   MessageSquare,
+  Package,
   RadioTower,
   RefreshCw,
   RotateCcw,
@@ -25,7 +26,7 @@ import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { getAgentTextIconDisplay } from '@/components/agents/agent-runtime/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
-import { digitalHumanTaskDisplayStatus } from '@/components/digital-human/digital-human-task-presentation';
+import { digitalHumanTaskDisplayStatus, formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import {
   digitalHumanRunStatusLabelKey,
   isActiveDigitalHumanRunStatus,
@@ -36,13 +37,15 @@ import {
   useDigitalHumanChannelMutations,
   useDigitalHumanChannels,
 } from '@/hooks/digital-human/use-digital-human-channels';
-import { useDigitalHumanMyTasks, useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
+import { useDigitalHumanMyTasks, useDigitalHumanTaskReports, useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
 import { useDigitalHuman, useDigitalHumanRuns } from '@/hooks/digital-human/use-digital-humans';
 import { useLocale } from '@/hooks/use-locale';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { digitalHumanService } from '@/services/digital-human.service';
+import { useQuery } from '@tanstack/react-query';
 import type {
   DigitalHumanChannelDelivery,
   DigitalHumanChannelInstallation,
@@ -163,15 +166,11 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const attentionCandidates = [...taskItems, ...ownTaskItems];
   const taskHref = (task: DigitalHumanTask) =>
     taskCenterIds.has(task.id) ? `/console/digital-humans/${id}/tasks?task=${task.id}` : `/console/digital-humans/${id}/chat`;
-  const taskCounts = tasks.data?.data.counts ?? {};
   const runItems = runs.data?.data.items ?? [];
   const installations = channels.installations.data?.data ?? [];
   const deliveries = channels.deliveries.data?.data.items ?? [];
   const activeRun = runItems.find(run => isActiveDigitalHumanRunStatus(run.status));
   const currentTask = taskItems.find(task => task.work_status === 'in_progress');
-  const nextTask = [...taskItems]
-    .filter(task => task.work_status === 'pending' && task.lifecycle_status === 'active')
-    .sort((left, right) => taskNextTimestamp(left) - taskNextTimestamp(right))[0];
   const failedDeliveries = deliveries.filter(delivery =>
     ['failed', 'unknown'].includes(delivery.status)
   );
@@ -214,18 +213,11 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
     published: Boolean(published),
     attentionCount,
   });
-  const visibleTasks = [...taskItems]
-    .filter(
-      task =>
-        task.lifecycle_status !== 'archived' &&
-        !['completed', 'canceled'].includes(task.work_status)
-    )
-    .sort((left, right) => {
-      const statusDiff = taskStatusOrder[left.work_status] - taskStatusOrder[right.work_status];
-      if (statusDiff !== 0) return statusDiff;
-      return taskNextTimestamp(left) - taskNextTimestamp(right);
-    })
-    .slice(0, 7);
+  // The next scheduled work, soonest first.
+  const upcomingTasks = [...taskItems]
+    .filter(task => task.lifecycle_status === 'active' && Boolean(task.next_run_at))
+    .sort((left, right) => taskNextTimestamp(left) - taskNextTimestamp(right))
+    .slice(0, 5);
   const recentRuns = [...runItems]
     .sort(
       (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
@@ -333,6 +325,9 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
           </Button>
         </div>
 
+        {/* The hero says what is running now; scheduled work is listed under
+            "Up next" beside the attention list. */}
+        {isWorking ? (
         <FocusBlock
           label={t('dashboard.currentFocus')}
           title={
@@ -349,11 +344,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
           active={Boolean(currentTask || activeRun)}
           className="@[680px]/dashboard-hero:border-l-0 @[1120px]/dashboard-hero:border-l"
         />
-        <FocusBlock
-          label={t('dashboard.nextUp')}
-          title={nextTask?.name ?? t('dashboard.noNextTask')}
-          meta={nextTask ? formatTaskNextRun(nextTask, locale, t) : undefined}
-        />
+        ) : null}
         <div className="flex items-center border-t p-4 sm:hidden">
           {activeRun ? (
             <Button asChild variant="outline" size="sm" className="w-full">
@@ -373,63 +364,18 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
         </div>
       </section>
 
+      <DashboardIndicators
+        id={id}
+        attentionCount={attentionCount}
+        completedToday={todayCompleted}
+      />
+
       <div className="grid gap-5 @[1180px]/dashboard:grid-cols-[minmax(0,1fr)_340px] @[1480px]/dashboard:grid-cols-[minmax(0,1fr)_380px] 2xl:gap-6">
-        <section className="overflow-hidden rounded-xl border bg-background">
-          <div className="flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-semibold">{t('dashboard.tasksTitle')}</h2>
-              <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
-                <SummaryCount label={t('tasks.status.proposed')} value={taskCounts.proposed ?? 0} />
-                <SummaryCount
-                  label={t('tasks.status.in_progress')}
-                  value={taskCounts.in_progress ?? 0}
-                />
-                <SummaryCount label={t('dashboard.completedToday')} value={todayCompleted} />
-              </div>
-            </div>
-            <Button asChild variant="ghost" size="sm">
-              <Link href={`/console/digital-humans/${id}/tasks`}>
-                {t('dashboard.viewAllTasks')}
-                <ArrowRight className="size-4" />
-              </Link>
-            </Button>
-          </div>
-
-          {tasks.isLoading ? (
-            <div className="space-y-3 p-5">
-              {[0, 1, 2, 3].map(item => (
-                <Skeleton key={item} className="h-14 rounded-lg" />
-              ))}
-            </div>
-          ) : tasks.isError ? (
-            <InlineState
-              icon={<AlertCircle className="size-5 text-destructive" />}
-              title={t('dashboard.tasksUnavailable')}
-              description={t('dashboard.tasksUnavailableDescription')}
-            />
-          ) : visibleTasks.length === 0 ? (
-            <InlineState
-              icon={<ListTodo className="size-5 text-muted-foreground" />}
-              title={t('dashboard.noTasks')}
-              description={t('dashboard.noTasksDescription')}
-              action={
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/console/digital-humans/${id}/tasks`}>
-                    {t('dashboard.openTasks')}
-                  </Link>
-                </Button>
-              }
-            />
-          ) : (
-            <TaskTable id={id} tasks={visibleTasks} locale={locale} />
-          )}
-        </section>
-
-        <aside className="flex min-w-0 flex-col gap-5 2xl:gap-6">
-          <section className="overflow-hidden rounded-xl border bg-background">
+        <div className="min-w-0">
+          <section id="dashboard-attention" className="scroll-mt-4 overflow-hidden rounded-xl border bg-background">
             <div className="flex min-h-[61px] flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5">
               <div className="flex items-center gap-2">
-                <h2 className="font-semibold">{t('dashboard.attentionTitle')}</h2>
+                <h2 className="font-semibold">{t('dashboard.waitingOnYou')}</h2>
                 {attentionCount > 0 ? <Badge variant="warning">{attentionCount}</Badge> : null}
               </div>
               {ignoredAttentionRecordCount > 0 ? (
@@ -467,6 +413,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
                     <AttentionRow
                       key={item.key}
                       title={item.title}
+                      label={item.label}
                       description={item.description}
                       href={item.href}
                       tone={item.tone}
@@ -494,7 +441,11 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
               </>
             )}
           </section>
+        </div>
 
+        <aside className="flex min-w-0 flex-col gap-5 2xl:gap-6">
+          <UpcomingTasks id={id} tasks={upcomingTasks} locale={locale} />
+          <RecentArtifacts id={id} locale={locale} />
           <section className="overflow-hidden rounded-xl border bg-background">
             <div className="flex items-center justify-between border-b px-5 py-4">
               <h2 className="font-semibold">{t('dashboard.connectionsTitle')}</h2>
@@ -804,114 +755,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function SummaryCount({ label, value }: { label: string; value: number }) {
-  return (
-    <span>
-      {label} <strong className="ml-1 font-semibold tabular-nums text-foreground">{value}</strong>
-    </span>
-  );
-}
-
-function TaskTable({
-  id,
-  tasks,
-  locale,
-}: {
-  id: string;
-  tasks: DigitalHumanTask[];
-  locale: string;
-}) {
-  const t = useT('digitalHumans');
-  return (
-    <div>
-      <div className="hidden grid-cols-[minmax(220px,1.5fr)_105px_120px_150px_125px] gap-4 border-b bg-muted/20 px-5 py-2.5 text-xs font-medium text-muted-foreground lg:grid">
-        <span>{t('tasks.columns.name')}</span>
-        <span>{t('tasks.columns.status')}</span>
-        <span>{t('tasks.columns.schedule')}</span>
-        <span>{t('tasks.columns.nextRun')}</span>
-        <span>{t('tasks.columns.lastResult')}</span>
-      </div>
-      <div className="divide-y">
-        {tasks.map(task => (
-          <Link
-            key={task.id}
-            href={`/console/digital-humans/${id}/tasks?task=${task.id}`}
-            className="grid min-w-0 gap-3 px-5 py-3.5 outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:grid-cols-[minmax(220px,1.5fr)_105px_120px_150px_125px] lg:items-center lg:gap-4"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{task.name}</p>
-              <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{task.goal}</p>
-              <p className="mt-1 truncate text-[11px] text-muted-foreground/80">
-                {dashboardTaskSourceLabel(task, t)}
-              </p>
-            </div>
-            <DashboardTaskCell label={t('tasks.columns.status')}>
-              <TaskStatusBadge task={task} />
-            </DashboardTaskCell>
-            <DashboardTaskCell label={t('tasks.columns.schedule')}>
-              {formatTaskSchedule(task, t)}
-            </DashboardTaskCell>
-            <DashboardTaskCell label={t('tasks.columns.nextRun')}>
-              {task.next_run_at ? formatDateTime(new Date(task.next_run_at), locale) : '—'}
-            </DashboardTaskCell>
-            <DashboardTaskCell label={t('tasks.columns.lastResult')}>
-              {task.last_run_status
-                ? t(`tasks.runStatus.${normalizeRunStatus(task.last_run_status)}`)
-                : t('tasks.neverRun')}
-            </DashboardTaskCell>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function dashboardTaskSourceLabel(
-  task: DigitalHumanTask,
-  t: ReturnType<typeof useT<'digitalHumans'>>
-) {
-  if (task.source === 'console') return t('tasks.source.console');
-  if (!task.source.startsWith('channel:')) return task.source || t('tasks.source.unknown');
-  const providerID = task.source.slice('channel:'.length);
-  const provider = digitalHumanChannelProvider(providerID);
-  const providerName = provider ? t(provider.nameKey) : providerID;
-  if (task.source_conversation_type === 'group') {
-    return t('tasks.source.channelGroup', { provider: providerName });
-  }
-  if (task.source_conversation_type === 'direct') {
-    return t('tasks.source.channelDirect', { provider: providerName });
-  }
-  return t('tasks.source.channel', { provider: providerName });
-}
-
-function DashboardTaskCell({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-4 text-xs text-muted-foreground lg:block">
-      <span className="font-medium text-foreground/70 lg:hidden">{label}</span>
-      <div className="min-w-0 text-right lg:text-left">{children}</div>
-    </div>
-  );
-}
-
-function TaskStatusBadge({ task }: { task: DigitalHumanTask }) {
-  const t = useT('digitalHumans');
-  const status = digitalHumanTaskDisplayStatus(task);
-  const variant =
-    status === 'completed' || status === 'recurring_active'
-      ? 'success'
-      : status === 'blocked' || status === 'canceled'
-        ? 'destructive'
-        : status === 'proposed' || status === 'waiting'
-          ? 'warning'
-          : status === 'in_progress'
-            ? 'info'
-            : 'subtle';
-  return <Badge variant={variant}>{t(`tasks.status.${status}`)}</Badge>;
-}
-
 interface DashboardAttentionItem {
   key: string;
   title: string;
+  // What kind of thing waits: a proposal, a blocked or failed task, a report.
+  label?: string;
   description: string;
   href: string;
   tone: 'warning' | 'danger';
@@ -940,10 +788,12 @@ function buildDashboardAttentionItems({
     ...attentionTasks.map(task => ({
       key: `task-${task.id}-${task.work_status}-${task.revision}`,
       title: task.name,
+      label: task.work_status === 'proposed' ? t('dashboard.kind.proposal') : t('dashboard.kind.blocked'),
+      // A blocked task says what blocked it when its last report knows.
       description:
         task.work_status === 'proposed'
           ? t('dashboard.proposalNeedsDecision')
-          : t('dashboard.blockedNeedsHelp'),
+          : plainTextPreview(task.latest_report?.summary) || t('dashboard.blockedNeedsHelp'),
       href: taskHref(task),
       tone: task.work_status === 'blocked' ? ('danger' as const) : ('warning' as const),
       occurredAt: task.updated_at,
@@ -951,7 +801,8 @@ function buildDashboardAttentionItems({
     ...failedTaskRuns.map(task => ({
       key: `failed-run-${task.id}-${task.last_run_at ?? task.updated_at}`,
       title: task.name,
-      description: t('dashboard.taskRunFailedNeedsReview'),
+      label: t('dashboard.kind.failed'),
+      description: plainTextPreview(task.latest_report?.summary) || t('dashboard.taskRunFailedNeedsReview'),
       href: taskHref(task),
       tone: 'danger' as const,
       occurredAt: task.last_run_at ?? task.updated_at,
@@ -959,14 +810,17 @@ function buildDashboardAttentionItems({
     ...reportsToReview.map(task => ({
       key: `report-${task.latest_report?.id}`,
       title: task.name,
-      description: t('dashboard.reportToReview'),
-      href: taskHref(task),
+      label: t('dashboard.kind.report'),
+      description: plainTextPreview(task.latest_report?.summary) || t('dashboard.reportToReview'),
+      // A report opens in the report drawer over the workspace.
+      href: `/console/digital-humans/${id}?report=${task.latest_report?.id ?? ''}`,
       tone: 'warning' as const,
       occurredAt: task.latest_report?.created_at ?? task.updated_at,
     })),
     ...failedDeliveries.map(delivery => ({
       key: `failed-delivery-${delivery.id}-${delivery.status}-${delivery.updated_at}`,
       title: t('dashboard.deliveryFailed'),
+      label: t('dashboard.kind.delivery'),
       description: delivery.error_message || t('dashboard.deliveryFailedDescription'),
       href: `/console/digital-humans/${id}/channels`,
       tone: 'danger' as const,
@@ -983,6 +837,7 @@ function buildDashboardAttentionItems({
 
 function AttentionRow({
   title,
+  label,
   description,
   href,
   tone,
@@ -991,6 +846,7 @@ function AttentionRow({
   dismissing = false,
 }: {
   title: string;
+  label?: string;
   description: string;
   href: string;
   tone: 'warning' | 'danger';
@@ -1012,7 +868,14 @@ function AttentionRow({
           )}
         />
         <div className="min-w-0 flex-1">
-          <p className="line-clamp-1 text-sm font-medium">{title}</p>
+          <p className="flex min-w-0 items-center gap-2">
+            <span className="line-clamp-1 text-sm font-medium">{title}</span>
+            {label ? (
+              <Badge variant={tone === 'danger' ? 'destructive' : 'warning'} className="shrink-0 text-[11px]">
+                {label}
+              </Badge>
+            ) : null}
+          </p>
           <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{description}</p>
         </div>
       </Link>
@@ -1244,22 +1107,6 @@ function taskNextTimestamp(task: DigitalHumanTask) {
   return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
 }
 
-function formatTaskSchedule(task: DigitalHumanTask, t: ReturnType<typeof useT<'digitalHumans'>>) {
-  if (task.schedule.type === 'manual') return t('tasks.schedule.manual');
-  if (task.schedule.type === 'cron') return t('tasks.schedule.cron');
-  return t('tasks.schedule.once');
-}
-
-function formatTaskNextRun(
-  task: DigitalHumanTask,
-  locale: string,
-  t: ReturnType<typeof useT<'digitalHumans'>>
-) {
-  if (task.next_run_at) return formatDateTime(new Date(task.next_run_at), locale);
-  if (task.schedule.type === 'manual') return t('tasks.status.manual_ready');
-  return t('tasks.neverRun');
-}
-
 function normalizeRunStatus(
   status: string
 ): 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'unknown' {
@@ -1297,15 +1144,111 @@ function formatFullDate(value: Date, locale: string) {
   }).format(value);
 }
 
-function formatDateTime(value: Date, locale: string) {
-  return new Intl.DateTimeFormat(locale, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(value);
-}
-
 function formatClock(value: Date, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(value);
+}
+
+/** Counts that lead to the work: reports to read, items to handle, today's results, artifacts. */
+function DashboardIndicators({ id, attentionCount, completedToday }: { id: string; attentionCount: number; completedToday: number }) {
+  const t = useT('digitalHumans');
+  const reports = useDigitalHumanTaskReports(id, { 'review_state[]': ['new'], page_size: 1 });
+  const artifacts = useQuery({
+    queryKey: ['digital-human-artifacts', id, 'count'],
+    queryFn: () => digitalHumanService.listArtifacts(id, { page_size: 1 }),
+  });
+  const tiles = [
+    { label: t('dashboard.indicators.reports'), value: reports.data?.data.total ?? 0, href: `/console/digital-humans/${id}/reports`, tone: 'primary' },
+    { label: t('dashboard.indicators.attention'), value: attentionCount, href: '#dashboard-attention', tone: attentionCount > 0 ? 'warning' : 'muted' },
+    { label: t('dashboard.indicators.completed'), value: completedToday, href: `/console/digital-humans/${id}/tasks?status=completed`, tone: 'muted' },
+    { label: t('dashboard.indicators.artifacts'), value: artifacts.data?.data.total ?? 0, href: `/console/digital-humans/${id}/artifacts`, tone: 'muted' },
+  ] as const;
+  return (
+    <nav aria-label={t('dashboard.indicators.label')} className="grid grid-cols-2 gap-3 @[680px]/dashboard:grid-cols-4">
+      {tiles.map(tile => (
+        <Link
+          key={tile.label}
+          href={tile.href}
+          className="rounded-xl border bg-background px-4 py-3 outline-none transition-colors hover:border-primary/30 hover:bg-primary/[0.02] focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <p className="text-xs text-muted-foreground">{tile.label}</p>
+          <p
+            className={cn(
+              'mt-1 text-2xl font-semibold tabular-nums',
+              tile.tone === 'warning' && 'text-warning',
+              tile.tone === 'primary' && tile.value > 0 && 'text-primary'
+            )}
+          >
+            {tile.value}
+          </p>
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+function UpcomingTasks({ id, tasks, locale }: { id: string; tasks: DigitalHumanTask[]; locale: string }) {
+  const t = useT('digitalHumans');
+  return (
+    <section className="overflow-hidden rounded-xl border bg-background">
+      <div className="flex items-center justify-between border-b px-5 py-4">
+        <h2 className="font-semibold">{t('dashboard.upcoming')}</h2>
+        <Button asChild variant="ghost" size="sm" className="-mr-2">
+          <Link href={`/console/digital-humans/${id}/tasks`}>
+            {t('dashboard.viewAllTasks')}
+            <ArrowRight className="size-4" />
+          </Link>
+        </Button>
+      </div>
+      {tasks.length === 0 ? (
+        <InlineState compact icon={<CalendarClock className="size-5 text-muted-foreground" />} title={t('dashboard.noUpcoming')} description="" />
+      ) : (
+        <ul className="divide-y px-5">
+          {tasks.map(task => (
+            <li key={task.id}>
+              <Link href={`/console/digital-humans/${id}/tasks?task=${task.id}`} className="flex items-center gap-3 py-2.5 text-sm hover:text-primary">
+                <span className="w-24 shrink-0 text-xs tabular-nums text-muted-foreground">{formatTaskTime(task.next_run_at, locale)}</span>
+                <span className="truncate">{task.name}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function RecentArtifacts({ id, locale }: { id: string; locale: string }) {
+  const t = useT('digitalHumans');
+  const query = useQuery({
+    queryKey: ['digital-human-artifacts', id, 'recent'],
+    queryFn: () => digitalHumanService.listArtifacts(id, { page_size: 3 }),
+  });
+  const items = query.data?.data.items ?? [];
+  if (!query.isLoading && items.length === 0) return null;
+  return (
+    <section className="overflow-hidden rounded-xl border bg-background">
+      <div className="flex items-center justify-between border-b px-5 py-4">
+        <h2 className="font-semibold">{t('dashboard.recentArtifacts')}</h2>
+        <Button asChild variant="ghost" size="sm" className="-mr-2">
+          <Link href={`/console/digital-humans/${id}/artifacts`}>
+            {t('dashboard.viewAllArtifacts')}
+            <ArrowRight className="size-4" />
+          </Link>
+        </Button>
+      </div>
+      <ul className="divide-y px-5">
+        {items.map(item => (
+          <li key={item.id}>
+            <Link href={`/console/digital-humans/${id}/artifacts?selected=${item.id}`} className="flex items-center gap-3 py-2.5 text-sm hover:text-primary">
+              <Package className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">{item.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                v{item.current_version} · {formatTaskTime(item.updated_at, locale)}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }

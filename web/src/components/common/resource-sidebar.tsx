@@ -17,6 +17,9 @@ export interface ResourceSidebarNavItem {
   icon: LucideIcon;
   children?: ResourceSidebarNavItem[];
   isActive?: (pathname: string) => boolean;
+  // Items sharing a group are headed by its name when the sidebar is open,
+  // and set apart by a divider when it is collapsed.
+  group?: string;
 }
 
 interface ResourceSidebarProps {
@@ -191,7 +194,20 @@ export function ResourceSidebar({
 
         {!isNavigationHidden && navItems.length > 0 ? (
           <nav className="flex flex-1 flex-col gap-[3px] px-1 py-2 items-center">
-            {navItems.map(item => {
+            {navItems.map((item, index) => [
+              item.group && item.group !== navItems[index - 1]?.group ? (
+                effectiveIsCollapsed ? (
+                  index > 0 ? <div key={`group:${item.group}`} aria-hidden className="my-1 h-px w-6 shrink-0 bg-border" /> : null
+                ) : (
+                  <div
+                    key={`group:${item.group}`}
+                    className={cn('w-full px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'pt-3' : 'pt-0.5')}
+                  >
+                    {item.group}
+                  </div>
+                )
+              ) : null,
+              (() => {
               const Icon = item.icon;
               const childItems = item.children ?? [];
               const hasChildren = childItems.length > 0;
@@ -316,7 +332,8 @@ export function ResourceSidebar({
                   ) : null}
                 </div>
               );
-            })}
+              })(),
+            ])}
           </nav>
         ) : null}
 
