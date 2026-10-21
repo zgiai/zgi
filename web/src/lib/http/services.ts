@@ -1,7 +1,7 @@
 // Service abstraction layer for type-safe API interactions
 
 import { httpClientFactory, type ExtendedRequestConfig } from './client';
-import { buildApiUrl } from './config';
+import { buildApiUrl, UPLOAD_TIMEOUT_MS } from './config';
 
 // Generic service configuration
 export interface ServiceConfig {
@@ -29,6 +29,22 @@ export interface PaginationParams {
   limit?: number;
   sort?: string;
   order?: 'asc' | 'desc';
+}
+
+// Multipart bodies stream from the browser and can take minutes, while the
+// per-endpoint timeout is sized for JSON calls. Give a FormData request the upload
+// budget unless the caller already asked for a specific timeout.
+function withUploadTimeout(
+  data: unknown,
+  options: ExtendedRequestConfig
+): ExtendedRequestConfig {
+  if (options.timeout !== undefined || typeof FormData === 'undefined') {
+    return options;
+  }
+  if (!(data instanceof FormData)) {
+    return options;
+  }
+  return { ...options, timeout: UPLOAD_TIMEOUT_MS };
 }
 
 // Base service class with common functionality and error handling
@@ -65,21 +81,22 @@ export abstract class BaseService {
         : httpClientFactory.getClient(endpointName);
 
     const url = this.buildUrl(path, endpointName);
+    const requestOptions = withUploadTimeout(data, options);
 
     switch (method) {
       case 'get':
-        return await client.get<T>(url, options);
+        return await client.get<T>(url, requestOptions);
       case 'post':
-        return await client.post<T>(url, data, options);
+        return await client.post<T>(url, data, requestOptions);
       case 'put':
-        return await client.put<T>(url, data, options);
+        return await client.put<T>(url, data, requestOptions);
       case 'patch':
-        return await client.patch<T>(url, data, options);
+        return await client.patch<T>(url, data, requestOptions);
       case 'delete':
         // axios has no body parameter for DELETE; the payload must ride on config.data.
         return await client.delete<T>(
           url,
-          data === undefined ? options : { ...options, data }
+          data === undefined ? requestOptions : { ...requestOptions, data }
         );
       default:
         throw new Error(`Unsupported HTTP method: ${method}`);
@@ -112,7 +129,10 @@ export abstract class BaseService {
       },
       onUploadProgress: options.onProgress
         ? (progressEvent: ProgressEvent) => {
-            const progress = Math.round((progressEvent.loaded * 98) / (progressEvent.total || 1));
+            // `total` is 0 when the browser cannot determine the body size. Dividing
+            // by it produced runaway percentages, so report 0 until the size is known.
+            const total = progressEvent.total || 0;
+            const progress = total > 0 ? Math.round((progressEvent.loaded * 98) / total) : 0;
             if (options.onProgress) {
               options.onProgress(progress);
             }

@@ -271,6 +271,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.POST("/:web_app_id/runtime/audio/speech", appHandler.GenerateWebAppAgentSpeech)
 	protectedWebApps.GET("/:web_app_id/files/upload", appHandler.GetWebAppUploadConfig)
 	protectedWebApps.POST("/:web_app_id/files/upload", appHandler.UploadWebAppFile)
+	protectedWebApps.DELETE("/:web_app_id/files/upload-attempts/:attempt_id", appHandler.CancelWebAppUploadFile)
 	protectedWebApps.GET("/:web_app_id/runtime/search", appHandler.SearchWebAppAgentRuntimeConversations)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations", appHandler.ListWebAppAgentRuntimeConversations)
 	protectedWebApps.GET("/:web_app_id/runtime/conversations/:conversation_id", appHandler.GetWebAppAgentRuntimeConversation)
