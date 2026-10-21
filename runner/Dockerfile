@@ -41,11 +41,13 @@ ARG UV_INDEX_URL=
 ARG UV_VERSION=0.10.6
 
 # Install system dependencies in a single layer
-RUN if [ -n "$APT_MIRROR" ]; then \
-      sed -i "s|http://deb.debian.org/debian|http://$APT_MIRROR/debian|g" /etc/apt/sources.list.d/debian.sources; \
-    fi \
-    && if [ -n "$APT_SECURITY_MIRROR" ]; then \
+# The security source goes first: the main source URI is a prefix of it, so
+# replacing the main source first would also take over the security source.
+RUN if [ -n "$APT_SECURITY_MIRROR" ]; then \
       sed -i "s|http://deb.debian.org/debian-security|http://$APT_SECURITY_MIRROR/debian-security|g" /etc/apt/sources.list.d/debian.sources; \
+    fi \
+    && if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|http://deb.debian.org/debian|http://$APT_MIRROR/debian|g" /etc/apt/sources.list.d/debian.sources; \
     fi
 RUN apt-get update -o Acquire::Retries=5 \
     && apt-get install -y --no-install-recommends -o Acquire::Retries=5 \
