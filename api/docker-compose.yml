@@ -151,7 +151,7 @@ services:
 
   # Weaviate (Vector Database)
   weaviate:
-    image: ${WEAVIATE_IMAGE:-cr.weaviate.io/semitechnologies/weaviate:1.38.2}
+    image: ${WEAVIATE_IMAGE:-cr.weaviate.io/semitechnologies/weaviate:1.38.22}
     container_name: zgi-weaviate
     working_dir: /go/pkg/mod
     ports:
