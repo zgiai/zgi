@@ -409,6 +409,7 @@ func publicTaskReport(row *taskReportRow, task *automationmodel.AutomationTask, 
 	}
 	if task != nil {
 		report.TaskName = task.Name
+		report.ClientReference = pointerValue(task.ClientReference)
 		report.CanReview = row.Final && access.CurrentTaskID == nil && canReviewReport(task, access)
 	}
 	return report
@@ -507,6 +508,7 @@ func reportNotice(row *taskReportRow, task *automationmodel.AutomationTask) (dig
 		return notice, false
 	}
 	notice.TaskName = task.Name
+	notice.ClientReference = pointerValue(task.ClientReference)
 	notice.ChannelIDs = taskNotifyChannels(task)
 	notice.Shared = teamReportableTask(task) && storedTaskVisibility(task) == digitalhuman.TaskVisibilityWorkspace
 	if row.DigitalHumanRunID != nil {

@@ -112,7 +112,9 @@ type RuntimeService struct {
 	linux          LinuxExecutionRuntimeProvider
 	// trustAuthorizer classifies console runs at admission (ADR 0004).
 	trustAuthorizer MemoryPromotionAuthorizer
-	now             func() time.Time
+	// approvalNotifier tells API end users about approvals that wait for them.
+	approvalNotifier TaskApprovalNotifier
+	now              func() time.Time
 }
 
 func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRuntimeAdapter, chat ChatRuntime, dispatcher RunDispatcher, options ...RuntimeServiceOption) *RuntimeService {
@@ -1156,6 +1158,15 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		})
 		if !ok {
 			return ErrRunConflict
+		}
+		// The approval waits in the conversation whatever the run's own state
+		// becomes: a task approval does not hold the run the way a workflow
+		// approval does.
+		if result.Status == runtimemodel.MessageStatusWaitingApproval {
+			// The run was loaded before its message was linked.
+			linked := *run
+			linked.ConversationID, linked.MessageID = &prepared.Conversation.ID, &prepared.Message.ID
+			s.notifyTaskApproval(ctx, &linked)
 		}
 		return waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now())
 	}

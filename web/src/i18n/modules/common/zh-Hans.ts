@@ -422,7 +422,7 @@ const messages: CommonMessages = {
     nameLabel: '名称（可选）',
     namePlaceholder: '例如：我的工作邮箱',
     eventsLabel: '接收',
-    event: { task_report: '任务汇报', task_failed: '执行失败' },
+    event: { task_report: '任务汇报', task_failed: '执行失败', task_approval: '等待用户确认' },
     atLeastOneEvent: '至少保留一种通知。',
     status: { pending: '待验证', active: '已启用', disabled: '已停用' },
     enabled: '启用',

@@ -141,7 +141,7 @@ func TestNotificationsReachSubscribedChannelsSigned(t *testing.T) {
 		}
 	}
 	// A report reaches the webhook only; the email subscribes to failures.
-	notify(Recipient{OrganizationID: organization, Kind: RecipientAccount, ID: me.ID}, "digital_human.task_report", report, map[string]any{"task_id": "t1", "outcome": "done"})
+	notify(Recipient{OrganizationID: organization, Kind: RecipientAccount, ID: me.ID}, "digital_human.task_report", report, map[string]any{"task_id": "t1", "outcome": "done", "client_reference": "crm-42"})
 	if len(*queued) != 1 {
 		t.Fatalf("queued deliveries = %d, want the webhook only", len(*queued))
 	}
@@ -152,7 +152,7 @@ func TestNotificationsReachSubscribedChannelsSigned(t *testing.T) {
 		t.Fatalf("webhook calls = %#v", hooks)
 	}
 	var payload WebhookPayload
-	if err := json.Unmarshal(hooks[0].body, &payload); err != nil || payload.Event != "report.created" || payload.Data["report_id"] != report.String() ||
+	if err := json.Unmarshal(hooks[0].body, &payload); err != nil || payload.Event != "report.created" || payload.Data["report_id"] != report.String() || payload.Data["client_reference"] != "crm-42" ||
 		payload.Data["link"] != "https://zgi.example/console/digital-humans/x/tasks?report="+report.String() {
 		t.Fatalf("payload = %#v, %v", payload, err)
 	}

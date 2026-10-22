@@ -45,6 +45,8 @@ func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("", h.list)
 	group.POST("", h.create)
 	group.POST("/schedule-preview", h.previewSchedule)
+	group.GET("/requesters", h.requesters)
+	group.PATCH("/requesters/:requester_id", h.labelRequester)
 	group.GET("/:task_id", h.get)
 	group.PATCH("/:task_id", h.update)
 	group.POST("/:task_id/actions/:action", h.applyAction)
@@ -65,7 +67,7 @@ func (h *TaskHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ClientReference: c.Query("client_reference"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
 		IncludeUnreviewed: c.Query("include_unreviewed") == "true"}
 	var err error
 	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
@@ -106,6 +108,53 @@ func optionalRFC3339Query(raw string) (*time.Time, error) {
 		return nil, err
 	}
 	return &parsed, nil
+}
+
+// requesters searches who asked for tasks in the task center.
+func (h *TaskHandler) requesters(c *gin.Context) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	directory, ok := h.service.(TaskRequesterDirectory)
+	if !ok {
+		h.base.writeError(c, taskApplicationError(ErrTaskNotFound, "digital_human.task.requesters"))
+		return
+	}
+	result, err := directory.ListTaskRequesters(c.Request.Context(), h.sharedAccess(c, scope, id), TaskRequesterQuery{
+		Query: c.Query("query"), Kind: TaskRequesterKind(c.Query("kind")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+	})
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.requesters"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// labelRequester names an API end user for the task center.
+func (h *TaskHandler) labelRequester(c *gin.Context) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	subjectID, err := uuid.Parse(strings.TrimSpace(c.Param("requester_id")))
+	directory, supported := h.service.(TaskRequesterDirectory)
+	if err != nil || !supported {
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.requester.label"))
+		return
+	}
+	var req struct {
+		Label string `json:"label"`
+	}
+	if !h.base.decode(c, &req) {
+		return
+	}
+	result, err := directory.LabelTaskRequester(c.Request.Context(), h.sharedAccess(c, scope, id), subjectID, req.Label)
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.requester.label"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
 func (h *TaskHandler) previewSchedule(c *gin.Context) {

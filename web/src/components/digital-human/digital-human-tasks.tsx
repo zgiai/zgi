@@ -40,9 +40,7 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -61,6 +59,7 @@ import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import { TaskLatestReport, TaskReportFeed, TaskReportView } from '@/components/digital-human/digital-human-task-reports';
 import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
+import { TaskRequesterLabelButton, TaskRequesterPicker, requesterName } from '@/components/digital-human/digital-human-task-requesters';
 import { DigitalHumanRunTimeline } from '@/components/digital-human/digital-human-run-timeline';
 import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
 import { TEAM_NOTIFICATION_CHANNELS_PATH } from '@/services/notification-channel.service';
@@ -100,6 +99,7 @@ const summaryStatuses: DigitalHumanTaskStatus[] = [
   'canceled',
 ];
 const taskParam = 'task';
+const requesterKindParam = 'requester_kind';
 const requesterParam = 'requester';
 // The header and every row share one column template so they line up.
 const taskColumns =
@@ -129,10 +129,10 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const rawSchedule = searchParams.get('schedule');
   const schedule: ScheduleFilter = taskSchedules.includes(rawSchedule as DigitalHumanTaskScheduleType)
     ? rawSchedule as DigitalHumanTaskScheduleType : 'all';
-  // `kind:<kind>` narrows to a kind of requester, `id:<id>` to one person.
-  const requester = searchParams.get(requesterParam) ?? '';
-  const requesterKind = requester.startsWith('kind:') ? requester.slice(5) : '';
-  const requesterID = requester.startsWith('id:') ? requester.slice(3) : '';
+  const rawRequesterKind = searchParams.get(requesterKindParam);
+  const requesterKind = requesterKinds.includes(rawRequesterKind as DigitalHumanTaskRequesterKind)
+    ? (rawRequesterKind as DigitalHumanTaskRequesterKind) : undefined;
+  const requesterID = searchParams.get(requesterParam) ?? '';
   const rawPage = Number(searchParams.get('page') ?? 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= 10_000 ? rawPage : 1;
   const selectedTaskID = searchParams.get(taskParam) ?? '';
@@ -159,11 +159,14 @@ export function DigitalHumanTasks({ id }: { id: string }) {
     requester_kind: requesterKind ? [requesterKind] : undefined,
     requester_id: requesterID || undefined,
   });
-  const requesters = query.data?.data.requesters ?? [];
   const items = query.data?.data.items ?? [];
+  // Every row belongs to the chosen person, so any row names them.
+  const chosenRequester = requesterID ? items.find(item => item.requester?.id === requesterID)?.requester : undefined;
+  const filterByRequester = (person?: DigitalHumanTaskRequester | null) =>
+    updateParams({ [requesterParam]: person?.id ?? null, page: null });
   const counts = query.data?.data.counts ?? {};
   const hasFilters = Boolean(
-    search.trim() || status !== 'open' || priority !== 'all' || schedule !== 'all' || requester
+    search.trim() || status !== 'open' || priority !== 'all' || schedule !== 'all' || requesterKind || requesterID
   );
   const updateParams = useCallback((updates: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -256,9 +259,9 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             placeholder={t('tasks.filters.search')}
             leftIcon={<Search />}
             className="h-9"
-            containerClassName="min-w-0 xl:w-[420px]"
+            containerClassName="min-w-0 xl:min-w-[200px] xl:flex-1"
           />
-          <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3 xl:flex xl:justify-end">
+          <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3 xl:flex xl:flex-none xl:justify-end">
             <TaskFilter
               value={status}
               onChange={value => updateParams({ status: value === 'open' ? null : value, page: null })}
@@ -297,39 +300,26 @@ export function DigitalHumanTasks({ id }: { id: string }) {
               ))}
             </TaskFilter>
             <TaskFilter
-              value={requester || 'all'}
-              onChange={value => updateParams({ [requesterParam]: value === 'all' ? null : value, page: null })}
+              value={requesterKind ?? 'all'}
+              onChange={value =>
+                updateParams({ [requesterKindParam]: value === 'all' ? null : value, [requesterParam]: null, page: null })
+              }
               label={t('tasks.filters.requester')}
             >
               <SelectItem value="all">{t('tasks.filters.allRequesters')}</SelectItem>
-              <SelectGroup>
-                <SelectLabel>{t('tasks.filters.requesterKinds')}</SelectLabel>
-                {requesterKinds.map(kind => (
-                  <SelectItem key={kind} value={`kind:${kind}`}>
-                    {t(`tasks.requester.${kind}`)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-              {requesters.some(item => item.id) || requesterID ? (
-                <SelectGroup>
-                  <SelectLabel>{t('tasks.filters.requesterPeople')}</SelectLabel>
-                  {requesters
-                    .filter(item => item.id)
-                    .map(item => (
-                      <SelectItem key={item.id} value={`id:${item.id}`}>
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="truncate">{requesterName(item, t)}</span>
-                          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{item.count}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  {/* Keep a chosen person selectable after their tasks leave the list. */}
-                  {requesterID && !requesters.some(item => item.id === requesterID) ? (
-                    <SelectItem value={`id:${requesterID}`}>{requesterID.slice(0, 8)}</SelectItem>
-                  ) : null}
-                </SelectGroup>
-              ) : null}
+              {requesterKinds.map(kind => (
+                <SelectItem key={kind} value={kind}>
+                  {t(`tasks.requester.${kind}`)}
+                </SelectItem>
+              ))}
             </TaskFilter>
+            <TaskRequesterPicker
+              digitalHumanId={id}
+              kind={requesterKind}
+              value={requesterID}
+              valueLabel={chosenRequester ? requesterName(chosenRequester, t) : undefined}
+              onChange={filterByRequester}
+            />
           </div>
           {hasFilters ? (
             <Button
@@ -337,7 +327,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
               size="sm"
               onClick={() => {
                 setSearch('');
-                updateParams({ q: null, status: null, priority: null, schedule: null, [requesterParam]: null, page: null });
+                updateParams({ q: null, status: null, priority: null, schedule: null, [requesterKindParam]: null, [requesterParam]: null, page: null });
               }}
             >
               {t('tasks.filters.clear')}
@@ -398,7 +388,12 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                     </p>
                   </div>
                   <TaskListCell label={t('tasks.columns.requester')}>
-                    <TaskRequesterCell task={task} />
+                    <TaskRequesterCell
+                      task={task}
+                      digitalHumanId={id}
+                      canLabel={canUpdate}
+                      onFilter={requesterID ? undefined : filterByRequester}
+                    />
                   </TaskListCell>
                   <TaskListCell label={t('tasks.columns.status')}>
                     <TaskStatusBadge task={task} />
@@ -508,7 +503,7 @@ function TaskFilter({
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-9 min-w-0 xl:w-[170px]" aria-label={label}>
+      <SelectTrigger className="h-9 min-w-0 xl:w-[150px]" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>{children}</SelectContent>
@@ -824,7 +819,16 @@ function TaskDetailSheet({
                   />
                   <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
                   {task.requester ? (
-                    <DetailValue label={t('tasks.columns.requester')} value={<TaskRequesterCell task={task} />} />
+                    <DetailValue
+                      label={t('tasks.columns.requester')}
+                      value={<TaskRequesterCell task={task} digitalHumanId={id} canLabel={canUpdate} />}
+                    />
+                  ) : null}
+                  {task.client_reference ? (
+                    <DetailValue
+                      label={t('tasks.fields.clientReference')}
+                      value={<span className="break-all font-mono text-xs">{task.client_reference}</span>}
+                    />
                   ) : null}
                   <DetailValue
                     label={t('tasks.visibilityControl.label')}
@@ -1417,25 +1421,53 @@ function normalizeRunStatus(
 }
 const requesterKinds: DigitalHumanTaskRequesterKind[] = ['member', 'api_user', 'channel'];
 
-function requesterName(requester: DigitalHumanTaskRequester, t: ReturnType<typeof useT<'digitalHumans'>>) {
-  if (requester.kind === 'api_user') {
-    return requester.name || t('tasks.requester.apiUser', { id: (requester.id ?? '').slice(0, 8) });
-  }
-  if (requester.kind === 'channel') return t('tasks.requester.channel');
-  return requester.name || requester.email || t('tasks.requester.unknownMember');
-}
-
-// Who asked, and where they asked from.
-function TaskRequesterCell({ task }: { task: DigitalHumanTask }) {
+// Who asked, and where they asked from. Clicking the person shows only
+// their tasks; an API end user can be given a name.
+function TaskRequesterCell({
+  task,
+  digitalHumanId,
+  canLabel,
+  onFilter,
+}: {
+  task: DigitalHumanTask;
+  digitalHumanId: string;
+  canLabel: boolean;
+  onFilter?: (requester: DigitalHumanTaskRequester) => void;
+}) {
   const t = useT('digitalHumans');
   const requester = task.requester;
   const origin = sourceLabel(task, t);
   if (!requester || requester.kind === 'channel') {
     return <span className="block truncate text-foreground/80">{origin}</span>;
   }
+  const name = requesterName(requester, t);
   return (
     <span className="block min-w-0" title={requester.email || undefined}>
-      <span className="block truncate text-foreground/80">{requesterName(requester, t)}</span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        {onFilter && requester.id ? (
+          <span
+            role="button"
+            tabIndex={0}
+            className="truncate text-foreground/80 hover:text-primary hover:underline"
+            title={t('tasks.requester.onlyThisPerson')}
+            onClick={event => {
+              event.stopPropagation();
+              onFilter(requester);
+            }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                event.stopPropagation();
+                onFilter(requester);
+              }
+            }}
+          >
+            {name}
+          </span>
+        ) : (
+          <span className="truncate text-foreground/80">{name}</span>
+        )}
+        {canLabel ? <TaskRequesterLabelButton digitalHumanId={digitalHumanId} requester={requester} /> : null}
+      </span>
       <span className="block truncate text-[11px] text-muted-foreground/80">{origin}</span>
     </span>
   );

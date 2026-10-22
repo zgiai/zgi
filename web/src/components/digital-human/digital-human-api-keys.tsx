@@ -349,7 +349,12 @@ function DigitalHumanAPIKeysContent({
       <section className="rounded-xl border bg-background p-5">
         <h3 className="text-sm font-semibold">{tCommon('notifications.webhookSectionTitle')}</h3>
         <p className="mb-3 mt-1 text-sm text-muted-foreground">{tCommon('notifications.webhookSectionDescription')}</p>
-        <NotificationChannelManager basePath={`/digital-humans/${id}/notification-channels`} types={['webhook']} canManage={canPublish} />
+        <NotificationChannelManager
+          basePath={`/digital-humans/${id}/notification-channels`}
+          types={['webhook']}
+          canManage={canPublish}
+          events={['task_report', 'task_failed', 'task_approval']}
+        />
       </section>
     </div>
   );

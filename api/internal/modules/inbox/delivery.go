@@ -81,6 +81,8 @@ func eventKey(event string) string {
 		return EventTaskReport
 	case "digital_human.task_failed":
 		return EventTaskFailed
+	case "digital_human.task_approval":
+		return EventTaskApproval
 	default:
 		return ""
 	}
@@ -248,6 +250,8 @@ func eventTitle(event string) (string, string) {
 	switch event {
 	case "digital_human.task_failed":
 		return "Task failed", "任务执行失败"
+	case "digital_human.task_approval":
+		return "Approval needed", "等待你确认"
 	case "notification.test":
 		return "Test notification", "测试通知"
 	default:
@@ -285,6 +289,8 @@ func webhookEvent(event string) string {
 		return "report.created"
 	case "digital_human.task_failed":
 		return "task.failed"
+	case "digital_human.task_approval":
+		return "task.approval_requested"
 	default:
 		return event
 	}
@@ -298,7 +304,7 @@ func (d *Dispatcher) sendWebhook(ctx context.Context, channel *Channel, notifica
 	data := map[string]any{"notification_id": notification.ID, "title": notification.Title, "summary": notification.Summary}
 	var meta map[string]any
 	if json.Unmarshal(notification.Context, &meta) == nil {
-		for _, key := range []string{"digital_human_id", "task_id", "outcome"} {
+		for _, key := range []string{"digital_human_id", "task_id", "outcome", "client_reference", "conversation_id", "message_id", "task_action"} {
 			if value, ok := meta[key]; ok {
 				data[key] = value
 			}

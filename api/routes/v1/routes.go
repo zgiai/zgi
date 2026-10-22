@@ -295,6 +295,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	if automationBundle.DigitalHumanTasks != nil {
 		automationBundle.DigitalHumanTasks.SetNotifyChannels(notificationChannels)
 	}
+	if digitalHumanRuntime.Runtime != nil {
+		digitalHumanRuntime.Runtime.SetTaskApprovalNotifier(digitalHumanApprovalInbox{inbox: inboxService})
+	}
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
 		automationBundle.DigitalHumanTaskReconciler.SetReportNotifier(reportNotifiers{

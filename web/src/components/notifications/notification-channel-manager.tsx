@@ -30,7 +30,8 @@ import {
 } from '@/services/notification-channel.service';
 import { getErrorMessage } from '@/utils/error-notifications';
 
-const allEvents: NotificationChannelEvent[] = ['task_report', 'task_failed'];
+// Approvals wait only for API end users, so only a DigitalHuman's webhook offers them.
+const defaultEvents: NotificationChannelEvent[] = ['task_report', 'task_failed'];
 
 /**
  * Manages notification channels at basePath: personal email and webhooks,
@@ -40,10 +41,13 @@ export function NotificationChannelManager({
   basePath,
   types,
   canManage = true,
+  events: allEvents = defaultEvents,
 }: {
   basePath: string;
   types: NotificationChannelType[];
   canManage?: boolean;
+  // The events these channels may subscribe to.
+  events?: NotificationChannelEvent[];
 }) {
   const t = useT('common');
   const client = useQueryClient();
@@ -107,6 +111,7 @@ export function NotificationChannelManager({
               basePath={basePath}
               channel={channel}
               canManage={canManage}
+              allEvents={allEvents}
               onEvents={events => update.mutate({ id: channel.id, body: { events } })}
               onEnabled={enabled => update.mutate({ id: channel.id, body: { enabled } })}
               onTest={() => test.mutate(channel.id)}
@@ -121,6 +126,7 @@ export function NotificationChannelManager({
       <AddChannelDialog
         open={adding}
         types={types}
+        allEvents={allEvents}
         basePath={basePath}
         onOpenChange={setAdding}
         onCreated={created => {
@@ -163,6 +169,7 @@ function ChannelRow({
   basePath,
   channel,
   canManage,
+  allEvents,
   busy,
   onEvents,
   onEnabled,
@@ -174,6 +181,7 @@ function ChannelRow({
   basePath: string;
   channel: NotificationChannel;
   canManage: boolean;
+  allEvents: NotificationChannelEvent[];
   busy: boolean;
   onEvents: (events: NotificationChannelEvent[]) => void;
   onEnabled: (enabled: boolean) => void;
@@ -298,12 +306,14 @@ function ChannelRow({
 function AddChannelDialog({
   open,
   types,
+  allEvents,
   basePath,
   onOpenChange,
   onCreated,
 }: {
   open: boolean;
   types: NotificationChannelType[];
+  allEvents: NotificationChannelEvent[];
   basePath: string;
   onOpenChange: (open: boolean) => void;
   onCreated: (channel: NotificationChannel) => void;

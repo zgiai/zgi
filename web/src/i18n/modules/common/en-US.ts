@@ -435,7 +435,7 @@ const messages = {
     nameLabel: 'Name (optional)',
     namePlaceholder: 'For example: my work email',
     eventsLabel: 'Receive',
-    event: { task_report: 'Task reports', task_failed: 'Failures' },
+    event: { task_report: 'Task reports', task_failed: 'Failures', task_approval: 'Approvals needed' },
     atLeastOneEvent: 'Keep at least one kind of notification.',
     status: { pending: 'To verify', active: 'Enabled', disabled: 'Disabled' },
     enabled: 'Enabled',

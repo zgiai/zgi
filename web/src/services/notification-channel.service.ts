@@ -2,7 +2,7 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
 
 export type NotificationChannelType = 'email' | 'webhook';
-export type NotificationChannelEvent = 'task_report' | 'task_failed';
+export type NotificationChannelEvent = 'task_report' | 'task_failed' | 'task_approval';
 export type NotificationChannelStatus = 'pending' | 'active' | 'disabled';
 
 /** A place notifications are delivered outside the console (ADR 0008). */

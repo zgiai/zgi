@@ -47,6 +47,14 @@ func (n endUserInbox) ListEndUserNotifications(ctx context.Context, organization
 	return n.inbox.List(ctx, inbox.Recipient{OrganizationID: organizationID, Kind: subjectKind, ID: subjectID}, inbox.ListQuery{UnreadOnly: unreadOnly, Page: page, PageSize: pageSize})
 }
 
+func (n endUserInbox) EndUserUnreadCount(ctx context.Context, organizationID uuid.UUID, subjectKind string, subjectID uuid.UUID) (int64, error) {
+	return n.inbox.UnreadCount(ctx, inbox.Recipient{OrganizationID: organizationID, Kind: subjectKind, ID: subjectID})
+}
+
+func (n endUserInbox) MarkAllEndUserNotificationsRead(ctx context.Context, organizationID uuid.UUID, subjectKind string, subjectID uuid.UUID) error {
+	return n.inbox.MarkAllRead(ctx, inbox.Recipient{OrganizationID: organizationID, Kind: subjectKind, ID: subjectID})
+}
+
 func (n endUserInbox) MarkEndUserNotificationsRead(ctx context.Context, organizationID uuid.UUID, subjectKind string, subjectID uuid.UUID, ids []uuid.UUID, reportID *uuid.UUID) error {
 	recipient := inbox.Recipient{OrganizationID: organizationID, Kind: subjectKind, ID: subjectID}
 	if reportID != nil {

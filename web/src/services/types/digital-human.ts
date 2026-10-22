@@ -829,6 +829,8 @@ export interface DigitalHumanTask {
   notify_channel_ids?: string[];
   /** The requester manages the team channels; a task manager may only remove them. */
   notify_channel_access?: 'manage' | 'remove';
+  /** An integrator's own identifier, given when an API task is created. */
+  client_reference?: string;
   /** Who asked for the task; only the task center returns it. */
   requester?: DigitalHumanTaskRequester;
   name: string;
@@ -868,10 +870,16 @@ export interface DigitalHumanTaskRequester {
   email?: string;
 }
 
+export interface DigitalHumanTaskRequesterPage {
+  items: Array<DigitalHumanTaskRequester & { count: number }>;
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
 export interface DigitalHumanTaskList {
   items: DigitalHumanTask[];
-  /** Everyone who asked for a visible task; only the task center returns it. */
-  requesters?: Array<DigitalHumanTaskRequester & { count: number }>;
   counts: Partial<Record<DigitalHumanTaskStatus, number>>;
   successful_run_count: number;
   total: number;

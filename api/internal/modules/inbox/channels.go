@@ -35,8 +35,9 @@ const (
 
 	// Event keys a channel subscribes to. They name inbox events without
 	// their module prefix.
-	EventTaskReport = "task_report"
-	EventTaskFailed = "task_failed"
+	EventTaskReport   = "task_report"
+	EventTaskFailed   = "task_failed"
+	EventTaskApproval = "task_approval"
 
 	verifyCodeTTL      = 15 * time.Minute
 	verifyCodeCooldown = time.Minute
@@ -394,7 +395,7 @@ func normalizeEvents(events []string) ([]string, error) {
 	result := make([]string, 0, len(events))
 	for _, event := range events {
 		event = strings.TrimSpace(event)
-		if event != EventTaskReport && event != EventTaskFailed {
+		if event != EventTaskReport && event != EventTaskFailed && event != EventTaskApproval {
 			return nil, ErrInvalidRequest
 		}
 		if !slices.Contains(result, event) {

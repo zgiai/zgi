@@ -47,6 +47,8 @@ import type {
   UpdateDigitalHumanTaskRequest,
   DigitalHumanTask,
   DigitalHumanTaskList,
+  DigitalHumanTaskRequester,
+  DigitalHumanTaskRequesterPage,
   DigitalHumanTaskRun,
   DigitalHumanTaskActivity,
   DigitalHumanTaskReport,
@@ -482,6 +484,19 @@ class DigitalHumanService extends BaseService {
     }
   ): Promise<ApiResponseData<DigitalHumanTaskList>> {
     return this.request('get', `/digital-humans/${id}/tasks`, undefined, { params });
+  }
+
+  /** Searches who asked for tasks in the task center, most recently active first. */
+  listTaskRequesters(
+    id: string,
+    params?: { query?: string; kind?: string; page?: number; page_size?: number }
+  ): Promise<ApiResponseData<DigitalHumanTaskRequesterPage>> {
+    return this.request('get', `/digital-humans/${id}/tasks/requesters`, undefined, { params });
+  }
+
+  /** Names an API end user in the task center. */
+  labelTaskRequester(id: string, requesterId: string, label: string): Promise<ApiResponseData<DigitalHumanTaskRequester>> {
+    return this.request('patch', `/digital-humans/${id}/tasks/requesters/${requesterId}`, { label });
   }
 
   listMyTasks(

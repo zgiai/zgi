@@ -53,10 +53,12 @@ const (
 // TaskReport is what one task run hands back (ADR 0008). Reports are visible
 // to whoever can see their task.
 type TaskReport struct {
-	ID                uuid.UUID             `json:"id"`
-	DigitalHumanID    uuid.UUID             `json:"digital_human_id"`
-	TaskID            uuid.UUID             `json:"task_id"`
-	TaskName          string                `json:"task_name"`
+	ID             uuid.UUID `json:"id"`
+	DigitalHumanID uuid.UUID `json:"digital_human_id"`
+	TaskID         uuid.UUID `json:"task_id"`
+	TaskName       string    `json:"task_name"`
+	// ClientReference is the task's integrator identifier, if any.
+	ClientReference   string                `json:"client_reference,omitempty"`
 	TaskRunID         uuid.UUID             `json:"task_run_id"`
 	DigitalHumanRunID *uuid.UUID            `json:"digital_human_run_id,omitempty"`
 	Attempt           int                   `json:"attempt"`

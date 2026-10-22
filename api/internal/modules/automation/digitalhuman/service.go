@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
@@ -106,6 +108,9 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	if source := strings.TrimSpace(query.Source); source != "" {
 		base = base.Where("source_ref = ?", source)
 	}
+	if reference := strings.TrimSpace(query.ClientReference); reference != "" {
+		base = base.Where("client_reference = ?", reference)
+	}
 	if showsRequesters(access) {
 		var err error
 		if base, err = applyRequesterFilter(base, query); err != nil {
@@ -166,13 +171,7 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	if err := s.attachRequesters(ctx, access, rows, items); err != nil {
 		return nil, err
 	}
-	result := &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}
-	if showsRequesters(access) {
-		if result.Requesters, err = s.requesterFacets(ctx, access); err != nil {
-			return nil, err
-		}
-	}
-	return result, nil
+	return &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
 }
 
 func (s *Service) countSuccessfulRuns(ctx context.Context, access digitalhuman.TaskAccessContext, query digitalhuman.TaskListQuery) (int64, error) {
@@ -268,6 +267,7 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 		Status: lifecycle, TriggerType: automationmodel.AutomationTriggerTypeSchedule, ScheduleType: scheduleType, Timezone: timezone,
 		ScheduleConfig: config, NextRunAt: nextRunAt, SourceType: sourceType(mutation), SourceRef: &sourceRef,
 		SourceSnapshot: sourceSnapshot(mutation), CreatedBy: createdBy, UpdatedBy: createdBy,
+		ClientReference: clientReference(req.ClientReference),
 	}
 	action := &automationmodel.AutomationTaskAction{ActionType: automationmodel.AutomationActionTypeRunDigitalHuman, ActionOrder: 1, Enabled: true, Config: map[string]any{}}
 	activity := newActivity(task.ID, mutation, "created", "Task created", map[string]any{"work_status": workStatus})
@@ -392,6 +392,13 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			}
 			task.MaxAttempts = *req.MaxAttempts
 			changes["max_attempts"] = *req.MaxAttempts
+		}
+		if req.ClientReference != nil {
+			if !validClientReference(*req.ClientReference) {
+				return digitalhuman.ErrInvalidRequest
+			}
+			task.ClientReference = clientReference(*req.ClientReference)
+			changes["client_reference"] = pointerValue(task.ClientReference)
 		}
 		var requestedScheduleNext *time.Time
 		if req.Schedule != nil {
@@ -957,6 +964,7 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 	if row.SourceRef != nil {
 		result.Source = *row.SourceRef
 	}
+	result.ClientReference = pointerValue(row.ClientReference)
 	result.SourceConversationType = sourceConversationType(row)
 	// Results of a change are always changeable by the caller that made it.
 	result.CanChange = true
@@ -1351,10 +1359,37 @@ func accessActorID(access digitalhuman.TaskAccessContext) uuid.UUID {
 func validateCreate(req digitalhuman.CreateTaskRequest) error {
 	invalidTimeout := req.ExecutionTimeoutSeconds != 0 && (req.ExecutionTimeoutSeconds < 30 || req.ExecutionTimeoutSeconds > 1800)
 	invalidAttempts := req.MaxAttempts != 0 && (req.MaxAttempts < 1 || req.MaxAttempts > 3)
-	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Goal) == "" || (req.Priority != "" && !validPriority(req.Priority)) || invalidTimeout || invalidAttempts {
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Goal) == "" || (req.Priority != "" && !validPriority(req.Priority)) || invalidTimeout || invalidAttempts ||
+		!validClientReference(req.ClientReference) {
 		return digitalhuman.ErrInvalidRequest
 	}
 	return nil
+}
+
+// maxClientReferenceRunes bounds an integrator's task identifier.
+const maxClientReferenceRunes = 255
+
+// validClientReference accepts an empty value or printable text that fits the
+// column; control characters would break logs and webhook consumers.
+func validClientReference(value string) bool {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > maxClientReferenceRunes {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func clientReference(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // taskUpdateValues deliberately includes nullable scheduling fields. GORM's
@@ -1380,6 +1415,7 @@ func taskUpdateValues(task *automationmodel.AutomationTask, updatedAt time.Time)
 		"priority":                  task.Priority,
 		"execution_timeout_seconds": task.ExecutionTimeoutSeconds,
 		"max_attempts":              task.MaxAttempts,
+		"client_reference":          task.ClientReference,
 		"delivery_config":           datatypes.JSON(deliveryConfig),
 		"status":                    task.Status,
 		"work_status":               task.WorkStatus,

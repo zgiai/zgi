@@ -42,8 +42,20 @@ func TestTaskCenterShowsAndFiltersRequesters(t *testing.T) {
 	if got := byName["conversation"]; got == nil || got.Kind != digitalhuman.TaskRequesterChannel || got.ID != "" {
 		t.Fatalf("channel task requester = %#v", got)
 	}
-	if len(result.Requesters) == 0 {
-		t.Fatal("task center lists no requesters")
+	// The directory finds people by name, email, or ID prefix, newest first.
+	// A manager also sees member B's private task, so three people asked.
+	page, err := fixture.service.ListTaskRequesters(t.Context(), fixture.manager, digitalhuman.TaskRequesterQuery{})
+	if err != nil || page.Total != 3 || len(page.Items) != 3 {
+		t.Fatalf("requester directory = %#v, %v", page, err)
+	}
+	for query, want := range map[string]string{"ali": "Alice", "MANAGER@": "Manager", fixture.memberA.Principal.ID[:8]: "Alice"} {
+		found, err := fixture.service.ListTaskRequesters(t.Context(), fixture.manager, digitalhuman.TaskRequesterQuery{Query: query})
+		if err != nil || found.Total != 1 || found.Items[0].Name != want {
+			t.Fatalf("search %q = %#v, %v", query, found, err)
+		}
+	}
+	if _, err := fixture.service.ListTaskRequesters(t.Context(), fixture.memberA, digitalhuman.TaskRequesterQuery{}); err == nil {
+		t.Fatal("a member listed requesters")
 	}
 
 	filtered, err := fixture.service.ListTasks(t.Context(), fixture.manager, digitalhuman.TaskListQuery{RequesterID: fixture.memberA.Principal.ID})
@@ -68,7 +80,23 @@ func TestTaskCenterShowsAndFiltersRequesters(t *testing.T) {
 			t.Fatalf("member view names requester of %q", item.Name)
 		}
 	}
-	if own.Requesters != nil {
-		t.Fatal("member view lists requesters")
+}
+
+func TestTaskCenterLabelsAPIEndUsers(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	subject := uuid.New()
+	if err := fixture.service.db.Exec("INSERT INTO digital_human_end_user_instances (organization_id, workspace_id, digital_human_id, subject_id) VALUES (?, ?, ?, ?)",
+		fixture.manager.OrganizationID.String(), fixture.manager.WorkspaceID.String(), fixture.manager.DigitalHumanID.String(), subject.String()).Error; err != nil {
+		t.Fatalf("insert instance: %v", err)
+	}
+	labeled, err := fixture.service.LabelTaskRequester(t.Context(), fixture.manager, subject, "  VIP Zhang  ")
+	if err != nil || labeled.Name != "VIP Zhang" {
+		t.Fatalf("label = %#v, %v", labeled, err)
+	}
+	if _, err := fixture.service.LabelTaskRequester(t.Context(), fixture.taskCenter, subject, "x"); err == nil {
+		t.Fatal("a reader without update permission labeled a requester")
+	}
+	if _, err := fixture.service.LabelTaskRequester(t.Context(), fixture.manager, uuid.New(), "x"); err == nil {
+		t.Fatal("labeled a requester with no instance")
 	}
 }

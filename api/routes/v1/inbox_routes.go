@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
@@ -97,20 +98,54 @@ func (n digitalHumanReportInbox) NotifyTaskReport(ctx context.Context, notice di
 		event = "digital_human.task_failed"
 	}
 	workspaceID := notice.WorkspaceID
+	meta := map[string]any{
+		"digital_human_id": notice.DigitalHumanID.String(), "task_id": notice.TaskID.String(), "outcome": string(notice.Outcome),
+		"channel_ids": notice.ChannelIDs,
+	}
+	if notice.ClientReference != "" {
+		meta["client_reference"] = notice.ClientReference
+	}
 	_, err := n.inbox.Notify(ctx, inbox.NotifyRequest{
 		Recipient:   inbox.Recipient{OrganizationID: notice.OrganizationID, Kind: kind, ID: notice.RecipientID},
 		WorkspaceID: &workspaceID, Event: event, SourceType: "digital_human_task_report", SourceID: notice.ReportID,
 		Title: notice.TaskName, Summary: notice.Summary,
-		Link: "/console/digital-humans/" + notice.DigitalHumanID.String() + "/tasks?report=" + notice.ReportID.String(),
-		Context: map[string]any{
-			"digital_human_id": notice.DigitalHumanID.String(), "task_id": notice.TaskID.String(), "outcome": string(notice.Outcome),
-			"channel_ids": notice.ChannelIDs,
-		},
+		Link:    "/console/digital-humans/" + notice.DigitalHumanID.String() + "/tasks?report=" + notice.ReportID.String(),
+		Context: meta,
 	})
 	return err
 }
 
 var _ digitalhuman.TaskReportNotifier = digitalHumanReportInbox{}
+
+// digitalHumanApprovalInbox tells an API end user that a task change waits
+// for their approval. The notification names the conversation and message to
+// answer through the workflow continuation.
+type digitalHumanApprovalInbox struct{ inbox *inbox.Service }
+
+func (n digitalHumanApprovalInbox) NotifyTaskApproval(ctx context.Context, notice digitalhuman.TaskApprovalNotice) error {
+	if notice.RecipientKind != inbox.RecipientAPIEndUser || notice.RecipientID == uuid.Nil || notice.MessageID == uuid.Nil {
+		return nil
+	}
+	meta := map[string]any{
+		"digital_human_id": notice.DigitalHumanID.String(), "conversation_id": notice.ConversationID.String(),
+		"message_id": notice.MessageID.String(), "task_action": notice.TaskAction,
+	}
+	if notice.TaskID != uuid.Nil {
+		meta["task_id"] = notice.TaskID.String()
+	}
+	if notice.ClientReference != "" {
+		meta["client_reference"] = notice.ClientReference
+	}
+	workspaceID := notice.WorkspaceID
+	_, err := n.inbox.Notify(ctx, inbox.NotifyRequest{
+		Recipient:   inbox.Recipient{OrganizationID: notice.OrganizationID, Kind: inbox.RecipientAPIEndUser, ID: notice.RecipientID},
+		WorkspaceID: &workspaceID, Event: "digital_human.task_approval", SourceType: "digital_human_task_approval", SourceID: notice.MessageID,
+		Title: notice.TaskName, Context: meta,
+	})
+	return err
+}
+
+var _ digitalhuman.TaskApprovalNotifier = digitalHumanApprovalInbox{}
 
 // reportNotifiers tells each notifier about a final report, in order. One
 // notifier's failure does not stop the others.

@@ -431,7 +431,7 @@ func newTaskService(t *testing.T) (*Service, *recordingDispatcher, digitalhuman.
 	// Requester names come from tables other modules own.
 	for _, statement := range []string{
 		"CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)",
-		"CREATE TABLE digital_human_end_user_instances (organization_id TEXT, workspace_id TEXT, digital_human_id TEXT, subject_id TEXT, label TEXT)",
+		"CREATE TABLE digital_human_end_user_instances (organization_id TEXT, workspace_id TEXT, digital_human_id TEXT, subject_id TEXT, label TEXT, updated_at DATETIME)",
 	} {
 		if err := db.Exec(statement).Error; err != nil {
 			t.Fatalf("create requester table: %v", err)

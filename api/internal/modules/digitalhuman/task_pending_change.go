@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 )
 
 // TaskPendingChange points to a proposed change to a task that waits for the
@@ -19,6 +20,19 @@ type TaskPendingChange struct {
 // console conversations with one DigitalHuman.
 type TaskPendingChangeSource interface {
 	PendingTaskChanges(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, taskIDs []uuid.UUID) (map[uuid.UUID]TaskPendingChange, error)
+}
+
+// pendingChangeConversationSource is where a surface's own conversations
+// live: an API end user's approvals wait in their API conversations.
+func pendingChangeConversationSource(surface string) string {
+	switch surface {
+	case SurfaceAPI:
+		return runtimemodel.ConversationSourceExternalAPI
+	case SurfaceWebApp:
+		return runtimemodel.ConversationSourceWebApp
+	default:
+		return digitalHumanConversationSource
+	}
 }
 
 // PendingTaskChanges returns, per task, the latest approval that waits in a
@@ -41,10 +55,10 @@ func (r *GormRepository) PendingTaskChanges(ctx context.Context, scope Scope, di
 	err := r.db.WithContext(ctx).Table("chat_runtime_messages AS m").
 		Select("m.id AS message_id, m.conversation_id, m.metadata->'agent_workflow_continuation'->>'task_id' AS task_id").
 		Joins("JOIN chat_runtime_conversations AS c ON c.id = m.conversation_id").
-		// Only console conversations open in the console chat; the same account
-		// may also wait on approvals in WebApp or API conversations.
+		// Only the reader's own surface: console approvals open in the console
+		// chat, an API end user's in their API conversations.
 		Where("c.organization_id = ? AND c.workspace_id = ? AND c.account_id = ? AND c.caller_type = ? AND c.caller_id = ? AND c.source = ? AND c.deleted_at IS NULL",
-			scope.OrganizationID, scope.WorkspaceID, scope.ActorID, "digital_human", digitalHumanID, digitalHumanConversationSource).
+			scope.OrganizationID, scope.WorkspaceID, scope.ActorID, "digital_human", digitalHumanID, pendingChangeConversationSource(scope.Surface)).
 		Where("m.deleted_at IS NULL AND m.status = ?", "waiting_approval").
 		Where("m.metadata->'agent_workflow_continuation'->>'kind' = ?", "digital_human_task").
 		Where("m.metadata->'agent_workflow_continuation'->>'task_id' IN ?", ids).

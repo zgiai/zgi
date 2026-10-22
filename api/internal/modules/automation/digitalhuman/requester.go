@@ -4,24 +4,30 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/google/uuid"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"gorm.io/gorm"
 )
 
-// maxTaskRequesterFacets bounds the requester choices of one task center.
-const maxTaskRequesterFacets = 200
+// maxTaskRequesterPageSize bounds one page of the requester search.
+const maxTaskRequesterPageSize = 50
+
+// maxRequesterLabelRunes matches the end user instance label column.
+const maxRequesterLabelRunes = 128
 
 // requesterKindSQL classifies a task row by who asked for it: a workspace
 // member (including tasks a manager created in the task center), an API end
-// user, or a channel conversation.
+// user, or a channel conversation. It is used to group, never to filter.
 const requesterKindSQL = `CASE WHEN owner_kind = 'conversation' THEN 'channel'
 	WHEN owner_subject_kind = 'api_end_user' THEN 'api_user' ELSE 'member' END`
 
-// requesterIDSQL is the requester a task is filtered by: the requesting
-// subject, or the manager who created a task in the task center. An account
-// subject's ID is its account ID.
+// requesterIDSQL is who a task is grouped under: the requesting subject, or
+// the manager who created a task in the task center. An account subject's ID
+// is its account ID.
 const requesterIDSQL = `CASE WHEN owner_kind = 'digital_human' THEN created_by ELSE owner_subject_id END`
 
 // showsRequesters reports whether a reader sees who asked for each task. Only
@@ -30,21 +36,39 @@ func showsRequesters(access digitalhuman.TaskAccessContext) bool {
 	return access.Viewer.Mode == digitalhuman.TaskViewTaskCenter
 }
 
+// requesterKindCondition filters to one kind of requester with plain column
+// predicates, so the owner indexes serve it.
+func requesterKindCondition(kind digitalhuman.TaskRequesterKind) (string, bool) {
+	switch kind {
+	case digitalhuman.TaskRequesterMember:
+		return "((owner_kind = 'user_subject' AND owner_subject_kind = 'account') OR owner_kind = 'digital_human')", true
+	case digitalhuman.TaskRequesterAPIUser:
+		return "owner_subject_kind = 'api_end_user'", true
+	case digitalhuman.TaskRequesterChannel:
+		return "owner_kind = 'conversation'", true
+	default:
+		return "", false
+	}
+}
+
 func applyRequesterFilter(query *gorm.DB, filter digitalhuman.TaskListQuery) (*gorm.DB, error) {
 	if len(filter.RequesterKinds) > 0 {
-		kinds := make([]string, 0, len(filter.RequesterKinds))
+		conditions := make([]string, 0, len(filter.RequesterKinds))
 		for _, kind := range filter.RequesterKinds {
-			switch kind {
-			case digitalhuman.TaskRequesterMember, digitalhuman.TaskRequesterAPIUser, digitalhuman.TaskRequesterChannel:
-				kinds = append(kinds, string(kind))
-			default:
+			condition, ok := requesterKindCondition(kind)
+			if !ok {
 				return nil, digitalhuman.ErrInvalidRequest
 			}
+			conditions = append(conditions, condition)
 		}
-		query = query.Where("("+requesterKindSQL+") IN ?", kinds)
+		query = query.Where("(" + strings.Join(conditions, " OR ") + ")")
 	}
-	if id := strings.TrimSpace(filter.RequesterID); id != "" {
-		query = query.Where("("+requesterIDSQL+") = ?", id)
+	if raw := strings.TrimSpace(filter.RequesterID); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil || id == uuid.Nil {
+			return nil, digitalhuman.ErrInvalidRequest
+		}
+		query = query.Where("(owner_subject_id = ? OR (owner_kind = 'digital_human' AND created_by = ?))", id.String(), id.String())
 	}
 	return query, nil
 }
@@ -140,40 +164,95 @@ func (s *Service) attachRequesters(ctx context.Context, access digitalhuman.Task
 	return nil
 }
 
-// requesterFacets lists everyone who asked for a task the reader can see,
-// with how many tasks each asked for, so the task center can filter by them.
-func (s *Service) requesterFacets(ctx context.Context, access digitalhuman.TaskAccessContext) ([]digitalhuman.TaskRequesterFacet, error) {
-	var rows []struct {
-		Kind  string
-		ID    *string
-		Count int64
+// ListTaskRequesters searches the people who asked for tasks the task center
+// sees, most recently active first. Channel conversations have no person to
+// pick, so they are filtered by kind only.
+func (s *Service) ListTaskRequesters(ctx context.Context, access digitalhuman.TaskAccessContext, query digitalhuman.TaskRequesterQuery) (*digitalhuman.TaskRequesterPage, error) {
+	if err := validateBoundary(access); err != nil {
+		return nil, err
 	}
-	if err := s.taskQuery(ctx, access).Select("(" + requesterKindSQL + ") AS kind, (" + requesterIDSQL + ") AS id, COUNT(*) AS count").
-		Group("1, 2").Order("count DESC").Limit(maxTaskRequesterFacets).Scan(&rows).Error; err != nil {
+	if !showsRequesters(access) {
+		return nil, digitalhuman.ErrTaskPolicyRejected
+	}
+	page, pageSize := query.Page, query.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > maxTaskRequesterPageSize {
+		pageSize = 20
+	}
+	rows := s.taskQuery(ctx, access).Where("owner_kind <> 'conversation'")
+	if query.Kind != "" {
+		condition, ok := requesterKindCondition(query.Kind)
+		if !ok || query.Kind == digitalhuman.TaskRequesterChannel {
+			return nil, digitalhuman.ErrInvalidRequest
+		}
+		rows = rows.Where(condition)
+	}
+	if keyword := strings.ToLower(strings.TrimSpace(query.Query)); keyword != "" {
+		like := "%" + keyword + "%"
+		rows = rows.Where(`(LOWER(CAST(`+requesterIDSQL+` AS TEXT)) LIKE ? OR client_reference = ?
+			OR EXISTS (SELECT 1 FROM accounts WHERE accounts.id = (`+requesterIDSQL+`) AND (LOWER(accounts.name) LIKE ? OR LOWER(accounts.email) LIKE ?))
+			OR EXISTS (SELECT 1 FROM digital_human_end_user_instances AS instances WHERE instances.digital_human_id = automation_tasks.subject_id
+				AND instances.subject_id = automation_tasks.owner_subject_id AND LOWER(instances.label) LIKE ?))`,
+			keyword+"%", strings.TrimSpace(query.Query), like, like, like)
+	}
+	grouped := s.db.WithContext(ctx).Table("(?) AS requesters",
+		rows.Select("("+requesterKindSQL+") AS kind, ("+requesterIDSQL+") AS requester_id, updated_at")).
+		Select("kind, requester_id, COUNT(*) AS count").Group("kind, requester_id")
+	var total int64
+	if err := s.db.WithContext(ctx).Table("(?) AS grouped", grouped).Count(&total).Error; err != nil {
 		return nil, fmt.Errorf("count digital human task requesters: %w", err)
 	}
-	keys := make([]requesterKey, 0, len(rows))
-	for _, row := range rows {
-		key := requesterKey{Kind: row.Kind}
-		if row.Kind != string(digitalhuman.TaskRequesterChannel) {
-			key.ID = pointerValue(row.ID)
-		}
-		keys = append(keys, key)
+	var found []struct {
+		Kind        string
+		RequesterID string
+		Count       int64
+	}
+	if err := grouped.Order("MAX(updated_at) DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&found).Error; err != nil {
+		return nil, fmt.Errorf("list digital human task requesters: %w", err)
+	}
+	keys := make([]requesterKey, len(found))
+	for index, row := range found {
+		keys[index] = requesterKey{Kind: row.Kind, ID: row.RequesterID}
 	}
 	requesters, err := s.describeRequesters(ctx, access, keys)
 	if err != nil {
 		return nil, err
 	}
-	// Channel tasks are one choice however many conversations asked.
-	merged := make(map[requesterKey]int, len(keys))
-	facets := make([]digitalhuman.TaskRequesterFacet, 0, len(keys))
-	for index, key := range keys {
-		if at, ok := merged[key]; ok {
-			facets[at].Count += rows[index].Count
-			continue
-		}
-		merged[key] = len(facets)
-		facets = append(facets, digitalhuman.TaskRequesterFacet{TaskRequester: *requesters[key], Count: rows[index].Count})
+	items := make([]digitalhuman.TaskRequesterFacet, 0, len(found))
+	for index, row := range found {
+		items = append(items, digitalhuman.TaskRequesterFacet{TaskRequester: *requesters[keys[index]], Count: row.Count})
 	}
-	return facets, nil
+	return &digitalhuman.TaskRequesterPage{Items: items, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
+}
+
+// LabelTaskRequester names an API end user for the task center. The label is
+// kept on their end user instance, which only exists once they have used the
+// DigitalHuman; an empty label clears it.
+func (s *Service) LabelTaskRequester(ctx context.Context, access digitalhuman.TaskAccessContext, subjectID uuid.UUID, label string) (*digitalhuman.TaskRequester, error) {
+	if err := validateBoundary(access); err != nil {
+		return nil, err
+	}
+	if !showsRequesters(access) || !access.Viewer.Manager {
+		return nil, digitalhuman.ErrTaskPolicyRejected
+	}
+	label = strings.TrimSpace(label)
+	if subjectID == uuid.Nil || utf8.RuneCountInString(label) > maxRequesterLabelRunes || strings.ContainsFunc(label, unicode.IsControl) {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	var value any
+	if label != "" {
+		value = label
+	}
+	result := s.db.WithContext(ctx).Table("digital_human_end_user_instances").
+		Where("organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND subject_id = ?", access.OrganizationID, access.WorkspaceID, access.DigitalHumanID, subjectID).
+		Updates(map[string]any{"label": value, "updated_at": s.now()})
+	if result.Error != nil {
+		return nil, fmt.Errorf("label digital human task requester: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, digitalhuman.ErrTaskNotFound
+	}
+	return &digitalhuman.TaskRequester{Kind: digitalhuman.TaskRequesterAPIUser, ID: subjectID.String(), Name: label}, nil
 }

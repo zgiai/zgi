@@ -72,6 +72,8 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodPost, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodPatch, "/console/api/digital-humans/:id/tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodGet, "/console/api/digital-humans/:id/tasks/requesters", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPatch, "/console/api/digital-humans/:id/tasks/requesters/:requester_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodGet, "/console/api/digital-humans/:id/my-tasks", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPost, "/console/api/digital-humans/:id/my-tasks", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPatch, "/console/api/digital-humans/:id/my-tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
@@ -119,7 +121,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 83; got != want {
+	if got, want := len(routes), 85; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{

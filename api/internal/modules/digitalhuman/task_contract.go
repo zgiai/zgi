@@ -298,6 +298,8 @@ type Task struct {
 	// NotifyChannelAccess says how this reader may change NotifyChannelIDs:
 	// the requester manages them, a task center manager may only remove.
 	NotifyChannelAccess TaskNotifyChannelAccess `json:"notify_channel_access,omitempty"`
+	// ClientReference is the integrator's identifier given at creation.
+	ClientReference string `json:"client_reference,omitempty"`
 	// Requester is who asked for the task. Only the console task center
 	// shows it.
 	Requester *TaskRequester `json:"requester,omitempty"`
@@ -334,6 +336,32 @@ type TaskRequesterFacet struct {
 	Count int64 `json:"count"`
 }
 
+// TaskRequesterQuery searches the people who asked for visible tasks: by
+// name, email, an API end user's label, an ID prefix, or a task's client
+// reference.
+type TaskRequesterQuery struct {
+	Query    string
+	Kind     TaskRequesterKind
+	Page     int
+	PageSize int
+}
+
+// TaskRequesterPage is one page of requesters, most recently active first.
+type TaskRequesterPage struct {
+	Items    []TaskRequesterFacet `json:"items"`
+	Total    int64                `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"page_size"`
+	HasMore  bool                 `json:"has_more"`
+}
+
+// TaskRequesterDirectory lets the task center find requesters and name API
+// end users, whose own identifiers are not kept.
+type TaskRequesterDirectory interface {
+	ListTaskRequesters(context.Context, TaskAccessContext, TaskRequesterQuery) (*TaskRequesterPage, error)
+	LabelTaskRequester(context.Context, TaskAccessContext, uuid.UUID, string) (*TaskRequester, error)
+}
+
 // TaskNotifyChannelAccess is how a reader may change a task's team channels.
 type TaskNotifyChannelAccess string
 
@@ -364,8 +392,10 @@ type TaskListQuery struct {
 	ScheduleType      TaskScheduleType
 	Source            string
 	// RequesterKinds and RequesterID narrow the task center to who asked.
-	RequesterKinds    []TaskRequesterKind
-	RequesterID       string
+	RequesterKinds []TaskRequesterKind
+	RequesterID    string
+	// ClientReference lists the tasks an integrator tagged with this value.
+	ClientReference   string
 	Query             string
 	UpdatedAfter      *time.Time
 	UpdatedBefore     *time.Time
@@ -384,9 +414,6 @@ type TaskListResult struct {
 	Page               int                      `json:"page"`
 	PageSize           int                      `json:"page_size"`
 	HasMore            bool                     `json:"has_more"`
-	// Requesters are everyone who asked for a visible task. Only the console
-	// task center lists them.
-	Requesters []TaskRequesterFacet `json:"requesters,omitempty"`
 }
 
 // CreateTaskRequest contains only product fields; subject and delivery
@@ -402,6 +429,9 @@ type CreateTaskRequest struct {
 	MaxAttempts             int              `json:"max_attempts,omitempty"`
 	// NotifyChannelIDs are team channels that also receive the task's reports.
 	NotifyChannelIDs []uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ClientReference is the integrator's own identifier for the task, echoed
+	// back in reports, notifications, and webhooks.
+	ClientReference string `json:"client_reference,omitempty"`
 }
 
 // UpdateTaskRequest updates a task using optimistic concurrency.
@@ -423,6 +453,8 @@ type UpdateTaskRequest struct {
 	Visibility *TaskVisibility `json:"visibility,omitempty"`
 	// NotifyChannelIDs replaces the team channels that receive the reports.
 	NotifyChannelIDs *[]uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ClientReference replaces the integrator's identifier; empty clears it.
+	ClientReference *string `json:"client_reference,omitempty"`
 }
 
 // TaskAction identifies an explicit lifecycle operation.
@@ -545,9 +577,11 @@ type TaskReportNotice struct {
 	DigitalHumanID uuid.UUID
 	TaskID         uuid.UUID
 	TaskName       string
-	ReportID       uuid.UUID
-	Outcome        TaskReportOutcome
-	Summary        string
+	// ClientReference is the task's integrator identifier, if any.
+	ClientReference string
+	ReportID        uuid.UUID
+	Outcome         TaskReportOutcome
+	Summary         string
 	// RecipientKind is the requester's user subject kind (account or
 	// api_end_user); RecipientID is that subject.
 	RecipientKind string

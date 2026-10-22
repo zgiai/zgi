@@ -89,6 +89,7 @@ func (h *ExternalHandler) RegisterAPIRoutes(router *gin.RouterGroup) {
 	group.GET("/tasks/:task_id/runs", h.ListAPITaskRuns)
 	group.GET("/tasks/:task_id/activities", h.ListAPITaskActivities)
 	h.registerAPIReportRoutes(group)
+	h.registerAPIEndUserRoutes(group)
 }
 
 func (h *ExternalHandler) authenticateAPIKey(c *gin.Context) {
