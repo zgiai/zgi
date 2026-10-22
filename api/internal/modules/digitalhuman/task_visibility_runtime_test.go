@@ -55,7 +55,6 @@ func mergeContext(base, extra map[string]any) map[string]any {
 }
 
 func TestTaskRuntimeMemberSeesSharedTasksAndOccupancyWhenEnabled(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	prepared, data, accesses, occupancy := prepareTaskListWithOccupancy(t, invocation.OriginManual, "")
 	if len(accesses) != 1 || accesses[0].Viewer.Mode != TaskViewMember || len(occupancy) != 1 {
 		t.Fatalf("accesses = %#v, occupancy calls = %d", accesses, len(occupancy))
@@ -73,7 +72,6 @@ func TestTaskRuntimeMemberSeesSharedTasksAndOccupancyWhenEnabled(t *testing.T) {
 }
 
 func TestTaskRuntimeExternalUserNeverReceivesOccupancy(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	_, data, accesses, occupancy := prepareTaskListWithOccupancy(t, invocation.OriginAPI, SurfaceWebApp)
 	if len(accesses) != 1 || accesses[0].Viewer.Mode != TaskViewExternal || len(occupancy) != 0 {
 		t.Fatalf("accesses = %#v, occupancy calls = %d", accesses, len(occupancy))
@@ -84,7 +82,6 @@ func TestTaskRuntimeExternalUserNeverReceivesOccupancy(t *testing.T) {
 }
 
 func TestTaskRuntimeChannelOccupancyKeepsConversationScope(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	prepared, data, accesses, occupancy := prepareTaskListWithOccupancy(t, invocation.OriginChannel, "")
 	if len(accesses) != 1 || accesses[0].Viewer.Mode != TaskViewChannel || len(occupancy) != 1 {
 		t.Fatalf("accesses = %#v, occupancy calls = %d", accesses, len(occupancy))
@@ -94,17 +91,6 @@ func TestTaskRuntimeChannelOccupancyKeepsConversationScope(t *testing.T) {
 	}
 	if !strings.Contains(prepared.SystemPromptAddendum, "current group conversation") || !strings.Contains(prepared.SystemPromptAddendum, "other_open_work") {
 		t.Fatalf("channel guidance = %q", prepared.SystemPromptAddendum)
-	}
-}
-
-func TestTaskRuntimeVisibilityDisabledKeepsLegacyList(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "")
-	_, data, _, occupancy := prepareTaskListWithOccupancy(t, invocation.OriginManual, "")
-	if _, ok := data["other_open_work"]; ok || len(occupancy) != 0 {
-		t.Fatalf("legacy list returned occupancy: %#v", data)
-	}
-	if scope := data["scope"].(taskListToolScope); scope.Visibility == "current_user_and_shared" {
-		t.Fatalf("legacy scope = %#v", scope)
 	}
 }
 
@@ -118,7 +104,6 @@ func (s readOnlyTaskService) GetTask(_ context.Context, access TaskAccessContext
 }
 
 func TestTaskRuntimeRefusesApprovalForReadOnlyTask(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	for _, canChange := range []bool{false, true} {
 		provider := NewTaskRuntimeProvider(readOnlyTaskService{canChange: canChange})
 		run, event := taskRuntimeFixture(invocation.OriginManual)

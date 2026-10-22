@@ -167,7 +167,7 @@ func (s *Service) ScheduleMemoryExtraction(
 		if !state.AutoExtractionEnabled {
 			return nil
 		}
-		if MemoryTrustPolicyEnabled() && !backgroundExtractionAdmitted(run) {
+		if !backgroundExtractionAdmitted(run) {
 			return nil
 		}
 		var version Version

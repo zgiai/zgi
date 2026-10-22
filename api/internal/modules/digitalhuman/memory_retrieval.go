@@ -103,11 +103,8 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
 	}
-	var readScope *memoryReadScope
-	if MemoryTrustPolicyEnabled() {
-		scoped := memoryReadScopeForRun(req.Run, req.Event)
-		readScope = &scoped
-	}
+	scoped := memoryReadScopeForRun(req.Run, req.Event)
+	readScope := &scoped
 	if p.knowledge == nil || p.vectorDB == nil {
 		return p.fallbackToRecentMemories(ctx, req.Run, readScope, "projection backend unavailable", fmt.Errorf("digital human memory projection backend is not configured"))
 	}

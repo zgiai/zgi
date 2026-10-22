@@ -89,9 +89,11 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := "sha256:" + strings.Repeat("b", 64)
+	operatorTrust := string(SourceTrustAuthorizedOperator)
 	guardRun := &Run{
 		ID: guardRunID, OrganizationID: organizationID, WorkspaceID: workspaceID, DigitalHumanID: detail.Definition.ID,
 		DigitalHumanVersionID: detail.Published.ID, ActorID: &actorA, IdempotencyKey: "runtime-scope-guard-" + guardRunID.String(),
+		Surface: SurfaceConsole, SourceTrust: &operatorTrust,
 		InvocationEvent: guardEventJSON, RunSpec: datatypes.JSON(`{}`), RunSpecRevision: revision,
 		ExecutionSnapshot: datatypes.JSON(`{}`), ExecutionSnapshotRevision: revision, ExecutionTrace: datatypes.JSON(`{}`),
 		Query: "Save this to memory.", Status: RunStatusRunning, CreatedAt: fixedNow, UpdatedAt: fixedNow,
@@ -100,7 +102,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := NewMemoryRuntimeProvider(service)
-	tool := provider.memoryMutationTool(guardRun, guardEvent, state, true, false)
+	tool := provider.memoryMutationTool(guardRun, guardEvent, state, true)
 	scopeResult := tool.Handler(t.Context(), adapter.ToolCall{
 		ID: "legacy-scope-fields",
 		Function: adapter.FunctionCall{
@@ -419,9 +421,11 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 		t.Fatal(err)
 	}
 
+	channelConversationID := uuid.New()
 	event, err := invocation.ValidateEvent(invocation.Event{
 		ID: uuid.NewString(), Type: invocation.EventTypeSchedule,
-		Origin: invocation.Origin{Kind: invocation.OriginSchedule},
+		Origin:  invocation.Origin{Kind: invocation.OriginSchedule},
+		Context: map[string]any{"origin_surface": SurfaceChannel, TaskOwnerConversationContextKey: channelConversationID.String()},
 		Target: runtimeidentity.SubjectRef{
 			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: detail.Definition.ID,
 			OrganizationID: organizationID, WorkspaceID: workspaceID,
@@ -439,9 +443,11 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 	runID, conversationID, messageID := uuid.New(), uuid.New(), uuid.New()
 	revision := "sha256:" + strings.Repeat("a", 64)
 	completedAt := fixedNow.Add(time.Second)
+	channelTrust := string(SourceTrustChannelParticipant)
 	run := &Run{
 		ID: runID, OrganizationID: organizationID, WorkspaceID: workspaceID, DigitalHumanID: detail.Definition.ID,
 		DigitalHumanVersionID: detail.Published.ID, ActorID: &actorID, IdempotencyKey: event.IdempotencyKey,
+		Surface: SurfaceTask, SourceTrust: &channelTrust,
 		InvocationEvent: eventJSON, RunSpec: datatypes.JSON(`{}`), RunSpecRevision: revision,
 		ExecutionSnapshot: datatypes.JSON(`{}`), ExecutionSnapshotRevision: revision, ExecutionTrace: datatypes.JSON(`{}`),
 		Query: "Review the approved launch plan.", Status: RunStatusSucceeded,
@@ -474,6 +480,20 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 	if err := service.ScheduleMemoryExtraction(t.Context(), scope, run, conversationID, messageID, datatypes.JSON(`[]`)); err != nil {
 		t.Fatal(err)
 	}
+	// A run without a channel source is never queued for extraction.
+	memberTrust := string(SourceTrustWorkspaceMember)
+	untrusted := *run
+	untrusted.ID, untrusted.SourceTrust, untrusted.IdempotencyKey = uuid.New(), &memberTrust, "untrusted-"+event.IdempotencyKey
+	if err := repository.CreateRun(t.Context(), &untrusted); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ScheduleMemoryExtraction(t.Context(), scope, &untrusted, conversationID, messageID, datatypes.JSON(`[]`)); err != nil {
+		t.Fatal(err)
+	}
+	var untrustedJobs int64
+	if err := tx.Model(&MemoryExtractionJob{}).Where("run_id = ?", untrusted.ID).Count(&untrustedJobs).Error; err != nil || untrustedJobs != 0 {
+		t.Fatalf("untrusted run extraction jobs = %d, %v", untrustedJobs, err)
+	}
 
 	extractor := &recordingMemoryExtractor{drafts: []MemoryExtractionDraft{{
 		Key: "launch-date", MemoryType: memoryruntime.MemoryTypeFact,
@@ -488,7 +508,8 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 		t.Fatalf("extractor calls=%d input=%#v", extractor.calls, extractor.input.Source)
 	}
 	items, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)
-	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 || items[0].MemoryClass != memoryruntime.MemoryClassSelf {
+	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 || items[0].MemoryClass != memoryruntime.MemoryClassBusiness ||
+		items[0].ScopeType != memoryruntime.MemoryScopeChannel || items[0].ScopeID != channelConversationID.String() {
 		t.Fatalf("extracted memory = %#v, err %v", items, err)
 	}
 	var job MemoryExtractionJob

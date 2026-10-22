@@ -66,7 +66,7 @@ The existing namespaces map deterministically:
 | `conversation` | The previous owner conversation | `conversation` |
 | `digital_human` | The creating account (`created_by`) | `workspace` |
 
-Visibility is nullable. Rows written by a build without visibility support resolve their visibility from the owner kind using the same mapping, so a rollback can keep serving traffic. Changes stay limited to the requester namespace except for task center managers. Delivery and scheduled execution keep reading the owner columns. The visibility layer ships behind `ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED`, which defaults to off. The existing ownership checks stay authoritative until it is enabled.
+Visibility is nullable. Rows written by a build without visibility support resolve their visibility from the owner kind using the same mapping, so a rollback can keep serving traffic. Changes stay limited to the requester namespace except for task center managers. Delivery and scheduled execution keep reading the owner columns. The visibility layer first shipped behind `ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED`. After acceptance the switch was removed (2026-10-22), and requester-based visibility always applies.
 
 ## Consequences
 

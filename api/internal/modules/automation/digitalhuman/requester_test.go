@@ -8,7 +8,6 @@ import (
 )
 
 func TestTaskCenterShowsAndFiltersRequesters(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	db := fixture.service.db
 	for _, account := range []struct{ id, name, email string }{

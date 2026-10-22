@@ -14,7 +14,6 @@ import (
 // The creator of a task center task reads its reports as their own and can
 // accept and then rework one there; another member can do neither.
 func TestTaskCenterCreatorReworksFromTheirOwnReports(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	service, _, shared, _ := newTaskService(t)
 	shared.Viewer = digitalhuman.TaskViewer{Mode: digitalhuman.TaskViewTaskCenter}
 	creator := uuid.MustParse(shared.Principal.ID)

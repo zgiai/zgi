@@ -123,7 +123,7 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 		if boundary.currentTaskRunID != uuid.Nil {
 			guidance = append(guidance, "Before your final answer, submit this run's report with "+taskReportToolName+": the outcome, a one-line summary, the full result, each success criterion assessed as met, not met, or unknown with a short reason, and any issues or decisions the requester must make. Be honest: report partial or not done when the goal was not fully reached. Your final answer must agree with the report.")
 		}
-	} else if TaskVisibilityEnabled() && boundary.access.Viewer.Mode == TaskViewMember {
+	} else if boundary.access.Viewer.Mode == TaskViewMember {
 		guidance = append(guidance,
 			"Visible tasks are the tasks the current user requested plus tasks shared with the workspace. Tasks with can_change false are read-only: explain that only their requester or a task manager can change them, and never propose a change to them.",
 			"Open tasks requested by others appear only in other_open_work as time, status, and priority. Use them to reason about workload and schedule conflicts, but never guess, ask about, or reveal their content or requester.",
@@ -134,7 +134,7 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 			"When answering a task list or status question, describe the result as the current user's tasks, not the DigitalHuman's complete shared todo list.",
 		)
 	}
-	if boundary.conversationID != "" && (!TaskVisibilityEnabled() || boundary.access.Viewer.Mode == TaskViewChannel) {
+	if boundary.conversationID != "" && boundary.access.Viewer.Mode == TaskViewChannel {
 		conversationScope := "current external conversation"
 		switch boundary.conversationType {
 		case "group":
@@ -323,7 +323,7 @@ type taskListToolScope struct {
 
 func taskListToolDescription(boundary taskRuntimeBoundary) string {
 	description := "List this DigitalHuman's visible tasks. Omit view to return unfinished work. Use completed or canceled only when relevant history is needed."
-	if boundary.conversationID != "" && (!TaskVisibilityEnabled() || boundary.access.Viewer.Mode == TaskViewChannel) {
+	if boundary.conversationID != "" && boundary.access.Viewer.Mode == TaskViewChannel {
 		description += " This channel call returns only tasks from the current conversation, not the DigitalHuman's complete todo list."
 	}
 	return description
@@ -332,7 +332,7 @@ func taskListToolDescription(boundary taskRuntimeBoundary) string {
 // taskOccupancyEnabled reports whether the list tool reports hidden open work.
 // External end users never receive it.
 func taskOccupancyEnabled(boundary taskRuntimeBoundary) bool {
-	if !TaskVisibilityEnabled() || boundary.currentTaskID != uuid.Nil {
+	if boundary.currentTaskID != uuid.Nil {
 		return false
 	}
 	mode := boundary.access.Viewer.Mode
@@ -343,7 +343,7 @@ func taskListScope(boundary taskRuntimeBoundary) taskListToolScope {
 	if boundary.currentTaskID != uuid.Nil {
 		return taskListToolScope{Visibility: "current_task"}
 	}
-	if TaskVisibilityEnabled() && boundary.access.Viewer.Mode == TaskViewMember {
+	if boundary.access.Viewer.Mode == TaskViewMember {
 		return taskListToolScope{Visibility: "current_user_and_shared"}
 	}
 	if boundary.conversationID != "" {

@@ -17,7 +17,6 @@ func TestTaskVisibilityPostgresReadRulesOccupancyAndConstraints(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set ZGI_MIGRATION_TEST_DSN to run DigitalHuman task visibility PostgreSQL integration")
 	}
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)

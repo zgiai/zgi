@@ -31,19 +31,6 @@ func (t SourceTrust) valid() bool {
 	}
 }
 
-// MemoryTrustPolicyEnabled switches DigitalHuman memory admission and
-// retrieval to the source trust policy. It is fail-closed: unset keeps the
-// legacy origin-based checks.
-func MemoryTrustPolicyEnabled() bool {
-	return envFlagEnabled("ZGI_DIGITAL_HUMAN_MEMORY_TRUST_POLICY_ENABLED")
-}
-
-// TaskVisibilityEnabled switches DigitalHuman task reads from owner
-// namespaces to requester-based visibility. It is fail-closed.
-func TaskVisibilityEnabled() bool {
-	return envFlagEnabled("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED")
-}
-
 func envFlagEnabled(name string) bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	return value == "1" || value == "true" || value == "yes" || value == "on"
