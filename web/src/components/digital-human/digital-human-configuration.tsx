@@ -172,7 +172,9 @@ function ConfigurationEditor({
   const { ref: bodyRef, width: bodyWidth } = useMeasuredWidth();
   const twoColumns = bodyWidth >= CONFIGURATION_TWO_COLUMN_MIN_WIDTH;
   // The draft preview sits beside the editor on wide screens, in a sheet otherwise.
-  const previewAvailable = permissions.hasPermission('digital_human.update') && !versionPreview;
+  // While a published version is shown it stays in place, paused, so the page
+  // keeps its shape and the preview conversation is still there afterwards.
+  const previewAvailable = permissions.hasPermission('digital_human.update');
   const inlinePreview = previewAvailable && bodyWidth >= CONFIGURATION_INLINE_PREVIEW_MIN_WIDTH;
   const [previewOpen, setPreviewOpen] = useState(false);
   const renderPreview = (surface: 'inline' | 'sheet'): ReactNode => (
@@ -183,6 +185,7 @@ function ConfigurationEditor({
         model={model}
         fileUploadPolicy={fileUploadPolicy}
         surfaceMode={surface}
+        pausedVersion={versionPreview ? (versionPreview.version.version_number ?? '') : undefined}
         onClose={() => setPreviewOpen(false)}
         beforeSend={() => manualSave()}
       />

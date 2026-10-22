@@ -579,6 +579,8 @@ const messages: DigitalHumansMessages = {
     homeTitle: '和{name}的草稿聊聊',
     homeDescription: '改完人设、规则或能力，直接在这里试。发送前会自动保存草稿。',
     sandboxNote: '预览不会创建或修改任务、保存成果、写入记忆，也不会操作连接的外部系统；预览记录不进入对话列表和运行日志。',
+    pausedTitle: '正在查看 v{version}，调试已暂停',
+    pausedDescription: '预览调试始终使用当前草稿。返回当前草稿后可继续，之前的对话会保留。',
   },
   configurationHub: {
     sectionNav: '配置分区',

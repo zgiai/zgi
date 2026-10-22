@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo } from 'react';
-import { Info, X } from 'lucide-react';
+import { History, Info, X } from 'lucide-react';
 import { AIChatShell, createDigitalHumanRuntimeTransport, useChatRuntimeController } from '@/components/chat';
 import {
   AIChatEmbeddedConversationControls,
@@ -22,6 +22,7 @@ export function DigitalHumanDraftPreview({
   model,
   fileUploadPolicy,
   surfaceMode,
+  pausedVersion,
   onClose,
   beforeSend,
 }: {
@@ -30,6 +31,8 @@ export function DigitalHumanDraftPreview({
   model: string;
   fileUploadPolicy: FileUploadSelection | null;
   surfaceMode: 'inline' | 'sheet';
+  // Set while a published version is shown: the preview pauses over its chat.
+  pausedVersion?: string | number;
   onClose?: () => void;
   // Saves the draft first, so the preview always answers with what is on screen.
   beforeSend: () => boolean | Promise<boolean>;
@@ -73,41 +76,55 @@ export function DigitalHumanDraftPreview({
         <Info className="mt-0.5 size-3.5 shrink-0" />
         {t('preview.sandboxNote')}
       </p>
-      <div className="min-h-0 flex-1">
-        <AIChatShell
-          controller={controller}
-          modelSelectorValue={modelSelectorValue}
-          onModelChange={() => undefined}
-          beforeSend={beforeSend}
-          showModelSelector={false}
-          variant="embedded"
-          requireModel={false}
-          showMemoryToggle={false}
-          forcedUseMemory={false}
-          enableUpload={fileUploadPolicy == null || fileUploadPolicy.allowed_file_types.length > 0}
-          fileUploadPolicy={fileUploadPolicy}
-          uploadScope={{ type: 'console' }}
-          showFileLibraryPicker={false}
-          allowWorkspaceSwitch={false}
-          showAssistantModelMeta={false}
-          surface="digital-human"
-          runtimeSurface="external_page_chat"
-          embeddedConversationMode="drawer"
-          embeddedConversationControlsMode="external"
-          embeddedConversationControlsPortalId={controlsPortalId}
-          renderEmbeddedConversationControls={controls => (
-            <AIChatEmbeddedConversationControls
-              openConversations={controls.openConversations}
-              startNewConversation={controls.startNewConversation}
-              conversationsLabel={t('preview.conversations')}
-              newConversationLabel={t('preview.newConversation')}
-            />
-          )}
-          homeTitle={t('preview.homeTitle', { name: name || t('title') })}
-          homeDescription={t('preview.homeDescription')}
-          suggestions={[t('chat.suggestions.introduce'), t('chat.suggestions.capabilities'), t('chat.suggestions.plan')]}
-          inputPlaceholder={t('chat.placeholder')}
-        />
+      <div className="relative min-h-0 flex-1">
+        {pausedVersion !== undefined ? (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-background p-6">
+            <div className="flex max-w-xs flex-col items-center gap-2 text-center">
+              <span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <History className="size-4" />
+              </span>
+              <p className="text-sm font-medium">{t('preview.pausedTitle', { version: pausedVersion })}</p>
+              <p className="text-xs leading-5 text-muted-foreground">{t('preview.pausedDescription')}</p>
+            </div>
+          </div>
+        ) : null}
+        {/* Hidden, not unmounted, so the preview chat is still there afterwards. */}
+        <div className={pausedVersion !== undefined ? 'invisible h-full' : 'h-full'} aria-hidden={pausedVersion !== undefined}>
+          <AIChatShell
+            controller={controller}
+            modelSelectorValue={modelSelectorValue}
+            onModelChange={() => undefined}
+            beforeSend={beforeSend}
+            showModelSelector={false}
+            variant="embedded"
+            requireModel={false}
+            showMemoryToggle={false}
+            forcedUseMemory={false}
+            enableUpload={fileUploadPolicy == null || fileUploadPolicy.allowed_file_types.length > 0}
+            fileUploadPolicy={fileUploadPolicy}
+            uploadScope={{ type: 'console' }}
+            showFileLibraryPicker={false}
+            allowWorkspaceSwitch={false}
+            showAssistantModelMeta={false}
+            surface="digital-human"
+            runtimeSurface="external_page_chat"
+            embeddedConversationMode="drawer"
+            embeddedConversationControlsMode="external"
+            embeddedConversationControlsPortalId={controlsPortalId}
+            renderEmbeddedConversationControls={controls => (
+              <AIChatEmbeddedConversationControls
+                openConversations={controls.openConversations}
+                startNewConversation={controls.startNewConversation}
+                conversationsLabel={t('preview.conversations')}
+                newConversationLabel={t('preview.newConversation')}
+              />
+            )}
+            homeTitle={t('preview.homeTitle', { name: name || t('title') })}
+            homeDescription={t('preview.homeDescription')}
+            suggestions={[t('chat.suggestions.introduce'), t('chat.suggestions.capabilities'), t('chat.suggestions.plan')]}
+            inputPlaceholder={t('chat.placeholder')}
+          />
+        </div>
       </div>
     </section>
   );

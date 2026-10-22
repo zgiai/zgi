@@ -617,6 +617,8 @@ const messages = {
     homeTitle: "Try {name}'s draft",
     homeDescription: 'Change the persona, rules, or capabilities and try them here. The draft is saved before each message.',
     sandboxNote: "Previews don't create or change tasks, save artifacts, write memory, or act in connected systems, and they stay out of the conversation list and run logs.",
+    pausedTitle: 'Viewing v{version}; preview is paused',
+    pausedDescription: 'The preview always uses the current draft. Return to the draft to continue; earlier preview chats are kept.',
   },
   configurationHub: {
     sectionNav: 'Configuration sections',
