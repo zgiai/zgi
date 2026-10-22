@@ -299,7 +299,9 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
               {currentTask
                 ? t('dashboard.statusLine.working', { name: currentTask.name })
                 : activeRun
-                  ? t('dashboard.statusLine.responding')
+                  ? activeRun.status === 'waiting'
+                    ? t('dashboard.statusLine.waitingApproval')
+                    : t('dashboard.statusLine.responding')
                   : attentionCount > 0
                     ? t('dashboard.statusLine.waitingOnYou', { count: attentionCount })
                     : t('dashboard.statusLine.idle')}
@@ -329,7 +331,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
             "Up next" beside the attention list. */}
         {isWorking ? (
         <FocusBlock
-          label={t('dashboard.currentFocus')}
+          label={!currentTask && activeRun?.status === 'waiting' ? t('dashboard.waitingFocus') : t('dashboard.currentFocus')}
           title={
             currentTask?.name ??
             (activeRun ? (digitalHumanRunTaskName(activeRun) ?? activeRun.query) : t('dashboard.noCurrentFocus'))
@@ -856,10 +858,10 @@ function AttentionRow({
 }) {
   const t = useT('digitalHumans');
   return (
-    <article className="group px-5 py-3.5 transition-colors hover:bg-muted/20">
+    <article className="group flex flex-col gap-2 px-5 py-3.5 transition-colors hover:bg-muted/20 @[680px]/dashboard:flex-row @[680px]/dashboard:items-center @[680px]/dashboard:gap-4">
       <Link
         href={href}
-        className="flex min-w-0 gap-3 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-w-0 flex-1 gap-3 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <AlertCircle
           className={cn(
@@ -879,7 +881,8 @@ function AttentionRow({
           <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{description}</p>
         </div>
       </Link>
-      <div className="mt-2 flex items-center justify-end gap-1 border-t border-border/60 pt-2">
+      {/* Actions sit beside the item they act on. */}
+      <div className="flex shrink-0 items-center justify-end gap-1 pl-7 @[680px]/dashboard:pl-0">
         <Button asChild variant="ghost" size="xs">
           <Link href={href}>
             {t('dashboard.handle')}
@@ -1162,9 +1165,7 @@ function DashboardIndicators({ id, attentionCount, completedToday }: { id: strin
     { label: t('dashboard.indicators.completed'), value: completedToday, href: `/console/digital-humans/${id}/tasks?status=completed`, tone: 'muted' },
     { label: t('dashboard.indicators.artifacts'), value: artifacts.data?.data.total ?? 0, href: `/console/digital-humans/${id}/artifacts`, tone: 'muted' },
   ] as const;
-  return (
-    <nav aria-label={t('dashboard.indicators.label')} className="grid grid-cols-2 gap-3 @[680px]/dashboard:grid-cols-4">
-      {tiles.map(tile => (
+  const renderTile = (tile: (typeof tiles)[number]) => (
         <Link
           key={tile.label}
           href={tile.href}
@@ -1181,7 +1182,18 @@ function DashboardIndicators({ id, attentionCount, completedToday }: { id: strin
             {tile.value}
           </p>
         </Link>
-      ))}
+  );
+  // On wide screens the tiles follow the columns below them: three over the
+  // main column and the artifacts over the side column, with the same gaps.
+  return (
+    <nav
+      aria-label={t('dashboard.indicators.label')}
+      className="grid grid-cols-2 gap-3 @[680px]/dashboard:grid-cols-4 @[1180px]/dashboard:grid-cols-[minmax(0,1fr)_340px] @[1180px]/dashboard:gap-5 @[1480px]/dashboard:grid-cols-[minmax(0,1fr)_380px] 2xl:gap-6"
+    >
+      <div className="contents @[1180px]/dashboard:grid @[1180px]/dashboard:grid-cols-3 @[1180px]/dashboard:gap-5 2xl:gap-6">
+        {tiles.slice(0, 3).map(renderTile)}
+      </div>
+      {renderTile(tiles[3])}
     </nav>
   );
 }

@@ -264,6 +264,7 @@ const messages: DigitalHumansMessages = {
     loadErrorDescription: '暂时无法获取数字人的工作状态，请稍后重试。',
     version: '正在运行已发布版本 v{value}',
     notPublished: '尚未发布可运行版本',
+    waitingFocus: '等你确认',
     currentFocus: '当前正在处理',
     nextUp: '接下来',
     noCurrentFocus: '当前没有执行中的工作',
@@ -330,6 +331,7 @@ const messages: DigitalHumansMessages = {
       disabled: '已停用',
     },
     statusLine: {
+      waitingApproval: '有一项请求在等你确认',
       working: '正在处理“{name}”',
       responding: '正在处理一项请求',
       idle: '随时可以开始工作',

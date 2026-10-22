@@ -283,6 +283,7 @@ const messages = {
     loadErrorDescription: 'The digital human status is temporarily unavailable. Try again.',
     version: 'Running published version v{value}',
     notPublished: 'No published version',
+    waitingFocus: 'Waiting for you',
     currentFocus: 'Current focus',
     nextUp: 'Up next',
     noCurrentFocus: 'Nothing is running right now',
@@ -352,6 +353,7 @@ const messages = {
       disabled: 'Disabled',
     },
     statusLine: {
+      waitingApproval: 'A request is waiting for your approval',
       working: 'Working on “{name}”',
       responding: 'Processing a request',
       idle: 'Available for work',
