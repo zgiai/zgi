@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Users } from 'lucide-react';
@@ -197,8 +198,9 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
   );
 }
 
-function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId: string; artifactId: string }) {
+export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId: string; artifactId: string }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   const { locale } = useLocale();
   const openReport = useOpenTaskReport();
   const artifact = useQuery({
@@ -242,7 +244,7 @@ function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId: string
             data.source_task_id || version.source_report_id ? (
               <span className="flex flex-wrap gap-x-2">
                 {data.source_task_id ? (
-                  <Link href={`/console/digital-humans/${digitalHumanId}/tasks?task=${data.source_task_id}`} className="text-primary hover:underline">
+                  <Link href={objectHref('task', data.source_task_id, digitalHumanId)} scroll={false} className="text-primary hover:underline">
                     {t('artifacts.openTask')}
                   </Link>
                 ) : null}

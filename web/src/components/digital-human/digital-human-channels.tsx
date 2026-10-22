@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import {
   AlertTriangle,
   Bot,
@@ -861,6 +862,7 @@ function EventRow({
   provider?: string;
 }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   const { locale } = useLocale();
   const time = formatChannelTime(event.received_at, locale);
   const preview = event.content_preview?.trim()
@@ -896,7 +898,7 @@ function EventRow({
       <div className="flex justify-start md:justify-end">
         {event.invocation_run_id ? (
           <Button variant="ghost" size="sm" asChild>
-            <Link href={`/console/digital-humans/${id}/runs?run=${event.invocation_run_id}`}>
+            <Link href={objectHref('run', event.invocation_run_id, id)} scroll={false}>
               {t('channels.activity.viewRun')}
               <ExternalLink className="size-3.5" />
             </Link>
@@ -929,6 +931,7 @@ function DeliveryRow({
   onDismiss: () => void;
 }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   const { locale } = useLocale();
   const canSafelyRetry = delivery.status === 'failed' && canRetry;
   const canDismiss = ['failed', 'unknown'].includes(delivery.status) && canRetry;
@@ -1003,7 +1006,7 @@ function DeliveryRow({
       </div>
       <div className="flex flex-wrap justify-start gap-1 md:justify-end">
         <Button variant="ghost" size="sm" asChild>
-          <Link href={`/console/digital-humans/${id}/runs?run=${delivery.run_id}`}>
+          <Link href={objectHref('run', delivery.run_id, id)} scroll={false}>
             {t('channels.activity.viewRun')}
           </Link>
         </Button>

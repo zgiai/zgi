@@ -19,6 +19,8 @@ import {
   RadioTower,
   RefreshCw,
   RotateCcw,
+  Loader2,
+  XCircle,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -40,7 +42,15 @@ import {
   useDigitalHumanChannelMutations,
   useDigitalHumanChannels,
 } from '@/hooks/digital-human/use-digital-human-channels';
-import { useDigitalHumanMyTasks, useDigitalHumanTaskReports, useDigitalHumanTasks } from '@/hooks/digital-human/use-digital-human-tasks';
+import {
+  useDigitalHumanMyTaskMutations,
+  useDigitalHumanMyTasks,
+  useDigitalHumanTaskMutations,
+  useDigitalHumanTaskReports,
+  useDigitalHumanTasks,
+} from '@/hooks/digital-human/use-digital-human-tasks';
+import { digitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
+import { toast } from 'sonner';
 import { useDigitalHuman, useDigitalHumanRuns } from '@/hooks/digital-human/use-digital-humans';
 import { useLocale } from '@/hooks/use-locale';
 import { useMediaQuery } from '@/hooks/use-media-query';
@@ -77,6 +87,9 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   // The reader's own tasks: private tasks are not in the task center list for
   // members, but their proposals, failures, and reports still need attention.
   const myTasks = useDigitalHumanMyTasks(id, {}, permissions.hasPermission('digital_human.run'));
+  const taskMutations = useDigitalHumanTaskMutations(id);
+  const myTaskMutations = useDigitalHumanMyTaskMutations(id);
+  const [pendingTaskAction, setPendingTaskAction] = useState<string | null>(null);
   const runs = useDigitalHumanRuns(id);
   const channels = useDigitalHumanChannels(id, true);
   const channelMutations = useDigitalHumanChannelMutations(id);
@@ -167,8 +180,29 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const taskCenterIds = new Set(taskItems.map(task => task.id));
   const ownTaskItems = (myTasks.data?.data.items ?? []).filter(task => !taskCenterIds.has(task.id));
   const attentionCandidates = [...taskItems, ...ownTaskItems];
+  // Task center tasks open over the workspace; a member's own private task
+  // lives in their conversation panel.
   const taskHref = (task: DigitalHumanTask) =>
-    taskCenterIds.has(task.id) ? `/console/digital-humans/${id}/tasks?task=${task.id}` : `/console/digital-humans/${id}/chat`;
+    taskCenterIds.has(task.id)
+      ? digitalHumanObjectHref(`/console/digital-humans/${id}`, 'task', task.id)
+      : `/console/digital-humans/${id}/chat?task=${task.id}`;
+  const runHref = (runId: string) => digitalHumanObjectHref(`/console/digital-humans/${id}`, 'run', runId);
+  // Confirm, decline, and retry are simple decisions, so they are made in the
+  // row; the task drawer is for reading more first.
+  const applyTaskAction = async (task: DigitalHumanTask, action: 'confirm' | 'decline' | 'retry') => {
+    if (pendingTaskAction) return;
+    setPendingTaskAction(task.id);
+    try {
+      const mutation = taskCenterIds.has(task.id) ? taskMutations.action : myTaskMutations.action;
+      await mutation.mutateAsync({ taskId: task.id, action, revision: task.revision });
+      toast.success(t('tasks.actionApplied'));
+      await Promise.all([tasks.refetch(), myTasks.refetch()]);
+    } catch {
+      // The mutation reports its own error.
+    } finally {
+      setPendingTaskAction(null);
+    }
+  };
   const runItems = runs.data?.data.items ?? [];
   const installations = channels.installations.data?.data ?? [];
   const deliveries = channels.deliveries.data?.data.items ?? [];
@@ -203,6 +237,9 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
     taskHref,
     t,
   });
+  const canDecide = (task: DigitalHumanTask) =>
+    task.can_change !== false &&
+    (taskCenterIds.has(task.id) ? permissions.hasPermission('digital_human.update') : permissions.hasPermission('digital_human.run'));
   const attentionItems = allAttentionItems.filter(item => !ignoredAttentionKeys.has(item.key));
   const ignoredAttentionCount = allAttentionItems.length - attentionItems.length;
   const ignoredAttentionRecordCount = ignoredAttentionKeys.size;
@@ -321,7 +358,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
           </div>
           <Button asChild variant="outline" size="sm" className="hidden shrink-0 sm:inline-flex">
             {focusRun ? (
-              <Link href={`/console/digital-humans/${id}/runs?run=${focusRun.id}`}>
+              <Link href={runHref(focusRun.id)} scroll={false}>
                 <Activity className={cn('size-4', isWorking && 'animate-pulse')} />
                 {t('dashboard.viewRun')}
               </Link>
@@ -357,7 +394,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
         <div className="flex items-center border-t p-4 sm:hidden">
           {focusRun ? (
             <Button asChild variant="outline" size="sm" className="w-full">
-              <Link href={`/console/digital-humans/${id}/runs?run=${focusRun.id}`}>
+              <Link href={runHref(focusRun.id)} scroll={false}>
                 <Activity className={cn('size-4', isWorking && 'animate-pulse')} />
                 {t('dashboard.viewRun')}
               </Link>
@@ -428,6 +465,16 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
                       description={item.description}
                       href={item.href}
                       tone={item.tone}
+                      actions={
+                        item.task && canDecide(item.task) ? (
+                          <AttentionTaskActions
+                            task={item.task}
+                            pending={pendingTaskAction === item.task.id}
+                            canRetry={permissions.hasPermission('digital_human.run')}
+                            onAction={action => item.task && void applyTaskAction(item.task, action)}
+                          />
+                        ) : null
+                      }
                       onIgnore={() => ignoreAttention(item.key)}
                       onDismiss={
                         item.deliveryId && canManageDeliveries
@@ -659,6 +706,7 @@ function DashboardLiveFeed({
       <Link
         key={`${event.id}-${activeIndex}`}
         href={event.href}
+        scroll={false}
         className="group flex min-w-0 flex-1 items-center gap-2 rounded-sm outline-none animate-in fade-in slide-in-from-bottom-1 duration-300 motion-reduce:animate-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <span
@@ -710,7 +758,7 @@ function buildDashboardLiveEvents({
       title: t('dashboard.live.taskRunning'),
       description: currentTask.name,
       timestamp: currentTask.updated_at,
-      href: `/console/digital-humans/${id}/tasks?task=${currentTask.id}`,
+      href: digitalHumanObjectHref(`/console/digital-humans/${id}`, 'task', currentTask.id),
       tone: 'active',
     });
   }
@@ -721,7 +769,7 @@ function buildDashboardLiveEvents({
       title: t(digitalHumanRunStatusLabelKey(run.status, run.waiting_reason)),
       description: digitalHumanRunTaskName(run) ?? dashboardRunSummary(run, t('dashboard.automaticRun')),
       timestamp: run.updated_at,
-      href: `/console/digital-humans/${id}/runs?run=${run.id}`,
+      href: digitalHumanObjectHref(`/console/digital-humans/${id}`, 'run', run.id),
       tone: 'warning',
     });
   }
@@ -736,7 +784,7 @@ function buildDashboardLiveEvents({
         ? currentTask.name
         : dashboardRunSummary(run, t('dashboard.automaticRun')),
       timestamp: run.updated_at,
-      href: `/console/digital-humans/${id}/runs?run=${run.id}`,
+      href: digitalHumanObjectHref(`/console/digital-humans/${id}`, 'run', run.id),
       tone: 'active',
     });
   }
@@ -787,6 +835,8 @@ interface DashboardAttentionItem {
   tone: 'warning' | 'danger';
   occurredAt: string;
   deliveryId?: string;
+  // A proposed or blocked task, decided in its row.
+  task?: DigitalHumanTask;
 }
 
 function buildDashboardAttentionItems({
@@ -819,6 +869,7 @@ function buildDashboardAttentionItems({
       href: taskHref(task),
       tone: task.work_status === 'blocked' ? ('danger' as const) : ('warning' as const),
       occurredAt: task.updated_at,
+      task,
     })),
     ...failedTaskRuns.map(task => ({
       key: `failed-run-${task.id}-${task.last_run_at ?? task.updated_at}`,
@@ -863,6 +914,7 @@ function AttentionRow({
   description,
   href,
   tone,
+  actions,
   onIgnore,
   onDismiss,
   dismissing = false,
@@ -872,6 +924,7 @@ function AttentionRow({
   description: string;
   href: string;
   tone: 'warning' | 'danger';
+  actions?: ReactNode;
   onIgnore: () => void;
   onDismiss?: () => void;
   dismissing?: boolean;
@@ -881,6 +934,7 @@ function AttentionRow({
     <article className="group flex flex-col gap-2 px-5 py-3.5 transition-colors hover:bg-muted/20 @[680px]/dashboard:flex-row @[680px]/dashboard:items-center @[680px]/dashboard:gap-4">
       <Link
         href={href}
+        scroll={false}
         className="flex min-w-0 flex-1 gap-3 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <AlertCircle
@@ -903,9 +957,10 @@ function AttentionRow({
       </Link>
       {/* Actions sit beside the item they act on. */}
       <div className="flex shrink-0 items-center justify-end gap-1 pl-7 @[680px]/dashboard:pl-0">
+        {actions}
         <Button asChild variant="ghost" size="xs">
-          <Link href={href}>
-            {t('dashboard.handle')}
+          <Link href={href} scroll={false}>
+            {actions ? t('dashboard.view') : t('dashboard.handle')}
             <ArrowRight className="size-3.5" />
           </Link>
         </Button>
@@ -1054,7 +1109,8 @@ function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; l
   const Icon = run.status === 'succeeded' ? CheckCircle2 : active ? CircleDashed : waiting ? Clock3 : AlertCircle;
   return (
     <Link
-      href={`/console/digital-humans/${id}/runs?run=${run.id}`}
+      href={digitalHumanObjectHref(`/console/digital-humans/${id}`, 'run', run.id)}
+      scroll={false}
       className="grid gap-2 py-3 text-sm outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[70px_20px_minmax(0,1fr)_auto] sm:items-center"
     >
       <time className="text-xs tabular-nums text-muted-foreground">
@@ -1234,7 +1290,7 @@ function UpcomingTasks({ id, tasks, locale }: { id: string; tasks: DigitalHumanT
         <ul className="divide-y px-5">
           {tasks.map(task => (
             <li key={task.id}>
-              <Link href={`/console/digital-humans/${id}/tasks?task=${task.id}`} className="flex items-center gap-3 py-2.5 text-sm hover:text-primary">
+              <Link href={digitalHumanObjectHref(`/console/digital-humans/${id}`, 'task', task.id)} scroll={false} className="flex items-center gap-3 py-2.5 text-sm hover:text-primary">
                 <span className="w-24 shrink-0 text-xs tabular-nums text-muted-foreground">{formatTaskTime(task.next_run_at, locale)}</span>
                 <span className="truncate">{task.name}</span>
               </Link>
@@ -1268,7 +1324,7 @@ function RecentArtifacts({ id, locale }: { id: string; locale: string }) {
       <ul className="divide-y px-5">
         {items.map(item => (
           <li key={item.id}>
-            <Link href={`/console/digital-humans/${id}/artifacts?selected=${item.id}`} className="flex items-center gap-3 py-2.5 text-sm hover:text-primary">
+            <Link href={digitalHumanObjectHref(`/console/digital-humans/${id}`, 'artifact', item.id)} scroll={false} className="flex items-center gap-3 py-2.5 text-sm hover:text-primary">
               <Package className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{item.title}</span>
               <span className="shrink-0 text-xs text-muted-foreground">
@@ -1295,4 +1351,52 @@ function currentDashboardTask(tasks: DigitalHumanTask[], runs: DigitalHumanRun[]
       .filter((taskId): taskId is string => Boolean(taskId))
   );
   return tasks.find(task => task.work_status === 'in_progress' && !waitingTaskIds.has(task.id));
+}
+
+/** Confirm or decline a proposal, or retry a blocked task, without leaving the row. */
+function AttentionTaskActions({
+  task,
+  pending,
+  canRetry,
+  onAction,
+}: {
+  task: DigitalHumanTask;
+  pending: boolean;
+  canRetry: boolean;
+  onAction: (action: 'confirm' | 'decline' | 'retry') => void;
+}) {
+  const t = useT('digitalHumans');
+  if (task.work_status === 'proposed') {
+    return (
+      <>
+        <ConfirmDialog
+          trigger={
+            <Button type="button" variant="ghost" size="xs" disabled={pending}>
+              <XCircle className="size-3.5" />
+              {t('tasks.actions.decline')}
+            </Button>
+          }
+          title={t('tasks.confirm.declineTitle')}
+          description={t('tasks.confirm.declineDescription')}
+          confirmText={t('tasks.actions.decline')}
+          cancelText={t('common.cancel')}
+          variant="danger"
+          onConfirm={() => onAction('decline')}
+        />
+        <Button type="button" variant="outline" size="xs" disabled={pending} onClick={() => onAction('confirm')}>
+          {pending ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+          {t('tasks.actions.confirm')}
+        </Button>
+      </>
+    );
+  }
+  if (task.work_status === 'blocked' && canRetry) {
+    return (
+      <Button type="button" variant="outline" size="xs" disabled={pending} onClick={() => onAction('retry')}>
+        {pending ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
+        {t('tasks.actions.retry')}
+      </Button>
+    );
+  }
+  return null;
 }

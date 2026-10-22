@@ -590,7 +590,7 @@ function TaskState({
   );
 }
 
-function TaskDetailSheet({
+export function TaskDetailSheet({
   id,
   taskId,
   open,
@@ -1051,7 +1051,7 @@ interface TaskFormState {
   attempts: string;
 }
 
-function TaskEditorDialog({
+export function TaskEditorDialog({
   id,
   task,
   open,

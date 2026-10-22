@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import {
   AlertCircle,
   ArrowRightLeft,
@@ -559,6 +560,7 @@ function MemoryDetail({
   undoing: boolean;
 }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   if (!memory) return null;
   const undoAvailable = Boolean(
     memory.undoable_until &&
@@ -594,7 +596,8 @@ function MemoryDetail({
                       {evidence.type === 'run' ? (
                         <Button variant="ghost" size="sm" asChild>
                           <Link
-                            href={`/console/digital-humans/${digitalHumanId}/runs?run=${encodeURIComponent(evidence.id)}`}
+                            href={objectHref('run', evidence.id, digitalHumanId)}
+                            scroll={false}
                           >
                             {t('memory.details')}
                             <ExternalLink className="size-3" />

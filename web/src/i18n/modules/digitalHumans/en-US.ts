@@ -228,6 +228,7 @@ const messages = {
   visibility: { private: 'Private', workspace: 'Workspace' },
   artifacts: {
     title: 'Artifacts',
+    openInPage: 'Open in artifacts',
     description: 'Documents, files, and images the digital human kept. Every revision leaves a version, and later conversations can find and reuse them.',
     search: 'Search titles',
     scope: { all: 'All', mine: 'Mine' },
@@ -283,7 +284,8 @@ const messages = {
     loadErrorDescription: 'The digital human status is temporarily unavailable. Try again.',
     version: 'Running published version v{value}',
     notPublished: 'No published version',
-    waitingFocus: 'Waiting for you',
+    waitingFocus: 'Waiting for confirmation',
+    view: 'View',
     currentFocus: 'Current focus',
     nextUp: 'Up next',
     noCurrentFocus: 'Nothing is running right now',
@@ -353,7 +355,7 @@ const messages = {
       disabled: 'Disabled',
     },
     statusLine: {
-      waitingApproval: 'A request is waiting for your approval',
+      waitingApproval: 'A request is waiting for a confirmation or an answer',
       working: 'Working on “{name}”',
       responding: 'Processing a request',
       idle: 'Available for work',
@@ -953,8 +955,15 @@ const messages = {
       allSources: 'All sources',
       all: 'All statuses',
       active: 'Running',
-      waiting: 'Waiting for you',
+      waiting: 'Waiting',
       clear: 'Clear filters',
+    },
+    waitingHandoff: {
+      approvalTitle: 'Waiting for confirmation',
+      questionTitle: 'Waiting for an answer',
+      own: 'You asked this in your conversation. Confirm or answer there and it continues.',
+      other: 'Asked via {source}. Whoever asked confirms or answers in that conversation; it does not hold a running place meanwhile.',
+      open: 'Answer in the conversation',
     },
     resultPending: 'No result yet',
     sources: {

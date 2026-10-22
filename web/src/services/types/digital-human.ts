@@ -391,6 +391,8 @@ export interface DigitalHumanRun {
   waiting_receipt?: string | null;
   conversation_id?: string | null;
   message_id?: string | null;
+  /** Where the run was asked from: console, webapp, api, task, channel, preview. */
+  surface?: string;
   result_summary?: string;
   error_code?: string;
   error_message?: string;

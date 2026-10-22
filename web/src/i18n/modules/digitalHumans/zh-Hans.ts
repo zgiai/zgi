@@ -209,6 +209,7 @@ const messages: DigitalHumansMessages = {
   visibility: { private: '私有', workspace: '工作空间' },
   artifacts: {
     title: '成果',
+    openInPage: '在成果页打开',
     description: '数字人沉淀下来的文档、文件和图片。每次修改都会留下新版本，以后的对话也能找到并复用它们。',
     search: '搜索标题',
     scope: { all: '全部', mine: '我的' },
@@ -264,7 +265,8 @@ const messages: DigitalHumansMessages = {
     loadErrorDescription: '暂时无法获取数字人的工作状态，请稍后重试。',
     version: '正在运行已发布版本 v{value}',
     notPublished: '尚未发布可运行版本',
-    waitingFocus: '等你确认',
+    waitingFocus: '等待确认',
+    view: '查看',
     currentFocus: '当前正在处理',
     nextUp: '接下来',
     noCurrentFocus: '当前没有执行中的工作',
@@ -331,7 +333,7 @@ const messages: DigitalHumansMessages = {
       disabled: '已停用',
     },
     statusLine: {
-      waitingApproval: '有一项请求在等你确认',
+      waitingApproval: '有请求在等待确认或回答',
       working: '正在处理“{name}”',
       responding: '正在处理一项请求',
       idle: '随时可以开始工作',
@@ -896,6 +898,13 @@ const messages: DigitalHumansMessages = {
       active: '运行中',
       waiting: '等待处理',
       clear: '清除筛选',
+    },
+    waitingHandoff: {
+      approvalTitle: '在等待确认',
+      questionTitle: '在等待回答',
+      own: '这是你发起的对话，在对话里确认或回答后会继续执行。',
+      other: '这项请求来自{source}，需要发起人在原对话中确认或回答；等待期间不占用运行位置。',
+      open: '去对话中处理',
     },
     resultPending: '暂未生成结果',
     sources: {

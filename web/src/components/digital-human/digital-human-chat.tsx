@@ -217,6 +217,17 @@ export function DigitalHumanChat({ id }: { id: string }) {
     [selectConversation]
   );
 
+  // `approval` names the message of a pending confirmation or question, e.g.
+  // from a waiting run's drawer; it is handled once and then dropped.
+  const approvalMessageId = searchParams.get('approval');
+  useEffect(() => {
+    if (!approvalMessageId || !initialConversationId) return;
+    openPendingChange({ conversation_id: initialConversationId, message_id: approvalMessageId });
+    const params = new URLSearchParams(window.location.search);
+    params.delete('approval');
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [approvalMessageId, initialConversationId, openPendingChange, pathname, router]);
+
   const handleStartNewConversation = useCallback(() => {
     startNewConversationRef.current();
     replaceConversationParam(null, 'draft-persistence');

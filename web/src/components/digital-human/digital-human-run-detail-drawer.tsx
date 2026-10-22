@@ -2,7 +2,8 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Ban, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowRight, Ban, Loader2 } from 'lucide-react';
 import { AgentRuntimeLogDetailDrawer } from '@/app/console/agents/[agentId]/logs/_components/agent-runtime-log-detail-drawer';
 import { Button } from '@/components/ui/button';
 import { ApprovalRuntimeForm } from '@/components/workflow/approval/approval-runtime-form';
@@ -27,6 +28,7 @@ import {
 } from '@/hooks/digital-human/use-digital-humans';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
+import { useAuthStore } from '@/store/auth-store';
 import type { AgentRuntimeRunItem } from '@/services/types/agent-runtime-log';
 import type { DigitalHumanRun } from '@/services/types/digital-human';
 
@@ -211,6 +213,8 @@ export function DigitalHumanRunDetailDrawer({
                   onSubmit={submitWorkflowApproval}
                 />
               </div>
+            ) : run.status === 'waiting' && !approvalReceipt && !runtimeQuery.isLoading ? (
+              <DigitalHumanRunWaitingHandoff digitalHumanId={digitalHumanId} run={run} />
             ) : approvalWait && !runtimeQuery.isLoading ? (
               <div className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-xs leading-5">
                 <div className="font-medium text-foreground">
@@ -295,4 +299,40 @@ function normalizedRunSource(run: DigitalHumanRun) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * A run waiting on a task confirmation or a question is answered in the
+ * conversation that asked it. The reader's own console conversation opens at
+ * that message; anyone else's run says who answers it.
+ */
+function DigitalHumanRunWaitingHandoff({ digitalHumanId, run }: { digitalHumanId: string; run: DigitalHumanRun }) {
+  const t = useT('digitalHumans');
+  const account = useAuthStore.use.user();
+  const sender = isRecord(run.invocation_event?.sender) ? run.invocation_event.sender : null;
+  const own =
+    run.surface === 'digital_human_console' &&
+    Boolean(account?.id) &&
+    sender?.id === account?.id &&
+    Boolean(run.conversation_id && run.message_id);
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-xs leading-5 sm:flex-row sm:items-center">
+      <div className="min-w-0 flex-1">
+        <div className="font-medium text-foreground">
+          {run.waiting_reason === 'waiting_question' ? t('runs.waitingHandoff.questionTitle') : t('runs.waitingHandoff.approvalTitle')}
+        </div>
+        <div className="mt-0.5 text-muted-foreground">
+          {own ? t('runs.waitingHandoff.own') : t('runs.waitingHandoff.other', { source: t(`runs.sources.${normalizedRunSource(run)}`) })}
+        </div>
+      </div>
+      {own ? (
+        <Button asChild size="sm" className="shrink-0">
+          <Link href={`/console/digital-humans/${digitalHumanId}/chat?conversation=${run.conversation_id}&approval=${run.message_id}`}>
+            {t('runs.waitingHandoff.open')}
+            <ArrowRight className="size-4" />
+          </Link>
+        </Button>
+      ) : null}
+    </div>
+  );
 }

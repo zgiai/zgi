@@ -8,6 +8,7 @@ import { Suspense, useEffect, type ReactNode } from 'react';
 import { customerAdapter } from '@/customer';
 import { Providers } from '@/providers';
 import { TaskReportDrawer } from '@/components/digital-human/task-report-drawer';
+import { DigitalHumanObjectDrawer } from '@/components/digital-human/digital-human-object-drawer';
 
 /**
  * Console layout with authentication protection
@@ -21,9 +22,11 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
       <ProtectedRoute>
         <OrganizationContextRequired>
           <ConsoleShell>{children}</ConsoleShell>
-          {/* Task reports open over any console page (ADR 0008). */}
+          {/* Task reports, runs, tasks, and artifacts open over any console
+              page, so looking at one never leaves the page (ADR 0008). */}
           <Suspense fallback={null}>
             <TaskReportDrawer />
+            <DigitalHumanObjectDrawer />
           </Suspense>
         </OrganizationContextRequired>
       </ProtectedRoute>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import { CheckCircle2, ChevronDown, CircleDashed, FileText, Paperclip, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -334,6 +335,7 @@ export function TaskReportView({
   withHeading?: boolean;
 }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   const query = useDigitalHumanTaskReport(digitalHumanId, reportId, mine);
   const { markRead } = useInboxMutations();
   const report = query.data?.data;
@@ -356,7 +358,7 @@ export function TaskReportView({
           <div className="min-w-0">
             <h3 className="text-lg font-semibold leading-7">{report.task_name}</h3>
             {mine ? null : (
-              <Link href={`/console/digital-humans/${digitalHumanId}/tasks?task=${report.task_id}`} className="text-xs text-primary hover:underline">
+              <Link href={objectHref('task', report.task_id, digitalHumanId)} scroll={false} className="text-xs text-primary hover:underline">
                 {t('tasks.reports.openTask')}
               </Link>
             )}

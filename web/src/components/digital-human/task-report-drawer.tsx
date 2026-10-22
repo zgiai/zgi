@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -83,6 +84,7 @@ export function TaskReportDrawer() {
 
 function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: string; reportId: string }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   const { report, mine, isLoading, isError } = useReaderTaskReport(digitalHumanId, reportId);
   // The run behind the report opens in place of it, for readers of run logs.
   const [runView, setRunView] = useState<string | null>(null);
@@ -104,7 +106,7 @@ function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: st
   const taskHref = report
     ? mine
       ? `/console/digital-humans/${digitalHumanId}/chat?task=${report.task_id}`
-      : `/console/digital-humans/${digitalHumanId}/tasks?task=${report.task_id}`
+      : objectHref('task', report.task_id, digitalHumanId)
     : null;
   return (
     <>
@@ -113,7 +115,7 @@ function TaskReportDrawerBody({ digitalHumanId, reportId }: { digitalHumanId: st
         <SheetDescription>{t('tasks.reports.sheetDescription')}</SheetDescription>
         {taskHref ? (
           <Button variant="link" size="sm" className="h-auto w-fit p-0 text-xs" asChild>
-            <Link href={taskHref}>
+            <Link href={taskHref} scroll={false}>
               <ExternalLink className="mr-1 size-3.5" />
               {t('tasks.reports.openTask')}
             </Link>
