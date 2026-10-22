@@ -263,7 +263,7 @@ func (s *Service) ReviewTaskReport(ctx context.Context, access digitalhuman.Task
 			row.ReviewState = string(digitalhuman.TaskReportAccepted)
 		} else {
 			row.ReviewState, row.ReviewFeedback = string(digitalhuman.TaskReportReworkRequested), &feedback
-			lockedTask, err := s.loadTask(ctx, tx, access, uuid.MustParse(task.ID), true)
+			lockedTask, err := s.lockReviewedTask(ctx, tx, access, task)
 			if err != nil {
 				return err
 			}
@@ -635,4 +635,29 @@ func taskReportOrigin(task *automationmodel.AutomationTask, holder bool) *digita
 		}
 	}
 	return nil
+}
+
+// lockReviewedTask locks the task of a report being reworked. The owner scope
+// of the reader's entry does not cover a task center task its creator reads as
+// their own, so a holder's task is locked by its identity and boundary, and
+// held again under the lock.
+func (s *Service) lockReviewedTask(ctx context.Context, tx *gorm.DB, access digitalhuman.TaskAccessContext, task *automationmodel.AutomationTask) (*automationmodel.AutomationTask, error) {
+	taskID := uuid.MustParse(task.ID)
+	locked, err := s.loadTask(ctx, tx, access, taskID, true)
+	if !errors.Is(err, digitalhuman.ErrTaskNotFound) || !taskHeldBy(task, access) {
+		return locked, err
+	}
+	var held automationmodel.AutomationTask
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND organization_id = ? AND workspace_id = ? AND task_kind = ? AND subject_type = ? AND subject_id = ?", taskID, access.OrganizationID, access.WorkspaceID,
+			automationmodel.AutomationTaskKindDigitalHuman, subjectTypeDigitalHuman, access.DigitalHumanID).
+		First(&held).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, digitalhuman.ErrTaskNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("lock reviewed digital human task: %w", err)
+	}
+	if !taskHeldBy(&held, access) {
+		return nil, digitalhuman.ErrTaskNotFound
+	}
+	return &held, nil
 }
