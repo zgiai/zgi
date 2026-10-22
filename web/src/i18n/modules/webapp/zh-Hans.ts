@@ -331,6 +331,7 @@ const messages: WebappMessages = {
     login: '登录',
     loginHint: '登录后可保存对话并使用更多能力',
     signedIn: '已登录',
+    back: '返回',
   },
   agentChat: {
     fallbackTitle: '智能体',

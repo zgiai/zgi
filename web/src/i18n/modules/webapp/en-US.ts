@@ -354,6 +354,7 @@ const messages = {
     login: 'Sign in',
     loginHint: 'Sign in to save conversations and use more capabilities',
     signedIn: 'Signed in',
+    back: 'Back',
   },
   agentChat: {
     fallbackTitle: 'Agent',
