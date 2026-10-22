@@ -1,7 +1,9 @@
 package chatfile
 
 import (
+	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -33,7 +35,7 @@ func TestAdmissionBoundaries(t *testing.T) {
 }
 
 func TestPolicyTypesAndOwnership(t *testing.T) {
-	for _, kind := range []string{"custom", "audio", "video", "*", "Document"} {
+	for _, kind := range []string{"custom", "*", "Document"} {
 		if err := (&Policy{AllowedFileTypes: []string{kind}}).Validate(); err == nil {
 			t.Errorf("accepted %q", kind)
 		}
@@ -53,5 +55,44 @@ func TestPolicyTypesAndOwnership(t *testing.T) {
 	}
 	if err := Resolve(&Policy{}, 50, 10, 5).ValidateFile("pdf", 1); err == nil {
 		t.Fatal("empty policy broadened")
+	}
+}
+
+func TestExtendedPolicyKindsCustomAndCount(t *testing.T) {
+	media := &Policy{AllowedFileTypes: []string{"audio", "video"}, NumberLimits: 8}
+	if err := media.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	effective := ResolveLimits(media, Limits{DocumentMiB: 50, ImageMiB: 10, AudioMiB: 20, VideoMiB: 80})
+	if effective.NumberLimit != 8 || effective.ValidateFile("mp3", 20*MiB) != nil || !errors.Is(effective.ValidateFile("mp3", 20*MiB+1), ErrFileTooLarge) ||
+		effective.ValidateFile("mp4", 80*MiB) != nil || !errors.Is(effective.ValidateFile("pdf", 1), ErrUnsupportedType) {
+		t.Fatalf("media policy = %#v", effective)
+	}
+	custom := &Policy{AllowedFileTypes: []string{"custom"}, AllowedFileExtensions: []string{".ZIP", "dwg", "zip"}}
+	custom.Normalize()
+	if err := custom.Validate(); err != nil || !slices.Equal(custom.AllowedFileExtensions, []string{"zip", "dwg"}) {
+		t.Fatalf("custom = %#v, %v", custom, err)
+	}
+	if Resolve(custom, 50, 10, 5).ValidateFile("dwg", 1) != nil {
+		t.Fatal("custom extension rejected")
+	}
+	for name, invalid := range map[string]*Policy{
+		"custom with others":    {AllowedFileTypes: []string{"custom", "image"}, AllowedFileExtensions: []string{"zip"}},
+		"custom without list":   {AllowedFileTypes: []string{"custom"}},
+		"executable":            {AllowedFileTypes: []string{"custom"}, AllowedFileExtensions: []string{"exe"}},
+		"extensions without it": {AllowedFileTypes: []string{"document"}, AllowedFileExtensions: []string{"zip"}},
+		"too many files":        {AllowedFileTypes: []string{"document"}, NumberLimits: 11},
+	} {
+		if invalid.Validate() == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	// Policies saved before the new fields keep their JSON.
+	data, _ := json.Marshal(&Policy{AllowedFileTypes: []string{"document"}})
+	if string(data) != `{"allowed_file_types":["document"]}` {
+		t.Fatalf("legacy JSON = %s", data)
+	}
+	if !Parsed("pdf") || Parsed("mp3") || Parsed("png") {
+		t.Fatal("parsed classification")
 	}
 }

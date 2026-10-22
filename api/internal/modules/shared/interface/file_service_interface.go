@@ -31,10 +31,15 @@ type FileUploadConfigResponse struct {
 
 // ChatPolicy resolves application selection against platform limits.
 func (c *FileUploadConfigResponse) ChatPolicy(selection *chatfile.Policy) chatfile.Effective {
+	return chatfile.ResolveLimits(selection, c.ChatLimits())
+}
+
+// ChatLimits are the platform's per-kind chat attachment size caps.
+func (c *FileUploadConfigResponse) ChatLimits() chatfile.Limits {
 	if c == nil {
-		return chatfile.Resolve(selection, 50, 10, chatfile.DefaultCount)
+		return chatfile.Limits{DocumentMiB: 50, ImageMiB: 10, Count: chatfile.DefaultCount}
 	}
-	return chatfile.Resolve(selection, c.FileSizeLimit, c.ImageFileSizeLimit, chatfile.DefaultCount)
+	return chatfile.Limits{DocumentMiB: c.FileSizeLimit, ImageMiB: c.ImageFileSizeLimit, AudioMiB: c.AudioFileSizeLimit, VideoMiB: c.VideoFileSizeLimit, Count: chatfile.DefaultCount}
 }
 
 // FileService defines the interface for file operations

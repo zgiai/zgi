@@ -110,8 +110,15 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		Status: StatusDraft, AutonomyLevel: request.AutonomyLevel, Visibility: request.Visibility,
 		Revision: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
+	// New digital humans start with uploads off, like Agents; one created
+	// before this keeps its saved policy.
+	uploadPolicy := chatfile.Clone(request.FileUploadPolicy)
+	if uploadPolicy == nil {
+		uploadPolicy = &chatfile.Policy{AllowedFileTypes: []string{}}
+	}
+	uploadPolicy.Normalize()
 	draft := &Version{
-		FileUploadPolicy: chatfile.Clone(request.FileUploadPolicy),
+		FileUploadPolicy: uploadPolicy,
 		ID:               draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		State: VersionStateDraft, IdentityName: request.IdentityName, Persona: request.Persona, Goals: goals, Rules: rules, DefaultModel: request.DefaultModel,
 		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, PresentationPolicy: presentationPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
@@ -645,10 +652,12 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		changed = true
 	}
 	if request.FileUploadPolicy != nil {
+		request.FileUploadPolicy.Normalize()
 		if request.FileUploadPolicy.Validate() != nil {
 			return ErrInvalidRequest
 		}
 		draft.FileUploadPolicy = chatfile.Clone(request.FileUploadPolicy)
+		draft.FileUploadPolicy.Normalize()
 		changed = true
 	}
 	if !changed {

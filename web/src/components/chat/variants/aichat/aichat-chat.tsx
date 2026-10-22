@@ -186,6 +186,7 @@ interface AIChatShellProps {
   forcedUseMemory?: boolean;
   enableUpload?: boolean;
   fileUploadPolicy?: FileUploadSelection | null;
+  uploadRequiresLogin?: boolean;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
@@ -334,6 +335,7 @@ export function AIChatShell({
   forcedUseMemory,
   enableUpload = true,
   fileUploadPolicy,
+  uploadRequiresLogin,
   uploadScope,
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
@@ -1976,6 +1978,7 @@ export function AIChatShell({
             showMemoryToggle={showMemoryToggle}
             enableUpload={enableUpload}
             fileUploadPolicy={fileUploadPolicy}
+            uploadRequiresLogin={uploadRequiresLogin}
             uploadScope={uploadScope}
             showFileLibraryPicker={showFileLibraryPicker}
             allowWorkspaceSwitch={allowWorkspaceSwitch}

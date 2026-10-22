@@ -317,7 +317,9 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	// Check file size
 	fileSize := int64(len(content))
 	if isTemporary && !isIcon && source != nil && *source == interfaces.FileSourceChat {
-		if err := s.GetUploadConfig().ChatUploadPolicy.ValidateFile(extension, fileSize); err != nil {
+		// Any type an application may allow is admitted here; the
+		// application's own policy applies when the file joins a turn.
+		if err := chatfile.ValidatePlatformFile(extension, fileSize, s.GetUploadConfig().ChatLimits()); err != nil {
 			if errors.Is(err, chatfile.ErrUnsupportedType) {
 				return nil, model.ErrUnsupportedFileType
 			}

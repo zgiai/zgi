@@ -545,10 +545,13 @@ func TestRequireAuthenticatedWebAppAgentWhenMemoryEnabled(t *testing.T) {
 	require.True(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
 }
 
-func TestAgentWebAppRequiresLoginForLinuxAndFileUploads(t *testing.T) {
+func TestAgentWebAppRequiresLoginForLinuxAndMemory(t *testing.T) {
+	// File uploads ask for sign-in only when a file is attached.
+	files := publicAgentWebAppConfig(&dto.AgentWebAppRuntimeConfigResponse{Config: dto.AgentConfigResponse{FileUpload: true}})
+	require.False(t, files.LoginRequired)
+	require.True(t, files.FileUploadRequiresLogin)
 	for name, config := range map[string]dto.AgentConfigResponse{
 		"linux":  {ExecutionRuntime: &dto.AgentExecutionRuntime{Enabled: true}},
-		"files":  {FileUpload: true},
 		"memory": {AgentMemoryEnabled: true},
 	} {
 		t.Run(name, func(t *testing.T) {

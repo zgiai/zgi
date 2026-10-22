@@ -319,3 +319,23 @@ func TestAttachmentReaderContentIsEphemeralInDurableAndLegacyTranscript(t *testi
 		}
 	}
 }
+
+func TestUnparsedAttachmentIsKeptAsAFile(t *testing.T) {
+	svc, prepared, files, extractor := attachmentReaderFixture(t)
+	prepared.Conversation = &runtimemodel.Conversation{ID: uuid.New()}
+	prepared.Message = &runtimemodel.Message{ID: uuid.New()}
+	files.file.Name, files.file.Extension, files.file.MimeType = "drawing.dwg", "dwg", "application/octet-stream"
+	prepared.parts.Attachments.Files = []attachmentFile{newPendingAttachmentFile(files.file)}
+	if err := svc.extractPreparedAttachments(t.Context(), prepared, nil); err != nil {
+		t.Fatal(err)
+	}
+	file := prepared.parts.Attachments.Files[0]
+	if extractor.calls != 0 || file.FilteredReason != attachmentFilteredReasonStoredOnly || len(prepared.RuntimeAttachmentRefs()) != 1 {
+		t.Fatalf("unparsed file = %#v, extractor calls %d", file, extractor.calls)
+	}
+	prepared.parts.Query = "what is in this drawing"
+	content, _ := svc.buildFallbackCurrentUserContent(prepared.parts)
+	if text, _ := content.(string); !strings.Contains(text, "drawing.dwg") || !strings.Contains(text, "not read") {
+		t.Fatalf("stored-only context = %#v", content)
+	}
+}

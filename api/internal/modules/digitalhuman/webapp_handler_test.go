@@ -157,8 +157,9 @@ func TestLinuxEnabledWebAppRequiresLoginWithoutAnonymousFallback(t *testing.T) {
 		}
 	}
 	access.Version.ExecutionRuntime = nil
-	if !webAppLoginRequired(access) {
-		t.Fatal("file upload enabled without login")
+	// Uploads ask for sign-in only when a file is attached, not to chat.
+	if webAppLoginRequired(access) || !fileUploadEnabled(access.Version) {
+		t.Fatal("file uploads required login to chat")
 	}
 	access.Version.FileUploadPolicy = &chatfile.Policy{AllowedFileTypes: []string{}}
 	if webAppLoginRequired(access) || fileUploadEnabled(access.Version) {

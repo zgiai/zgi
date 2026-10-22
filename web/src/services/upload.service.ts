@@ -30,17 +30,29 @@ export interface UploadConfig {
   workflow_file_upload_limit: number;
 }
 
+export type ChatFileKind = 'document' | 'image' | 'audio' | 'video' | 'custom';
+
 export interface ChatUploadPolicy {
-  allowed_file_types: Array<'document' | 'image'>;
+  allowed_file_types: ChatFileKind[];
   allowed_extensions: string[];
   number_limit: number;
   document_max_bytes: number;
   image_max_bytes: number;
+  audio_max_bytes?: number;
+  video_max_bytes?: number;
   turn_max_bytes: number;
+  /** Extensions read for the model as text. */
+  parsed_extensions?: string[];
+  /** Image extensions a vision model can see. */
+  vision_extensions?: string[];
 }
 
 export interface FileUploadSelection {
-  allowed_file_types: Array<'document' | 'image'>;
+  allowed_file_types: ChatFileKind[];
+  /** Extensions without dots, used only with the custom kind. */
+  allowed_file_extensions?: string[];
+  /** Files per turn, 1-10; unset means the default of 5. */
+  number_limits?: number;
 }
 
 export interface MultipleUploadResponse {
