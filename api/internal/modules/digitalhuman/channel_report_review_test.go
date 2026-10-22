@@ -97,7 +97,7 @@ func TestChannelReplyReviewsTheConversationsLatestReport(t *testing.T) {
 		t.Fatalf("rework without feedback: handled=%v err=%v reviewed=%+v delivered=%v", handled, err, tasks.reviewed, store.delivered)
 	}
 
-	// Without a report to review, 采纳 is an ordinary message.
+	// Without a report to review, an accept reply is an ordinary message.
 	service, tasks, _ = newService()
 	if handled, err := service.ReviewChannelTaskReport(context.Background(), scope, uuid.New(), conversationID, reply("采纳")); err != nil || handled || tasks.reviewed != nil {
 		t.Fatalf("no report: handled=%v err=%v", handled, err)

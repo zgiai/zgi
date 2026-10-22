@@ -8,8 +8,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 )
 
-// A task report delivered to a channel is reviewed by replying 采纳 or
-// 返工：意见. Only these explicit forms are read as a review, so ordinary
+// A task report delivered to a channel is reviewed by replying with the accept
+// word or the rework prefix and feedback. Only these explicit forms are read as a review, so ordinary
 // conversation is never mistaken for one.
 
 const (
@@ -66,7 +66,7 @@ func (s *RuntimeService) ReviewChannelTaskReport(ctx context.Context, scope Scop
 	}
 	list, err := reports.ListTaskReports(ctx, access, TaskReportListQuery{ReviewStates: []TaskReportReviewState{TaskReportNew}, Page: 1, PageSize: 1})
 	if err != nil || list == nil || len(list.Items) == 0 {
-		// Without a report waiting for review, 采纳 is just a message.
+		// Without a report waiting for review, an accept reply is just a message.
 		return false, err
 	}
 	report := list.Items[0]
