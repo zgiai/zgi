@@ -208,7 +208,7 @@ const messages = {
   fields: {
     name: 'Name',
     description: 'Description',
-    identityName: 'Name',
+    identityName: 'Name in conversations',
     persona: 'Persona',
     goals: 'Goals',
     rules: 'Rules',
@@ -481,28 +481,25 @@ const messages = {
       'Describe who this digital human is, how it communicates, and which boundaries it follows.',
     modelTitle: 'Runtime model',
     modelDescription: 'It must support tool calls. Stronger models follow instructions and run tools more reliably, but each conversation costs more and answers more slowly.',
-    modelPlaceholder: 'Select an Agent model',
-    modelUnavailable:
-      'The current model no longer meets Agent runtime requirements. Select another model and save.',
+    modelPlaceholder: 'Choose a model',
+    modelUnavailable: 'This model no longer supports the tool calls a digital human needs. Choose another one.',
     identityTitle: 'Basic identity',
     identityDescription: 'Give teammates a clear name and one-sentence purpose.',
-    behaviorTitle: 'Instructions',
-    behaviorDescription: 'The digital human’s identity, goals, and behavior rules.',
+    behaviorTitle: 'Identity and role',
+    behaviorDescription: 'Who it is, what it works toward, and what it must respect.',
     identityNamePlaceholder: 'For example: Nova',
-    identityNameDescription:
-      'The identity name this digital human uses to introduce and refer to itself in conversations.',
+    identityNameDescription: 'What the digital human calls itself in conversations. It can differ from the name in the list.',
     personaPlaceholder:
       'Describe its expertise, communication style, and how it should introduce itself.',
     personaDescription:
       'Defines the digital human’s expertise, communication style, and self-positioning, directly shaping its responses.',
     goalsPlaceholder:
       'For example: Continuously identify growth opportunities and propose concrete actions.',
-    goalsDescription:
-      'Describes the work directions this digital human should continuously watch and advance. This field is optional.',
+    goalsDescription: 'The work it keeps moving forward. Optional.',
     addGoal: 'Add goal',
     removeGoal: 'Remove goal',
-    rulesPlaceholder: 'For example: Never use a resource that is not explicitly bound.',
-    rulesDescription: 'Optional. Add behavior boundaries and execution constraints when needed.',
+    rulesPlaceholder: 'For example: confirm any price or contract commitment with the owner first.',
+    rulesDescription: 'Limits it respects in every situation. Optional.',
     addRule: 'Add rule',
     removeRule: 'Remove rule',
     unsaved: 'You have unsaved changes',
@@ -512,10 +509,10 @@ const messages = {
     saveHint: 'Saved changes remain in the draft until you publish a new version.',
   },
   preferences: {
-    runtimeTitle: 'Runtime and files',
-    runtimeDescription: 'Choose whether this DigitalHuman can use a Linux execution environment and which files users can upload. Changes save to the draft automatically and take effect after publishing.',
-    linuxEnvironment: 'Enable Linux execution environment',
-    linuxEnvironmentDescription: 'Run scripts and process files in a platform-managed environment.',
+    runtimeTitle: 'Code execution',
+    runtimeDescription: 'What the digital human can do with files it receives. Changes save to the draft and go live when published.',
+    linuxEnvironment: 'Code execution environment',
+    linuxEnvironmentDescription: 'When on, uploaded files go into a secure sandbox where the digital human can write code to read, analyze, and create files such as spreadsheets and charts. When off, it can only read document text and look at images.',
     linuxEnvironmentUnavailable: 'The Linux environment is not available for this organization.',
     linuxEnvironmentUnavailableReasons: {
       disabled: 'The Linux execution environment is turned off for this deployment. Ask an administrator to enable it.',
@@ -526,15 +523,13 @@ const messages = {
     title: 'Settings',
     description:
       'Control channel feedback and other runtime preferences without changing this digital human’s identity.',
-    channelResponseTitle: 'Channel response experience',
+    channelResponseTitle: 'Replies in channels',
     channelResponseDescription:
       'Choose which temporary messages are sent while this digital human works in Feishu or another chat channel.',
-    intermediateMessages: 'Send intermediate messages',
-    intermediateMessagesDescription:
-      'Send each useful in-progress explanation as a separate message, with no quantity limit. These messages are best effort and are not written to ZGI’s durable delivery history.',
-    acknowledgement: 'Send processing acknowledgement',
-    acknowledgementDescription:
-      'Send “Received, processing…” when a channel request is accepted. This can be enabled independently of intermediate messages.',
+    intermediateMessages: 'Send progress updates',
+    intermediateMessagesDescription: 'When work takes a while, send progress as separate messages. A progress message may occasionally be lost; the final reply is not affected.',
+    acknowledgement: 'Reply "Got it" first',
+    acknowledgementDescription: 'Answer "Got it, working on it…" as soon as a message arrives, then start working.',
     unsaved: 'You have unsaved changes',
     saved: 'All settings are saved',
     pendingPublish: 'Draft saved and waiting to be published',
@@ -580,7 +575,7 @@ const messages = {
   },
   capabilities: {
     title: 'Capabilities and resources',
-    description: 'Control which approved skills, knowledge, data, workflows, and apps it may use.',
+    description: 'The skills, knowledge bases, databases, workflows, and connectors it can use.',
     draftHint: 'Changes save to the draft immediately and go live after you publish.',
     pendingPublish: 'Unpublished changes',
   },

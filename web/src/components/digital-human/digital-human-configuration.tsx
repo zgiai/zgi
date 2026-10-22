@@ -529,7 +529,8 @@ function ConfigurationEditor({
                 </Badge>
               ) : null}
             </nav>
-            <div className="space-y-4 p-4 md:p-5">
+            {/* Leave room for the floating preview button. */}
+            <div className={cn('space-y-4 p-4 md:p-5', previewAvailable && !inlinePreview && 'pb-20 md:pb-20')}>
               <ConfigurationSection id="configuration-model" title={t('settings.modelTitle')} description={t('settings.modelDescription')}>
                 <ModelSelector
                   modelType="text-chat"
