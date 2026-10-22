@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
-import { CheckCircle2, ChevronDown, CircleDashed, FileText, Paperclip, RotateCcw, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, CircleDashed, FileText, Paperclip, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Badge } from '@/components/ui/badge';
@@ -520,6 +520,9 @@ export function TaskReportFeed({
 export interface TaskReportClient {
   readFile?: (reportId: string, fileId: string, signal?: AbortSignal) => Promise<Blob>;
   list: (taskId: string) => Promise<ApiResponseData<DigitalHumanTaskReportList>>;
+  // The reports of all the reader's tasks, newest first. Without it the panel
+  // keeps reports inside each task.
+  feed?: (params: DigitalHumanTaskReportParams) => Promise<ApiResponseData<DigitalHumanTaskReportList>>;
   review: (reportId: string, request: ReviewDigitalHumanTaskReportRequest) => Promise<ApiResponseData<DigitalHumanTaskReport>>;
   // Called when the reader opens a report, for example to mark its notice read.
   viewed?: (reportId: string) => void;
@@ -624,5 +627,205 @@ export function TaskPanelReports({
         </li>
       ))}
     </ul>
+  );
+}
+
+type PanelFeedFilter = 'to_review' | 'all';
+
+/**
+ * The Reports tab of the My tasks panel: what the reader's tasks handed back,
+ * reports to review first. A report opens in place of the list, with its
+ * review actions, through the surface's own API.
+ */
+export function TaskPanelReportFeed({
+  client,
+  refreshKey = 0,
+  openReportId,
+  onOpenHandled,
+  onChanged,
+}: {
+  client: TaskReportClient;
+  refreshKey?: number;
+  // A report to open, e.g. from a task's "New report"; handled once listed.
+  openReportId?: string | null;
+  onOpenHandled?: () => void;
+  onChanged?: () => void;
+}) {
+  const t = useT('digitalHumans');
+  const { locale } = useLocale();
+  const [filter, setFilter] = useState<PanelFeedFilter>('to_review');
+  const [page, setPage] = useState(1);
+  const [list, setList] = useState<DigitalHumanTaskReportList | null>(null);
+  const [error, setError] = useState(false);
+  const [open, setOpen] = useState<DigitalHumanTaskReport | null>(null);
+  const [pending, setPending] = useState(false);
+  const [reload, setReload] = useState(0);
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  const readReportFile = client.readFile;
+
+  useEffect(() => {
+    const feed = clientRef.current.feed;
+    if (!feed) return;
+    let active = true;
+    setError(false);
+    feed({ ...feedFilters[filter], page, page_size: 20 })
+      .then(response => {
+        if (active) setList(response.data);
+      })
+      .catch(() => {
+        if (active) {
+          setList(null);
+          setError(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [filter, page, refreshKey, reload]);
+
+  // A named report may already be reviewed, so it is looked for among all.
+  useEffect(() => {
+    if (!openReportId || !list) return;
+    const report = list.items.find(item => item.id === openReportId);
+    if (report) {
+      setOpen(report);
+      onOpenHandled?.();
+    } else if (filter !== 'all' || page !== 1) {
+      setFilter('all');
+      setPage(1);
+    } else {
+      onOpenHandled?.();
+    }
+  }, [filter, list, onOpenHandled, openReportId, page]);
+
+  useEffect(() => {
+    if (open) clientRef.current.viewed?.(open.id);
+  }, [open]);
+
+  if (open) {
+    return (
+      <div className="space-y-3">
+        <Button variant="ghost" size="sm" className="-ml-2 h-7 px-2 text-xs" onClick={() => setOpen(null)}>
+          <ArrowLeft className="size-3.5" />
+          {t('tasks.panel.backToReports')}
+        </Button>
+        <div>
+          <h3 className="text-sm font-semibold leading-6">{open.task_name}</h3>
+          <p className="text-xs text-muted-foreground">{new Date(open.created_at).toLocaleString(locale)}</p>
+        </div>
+        <TaskReportDetailView
+          report={open}
+          pending={pending}
+          readFile={readReportFile ? (fileId, signal) => readReportFile(open.id, fileId, signal) : undefined}
+          onReview={async request => {
+            setPending(true);
+            try {
+              const response = await clientRef.current.review(open.id, request);
+              setOpen(response.data);
+            } catch (reviewError) {
+              toast.error(getErrorMessage(reviewError) || t('tasks.reports.loadError'));
+              throw reviewError;
+            } finally {
+              setPending(false);
+            }
+            setReload(value => value + 1);
+            onChanged?.();
+          }}
+        />
+      </div>
+    );
+  }
+
+  const items = list?.items ?? [];
+  const pages = list ? Math.max(1, Math.ceil(list.total / list.page_size)) : 1;
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1">
+        {(['to_review', 'all'] as const).map(key => (
+          <Button
+            key={key}
+            type="button"
+            size="sm"
+            variant={filter === key ? 'secondary' : 'ghost'}
+            className="h-7 rounded-full px-3 text-xs"
+            aria-pressed={filter === key}
+            onClick={() => {
+              setFilter(key);
+              setPage(1);
+            }}
+          >
+            {t(`tasks.reports.filter.${key}`)}
+          </Button>
+        ))}
+      </div>
+      {error ? (
+        <div className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">
+          {t('tasks.reports.loadError')}
+          <Button variant="link" size="sm" className="h-auto px-1 text-xs" onClick={() => setReload(value => value + 1)}>
+            {t('tasks.retry')}
+          </Button>
+        </div>
+      ) : list === null ? (
+        <div className="space-y-2">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="flex min-h-28 flex-col items-center justify-center gap-2 px-3 py-5 text-center">
+          <FileText className="size-6 text-muted-foreground/60" />
+          <p className="text-xs text-muted-foreground">
+            {filter === 'to_review' ? t('tasks.panel.noReportsToReview') : t('tasks.reports.none')}
+          </p>
+        </div>
+      ) : (
+        <ul className="space-y-1">
+          {items.map(report => {
+            const unread = report.review_state === 'new';
+            return (
+              <li key={report.id}>
+                <button
+                  type="button"
+                  className="w-full rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors hover:border-primary/30 hover:bg-muted/60"
+                  onClick={() => setOpen(report)}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    {unread ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label={t('tasks.reports.review.new')} /> : null}
+                    <span className={cn('min-w-0 flex-1 truncate text-sm', unread ? 'font-semibold' : 'font-medium text-foreground/80')}>
+                      {report.task_name}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatTaskTime(report.created_at, locale)}</span>
+                  </span>
+                  <span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground">{plainTextPreview(report.summary)}</span>
+                  <span className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <TaskReportOutcomeBadge outcome={report.outcome} />
+                    {unread ? null : <ReviewStateLabel state={report.review_state} />}
+                    {report.files?.length ? (
+                      <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                        <Paperclip className="size-3" />
+                        {report.files.length}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {pages > 1 ? (
+        <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>
+            {t('tasks.reports.previous')}
+          </Button>
+          <span>
+            {page} / {pages}
+          </span>
+          <Button size="sm" variant="outline" disabled={page >= pages} onClick={() => setPage(value => value + 1)}>
+            {t('tasks.reports.next')}
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -11,6 +11,7 @@ import type {
   UpdateDigitalHumanTaskRequest,
   DigitalHumanTaskReport,
   DigitalHumanTaskReportList,
+  DigitalHumanTaskReportParams,
   ReviewDigitalHumanTaskReportRequest,
 } from '@/services/types/digital-human';
 
@@ -73,6 +74,13 @@ export const digitalHumanWebAppService = {
     return createDigitalHumanWebAppHttp(webAppId).get(
       `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/task-reports`,
       { params: { task_id: taskId } }
+    );
+  },
+  // The reports of all the visitor's tasks, filtered like the console feed.
+  listTaskReportFeed(webAppId: string, params: DigitalHumanTaskReportParams): Promise<ApiResponseData<DigitalHumanTaskReportList>> {
+    return createDigitalHumanWebAppHttp(webAppId).get(
+      `/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/task-reports`,
+      { params }
     );
   },
   reviewTaskReport(

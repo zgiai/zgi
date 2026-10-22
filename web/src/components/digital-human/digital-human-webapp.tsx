@@ -88,6 +88,7 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
       activities: (taskId, page) => digitalHumanWebAppService.listTaskActivities(webAppId, taskId, page),
       reports: {
         list: taskId => digitalHumanWebAppService.listTaskReports(webAppId, taskId),
+        feed: params => digitalHumanWebAppService.listTaskReportFeed(webAppId, params),
         review: (reportId, request) => digitalHumanWebAppService.reviewTaskReport(webAppId, reportId, request),
         readFile: (reportId, fileId, signal) => digitalHumanWebAppService.downloadTaskReportFile(webAppId, reportId, fileId, signal),
       },

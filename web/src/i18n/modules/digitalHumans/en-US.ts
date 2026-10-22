@@ -1591,6 +1591,15 @@ const messages = {
   tasks: {
     title: 'Task center',
     myTitle: 'My tasks',
+    panel: {
+      reports: 'Reports',
+      scope: { open: 'Active', ended: 'Finished', all: 'All' },
+      next: 'next {time}',
+      last: 'last {time}',
+      newReport: 'New report',
+      backToReports: 'Back to reports',
+      noReportsToReview: 'No reports to review.',
+    },
     myDescription:
       'Tasks you requested on this digital human. Tasks shared with the workspace may also appear here as read-only.',
     createFromChat: 'Describe a task in the conversation; confirmed tasks appear here.',

@@ -16,7 +16,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  SlidersHorizontal,
+  Search,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -24,13 +24,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -39,7 +32,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { translateTimezone } from '@/utils/timezone';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary, formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
-import { TaskLatestReport, TaskPanelReports, type TaskReportClient } from '@/components/digital-human/digital-human-task-reports';
+import { TaskLatestReport, TaskPanelReportFeed, TaskPanelReports, type TaskReportClient } from '@/components/digital-human/digital-human-task-reports';
 import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import type {
@@ -55,17 +48,14 @@ import type {
 } from '@/services/types/digital-human';
 import type { ApiResponseData } from '@/services/types/common';
 
-const taskStatusFilters = [
-  'open',
-  'proposed',
-  'pending',
-  'in_progress',
-  'waiting',
-  'blocked',
-  'completed',
-  'canceled',
-] as const;
-const taskPriorityFilters = ['low', 'normal', 'high', 'urgent'] as const;
+// Quick task filters: unfinished work, finished work, or everything.
+type TaskScope = 'open' | 'ended' | 'all';
+const taskScopes: readonly TaskScope[] = ['open', 'ended', 'all'];
+const taskScopeStatuses: Record<TaskScope, string[] | undefined> = {
+  open: ['proposed', 'pending', 'in_progress', 'waiting', 'blocked'],
+  ended: ['completed', 'canceled'],
+  all: undefined,
+};
 
 export interface DigitalHumanTaskPanelClient {
   list: (params?: Record<string, unknown>) => Promise<ApiResponseData<DigitalHumanTaskList>>;
@@ -122,10 +112,15 @@ export function DigitalHumanTaskPanel({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ name: '', goal: '' });
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('open');
-  const [priority, setPriority] = useState('all');
+  const [scope, setScope] = useState<TaskScope>('open');
   const [page, setPage] = useState(1);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Tasks and the reports they hand back are separate tabs.
+  const [view, setView] = useState<'tasks' | 'reports'>('tasks');
+  const [openReportId, setOpenReportId] = useState<string | null>(null);
+  const [reportsToReview, setReportsToReview] = useState<number | null>(null);
+  const [reportsRefresh, setReportsRefresh] = useState(0);
+  const reportFeed = Boolean(client.reports?.feed);
   const loadSequenceRef = useRef(0);
   const deferredSearch = useDeferredValue(search);
   const loadErrorText = t('tasks.loadError');
@@ -139,27 +134,17 @@ export function DigitalHumanTaskPanel({
     [selectedId, tasks]
   );
 
-  const filtersActive = search.trim() !== '' || status !== 'open' || priority !== 'all';
-  // A short personal list does not need permanent filter controls.
-  const filtersVisible = !compact || filtersOpen || filtersActive || (tasks?.total ?? 0) > 5;
+  const searchVisible = searchOpen || search.trim() !== '';
 
   const load = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
     try {
-      const statusValues =
-        status === 'open'
-          ? ['proposed', 'pending', 'in_progress', 'waiting', 'blocked']
-          : status !== 'all'
-            ? [status]
-            : undefined;
+      const statusValues = taskScopeStatuses[scope];
       const response = await clientRef.current.list({
         page,
         page_size: 100,
         ...(deferredSearch.trim() ? { query: deferredSearch.trim() } : {}),
         ...(statusValues ? { status: statusValues } : {}),
-        // Finished work stays in the default view until its report is read.
-        ...(status === 'open' ? { include_unreviewed: true } : {}),
-        ...(priority !== 'all' ? { priority: [priority] } : {}),
       });
       if (sequence !== loadSequenceRef.current) return;
       setTasks(response.data);
@@ -176,9 +161,9 @@ export function DigitalHumanTaskPanel({
         setRefreshing(false);
       }
     }
-  }, [deferredSearch, page, priority, status]);
+  }, [deferredSearch, page, scope]);
 
-  const loadFilterKey = `${deferredSearch}\u0000${priority}\u0000${status}\u0000${page}\u0000${refreshKey}`;
+  const loadFilterKey = `${deferredSearch}\u0000${scope}\u0000${page}\u0000${refreshKey}`;
   useEffect(() => {
     if (lastLoadFilterKeyRef.current === loadFilterKey) return;
     if (refreshKey > 0) setRefreshing(true);
@@ -244,6 +229,23 @@ export function DigitalHumanTaskPanel({
 
   const visibleTasks = useMemo(() => tasks?.items ?? [], [tasks]);
 
+  useEffect(() => {
+    const feed = clientRef.current.reports?.feed;
+    if (!feed) return;
+    let active = true;
+    feed({ 'review_state[]': ['new'], page_size: 1 })
+      .then(response => {
+        if (active) setReportsToReview(response.data.total);
+      })
+      .catch(() => {
+        if (active) setReportsToReview(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [refreshKey, reportsRefresh, tasks]);
+  const handledOpenReport = useCallback(() => setOpenReportId(null), []);
+
   const select = (task: DigitalHumanTask) => {
     setSelectedId(task.id);
     setEditing(false);
@@ -255,7 +257,8 @@ export function DigitalHumanTaskPanel({
   const focusedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!focusTaskId || focusedRef.current === focusTaskId) return;
-    setStatus('all');
+    setView('tasks');
+    setScope('all');
     setPage(1);
   }, [focusTaskId]);
   useEffect(() => {
@@ -360,53 +363,66 @@ export function DigitalHumanTaskPanel({
         compact ? 'flex h-full min-h-0 flex-col bg-card' : 'rounded-xl border bg-background'
       }
     >
-      <div className="flex items-start justify-between gap-3 border-b px-4 py-3.5">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <ListTodo className="size-4" />
-            </span>
-            <h2 className="truncate font-semibold">{titleText}</h2>
-            {tasks && tasks.total > 0 ? (
-              <span className="shrink-0 rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
-                {tasks.total}
-              </span>
-            ) : null}
-            {compact && title === 'my' ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
-                    aria-label={t('tasks.createFromChat')}
-                  >
-                    <Info className="size-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-64 leading-5">
-                  <span className="block">{t('tasks.myDescription')}</span>
-                  <span className="mt-1 block">{t('tasks.createFromChat')}</span>
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-          </div>
-          {!compact ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {title === 'my' ? t('tasks.myDescription') : t('tasks.description')}
-            </p>
+      {/* As tall as the conversation header beside it, so their lines meet. */}
+      <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <div className="flex min-w-0 items-center gap-1">
+          {reportFeed ? (
+            <div role="tablist" aria-label={titleText} className="flex min-w-0 items-center gap-0.5 rounded-lg bg-muted p-0.5">
+              <TaskPanelTab active={view === 'tasks'} label={titleText} count={tasks?.total} onSelect={() => setView('tasks')} />
+              <TaskPanelTab
+                active={view === 'reports'}
+                label={t('tasks.panel.reports')}
+                count={reportsToReview ?? undefined}
+                highlight
+                onSelect={() => setView('reports')}
+              />
+            </div>
+          ) : (
+            <>
+              <ListTodo className="size-4 shrink-0 text-primary" />
+              <h2 className="truncate px-1 text-sm font-semibold">{titleText}</h2>
+              {tasks && tasks.total > 0 ? (
+                <span className="shrink-0 rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
+                  {tasks.total}
+                </span>
+              ) : null}
+            </>
+          )}
+          {compact && title === 'my' ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground/80 transition-colors hover:bg-muted hover:text-foreground"
+                  aria-label={t('tasks.createFromChat')}
+                >
+                  <Info className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="max-w-64 leading-5">
+                <span className="block">{t('tasks.myDescription')}</span>
+                <span className="mt-1 block">{t('tasks.createFromChat')}</span>
+              </TooltipContent>
+            </Tooltip>
           ) : null}
         </div>
-        <div className="flex shrink-0 gap-1">
-          {compact ? (
+        <div className="flex shrink-0 items-center gap-0.5">
+          {view === 'tasks' ? (
             <Button
               variant="ghost"
               size="sm"
-              className={filtersVisible ? 'h-8 w-8 bg-muted p-0' : 'h-8 w-8 p-0'}
-              onClick={() => setFiltersOpen(value => !value)}
-              aria-label={t('tasks.filters.toggle')}
-              aria-expanded={filtersVisible}
+              className={searchVisible ? 'h-8 w-8 bg-muted p-0' : 'h-8 w-8 p-0'}
+              onClick={() => {
+                if (searchVisible) {
+                  setSearch('');
+                  setPage(1);
+                }
+                setSearchOpen(!searchVisible);
+              }}
+              aria-label={t('tasks.filters.search')}
+              aria-pressed={searchVisible}
             >
-              <SlidersHorizontal className="size-4" />
+              <Search className="size-4" />
             </Button>
           ) : null}
           <Button
@@ -415,6 +431,7 @@ export function DigitalHumanTaskPanel({
             className="h-8 w-8 p-0"
             onClick={() => {
               setRefreshing(true);
+              setReportsRefresh(value => value + 1);
               void load();
             }}
             disabled={refreshing}
@@ -428,6 +445,7 @@ export function DigitalHumanTaskPanel({
               size="sm"
               className="h-8 w-8 p-0"
               onClick={() => {
+                setView('tasks');
                 setSelectedId(null);
                 setEditing(true);
                 setDraft({ name: '', goal: '' });
@@ -439,15 +457,26 @@ export function DigitalHumanTaskPanel({
           ) : null}
         </div>
       </div>
-      {filtersVisible ? (
-        <div
-          className={
-            compact
-              ? 'grid gap-2 border-b p-3'
-              : 'grid gap-2 border-b p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]'
-          }
-        >
+      {view === 'reports' && client.reports ? (
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <TaskPanelReportFeed
+            client={client.reports}
+            refreshKey={refreshKey + reportsRefresh}
+            openReportId={openReportId}
+            onOpenHandled={handledOpenReport}
+            onChanged={() => {
+              setReportsRefresh(value => value + 1);
+              void load();
+            }}
+          />
+        </div>
+      ) : (
+      <>
+      <div className="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
+        {searchVisible ? (
           <Input
+            autoFocus
+            className="h-8"
             value={search}
             onChange={event => {
               setSearch(event.target.value);
@@ -456,42 +485,26 @@ export function DigitalHumanTaskPanel({
             placeholder={t('tasks.filters.search')}
             aria-label={t('tasks.filters.search')}
           />
-          <div className={compact ? 'grid grid-cols-2 gap-2' : 'contents'}>
-            <Select value={status} onValueChange={value => {
-              setStatus(value);
-              setPage(1);
-            }}>
-              <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.status')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('tasks.filters.allStatuses')}</SelectItem>
-                {taskStatusFilters.map(value => (
-                  <SelectItem key={value} value={value}>
-                    {t(`tasks.status.${value}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={priority} onValueChange={value => {
-              setPriority(value);
-              setPage(1);
-            }}>
-              <SelectTrigger className="h-9 min-w-0" aria-label={t('tasks.filters.priority')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('tasks.filters.allPriorities')}</SelectItem>
-                {taskPriorityFilters.map(value => (
-                  <SelectItem key={value} value={value}>
-                    {t(`tasks.priority.${value}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        ) : null}
+        <div className="flex items-center gap-1" role="group" aria-label={t('tasks.filters.status')}>
+          {taskScopes.map(key => (
+            <Button
+              key={key}
+              type="button"
+              size="sm"
+              variant={scope === key ? 'secondary' : 'ghost'}
+              className="h-7 rounded-full px-3 text-xs"
+              aria-pressed={scope === key}
+              onClick={() => {
+                setScope(key);
+                setPage(1);
+              }}
+            >
+              {t(`tasks.panel.scope.${key}`)}
+            </Button>
+          ))}
         </div>
-      ) : null}
+      </div>
       <div
         className={
           compact
@@ -539,52 +552,52 @@ export function DigitalHumanTaskPanel({
                   <button
                     type="button"
                     onClick={() => select(task)}
-                    className={`group w-full rounded-lg border p-2.5 text-left text-sm transition-colors hover:border-primary/30 hover:bg-muted/70 ${selected?.id === task.id ? 'border-primary/40 bg-muted shadow-sm' : 'border-transparent'}`}
+                    className={`group w-full rounded-lg border px-3 py-2.5 text-left text-sm transition-colors hover:border-primary/30 hover:bg-muted/60 ${selected?.id === task.id && (!compact || detailOpen) ? 'border-primary/40 bg-muted shadow-sm' : 'border-transparent'}`}
                     aria-label={`${task.name}, ${t(`tasks.status.${displayStatus}`)}`}
                   >
-                    <div className="flex min-w-0 items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">{task.name}</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${statusTone.text}`}>
-                            <span className={`size-1.5 shrink-0 rounded-full ${statusTone.dot}`} aria-hidden="true" />
-                            {t(`tasks.status.${displayStatus}`)}
-                          </span>
-                          {task.priority !== 'normal' ? (
-                            <Badge variant="secondary" className="text-[11px]" title={t('tasks.priorityNote')}>
-                              {t(`tasks.priority.${task.priority}`)}
-                            </Badge>
-                          ) : null}
-                          {title === 'my' && task.can_change === false ? (
-                            <Badge variant="subtle" className="text-[11px]" title={t('tasks.sharedReadOnly')}>
-                              {t('tasks.sharedBadge')}
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </div>
-                      <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate font-medium">{task.name}</span>
+                      <span className={`inline-flex shrink-0 items-center gap-1.5 text-xs font-medium ${statusTone.text}`}>
+                        <span className={`size-1.5 shrink-0 rounded-full ${statusTone.dot}`} aria-hidden="true" />
+                        {t(`tasks.status.${displayStatus}`)}
+                      </span>
                     </div>
-                    <div className="mt-1.5 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                       <CalendarClock className="size-3.5 shrink-0" />
-                      <span className="truncate">{digitalHumanTaskScheduleSummary(task, t, locale)}</span>
+                      <span className="min-w-0 truncate">{taskTimeLine(task, t, locale)}</span>
+                      {task.priority !== 'normal' ? (
+                        <Badge variant="secondary" className="shrink-0 text-[11px]" title={t('tasks.priorityNote')}>
+                          {t(`tasks.priority.${task.priority}`)}
+                        </Badge>
+                      ) : null}
+                      {title === 'my' && task.can_change === false ? (
+                        <Badge variant="subtle" className="shrink-0 text-[11px]" title={t('tasks.sharedReadOnly')}>
+                          {t('tasks.sharedBadge')}
+                        </Badge>
+                      ) : null}
                     </div>
-                    {/* A one-time task already shows its time in the schedule line. */}
-                    {task.next_run_at && task.schedule.type !== 'once' ? (
-                      <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground">
-                        {t('tasks.fields.nextRun')} · {formatTaskTime(task.next_run_at, locale)}
-                      </div>
-                    ) : null}
-                    {task.last_run_at ? (
-                      <div className="mt-0.5 truncate pl-[1.125rem] text-xs text-muted-foreground/80">
-                        {t('tasks.fields.lastRun')} · {formatTaskTime(task.last_run_at, locale)}
-                      </div>
-                    ) : null}
-                    {task.latest_report ? (
+                    {/* Without a report tab the latest report stays on the card. */}
+                    {task.latest_report && !reportFeed ? (
                       <div className="mt-1.5 min-w-0">
                         <TaskLatestReport report={task.latest_report} />
                       </div>
                     ) : null}
                   </button>
+                  {/* A report waiting to be read points to the Reports tab. */}
+                  {task.latest_report?.review_state === 'new' && reportFeed ? (
+                    <button
+                      type="button"
+                      className="ml-1 mt-0.5 inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
+                      onClick={() => {
+                        setOpenReportId(task.latest_report?.id ?? null);
+                        setView('reports');
+                      }}
+                    >
+                      <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                      {t('tasks.panel.newReport')}
+                      <ArrowRight className="size-3" />
+                    </button>
+                  ) : null}
                   {task.pending_change ? (
                     <TaskPendingChangeLink change={task.pending_change} onOpen={onOpenPendingChange} />
                   ) : null}
@@ -643,6 +656,8 @@ export function DigitalHumanTaskPanel({
           </div>
         ) : null}
       </div>
+      </>
+      )}
       {compact ? (
         <Sheet open={detailOpen && Boolean(selected)} onOpenChange={setDetailOpen}>
           <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-lg">
@@ -680,6 +695,53 @@ export function DigitalHumanTaskPanel({
       ) : null}
     </section>
   );
+}
+
+function TaskPanelTab({
+  active,
+  label,
+  count,
+  highlight = false,
+  onSelect,
+}: {
+  active: boolean;
+  label: string;
+  count?: number;
+  // Counts something waiting for the reader, so it is shown in color.
+  highlight?: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onSelect}
+      className={`inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2.5 text-sm transition-colors ${active ? 'bg-background font-semibold text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+    >
+      <span className="truncate">{label}</span>
+      {count ? (
+        <span
+          className={`shrink-0 rounded-full px-1.5 text-[11px] font-medium tabular-nums ${highlight ? 'bg-primary text-primary-foreground' : 'bg-muted-foreground/15 text-muted-foreground'}`}
+        >
+          {count}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+// One line for when a task runs: its schedule, then its next run, or its
+// last run once nothing is scheduled.
+function taskTimeLine(task: DigitalHumanTask, t: ReturnType<typeof useT<'digitalHumans'>>, locale: string) {
+  const schedule = digitalHumanTaskScheduleSummary(task, t, locale);
+  if (task.next_run_at && task.schedule.type !== 'once') {
+    return `${schedule} · ${t('tasks.panel.next', { time: formatTaskTime(task.next_run_at, locale) })}`;
+  }
+  if (!task.next_run_at && task.last_run_at) {
+    return `${schedule} · ${t('tasks.panel.last', { time: formatTaskTime(task.last_run_at, locale) })}`;
+  }
+  return schedule;
 }
 
 interface TaskDraft {

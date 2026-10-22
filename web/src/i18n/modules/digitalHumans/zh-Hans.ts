@@ -1476,6 +1476,15 @@ const messages: DigitalHumansMessages = {
   tasks: {
     title: '任务中心',
     myTitle: '我的任务',
+    panel: {
+      reports: '汇报',
+      scope: { open: '进行中', ended: '已结束', all: '全部' },
+      next: '下次 {time}',
+      last: '上次 {time}',
+      newReport: '有新汇报',
+      backToReports: '返回汇报',
+      noReportsToReview: '没有待查看的汇报。',
+    },
     myDescription: '你在这个数字人下发起的任务；与工作空间共享的任务也可能以只读方式显示在这里。',
     createFromChat: '在对话中提出需求，确认后会出现在这里。',
     myEmpty: '你还没有私有任务。',
