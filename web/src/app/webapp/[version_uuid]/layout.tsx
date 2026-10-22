@@ -98,12 +98,16 @@ function WebappVersionLayoutContent({ children }: { children: React.ReactNode })
       {/* Webapp global header for this version */}
       <div className="w-full shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 md:grid-cols-[1fr_auto_1fr] md:gap-3 md:px-4 md:py-1">
-          <div className="hidden max-w-52 items-center gap-2 md:flex">
-            <WebAppBackButton />
-            <Logo routerToHome={false} showName={false} />
+          <div className="hidden min-w-0 items-center gap-3 md:flex">
+            <WebAppBackButton divider />
+            <div className="max-w-52">
+              <Logo routerToHome={false} showName={false} />
+            </div>
           </div>
           <div className="flex min-w-0 items-center gap-2">
-            <WebAppBackButton className="-ml-1 md:hidden" />
+            <div className="flex shrink-0 items-center md:hidden">
+              <WebAppBackButton className="w-8 px-0" />
+            </div>
             {isLoading ? (
               <>
                 <Skeleton className="h-6 w-6 rounded-md" />

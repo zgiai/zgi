@@ -21,7 +21,13 @@ const historyBack = 'back';
  * @example
  * <WebAppBackButton />
  */
-export function WebAppBackButton({ className }: { className?: string }) {
+export function WebAppBackButton({
+  className,
+  divider = false,
+}: {
+  className?: string;
+  divider?: boolean;
+}) {
   const t = useT('webapp');
   const router = useRouter();
   const target = WEBAPP_BACK_TARGET;
@@ -47,17 +53,20 @@ export function WebAppBackButton({ className }: { className?: string }) {
 
   if (!target || (goesBack && !canGoBack)) return null;
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      className={cn('h-8 shrink-0 gap-1 px-2 text-xs', className)}
-      onClick={handleClick}
-      title={t('header.back')}
-      aria-label={t('header.back')}
-    >
-      <ArrowLeft className="size-4" />
-      <span className="hidden sm:inline">{t('header.back')}</span>
-    </Button>
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className={cn('h-8 shrink-0 gap-1.5 px-2.5 text-xs', className)}
+        onClick={handleClick}
+        title={t('header.back')}
+        aria-label={t('header.back')}
+      >
+        <ArrowLeft className="size-3.5" />
+        <span className="hidden md:inline">{t('header.back')}</span>
+      </Button>
+      {divider ? <span aria-hidden className="h-5 w-px shrink-0 bg-border" /> : null}
+    </>
   );
 }
