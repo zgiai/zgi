@@ -76,7 +76,15 @@ func (s *RuntimeService) ContinueTaskApproval(
 		// Connector access require it; without it the follow-up answer fails.
 		caller.RunID = cloneUUIDPointer(&run.ID)
 	}
-	return approvalRuntime.RunDigitalHumanTaskApprovalContinuation(
+	// A run the approval held resumes now and records where the continuation
+	// ends, so the run log and API clients following the run see it finish.
+	held := run != nil && run.Status == RunStatusWaiting && run.WaitingApprovalOrigin == taskApprovalOrigin
+	if held {
+		if err := s.resumeHeldWorkflowRun(ctx, run); err != nil {
+			return nil, err
+		}
+	}
+	result, err := approvalRuntime.RunDigitalHumanTaskApprovalContinuation(
 		ctx,
 		runtimeScope,
 		caller,
@@ -87,6 +95,20 @@ func (s *RuntimeService) ContinueTaskApproval(
 		s.applyTaskApproval(scope, digitalHumanID),
 		onEvent,
 	)
+	if held {
+		switch {
+		case err != nil:
+			// A rejected answer leaves the approval waiting; hold the run again
+			// unless the message moved on.
+			if waiter, ok := s.store.(runWaitingStore); !ok ||
+				waiter.MarkRunWaiting(context.WithoutCancel(ctx), run.ID, runtimemodel.MessageStatusWaitingApproval, s.now()) != nil {
+				s.settleWorkflowContinuationRun(ctx, run, "", "", nil)
+			}
+		case result != nil:
+			s.settleWorkflowContinuationRun(ctx, run, result.Status, result.Answer, result.Metadata)
+		}
+	}
+	return result, err
 }
 
 // taskApprovalContinuationConfig restores the immutable execution snapshot and

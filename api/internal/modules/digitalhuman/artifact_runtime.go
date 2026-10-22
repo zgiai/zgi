@@ -40,6 +40,15 @@ func NewArtifactRuntimeProvider(next TaskRuntimeProvider, service *artifacts.Ser
 	return &ArtifactRuntimeProvider{next: next, artifacts: service}
 }
 
+// TaskService passes through the decorated provider's task service, which
+// task approval continuations use to apply an approved change.
+func (p *ArtifactRuntimeProvider) TaskService() TaskHandlerService {
+	if typed, ok := p.next.(interface{ TaskService() TaskHandlerService }); ok {
+		return typed.TaskService()
+	}
+	return nil
+}
+
 // Prepare returns next's preparation plus the artifact tools when the run
 // has an owner to keep artifacts for.
 func (p *ArtifactRuntimeProvider) Prepare(ctx context.Context, run *Run, event invocation.Event) (*TaskRuntimePreparation, error) {

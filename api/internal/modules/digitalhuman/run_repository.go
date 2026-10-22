@@ -283,10 +283,18 @@ func (r *GormRepository) MarkRunWaiting(ctx context.Context, runID uuid.UUID, re
 					if err != nil {
 						return err
 					}
-					if !workflowMatched {
-						return ErrRunConflict
+					if workflowMatched {
+						approvalOrigin = workflowApprovalOrigin
+					} else {
+						taskMatched, err := runHasTaskApprovalMessage(tx, &run, runtimemodel.MessageStatusWaitingApproval)
+						if err != nil {
+							return err
+						}
+						if !taskMatched {
+							return ErrRunConflict
+						}
+						approvalOrigin = taskApprovalOrigin
 					}
-					approvalOrigin = workflowApprovalOrigin
 				}
 			}
 		}
