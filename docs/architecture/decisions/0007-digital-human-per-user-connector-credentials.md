@@ -1,6 +1,6 @@
 # ADR 0007: DigitalHuman Per-User Connector Credentials
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-20
 - Builds on: ADR 0004, ADR 0005, ADR 0006
 
@@ -21,14 +21,14 @@ A DigitalHuman Connector binding becomes a slot: a Connector, its allowed operat
 | `shared` | The editor's delegated Connection, as today | The DigitalHuman |
 | `per_user` | A Connection supplied by the requester of the run | The requester |
 
-Existing bindings are `shared`. Their behavior does not change.
+The DigitalHuman's managers choose the mode for each binding in its Connector settings, and the choice takes effect when the version is published. Existing bindings are `shared`. Their behavior does not change.
 
 ### Per-user credentials are resolved from the requester
 
 For a `per_user` slot, the runtime resolves the credential from the run's verified requester, never from model output or client fields:
 
 - **Workspace member in the console.** One of the member's own Personal Connections, selected once for this DigitalHuman and slot. Existing ownership checks apply: a member never uses another member's Connection.
-- **External end user.** A Connection owned by the end user's instance (ADR 0006). Connection ownership is extended from accounts to instances. An instance Connection is usable only by runs of that instance.
+- **External end user.** A Connection owned by the end user's instance (ADR 0006). Connection ownership is extended from accounts to instances. An instance Connection is usable only by runs of that instance. This includes signed-in WebApp users: they are ZGI accounts, but their Personal Connections belong to their own workspace and are not used by a DigitalHuman of another workspace.
 - **Runs without a requester.** The DigitalHuman's own background runs never resolve a `per_user` slot.
 - **Channel participants.** Not supported in this decision. The slot is unavailable in channel runs.
 
@@ -53,7 +53,7 @@ A task created in an instance or by a member runs with that requester's credenti
 ### Setup for end users
 
 - **External API.** `POST /end-users/{user}/connections` lets the integrating server submit a key-based credential for an end user. `GET` lists connection health and `DELETE` removes one. The integrator's API key is the trust anchor, and the subject is derived from `user` as in the chat endpoints.
-- **WebApp.** A hosted connection page lets an authenticated end user enter a key. Anonymous sessions cannot connect.
+- **WebApp.** A hosted connection page lets a signed-in end user enter a key for their instance. Anonymous sessions have no instance (ADR 0006) and cannot connect.
 - OAuth providers are outside this decision. The first implementation supports key-based Connectors only.
 
 ### Management and lifecycle
@@ -61,8 +61,16 @@ A task created in an instance or by a member runs with that requester's credenti
 - Operators see, per instance, which slots are connected and their health. They never see credentials. They can force a disconnect.
 - Erasing an instance deletes its Connections and makes their credentials unusable. Removing a ZGI connection does not revoke provider-side authorization, as today.
 - Credentials use the existing Connector keyring, are write-only, and are never returned, logged, or copied into run records.
-- Per-instance rate limits apply to `per_user` operations.
+- Per-instance quotas (ADR 0006) apply to runs that use `per_user` operations.
 - Creation, use failures, disconnection, and erasure of instance Connections are audit events with identifiers and enum values only.
+
+### Resolved questions
+
+| Question | Decision |
+|---|---|
+| May a `per_user` slot fall back to `shared`? | No. A slot has one mode. A DigitalHuman that needs both binds two slots, one per mode, so the acting identity is always stated by the slot the model chose. An external API end user's `per_user` credential always comes from their own instance; without one, the operation asks them to connect. |
+| May one end user reuse a Connection across DigitalHumans? | Members: yes, a Personal Connection is theirs and can be selected for slots of several DigitalHumans. External end users: no, an instance Connection belongs to one instance, and instances are per DigitalHuman (ADR 0006). |
+| When are OAuth Connectors supported? | Not in this decision. Key-based Connectors first; OAuth needs a hosted consent flow per instance and is a separate decision. |
 
 ## Consequences
 
@@ -71,4 +79,4 @@ A task created in an instance or by a member runs with that requester's credenti
 - The Connector ownership model gains a second owner type. Every credential-opening path must check owner type and instance status, which needs tests for each surface.
 - Workspace members can adopt `per_user` slots before instances exist, because they already own Personal Connections.
 - `per_user` slots ship behind `ZGI_DIGITAL_HUMAN_PER_USER_CONNECTORS_ENABLED`, which defaults to off.
-- Open for review: whether a `per_user` slot may declare an explicit, user-visible `shared` fallback, and whether one end user may reuse a Connection across DigitalHumans.
+- Every credential-opening path gains an owner-type and instance-status check, which is the main review and test burden of this change.
