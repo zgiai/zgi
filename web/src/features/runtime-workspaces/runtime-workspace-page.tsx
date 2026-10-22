@@ -32,6 +32,7 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useRuntimeWorkspace } from '@/hooks/runtime-workspace/use-runtime-workspace';
 import { EndUserQuotaCard } from '@/features/runtime-workspaces/end-user-quota-card';
+import { RuntimeEndUsersTab } from '@/features/runtime-workspaces/end-users-tab';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { cn } from '@/lib/utils';
 import type {
@@ -1335,7 +1336,7 @@ function CredentialsTab({
   );
 }
 
-export type RuntimeWorkspaceSection = 'overview' | 'agents';
+export type RuntimeWorkspaceSection = 'overview' | 'agents' | 'end-users';
 type RuntimeWorkspaceTarget = RuntimeWorkspaceSection | 'keys' | 'docs';
 
 export default function RuntimeWorkspacePage({
@@ -1359,9 +1360,11 @@ export default function RuntimeWorkspacePage({
           ? ''
           : target === 'agents'
             ? '/agents'
-            : target === 'keys'
-              ? '#runtime-keys'
-              : '/docs';
+            : target === 'end-users'
+              ? '/end-users'
+              : target === 'keys'
+                ? '#runtime-keys'
+                : '/docs';
       router.push(`/console/workspace/runtime-workspaces${suffix}`);
     },
     [router]
@@ -1623,6 +1626,9 @@ export default function RuntimeWorkspacePage({
               />
             </div>
           </div>
+        ) : null}
+        {section === 'end-users' && runtime.current.data ? (
+          <RuntimeEndUsersTab runtimeWorkspaceId={runtime.current.data.workspace_id} apps={apps} />
         ) : null}
         {section === 'agents' ? (
           <AppsTab

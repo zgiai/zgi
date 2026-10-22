@@ -80,6 +80,50 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		response.Success(c, gin.H{"items": apps})
 	})
 
+	// The integrating server manages its end users by the IDs it sends
+	// (ADR 0010). An end user exists once they have made a request.
+	endUser := func(handle func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			principal, ok := runtimePrincipal(c)
+			if !ok {
+				return
+			}
+			subjectID, err := runtimeworkspace.EndUserSubject(principal.RuntimeWorkspace.LogicalID(), c.Param("user"))
+			if err != nil {
+				runtimeFail(c, err)
+				return
+			}
+			handle(c, principal, subjectID)
+		}
+	}
+	group.GET("/end-users/:user", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		view, err := service.GetEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+	group.PATCH("/end-users/:user", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
+		if err != nil {
+			runtimeFail(c, runtimeworkspace.ErrInvalidEndUser)
+			return
+		}
+		patch, err := runtimeworkspace.ParseEndUserPatch(body)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		view, err := service.UpdateEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID}, patch)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+
 	appGroup := group.Group("/apps/:app_key")
 	appGroup.GET("", func(c *gin.Context) {
 		principal, ok := runtimePrincipal(c)
@@ -491,8 +535,10 @@ func runtimeFail(c *gin.Context, err error) {
 		response.Fail(c, response.ErrRateLimitExceeded)
 	case errors.Is(err, runtimeworkspace.ErrUnauthorized), errors.Is(err, runtimeworkspace.ErrSubjectRequired):
 		response.Fail(c, response.ErrUnauthorized)
-	case errors.Is(err, runtimeworkspace.ErrAppNotFound), errors.Is(err, runtimeworkspace.ErrFileNotFound):
+	case errors.Is(err, runtimeworkspace.ErrAppNotFound), errors.Is(err, runtimeworkspace.ErrFileNotFound), errors.Is(err, runtimeworkspace.ErrEndUserNotFound):
 		response.Fail(c, response.ErrNotFound)
+	case errors.Is(err, runtimeworkspace.ErrInvalidWorkspace):
+		response.Fail(c, response.ErrInvalidParam)
 	case errors.Is(err, runtimeworkspace.ErrAppDisabled), errors.Is(err, runtimeworkspace.ErrWorkspaceDisabled):
 		response.Fail(c, response.ErrPermissionDenied)
 	default:

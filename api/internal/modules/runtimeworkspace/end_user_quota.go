@@ -30,12 +30,23 @@ import (
 // QuotaWindows are the rolling windows a limit may use.
 var QuotaWindows = map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
 
+// QuotaWindowOrder lists the windows from shortest to longest.
+var QuotaWindowOrder = []string{"24h", "7d", "30d"}
+
 // QuotaLimit caps an end user's points over one rolling window. Points may
 // be fractional down to one milli-point, since a model call often costs less
 // than a point.
 type QuotaLimit struct {
 	Window string          `json:"window"`
 	Points decimal.Decimal `json:"points"`
+}
+
+// MarshalJSON writes points as a JSON number, as clients send them.
+func (l QuotaLimit) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Window string      `json:"window"`
+		Points json.Number `json:"points"`
+	}{l.Window, json.Number(l.Points.String())})
 }
 
 // MilliPoints is the limit in the unit usage bills record.
@@ -83,28 +94,31 @@ func ValidateEndUserQuota(policyJSON []byte) error {
 	if policy.EndUserQuota == nil {
 		return nil
 	}
-	valid := func(limits []QuotaLimit) bool {
-		seen := map[string]bool{}
-		for _, limit := range limits {
-			if _, ok := QuotaWindows[limit.Window]; !ok || limit.MilliPoints() < 1 || seen[limit.Window] {
-				return false
-			}
-			seen[limit.Window] = true
-		}
-		return true
-	}
-	if !valid(policy.EndUserQuota.Limits) {
+	if !validQuotaLimits(policy.EndUserQuota.Limits) {
 		return ErrInvalidQuotaPolicy
 	}
 	apps := map[string]bool{}
 	for _, app := range policy.EndUserQuota.Apps {
 		key := strings.TrimSpace(app.AppKey)
-		if key == "" || apps[key] || len(app.Limits) == 0 || !valid(app.Limits) {
+		if key == "" || apps[key] || len(app.Limits) == 0 || !validQuotaLimits(app.Limits) {
 			return ErrInvalidQuotaPolicy
 		}
 		apps[key] = true
 	}
 	return nil
+}
+
+// validQuotaLimits reports whether limits use known windows, each once,
+// with at least a milli-point.
+func validQuotaLimits(limits []QuotaLimit) bool {
+	seen := map[string]bool{}
+	for _, limit := range limits {
+		if _, ok := QuotaWindows[limit.Window]; !ok || limit.MilliPoints() < 1 || seen[limit.Window] {
+			return false
+		}
+		seen[limit.Window] = true
+	}
+	return true
 }
 
 // errEndUserQuotaExhausted is what an end user over their quota sees.
@@ -125,13 +139,26 @@ func NewQuotaGuard(db *gorm.DB) *QuotaGuard {
 
 var _ chatruntime.EndUserQuotaGuard = (*QuotaGuard)(nil)
 
-// CheckEndUserQuota rejects a model call once the end user has spent a
-// quota of their Runtime Workspace. End users of other origins pass.
+// CheckEndUserQuota rejects a model call of a suspended end user, or once
+// the end user has spent a quota of their Runtime Workspace. End users of
+// other origins pass.
 func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndUserQuotaRef) error {
 	if g == nil || g.db == nil || ref.SubjectID == uuid.Nil {
 		return nil
 	}
 	runtimeWorkspaceID := ref.RuntimeWorkspaceID
+	var override EndUserQuotaOverride
+	var users []EndUser
+	if err := g.db.WithContext(ctx).Where("subject_id = ?", ref.SubjectID).Limit(1).Find(&users).Error; err != nil {
+		return fmt.Errorf("load end user: %w", err)
+	}
+	if len(users) == 1 {
+		if users[0].Status != EndUserActive {
+			return apperror.New(chatruntime.CodeEndUserSuspended, apperror.WithOperation("runtime_workspace.end_user_status"))
+		}
+		override = endUserQuotaOverride(users[0].QuotaJSON)
+		runtimeWorkspaceID = users[0].RuntimeWorkspaceID
+	}
 	if runtimeWorkspaceID == uuid.Nil {
 		var issuers []uuid.UUID
 		if err := g.db.WithContext(ctx).Table("user_subjects").
@@ -152,7 +179,7 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 		return fmt.Errorf("load runtime workspace quota: %w", err)
 	}
 	quota := EndUserQuota(workspace.PolicyJSON)
-	if err := g.checkLimits(ctx, ref.SubjectID, "", quota.Limits); err != nil {
+	if err := g.checkLimits(ctx, ref.SubjectID, "", effectiveLimits(quota, override)); err != nil {
 		return err
 	}
 	if len(quota.Apps) == 0 || strings.TrimSpace(ref.AppID) == "" {

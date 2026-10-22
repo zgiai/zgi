@@ -303,6 +303,32 @@ The operation must belong to the current External User ID and App and remain ins
 
 ---
 
+## End users
+
+An end user is an External User ID that has made at least one request. Manage them with the Runtime Key, addressing each by the External User ID your backend sends; these calls need no `X-ZGI-External-User-ID` header.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/end-users/{user}` | Status, quota, and points used over the last 24 hours, 7 days, and 30 days, in total and per App |
+| PATCH | `/end-users/{user}` | Suspend or resume the end user, or set their own quota |
+
+<CodeGroup title="Give an end user their own quota">
+
+```bash
+curl -X PATCH '{apibase}/end-users/customer-42' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'Content-Type: application/json' \
+  --data '{"quota":{"limits":[{"window":"24h","points":50}]}}'
+```
+
+</CodeGroup>
+
+- `status` is `active` or `suspended`. A suspended end user can still read conversations, files, and memory, but new chats and runs return 403 `end_user.suspended`.
+- `quota` replaces the console's per-end-user limits for this end user: `{"limits": [...]}` with windows `24h`, `7d`, or `30d` and points down to 0.001, or `{"unlimited": true}`. Caps set for single Apps still apply. `"quota": null` returns the end user to the console's limits.
+- An end user over a quota gets 429 `quota.exceeded` when starting a chat or run, until usage in the window falls below the limit.
+
+---
+
 ## Runtime Key rotation
 
 1. Create a new Runtime Key in the console.
@@ -327,11 +353,11 @@ Rotation does not change App IDs, Subjects, files, conversations, or memory owne
 | --- | --- |
 | 400 | Validate parameters and request body |
 | 401 | Check whether the Runtime Key is missing, expired, or revoked |
-| 403 | Check Runtime Workspace and App status |
+| 403 | Check Runtime Workspace and App status; `end_user.suspended` means the end user is suspended |
 | 404 | The resource does not exist or is owned by another External User ID |
 | 409 | Refresh the revision or inspect the idempotent operation |
 | 413 | Reduce file size |
-| 429 | Retry according to `Retry-After` |
+| 429 | Retry according to `Retry-After`; `quota.exceeded` means the end user has spent a quota |
 | 500 | Retry safe mutations with the same idempotency key and retain the request ID |
 
 Responses include `X-Request-ID`. Share that value with operators without sharing the Runtime Key.

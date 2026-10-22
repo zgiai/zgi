@@ -693,7 +693,7 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 }
 
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
-	if apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) || apperror.IsCode(err, appcatalog.CodeQuotaExceeded) {
+	if apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) || runtimeservice.IsEndUserAdmissionError(err) {
 		projector := h.appErrorProjector
 		if projector == nil {
 			// Handlers built without a catalog, like the external API's, use

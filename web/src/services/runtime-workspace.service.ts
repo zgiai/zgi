@@ -5,6 +5,11 @@ import type {
   RuntimeAppCollection,
   RuntimeCredential,
   RuntimeCredentialCreation,
+  RuntimeEndUser,
+  RuntimeEndUserEvent,
+  RuntimeEndUserList,
+  RuntimeEndUserListParams,
+  RuntimeEndUserPatch,
   RuntimeWorkspace,
   RuntimeWorkspaceAgentSelectionInput,
   RuntimeWorkspaceCredentialInput,
@@ -134,6 +139,48 @@ class RuntimeWorkspaceService extends BaseService {
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data;
+  }
+
+  async listEndUsers(
+    workspaceId: string,
+    query: RuntimeEndUserListParams = {}
+  ): Promise<RuntimeEndUserList> {
+    const params = new URLSearchParams();
+    if (query.search) params.set('search', query.search);
+    if (query.status) params.set('status', query.status);
+    if (query.page) params.set('page', String(query.page));
+    if (query.limit) params.set('limit', String(query.limit));
+    const response = await this.request<ApiResponseData<RuntimeEndUserList>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users?${params.toString()}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data ?? { items: [], page: 1, limit: 50, total: 0, has_more: false };
+  }
+
+  async updateEndUser(
+    workspaceId: string,
+    subjectId: string,
+    data: RuntimeEndUserPatch
+  ): Promise<RuntimeEndUser> {
+    const response = await this.request<ApiResponseData<RuntimeEndUser>>(
+      'patch',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}`,
+      data,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async listEndUserEvents(workspaceId: string, subjectId: string): Promise<RuntimeEndUserEvent[]> {
+    const response = await this.request<ApiResponseData<{ items: RuntimeEndUserEvent[] }>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/events`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data?.items ?? [];
   }
 }
 

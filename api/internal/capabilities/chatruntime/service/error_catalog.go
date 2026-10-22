@@ -63,7 +63,25 @@ func streamErrorCatalogMessage(code string, locale appcatalog.Locale) (string, b
 	return presentation.Message, true
 }
 
+// CodeEndUserSuspended refuses a run of an end user an administrator
+// suspended (ADR 0010).
+var CodeEndUserSuspended = apperror.MustCode("end_user.suspended")
+
+// IsEndUserAdmissionError reports whether err refuses an end user's run:
+// spent quota or suspension.
+func IsEndUserAdmissionError(err error) bool {
+	return apperror.IsCode(err, appcatalog.CodeQuotaExceeded) || apperror.IsCode(err, CodeEndUserSuspended)
+}
+
 // CatalogDefinitions returns chat-runtime-owned product error definitions.
 func CatalogDefinitions() []appcatalog.Definition {
-	return nil
+	return []appcatalog.Definition{{
+		Code:       CodeEndUserSuspended,
+		Category:   appcatalog.CategoryAuthorization,
+		HTTPStatus: 403,
+		Messages: map[appcatalog.Locale]string{
+			appcatalog.LocaleEnglishUS:         "This user is suspended and cannot start new conversations.",
+			appcatalog.LocaleChineseSimplified: "该用户已被停用，无法发起新的对话。",
+		},
+	}}
 }

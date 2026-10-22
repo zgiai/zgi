@@ -307,6 +307,32 @@ GET 返回当前记忆开关、自动捕获开关、可写槽位和配置 revisi
 
 ---
 
+## 终端用户
+
+携带过某个 External User ID 的请求之后，该 ID 就是一个终端用户。用 Runtime Key 按业务后端发送的 External User ID 管理终端用户；这些接口不需要 `X-ZGI-External-User-ID` 请求头。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/end-users/{user}` | 查看状态、额度，以及最近 24 小时、7 天、30 天的积分用量（总计和按 App） |
+| PATCH | `/end-users/{user}` | 停用或恢复该终端用户，或为其单独设置额度 |
+
+<CodeGroup title="为终端用户单独设置额度">
+
+```bash
+curl -X PATCH '{apibase}/end-users/customer-42' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'Content-Type: application/json' \
+  --data '{"quota":{"limits":[{"window":"24h","points":50}]}}'
+```
+
+</CodeGroup>
+
+- `status` 取值为 `active` 或 `suspended`。停用后仍可读取对话、文件和记忆，但发起新的对话或运行会返回 403 `end_user.suspended`。
+- `quota` 替代控制台为每个终端用户设置的限额：`{"limits": [...]}`，窗口为 `24h`、`7d` 或 `30d`，积分最小 0.001；或 `{"unlimited": true}`。单个 App 的额外上限仍然生效。`"quota": null` 表示恢复使用控制台限额。
+- 终端用户超出额度后，发起对话或运行会返回 429 `quota.exceeded`，直到窗口内用量回落到限额以下。
+
+---
+
 ## Key 轮换
 
 推荐顺序：
@@ -335,11 +361,11 @@ Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、�
 | --- | --- |
 | 400 | 校验请求参数和请求体 |
 | 401 | 检查 Runtime Key 是否缺失、过期或已撤销 |
-| 403 | 检查 Runtime Workspace 或 App 状态 |
+| 403 | 检查 Runtime Workspace 或 App 状态；`end_user.suspended` 表示该终端用户已被停用 |
 | 404 | 资源不存在，或不属于当前 External User ID |
 | 409 | 重新读取 revision，或检查幂等请求 |
 | 413 | 根据上传限制缩小文件 |
-| 429 | 按 `Retry-After` 退避重试 |
+| 429 | 按 `Retry-After` 退避重试；`quota.exceeded` 表示该终端用户的额度已用完 |
 | 500 | 使用相同幂等键重试安全写操作，并记录 request ID |
 
 所有响应都会携带 `X-Request-ID`。向运维人员反馈问题时请提供该值，不要提供完整 Runtime Key。

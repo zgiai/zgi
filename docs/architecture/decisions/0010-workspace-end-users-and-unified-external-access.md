@@ -57,6 +57,8 @@ A workspace-level module manages end users of Runtime Workspaces:
 - application-specific panels: a DigitalHuman shows the end user's instance memory, tasks, and per-user connections (ADR 0006, ADR 0007);
 - every change is an audit event with identifiers and enum values only.
 
+The module keeps a registry of each Runtime Workspace's end users: the subject, the External User ID the integrator sent (no other table stores it, and erasure clears it), status, an optional quota of their own, and first and last activity. A request records its end user at most once a minute. A per-end-user quota replaces the Runtime Workspace's per-end-user limits for that end user, as its own limits or no limit; per-application caps still apply. Suspension is enforced by the same chat runtime check as quotas and returns `end_user.suspended` (HTTP 403); a suspended end user can still read their data. Changes are events with an action (`suspended`, `resumed`, `quota_set`, `quota_reset`), the actor kind (console account or credential), and the windows a quota uses.
+
 The integrating server manages the same end users with its credential: `GET`, `PATCH` (quota, status), `POST .../export`, and `DELETE` under `/api/connect/v1/end-users/{user}`.
 
 ### Delivery

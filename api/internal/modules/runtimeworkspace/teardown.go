@@ -113,6 +113,11 @@ func TeardownAttachedWorkspace(ctx context.Context, tx *gorm.DB, workspaceID uui
 		}
 	}
 
+	for _, table := range []string{"runtime_workspace_end_user_events", "runtime_workspace_end_users"} {
+		if err := tx.WithContext(ctx).Exec("DELETE FROM "+table+" WHERE runtime_workspace_id = ?", runtimeID).Error; err != nil {
+			return nil, fmt.Errorf("delete Runtime end users from %s: %w", table, err)
+		}
+	}
 	if err := tx.WithContext(ctx).Exec("DELETE FROM runtime_workspaces WHERE runtime_id = ?", runtimeID).Error; err != nil {
 		return nil, fmt.Errorf("delete Runtime Workspace: %w", err)
 	}

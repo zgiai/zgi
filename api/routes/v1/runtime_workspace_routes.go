@@ -221,6 +221,71 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		}
 		response.Success(c, gin.H{"items": events, "page": page, "limit": limit, "total": total, "has_more": int64(page*limit) < total})
 	})
+	scoped.GET("/end-users", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		list, err := service.ListEndUsers(c.Request.Context(), workspaceID, runtimeworkspace.EndUserListQuery{
+			Search: c.Query("search"), Status: c.Query("status"),
+			Page:  managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
+			Limit: managementPositiveQueryInt(c.Query("limit"), 50, 200),
+		})
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, list)
+	})
+	endUser := func(handle func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
+			if !ok {
+				return
+			}
+			subjectID, err := uuid.Parse(c.Param("subject_id"))
+			if err != nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
+			handle(c, workspaceID, accountID, subjectID)
+		}
+	}
+	scoped.GET("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		view, err := service.GetEndUser(c.Request.Context(), workspaceID, subjectID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+	scoped.PATCH("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		patch, err := runtimeworkspace.ParseEndUserPatch(body)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		view, err := service.UpdateEndUser(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}, patch)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+	scoped.GET("/end-users/:subject_id/events", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		events, err := service.ListEndUserEvents(c.Request.Context(), workspaceID, subjectID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"items": events})
+	}))
 	scoped.PUT("/agents", func(c *gin.Context) {
 		workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
 		if !ok {
@@ -378,7 +443,7 @@ func managementFail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, response.Response{Code: "213003", Message: response.ErrAPIKeyAlreadyExists.Message})
 		return
 	}
-	if errors.Is(err, runtimeworkspace.ErrAppNotFound) {
+	if errors.Is(err, runtimeworkspace.ErrAppNotFound) || errors.Is(err, runtimeworkspace.ErrEndUserNotFound) {
 		response.Fail(c, response.ErrNotFound)
 		return
 	}

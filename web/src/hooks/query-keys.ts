@@ -77,6 +77,21 @@ export const RUNTIME_WORKSPACE_KEYS = {
     'credentials',
     workspaceId,
   ],
+  endUsers: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'end-users',
+    workspaceId,
+  ],
+  endUserList: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'list',
+    params,
+  ],
+  endUserEvents: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'events',
+    subjectId,
+  ],
 } as const;
 
 // 3. Agent Related

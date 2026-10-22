@@ -464,6 +464,9 @@ func (s *Service) ResolveRequestPrincipal(ctx context.Context, principal *Princi
 		}); err != nil {
 			return fmt.Errorf("ensure runtime workspace subject: %w", err)
 		}
+		if err := s.touchEndUser(ctx, logicalID, subject.ID, principal.ExternalUserID); err != nil {
+			return fmt.Errorf("record runtime workspace end user: %w", err)
+		}
 		principal.SubjectID = subject.ID
 	}
 	appKey = strings.TrimSpace(appKey)

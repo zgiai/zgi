@@ -116,3 +116,74 @@ export interface RuntimeWorkspaceAgentSelectionInput {
   agent_ids: string[];
   digital_human_ids?: string[];
 }
+
+export type RuntimeQuotaWindow = '24h' | '7d' | '30d';
+export type RuntimeEndUserStatus = 'active' | 'suspended' | 'erased';
+
+export interface RuntimeQuotaLimit {
+  window: RuntimeQuotaWindow;
+  points: number;
+}
+
+export interface RuntimeEndUserQuota {
+  unlimited?: boolean;
+  limits?: RuntimeQuotaLimit[];
+}
+
+export interface RuntimeWindowUsage {
+  window: RuntimeQuotaWindow;
+  points: number;
+  limit?: number;
+  remaining?: number;
+}
+
+export interface RuntimeEndUserAppUsage {
+  app_id: string;
+  app_type?: string;
+  app_key?: string;
+  usage: RuntimeWindowUsage[];
+}
+
+export interface RuntimeEndUser {
+  subject_id: string;
+  external_user_id: string;
+  status: RuntimeEndUserStatus;
+  first_seen_at: string;
+  last_seen_at: string;
+  suspended_at?: string;
+  quota_source: 'default' | 'custom' | 'unlimited';
+  quota: RuntimeEndUserQuota;
+  usage: RuntimeWindowUsage[];
+  apps: RuntimeEndUserAppUsage[];
+}
+
+export interface RuntimeEndUserList {
+  items: RuntimeEndUser[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface RuntimeEndUserListParams {
+  search?: string;
+  status?: RuntimeEndUserStatus | '';
+  page?: number;
+  limit?: number;
+}
+
+/** A null quota returns the end user to the workspace limits. */
+export interface RuntimeEndUserPatch {
+  status?: 'active' | 'suspended';
+  quota?: RuntimeEndUserQuota | null;
+}
+
+export interface RuntimeEndUserEvent {
+  id: string;
+  subject_id: string;
+  action: 'suspended' | 'resumed' | 'quota_set' | 'quota_reset';
+  actor_kind: 'account' | 'credential';
+  actor_id?: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}

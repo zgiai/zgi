@@ -52,6 +52,8 @@ func TestTeardownAttachedWorkspacePurgesSubjectsAndDefersFileObjects(t *testing.
 	mock.ExpectExec(`DELETE FROM chat_runtime_messages WHERE conversation_id IN \(\$1\)`).WithArgs(conversationID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DELETE FROM chat_runtime_conversations WHERE id IN \(\$1\)`).WithArgs(conversationID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DELETE FROM user_subjects WHERE id IN \(\$1\)`).WithArgs(subjectID).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM runtime_workspace_end_user_events WHERE runtime_workspace_id = \$1`).WithArgs(runtimeID).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM runtime_workspace_end_users WHERE runtime_workspace_id = \$1`).WithArgs(runtimeID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`DELETE FROM runtime_workspaces WHERE runtime_id = \$1`).WithArgs(runtimeID).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	result, err := TeardownAttachedWorkspace(t.Context(), db, workspaceID, now)
