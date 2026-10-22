@@ -70,6 +70,10 @@ var (
 	// rejection that is reported as missing permission rather than as an
 	// unsupported surface.
 	ErrTaskVisibilityForbidden = fmt.Errorf("%w: this reader may not set that task visibility", ErrTaskPolicyRejected)
+	// ErrTaskReadOnly indicates a task the caller can see but not change,
+	// such as a workspace task another account requested. Tasks the caller
+	// cannot see keep reporting ErrTaskNotFound.
+	ErrTaskReadOnly = fmt.Errorf("%w: the task is visible but read-only for this caller", ErrTaskPolicyRejected)
 	// ErrChannelInstallationNotFound indicates a missing scoped channel installation.
 	ErrChannelInstallationNotFound = errors.New("digital human channel installation not found")
 	// ErrChannelCredentialNotFound indicates that an installation does not own

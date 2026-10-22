@@ -17,6 +17,10 @@ func TestTaskVisibilityForbiddenIsReportedAsMissingPermission(t *testing.T) {
 	if !errors.Is(ErrTaskVisibilityForbidden, ErrTaskPolicyRejected) {
 		t.Fatal("visibility rejection must remain a task policy rejection")
 	}
+	readOnly, ok := apperror.As(taskApplicationError(ErrTaskReadOnly, "digital_human.task.update"))
+	if !ok || readOnly.Code() != appcatalog.CodePermissionDenied || !errors.Is(ErrTaskReadOnly, ErrTaskPolicyRejected) {
+		t.Fatalf("read-only rejection = %v, want %s", readOnly, appcatalog.CodePermissionDenied)
+	}
 	other, _ := apperror.As(taskApplicationError(ErrTaskPolicyRejected, "digital_human.task.update"))
 	if other == nil || other.Code() != AppCodeTaskPolicyRejected {
 		t.Fatalf("plain policy rejection changed: %v", other)
