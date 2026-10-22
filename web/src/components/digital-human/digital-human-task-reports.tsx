@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import { RequesterOrigin } from '@/components/digital-human/digital-human-task-requesters';
-import { ArrowLeft, CheckCircle2, ChevronDown, CircleDashed, FileText, Paperclip, RotateCcw, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, CircleDashed, FileText, MessageSquare, Paperclip, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Badge } from '@/components/ui/badge';
@@ -126,6 +126,7 @@ export function TaskReportDetail({
       stickyActions={stickyActions}
       actionsExtra={actionsExtra}
       readFile={(fileId, signal) => digitalHumanService.downloadTaskReportFile(digitalHumanId, report.id, fileId, mine, signal)}
+      followUpHref={(draft, conversationId) => digitalHumanChatFollowUpHref(digitalHumanId, draft, conversationId)}
       onOpenRun={runId && !mine && onOpenRun ? () => onOpenRun(runId) : undefined}
       onReview={async request => {
         await review.mutateAsync({ reportId: report.id, request });
@@ -153,10 +154,14 @@ export function TaskReportDetailView({
   readFile,
   stickyActions = false,
   actionsExtra,
+  followUpHref,
   onReview,
 }: {
   report: DigitalHumanTaskReport;
   pending?: boolean;
+  // Where a holder follows the report up in a conversation, with a draft;
+  // without it only supplementing in place is offered.
+  followUpHref?: (draft: string, conversationId?: string) => string;
   stickyActions?: boolean;
   // Shown at the end of the action bar, such as a link to the next report.
   actionsExtra?: ReactNode;
@@ -251,6 +256,7 @@ export function TaskReportDetailView({
           <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{issues}</p>
         </section>
       ) : null}
+      <TaskReportFollowUp report={report} pending={pending} followUpHref={followUpHref} onReview={onReview} />
       {report.review_feedback ? (
         <section className="rounded-md border border-warning/30 bg-warning/5 p-3">
           <h4 className="text-xs font-semibold text-warning">{t('tasks.reports.feedback')}</h4>
@@ -528,6 +534,8 @@ export interface TaskReportClient {
   review: (reportId: string, request: ReviewDigitalHumanTaskReportRequest) => Promise<ApiResponseData<DigitalHumanTaskReport>>;
   // Called when the reader opens a report, for example to mark its notice read.
   viewed?: (reportId: string) => void;
+  // Where a holder follows a report up in a conversation, when the surface has one.
+  followUpHref?: (draft: string, conversationId?: string) => string;
 }
 
 /** The reports of one task inside the My tasks panel. */
@@ -610,6 +618,7 @@ export function TaskPanelReports({
                 report={report}
                 pending={pending}
                 readFile={readReportFile ? (fileId, signal) => readReportFile(report.id, fileId, signal) : undefined}
+                followUpHref={client.followUpHref}
                 onReview={async request => {
                   setPending(true);
                   try {
@@ -727,6 +736,7 @@ export function TaskPanelReportFeed({
           report={open}
           pending={pending}
           readFile={readReportFile ? (fileId, signal) => readReportFile(open.id, fileId, signal) : undefined}
+          followUpHref={client.followUpHref}
           onReview={async request => {
             setPending(true);
             try {
@@ -836,5 +846,90 @@ export function TaskPanelReportFeed({
         </div>
       ) : null}
     </div>
+  );
+}
+
+const problemOutcomes: ReadonlySet<DigitalHumanTaskReportOutcome> = new Set(['partial', 'not_done', 'failed']);
+
+/** The console chat, opened with a follow-up draft, in the task's conversation when known. */
+export function digitalHumanChatFollowUpHref(digitalHumanId: string, draft: string, conversationId?: string) {
+  const params = new URLSearchParams({ draft });
+  if (conversationId) params.set('conversation', conversationId);
+  return `/console/digital-humans/${digitalHumanId}/chat?${params.toString()}`;
+}
+
+/**
+ * A report that did not fully succeed, for the reader who holds its task:
+ * supplement what was missing and run again, or take it to the conversation
+ * the task came from. A channel task is answered by reply in its chat.
+ */
+function TaskReportFollowUp({
+  report,
+  pending,
+  followUpHref,
+  onReview,
+}: {
+  report: DigitalHumanTaskReport;
+  pending: boolean;
+  followUpHref?: (draft: string, conversationId?: string) => string;
+  onReview: (request: { action: 'accept' } | { action: 'rework'; feedback: string }) => Promise<void>;
+}) {
+  const t = useT('digitalHumans');
+  const [supplement, setSupplement] = useState('');
+  if (!problemOutcomes.has(report.outcome) || report.review_state === 'rework_requested') return null;
+  const channel = report.origin?.kind === 'channel';
+  // Whoever holds the task handles it; a channel task is held by its chat.
+  if (!report.requested_by_reader && !channel) return null;
+  const problem = (report.issues?.trim() || report.summary).trim();
+  const draft = t('tasks.reports.followUp.draft', { name: report.task_name, problem });
+  const conversationId = report.origin?.kind === 'conversation' ? report.origin.conversation_id : undefined;
+  return (
+    <section className="space-y-3 rounded-lg border border-warning/30 bg-warning/5 p-3">
+      <div>
+        <h4 className="text-sm font-semibold">{t('tasks.reports.followUp.title')}</h4>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          {channel
+            ? t(report.origin?.conversation_type === 'group' ? 'tasks.reports.followUp.channelGroup' : 'tasks.reports.followUp.channelDirect')
+            : t('tasks.reports.followUp.description')}
+        </p>
+      </div>
+      {report.requested_by_reader && report.can_review ? (
+        <>
+          <Textarea
+            value={supplement}
+            maxLength={2000}
+            onChange={event => setSupplement(event.target.value)}
+            placeholder={t('tasks.reports.followUp.placeholder')}
+            className="min-h-20 bg-background"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              disabled={!supplement.trim() || pending}
+              onClick={async () => {
+                try {
+                  await onReview({ action: 'rework', feedback: supplement.trim() });
+                } catch {
+                  return;
+                }
+                toast.success(t('tasks.reports.followUp.submitted'));
+                setSupplement('');
+              }}
+            >
+              <RotateCcw className="mr-1 size-4" />
+              {t('tasks.reports.followUp.submit')}
+            </Button>
+            {followUpHref && !channel ? (
+              <Button size="sm" variant="ghost" asChild>
+                <Link href={followUpHref(draft, conversationId)}>
+                  <MessageSquare className="mr-1 size-4" />
+                  {conversationId ? t('tasks.reports.followUp.openConversation') : t('tasks.reports.followUp.newConversation')}
+                </Link>
+              </Button>
+            ) : null}
+          </div>
+        </>
+      ) : null}
+    </section>
   );
 }

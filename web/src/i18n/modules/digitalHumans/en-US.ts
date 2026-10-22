@@ -1677,6 +1677,18 @@ const messages = {
       outcome: { done: 'Done', partial: 'Partly done', not_done: 'Not done', failed: 'Failed' },
       review: { new: 'To review', accepted: 'Accepted', rework_requested: 'Rework requested' },
       criterion: { met: 'met', not_met: 'not met', unknown: 'unknown' },
+      followUp: {
+        title: 'This run did not fully finish',
+        description: 'Supplement what was missing and run it again, or take this report to a conversation with the digital human.',
+        channelDirect: 'This task came from a Feishu direct chat. Reply "返工：your details" there to have it redone with them.',
+        channelGroup: 'This task came from a Feishu group. @mention the digital human there and reply "返工：your details" to have it redone with them.',
+        placeholder: 'Add what was missing or how to change it, e.g. use the sales team weekly sheet as the data source.',
+        submit: 'Supplement and run again',
+        submitted: 'Supplement sent; the task runs again',
+        openConversation: 'Open the original conversation',
+        newConversation: 'Handle in a new conversation',
+        draft: 'About the latest report of task "{name}": {problem}\nI want to add: ',
+      },
       filter: { all: 'All', to_review: 'To review', attention: 'Needs attention', accepted: 'Accepted' },
     },
     share: {

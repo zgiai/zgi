@@ -13,7 +13,7 @@ import (
 // conversation is never mistaken for one.
 
 const (
-	channelReportReviewHint     = "回复「采纳」确认这次结果，或回复「返工：具体意见」让我重做。"
+	channelReportReviewHint     = "回复「采纳」确认这次结果；需要修改或补充信息时，回复「返工：具体内容」，我会按你的补充重做。"
 	channelReportReworkAskHint  = "请说明需要怎么改，例如「返工：补充北京的数据」。"
 	channelReportReviewedReason = "channel.task_report.reviewed"
 )

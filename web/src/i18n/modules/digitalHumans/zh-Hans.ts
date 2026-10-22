@@ -1559,6 +1559,18 @@ const messages: DigitalHumansMessages = {
       outcome: { done: '已完成', partial: '部分完成', not_done: '未完成', failed: '执行失败' },
       review: { new: '待查看', accepted: '已采纳', rework_requested: '已要求返工' },
       criterion: { met: '达到', not_met: '未达到', unknown: '无法判断' },
+      followUp: {
+        title: '这次没有完全完成，需要你处理',
+        description: '补充缺少的信息后重新执行，或带着这份汇报去对话里和数字人一起处理。',
+        channelDirect: '这个任务来自飞书私聊，在原会话回复「返工：补充内容」即可让数字人按补充重做。',
+        channelGroup: '这个任务来自飞书群聊，在原群里 @数字人 回复「返工：补充内容」即可让数字人按补充重做。',
+        placeholder: '补充缺少的信息或说明要怎么改，例如：数据源用销售部的周报表格。',
+        submit: '补充信息并重新执行',
+        submitted: '已提交补充，任务会重新执行',
+        openConversation: '去原对话补充',
+        newConversation: '在新对话中处理',
+        draft: '关于任务「{name}」最近一次汇报：{problem}\n我补充：',
+      },
       filter: { all: '全部', to_review: '待查看', attention: '需要处理', accepted: '已采纳' },
     },
     share: {

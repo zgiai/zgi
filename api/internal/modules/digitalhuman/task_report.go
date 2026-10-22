@@ -77,12 +77,29 @@ type TaskReport struct {
 	CanReview bool `json:"can_review"`
 	// Requester is who asked for the task, for task center readers.
 	Requester *TaskRequester `json:"requester,omitempty"`
+	// RequestedByReader is true when the reader holds the task. Whoever holds
+	// a task is the one who supplements a report that needs more.
+	RequestedByReader bool `json:"requested_by_reader"`
+	// Origin is where the task was asked for, so a report can be followed up
+	// there.
+	Origin *TaskReportOrigin `json:"origin,omitempty"`
 	// FileIDs are the run files the DigitalHuman chose to attach. When empty,
 	// the report carries every file its run produced.
 	FileIDs []uuid.UUID `json:"-"`
 	// Files are the run files the report carries, filled in when it is read.
 	Files     []TaskReportFile `json:"files"`
 	CreatedAt time.Time        `json:"created_at"`
+}
+
+// TaskReportOrigin is where a task was asked for. A console conversation is
+// named only for the reader who holds the task; a channel says only which kind
+// of chat, since it is answered there by reply.
+type TaskReportOrigin struct {
+	// Kind is conversation (a console conversation) or channel.
+	Kind             string `json:"kind"`
+	ConversationID   string `json:"conversation_id,omitempty"`
+	ConversationType string `json:"conversation_type,omitempty"`
+	Provider         string `json:"provider,omitempty"`
 }
 
 // TaskReportFile is a file a report carries, downloaded through the report.

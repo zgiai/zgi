@@ -1004,6 +1004,13 @@ export interface DigitalHumanTaskReportFile {
   size: number;
 }
 
+export interface DigitalHumanTaskReportOrigin {
+  kind: 'conversation' | 'channel';
+  conversation_id?: string;
+  conversation_type?: 'direct' | 'group' | string;
+  provider?: string;
+}
+
 export interface DigitalHumanTaskReport {
   /** Files the run produced that the report carries. */
   files?: DigitalHumanTaskReportFile[];
@@ -1028,6 +1035,10 @@ export interface DigitalHumanTaskReport {
   created_at: string;
   /** Who asked for the report's task; task center readers only. */
   requester?: DigitalHumanTaskRequester;
+  /** The reader holds the task, and is the one who supplements this report. */
+  requested_by_reader?: boolean;
+  /** Where the task was asked for, to follow the report up there. */
+  origin?: DigitalHumanTaskReportOrigin;
 }
 
 export interface DigitalHumanTaskReportList {

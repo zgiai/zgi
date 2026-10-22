@@ -225,6 +225,9 @@ interface AIChatShellProps {
   voiceTranscriber?: AIChatVoiceTranscriber;
   speechSynthesizer?: AIChatSpeechSynthesizer;
   headerRightAction?: React.ReactNode;
+  // Text the composer starts with, e.g. a follow-up written for the reader;
+  // a new value replaces what is typed.
+  initialInput?: string;
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
@@ -342,6 +345,7 @@ export function AIChatShell({
   homeBrand,
   openingGuideBrand,
   homeTitle,
+  initialInput,
   homeDescription,
   suggestions: configuredSuggestions,
   inputPlaceholder,
@@ -389,6 +393,9 @@ export function AIChatShell({
     return primary ? ({ '--primary': primary } as CSSProperties) : undefined;
   }, [themeColor]);
   const [input, setInput] = useState('');
+  useEffect(() => {
+    if (initialInput) setInput(initialInput);
+  }, [initialInput]);
   const [queuedTurnsByConversation, setQueuedTurnsByConversation] = useState<
     Record<string, AIChatQueuedTurn[]>
   >({});

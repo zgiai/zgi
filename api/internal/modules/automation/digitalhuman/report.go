@@ -451,6 +451,8 @@ func publicTaskReport(row *taskReportRow, task *automationmodel.AutomationTask, 
 		report.TaskName = task.Name
 		report.ClientReference = pointerValue(task.ClientReference)
 		report.CanReview = row.Final && access.CurrentTaskID == nil && canReviewReport(task, access)
+		report.RequestedByReader = taskRequestedBy(task, access)
+		report.Origin = taskReportOrigin(task, report.RequestedByReader)
 	}
 	return report
 }
@@ -593,4 +595,31 @@ func reportFileRefs(ids []uuid.UUID) []map[string]any {
 		refs = append(refs, map[string]any{"id": id.String()})
 	}
 	return refs
+}
+
+// taskReportOrigin says where a task was asked for, for following its report
+// up: the console conversation of a holder who asked there, or the channel
+// chat it came from.
+func taskReportOrigin(task *automationmodel.AutomationTask, holder bool) *digitalhuman.TaskReportOrigin {
+	if task == nil {
+		return nil
+	}
+	snapshotValue := func(key string) string {
+		value, _ := task.SourceSnapshot[key].(string)
+		return strings.TrimSpace(value)
+	}
+	switch pointerValue(task.OriginSurface) {
+	case digitalhuman.SurfaceChannel:
+		origin := &digitalhuman.TaskReportOrigin{Kind: "channel", ConversationType: snapshotValue("conversation_type")}
+		if reply, _ := task.DeliveryConfig["reply_to"].(map[string]any); reply != nil {
+			provider, _ := reply["provider"].(string)
+			origin.Provider = strings.TrimSpace(provider)
+		}
+		return origin
+	case digitalhuman.SurfaceConsole:
+		if conversation := snapshotValue("conversation_id"); holder && validConversationID(conversation) {
+			return &digitalhuman.TaskReportOrigin{Kind: "conversation", ConversationID: conversation}
+		}
+	}
+	return nil
 }

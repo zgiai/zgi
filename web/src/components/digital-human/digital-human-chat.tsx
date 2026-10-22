@@ -29,6 +29,7 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { digitalHumanService } from '@/services/digital-human.service';
+import { digitalHumanChatFollowUpHref } from '@/components/digital-human/digital-human-task-reports';
 import { inboxService } from '@/services/inbox.service';
 import type { DigitalHumanTaskPendingChange } from '@/services/types/digital-human';
 
@@ -63,6 +64,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
       reports: {
         list: taskId => digitalHumanService.listTaskReports(id, { task_id: taskId }, true),
         feed: params => digitalHumanService.listTaskReports(id, params, true),
+        followUpHref: (draft, conversationId) => digitalHumanChatFollowUpHref(id, draft, conversationId),
         review: (reportId, request) => digitalHumanService.reviewTaskReport(id, reportId, request, true),
         readFile: (reportId, fileId, signal) => digitalHumanService.downloadTaskReportFile(id, reportId, fileId, true, signal),
         viewed: reportId => void inboxService.markRead({ source_type: 'digital_human_task_report', source_id: reportId }).catch(() => undefined),
@@ -220,6 +222,19 @@ export function DigitalHumanChat({ id }: { id: string }) {
     [selectConversation]
   );
 
+  // `draft` is a follow-up written for the reader, e.g. from a report that
+  // needs more; it fills the composer once and is then dropped.
+  const draftParam = searchParams.get('draft');
+  const [initialDraft, setInitialDraft] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!draftParam) return;
+    setInitialDraft(draftParam);
+    const params = new URLSearchParams(window.location.search);
+    params.delete('draft');
+    const next = params.toString();
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [draftParam, pathname, router]);
+
   // `approval` names the message of a pending confirmation or question, e.g.
   // from a waiting run's drawer; it is handled once and then dropped.
   const approvalMessageId = searchParams.get('approval');
@@ -356,6 +371,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
             </div>
           }
           onTaskMutation={handleTaskMutation}
+          initialInput={initialDraft}
         />
       </div>
       {canRun ? (
