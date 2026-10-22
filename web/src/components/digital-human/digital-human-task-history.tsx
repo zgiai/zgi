@@ -12,7 +12,8 @@ import type { DigitalHumanTaskActivity, DigitalHumanTaskPage, DigitalHumanTaskRu
 
 type TaskTranslator = ReturnType<typeof useT<'digitalHumans'>>;
 
-export function DigitalHumanTaskRunSummary({ run, children }: { run: DigitalHumanTaskRun; children?: ReactNode }) {
+// showResult is off when the task's reports already carry what the run produced.
+export function DigitalHumanTaskRunSummary({ run, showResult = true, children }: { run: DigitalHumanTaskRun; showResult?: boolean; children?: ReactNode }) {
   const t = useT('digitalHumans');
   return (
     <div className="rounded-md border bg-muted/20 p-3 text-xs">
@@ -30,7 +31,7 @@ export function DigitalHumanTaskRunSummary({ run, children }: { run: DigitalHuma
           {run.result_delivery_error ? ` · ${run.result_delivery_error}` : ''}
         </p>
       ) : null}
-      {run.result_summary ? <p className="mt-1 whitespace-pre-wrap text-foreground">{run.result_summary}</p> : null}
+      {showResult && run.result_summary ? <p className="mt-1 whitespace-pre-wrap text-foreground">{run.result_summary}</p> : null}
       {children}
     </div>
   );
@@ -111,6 +112,8 @@ function activityLabel(action: string, t: TaskTranslator): string {
     archive: t('tasks.activity.archive'), blocked: t('tasks.activity.blocked'),
     run_finished: t('tasks.activity.run_finished'), proposal_expired: t('tasks.activity.proposal_expired'),
     status_repaired: t('tasks.activity.status_repaired'),
+    report_accepted: t('tasks.activity.report_accepted'), rework_requested: t('tasks.activity.rework_requested'),
+    result_delivered: t('tasks.activity.result_delivered'), result_delivery_failed: t('tasks.activity.result_delivery_failed'),
   };
   return labels[action] || action.replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
 }
@@ -204,9 +207,11 @@ function formatActivityChanges(changes: Record<string, unknown> | undefined, act
   if (!changes) return [];
   const labels: Record<string, string> = locale?.startsWith('zh')
     ? { name: '名称', goal: '目标', priority: '优先级', work_status: '状态', lifecycle_status: '生命周期',
-        delivery_mode: '交付方式', schedule: '执行计划', reason: '原因', run_status: '执行状态', digital_human_status: '数字人状态' }
+        delivery_mode: '交付方式', schedule: '执行计划', reason: '原因', run_status: '执行状态', digital_human_status: '数字人状态',
+        visibility: '可见范围', success_criteria: '成功标准' }
     : { name: 'Name', goal: 'Goal', priority: 'Priority', work_status: 'Status', lifecycle_status: 'Lifecycle',
-        delivery_mode: 'Delivery', schedule: 'Schedule', reason: 'Reason', run_status: 'Run status', digital_human_status: 'Digital human status' };
+        delivery_mode: 'Delivery', schedule: 'Schedule', reason: 'Reason', run_status: 'Run status', digital_human_status: 'Digital human status',
+        visibility: 'Visibility', success_criteria: 'Success criteria' };
   const entries: Array<{ key: string; label: string; before?: unknown; after?: unknown }> = [];
   for (const [key, rawValue] of Object.entries(changes)) {
     if (rawValue === undefined || rawValue === null) continue;
@@ -246,6 +251,9 @@ function formatActivityValue(key: string, value: unknown, locale?: string): stri
     status: zh
       ? { draft: '未启用', active: '已启用', paused: '已暂停', archived: '已归档' }
       : { draft: 'Not active', active: 'Enabled', paused: 'Paused', archived: 'Archived' },
+    visibility: zh
+      ? { requester: '仅发起人', conversation: '仅本会话', workspace: '工作空间', restricted: '受限' }
+      : { requester: 'Requester only', conversation: 'Conversation only', workspace: 'Workspace', restricted: 'Restricted' },
     priority: zh
       ? { low: '低', normal: '普通', high: '高', urgent: '紧急' }
       : { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' },

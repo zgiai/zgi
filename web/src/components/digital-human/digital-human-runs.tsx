@@ -1,8 +1,21 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Filter, History, RefreshCw, Search } from 'lucide-react';
+import {
+  AlertCircle,
+  Building2,
+  Filter,
+  Globe,
+  History,
+  KeyRound,
+  MessagesSquare,
+  RefreshCw,
+  Search,
+  UserRound,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { StickyDataTable, type StickyDataTableColumn } from '@/components/common/sticky-data-table';
 import { DigitalHumanRunDetailDrawer } from '@/components/digital-human/digital-human-run-detail-drawer';
@@ -11,15 +24,23 @@ import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { requesterName } from '@/components/digital-human/digital-human-task-requesters';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 import {
   digitalHumanRunStatusLabelKey,
-  isActiveDigitalHumanRunStatus,
+  isRunningDigitalHumanRunStatus,
+  isWaitingDigitalHumanRunStatus,
+  digitalHumanRunStartedByPerson,
+  digitalHumanRunTaskName,
+  plainTextPreview,
 } from '@/components/digital-human/digital-human-run-presentation';
 import {
   useDigitalHumanMutations,
@@ -27,15 +48,50 @@ import {
 } from '@/hooks/digital-human/use-digital-humans';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { DigitalHumanRun, DigitalHumanRunStatus } from '@/services/types/digital-human';
+import { useAuthStore } from '@/store/auth-store';
+import type {
+  DigitalHumanRun,
+  DigitalHumanRunStatus,
+  DigitalHumanTaskRequesterKind,
+} from '@/services/types/digital-human';
 
 const runParam = 'run';
 
-type StatusFilter = 'all' | 'active' | 'succeeded' | 'failed' | 'canceled';
+type StatusFilter = 'all' | 'active' | 'waiting' | 'succeeded' | 'failed' | 'canceled';
 type SourceFilter = 'all' | 'manual' | 'channel' | 'scheduled' | 'email' | 'external';
+// Whose runs to show, narrowed on the server so many API users or channel
+// chats do not bury everyone else's runs.
+type RequesterScope = 'all' | 'mine' | DigitalHumanTaskRequesterKind;
+// Whose runs, then which kind of requester.
+const requesterScopeGroups: ReadonlyArray<readonly RequesterScope[]> = [
+  ['all', 'mine'],
+  ['member', 'api_user', 'channel', 'visitor'],
+];
+const requesterScopeIcons: Record<RequesterScope, LucideIcon> = {
+  all: Users,
+  mine: UserRound,
+  member: Building2,
+  api_user: KeyRound,
+  channel: MessagesSquare,
+  visitor: Globe,
+};
+
+function runRequesterParams(scope: RequesterScope, accountId?: string) {
+  if (scope === 'all') return undefined;
+  if (scope === 'mine') return accountId ? { requester_id: accountId } : undefined;
+  return { 'requester_kind[]': [scope] };
+}
 
 export function DigitalHumanRuns({ id }: { id: string }) {
   const t = useT('digitalHumans');
+  // A task run shows its task, not the instruction written for the model; a
+  // failed run without a result shows why it failed.
+  const runTitle = (run: DigitalHumanRun) => {
+    const task = digitalHumanRunTaskName(run);
+    return task ? t('runs.taskRun', { name: task }) : run.query;
+  };
+  const runOutcome = (run: DigitalHumanRun) =>
+    plainTextPreview(run.result_summary) || (run.status === 'failed' ? run.error_message ?? '' : '');
   const sourceLabels: RunSourceLabels = {
     manual: t('runs.sources.manual'),
     scheduled: t('runs.sources.scheduled'),
@@ -46,7 +102,9 @@ export function DigitalHumanRuns({ id }: { id: string }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const query = useDigitalHumanRuns(id);
+  const accountId = useAuthStore.use.user()?.id;
+  const [requesterScope, setRequesterScope] = useState<RequesterScope>('all');
+  const query = useDigitalHumanRuns(id, true, runRequesterParams(requesterScope, accountId));
   const mutations = useDigitalHumanMutations(id);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -60,16 +118,24 @@ export function DigitalHumanRuns({ id }: { id: string }) {
       if (!matchesStatus(run.status, statusFilter)) return false;
       if (sourceFilter !== 'all' && normalizedRunSource(run) !== sourceFilter) return false;
       if (!normalized) return true;
-      return [run.id, run.query, run.conversation_id, run.result_summary, run.error_code]
+      return [
+        run.id,
+        run.query,
+        run.conversation_id,
+        run.result_summary,
+        run.error_code,
+        run.requester ? requesterName(run.requester, t) : null,
+      ]
         .filter(Boolean)
         .some(value => String(value).toLowerCase().includes(normalized));
     });
-  }, [runItems, search, sourceFilter, statusFilter]);
+  }, [runItems, search, sourceFilter, statusFilter, t]);
 
   const columns: StickyDataTableColumn[] = [
     { key: 'source', header: t('runs.columns.source'), className: 'w-[110px]' },
     { key: 'query', header: t('runs.columns.trigger'), className: 'min-w-[240px] pl-4' },
     { key: 'result', header: t('runs.columns.result'), className: 'min-w-[260px]' },
+    { key: 'requester', header: t('runs.columns.requester'), className: 'w-[150px]' },
     { key: 'status', header: t('runs.columns.status'), className: 'w-[110px]' },
     { key: 'duration', header: t('runs.columns.duration'), className: 'w-[100px]' },
     { key: 'created', header: t('runs.columns.created'), className: 'w-[170px]' },
@@ -88,7 +154,15 @@ export function DigitalHumanRuns({ id }: { id: string }) {
     toast.success(t('runs.cancelRequested'));
   };
 
-  const hasFilters = Boolean(search.trim() || statusFilter !== 'all' || sourceFilter !== 'all');
+  const hasFilters = Boolean(
+    search.trim() || statusFilter !== 'all' || sourceFilter !== 'all' || requesterScope !== 'all'
+  );
+  const clearFilters = () => {
+    setSearch('');
+    setStatusFilter('all');
+    setSourceFilter('all');
+    setRequesterScope('all');
+  };
   const sourceTabs: Array<{ value: SourceFilter; label: string }> = [
     { value: 'all', label: t('runs.filters.allSources') },
     { value: 'manual', label: sourceLabels.manual },
@@ -165,9 +239,56 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                 <SelectContent>
                   <SelectItem value="all">{t('runs.filters.all')}</SelectItem>
                   <SelectItem value="active">{t('runs.filters.active')}</SelectItem>
+                  <SelectItem value="waiting">{t('runs.filters.waiting')}</SelectItem>
                   <SelectItem value="succeeded">{t('status.succeeded')}</SelectItem>
                   <SelectItem value="failed">{t('status.failed')}</SelectItem>
                   <SelectItem value="canceled">{t('status.canceled')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={requesterScope}
+                onValueChange={value => setRequesterScope(value as RequesterScope)}
+              >
+                {/* A narrowed list is tinted, so it is not mistaken for everyone's runs. */}
+                <SelectTrigger
+                  className={cn(
+                    'lg:w-[190px]',
+                    requesterScope !== 'all' &&
+                      'border-primary/40 bg-primary/5 text-primary hover:border-primary/60 dark:bg-primary/10'
+                  )}
+                  aria-label={t('runs.filters.requester.label')}
+                  title={t('runs.filters.requester.label')}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="min-w-[11rem]">
+                  {requesterScopeGroups.map((group, index) => (
+                    <Fragment key={group.join()}>
+                      {index > 0 ? <SelectSeparator /> : null}
+                      <SelectGroup>
+                        {index === 0 ? (
+                          <SelectLabel className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                            {t('runs.filters.requester.label')}
+                          </SelectLabel>
+                        ) : null}
+                        {group.map(value => {
+                          const Icon = requesterScopeIcons[value];
+                          return (
+                            <SelectItem
+                              key={value}
+                              value={value}
+                              disabled={value === 'mine' && !accountId}
+                            >
+                              <span className="flex items-center gap-2">
+                                <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                                {t(`runs.filters.requester.${value}`)}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectGroup>
+                    </Fragment>
+                  ))}
                 </SelectContent>
               </Select>
               {hasFilters ? (
@@ -175,11 +296,7 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                   type="button"
                   size="sm"
                   variant="ghost"
-                  onClick={() => {
-                    setSearch('');
-                    setStatusFilter('all');
-                    setSourceFilter('all');
-                  }}
+                  onClick={clearFilters}
                 >
                   {t('runs.filters.clear')}
                 </Button>
@@ -240,14 +357,19 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                           />
                         </div>
                         <p className="mt-3 line-clamp-2 text-sm font-medium leading-6">
-                          {run.query}
+                          {runTitle(run)}
                         </p>
-                        {run.result_summary ? (
+                        {runOutcome(run) ? (
                           <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                            {run.result_summary}
+                            {runOutcome(run)}
                           </p>
                         ) : null}
                         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                          {run.requester ? (
+                            <span title={run.requester.email || undefined}>
+                              {requesterName(run.requester, t)}
+                            </span>
+                          ) : null}
                           <span>{formatRunDuration(run)}</span>
                           <span>{new Date(run.created_at).toLocaleString()}</span>
                         </div>
@@ -276,11 +398,7 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            setSearch('');
-                            setStatusFilter('all');
-                            setSourceFilter('all');
-                          }}
+                          onClick={clearFilters}
                         >
                           {t('runs.filters.clear')}
                         </Button>
@@ -313,18 +431,33 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                       <TableCell className="max-w-[420px] py-4 pl-4">
                         <span
                           className="line-clamp-2 text-left text-xs leading-5"
-                          title={run.query}
+                          title={runTitle(run)}
                         >
-                          {run.query || t('runs.details')}
+                          {runTitle(run) || t('runs.details')}
                         </span>
                       </TableCell>
                       <TableCell className="max-w-[360px] py-4">
                         <span
-                          className="line-clamp-2 text-xs leading-5 text-muted-foreground"
-                          title={run.result_summary || undefined}
+                          className={cn(
+                            'line-clamp-2 text-xs leading-5 text-muted-foreground',
+                            run.status === 'failed' && !run.result_summary && 'text-destructive'
+                          )}
+                          title={runOutcome(run) || undefined}
                         >
-                          {run.result_summary || t('runs.resultPending')}
+                          {runOutcome(run) || t('runs.resultPending')}
                         </span>
+                      </TableCell>
+                      <TableCell className="max-w-[180px] py-4">
+                        {run.requester ? (
+                          <span
+                            className="block truncate text-xs"
+                            title={run.requester.email || requesterName(run.requester, t)}
+                          >
+                            {requesterName(run.requester, t)}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="py-4">
                         <RunStatusBadge
@@ -399,7 +532,8 @@ function SourceBadge({ label }: { label: string }) {
 
 function matchesStatus(status: DigitalHumanRunStatus, filter: StatusFilter) {
   if (filter === 'all') return true;
-  if (filter === 'active') return isActiveDigitalHumanRunStatus(status);
+  if (filter === 'active') return isRunningDigitalHumanRunStatus(status);
+  if (filter === 'waiting') return isWaitingDigitalHumanRunStatus(status);
   if (filter === 'failed') return status === 'failed' || status === 'unknown';
   return status === filter;
 }
@@ -431,7 +565,8 @@ function normalizedRunSource(run: DigitalHumanRun): Exclude<SourceFilter, 'all'>
   const origin = recordValue(run.invocation_event?.origin);
   const source = stringValue(origin?.kind) ?? stringValue(run.invocation_event?.type) ?? 'manual';
   if (source === 'manual') return 'manual';
-  if (source === 'schedule' || source === 'scheduled') return 'scheduled';
+  // A task run is scheduled unless a person ran it now.
+  if (source === 'schedule' || source === 'scheduled') return digitalHumanRunStartedByPerson(run) ? 'manual' : 'scheduled';
   if (source === 'email') return 'email';
   if (source === 'channel' || source === 'chat') return 'channel';
   return 'external';

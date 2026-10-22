@@ -50,6 +50,7 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/runs/:run_id", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodGet, "/console/api/digital-humans/:id/memory", workspacemodel.WorkspacePermissionDigitalHumanMemoryView},
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/proposals", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
+		{http.MethodPost, "/console/api/digital-humans/:id/memory/:memory_id/rescope", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPatch, "/console/api/digital-humans/:id/memory/state", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/operations/:operation_id/undo", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/repair", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
@@ -71,10 +72,29 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodPost, "/console/api/digital-humans/:id/tasks", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodPatch, "/console/api/digital-humans/:id/tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodGet, "/console/api/digital-humans/:id/tasks/requesters", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans/:id/preview/invocations", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodGet, "/console/api/digital-humans/:id/preview/runtime/conversations/:conversation_id/events", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodPatch, "/console/api/digital-humans/:id/tasks/requesters/:requester_id", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 		{http.MethodGet, "/console/api/digital-humans/:id/my-tasks", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPost, "/console/api/digital-humans/:id/my-tasks", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPatch, "/console/api/digital-humans/:id/my-tasks/:task_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPost, "/console/api/digital-humans/:id/my-tasks/:task_id/actions/:action", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/task-reports", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodGet, "/console/api/digital-humans/:id/task-reports/:report_id", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans/:id/task-reports/:report_id/review", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/my-task-reports", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodPost, "/console/api/digital-humans/:id/my-task-reports/:report_id/review", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/notification-channels", workspacemodel.WorkspacePermissionDigitalHumanPublish},
+		{http.MethodGet, "/console/api/team-notification-channels/options", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodGet, "/console/api/digital-humans/:id/artifacts", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodGet, "/console/api/digital-humans/:id/artifacts/:artifact_id/versions/:number/content", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans/:id/artifacts", ""},
+		{http.MethodGet, "/console/api/digital-humans/:id/task-reports/:report_id/files/:file_id", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodGet, "/console/api/digital-humans/:id/my-task-reports/:report_id/files/:file_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
+		{http.MethodPost, "/console/api/team-notification-channels/options", ""},
+		{http.MethodGet, "/console/api/team-notification-channels", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
+		{http.MethodPost, "/console/api/team-notification-channels/:channel_id/test", workspacemodel.WorkspacePermissionDigitalHumanUpdate},
 	}
 	for _, test := range tests {
 		if got := digitalHumanPermissionForRequest(test.method, test.path); got != test.want {
@@ -103,7 +123,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 82; got != want {
+	if got, want := len(routes), 97; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -133,6 +153,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"DELETE /console/api/digital-humans/:id/api-keys/:api_key_id":                                                                               false,
 		"GET /console/api/digital-humans/:id/memory":                                                                                                false,
 		"POST /console/api/digital-humans/:id/memory/proposals":                                                                                     false,
+		"POST /console/api/digital-humans/:id/memory/:memory_id/rescope":                                                                            false,
 		"PATCH /console/api/digital-humans/:id/memory/state":                                                                                        false,
 		"POST /console/api/digital-humans/:id/memory/operations/:operation_id/undo":                                                                 false,
 		"POST /console/api/digital-humans/:id/memory/repair":                                                                                        false,

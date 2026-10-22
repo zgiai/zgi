@@ -1451,8 +1451,10 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		SupportsVision:     result.Config.SupportsVision,
 		AgentMemoryEnabled: result.Config.AgentMemoryEnabled,
 		LoginRequired:      agentWebAppRequiresLogin(result.Config),
-		Version:            result.Version,
-		VersionUUID:        result.VersionUUID,
+		// Visitors chat anonymously; only attaching a file asks them to sign in.
+		FileUploadRequiresLogin: result.Config.FileUpload,
+		Version:                 result.Version,
+		VersionUUID:             result.VersionUUID,
 	}
 }
 
@@ -1464,8 +1466,11 @@ func requireAuthenticatedWebAppAgentWhenMemoryEnabled(c *gin.Context, published 
 	return true
 }
 
+// agentWebAppRequiresLogin decides whether visitors must sign in before they
+// chat at all. File uploads do not: they need an identity only for the upload
+// itself, which the upload endpoints and the chat below enforce.
 func agentWebAppRequiresLogin(config dto.AgentConfigResponse) bool {
-	return config.AgentMemoryEnabled || config.FileUpload || (config.ExecutionRuntime != nil && config.ExecutionRuntime.Enabled)
+	return config.AgentMemoryEnabled || (config.ExecutionRuntime != nil && config.ExecutionRuntime.Enabled)
 }
 
 func requireAuthenticatedWebAppAgentFileAccess(c *gin.Context) bool {
@@ -1534,6 +1539,11 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 	var req runtimedto.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	// Anonymous visitors may chat but not attach files.
+	if len(req.FileIDs) > 0 && !c.GetBool("is_authenticated") {
+		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &workspaceID, SkipAccessCheck: true}

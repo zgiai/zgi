@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
+	"github.com/zgiai/zgi/api/internal/capabilities/artifacts"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
 	channelproviders "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providers"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
@@ -22,6 +23,7 @@ import (
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -51,6 +53,14 @@ type DigitalHumanRouteDeps struct {
 	AccountService          interfaces.AccountService
 	OrganizationService     interfaces.OrganizationService
 	ApplicationErrorCatalog *appcatalog.Catalog
+	// NotificationChannels serves the webhook a DigitalHuman's API
+	// integrations receive task notifications on (ADR 0008).
+	NotificationChannels *inbox.ChannelHandler
+	// PendingTaskChanges is optional. It marks personal-view tasks whose
+	// proposed change waits for the reader's approval.
+	PendingTaskChanges digitalhuman.TaskPendingChangeSource
+	// Artifacts serves the DigitalHuman's artifact center (ADR 0009).
+	Artifacts *artifacts.Service
 }
 
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
@@ -79,6 +89,8 @@ type DigitalHumanRuntimeDeps struct {
 	Tasks                               digitalhuman.TaskHandlerService
 	MemoryRetriever                     digitalhuman.DigitalHumanMemoryRetriever
 	WorkflowService                     interfaces.WorkflowService
+	// Artifacts gives runs the artifact tools when it is set.
+	Artifacts *artifacts.Service
 }
 
 // DigitalHumanRuntimeBundle keeps the model runtime and channel application
@@ -113,7 +125,19 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewAccessHandler(deps.Access, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
-	digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).RegisterRoutes(group)
+	// The runtime serves the files a task report carries when it can.
+	reportFiles, _ := deps.Runtime.(digitalhuman.TaskReportFileSource)
+	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges).WithReportFiles(reportFiles)
+	taskHandler.RegisterRoutes(group)
+	taskHandler.RegisterReportRoutes(group)
+	if deps.Artifacts != nil {
+		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).RegisterRoutes(group)
+	}
+	if deps.NotificationChannels != nil {
+		deps.NotificationChannels.RegisterRoutes(group, "/digital-humans/:id/notification-channels", digitalHumanChannelOwner(deps.Service, errorProjector))
+		deps.NotificationChannels.RegisterChoiceRoute(group, "/team-notification-channels/options", workspaceChannelOwner(errorProjector))
+		deps.NotificationChannels.RegisterRoutes(group, "/team-notification-channels", workspaceChannelOwner(errorProjector))
+	}
 	channelHandler.RegisterAuthenticatedRoutes(group)
 }
 
@@ -145,7 +169,7 @@ func digitalHumanPermissionMiddleware(organizationService interfaces.Organizatio
 			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodePermissionDenied, apperror.WithOperation("digital_human.permission.check")))
 			return
 		}
-		if isDigitalHumanTaskCenterPath(c.FullPath()) && digitalhuman.TaskVisibilityEnabled() {
+		if (isDigitalHumanTaskCenterPath(c.FullPath()) && digitalhuman.TaskVisibilityEnabled()) || strings.Contains(c.FullPath(), "/digital-humans/:id/artifacts") {
 			manager := permission == workspacemodel.WorkspacePermissionDigitalHumanUpdate
 			if !manager {
 				manager, err = organizationService.CheckWorkspacePermission(
@@ -165,13 +189,17 @@ func digitalHumanPermissionMiddleware(organizationService interfaces.Organizatio
 // isDigitalHumanTaskCenterPath matches the shared task center routes, not the
 // personal my-tasks view.
 func isDigitalHumanTaskCenterPath(routePath string) bool {
-	return strings.Contains(routePath, "/digital-humans/:id/tasks")
+	return strings.Contains(routePath, "/digital-humans/:id/tasks") || strings.Contains(routePath, "/digital-humans/:id/task-reports")
 }
 
 func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.WorkspacePermissionCode {
 	path := strings.TrimSpace(routePath)
 	if path == "" {
 		return ""
+	}
+	// Previewing the draft is part of editing it.
+	if strings.Contains(path, "/digital-humans/:id/preview/") {
+		return workspacemodel.WorkspacePermissionDigitalHumanUpdate
 	}
 	// Creation needs the workspace's bindable skills and owner Connector
 	// connections before the draft exists, so these routes are owned by the
@@ -185,8 +213,21 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	// Private tasks are part of the formal run surface. A user who can run a
 	// DigitalHuman may manage only their own task namespace from chat; viewers
 	// must not discover it through a direct URL.
-	if strings.Contains(path, "/my-tasks") {
+	if strings.Contains(path, "/my-tasks") || strings.Contains(path, "/my-task-reports") {
 		return workspacemodel.WorkspacePermissionDigitalHumanRun
+	}
+	// Task reports are read with view permission. Reviewing one may rerun its
+	// task, so it needs run permission; the task service then requires the
+	// reader to be the task's requester or a task center manager.
+	if strings.Contains(path, "/task-reports") {
+		switch method {
+		case http.MethodGet:
+			return workspacemodel.WorkspacePermissionDigitalHumanView
+		case http.MethodPost:
+			return workspacemodel.WorkspacePermissionDigitalHumanRun
+		default:
+			return ""
+		}
 	}
 	if strings.Contains(path, "/tasks") || strings.Contains(path, "/my-tasks") {
 		switch method {
@@ -207,7 +248,27 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		}
 		return ""
 	}
-	if strings.Contains(path, "/access") || strings.Contains(path, "/api-keys") {
+	// Artifacts are read with view permission; the artifact center decides
+	// which ones the reader sees.
+	if strings.Contains(path, "/digital-humans/:id/artifacts") {
+		if method == http.MethodGet {
+			return workspacemodel.WorkspacePermissionDigitalHumanView
+		}
+		return ""
+	}
+	// Team channels receive the reports of tasks shared with the workspace.
+	// Task center managers keep the list; anyone who can run a DigitalHuman
+	// may see the choices for their own task.
+	if strings.Contains(path, "/team-notification-channels") {
+		if strings.HasSuffix(path, "/options") {
+			if method == http.MethodGet {
+				return workspacemodel.WorkspacePermissionDigitalHumanRun
+			}
+			return ""
+		}
+		return workspacemodel.WorkspacePermissionDigitalHumanUpdate
+	}
+	if strings.Contains(path, "/access") || strings.Contains(path, "/api-keys") || strings.Contains(path, "/notification-channels") {
 		return workspacemodel.WorkspacePermissionDigitalHumanPublish
 	}
 	if strings.Contains(path, "/memory") {
@@ -388,7 +449,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 			memoryProvider,
 			digitalhuman.NewRelationshipMemoryRuntimeProvider(deps.DB),
 		)),
-		digitalhuman.WithTaskRuntime(digitalhuman.NewTaskRuntimeProvider(deps.Tasks)),
+		digitalhuman.WithTaskRuntime(digitalhuman.NewArtifactRuntimeProvider(digitalhuman.NewTaskRuntimeProvider(deps.Tasks), deps.Artifacts)),
 		digitalhuman.WithChannelTransientDispatcher(transientDispatcher),
 		digitalhuman.WithChannelContextRuntime(digitalhuman.NewChannelContextRuntime(repository, channelAdapters, modelSpecResolver)),
 		digitalhuman.WithManualInvocationFileValidator(digitalhuman.NewConsoleFileValidator(deps.FileService)),
@@ -470,4 +531,39 @@ func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.L
 			return nil
 		},
 	})
+}
+
+// workspaceChannelOwner resolves the current workspace's team channels.
+func workspaceChannelOwner(projector *apptransport.Projector) inbox.OwnerResolver {
+	return func(c *gin.Context) (inbox.ChannelOwner, bool) {
+		organizationID, orgErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+		workspaceID, workspaceErr := uuid.Parse(strings.TrimSpace(util.GetWorkspaceID(c)))
+		if orgErr != nil || workspaceErr != nil {
+			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodeRequestInvalid, apperror.WithOperation("digital_human.notification_channel.workspace")))
+			return inbox.ChannelOwner{}, false
+		}
+		return inbox.ChannelOwner{OrganizationID: organizationID, WorkspaceID: &workspaceID, Kind: inbox.OwnerWorkspace, ID: workspaceID}, true
+	}
+}
+
+// digitalHumanChannelOwner resolves the DigitalHuman whose webhook channels
+// a request manages, and only when it belongs to the current workspace, so a
+// webhook can never receive another workspace's end-user notifications.
+func digitalHumanChannelOwner(service digitalhuman.HandlerService, projector *apptransport.Projector) inbox.OwnerResolver {
+	return func(c *gin.Context) (inbox.ChannelOwner, bool) {
+		organizationID, orgErr := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+		workspaceID, workspaceErr := uuid.Parse(strings.TrimSpace(util.GetWorkspaceID(c)))
+		actorID, actorErr := uuid.Parse(strings.TrimSpace(util.GetAccountID(c)))
+		digitalHumanID, idErr := uuid.Parse(strings.TrimSpace(c.Param("id")))
+		if orgErr != nil || workspaceErr != nil || actorErr != nil || idErr != nil {
+			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodeRequestInvalid, apperror.WithOperation("digital_human.notification_channel.owner")))
+			return inbox.ChannelOwner{}, false
+		}
+		scope := digitalhuman.Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}
+		if _, err := service.Get(c.Request.Context(), scope, digitalHumanID); err != nil {
+			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodeResourceNotFound, apperror.WithOperation("digital_human.notification_channel.owner")))
+			return inbox.ChannelOwner{}, false
+		}
+		return inbox.ChannelOwner{OrganizationID: organizationID, WorkspaceID: &workspaceID, Kind: inbox.OwnerDigitalHuman, ID: digitalHumanID}, true
+	}
 }

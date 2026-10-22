@@ -1019,6 +1019,27 @@ func (service *ChannelService) handleInboundMessage(
 			return &ChannelWebhookResult{Response: acknowledgement, Accepted: true, Duplicate: !created, EventID: stored.ID}, nil
 		}
 	}
+	// An accept or rework reply reviews the conversation's latest task report. Its
+	// tasks belong to the stable channel conversation, not the local one.
+	ownerConversationID, ownerErr := ChannelTaskConversationID(installation.OrganizationID, installation.WorkspaceID, route.Binding.SubjectID,
+		installation.Provider, installation.ID.String(), message.ExternalConversationID)
+	if reviewer, ok := service.runtime.(channelReportReviewRuntime); ok && ownerErr == nil {
+		handled, reviewErr := reviewer.ReviewChannelTaskReport(ctx,
+			Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
+			route.Binding.SubjectID, ownerConversationID, ChannelApprovalReply{
+				Text: channelInvocationQuery(message), SenderExternalID: strings.TrimSpace(message.SenderExternalID), ConversationType: message.ConversationType,
+			})
+		if reviewErr != nil {
+			_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventFailed, "channel.task_report.review_failed", nil, now)
+			return nil, reviewErr
+		}
+		if handled {
+			if err := service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventAccepted, channelReportReviewedReason, nil, now); err != nil {
+				return nil, err
+			}
+			return &ChannelWebhookResult{Response: acknowledgement, Accepted: true, Duplicate: !created, EventID: stored.ID}, nil
+		}
+	}
 	acceptedAsRuntimeInput, err := service.runtime.SubmitChannelRuntimeInput(
 		ctx,
 		Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},

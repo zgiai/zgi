@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { ContextualAIChatLauncher } from '@/components/aichat/contextual';
 import { getOrganizationDisplayName } from '@/utils/organization-display';
 import { ConsoleReadinessStatus } from './console-readiness-status';
+import { InboxBell } from './inbox-bell';
 
 interface ConsoleHeaderProps {
   hidden?: boolean;
@@ -187,6 +188,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
       <div className="ml-auto flex items-center gap-2 sm:gap-3">
         {!isDashboardRoute ? <ConsoleReadinessStatus /> : null}
         {!isDashboardRoute ? <ContextualAIChatLauncher /> : null}
+        <InboxBell />
         {/* <QuickThemeToggle /> */}
         <UserMenu />
       </div>

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"maps"
 	"slices"
 	"strconv"
@@ -111,7 +112,11 @@ type RuntimeService struct {
 	linux          LinuxExecutionRuntimeProvider
 	// trustAuthorizer classifies console runs at admission (ADR 0004).
 	trustAuthorizer MemoryPromotionAuthorizer
-	now             func() time.Time
+	// approvalNotifier tells API end users about approvals that wait for them.
+	approvalNotifier TaskApprovalNotifier
+	// channelConnectors decides connector confirmations from channel replies.
+	channelConnectors ChannelConnectorConfirmer
+	now              func() time.Time
 }
 
 func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRuntimeAdapter, chat ChatRuntime, dispatcher RunDispatcher, options ...RuntimeServiceOption) *RuntimeService {
@@ -129,6 +134,34 @@ func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRu
 	}
 	return service
 }
+
+// draftResolver resolves a configuration preview against the draft.
+type draftResolver interface {
+	ResolveDraft(context.Context, invocation.Event) (*ResolvedExecution, error)
+}
+
+func (s *RuntimeService) resolveInvocation(ctx context.Context, scope Scope, event invocation.Event) (*ResolvedExecution, error) {
+	if scope.Surface != SurfacePreview {
+		return s.resolver.Resolve(ctx, event, nil)
+	}
+	resolver, ok := s.resolver.(draftResolver)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	return resolver.ResolveDraft(ctx, event)
+}
+
+// previewRun reports whether a run is a configuration preview, which gets no
+// task, artifact, or memory tools and leaves no memory behind.
+func previewRun(run *Run) bool {
+	return run != nil && run.Surface == SurfacePreview
+}
+
+// previewGuidance tells the model what a preview cannot do, so it explains
+// instead of pretending to act.
+const previewGuidance = "This conversation is a configuration preview of an unpublished draft. " +
+	"Creating or changing tasks, saving artifacts, changing memory, and acting in connected systems are turned off here. " +
+	"When asked to do one of these, say what you would do once published instead of claiming it was done."
 
 // RuntimeServiceOption configures optional subject-owned runtime capabilities.
 type RuntimeServiceOption func(*RuntimeService)
@@ -192,12 +225,19 @@ func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalH
 		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
 		OccurredAt: s.now(), Context: map[string]any{"query": query, "surface": SurfaceConsole},
 	}
+	// The configuration preview submits through the same path with its own
+	// surface, which resolves the draft instead of the published version.
+	surface := SurfaceConsole
+	if scope.Surface == SurfacePreview {
+		surface = SurfacePreview
+		event.Context["surface"] = surface
+	}
 	scope.PrincipalType = string(invocation.PrincipalAccount)
 	scope.PrincipalID = scope.ActorID
 	subjectID := scope.ActorID
 	scope.UserSubjectKind = string(usersubject.Account)
 	scope.UserSubjectID = &subjectID
-	scope.Surface = SurfaceConsole
+	scope.Surface = surface
 	if len(request.FileIDs) > 0 {
 		if s.manualFiles == nil {
 			return nil, false, ErrConsoleFileNotAccessible
@@ -239,7 +279,7 @@ func (s *RuntimeService) SubmitRegeneration(ctx context.Context, scope Scope, di
 		surface = SurfaceConsole
 		scope.Surface = surface
 	}
-	if surface != SurfaceConsole && surface != SurfaceAPI && surface != SurfaceWebApp {
+	if surface != SurfaceConsole && surface != SurfaceAPI && surface != SurfaceWebApp && surface != SurfacePreview {
 		return nil, false, ErrInvalidRequest
 	}
 	if surface == SurfaceConsole {
@@ -402,7 +442,7 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 		return nil, false, loadErr
 	}
 
-	resolved, err := s.resolver.Resolve(ctx, validated, nil)
+	resolved, err := s.resolveInvocation(ctx, scope, validated)
 	if err != nil {
 		return nil, false, err
 	}
@@ -443,7 +483,14 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		RunID: runID, Status: RunOutboxPending, AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.store.CreateRunWithOutbox(ctx, run, outbox); err != nil {
+	var createErr error
+	instanceStore, admitsInstances := s.store.(endUserInstanceStore)
+	if instance := endUserInstanceForRun(scope, run, now); instance != nil && admitsInstances {
+		createErr = instanceStore.CreateRunWithOutboxForEndUser(ctx, run, outbox, instance)
+	} else {
+		createErr = s.store.CreateRunWithOutbox(ctx, run, outbox)
+	}
+	if err := createErr; err != nil {
 		if errors.Is(err, ErrRunConflict) {
 			existing, loadErr := s.store.RunByIdempotency(ctx, scope.OrganizationID, validated.Target.ID, validated.IdempotencyKey)
 			if loadErr == nil {
@@ -505,7 +552,7 @@ func (s *RuntimeService) GetRun(ctx context.Context, scope Scope, digitalHumanID
 func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDeliveryRequest) error {
 	if s == nil || s.chat == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil ||
 		req.DigitalHumanID == uuid.Nil || req.TaskID == uuid.Nil || req.TaskRunID == uuid.Nil ||
-		req.ConversationID == uuid.Nil || strings.TrimSpace(req.Answer) == "" {
+		req.ConversationID == uuid.Nil || (strings.TrimSpace(req.Answer) == "" && req.Report == nil) {
 		return ErrInvalidRequest
 	}
 	writer, ok := s.chat.(idempotentCompletedMessageWriter)
@@ -530,16 +577,45 @@ func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDe
 	if name := strings.TrimSpace(req.TaskName); name != "" {
 		query = "任务执行结果：" + name
 	}
+	answer := strings.TrimSpace(req.Answer)
+	if report := req.Report; report != nil {
+		query = "任务汇报"
+		if name := strings.TrimSpace(req.TaskName); name != "" {
+			query = "任务汇报：" + name
+		}
+		answer = taskReportMessage(report)
+		metadata["digital_human_task_report"] = map[string]interface{}{
+			"report_id": report.ID.String(), "task_id": req.TaskID.String(), "task_name": strings.TrimSpace(req.TaskName),
+			"outcome": string(report.Outcome), "summary": report.Summary,
+		}
+	}
 	_, err := writer.CreateCompletedMessageIfAbsent(ctx, scope, chatruntime.CreateCompletedMessageRequest{
 		ConversationID:  req.ConversationID,
 		Query:           query,
-		Answer:          strings.TrimSpace(req.Answer),
+		Answer:          answer,
 		ModelProvider:   "digital-human-task",
 		ModelName:       "task-result",
 		Metadata:        metadata,
 		SourceMessageID: &req.TaskRunID,
 	})
 	return err
+}
+
+// taskReportMessage renders a final report as the delivered message text. The
+// report card in the client reads the structured metadata; this text keeps the
+// conversation readable everywhere else.
+func taskReportMessage(report *TaskReportDelivery) string {
+	outcome := map[TaskReportOutcome]string{
+		TaskReportDone: "已完成", TaskReportPartial: "部分完成", TaskReportNotDone: "未完成", TaskReportFailed: "执行失败",
+	}[report.Outcome]
+	parts := []string{"**结论：" + outcome + "**", strings.TrimSpace(report.Summary)}
+	if body := strings.TrimSpace(report.Body); body != "" && body != strings.TrimSpace(report.Summary) {
+		parts = append(parts, body)
+	}
+	if issues := strings.TrimSpace(report.Issues); issues != "" {
+		parts = append(parts, "**问题：**\n"+issues)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // GetRunRuntimeLog loads the ChatRuntime message linked to a durable run and
@@ -552,12 +628,7 @@ func (s *RuntimeService) GetRunRuntimeLog(ctx context.Context, scope Scope, digi
 	if run.MessageID == nil || *run.MessageID == uuid.Nil {
 		return &RunRuntimeLog{Steps: channelContextRuntimeSteps(run, nil)}, nil
 	}
-	callerID := run.DigitalHumanID
-	message, conversation, err := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
-		Type:   runtimemodel.ConversationCallerDigitalHuman,
-		ID:     &callerID,
-		Source: digitalHumanConversationSourceForRun(run),
-	}, *run.MessageID)
+	message, conversation, err := s.chat.GetMessageByCaller(ctx, runtimeScope(run), runConversationCaller(run), *run.MessageID)
 	if err != nil {
 		return nil, mapConversationRuntimeError(err)
 	}
@@ -619,6 +690,11 @@ func pendingRunWorkflowApproval(run *Run, message *runtimemodel.Message) *RunWor
 	for index := len(runs) - 1; index >= 0; index-- {
 		workflowRun, ok := stringMap(runs[index])
 		if !ok {
+			continue
+		}
+		// Task confirmations are answered in the conversation, not as a
+		// workflow approval form.
+		if kind, _ := workflowRun["kind"].(string); kind == "digital_human_task" {
 			continue
 		}
 		approval, ok := stringMap(workflowRun["approval"])
@@ -941,13 +1017,18 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	if s.linux != nil {
 		factory, prepareErr := s.linux.Prepare(ctx, run, resolved, event)
 		if prepareErr != nil {
+			// The public message stays generic; operators need the cause.
+			logger.WarnContext(ctx, "DigitalHuman Linux execution preparation failed", "run_id", run.ID.String(), "surface", run.Surface, prepareErr)
 			_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "The DigitalHuman Linux execution environment is not approved or available.", s.now())
 			return prepareErr
 		}
 		config.RuntimeToolFactory = factory
 	}
 	config.ConnectorRunID = run.ID.String()
-	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual
+	// A channel member who asked can confirm by reply; a run without a known
+	// requester stays non-interactive and cannot ask.
+	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual ||
+		(event.Origin.Kind == invocation.OriginChannel && event.Sender.Type == invocation.PrincipalExternalUser && strings.TrimSpace(event.Sender.ID) != "")
 	applyScheduledConnectorPolicy(&config, run, event)
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
@@ -969,7 +1050,10 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			config.RuntimeTools = append(config.RuntimeTools, channelContextPreparation.Tools...)
 		}
 	}
-	if s.memory != nil {
+	if previewRun(run) {
+		config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + previewGuidance
+	}
+	if s.memory != nil && !previewRun(run) {
 		memoryPreparation, memoryErr := s.memory.Prepare(ctx, run, resolved, event)
 		if memoryErr != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.memory.prepare_failed", "The DigitalHuman could not prepare its long-term memory context.", s.now())
@@ -982,7 +1066,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			config.RuntimeTools = append(config.RuntimeTools, memoryPreparation.Tools...)
 		}
 	}
-	if s.tasks != nil {
+	if s.tasks != nil && !previewRun(run) {
 		taskPreparation, taskErr := s.tasks.Prepare(ctx, run, event)
 		if taskErr != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.tasks.prepare_failed", "The DigitalHuman could not prepare its task tools.", s.now())
@@ -1118,7 +1202,33 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		if !ok {
 			return ErrRunConflict
 		}
-		return waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now())
+		// The approval waits in the conversation whatever the run's own state
+		// becomes: a task approval does not hold the run the way a workflow
+		// approval does.
+		if result.Status == runtimemodel.MessageStatusWaitingApproval {
+			// The run was loaded before its message was linked.
+			linked := *run
+			linked.ConversationID, linked.MessageID = &prepared.Conversation.ID, &prepared.Message.ID
+			s.notifyTaskApproval(ctx, &linked)
+		}
+		if err := waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now()); err != nil {
+			if errors.Is(err, ErrRunConflict) && event.Origin.Kind == invocation.OriginChannel && result.Status == runtimemodel.MessageStatusWaitingApproval {
+				prompt := channelWaitingPromptText(run, result.Status, result.Answer, result.Metadata)
+				return s.store.CompleteRunWithDelivery(ctx, run.ID, prompt, executionTraceFromMetadata(result.Metadata), s.now())
+			}
+			return err
+		}
+		// A channel has no card or form: it is told what the run waits for
+		// and how to answer by replying.
+		if event.Origin.Kind == invocation.OriginChannel {
+			waiting := *run
+			waiting.ConversationID, waiting.MessageID = &prepared.Conversation.ID, &prepared.Message.ID
+			if refreshed, lookupErr := s.store.RunByID(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, run.ID); lookupErr == nil && refreshed != nil {
+				waiting.WaitingReceipt = refreshed.WaitingReceipt
+			}
+			s.deliverChannelWaitingPrompt(ctx, &waiting, prepared.Message.ID, result.Status, result.Answer, result.Metadata)
+		}
+		return nil
 	}
 	if channelContextPreparation != nil {
 		if result.Metadata == nil {
@@ -1127,7 +1237,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		result.Metadata["channel_context"] = []interface{}{channelContextPreparation.Diagnostics}
 		recordChannelContextMetrics(ctx, channelContextPreparation.Diagnostics)
 	}
-	if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok {
+	if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok && !previewRun(run) {
 		if err := finalizer.Finalize(ctx, run, prepared, result); err != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.memory.schedule_failed", "The DigitalHuman could not schedule its memory extraction task.", s.now())
 			return err
@@ -1321,6 +1431,7 @@ func (s *RuntimeService) Reconcile(ctx context.Context) error {
 		s.store.RequeueStaleRunOutbox(ctx, now.Add(-defaultOutboxLease), now),
 		s.DispatchPending(ctx, defaultOutboxBatch),
 		s.recoverCompletedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
+		s.settleAnsweredWaitingRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
 		s.store.MarkStaleRunsUnknown(ctx, now.Add(-defaultStaleRunWindow), now),
 	)
 }
@@ -1338,10 +1449,7 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 		if run == nil || run.MessageID == nil || *run.MessageID == uuid.Nil || run.ActorID == nil || *run.ActorID == uuid.Nil {
 			continue
 		}
-		callerID := run.DigitalHumanID
-		message, conversation, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
-			Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForRun(run),
-		}, *run.MessageID)
+		message, conversation, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), runConversationCaller(run), *run.MessageID)
 		if loadErr != nil {
 			combined = errors.Join(combined, loadErr)
 			continue
@@ -1357,7 +1465,7 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 			}
 			continue
 		}
-		if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok {
+		if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok && !previewRun(run) {
 			prepared := &chatruntime.PreparedChat{Conversation: conversation, Message: message}
 			result := &chatruntime.ChatResult{Answer: message.Answer, Metadata: message.Metadata, Status: message.Status}
 			if finalizeErr := finalizer.Finalize(ctx, run, prepared, result); finalizeErr != nil {
@@ -1384,14 +1492,11 @@ func digitalHumanConversationSourceForEvent(event invocation.Event) string {
 	return digitalHumanConversationSource
 }
 
+// A task run's conversation is its own work record, kept out of the console
+// chat history; reports reach people through the task center and inbox.
 func digitalHumanConversationSourceForRun(run *Run) string {
 	if run != nil && run.Surface == SurfaceTask {
-		var event invocation.Event
-		if json.Unmarshal(run.InvocationEvent, &event) == nil {
-			if entry, _ := stringContextValue(event.Context, backgroundExecutionEntryKey); entry == backgroundTaskEntry {
-				return backgroundTaskEntry
-			}
-		}
+		return runtimemodel.ConversationSourceTask
 	}
 	if run != nil && strings.TrimSpace(run.Surface) != "" {
 		return digitalHumanConversationSourceForSurface(run.Surface)

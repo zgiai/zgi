@@ -34,6 +34,9 @@ type MemoryProposalRequest struct {
 	SourceContext              MemorySourceContext            `json:"source_context"`
 	AdminApproved              bool                           `json:"admin_approved"`
 	OccurredAt                 time.Time                      `json:"occurred_at"`
+	// rescope is set only by RescopeMemory. It lets the supersede move a
+	// memory to another class or scope; clients cannot set it.
+	rescope bool
 }
 
 type MemoryListQuery struct {

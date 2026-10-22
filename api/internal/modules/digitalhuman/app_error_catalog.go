@@ -29,8 +29,10 @@ var (
 	AppCodeResourceBindingInvalid       = apperror.MustCode("digital_human.resource_binding.invalid")
 	AppCodeRunNotFound                  = apperror.MustCode("digital_human.run.not_found")
 	AppCodeRunConflict                  = apperror.MustCode("digital_human.run.conflict")
+	AppCodeEndUserSuspended             = apperror.MustCode("digital_human.end_user.suspended")
 	AppCodeConversationNotFound         = apperror.MustCode("digital_human.conversation.not_found")
 	AppCodeConsoleFileNotAccessible     = apperror.MustCode("digital_human.file.not_found")
+	AppCodeWebAppFileRequiresLogin      = apperror.MustCode("digital_human.file.login_required")
 	AppCodeMemoryNotFound               = apperror.MustCode("digital_human.memory.not_found")
 	AppCodeMemoryConflict               = apperror.MustCode("digital_human.memory.conflict")
 	AppCodeMemoryPolicyRejected         = apperror.MustCode("digital_human.memory.policy_rejected")
@@ -91,10 +93,14 @@ func CatalogDefinitions() []appcatalog.Definition {
 			"The DigitalHuman run was not found.", "未找到该数字人运行记录。"),
 		digitalHumanDefinition(AppCodeRunConflict, appcatalog.CategoryConflict, 409,
 			"The DigitalHuman run cannot transition from its current state.", "该数字人运行无法从当前状态继续转换。"),
+		digitalHumanDefinition(AppCodeEndUserSuspended, appcatalog.CategoryAuthorization, 403,
+			"This DigitalHuman is not available to this user right now.", "当前用户暂时无法使用该数字人。"),
 		digitalHumanDefinition(AppCodeConversationNotFound, appcatalog.CategoryNotFound, 404,
 			"The DigitalHuman conversation was not found.", "未找到该数字人的会话。"),
 		digitalHumanDefinition(AppCodeConsoleFileNotAccessible, appcatalog.CategoryNotFound, 404,
 			"The file was not found or is not available for this conversation.", "未找到该文件，或该文件无法用于当前会话。"),
+		digitalHumanDefinition(AppCodeWebAppFileRequiresLogin, appcatalog.CategoryAuthorization, 403,
+			"Sign in to send files. You can keep chatting without attachments.", "发送文件需要先登录；不带附件仍可继续对话。"),
 		digitalHumanDefinition(AppCodeMemoryNotFound, appcatalog.CategoryNotFound, 404,
 			"The DigitalHuman memory was not found.", "未找到该数字人的记忆。"),
 		digitalHumanDefinition(AppCodeMemoryConflict, appcatalog.CategoryConflict, 409,

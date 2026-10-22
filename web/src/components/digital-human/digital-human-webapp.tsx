@@ -70,6 +70,7 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
   // the first conversation is never created under an anonymous subject.
   const hasAccountSession = sessionManager.hasSession();
   const [mobileTasksOpen, setMobileTasksOpen] = useState(false);
+  const [tasksWide, setTasksWide] = useState(false);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [configLoadTimedOut, setConfigLoadTimedOut] = useState(false);
   const [authWaitTimedOut, setAuthWaitTimedOut] = useState(false);
@@ -86,6 +87,12 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
         digitalHumanWebAppService.applyTaskAction(webAppId, taskId, action, revision),
       runs: (taskId, page) => digitalHumanWebAppService.listTaskRuns(webAppId, taskId, page),
       activities: (taskId, page) => digitalHumanWebAppService.listTaskActivities(webAppId, taskId, page),
+      reports: {
+        list: taskId => digitalHumanWebAppService.listTaskReports(webAppId, taskId),
+        feed: params => digitalHumanWebAppService.listTaskReportFeed(webAppId, params),
+        review: (reportId, request) => digitalHumanWebAppService.reviewTaskReport(webAppId, reportId, request),
+        readFile: (reportId, fileId, signal) => digitalHumanWebAppService.downloadTaskReportFile(webAppId, reportId, fileId, signal),
+      },
     }),
     [webAppId]
   );
@@ -330,7 +337,8 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
                   requireModel={false}
                   showMemoryToggle={false}
                   forcedUseMemory={false}
-          enableUpload={config.file_upload_enabled && isAuthenticated}
+          enableUpload={config.file_upload_enabled}
+          uploadRequiresLogin={!isAuthenticated}
           fileUploadPolicy={config.file_upload_policy}
                   uploadScope={uploadScope}
                   showFileLibraryPicker={false}
@@ -356,8 +364,13 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
                 />
               </div>
               {isAuthenticated ? (
-                <div className="hidden w-[21rem] max-w-[35vw] shrink-0 border-l border-border/70 bg-card/70 xl:block">
-                  <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+                // The panel widens while a task or report is open beside the chat.
+                <div
+                  className={`hidden shrink-0 border-l border-border/70 bg-card/70 transition-[width] duration-200 ease-out motion-reduce:transition-none xl:block ${
+                    tasksWide ? 'w-[36rem] max-w-[45vw]' : 'w-[24rem] max-w-[35vw]'
+                  }`}
+                >
+                  <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} onWideChange={setTasksWide} />
                 </div>
               ) : null}
               {isAuthenticated ? (

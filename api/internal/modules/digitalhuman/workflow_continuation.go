@@ -72,6 +72,10 @@ func (s *RuntimeService) continueWorkflowApproval(
 	// The resumed Agent loop (summary, connector tools, workspace) is owned by
 	// this run, exactly like the other DigitalHuman continuations.
 	caller.RunID = cloneUUIDPointer(&run.ID)
+	if run.Surface == SurfaceTask {
+		// The run drawer answers a task run's approval in its task conversation.
+		caller.Source = digitalHumanConversationSourceForRun(run)
+	}
 	heldRun := workflowHeldRun(run)
 	runtime, ok := s.chat.(workflowContinuationChatRuntime)
 	if !ok {

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
@@ -35,6 +38,8 @@ type Service struct {
 	dispatcher RunDispatcher
 	now        func() time.Time
 	runner     automationaction.DigitalHumanRunnerProvider
+	// notifyChannels checks the team channels a task reports to.
+	notifyChannels digitalhuman.TaskNotifyChannels
 }
 
 func NewService(db *gorm.DB, dispatcher RunDispatcher, runner automationaction.DigitalHumanRunnerProvider) *Service {
@@ -88,7 +93,10 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	}
 	page, pageSize := normalizePage(query.Page, query.PageSize)
 	base := s.taskQuery(ctx, access)
-	if len(query.Statuses) > 0 {
+	if len(query.Statuses) > 0 && query.IncludeUnreviewed {
+		base = base.Where(`(work_status IN ? OR EXISTS (SELECT 1 FROM digital_human_task_reports AS reports
+			WHERE reports.task_id = automation_tasks.id AND reports.final AND reports.review_state = ?))`, stringValues(query.Statuses), string(digitalhuman.TaskReportNew))
+	} else if len(query.Statuses) > 0 {
 		base = base.Where("work_status IN ?", stringValues(query.Statuses))
 	}
 	if len(query.Priorities) > 0 {
@@ -99,6 +107,15 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	}
 	if source := strings.TrimSpace(query.Source); source != "" {
 		base = base.Where("source_ref = ?", source)
+	}
+	if reference := strings.TrimSpace(query.ClientReference); reference != "" {
+		base = base.Where("client_reference = ?", reference)
+	}
+	if showsRequesters(access) {
+		var err error
+		if base, err = applyRequesterFilter(base, query); err != nil {
+			return nil, err
+		}
 	}
 	if keyword := strings.TrimSpace(query.Query); keyword != "" {
 		like := "%" + keyword + "%"
@@ -134,13 +151,25 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	if err != nil {
 		return nil, err
 	}
+	taskIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		taskIDs = append(taskIDs, row.ID)
+	}
+	reports, err := s.latestReports(ctx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]*digitalhuman.Task, 0, len(rows))
 	for _, row := range rows {
 		item, err := publicTaskForAccess(row, access)
 		if err != nil {
 			return nil, err
 		}
+		item.LatestReport = reports[row.ID]
 		items = append(items, item)
+	}
+	if err := s.attachRequesters(ctx, access, rows, items); err != nil {
+		return nil, err
 	}
 	return &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
 }
@@ -214,6 +243,20 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 	ownerKind, ownerSubjectKind, ownerSubjectID, ownerConversationID := storedOwner(access.Owner)
 	originSurface := strings.TrimSpace(access.Surface)
 	visibility := string(digitalhuman.DefaultTaskVisibility(access.Owner.Kind))
+	if len(req.NotifyChannelIDs) > 0 {
+		ids, err := normalizeNotifyChannels(req.NotifyChannelIDs)
+		if err != nil {
+			return nil, err
+		}
+		if access.Owner.Kind != digitalhuman.TaskOwnerDigitalHuman || access.Surface != digitalhuman.SurfaceConsole ||
+			visibility != string(digitalhuman.TaskVisibilityWorkspace) {
+			return nil, digitalhuman.ErrInvalidRequest
+		}
+		if err := s.checkNotifyChannels(ctx, access.OrganizationID.String(), access.WorkspaceID.String(), ids); err != nil {
+			return nil, err
+		}
+		delivery = withNotifyChannels(delivery, ids)
+	}
 	task := &automationmodel.AutomationTask{
 		OrganizationID: access.OrganizationID.String(), WorkspaceID: access.WorkspaceID.String(), Name: strings.TrimSpace(req.Name),
 		TaskKind: automationmodel.AutomationTaskKindDigitalHuman, SubjectType: stringPointer(subjectTypeDigitalHuman), SubjectID: &subjectID,
@@ -224,6 +267,7 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 		Status: lifecycle, TriggerType: automationmodel.AutomationTriggerTypeSchedule, ScheduleType: scheduleType, Timezone: timezone,
 		ScheduleConfig: config, NextRunAt: nextRunAt, SourceType: sourceType(mutation), SourceRef: &sourceRef,
 		SourceSnapshot: sourceSnapshot(mutation), CreatedBy: createdBy, UpdatedBy: createdBy,
+		ClientReference: clientReference(req.ClientReference),
 	}
 	action := &automationmodel.AutomationTaskAction{ActionType: automationmodel.AutomationActionTypeRunDigitalHuman, ActionOrder: 1, Enabled: true, Config: map[string]any{}}
 	activity := newActivity(task.ID, mutation, "created", "Task created", map[string]any{"work_status": workStatus})
@@ -254,7 +298,19 @@ func (s *Service) GetTask(ctx context.Context, access digitalhuman.TaskAccessCon
 	if err != nil {
 		return nil, err
 	}
-	return publicTaskForAccess(task, access)
+	result, err := publicTaskForAccess(task, access)
+	if err != nil {
+		return nil, err
+	}
+	reports, err := s.latestReports(ctx, []string{task.ID})
+	if err != nil {
+		return nil, err
+	}
+	result.LatestReport = reports[task.ID]
+	if err := s.attachRequesters(ctx, access, []*automationmodel.AutomationTask{task}, []*digitalhuman.Task{result}); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccessContext, taskID uuid.UUID, req digitalhuman.UpdateTaskRequest, mutation digitalhuman.TaskMutationContext) (*digitalhuman.Task, error) {
@@ -283,12 +339,13 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			return digitalhuman.ErrTaskConflict
 		}
 		changes := map[string]any{}
+		currentChannels := taskNotifyChannels(task)
 		if req.Visibility != nil {
-			if !taskCenterManager(access) {
-				return digitalhuman.ErrTaskVisibilityForbidden
-			}
-			if !req.Visibility.Valid() {
+			if !slices.Contains(digitalhuman.TaskVisibilityOptions(digitalhuman.TaskOwnerKind(pointerValue(task.OwnerKind))), *req.Visibility) {
 				return digitalhuman.ErrInvalidRequest
+			}
+			if !slices.Contains(taskVisibilityChoices(task, access), *req.Visibility) {
+				return digitalhuman.ErrTaskVisibilityForbidden
 			}
 			v := string(*req.Visibility)
 			task.Visibility = &v
@@ -335,6 +392,13 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			}
 			task.MaxAttempts = *req.MaxAttempts
 			changes["max_attempts"] = *req.MaxAttempts
+		}
+		if req.ClientReference != nil {
+			if !validClientReference(*req.ClientReference) {
+				return digitalhuman.ErrInvalidRequest
+			}
+			task.ClientReference = clientReference(*req.ClientReference)
+			changes["client_reference"] = pointerValue(task.ClientReference)
 		}
 		var requestedScheduleNext *time.Time
 		if req.Schedule != nil {
@@ -398,6 +462,20 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			}
 			task.DeliveryConfig, changes["delivery_mode"] = cfg, *req.DeliveryMode
 		}
+		channels := currentChannels
+		if req.NotifyChannelIDs != nil {
+			if channels, err = s.changeNotifyChannels(ctx, task, access, currentChannels, *req.NotifyChannelIDs); err != nil {
+				return err
+			}
+		}
+		// A task withdrawn from its workspace stops reporting to team channels.
+		if storedTaskVisibility(task) != digitalhuman.TaskVisibilityWorkspace {
+			channels = nil
+		}
+		if !slices.Equal(channels, currentChannels) {
+			changes["notify_channel_ids"] = channels
+		}
+		task.DeliveryConfig = withNotifyChannels(task.DeliveryConfig, channels)
 		task.Revision++
 		task.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(task, s.now())
@@ -816,7 +894,32 @@ func publicTaskForAccess(row *automationmodel.AutomationTask, access digitalhuma
 		return nil, err
 	}
 	task.CanChange = access.CurrentTaskID != nil || taskCenterManager(access) || taskRequestedBy(row, access)
+	task.VisibilityOptions = taskVisibilityChoices(row, access)
+	task.NotifyChannelAccess = notifyChannelAccess(row, access)
 	return task, nil
+}
+
+// taskVisibilityChoices lists the visibilities access may set on row. In the
+// console a requester may share their task with the team or withdraw it. A
+// task center manager may narrow anyone's task but never widen someone
+// else's, which would publish that requester's work without them. External
+// end users never share tasks with the team.
+func taskVisibilityChoices(row *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) []digitalhuman.TaskVisibility {
+	if !digitalhuman.TaskVisibilityEnabled() || access.CurrentTaskID != nil {
+		return nil
+	}
+	requestedByReader := access.Surface == digitalhuman.SurfaceConsole && taskRequestedBy(row, access)
+	if !requestedByReader && !taskCenterManager(access) {
+		return nil
+	}
+	current := storedTaskVisibility(row)
+	var choices []digitalhuman.TaskVisibility
+	for _, option := range digitalhuman.TaskVisibilityOptions(digitalhuman.TaskOwnerKind(pointerValue(row.OwnerKind))) {
+		if requestedByReader || option == current || !current.Widens(option) {
+			choices = append(choices, option)
+		}
+	}
+	return choices
 }
 
 // taskRequestedBy mirrors mutationOwnerPredicate for one loaded row.
@@ -854,13 +957,14 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 		return nil, fmt.Errorf("invalid stored digital human task owner")
 	}
 	mode := deliveryMode(row.DeliveryConfig)
-	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.LastRunStatus != nil {
 		result.LastRunStatus = *row.LastRunStatus
 	}
 	if row.SourceRef != nil {
 		result.Source = *row.SourceRef
 	}
+	result.ClientReference = pointerValue(row.ClientReference)
 	result.SourceConversationType = sourceConversationType(row)
 	// Results of a change are always changeable by the caller that made it.
 	result.CanChange = true
@@ -1255,10 +1359,37 @@ func accessActorID(access digitalhuman.TaskAccessContext) uuid.UUID {
 func validateCreate(req digitalhuman.CreateTaskRequest) error {
 	invalidTimeout := req.ExecutionTimeoutSeconds != 0 && (req.ExecutionTimeoutSeconds < 30 || req.ExecutionTimeoutSeconds > 1800)
 	invalidAttempts := req.MaxAttempts != 0 && (req.MaxAttempts < 1 || req.MaxAttempts > 3)
-	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Goal) == "" || (req.Priority != "" && !validPriority(req.Priority)) || invalidTimeout || invalidAttempts {
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Goal) == "" || (req.Priority != "" && !validPriority(req.Priority)) || invalidTimeout || invalidAttempts ||
+		!validClientReference(req.ClientReference) {
 		return digitalhuman.ErrInvalidRequest
 	}
 	return nil
+}
+
+// maxClientReferenceRunes bounds an integrator's task identifier.
+const maxClientReferenceRunes = 255
+
+// validClientReference accepts an empty value or printable text that fits the
+// column; control characters would break logs and webhook consumers.
+func validClientReference(value string) bool {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > maxClientReferenceRunes {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func clientReference(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // taskUpdateValues deliberately includes nullable scheduling fields. GORM's
@@ -1284,6 +1415,7 @@ func taskUpdateValues(task *automationmodel.AutomationTask, updatedAt time.Time)
 		"priority":                  task.Priority,
 		"execution_timeout_seconds": task.ExecutionTimeoutSeconds,
 		"max_attempts":              task.MaxAttempts,
+		"client_reference":          task.ClientReference,
 		"delivery_config":           datatypes.JSON(deliveryConfig),
 		"status":                    task.Status,
 		"work_status":               task.WorkStatus,

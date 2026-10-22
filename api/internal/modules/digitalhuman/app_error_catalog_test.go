@@ -62,3 +62,25 @@ func TestCatalogDefinitionsHideConsoleFileAccessBoundary(t *testing.T) {
 		t.Fatalf("presentation = %#v", presentation)
 	}
 }
+
+func TestCatalogDefinitionsAskAnonymousWebAppVisitorToSignInForFiles(t *testing.T) {
+	t.Parallel()
+	definitions := append(appcatalog.DefaultDefinitions(), CatalogDefinitions()...)
+	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[appcatalog.Locale]string{
+		appcatalog.LocaleEnglishUS:         "Sign in to send files. You can keep chatting without attachments.",
+		appcatalog.LocaleChineseSimplified: "发送文件需要先登录；不带附件仍可继续对话。",
+	}
+	for locale, want := range tests {
+		presentation, presentErr := catalog.Present(AppCodeWebAppFileRequiresLogin, locale, nil)
+		if presentErr != nil {
+			t.Fatalf("Present(%s): %v", locale, presentErr)
+		}
+		if presentation.HTTPStatus != 403 || presentation.Message != want {
+			t.Fatalf("Present(%s) = %#v, want message %q", locale, presentation, want)
+		}
+	}
+}

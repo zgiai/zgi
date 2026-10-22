@@ -21,9 +21,9 @@ import {
   type DigitalHumanPublishVersionDetails,
 } from '@/components/digital-human/digital-human-publish-version-dialog';
 import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Popover,
   PopoverContent,
@@ -82,9 +82,15 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
     versionsOpen && Boolean(selectedVersionId)
   );
   const detail = detailQuery.data?.data;
+  // API keys and docs take effect at once; only the configuration and the
+  // landing page edit the draft that publishing puts live.
+  const isImmediatePage =
+    pathname.startsWith(`/console/digital-humans/${id}/external/keys`) ||
+    pathname.startsWith(`/console/digital-humans/${id}/external/docs`);
   const isDraftEditingPage =
-    pathname.startsWith(`/console/digital-humans/${id}/configuration`) ||
-    pathname.startsWith(`/console/digital-humans/${id}/external`);
+    !isImmediatePage &&
+    (pathname.startsWith(`/console/digital-humans/${id}/configuration`) ||
+      pathname.startsWith(`/console/digital-humans/${id}/external`));
   // The server compares resource bindings too; the revision check is only a
   // fallback for responses that predate the field.
   const hasUnpublishedChanges = Boolean(
@@ -329,7 +335,9 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
             </div>
           ) : null}
 
-          {isDraftEditingPage && draftEditor?.canUpdate ? (
+          {/* Autosave keeps the draft; a manual save is offered only when
+              there is something it has not saved yet. */}
+          {isDraftEditingPage && draftEditor?.canUpdate && (isDirty || saveState === 'error') ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="relative">
@@ -361,7 +369,7 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
             </Tooltip>
           ) : null}
 
-          {detail?.published ? (
+          {detail?.published && isDraftEditingPage ? (
             <DigitalHumanVersionPopover
               open={versionsOpen}
               onOpenChange={nextOpen => {
@@ -398,11 +406,13 @@ export function DigitalHumanHeader({ id, onOpenChat }: DigitalHumanHeaderProps) 
             </Button>
           ) : null}
 
-          {permissions.hasPermission('digital_human.publish') ? (
+          {permissions.hasPermission('digital_human.publish') && isDraftEditingPage ? (
             <Button
               size="sm"
               className="flex items-center gap-1.5 border border-primary/25 bg-primary/10 px-2 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15 sm:px-3.5"
-              disabled={!detail || mutations.publish.isPending || isVersionPreviewing}
+              // Nothing to publish while the draft matches the live version.
+              disabled={!detail || mutations.publish.isPending || isVersionPreviewing || (Boolean(detail?.published) && !hasUnpublishedChanges && !isDirty)}
+              title={detail?.published && !hasUnpublishedChanges && !isDirty ? t('header.nothingToPublish') : undefined}
               onClick={() => void openPublishDialog()}
             >
               {mutations.publish.isPending ? (
@@ -488,20 +498,46 @@ function DigitalHumanVersionPopover({
   onRestore,
 }: DigitalHumanVersionPopoverProps) {
   const t = useT('digitalHumans');
-  const [discardConfirmed, setDiscardConfirmed] = useState(false);
+  // Overwriting unpublished work is confirmed in a centered dialog, which
+  // stays visible however long the version list or short the window is.
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const selectedVersion = versions.find(version => version.id === selectedVersionId);
   const requiresDiscardConfirmation = Boolean(
     restorePreview?.will_discard_unpublished_changes || hasLocalDraftChanges
   );
+  const selectedNumber = selectedVersion
+    ? (selectedVersion.version_number ?? versions.length - versions.indexOf(selectedVersion))
+    : undefined;
+  const noChanges = Boolean(
+    restorePreview &&
+      !requiresDiscardConfirmation &&
+      restorePreview.changed_fields.length === 0 &&
+      restorePreview.binding_changes.length === 0
+  );
+  const restoreDisabled =
+    !canRestore ||
+    !selectedVersion ||
+    !restorePreview?.impact_token ||
+    isLoadingPreview ||
+    isRestoring ||
+    isDraftSaving ||
+    noChanges;
+  const requestRestore = () => {
+    if (requiresDiscardConfirmation) setConfirmOpen(true);
+    else onRestore();
+  };
 
   useEffect(() => {
-    setDiscardConfirmed(false);
+    setConfirmOpen(false);
   }, [selectedVersionId, restorePreview?.impact_token]);
 
   return (
     <Popover
       open={open && canOpen}
       onOpenChange={nextOpen => {
+        // The confirmation dialog takes focus; that must not close the
+        // panel and cancel the preview it is confirming.
+        if (!nextOpen && confirmOpen) return;
         if (canOpen) onOpenChange(nextOpen);
       }}
     >
@@ -523,12 +559,17 @@ function DigitalHumanVersionPopover({
         </PopoverTrigger>
         <TooltipContent>{t('header.versions')}</TooltipContent>
       </Tooltip>
-      <PopoverContent align="end" sideOffset={10} className="w-[360px] p-0">
+      <PopoverContent
+        align="end"
+        sideOffset={10}
+        collisionPadding={12}
+        className="flex max-h-[var(--radix-popover-content-available-height)] w-[360px] flex-col p-0"
+      >
         <PopoverHeader className="border-b px-4 py-3">
           <PopoverTitle>{t('versionHistory.title')}</PopoverTitle>
           <PopoverDescription>{t('versionHistory.description')}</PopoverDescription>
         </PopoverHeader>
-        <div className="max-h-[min(460px,calc(100vh-180px))] overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="m-4 mb-0 rounded-lg border border-primary/20 bg-primary/5 p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">{t('configuration.currentDraft')}</span>
@@ -562,11 +603,11 @@ function DigitalHumanVersionPopover({
                 const current = version.id === currentVersionId;
                 const selected = version.id === selectedVersionId;
                 const publishedAt = formatVersionTime(version);
+                const number = version.version_number ?? versions.length - index;
+                // An unnamed version is called by its number; its time is on
+                // the line below.
                 const displayName =
-                  version.name?.trim() ||
-                  t('versionHistory.fallbackName', {
-                    time: publishedAt,
-                  });
+                  version.name?.trim() || t('configuration.publishedVersion', { version: number });
                 return (
                   <button
                     key={version.id}
@@ -598,14 +639,16 @@ function DigitalHumanVersionPopover({
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {t('versionHistory.publishedAt', {
-                        time: publishedAt,
-                      })}
-                      {' · '}
-                      {t('configuration.publishedVersion', {
-                        version: version.version_number ?? versions.length - index,
-                      })}
+                      {t('versionHistory.publishedAt', { time: publishedAt })}
+                      {version.name?.trim()
+                        ? ` · ${t('configuration.publishedVersion', { version: number })}`
+                        : ''}
                     </p>
+                    {version.description?.trim() ? (
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {version.description.trim()}
+                      </p>
+                    ) : null}
                   </button>
                 );
               })}
@@ -614,23 +657,13 @@ function DigitalHumanVersionPopover({
 
           {selectedVersionId ? (
             <div className="border-t px-4 py-3">
-              {selectedVersion ? (
-                <div className="mb-3">
-                  <div className="text-xs font-medium text-foreground">
-                    {t('versionHistory.descriptionTitle')}
-                  </div>
-                  <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
-                    {selectedVersion.description?.trim() || t('versionHistory.noDescription')}
-                  </p>
-                </div>
-              ) : null}
               {isLoadingPreview ? (
-                <div className="flex items-center gap-2 border-t pt-3 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
                   {t('versionHistory.loadingImpact')}
                 </div>
               ) : restorePreview ? (
-                <div className="space-y-3 border-t pt-3">
+                <div className="space-y-3">
                   <div>
                     <div className="text-sm font-medium">{t('versionHistory.impactTitle')}</div>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -657,54 +690,60 @@ function DigitalHumanVersionPopover({
                       ))}
                     </div>
                   ) : null}
-                  {requiresDiscardConfirmation ? (
-                    <label className="flex cursor-pointer items-start gap-2 text-xs leading-5">
-                      <Checkbox
-                        checked={discardConfirmed}
-                        onCheckedChange={checked => setDiscardConfirmed(checked === true)}
-                      />
-                      <span>{t('versionHistory.confirmDiscard')}</span>
-                    </label>
-                  ) : (
+                  {noChanges ? (
                     <p className="text-xs text-muted-foreground">{t('versionHistory.noChanges')}</p>
-                  )}
+                  ) : null}
                 </div>
               ) : null}
             </div>
           ) : null}
         </div>
-        <div className="flex items-center justify-between gap-2 border-t p-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onCancelPreview}
-            disabled={!selectedVersionId || isRestoring}
-          >
-            <X className="mr-1.5 size-4" />
-            {t('versionHistory.cancelPreview')}
-          </Button>
-          <Button
-            size="sm"
-            onClick={onRestore}
-            disabled={
-              !canRestore ||
-              !selectedVersion ||
-              !restorePreview?.impact_token ||
-              isLoadingPreview ||
-              isRestoring ||
-              isDraftSaving ||
-              (requiresDiscardConfirmation && !discardConfirmed)
-            }
-          >
-            {isRestoring ? (
-              <Loader2 className="mr-1.5 size-4 animate-spin" />
-            ) : (
-              <RotateCcw className="mr-1.5 size-4" />
-            )}
-            {t('versionHistory.restore')}
-          </Button>
+        {/* Actions appear once a version is chosen; until then the footer
+            says what to do instead of offering buttons that cannot work. */}
+        <div className="shrink-0 border-t p-3">
+          {selectedVersionId ? (
+            <div className="flex items-center justify-between gap-2">
+              <Button variant="outline" size="sm" onClick={onCancelPreview} disabled={isRestoring}>
+                <X className="mr-1.5 size-4" />
+                {t('versionHistory.cancelPreview')}
+              </Button>
+              <Button size="sm" onClick={requestRestore} disabled={restoreDisabled}>
+                {isRestoring ? (
+                  <Loader2 className="mr-1.5 size-4 animate-spin" />
+                ) : (
+                  <RotateCcw className="mr-1.5 size-4" />
+                )}
+                {t('versionHistory.restore')}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">{t('versionHistory.selectHint')}</p>
+          )}
         </div>
       </PopoverContent>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        variant="warning"
+        title={t('versionHistory.confirmTitle', { version: selectedNumber ?? '' })}
+        description={
+          <span className="block space-y-1">
+            <span className="block">{t('versionHistory.confirmDiscardBody')}</span>
+            {restorePreview ? (
+              <span className="block">
+                {t('versionHistory.impactSummary', {
+                  fields: restorePreview.changed_fields.length,
+                  resources: restorePreview.binding_changes.length,
+                })}
+              </span>
+            ) : null}
+            <span className="block">{t('versionHistory.confirmPublishNote')}</span>
+          </span>
+        }
+        confirmText={t('versionHistory.confirmRestore')}
+        loading={isRestoring}
+        onConfirm={onRestore}
+      />
     </Popover>
   );
 }

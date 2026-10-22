@@ -18,7 +18,10 @@ const (
 	ConversationSourceExternalAPI = "external-api"
 	ConversationSourceChannel     = "channel"
 	ConversationSourceTask        = "task"
-	ConversationSourceMigration   = "migration"
+	// ConversationSourcePreview holds draft previews, apart from real
+	// conversations.
+	ConversationSourcePreview   = "preview"
+	ConversationSourceMigration = "migration"
 
 	ConversationCallerAIChat       = "aichat"
 	ConversationCallerAgent        = "agent"

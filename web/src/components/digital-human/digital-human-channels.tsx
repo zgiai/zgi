@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import {
   AlertTriangle,
   Bot,
@@ -102,6 +103,11 @@ export function DigitalHumanChannels({ id }: { id: string }) {
   const events = queries.events.data?.data?.items ?? [];
   const deliveries = queries.deliveries.data?.data?.items ?? [];
   const activeInstallations = installations.filter(item => item.status === 'active');
+  const hasChannels =
+    queries.installations.isLoading ||
+    installations.length > 0 ||
+    events.length > 0 ||
+    deliveries.length > 0;
   const pendingDeliveries = deliveries.filter(item =>
     ['pending', 'processing'].includes(item.status)
   ).length;
@@ -144,17 +150,21 @@ export function DigitalHumanChannels({ id }: { id: string }) {
         addLabel={t('channels.installations.addChannel')}
       />
 
-      <ChannelMetrics
-        activeInstallations={activeInstallations.length}
-        recentEvents={events.length}
-        pendingDeliveries={pendingDeliveries}
-        canViewActivity={canViewActivity}
-        labels={{
-          installations: t('channels.summary.installations'),
-          recentEvents: t('channels.summary.recentEvents'),
-          pending: t('channels.summary.pending'),
-        }}
-      />
+      {/* With no channel yet, the page is just the way to add one: counts and
+          an activity log of zeros only add noise. */}
+      {hasChannels ? (
+        <ChannelMetrics
+          activeInstallations={activeInstallations.length}
+          recentEvents={events.length}
+          pendingDeliveries={pendingDeliveries}
+          canViewActivity={canViewActivity}
+          labels={{
+            installations: t('channels.summary.installations'),
+            recentEvents: t('channels.summary.recentEvents'),
+            pending: t('channels.summary.pending'),
+          }}
+        />
+      ) : null}
 
       <section>
         {configurationError ? (
@@ -239,25 +249,27 @@ export function DigitalHumanChannels({ id }: { id: string }) {
         )}
       </section>
 
-      <ActivityPanel
-        id={id}
-        events={events}
-        deliveries={deliveries}
-        enabled={canViewActivity}
-        installations={installations}
-        loading={queries.events.isLoading || queries.deliveries.isLoading}
-        error={activityError}
-        canRetry={canRetry}
-        retryingId={
-          mutations.retryDelivery.isPending ? mutations.retryDelivery.variables : undefined
-        }
-        onRetry={deliveryId => mutations.retryDelivery.mutate(deliveryId)}
-        dismissingId={
-          mutations.dismissDelivery.isPending ? mutations.dismissDelivery.variables : undefined
-        }
-        onDismiss={deliveryId => mutations.dismissDelivery.mutate(deliveryId)}
-        onRefresh={refresh}
-      />
+      {hasChannels ? (
+        <ActivityPanel
+          id={id}
+          events={events}
+          deliveries={deliveries}
+          enabled={canViewActivity}
+          installations={installations}
+          loading={queries.events.isLoading || queries.deliveries.isLoading}
+          error={activityError}
+          canRetry={canRetry}
+          retryingId={
+            mutations.retryDelivery.isPending ? mutations.retryDelivery.variables : undefined
+          }
+          onRetry={deliveryId => mutations.retryDelivery.mutate(deliveryId)}
+          dismissingId={
+            mutations.dismissDelivery.isPending ? mutations.dismissDelivery.variables : undefined
+          }
+          onDismiss={deliveryId => mutations.dismissDelivery.mutate(deliveryId)}
+          onRefresh={refresh}
+        />
+      ) : null}
 
       <ChannelInstallationSetupDialog
         open={installationDialogOpen}
@@ -850,6 +862,7 @@ function EventRow({
   provider?: string;
 }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   const { locale } = useLocale();
   const time = formatChannelTime(event.received_at, locale);
   const preview = event.content_preview?.trim()
@@ -885,7 +898,7 @@ function EventRow({
       <div className="flex justify-start md:justify-end">
         {event.invocation_run_id ? (
           <Button variant="ghost" size="sm" asChild>
-            <Link href={`/console/digital-humans/${id}/runs?run=${event.invocation_run_id}`}>
+            <Link href={objectHref('run', event.invocation_run_id, id)} scroll={false}>
               {t('channels.activity.viewRun')}
               <ExternalLink className="size-3.5" />
             </Link>
@@ -918,6 +931,7 @@ function DeliveryRow({
   onDismiss: () => void;
 }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   const { locale } = useLocale();
   const canSafelyRetry = delivery.status === 'failed' && canRetry;
   const canDismiss = ['failed', 'unknown'].includes(delivery.status) && canRetry;
@@ -992,7 +1006,7 @@ function DeliveryRow({
       </div>
       <div className="flex flex-wrap justify-start gap-1 md:justify-end">
         <Button variant="ghost" size="sm" asChild>
-          <Link href={`/console/digital-humans/${id}/runs?run=${delivery.run_id}`}>
+          <Link href={objectHref('run', delivery.run_id, id)} scroll={false}>
             {t('channels.activity.viewRun')}
           </Link>
         </Button>

@@ -530,7 +530,7 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 
 	// Read file content
 	if source != nil && *source == interfaces.FileSourceChat {
-		if err := config.ChatPolicy(nil).ValidateFile(fileExtension, header.Size); err != nil {
+		if err := chatfile.ValidatePlatformFile(fileExtension, header.Size, config.ChatLimits()); err != nil {
 			if errors.Is(err, chatfile.ErrUnsupportedType) {
 				h.businessError(c, response.ErrUnsupportedFileType)
 			} else {

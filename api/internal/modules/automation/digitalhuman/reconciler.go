@@ -33,6 +33,7 @@ type ReconcileHandler struct {
 	dispatcher RunDispatcher
 	provider   automationaction.DigitalHumanRunnerProvider
 	deliverer  digitalhuman.TaskResultDeliverer
+	notifier   digitalhuman.TaskReportNotifier
 	now        func() time.Time
 }
 
@@ -45,6 +46,13 @@ func NewReconcileHandler(db *gorm.DB, dispatcher RunDispatcher, provider automat
 func (h *ReconcileHandler) SetResultDeliverer(deliverer digitalhuman.TaskResultDeliverer) {
 	if h != nil {
 		h.deliverer = deliverer
+	}
+}
+
+// SetReportNotifier lets the in-app inbox tell requesters about final reports.
+func (h *ReconcileHandler) SetReportNotifier(notifier digitalhuman.TaskReportNotifier) {
+	if h != nil {
+		h.notifier = notifier
 	}
 }
 
@@ -148,6 +156,8 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 	retryRunID := ""
 	var delivery *digitalhuman.TaskResultDeliveryRequest
 	var deliveryAlreadyRecorded bool
+	var finalReport *taskReportRow
+	var finalTask *automationmodel.AutomationTask
 	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var actionRun automationmodel.AutomationActionRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", actionRunID).First(&actionRun).Error; err != nil {
@@ -163,35 +173,6 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 		var task automationmodel.AutomationTask
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", taskID).First(&task).Error; err != nil {
 			return err
-		}
-		if state.Status == "succeeded" && h.deliverer != nil {
-			var delivered int64
-			if err := tx.Model(&automationmodel.AutomationTaskActivity{}).
-				Where("task_id = ? AND action = ? AND operation_id = ?", task.ID, "result_delivered", taskRunID).
-				Count(&delivered).Error; err != nil {
-				return err
-			}
-			deliveryAlreadyRecorded = delivered > 0
-			if !deliveryAlreadyRecorded {
-				if conversationID, ok := uuidFromTaskDeliveryConfig(task.DeliveryConfig); ok {
-					accountID := uuid.Nil
-					subjectKind := ""
-					if task.OwnerSubjectKind != nil {
-						subjectKind = strings.TrimSpace(*task.OwnerSubjectKind)
-					}
-					// ChatRuntime stores both account and API-end-user
-					// conversations under AccountID. The runtime decides whether
-					// membership checks apply from UserSubjectKind.
-					if task.OwnerSubjectID != nil {
-						accountID, _ = uuid.Parse(strings.TrimSpace(*task.OwnerSubjectID))
-					}
-					delivery = &digitalhuman.TaskResultDeliveryRequest{
-						OrganizationID: mustUUID(task.OrganizationID), WorkspaceID: mustUUID(task.WorkspaceID), AccountID: accountID, UserSubjectKind: subjectKind,
-						DigitalHumanID: mustUUID(pointerValue(task.SubjectID)), TaskID: mustUUID(task.ID), TaskRunID: mustUUID(taskRunID),
-						ConversationID: conversationID, Source: pointerValue(task.OriginSurface), TaskName: task.Name, Answer: state.Result,
-					}
-				}
-			}
 		}
 		succeeded := state.Status == "succeeded"
 		actionRun.FinishedAt = &now
@@ -260,6 +241,39 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 		if err := tx.Model(&automationmodel.AutomationTask{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
 			return err
 		}
+		report, err := finalizeTaskReport(tx, &task, &taskRun, pointerValue(actionRun.ExternalRunID), succeeded, willRetry, state.Result, state.ErrorMessage, now)
+		if err != nil {
+			return err
+		}
+		if report != nil && h.deliverer != nil {
+			var delivered int64
+			if err := tx.Model(&automationmodel.AutomationTaskActivity{}).
+				Where("task_id = ? AND action = ? AND operation_id = ?", task.ID, "result_delivered", taskRunID).
+				Count(&delivered).Error; err != nil {
+				return err
+			}
+			deliveryAlreadyRecorded = delivered > 0
+			if conversationID, ok := uuidFromTaskDeliveryConfig(task.DeliveryConfig); ok && !deliveryAlreadyRecorded {
+				accountID := uuid.Nil
+				subjectKind := ""
+				if task.OwnerSubjectKind != nil {
+					subjectKind = strings.TrimSpace(*task.OwnerSubjectKind)
+				}
+				// ChatRuntime stores both account and API-end-user
+				// conversations under AccountID. The runtime decides whether
+				// membership checks apply from UserSubjectKind.
+				if task.OwnerSubjectID != nil {
+					accountID, _ = uuid.Parse(strings.TrimSpace(*task.OwnerSubjectID))
+				}
+				delivery = &digitalhuman.TaskResultDeliveryRequest{
+					OrganizationID: mustUUID(task.OrganizationID), WorkspaceID: mustUUID(task.WorkspaceID), AccountID: accountID, UserSubjectKind: subjectKind,
+					DigitalHumanID: mustUUID(pointerValue(task.SubjectID)), TaskID: mustUUID(task.ID), TaskRunID: mustUUID(taskRunID),
+					ConversationID: conversationID, Source: pointerValue(task.OriginSurface), TaskName: task.Name, Answer: state.Result,
+					Report: reportDelivery(report),
+				}
+			}
+		}
+		finalReport, finalTask = report, &task
 		activity := &automationmodel.AutomationTaskActivity{TaskID: task.ID, OperationID: uuid.NewString(), ActorType: automationmodel.AutomationTaskActivityActorSystem, ActorRef: "scheduler", Action: "run_finished", Summary: "Task run finished", Changes: map[string]any{"run_status": taskRun.Status, "digital_human_status": state.Status}}
 		return tx.Create(activity).Error
 	})
@@ -284,6 +298,13 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 				Action: "result_delivered", Summary: "Task result returned to the source conversation",
 				Changes: map[string]any{"conversation_id": delivery.ConversationID.String()},
 			}).Error
+		}
+	}
+	if finalReport != nil && h.notifier != nil {
+		if notice, ok := reportNotice(finalReport, finalTask); ok {
+			// The report stays in the task's report history if the inbox is
+			// unavailable; a missing notice is not worth failing the run.
+			_ = h.notifier.NotifyTaskReport(ctx, notice)
 		}
 	}
 	if retryRunID != "" {
