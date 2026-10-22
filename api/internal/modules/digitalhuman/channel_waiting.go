@@ -160,9 +160,30 @@ func channelQuestionTexts(request map[string]interface{}) []string {
 		if len(raw) > 1 {
 			text = fmt.Sprintf("%d. %s", index+1, text)
 		}
+		// A channel has no option buttons, so the choices are written out.
+		if options := channelQuestionOptions(question["options"]); len(options) > 0 {
+			text += "\n   可选：" + strings.Join(options, " / ")
+		}
 		texts = append(texts, text)
 	}
 	return texts
+}
+
+func channelQuestionOptions(value interface{}) []string {
+	raw, _ := value.([]interface{})
+	labels := make([]string, 0, len(raw))
+	for _, item := range raw {
+		option, _ := item.(map[string]interface{})
+		label := strings.TrimSpace(stringValue(option["label"]))
+		if label == "" {
+			continue
+		}
+		if description := strings.TrimSpace(stringValue(option["description"])); description != "" {
+			label += "（" + description + "）"
+		}
+		labels = append(labels, label)
+	}
+	return labels
 }
 
 func containsAll(text string, parts []string) bool {
@@ -170,7 +191,8 @@ func containsAll(text string, parts []string) bool {
 		return false
 	}
 	for _, part := range parts {
-		if !strings.Contains(text, strings.TrimLeft(part, "0123456789. ")) {
+		question := strings.SplitN(strings.TrimLeft(part, "0123456789. "), "\n", 2)[0]
+		if !strings.Contains(text, question) {
 			return false
 		}
 	}

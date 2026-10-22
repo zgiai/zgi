@@ -152,12 +152,12 @@ func TestChannelWaitingPromptReadsQuestionsHeldInMemory(t *testing.T) {
 		"request_id": "call_1",
 		"message":    "渠道测试第 1 题与第 2 题如下，请分别作答。",
 		"questions": []map[string]interface{}{
-			{"id": "test_q1", "question": "消息显示与发送是否都正常？"},
+			{"id": "test_q1", "question": "消息显示与发送是否都正常？", "options": []map[string]interface{}{{"label": "正常"}, {"label": "能收不能发", "description": "回复失败"}}},
 			{"id": "test_q2", "question": "提醒希望以什么形式送达？"},
 		},
 	}}
 	text := channelWaitingPromptText(nil, runtimemodel.MessageStatusWaitingQuestion, "", metadata)
-	for _, want := range []string{"渠道测试第 1 题与第 2 题如下", "1. 消息显示与发送是否都正常？", "2. 提醒希望以什么形式送达？", channelReplyQuestion} {
+	for _, want := range []string{"渠道测试第 1 题与第 2 题如下", "1. 消息显示与发送是否都正常？\n   可选：正常 / 能收不能发（回复失败）", "2. 提醒希望以什么形式送达？", channelReplyQuestion} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("prompt = %q, want it to contain %q", text, want)
 		}
