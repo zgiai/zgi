@@ -104,13 +104,15 @@ type PublishRequest struct {
 	// Text is a document's Markdown; File is any other kind's content.
 	Text string
 	File *Blob
-	// Source says what produced the version. A task's artifact with the same
-	// title gains versions instead of being duplicated.
-	Source         SourceKind
-	SourceTaskID   *uuid.UUID
-	SourceRunID    *uuid.UUID
-	SourceReportID *uuid.UUID
-	Actor          Actor
+	// Source says what produced the version. A task's or a conversation's
+	// artifact with the same title gains versions instead of being
+	// duplicated, and content the owner already keeps is not kept twice.
+	Source               SourceKind
+	SourceTaskID         *uuid.UUID
+	SourceConversationID *uuid.UUID
+	SourceRunID          *uuid.UUID
+	SourceReportID       *uuid.UUID
+	Actor                Actor
 }
 
 // Published is the result of a publish. Created is false when the content
@@ -127,9 +129,21 @@ type Summary struct {
 	Latest *Version `json:"latest,omitempty"`
 }
 
+// ArchiveFilter selects artifacts by whether they are archived.
+type ArchiveFilter string
+
+const (
+	// ArchiveActive, the default, lists artifacts that are not archived.
+	ArchiveActive ArchiveFilter = ""
+	ArchiveOnly   ArchiveFilter = "archived"
+	ArchiveAll    ArchiveFilter = "all"
+)
+
 // ListQuery filters the artifacts a reader can see.
 type ListQuery struct {
 	Kind Kind
+	// Archive selects archived artifacts; by default they are left out.
+	Archive ArchiveFilter
 	// Query matches titles.
 	Query string
 	// Mine keeps only the reader's own artifacts.
@@ -176,7 +190,7 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, 
 	sum := sha256.Sum256(content)
 	checksum := hex.EncodeToString(sum[:])
 
-	artifact, err := s.target(ctx, req, title)
+	artifact, err := s.target(ctx, req, title, checksum)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +200,9 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, 
 		}
 		var current Version
 		if err := s.db.WithContext(ctx).Where("artifact_id = ? AND number = ?", artifact.ID, artifact.CurrentVersion).First(&current).Error; err == nil && current.Checksum == checksum {
+			if err := s.unarchive(ctx, artifact); err != nil {
+				return nil, err
+			}
 			return &Published{Artifact: artifact, Version: &current}, nil
 		}
 	}
@@ -212,16 +229,18 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, 
 		if artifact == nil {
 			artifact = &Artifact{ID: uuid.New(), OrganizationID: req.OrganizationID, WorkspaceID: req.WorkspaceID, ApplicationType: req.ApplicationType, ApplicationID: req.ApplicationID,
 				OwnerKind: req.Owner.Kind, OwnerID: req.Owner.ID, Visibility: req.Visibility, Kind: req.Kind, Title: title, SourceTaskID: req.SourceTaskID,
-				CurrentVersion: 1, CreatedByKind: req.Actor.Kind, CreatedByID: req.Actor.ID, CreatedAt: now, UpdatedAt: now}
+				SourceConversationID: req.SourceConversationID,
+				CurrentVersion:       1, CreatedByKind: req.Actor.Kind, CreatedByID: req.Actor.ID, CreatedAt: now, UpdatedAt: now}
 			if err := tx.Create(artifact).Error; err != nil {
 				return err
 			}
 			version.Number = 1
 		} else {
 			// Advance only from the version this publish was based on, so two
-			// concurrent publishes never claim the same number.
+			// concurrent publishes never claim the same number. A new version
+			// brings an archived artifact back.
 			result := tx.Model(&Artifact{}).Where("id = ? AND current_version = ?", artifact.ID, artifact.CurrentVersion).
-				Updates(map[string]any{"current_version": artifact.CurrentVersion + 1, "updated_at": now})
+				Updates(map[string]any{"current_version": artifact.CurrentVersion + 1, "updated_at": now, "archived_at": nil})
 			if result.Error != nil {
 				return result.Error
 			}
@@ -230,6 +249,7 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, 
 			}
 			artifact.CurrentVersion++
 			artifact.UpdatedAt = now
+			artifact.ArchivedAt = nil
 			version.Number = artifact.CurrentVersion
 		}
 		version.ArtifactID = artifact.ID
@@ -241,28 +261,85 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, 
 	return &Published{Artifact: artifact, Version: version, Created: true}, nil
 }
 
-// target finds the artifact a publish adds a version to, if any.
-func (s *Service) target(ctx context.Context, req PublishRequest, title string) (*Artifact, error) {
-	query := s.db.WithContext(ctx).Where("organization_id = ? AND workspace_id = ? AND application_type = ? AND application_id = ? AND owner_kind = ? AND owner_id = ? AND deleted_at IS NULL",
-		req.OrganizationID, req.WorkspaceID, req.ApplicationType, req.ApplicationID, req.Owner.Kind, req.Owner.ID)
-	var artifact Artifact
-	switch {
-	case req.ArtifactID != nil:
-		if err := query.Where("id = ?", *req.ArtifactID).First(&artifact).Error; err != nil {
+// target finds the artifact a publish adds a version to, if any: the one
+// named, else the task's or the conversation's artifact of that title, else
+// the owner's artifact whose current version already holds this content.
+func (s *Service) target(ctx context.Context, req PublishRequest, title, checksum string) (*Artifact, error) {
+	owned := func() *gorm.DB {
+		return s.db.WithContext(ctx).Model(&Artifact{}).
+			Where("artifacts.organization_id = ? AND artifacts.workspace_id = ? AND artifacts.application_type = ? AND artifacts.application_id = ?",
+				req.OrganizationID, req.WorkspaceID, req.ApplicationType, req.ApplicationID).
+			Where("artifacts.owner_kind = ? AND artifacts.owner_id = ? AND artifacts.deleted_at IS NULL", req.Owner.Kind, req.Owner.ID)
+	}
+	if req.ArtifactID != nil {
+		var artifact Artifact
+		if err := owned().Where("artifacts.id = ?", *req.ArtifactID).First(&artifact).Error; err != nil {
 			return nil, notFound(err)
 		}
-	case req.SourceTaskID != nil:
-		err := query.Where("source_task_id = ? AND title = ? AND kind = ?", *req.SourceTaskID, title, req.Kind).Order("created_at").First(&artifact).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+		return &artifact, nil
+	}
+	var candidates []*gorm.DB
+	if req.SourceTaskID != nil {
+		candidates = append(candidates, owned().Where("artifacts.source_task_id = ? AND artifacts.title = ? AND artifacts.kind = ?", *req.SourceTaskID, title, req.Kind))
+	}
+	if req.SourceConversationID != nil {
+		candidates = append(candidates, owned().Where("artifacts.source_conversation_id = ? AND artifacts.title = ? AND artifacts.kind = ?", *req.SourceConversationID, title, req.Kind))
+	}
+	candidates = append(candidates, owned().
+		Joins("JOIN artifact_versions ON artifact_versions.artifact_id = artifacts.id AND artifact_versions.number = artifacts.current_version").
+		Where("artifacts.kind = ? AND artifact_versions.checksum = ?", req.Kind, checksum))
+	for _, query := range candidates {
+		var artifact Artifact
+		err := query.Order("artifacts.created_at").First(&artifact).Error
+		if err == nil {
+			return &artifact, nil
 		}
-		if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
-	default:
-		return nil, nil
 	}
-	return &artifact, nil
+	return nil, nil
+}
+
+// unarchive restores an archived artifact that is being published again.
+func (s *Service) unarchive(ctx context.Context, artifact *Artifact) error {
+	if artifact.ArchivedAt == nil {
+		return nil
+	}
+	if err := s.db.WithContext(ctx).Model(&Artifact{}).Where("id = ?", artifact.ID).UpdateColumn("archived_at", nil).Error; err != nil {
+		return fmt.Errorf("restore artifact: %w", err)
+	}
+	artifact.ArchivedAt = nil
+	return nil
+}
+
+// SetArchived archives an artifact, or restores it when archived is false.
+// An archived artifact leaves the default listing but stays readable. Its
+// owner may manage it; so may an operator, and any member a workspace's
+// artifact shared with the team.
+func (s *Service) SetArchived(ctx context.Context, reader Reader, id uuid.UUID, archived bool) (*Artifact, error) {
+	artifact, err := s.load(ctx, reader, id)
+	if err != nil {
+		return nil, err
+	}
+	own := artifact.OwnerKind == reader.Principal.Kind && artifact.OwnerID == reader.Principal.ID
+	shared := reader.Member && artifact.OwnerKind == OwnerWorkspace && artifact.Visibility == VisibilityTeam
+	if !own && !reader.Operator && !shared {
+		return nil, ErrNotFound
+	}
+	if (artifact.ArchivedAt != nil) == archived {
+		return artifact, nil
+	}
+	var value *time.Time
+	if archived {
+		now := s.now()
+		value = &now
+	}
+	if err := s.db.WithContext(ctx).Model(&Artifact{}).Where("id = ?", artifact.ID).UpdateColumn("archived_at", value).Error; err != nil {
+		return nil, fmt.Errorf("archive artifact: %w", err)
+	}
+	artifact.ArchivedAt = value
+	return artifact, nil
 }
 
 // List returns the artifacts reader may see, newest first.
@@ -282,6 +359,13 @@ func (s *Service) List(ctx context.Context, reader Reader, query ListQuery) (*Li
 	}
 	if query.TaskID != nil {
 		base = base.Where("source_task_id = ?", *query.TaskID)
+	}
+	switch query.Archive {
+	case ArchiveOnly:
+		base = base.Where("archived_at IS NOT NULL")
+	case ArchiveAll:
+	default:
+		base = base.Where("archived_at IS NULL")
 	}
 	page, size := query.Page, query.PageSize
 	if page < 1 {
