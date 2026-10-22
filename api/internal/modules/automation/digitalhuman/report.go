@@ -644,7 +644,9 @@ func taskReportOrigin(task *automationmodel.AutomationTask, holder bool) *digita
 func (s *Service) lockReviewedTask(ctx context.Context, tx *gorm.DB, access digitalhuman.TaskAccessContext, task *automationmodel.AutomationTask) (*automationmodel.AutomationTask, error) {
 	taskID := uuid.MustParse(task.ID)
 	locked, err := s.loadTask(ctx, tx, access, taskID, true)
-	if !errors.Is(err, digitalhuman.ErrTaskNotFound) || !taskHeldBy(task, access) {
+	// The entry's scope either misses the task or sees it read-only.
+	outOfScope := errors.Is(err, digitalhuman.ErrTaskNotFound) || errors.Is(err, digitalhuman.ErrTaskPolicyRejected)
+	if !outOfScope || !taskHeldBy(task, access) {
 		return locked, err
 	}
 	var held automationmodel.AutomationTask
