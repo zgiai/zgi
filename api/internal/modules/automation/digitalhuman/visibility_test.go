@@ -129,22 +129,7 @@ func TestTaskVisibilityDefaultsFromOwnerAndRecordsConfirmation(t *testing.T) {
 	}
 }
 
-func TestTaskVisibilityDisabledKeepsOwnerNamespaces(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "false")
-	fixture := newVisibilityFixture(t)
-	assertNames(t, "member A", listNames(t, fixture.service, fixture.memberA), "private A")
-	assertNames(t, "task center manager", listNames(t, fixture.service, fixture.manager), "shared")
-	if occupancy, err := fixture.service.ListTaskOccupancy(t.Context(), fixture.memberA, 0); err != nil || occupancy != nil {
-		t.Fatalf("occupancy without the switch = %v, %v", occupancy, err)
-	}
-	visibility := digitalhuman.TaskVisibilityRestricted
-	if _, err := fixture.service.UpdateTask(t.Context(), fixture.manager, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &visibility}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskPolicyRejected) {
-		t.Fatalf("visibility update without the switch error = %v", err)
-	}
-}
-
 func TestTaskVisibilityReadRulesAndMutationScope(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	service := fixture.service
 
@@ -200,7 +185,6 @@ func TestTaskVisibilityReadRulesAndMutationScope(t *testing.T) {
 }
 
 func TestTaskOccupancyRedactsHiddenOpenWork(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	runAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
 	if _, err := fixture.service.CreateTask(t.Context(), fixture.memberB, digitalhuman.CreateTaskRequest{
@@ -242,7 +226,6 @@ func TestTaskOccupancyRedactsHiddenOpenWork(t *testing.T) {
 }
 
 func TestVisibleTasksReportWhetherTheReaderCanChangeThem(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	check := func(label string, access digitalhuman.TaskAccessContext, want map[string]bool) {
 		t.Helper()
@@ -266,7 +249,6 @@ func TestVisibleTasksReportWhetherTheReaderCanChangeThem(t *testing.T) {
 }
 
 func TestTaskVisibilityChoicesLetRequestersShareAndManagersOnlyNarrow(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	service := fixture.service
 	choices := func(access digitalhuman.TaskAccessContext, taskID uuid.UUID) []digitalhuman.TaskVisibility {
@@ -338,18 +320,7 @@ func TestTaskVisibilityChoicesLetRequestersShareAndManagersOnlyNarrow(t *testing
 	}
 }
 
-func TestTaskVisibilityCannotChangeWhileVisibilityIsDisabled(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
-	fixture := newVisibilityFixture(t)
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "false")
-	task, err := fixture.service.GetTask(t.Context(), fixture.manager, fixture.shared.ID)
-	if err != nil || len(task.VisibilityOptions) != 0 {
-		t.Fatalf("manager GetTask(shared) with visibility disabled = %#v, %v", task, err)
-	}
-}
-
 func TestTaskCenterNonManagerChangesOnlySharedTasksTheyCreated(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	service := fixture.service
 	// Another workspace member with only the Run permission in the task center.

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -71,33 +70,6 @@ func TestMemoryToolOperationIDIsReplayStable(t *testing.T) {
 	call.ID = "call-2"
 	if memoryToolOperationID(runID, call) == first {
 		t.Fatal("different call reused operation id")
-	}
-}
-
-func TestDigitalHumanMemoryToolAvailabilityIsPolicyDriven(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name            string
-		origin          invocation.OriginKind
-		autoExtraction  bool
-		actorAuthorized bool
-		want            bool
-	}{
-		{name: "authorized manual run", origin: invocation.OriginManual, actorAuthorized: true, want: true},
-		{name: "manual run requires actor permission", origin: invocation.OriginManual, autoExtraction: true, want: false},
-		{name: "automatic channel maintenance", origin: invocation.OriginChannel, autoExtraction: true, want: true},
-		{name: "authorized channel explicit maintenance", origin: invocation.OriginChannel, actorAuthorized: true, want: true},
-		{name: "unconfigured channel maintenance", origin: invocation.OriginChannel, want: false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			state := &MemoryState{AutoExtractionEnabled: test.autoExtraction}
-			event := invocation.Event{Origin: invocation.Origin{Kind: test.origin}}
-			if got := digitalHumanMemoryToolEnabled(event, state, test.actorAuthorized); got != test.want {
-				t.Fatalf("digitalHumanMemoryToolEnabled(%s, auto=%v, authorized=%v) = %v, want %v", test.origin, test.autoExtraction, test.actorAuthorized, got, test.want)
-			}
-		})
 	}
 }
 

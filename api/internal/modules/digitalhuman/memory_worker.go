@@ -220,21 +220,14 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 			return nil
 		}
 	}
-	target := memoryWriteAdmission{Allowed: true, Class: memoryruntime.MemoryClassSelf}
-	var readScope *memoryReadScope
-	if MemoryTrustPolicyEnabled() {
-		// The claim already verified automatic extraction for this epoch.
-		target = admitMemoryWrite(run, event, memoryWriteBackground, true)
-		if !target.Allowed {
-			r.recordExtractionLedger(ctx, job, "rejected", map[string]any{"reason": target.Reason, "source_trust": target.Trust})
-			return nil
-		}
-		scoped := memoryReadScopeForRun(run, event)
-		readScope = &scoped
-	} else if event.Origin.Kind == invocation.OriginManual && !memoryPromotionAuthorized(event) {
-		r.recordExtractionLedger(ctx, job, "rejected", map[string]any{"reason": "private_not_promoted"})
+	// The claim already verified automatic extraction for this epoch.
+	target := admitMemoryWrite(run, event, memoryWriteBackground, true)
+	if !target.Allowed {
+		r.recordExtractionLedger(ctx, job, "rejected", map[string]any{"reason": target.Reason, "source_trust": target.Trust})
 		return nil
 	}
+	scoped := memoryReadScopeForRun(run, event)
+	readScope := &scoped
 	scope := Scope{OrganizationID: job.OrganizationID, WorkspaceID: job.WorkspaceID, ActorID: source.AccountID}
 	current, err := r.service.retrieveMemories(ctx, scope, job.DigitalHumanID, 50, readScope)
 	if err != nil {
@@ -495,11 +488,6 @@ func memoryInWriteTarget(memory *DigitalHumanMemory, target memoryWriteAdmission
 // and business scope no longer partition the store.
 func memoryIdentity(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
-}
-
-func memoryPromotionAuthorized(event invocation.Event) bool {
-	value, _ := event.Context["memory_promotion_authorized"].(bool)
-	return value
 }
 
 func memoryExtractionRetryDelay(attempt int) time.Duration {

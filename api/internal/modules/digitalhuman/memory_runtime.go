@@ -103,14 +103,6 @@ func (f MemoryPromotionAuthorizerFunc) CanPromoteDigitalHumanMemory(ctx context.
 // MemoryRuntimeProviderOption configures the DigitalHuman-owned memory edge.
 type MemoryRuntimeProviderOption func(*DefaultMemoryRuntimeProvider)
 
-// WithMemoryPromotionAuthorizer requires an explicit workspace permission
-// decision before private conversation content can be promoted.
-func WithMemoryPromotionAuthorizer(authorizer MemoryPromotionAuthorizer) MemoryRuntimeProviderOption {
-	return func(provider *DefaultMemoryRuntimeProvider) {
-		provider.promotionAuthorizer = authorizer
-	}
-}
-
 // WithDigitalHumanMemoryRetriever attaches the hidden, query-aware retrieval
 // backend. It does not expose a dataset ID or a resource binding to callers.
 func WithDigitalHumanMemoryRetriever(retriever DigitalHumanMemoryRetriever) MemoryRuntimeProviderOption {
@@ -120,10 +112,9 @@ func WithDigitalHumanMemoryRetriever(retriever DigitalHumanMemoryRetriever) Memo
 }
 
 type DefaultMemoryRuntimeProvider struct {
-	service             *Service
-	promotionAuthorizer MemoryPromotionAuthorizer
-	retriever           DigitalHumanMemoryRetriever
-	now                 func() time.Time
+	service   *Service
+	retriever DigitalHumanMemoryRetriever
+	now       func() time.Time
 }
 
 func NewMemoryRuntimeProvider(service *Service, options ...MemoryRuntimeProviderOption) *DefaultMemoryRuntimeProvider {
@@ -148,48 +139,23 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	if err != nil {
 		return nil, err
 	}
-	trustPolicy := MemoryTrustPolicyEnabled()
-	promotionAuthorized := false
-	var toolEnabled bool
-	if trustPolicy {
-		// The run's admission-time trust level replaces the live actor check, so
-		// a channel run no longer borrows the installer's permission.
-		promotionAuthorized = RunSourceTrust(run) == SourceTrustAuthorizedOperator
-		toolEnabled = memoryToolAvailable(run, state.AutoExtractionEnabled)
-	} else {
-		if p.promotionAuthorizer != nil && run.ActorID != nil && *run.ActorID != uuid.Nil {
-			promotionAuthorized, err = p.promotionAuthorizer.CanPromoteDigitalHumanMemory(
-				ctx, run.OrganizationID, run.WorkspaceID, *run.ActorID,
-			)
-			if err != nil {
-				return nil, err
-			}
-		}
-		toolEnabled = digitalHumanMemoryToolEnabled(event, state, promotionAuthorized)
-	}
+	// The run's admission-time trust level decides, so a channel run never
+	// borrows the installer's permission.
+	promotionAuthorized := RunSourceTrust(run) == SourceTrustAuthorizedOperator
+	toolEnabled := memoryToolAvailable(run, state.AutoExtractionEnabled)
 	preparation := &MemoryRuntimePreparation{
 		SystemPromptAddendum: renderDigitalHumanMemoryContext(nil, toolEnabled, state.AutoExtractionEnabled),
 	}
-	if trustPolicy && toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
+	if toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
 		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation stay scoped to this conversation. They cannot change the DigitalHuman's own self memory or memory used in other conversations."
 	}
 	if p.retriever != nil {
 		preparation.Tools = append(preparation.Tools, p.memoryRetrievalTool(run, event))
 	}
 	if toolEnabled {
-		preparation.Tools = append(preparation.Tools, p.memoryMutationTool(run, event, state, promotionAuthorized, trustPolicy))
+		preparation.Tools = append(preparation.Tools, p.memoryMutationTool(run, event, state, promotionAuthorized))
 	}
 	return preparation, nil
-}
-
-func digitalHumanMemoryToolEnabled(event invocation.Event, state *MemoryState, actorAuthorized bool) bool {
-	if state == nil {
-		return false
-	}
-	if event.Origin.Kind == invocation.OriginManual {
-		return actorAuthorized
-	}
-	return actorAuthorized || state.AutoExtractionEnabled
 }
 
 // Finalize persists only durable source references for later extraction. The
@@ -324,15 +290,13 @@ func decodeMemoryRetrievalToolArguments(raw string) (memoryRetrievalToolArgument
 }
 
 // memoryMutationTool exposes the single converged memory write surface. The
-// tool never accepts memory_class or scope fields. Without the source trust
-// policy every proposal is self memory; with it, the run's trust level decides
-// the class and scope (ADR 0004).
+// tool never accepts memory_class or scope fields: the run's trust level
+// decides the class and scope (ADR 0004).
 func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 	run *Run,
 	event invocation.Event,
 	state *MemoryState,
 	promotionAuthorized bool,
-	trustPolicy bool,
 ) skillloop.RuntimeTool {
 	modes := []string{digitalHumanMemoryModeExplicit}
 	if state.AutoExtractionEnabled {
@@ -368,16 +332,13 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 		}
 		operationID := memoryToolOperationID(run.ID, call)
 		memoryClass, memoryScope := memoryruntime.MemoryClassSelf, (*memoryruntime.MemoryScopeRef)(nil)
-		var admission memoryWriteAdmission
-		if trustPolicy {
-			mode := memoryWriteExplicit
-			if args.Mode == digitalHumanMemoryModeProactive {
-				mode = memoryWriteProactive
-			}
-			admission = admitMemoryWrite(run, event, mode, state.AutoExtractionEnabled)
-			if admission.Allowed {
-				memoryClass, memoryScope = admission.Class, admission.Scope
-			}
+		mode := memoryWriteExplicit
+		if args.Mode == digitalHumanMemoryModeProactive {
+			mode = memoryWriteProactive
+		}
+		admission := admitMemoryWrite(run, event, mode, state.AutoExtractionEnabled)
+		if admission.Allowed {
+			memoryClass, memoryScope = admission.Class, admission.Scope
 		}
 		request := MemoryProposalRequest{
 			OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: memoryClass, Scope: memoryScope, MemoryType: args.MemoryType,
@@ -391,12 +352,10 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 			},
 			OccurredAt: p.now(),
 		}
-		if trustPolicy {
-			request.SourceContext.SourceTrust = admission.Trust
-			if !admission.Allowed {
-				p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, admission.err())
-				return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
-			}
+		request.SourceContext.SourceTrust = admission.Trust
+		if !admission.Allowed {
+			p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, admission.err())
+			return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
 		}
 		if err := validateMemoryToolDecision(args, run.Query, state.AutoExtractionEnabled); err != nil {
 			p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, err)

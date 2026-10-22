@@ -69,5 +69,5 @@ The trust level and resolved scopes are stored on the run and on every memory ev
 - Channel conversations stop leaking working context into unrelated groups by default. Identity-level continuity across channels is now built through promotion instead of automatic writes. This trade-off is deliberate.
 - Existing memories remain `self` memory. No backfill is required. Operators review existing entries and archive any that should not be shared; re-scoping existing entries needs its own management operation.
 - Scope resolution becomes a shared server-side concept. ADR 0005 reuses the same trust levels for task visibility.
-- The new admission policy ships behind `ZGI_DIGITAL_HUMAN_MEMORY_TRUST_POLICY_ENABLED`, which defaults to off. When the switch is off, the existing origin-based checks apply. The trust level is recorded on runs either way.
+- The new admission policy first shipped behind `ZGI_DIGITAL_HUMAN_MEMORY_TRUST_POLICY_ENABLED`. After acceptance the switch was removed (2026-10-22): the policy always applies and the origin-based checks are gone.
 - Per-user instances, an artifact library, and an approval center are outside this decision. Memory references artifacts by identifier and never copies their content, as ADR 0002 already requires.

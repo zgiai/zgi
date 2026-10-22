@@ -24,7 +24,6 @@ func (k knownChannels) ActiveWorkspaceChannels(_ context.Context, _, _ uuid.UUID
 }
 
 func TestTaskTeamChannelsFollowTheRequester(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	service, ctx := fixture.service, t.Context()
 	first, second := uuid.New(), uuid.New()

@@ -37,20 +37,17 @@ func TestDigitalHumanPermissionMiddlewareRecordsTaskCenterManager(t *testing.T) 
 	manager := map[workspacemodel.WorkspacePermissionCode]bool{workspacemodel.WorkspacePermissionDigitalHumanView: true, workspacemodel.WorkspacePermissionDigitalHumanUpdate: true, workspacemodel.WorkspacePermissionDigitalHumanRun: true}
 	cases := []struct {
 		name     string
-		enabled  string
 		granted  map[workspacemodel.WorkspacePermissionCode]bool
 		path     string
 		wantSet  bool
 		wantFlag bool
 	}{
-		{name: "viewer", enabled: "true", granted: viewer, path: "/digital-humans/:id/tasks", wantSet: true, wantFlag: false},
-		{name: "manager", enabled: "true", granted: manager, path: "/digital-humans/:id/tasks", wantSet: true, wantFlag: true},
-		{name: "personal view", enabled: "true", granted: manager, path: "/digital-humans/:id/my-tasks", wantSet: false},
-		{name: "switch off", enabled: "false", granted: manager, path: "/digital-humans/:id/tasks", wantSet: false},
+		{name: "viewer", granted: viewer, path: "/digital-humans/:id/tasks", wantSet: true, wantFlag: false},
+		{name: "manager", granted: manager, path: "/digital-humans/:id/tasks", wantSet: true, wantFlag: true},
+		{name: "personal view", granted: manager, path: "/digital-humans/:id/my-tasks", wantSet: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", tc.enabled)
 			router := gin.New()
 			var set, flag bool
 			router.GET(tc.path, digitalHumanPermissionMiddleware(taskManagerPermissionService{granted: tc.granted}, projector), func(c *gin.Context) {

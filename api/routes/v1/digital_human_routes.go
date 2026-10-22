@@ -169,7 +169,7 @@ func digitalHumanPermissionMiddleware(organizationService interfaces.Organizatio
 			writeDigitalHumanRouteError(c, projector, apperror.New(appcatalog.CodePermissionDenied, apperror.WithOperation("digital_human.permission.check")))
 			return
 		}
-		if (isDigitalHumanTaskCenterPath(c.FullPath()) && digitalhuman.TaskVisibilityEnabled()) || strings.Contains(c.FullPath(), "/digital-humans/:id/artifacts") {
+		if isDigitalHumanTaskCenterPath(c.FullPath()) || strings.Contains(c.FullPath(), "/digital-humans/:id/artifacts") {
 			manager := permission == workspacemodel.WorkspacePermissionDigitalHumanUpdate
 			if !manager {
 				manager, err = organizationService.CheckWorkspacePermission(
@@ -413,9 +413,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 			)
 		},
 	)
-	memoryOptions := []digitalhuman.MemoryRuntimeProviderOption{
-		digitalhuman.WithMemoryPromotionAuthorizer(memoryPromotionAuthorizer),
-	}
+	var memoryOptions []digitalhuman.MemoryRuntimeProviderOption
 	var memoryRetriever digitalhuman.DigitalHumanMemoryRetriever
 	if deps.MemoryRetriever != nil {
 		memoryRetriever = deps.MemoryRetriever

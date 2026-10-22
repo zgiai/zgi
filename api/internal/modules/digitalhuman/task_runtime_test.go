@@ -299,8 +299,8 @@ func TestTaskRuntimeListDefaultsToOpenTasks(t *testing.T) {
 		t.Fatalf("list view = %#v, want %q", data["view"], taskListViewOpen)
 	}
 	scope, ok := data["scope"].(taskListToolScope)
-	if !ok || scope.Visibility != "current_user" {
-		t.Fatalf("manual list scope = %#v, want current user tasks", data["scope"])
+	if !ok || scope.Visibility != "current_user_and_shared" {
+		t.Fatalf("manual list scope = %#v, want the member's and shared tasks", data["scope"])
 	}
 }
 

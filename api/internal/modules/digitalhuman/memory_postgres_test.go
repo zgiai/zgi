@@ -100,7 +100,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := NewMemoryRuntimeProvider(service)
-	tool := provider.memoryMutationTool(guardRun, guardEvent, state, true, false)
+	tool := provider.memoryMutationTool(guardRun, guardEvent, state, true)
 	scopeResult := tool.Handler(t.Context(), adapter.ToolCall{
 		ID: "legacy-scope-fields",
 		Function: adapter.FunctionCall{

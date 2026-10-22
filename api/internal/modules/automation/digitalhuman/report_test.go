@@ -219,7 +219,6 @@ func TestReportsAreListedReviewedAndReworked(t *testing.T) {
 	stranger := access
 	stranger.Principal.ID = uuid.NewString()
 	stranger.Viewer = digitalhuman.TaskViewer{Mode: digitalhuman.TaskViewTaskCenter}
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	other, err := service.GetTaskReport(t.Context(), stranger, reportID)
 	if err != nil || other.CanReview {
 		t.Fatalf("another member's view = %#v, %v", other, err)

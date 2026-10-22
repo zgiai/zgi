@@ -774,7 +774,7 @@ func (s *Service) ListTaskOccupancy(ctx context.Context, access digitalhuman.Tas
 	if err := validateBoundary(access); err != nil {
 		return nil, err
 	}
-	if !digitalhuman.TaskVisibilityEnabled() || access.CurrentTaskID != nil {
+	if access.CurrentTaskID != nil {
 		return nil, nil
 	}
 	if access.Viewer.Mode != digitalhuman.TaskViewMember && access.Viewer.Mode != digitalhuman.TaskViewChannel {
@@ -905,7 +905,7 @@ func publicTaskForAccess(row *automationmodel.AutomationTask, access digitalhuma
 // else's, which would publish that requester's work without them. External
 // end users never share tasks with the team.
 func taskVisibilityChoices(row *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) []digitalhuman.TaskVisibility {
-	if !digitalhuman.TaskVisibilityEnabled() || access.CurrentTaskID != nil {
+	if access.CurrentTaskID != nil {
 		return nil
 	}
 	requestedByReader := access.Surface == digitalhuman.SurfaceConsole && taskRequestedBy(row, access)
@@ -933,7 +933,7 @@ func taskRequestedBy(row *automationmodel.AutomationTask, access digitalhuman.Ta
 		if row.OwnerSubjectID != nil || row.OwnerConversationID != nil {
 			return false
 		}
-		return !digitalhuman.TaskVisibilityEnabled() || row.CreatedBy == accessActorID(access).String()
+		return row.CreatedBy == accessActorID(access).String()
 	case digitalhuman.TaskOwnerUserSubject:
 		return pointerValue(row.OwnerSubjectKind) == string(owner.Subject.Kind) && pointerValue(row.OwnerSubjectID) == owner.Subject.ID.String()
 	case digitalhuman.TaskOwnerConversation:
@@ -1258,7 +1258,7 @@ const workspaceVisiblePredicate = "(COALESCE(visibility, CASE WHEN owner_kind = 
 // visibleTaskPredicate expresses the read visibility rules of ADR 0005. ok is
 // false when the reader sees every task of the DigitalHuman.
 func visibleTaskPredicate(access digitalhuman.TaskAccessContext) (clause string, args []any, ok bool) {
-	if !digitalhuman.TaskVisibilityEnabled() || access.CurrentTaskID != nil {
+	if access.CurrentTaskID != nil {
 		clause, args = ownerPredicate(access.Owner)
 		return clause, args, true
 	}
@@ -1306,20 +1306,19 @@ func applyMutationScope(query *gorm.DB, access digitalhuman.TaskAccessContext) *
 	return query.Where(clause, args...)
 }
 
-// mutationOwnerPredicate matches the tasks this caller requested. With task
-// visibility enabled, a shared task's requester is the account that created
-// it, so a non-manager in the task center cannot change another account's
-// shared or restricted task.
+// mutationOwnerPredicate matches the tasks this caller requested. A shared
+// task's requester is the account that created it, so a non-manager in the
+// task center cannot change another account's shared or restricted task.
 func mutationOwnerPredicate(access digitalhuman.TaskAccessContext) (string, []any) {
 	clause, args := ownerPredicate(access.Owner)
-	if digitalhuman.TaskVisibilityEnabled() && access.Owner.Kind == digitalhuman.TaskOwnerDigitalHuman {
+	if access.Owner.Kind == digitalhuman.TaskOwnerDigitalHuman {
 		return clause + " AND created_by = ?", append(args, accessActorID(access).String())
 	}
 	return clause, args
 }
 
 func taskCenterManager(access digitalhuman.TaskAccessContext) bool {
-	return digitalhuman.TaskVisibilityEnabled() && access.CurrentTaskID == nil &&
+	return access.CurrentTaskID == nil &&
 		access.Viewer.Mode == digitalhuman.TaskViewTaskCenter && access.Viewer.Manager
 }
 
