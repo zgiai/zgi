@@ -892,8 +892,18 @@ const messages: DigitalHumansMessages = {
       duration: '耗时',
       created: '创建时间',
       conversation: '会话',
+      requester: '发起人',
     },
     filters: {
+      requester: {
+        label: '发起人范围',
+        all: '全部发起人',
+        mine: '我发起的',
+        member: 'ZGI 成员',
+        api_user: 'API 用户',
+        channel: '渠道会话',
+        visitor: '未登录访客',
+      },
       searchPlaceholder: '搜索触发内容、运行 ID、会话或结果',
       statusLabel: '按状态筛选',
       allSources: '全部来源',

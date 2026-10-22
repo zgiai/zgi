@@ -951,8 +951,18 @@ const messages = {
       duration: 'Duration',
       created: 'Created',
       conversation: 'Conversation',
+      requester: 'Requester',
     },
     filters: {
+      requester: {
+        label: 'Show runs from',
+        all: 'Everyone',
+        mine: 'Mine',
+        member: 'ZGI members',
+        api_user: 'API users',
+        channel: 'Channel chats',
+        visitor: 'Signed-out visitors',
+      },
       searchPlaceholder: 'Search trigger, run ID, conversation, or result',
       statusLabel: 'Filter by status',
       allSources: 'All sources',
