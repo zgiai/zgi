@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { CheckCircle2, ChevronDown, CircleDashed, FileText, RotateCcw, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleDashed, FileText, Paperclip, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,8 @@ import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { plainTextPreview } from '@/components/digital-human/digital-human-run-presentation';
+import { formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import type { ApiResponseData } from '@/services/types/common';
 import type { AIChatGeneratedFile } from '@/services/types/aichat';
 import type {
@@ -101,10 +103,13 @@ export function TaskReportDetail({
   onOpenRun,
   stickyActions,
   actionsExtra,
+  onReviewed,
 }: {
   digitalHumanId: string;
   report: DigitalHumanTaskReport;
   mine: boolean;
+  // Called once a review is saved, for example to move on to the next report.
+  onReviewed?: (action: 'accept' | 'rework') => void;
   // Shows the run that produced the report in place, for readers of run logs.
   onOpenRun?: (runId: string) => void;
   stickyActions?: boolean;
@@ -122,6 +127,7 @@ export function TaskReportDetail({
       onOpenRun={runId && !mine && onOpenRun ? () => onOpenRun(runId) : undefined}
       onReview={async request => {
         await review.mutateAsync({ reportId: report.id, request });
+        onReviewed?.(request.action);
       }}
     />
   );
@@ -164,6 +170,7 @@ export function TaskReportDetailView({
   const body = report.body?.trim() && report.body.trim() !== report.summary.trim() ? report.body : '';
   // A failed run's issue is often its summary; show it once.
   const issues = report.issues?.trim() && report.issues.trim() !== report.summary.trim() ? report.issues : '';
+  const metCount = report.criteria.filter(criterion => criterion.status === 'met').length;
 
   const submit = async (action: 'accept' | 'rework') => {
     try {
@@ -182,16 +189,22 @@ export function TaskReportDetailView({
         <div className="flex flex-wrap items-center gap-2">
           <TaskReportOutcomeBadge outcome={report.outcome} />
           <ReviewStateLabel state={report.review_state} />
-          <span className="text-xs text-muted-foreground">
-            {new Date(report.created_at).toLocaleString(locale)}
+          <span className="text-xs text-muted-foreground" title={new Date(report.created_at).toLocaleString(locale)}>
+            {formatTaskTime(report.created_at, locale)}
             {report.attempt > 1 ? ` · ${t('tasks.reports.attempt', { value: report.attempt })}` : ''}
           </span>
         </div>
-        <p className="text-sm font-medium leading-6">{report.summary}</p>
+        {/* The summary is what the reader needs first. */}
+        <p className="rounded-lg border-l-2 border-primary/60 bg-muted/40 px-3 py-2.5 text-sm font-medium leading-6">{report.summary}</p>
       </div>
       {report.criteria.length ? (
         <section>
-          <h4 className="text-sm font-semibold">{t('tasks.reports.criteria')}</h4>
+          <h4 className="flex items-center gap-2 text-sm font-semibold">
+            {t('tasks.reports.criteria')}
+            <span className={cn('text-xs font-normal tabular-nums', metCount === report.criteria.length ? 'text-success' : 'text-muted-foreground')}>
+              {t('tasks.reports.criteriaMet', { met: metCount, total: report.criteria.length })}
+            </span>
+          </h4>
           <ul className="mt-2 space-y-2">
             {report.criteria.map((criterion, index) => (
               <li key={`${index}-${criterion.criterion}`} className="flex gap-2 text-sm">
@@ -209,7 +222,7 @@ export function TaskReportDetailView({
       {body ? (
         <section>
           <h4 className="text-sm font-semibold">{t('tasks.reports.result')}</h4>
-          <div className="mt-2 rounded-md border bg-muted/30 p-3 text-sm">
+          <div className="mt-2 rounded-lg border px-4 py-3 text-sm">
             <MarkdownViewer content={body} />
           </div>
         </section>
@@ -306,12 +319,17 @@ export function TaskReportView({
   onOpenRun,
   stickyActions,
   withHeading = false,
+  navigation,
+  onReviewed,
 }: {
   digitalHumanId: string;
   reportId: string;
   mine: boolean;
   onOpenRun?: (runId: string) => void;
   stickyActions?: boolean;
+  // Shown beside the heading, such as previous and next buttons.
+  navigation?: ReactNode;
+  onReviewed?: (action: 'accept' | 'rework') => void;
   // Shows the task name with a link to the task, where nothing else does.
   withHeading?: boolean;
 }) {
@@ -334,16 +352,26 @@ export function TaskReportView({
   return report ? (
     <div className="space-y-4">
       {withHeading ? (
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h3 className="text-base font-semibold">{report.task_name}</h3>
-          {mine ? null : (
-            <Link href={`/console/digital-humans/${digitalHumanId}/tasks?task=${report.task_id}`} className="text-xs text-primary hover:underline">
-              {t('tasks.reports.openTask')}
-            </Link>
-          )}
+        <div className="flex flex-wrap items-start justify-between gap-2 border-b pb-3">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold leading-7">{report.task_name}</h3>
+            {mine ? null : (
+              <Link href={`/console/digital-humans/${digitalHumanId}/tasks?task=${report.task_id}`} className="text-xs text-primary hover:underline">
+                {t('tasks.reports.openTask')}
+              </Link>
+            )}
+          </div>
+          {navigation}
         </div>
       ) : null}
-      <TaskReportDetail digitalHumanId={digitalHumanId} report={report} mine={mine} onOpenRun={onOpenRun} stickyActions={stickyActions} />
+      <TaskReportDetail
+        digitalHumanId={digitalHumanId}
+        report={report}
+        mine={mine}
+        onOpenRun={onOpenRun}
+        stickyActions={stickyActions}
+        onReviewed={onReviewed}
+      />
     </div>
   ) : (
     <p className="text-sm text-muted-foreground">{t('tasks.reports.loadError')}</p>
@@ -366,6 +394,7 @@ export function TaskReportFeed({
   taskId,
   selectedId,
   onOpen,
+  onItemsChange,
 }: {
   digitalHumanId: string;
   mine?: boolean;
@@ -373,15 +402,28 @@ export function TaskReportFeed({
   // Highlights the report open beside the list.
   selectedId?: string | null;
   onOpen: (reportId: string) => void;
+  // The reports on screen, in order, for moving between them.
+  onItemsChange?: (ids: string[]) => void;
 }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
   const [filter, setFilter] = useState<FeedFilter>('all');
   const [page, setPage] = useState(1);
   const query = useDigitalHumanTaskReports(digitalHumanId, { ...feedFilters[filter], task_id: taskId, page, page_size: 20 }, mine);
+  // How many wait in the two filters that ask for action.
+  const toReview = useDigitalHumanTaskReports(digitalHumanId, { ...feedFilters.to_review, task_id: taskId, page_size: 1 }, mine);
+  const attention = useDigitalHumanTaskReports(digitalHumanId, { ...feedFilters.attention, task_id: taskId, page_size: 1 }, mine);
+  const counts: Partial<Record<FeedFilter, number | undefined>> = {
+    to_review: toReview.data?.data.total,
+    attention: attention.data?.data.total,
+  };
   const list = query.data?.data;
   const items = list?.items ?? [];
   const pages = list ? Math.max(1, Math.ceil(list.total / list.page_size)) : 1;
+  const idsKey = items.map(item => item.id).join(',');
+  useEffect(() => {
+    onItemsChange?.(idsKey ? idsKey.split(',') : []);
+  }, [idsKey, onItemsChange]);
   return (
     <div className="space-y-3">
       {taskId ? null : (
@@ -397,6 +439,7 @@ export function TaskReportFeed({
               }}
             >
               {t(`tasks.reports.filter.${key}`)}
+              {counts[key] ? <span className="ml-1.5 tabular-nums opacity-70">{counts[key]}</span> : null}
             </Button>
           ))}
         </div>
@@ -413,25 +456,45 @@ export function TaskReportFeed({
           <p className="mt-1 text-xs text-muted-foreground">{t('tasks.reports.emptyDescription')}</p>
         </div>
       ) : (
-        <ul className="divide-y rounded-lg border">
-          {items.map(report => (
-            <li key={report.id}>
-              <button
-                type="button"
-                aria-current={selectedId === report.id ? 'true' : undefined}
-                className={cn('w-full px-4 py-3 text-left hover:bg-muted/40', selectedId === report.id && 'bg-primary/5')}
-                onClick={() => onOpen(report.id)}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <TaskReportOutcomeBadge outcome={report.outcome} />
-                  {taskId ? null : <span className="text-sm font-medium">{report.task_name}</span>}
-                  <ReviewStateLabel state={report.review_state} />
-                  <span className="ml-auto text-xs text-muted-foreground">{new Date(report.created_at).toLocaleString(locale)}</span>
-                </div>
-                <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{report.summary}</p>
-              </button>
-            </li>
-          ))}
+        <ul className="divide-y overflow-hidden rounded-xl border bg-background">
+          {items.map(report => {
+            const unread = report.review_state === 'new';
+            return (
+              <li key={report.id}>
+                <button
+                  type="button"
+                  aria-current={selectedId === report.id ? 'true' : undefined}
+                  className={cn(
+                    'relative w-full px-4 py-3 text-left transition-colors hover:bg-muted/40',
+                    selectedId === report.id && 'bg-primary/5 hover:bg-primary/5'
+                  )}
+                  onClick={() => onOpen(report.id)}
+                >
+                  {/* Unread reports carry a bar, so they stand out in a long list. */}
+                  {unread ? <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary" aria-hidden /> : null}
+                  <div className="flex items-center gap-2">
+                    <span className={cn('min-w-0 flex-1 truncate text-sm', unread ? 'font-semibold' : 'font-medium text-foreground/80')}>
+                      {taskId ? t(`tasks.reports.outcome.${report.outcome}`) : report.task_name}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground" title={new Date(report.created_at).toLocaleString(locale)}>
+                      {formatTaskTime(report.created_at, locale)}
+                    </span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{plainTextPreview(report.summary)}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <TaskReportOutcomeBadge outcome={report.outcome} />
+                    <ReviewStateLabel state={report.review_state} />
+                    {report.files?.length ? (
+                      <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                        <Paperclip className="size-3" />
+                        {report.files.length}
+                      </span>
+                    ) : null}
+                  </div>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {pages > 1 ? (

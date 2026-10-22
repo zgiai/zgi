@@ -1,14 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { Download, FileImage, FileSpreadsheet, FileText, Files, Package, Search, Users } from 'lucide-react';
+import { Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Users } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { ProtectedGeneratedFileCard } from '@/components/chat/variants/aichat/protected-generated-file-card';
 import { useOpenTaskReport } from '@/components/digital-human/task-report-drawer';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
@@ -17,6 +16,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import { digitalHumanService } from '@/services/digital-human.service';
 import type {
   DigitalHumanArtifact,
@@ -26,6 +26,38 @@ import type {
 
 const kinds: DigitalHumanArtifactKind[] = ['document', 'file', 'image', 'table'];
 const kindIcon = { document: FileText, file: Files, image: FileImage, table: FileSpreadsheet } as const;
+const kindTone = {
+  document: 'bg-primary/10 text-primary',
+  file: 'bg-muted text-muted-foreground',
+  image: 'bg-success/10 text-success',
+  table: 'bg-warning/10 text-warning',
+} as const;
+// Text files read as documents, whatever kind they were kept as.
+const textExtensions = ['md', 'markdown', 'txt', 'csv', 'json', 'log', 'yaml', 'yml'];
+const maxTextPreviewBytes = 1024 * 1024;
+
+function readsAsText(version: DigitalHumanArtifactVersion, title: string) {
+  if (version.size > maxTextPreviewBytes) return false;
+  const name = (version.file_name || title).toLowerCase();
+  const extension = name.includes('.') ? name.split('.').pop() ?? '' : '';
+  return version.mime_type?.startsWith('text/') || version.mime_type === 'application/json' || textExtensions.includes(extension);
+}
+
+function formatSize(bytes: number) {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function KindTile({ kind, size = 'md' }: { kind: DigitalHumanArtifactKind; size?: 'md' | 'lg' }) {
+  const Icon = kindIcon[kind];
+  return (
+    <span className={cn('flex shrink-0 items-center justify-center rounded-lg', kindTone[kind], size === 'lg' ? 'size-10' : 'size-8')}>
+      <Icon className={size === 'lg' ? 'size-5' : 'size-4'} />
+    </span>
+  );
+}
 
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -97,45 +129,52 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
             <Skeleton className="h-16 w-full" />
           </div>
         ) : items.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-8 text-center">
+          <div className="rounded-xl border border-dashed p-8 text-center">
             <Package className="mx-auto size-7 text-muted-foreground/50" />
             <p className="mt-2 text-sm font-medium">{t('artifacts.empty')}</p>
             <p className="mt-1 text-xs text-muted-foreground">{t('artifacts.emptyDescription')}</p>
           </div>
         ) : (
-          <ul className="divide-y rounded-lg border">
-            {items.map(item => {
-              const Icon = kindIcon[item.kind];
-              return (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    aria-current={selected === item.id ? 'true' : undefined}
-                    className={cn('flex w-full gap-3 px-4 py-3 text-left hover:bg-muted/40', selected === item.id && 'bg-primary/5')}
-                    onClick={() => select(item.id)}
-                  >
-                    <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{item.title}</span>
-                      <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                        <span>v{item.current_version}</span>
-                        <span>{new Date(item.updated_at).toLocaleString(locale)}</span>
-                        {item.visibility === 'team' ? (
-                          <span className="inline-flex items-center gap-0.5">
-                            <Users className="size-3" />
-                            {t('artifacts.visibility.team')}
-                          </span>
-                        ) : null}
+          <ul className="divide-y overflow-hidden rounded-xl border bg-background">
+            {items.map(item => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  aria-current={selected === item.id ? 'true' : undefined}
+                  className={cn(
+                    'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40',
+                    selected === item.id && 'bg-primary/5 hover:bg-primary/5'
+                  )}
+                  onClick={() => select(item.id)}
+                >
+                  <KindTile kind={item.kind} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground" title={new Date(item.updated_at).toLocaleString(locale)}>
+                        {formatTaskTime(item.updated_at, locale)}
                       </span>
                     </span>
-                  </button>
-                </li>
-              );
-            })}
+                    {item.latest?.note ? <span className="mt-0.5 line-clamp-1 block text-xs text-muted-foreground">{item.latest.note}</span> : null}
+                    <span className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground/80">
+                      <span>{t(`artifacts.kind.${item.kind}`)}</span>
+                      <span>·</span>
+                      <span>{t('artifacts.versionCount', { count: item.current_version })}</span>
+                      {item.visibility === 'team' ? (
+                        <span className="inline-flex items-center gap-0.5">
+                          <Users className="size-3" />
+                          {t('artifacts.visibility.team')}
+                        </span>
+                      ) : null}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
           </ul>
         )}
         {wide ? (
-          <section className="sticky top-4 max-h-[calc(100vh-12rem)] overflow-y-auto rounded-xl border bg-background p-4">
+          <section className="sticky top-4 max-h-[calc(100vh-12rem)] overflow-y-auto rounded-xl border bg-background p-5">
             {selected ? (
               <ArtifactDetail key={selected} digitalHumanId={id} artifactId={selected} />
             ) : (
@@ -177,44 +216,82 @@ function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId: string
 
   if (artifact.isLoading) return <Skeleton className="h-40 w-full" />;
   if (!data || !version) return <p className="text-sm text-muted-foreground">{t('artifacts.loadError')}</p>;
+  const viewingOld = version.number !== data.current_version;
   return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <h2 className="text-base font-semibold">{data.title}</h2>
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="outline">{t(`artifacts.kind.${data.kind}`)}</Badge>
-          <Badge variant="outline">{t(`artifacts.visibility.${data.visibility}`)}</Badge>
-          <span>{new Date(version.created_at).toLocaleString(locale)}</span>
-          {data.source_task_id ? (
-            <Link href={`/console/digital-humans/${digitalHumanId}/tasks?task=${data.source_task_id}`} className="text-primary hover:underline">
-              {t('artifacts.openTask')}
-            </Link>
-          ) : null}
-          {version.source_report_id ? (
-            <button type="button" className="text-primary hover:underline" onClick={() => openReport(version.source_report_id ?? '')}>
-              {t('artifacts.openReport')}
-            </button>
-          ) : null}
+    <div className="space-y-5">
+      <div className="flex items-start gap-3">
+        <KindTile kind={data.kind} size="lg" />
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-lg font-semibold leading-7">{data.title}</h2>
+          <p className="text-xs text-muted-foreground">
+            {t('artifacts.versionLabel', { number: version.number })}
+            {viewingOld ? ` · ${t('artifacts.oldVersion')}` : ''}
+            {' · '}
+            {formatTaskTime(version.created_at, locale)}
+          </p>
         </div>
       </div>
-      {items.length > 1 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {items.map(item => (
-            <Button
-              key={item.id}
-              size="sm"
-              variant={item.number === version.number ? 'default' : 'outline'}
-              className="h-7 rounded-full px-2.5 text-xs"
-              title={item.note || new Date(item.created_at).toLocaleString(locale)}
-              onClick={() => setNumber(item.number)}
-            >
-              v{item.number}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-      {version.note ? <p className="text-xs text-muted-foreground">{version.note}</p> : null}
+      {version.note ? <p className="rounded-lg border-l-2 border-primary/60 bg-muted/40 px-3 py-2 text-sm">{version.note}</p> : null}
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border px-4 py-3 text-sm sm:grid-cols-4">
+        <ArtifactFact label={t('artifacts.facts.kind')} value={t(`artifacts.kind.${data.kind}`)} />
+        <ArtifactFact label={t('artifacts.facts.visibility')} value={t(`artifacts.visibility.${data.visibility}`)} />
+        <ArtifactFact label={t('artifacts.facts.size')} value={formatSize(version.size) || '—'} />
+        <ArtifactFact
+          label={t('artifacts.facts.source')}
+          value={
+            data.source_task_id || version.source_report_id ? (
+              <span className="flex flex-wrap gap-x-2">
+                {data.source_task_id ? (
+                  <Link href={`/console/digital-humans/${digitalHumanId}/tasks?task=${data.source_task_id}`} className="text-primary hover:underline">
+                    {t('artifacts.openTask')}
+                  </Link>
+                ) : null}
+                {version.source_report_id ? (
+                  <button type="button" className="text-primary hover:underline" onClick={() => openReport(version.source_report_id ?? '')}>
+                    {t('artifacts.openReport')}
+                  </button>
+                ) : null}
+              </span>
+            ) : (
+              t('artifacts.facts.conversation')
+            )
+          }
+        />
+      </dl>
       <ArtifactPreview digitalHumanId={digitalHumanId} artifact={data} version={version} />
+      {items.length > 1 ? (
+        <section>
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+            <History className="size-4 text-muted-foreground" />
+            {t('artifacts.history')}
+          </h3>
+          <ol className="mt-2 divide-y rounded-lg border">
+            {items.map(item => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  aria-current={item.number === version.number ? 'true' : undefined}
+                  className={cn('flex w-full items-start gap-3 px-3 py-2 text-left text-sm hover:bg-muted/40', item.number === version.number && 'bg-primary/5')}
+                  onClick={() => setNumber(item.number)}
+                >
+                  <span className="w-8 shrink-0 font-medium tabular-nums">v{item.number}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{item.note || '—'}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatTaskTime(item.created_at, locale)}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function ArtifactFact({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 truncate">{value}</dd>
     </div>
   );
 }
@@ -222,7 +299,8 @@ function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId: string
 function ArtifactPreview({ digitalHumanId, artifact, version }: { digitalHumanId: string; artifact: DigitalHumanArtifact; version: DigitalHumanArtifactVersion }) {
   const t = useT('digitalHumans');
   const read = (signal?: AbortSignal) => digitalHumanService.readArtifactContent(digitalHumanId, artifact.id, version.number, signal);
-  const inline = artifact.kind === 'document' || artifact.kind === 'image';
+  const asText = artifact.kind === 'document' || readsAsText(version, artifact.title);
+  const inline = asText || artifact.kind === 'image';
   const content = useQuery({
     queryKey: ['digital-human-artifact-content', digitalHumanId, artifact.id, version.number],
     queryFn: ({ signal }) => read(signal),
@@ -234,14 +312,14 @@ function ArtifactPreview({ digitalHumanId, artifact, version }: { digitalHumanId
   useEffect(() => {
     const blob = content.data;
     if (!blob) return;
-    if (artifact.kind === 'document') {
+    if (asText) {
       void blob.text().then(setText);
       return;
     }
     const url = URL.createObjectURL(blob);
     setImageUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [artifact.kind, content.data]);
+  }, [asText, content.data]);
 
   if (!inline) {
     const name = version.file_name || artifact.title;
@@ -259,22 +337,24 @@ function ArtifactPreview({ digitalHumanId, artifact, version }: { digitalHumanId
   if (content.isLoading) return <Skeleton className="h-40 w-full" />;
   if (content.isError) return <p className="text-sm text-muted-foreground">{t('artifacts.loadError')}</p>;
   const download = () => content.data && saveBlob(content.data, version.file_name || `${artifact.title}.md`);
+  const markdown = artifact.kind === 'document' || /\.(md|markdown)$/i.test(version.file_name || artifact.title);
   return (
-    <div className="space-y-2">
-      <div className="flex justify-end">
-        <Button size="sm" variant="ghost" onClick={download}>
+    <section className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">{t('artifacts.preview')}</h3>
+        <Button size="sm" variant="outline" onClick={download}>
           <Download className="size-4" />
           {t('artifacts.download')}
         </Button>
       </div>
-      {artifact.kind === 'document' ? (
-        <div className="rounded-md border bg-muted/20 p-4 text-sm">
-          <MarkdownViewer content={text ?? ''} />
+      {asText ? (
+        <div className="max-h-[60vh] overflow-auto rounded-lg border px-5 py-4 text-sm">
+          {markdown ? <MarkdownViewer content={text ?? ''} /> : <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5">{text}</pre>}
         </div>
       ) : imageUrl ? (
         // A blob URL from an authenticated read.
-        <img src={imageUrl} alt={artifact.title} className="max-h-[60vh] rounded-md border object-contain" />
+        <img src={imageUrl} alt={artifact.title} className="max-h-[60vh] rounded-lg border object-contain" />
       ) : null}
-    </div>
+    </section>
   );
 }
