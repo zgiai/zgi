@@ -1,5 +1,6 @@
 'use client';
 
+import { DigitalHumanApiCallbackGuide } from '@/components/digital-human/digital-human-api-callback-guide';
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, Edit, KeyRound, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -347,8 +348,14 @@ function DigitalHumanAPIKeysContent({
         </DialogContent>
       </Dialog>
       <section className="rounded-xl border bg-background p-5">
-        <h3 className="text-sm font-semibold">{tCommon('notifications.webhookSectionTitle')}</h3>
-        <p className="mb-3 mt-1 text-sm text-muted-foreground">{tCommon('notifications.webhookSectionDescription')}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">{tCommon('notifications.webhookSectionTitle')}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{tCommon('notifications.webhookSectionDescription')}</p>
+          </div>
+          <DigitalHumanApiCallbackGuide />
+        </div>
+        <div className="mb-3" />
         <NotificationChannelManager
           basePath={`/digital-humans/${id}/notification-channels`}
           types={['webhook']}

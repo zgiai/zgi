@@ -20,6 +20,18 @@ export interface NotificationChannel {
   secret?: string;
 }
 
+/** One recent delivery to a channel. */
+export interface NotificationDelivery {
+  id: string;
+  event: string;
+  title: string;
+  status: 'pending' | 'sent' | 'failed';
+  attempts: number;
+  last_error?: string;
+  sent_at?: string;
+  created_at: string;
+}
+
 /** A team channel as someone choosing where a task reports sees it. */
 export interface NotificationChannelChoice {
   id: string;
@@ -57,6 +69,16 @@ class NotificationChannelService extends BaseService {
 
   create(basePath: string, input: NotificationChannelInput): Promise<ApiResponseData<NotificationChannel>> {
     return this.request('post', basePath, input);
+  }
+
+  /** The channel's most recent deliveries, newest first. */
+  deliveries(basePath: string, id: string): Promise<ApiResponseData<{ items: NotificationDelivery[] }>> {
+    return this.request('get', `${basePath}/${id}/deliveries`);
+  }
+
+  /** Sends a failed delivery again. */
+  retryDelivery(basePath: string, id: string, deliveryId: string): Promise<ApiResponseData<{ queued: boolean }>> {
+    return this.request('post', `${basePath}/${id}/deliveries/${deliveryId}/retry`, {});
   }
 
   update(basePath: string, id: string, update: NotificationChannelUpdate): Promise<ApiResponseData<NotificationChannel>> {

@@ -446,15 +446,25 @@ const messages: CommonMessages = {
     create: '添加',
     cancel: '取消',
     settings: '通知设置',
-    webhookSectionTitle: '通知 Webhook',
-    webhookSectionDescription: 'API 用户的任务产生汇报或执行失败时，推送到这里。推送只包含任务、汇报的编号和一句结论，完整内容请通过汇报接口读取。',
+    webhookSectionTitle: 'API 回调',
+    webhookSectionDescription: 'API 用户的任务有了汇报、执行失败或等待用户确认时，推送到你的服务器。推送只带编号和一句结论，完整内容通过 API 读取。',
+    deliveries: {
+      show: '投递记录',
+      hide: '收起投递记录',
+      loading: '正在加载…',
+      empty: '还没有投递。',
+      retry: '重新发送',
+      retried: '已重新排队发送。',
+      attempts: '尝试 {count} 次',
+      status: { pending: '发送中', sent: '已送达', failed: '失败' },
+    },
     errors: { generic: '操作失败，请稍后再试。' },
   },
   inbox: {
     title: '通知',
     markAllRead: '全部已读',
     empty: '还没有通知。',
-    event: { taskReport: '任务汇报', taskFailed: '任务执行失败' },
+    event: { taskReport: '任务汇报', taskFailed: '任务执行失败', taskApproval: '等待你确认' },
   },
   notificationSms: {
     fields: {

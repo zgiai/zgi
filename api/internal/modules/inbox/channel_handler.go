@@ -43,6 +43,8 @@ func (h *ChannelHandler) RegisterRoutes(router *gin.RouterGroup, path string, re
 	group.POST("/:channel_id/resend-code", h.handle(resolve, h.resendCode))
 	group.POST("/:channel_id/rotate-secret", h.handle(resolve, h.rotateSecret))
 	group.POST("/:channel_id/test", h.handle(resolve, h.test))
+	group.GET("/:channel_id/deliveries", h.handle(resolve, h.deliveries))
+	group.POST("/:channel_id/deliveries/:delivery_id/retry", h.handle(resolve, h.retryDelivery))
 }
 
 // RegisterChoiceRoute lists the active channels of the owner resolve
@@ -218,6 +220,38 @@ func (h *ChannelHandler) test(c *gin.Context, owner ChannelOwner) {
 		// fault: report what the receiving end did.
 		writeData(c, gin.H{"sent": false, "error": err.Error()})
 	}
+}
+
+// deliveries lists the channel's recent deliveries.
+func (h *ChannelHandler) deliveries(c *gin.Context, owner ChannelOwner) {
+	id, ok := h.channelID(c)
+	if !ok {
+		return
+	}
+	items, err := h.dispatcher.ListDeliveries(c.Request.Context(), owner, id, 20)
+	if err != nil {
+		h.writeError(c, channelError(err, "inbox.channel.deliveries"))
+		return
+	}
+	writeData(c, gin.H{"items": items})
+}
+
+// retryDelivery sends a failed delivery again.
+func (h *ChannelHandler) retryDelivery(c *gin.Context, owner ChannelOwner) {
+	id, ok := h.channelID(c)
+	if !ok {
+		return
+	}
+	deliveryID, err := uuid.Parse(strings.TrimSpace(c.Param("delivery_id")))
+	if err != nil || deliveryID == uuid.Nil {
+		h.writeError(c, channelError(ErrInvalidRequest, "inbox.channel.delivery.retry"))
+		return
+	}
+	if err := h.dispatcher.Redeliver(c.Request.Context(), owner, id, deliveryID); err != nil {
+		h.writeError(c, channelError(err, "inbox.channel.delivery.retry"))
+		return
+	}
+	writeData(c, gin.H{"queued": true})
 }
 
 func knownChannelError(err error) bool {

@@ -459,15 +459,25 @@ const messages = {
     create: 'Add',
     cancel: 'Cancel',
     settings: 'Notification settings',
-    webhookSectionTitle: 'Notification webhook',
-    webhookSectionDescription: 'Receives a push when a task of an API end user hands back a report or fails. Pushes carry the task and report IDs and the outcome line; read the full report through the reports API.',
+    webhookSectionTitle: 'API callbacks',
+    webhookSectionDescription: "Pushes to your server when an API user's task reports, fails, or waits for their approval. A push carries identifiers and one line; read the rest through the API.",
+    deliveries: {
+      show: 'Delivery log',
+      hide: 'Hide delivery log',
+      loading: 'Loading…',
+      empty: 'Nothing delivered yet.',
+      retry: 'Send again',
+      retried: 'Queued to send again.',
+      attempts: '{count} attempts',
+      status: { pending: 'Sending', sent: 'Delivered', failed: 'Failed' },
+    },
     errors: { generic: 'Something went wrong. Try again later.' },
   },
   inbox: {
     title: 'Notifications',
     markAllRead: 'Mark all read',
     empty: 'No notifications yet.',
-    event: { taskReport: 'Task report', taskFailed: 'Task failed' },
+    event: { taskReport: 'Task report', taskFailed: 'Task failed', taskApproval: 'Waiting for you' },
   },
   notificationSms: {
     fields: {

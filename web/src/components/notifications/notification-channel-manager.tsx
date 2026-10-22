@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, KeyRound, Mail, Plus, Send, Trash2, Webhook } from 'lucide-react';
+import { Copy, History, KeyRound, Mail, Plus, RotateCcw, Send, Trash2, Webhook } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { useLocale } from '@/hooks/use-locale';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -299,6 +300,7 @@ function ChannelRow({
           </div>
         ) : null}
       </div>
+      {channel.status !== 'pending' ? <ChannelDeliveries basePath={basePath} channelId={channel.id} canManage={canManage} /> : null}
     </li>
   );
 }
@@ -390,5 +392,66 @@ function AddChannelDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * What reached the receiving end and what did not, so a broken receiver is
+ * visible and a failed delivery can be sent again once it is fixed.
+ */
+function ChannelDeliveries({ basePath, channelId, canManage }: { basePath: string; channelId: string; canManage: boolean }) {
+  const t = useT('common');
+  const { locale } = useLocale();
+  const [open, setOpen] = useState(false);
+  const client = useQueryClient();
+  const queryKey = ['notification-channel-deliveries', basePath, channelId];
+  const query = useQuery({ queryKey, queryFn: () => notificationChannelService.deliveries(basePath, channelId), enabled: open });
+  const retry = useMutation({
+    mutationFn: (deliveryId: string) => notificationChannelService.retryDelivery(basePath, channelId, deliveryId),
+    onSuccess: () => {
+      toast.success(t('notifications.deliveries.retried'));
+      void client.invalidateQueries({ queryKey });
+    },
+    onError: (error: unknown) => toast.error(getErrorMessage(error) || t('notifications.errors.generic')),
+  });
+  const items = query.data?.data.items ?? [];
+  return (
+    <div className="mt-3 border-t pt-2">
+      <Button size="sm" variant="ghost" className="-ml-2 h-7 px-2 text-xs text-muted-foreground" onClick={() => setOpen(value => !value)}>
+        <History className="size-3.5" />
+        {open ? t('notifications.deliveries.hide') : t('notifications.deliveries.show')}
+      </Button>
+      {open ? (
+        query.isLoading ? (
+          <p className="px-1 py-2 text-xs text-muted-foreground">{t('notifications.deliveries.loading')}</p>
+        ) : items.length === 0 ? (
+          <p className="px-1 py-2 text-xs text-muted-foreground">{t('notifications.deliveries.empty')}</p>
+        ) : (
+          <ul className="mt-1 divide-y rounded-md border">
+            {items.map(item => (
+              <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-xs">
+                <Badge variant={item.status === 'sent' ? 'success' : item.status === 'failed' ? 'destructive' : 'subtle'}>
+                  {t(`notifications.deliveries.status.${item.status}`)}
+                </Badge>
+                <span className="font-mono text-muted-foreground">{item.event}</span>
+                <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">{new Date(item.created_at).toLocaleString(locale)}</span>
+                {item.status === 'failed' && canManage ? (
+                  <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={retry.isPending} onClick={() => retry.mutate(item.id)}>
+                    <RotateCcw className="size-3" />
+                    {t('notifications.deliveries.retry')}
+                  </Button>
+                ) : null}
+                {item.last_error ? (
+                  <p className="w-full break-all text-[11px] text-destructive" title={item.last_error}>
+                    {t('notifications.deliveries.attempts', { count: item.attempts })} · {item.last_error}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
+    </div>
   );
 }
