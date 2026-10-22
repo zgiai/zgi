@@ -84,6 +84,10 @@ func (h *TaskHandler) list(c *gin.Context) {
 	for _, value := range append(c.QueryArray("priority"), c.QueryArray("priority[]")...) {
 		query.Priorities = append(query.Priorities, TaskPriority(value))
 	}
+	for _, value := range append(c.QueryArray("requester_kind"), c.QueryArray("requester_kind[]")...) {
+		query.RequesterKinds = append(query.RequesterKinds, TaskRequesterKind(value))
+	}
+	query.RequesterID = c.Query("requester_id")
 	result, err := h.service.ListTasks(c.Request.Context(), h.sharedAccess(c, scope, id), query)
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.list"))

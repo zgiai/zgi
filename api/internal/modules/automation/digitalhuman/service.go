@@ -106,6 +106,12 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 	if source := strings.TrimSpace(query.Source); source != "" {
 		base = base.Where("source_ref = ?", source)
 	}
+	if showsRequesters(access) {
+		var err error
+		if base, err = applyRequesterFilter(base, query); err != nil {
+			return nil, err
+		}
+	}
 	if keyword := strings.TrimSpace(query.Query); keyword != "" {
 		like := "%" + keyword + "%"
 		base = base.Where("LOWER(name) LIKE LOWER(?) OR LOWER(goal) LIKE LOWER(?)", like, like)
@@ -157,7 +163,16 @@ func (s *Service) ListTasks(ctx context.Context, access digitalhuman.TaskAccessC
 		item.LatestReport = reports[row.ID]
 		items = append(items, item)
 	}
-	return &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}, nil
+	if err := s.attachRequesters(ctx, access, rows, items); err != nil {
+		return nil, err
+	}
+	result := &digitalhuman.TaskListResult{Items: items, Counts: counts, SuccessfulRunCount: successfulRunCount, Total: total, Page: page, PageSize: pageSize, HasMore: int64(page*pageSize) < total}
+	if showsRequesters(access) {
+		if result.Requesters, err = s.requesterFacets(ctx, access); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) countSuccessfulRuns(ctx context.Context, access digitalhuman.TaskAccessContext, query digitalhuman.TaskListQuery) (int64, error) {
@@ -292,6 +307,9 @@ func (s *Service) GetTask(ctx context.Context, access digitalhuman.TaskAccessCon
 		return nil, err
 	}
 	result.LatestReport = reports[task.ID]
+	if err := s.attachRequesters(ctx, access, []*automationmodel.AutomationTask{task}, []*digitalhuman.Task{result}); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

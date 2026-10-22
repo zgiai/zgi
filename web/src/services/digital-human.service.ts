@@ -477,6 +477,8 @@ class DigitalHumanService extends BaseService {
       run_finished_after?: string;
       run_finished_before?: string;
       include_unreviewed?: boolean;
+      requester_kind?: string[];
+      requester_id?: string;
     }
   ): Promise<ApiResponseData<DigitalHumanTaskList>> {
     return this.request('get', `/digital-humans/${id}/tasks`, undefined, { params });

@@ -298,8 +298,40 @@ type Task struct {
 	// NotifyChannelAccess says how this reader may change NotifyChannelIDs:
 	// the requester manages them, a task center manager may only remove.
 	NotifyChannelAccess TaskNotifyChannelAccess `json:"notify_channel_access,omitempty"`
-	CreatedAt           time.Time               `json:"created_at"`
-	UpdatedAt           time.Time               `json:"updated_at"`
+	// Requester is who asked for the task. Only the console task center
+	// shows it.
+	Requester *TaskRequester `json:"requester,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+}
+
+// TaskRequesterKind says who asked for a task.
+type TaskRequesterKind string
+
+const (
+	// TaskRequesterMember is a workspace member, including a manager who
+	// created the task in the task center.
+	TaskRequesterMember TaskRequesterKind = "member"
+	// TaskRequesterAPIUser is an end user of the DigitalHuman API.
+	TaskRequesterAPIUser TaskRequesterKind = "api_user"
+	// TaskRequesterChannel is a conversation in a connected channel.
+	TaskRequesterChannel TaskRequesterKind = "channel"
+)
+
+// TaskRequester is who asked for a task. ID is empty for channel
+// conversations. An API end user's name is the label an operator gave their
+// instance, because the API's user identifier is not kept.
+type TaskRequester struct {
+	Kind  TaskRequesterKind `json:"kind"`
+	ID    string            `json:"id,omitempty"`
+	Name  string            `json:"name,omitempty"`
+	Email string            `json:"email,omitempty"`
+}
+
+// TaskRequesterFacet is one requester the task center can filter by.
+type TaskRequesterFacet struct {
+	TaskRequester
+	Count int64 `json:"count"`
 }
 
 // TaskNotifyChannelAccess is how a reader may change a task's team channels.
@@ -331,6 +363,9 @@ type TaskListQuery struct {
 	Priorities        []TaskPriority
 	ScheduleType      TaskScheduleType
 	Source            string
+	// RequesterKinds and RequesterID narrow the task center to who asked.
+	RequesterKinds    []TaskRequesterKind
+	RequesterID       string
 	Query             string
 	UpdatedAfter      *time.Time
 	UpdatedBefore     *time.Time
@@ -349,6 +384,9 @@ type TaskListResult struct {
 	Page               int                      `json:"page"`
 	PageSize           int                      `json:"page_size"`
 	HasMore            bool                     `json:"has_more"`
+	// Requesters are everyone who asked for a visible task. Only the console
+	// task center lists them.
+	Requesters []TaskRequesterFacet `json:"requesters,omitempty"`
 }
 
 // CreateTaskRequest contains only product fields; subject and delivery

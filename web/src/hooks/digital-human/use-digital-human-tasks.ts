@@ -22,6 +22,9 @@ export interface DigitalHumanTaskFilters {
   run_finished_before?: string;
   // Also list tasks outside `status` whose final report waits for review.
   include_unreviewed?: boolean;
+  // Task center only: who asked for the task.
+  requester_kind?: string[];
+  requester_id?: string;
 }
 
 export function useDigitalHumanTasks(id: string, filters: DigitalHumanTaskFilters = {}) {

@@ -40,7 +40,9 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -79,6 +81,8 @@ import type {
   DigitalHumanTaskVisibility,
   DigitalHumanTaskScheduleType,
   DigitalHumanTaskSchedulePreview,
+  DigitalHumanTaskRequester,
+  DigitalHumanTaskRequesterKind,
   DigitalHumanTaskStatus,
 } from '@/services/types/digital-human';
 
@@ -96,6 +100,10 @@ const summaryStatuses: DigitalHumanTaskStatus[] = [
   'canceled',
 ];
 const taskParam = 'task';
+const requesterParam = 'requester';
+// The header and every row share one column template so they line up.
+const taskColumns =
+  'xl:grid-cols-[minmax(220px,2fr)_minmax(150px,1.1fr)_100px_72px_120px_150px_minmax(150px,1fr)]';
 const taskTimezones = ['UTC', ...(typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
   : ['Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York'])];
@@ -121,6 +129,10 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const rawSchedule = searchParams.get('schedule');
   const schedule: ScheduleFilter = taskSchedules.includes(rawSchedule as DigitalHumanTaskScheduleType)
     ? rawSchedule as DigitalHumanTaskScheduleType : 'all';
+  // `kind:<kind>` narrows to a kind of requester, `id:<id>` to one person.
+  const requester = searchParams.get(requesterParam) ?? '';
+  const requesterKind = requester.startsWith('kind:') ? requester.slice(5) : '';
+  const requesterID = requester.startsWith('id:') ? requester.slice(3) : '';
   const rawPage = Number(searchParams.get('page') ?? 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= 10_000 ? rawPage : 1;
   const selectedTaskID = searchParams.get(taskParam) ?? '';
@@ -144,11 +156,14 @@ export function DigitalHumanTasks({ id }: { id: string }) {
     schedule_type: schedule === 'all' ? undefined : schedule,
     // Finished work stays in the default view until its report is read.
     include_unreviewed: status === 'open' || undefined,
+    requester_kind: requesterKind ? [requesterKind] : undefined,
+    requester_id: requesterID || undefined,
   });
+  const requesters = query.data?.data.requesters ?? [];
   const items = query.data?.data.items ?? [];
   const counts = query.data?.data.counts ?? {};
   const hasFilters = Boolean(
-    search.trim() || status !== 'open' || priority !== 'all' || schedule !== 'all'
+    search.trim() || status !== 'open' || priority !== 'all' || schedule !== 'all' || requester
   );
   const updateParams = useCallback((updates: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -281,6 +296,40 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                 </SelectItem>
               ))}
             </TaskFilter>
+            <TaskFilter
+              value={requester || 'all'}
+              onChange={value => updateParams({ [requesterParam]: value === 'all' ? null : value, page: null })}
+              label={t('tasks.filters.requester')}
+            >
+              <SelectItem value="all">{t('tasks.filters.allRequesters')}</SelectItem>
+              <SelectGroup>
+                <SelectLabel>{t('tasks.filters.requesterKinds')}</SelectLabel>
+                {requesterKinds.map(kind => (
+                  <SelectItem key={kind} value={`kind:${kind}`}>
+                    {t(`tasks.requester.${kind}`)}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+              {requesters.some(item => item.id) || requesterID ? (
+                <SelectGroup>
+                  <SelectLabel>{t('tasks.filters.requesterPeople')}</SelectLabel>
+                  {requesters
+                    .filter(item => item.id)
+                    .map(item => (
+                      <SelectItem key={item.id} value={`id:${item.id}`}>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate">{requesterName(item, t)}</span>
+                          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{item.count}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  {/* Keep a chosen person selectable after their tasks leave the list. */}
+                  {requesterID && !requesters.some(item => item.id === requesterID) ? (
+                    <SelectItem value={`id:${requesterID}`}>{requesterID.slice(0, 8)}</SelectItem>
+                  ) : null}
+                </SelectGroup>
+              ) : null}
+            </TaskFilter>
           </div>
           {hasFilters ? (
             <Button
@@ -288,7 +337,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
               size="sm"
               onClick={() => {
                 setSearch('');
-                updateParams({ q: null, status: null, priority: null, schedule: null, page: null });
+                updateParams({ q: null, status: null, priority: null, schedule: null, [requesterParam]: null, page: null });
               }}
             >
               {t('tasks.filters.clear')}
@@ -321,8 +370,9 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           />
         ) : (
           <>
-            <div className="hidden grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_130px] gap-4 border-b bg-muted/20 px-5 py-3 text-xs font-medium text-muted-foreground xl:grid">
+            <div className={cn('hidden gap-4 border-b bg-muted/20 px-5 py-3 text-xs font-medium text-muted-foreground xl:grid', taskColumns)}>
               <span>{t('tasks.columns.name')}</span>
+              <span>{t('tasks.columns.requester')}</span>
               <span>{t('tasks.columns.status')}</span>
               <span>{t('tasks.columns.priority')}</span>
               <span>{t('tasks.columns.schedule')}</span>
@@ -334,17 +384,22 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                 <button
                   key={task.id}
                   type="button"
-                  className="grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_minmax(160px,1fr)] xl:items-center xl:gap-4 xl:px-5"
+                  className={cn(
+                    'grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:items-center xl:gap-4 xl:px-5',
+                    taskColumns
+                  )}
                   onClick={() => setSelectedTaskID(task.id)}
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{task.name}</p>
-                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{task.goal}</p>
-                    <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground/80">
-                      <span className="truncate">{sourceLabel(task, t)}</span>
+                    <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="line-clamp-1">{task.goal}</span>
                       <TaskVisibilityBadge task={task} />
                     </p>
                   </div>
+                  <TaskListCell label={t('tasks.columns.requester')}>
+                    <TaskRequesterCell task={task} />
+                  </TaskListCell>
                   <TaskListCell label={t('tasks.columns.status')}>
                     <TaskStatusBadge task={task} />
                   </TaskListCell>
@@ -768,6 +823,9 @@ function TaskDetailSheet({
                     value={String(task.max_attempts - 1)}
                   />
                   <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
+                  {task.requester ? (
+                    <DetailValue label={t('tasks.columns.requester')} value={<TaskRequesterCell task={task} />} />
+                  ) : null}
                   <DetailValue
                     label={t('tasks.visibilityControl.label')}
                     value={
@@ -1357,8 +1415,37 @@ function normalizeRunStatus(
     ? (value as 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled')
     : 'unknown';
 }
+const requesterKinds: DigitalHumanTaskRequesterKind[] = ['member', 'api_user', 'channel'];
+
+function requesterName(requester: DigitalHumanTaskRequester, t: ReturnType<typeof useT<'digitalHumans'>>) {
+  if (requester.kind === 'api_user') {
+    return requester.name || t('tasks.requester.apiUser', { id: (requester.id ?? '').slice(0, 8) });
+  }
+  if (requester.kind === 'channel') return t('tasks.requester.channel');
+  return requester.name || requester.email || t('tasks.requester.unknownMember');
+}
+
+// Who asked, and where they asked from.
+function TaskRequesterCell({ task }: { task: DigitalHumanTask }) {
+  const t = useT('digitalHumans');
+  const requester = task.requester;
+  const origin = sourceLabel(task, t);
+  if (!requester || requester.kind === 'channel') {
+    return <span className="block truncate text-foreground/80">{origin}</span>;
+  }
+  return (
+    <span className="block min-w-0" title={requester.email || undefined}>
+      <span className="block truncate text-foreground/80">{requesterName(requester, t)}</span>
+      <span className="block truncate text-[11px] text-muted-foreground/80">{origin}</span>
+    </span>
+  );
+}
+
 function sourceLabel(task: DigitalHumanTask, t: ReturnType<typeof useT<'digitalHumans'>>) {
+  if (task.owner_kind === 'digital_human') return t('tasks.source.taskCenter');
   if (task.source === 'console') return t('tasks.source.console');
+  if (task.source === 'webapp') return t('tasks.source.webapp');
+  if (task.source === 'external-api') return t('tasks.source.api');
   if (!task.source.startsWith('channel:')) return task.source || t('tasks.source.unknown');
   const providerID = task.source.slice('channel:'.length);
   const provider = digitalHumanChannelProvider(providerID);

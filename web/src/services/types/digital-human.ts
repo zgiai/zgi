@@ -829,6 +829,8 @@ export interface DigitalHumanTask {
   notify_channel_ids?: string[];
   /** The requester manages the team channels; a task manager may only remove them. */
   notify_channel_access?: 'manage' | 'remove';
+  /** Who asked for the task; only the task center returns it. */
+  requester?: DigitalHumanTaskRequester;
   name: string;
   goal: string;
   success_criteria: string[];
@@ -853,8 +855,23 @@ export interface DigitalHumanTask {
   updated_at: string;
 }
 
+export type DigitalHumanTaskRequesterKind = 'member' | 'api_user' | 'channel';
+
+/**
+ * Who asked for a task. API end users are named by their instance label,
+ * because the API's user identifier is not kept; channel requesters have no ID.
+ */
+export interface DigitalHumanTaskRequester {
+  kind: DigitalHumanTaskRequesterKind;
+  id?: string;
+  name?: string;
+  email?: string;
+}
+
 export interface DigitalHumanTaskList {
   items: DigitalHumanTask[];
+  /** Everyone who asked for a visible task; only the task center returns it. */
+  requesters?: Array<DigitalHumanTaskRequester & { count: number }>;
   counts: Partial<Record<DigitalHumanTaskStatus, number>>;
   successful_run_count: number;
   total: number;
