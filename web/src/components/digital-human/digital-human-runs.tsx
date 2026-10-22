@@ -19,7 +19,8 @@ import { TableCell, TableRow } from '@/components/ui/table';
 import { RunStatusBadge } from '@/components/workflow/ui/run-status-badge';
 import {
   digitalHumanRunStatusLabelKey,
-  isActiveDigitalHumanRunStatus,
+  isRunningDigitalHumanRunStatus,
+  isWaitingDigitalHumanRunStatus,
   digitalHumanRunStartedByPerson,
   digitalHumanRunTaskName,
   plainTextPreview,
@@ -34,7 +35,7 @@ import type { DigitalHumanRun, DigitalHumanRunStatus } from '@/services/types/di
 
 const runParam = 'run';
 
-type StatusFilter = 'all' | 'active' | 'succeeded' | 'failed' | 'canceled';
+type StatusFilter = 'all' | 'active' | 'waiting' | 'succeeded' | 'failed' | 'canceled';
 type SourceFilter = 'all' | 'manual' | 'channel' | 'scheduled' | 'email' | 'external';
 
 export function DigitalHumanRuns({ id }: { id: string }) {
@@ -176,6 +177,7 @@ export function DigitalHumanRuns({ id }: { id: string }) {
                 <SelectContent>
                   <SelectItem value="all">{t('runs.filters.all')}</SelectItem>
                   <SelectItem value="active">{t('runs.filters.active')}</SelectItem>
+                  <SelectItem value="waiting">{t('runs.filters.waiting')}</SelectItem>
                   <SelectItem value="succeeded">{t('status.succeeded')}</SelectItem>
                   <SelectItem value="failed">{t('status.failed')}</SelectItem>
                   <SelectItem value="canceled">{t('status.canceled')}</SelectItem>
@@ -413,7 +415,8 @@ function SourceBadge({ label }: { label: string }) {
 
 function matchesStatus(status: DigitalHumanRunStatus, filter: StatusFilter) {
   if (filter === 'all') return true;
-  if (filter === 'active') return isActiveDigitalHumanRunStatus(status);
+  if (filter === 'active') return isRunningDigitalHumanRunStatus(status);
+  if (filter === 'waiting') return isWaitingDigitalHumanRunStatus(status);
   if (filter === 'failed') return status === 'failed' || status === 'unknown';
   return status === filter;
 }

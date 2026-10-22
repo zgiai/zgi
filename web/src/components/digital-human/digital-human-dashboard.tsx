@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDashed,
+  Clock3,
   CircleOff,
   EyeOff,
   MessageSquare,
@@ -29,7 +30,9 @@ import { digitalHumanChannelProvider } from '@/components/digital-human/digital-
 import { digitalHumanTaskDisplayStatus, formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import {
   digitalHumanRunStatusLabelKey,
-  isActiveDigitalHumanRunStatus,
+  digitalHumanRunTaskId,
+  isRunningDigitalHumanRunStatus,
+  isWaitingDigitalHumanRunStatus,
   digitalHumanRunTaskName,
   plainTextPreview,
 } from '@/components/digital-human/digital-human-run-presentation';
@@ -169,8 +172,11 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const runItems = runs.data?.data.items ?? [];
   const installations = channels.installations.data?.data ?? [];
   const deliveries = channels.deliveries.data?.data.items ?? [];
-  const activeRun = runItems.find(run => isActiveDigitalHumanRunStatus(run.status));
-  const currentTask = taskItems.find(task => task.work_status === 'in_progress');
+  // Runs waiting on an approval or an answer are not working: they are shown
+  // as waiting for you and never as running.
+  const runningRun = runItems.find(run => isRunningDigitalHumanRunStatus(run.status));
+  const waitingRun = runItems.find(run => isWaitingDigitalHumanRunStatus(run.status));
+  const currentTask = currentDashboardTask(taskItems, runItems);
   const failedDeliveries = deliveries.filter(delivery =>
     ['failed', 'unknown'].includes(delivery.status)
   );
@@ -231,7 +237,8 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
     channels.events.dataUpdatedAt,
     channels.deliveries.dataUpdatedAt
   );
-  const isWorking = Boolean(currentTask || activeRun);
+  const isWorking = Boolean(currentTask || runningRun);
+  const focusRun = runningRun ?? (currentTask ? undefined : waitingRun);
 
   return (
     <main className="@container/dashboard mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-4 px-4 py-4 sm:gap-5 md:px-6 md:py-6 2xl:gap-6 2xl:px-8 2xl:py-8">
@@ -298,11 +305,11 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
             <p className="mt-1 line-clamp-2 text-sm font-medium">
               {currentTask
                 ? t('dashboard.statusLine.working', { name: currentTask.name })
-                : activeRun
-                  ? activeRun.status === 'waiting'
+                : runningRun
+                  ? t('dashboard.statusLine.responding')
+                  : waitingRun
                     ? t('dashboard.statusLine.waitingApproval')
-                    : t('dashboard.statusLine.responding')
-                  : attentionCount > 0
+                    : attentionCount > 0
                     ? t('dashboard.statusLine.waitingOnYou', { count: attentionCount })
                     : t('dashboard.statusLine.idle')}
             </p>
@@ -313,8 +320,8 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
             </p>
           </div>
           <Button asChild variant="outline" size="sm" className="hidden shrink-0 sm:inline-flex">
-            {activeRun ? (
-              <Link href={`/console/digital-humans/${id}/runs?run=${activeRun.id}`}>
+            {focusRun ? (
+              <Link href={`/console/digital-humans/${id}/runs?run=${focusRun.id}`}>
                 <Activity className={cn('size-4', isWorking && 'animate-pulse')} />
                 {t('dashboard.viewRun')}
               </Link>
@@ -329,29 +336,29 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
 
         {/* The hero says what is running now; scheduled work is listed under
             "Up next" beside the attention list. */}
-        {isWorking ? (
+        {isWorking || focusRun ? (
         <FocusBlock
-          label={!currentTask && activeRun?.status === 'waiting' ? t('dashboard.waitingFocus') : t('dashboard.currentFocus')}
+          label={isWorking ? t('dashboard.currentFocus') : t('dashboard.waitingFocus')}
           title={
             currentTask?.name ??
-            (activeRun ? (digitalHumanRunTaskName(activeRun) ?? activeRun.query) : t('dashboard.noCurrentFocus'))
+            (focusRun ? (digitalHumanRunTaskName(focusRun) ?? focusRun.query) : t('dashboard.noCurrentFocus'))
           }
           meta={
             currentTask
               ? t(`tasks.status.${digitalHumanTaskDisplayStatus(currentTask)}`)
-              : activeRun
-                ? t(digitalHumanRunStatusLabelKey(activeRun.status, activeRun.waiting_reason))
+              : focusRun
+                ? t(digitalHumanRunStatusLabelKey(focusRun.status, focusRun.waiting_reason))
                 : undefined
           }
-          active={Boolean(currentTask || activeRun)}
+          active={isWorking}
           className="@[680px]/dashboard-hero:border-l-0 @[1120px]/dashboard-hero:border-l"
         />
         ) : null}
         <div className="flex items-center border-t p-4 sm:hidden">
-          {activeRun ? (
+          {focusRun ? (
             <Button asChild variant="outline" size="sm" className="w-full">
-              <Link href={`/console/digital-humans/${id}/runs?run=${activeRun.id}`}>
-                <Activity className="size-4 animate-pulse" />
+              <Link href={`/console/digital-humans/${id}/runs?run=${focusRun.id}`}>
+                <Activity className={cn('size-4', isWorking && 'animate-pulse')} />
                 {t('dashboard.viewRun')}
               </Link>
             </Button>
@@ -696,7 +703,7 @@ function buildDashboardLiveEvents({
   t: ReturnType<typeof useT<'digitalHumans'>>;
 }) {
   const events: DashboardLiveEvent[] = [];
-  const currentTask = tasks.find(task => task.work_status === 'in_progress');
+  const currentTask = currentDashboardTask(tasks, runs);
   if (currentTask) {
     events.push({
       id: `task-${currentTask.id}-${currentTask.updated_at}`,
@@ -708,8 +715,19 @@ function buildDashboardLiveEvents({
     });
   }
 
+  for (const run of newestFirst(runs.filter(item => isWaitingDigitalHumanRunStatus(item.status))).slice(0, 2)) {
+    events.push({
+      id: `run-${run.id}-${run.status}-${run.updated_at}`,
+      title: t(digitalHumanRunStatusLabelKey(run.status, run.waiting_reason)),
+      description: digitalHumanRunTaskName(run) ?? dashboardRunSummary(run, t('dashboard.automaticRun')),
+      timestamp: run.updated_at,
+      href: `/console/digital-humans/${id}/runs?run=${run.id}`,
+      tone: 'warning',
+    });
+  }
+
   for (const run of newestFirst(
-    runs.filter(item => isActiveDigitalHumanRunStatus(item.status))
+    runs.filter(item => isRunningDigitalHumanRunStatus(item.status))
   ).slice(0, 4)) {
     events.push({
       id: `run-${run.id}-${run.status}-${run.updated_at}`,
@@ -1030,9 +1048,10 @@ function ConnectionRow({ installation }: { installation: DigitalHumanChannelInst
 
 function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; locale: string }) {
   const t = useT('digitalHumans');
-  const active = isActiveDigitalHumanRunStatus(run.status);
+  const active = isRunningDigitalHumanRunStatus(run.status);
+  const waiting = isWaitingDigitalHumanRunStatus(run.status);
   const statusLabel = t(digitalHumanRunStatusLabelKey(run.status, run.waiting_reason));
-  const Icon = run.status === 'succeeded' ? CheckCircle2 : active ? CircleDashed : AlertCircle;
+  const Icon = run.status === 'succeeded' ? CheckCircle2 : active ? CircleDashed : waiting ? Clock3 : AlertCircle;
   return (
     <Link
       href={`/console/digital-humans/${id}/runs?run=${run.id}`}
@@ -1044,7 +1063,7 @@ function RecentRunRow({ id, run, locale }: { id: string; run: DigitalHumanRun; l
       <Icon
         className={cn(
           'size-4',
-          run.status === 'succeeded' ? 'text-success' : active ? 'text-primary' : 'text-destructive'
+          run.status === 'succeeded' ? 'text-success' : active ? 'text-primary' : waiting ? 'text-warning' : 'text-destructive'
         )}
       />
       <div className="min-w-0">
@@ -1261,4 +1280,19 @@ function RecentArtifacts({ id, locale }: { id: string; locale: string }) {
       </ul>
     </section>
   );
+}
+
+/**
+ * The task being worked on now. A task whose run is parked on an approval or
+ * an answer stays in progress on the server, but it is waiting for someone
+ * and does not count as current work.
+ */
+function currentDashboardTask(tasks: DigitalHumanTask[], runs: DigitalHumanRun[]) {
+  const waitingTaskIds = new Set(
+    runs
+      .filter(run => isWaitingDigitalHumanRunStatus(run.status))
+      .map(run => digitalHumanRunTaskId(run))
+      .filter((taskId): taskId is string => Boolean(taskId))
+  );
+  return tasks.find(task => task.work_status === 'in_progress' && !waitingTaskIds.has(task.id));
 }
