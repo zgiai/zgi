@@ -21,7 +21,7 @@ ADR 0006 planned per-instance quotas and end-user management inside the DigitalH
 
 - A Runtime Workspace can bind DigitalHumans as well as Agents. The binding table gains an application type; existing rows are Agent bindings.
 - `/api/connect/v1/apps/{app_key}/...` serves a bound DigitalHuman with the DigitalHuman's own operations (chat, conversations, runtime inputs, tasks, reports, files, memory) behind the same credential, lease, audit, rate limit, and subject middleware Agents use.
-- DigitalHumans cannot be moved between workspaces today. If that becomes possible, moving one relocates its runtime surfaces and bindings, as it does for Agents.
+- Moving a DigitalHuman to another workspace relocates its runtime surfaces, as for Agents. Its Runtime Workspace bindings stay, so integrations keep calling it, and its end users keep their identities.
 - The per-application API keys of Agents and DigitalHumans stay as compatibility entry points. They keep working but gain no new features: no end-user quotas and no end-user management.
 - The WebApp is unchanged by this decision.
 

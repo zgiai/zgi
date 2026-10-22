@@ -417,7 +417,7 @@ export interface CheckMemberNameResponse {
   is_exist: boolean;
 }
 
-export type WorkspaceAssetMoveType = 'agent' | 'dataset' | 'file' | 'database';
+export type WorkspaceAssetMoveType = 'agent' | 'dataset' | 'file' | 'database' | 'digital_human';
 
 export interface WorkspaceAssetMoveItem {
   type: WorkspaceAssetMoveType;
