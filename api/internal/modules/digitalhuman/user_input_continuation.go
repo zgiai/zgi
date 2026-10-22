@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
@@ -83,9 +84,32 @@ func (s *RuntimeService) ContinueUserInput(
 		return nil, err
 	}
 	caller.RunID = cloneUUIDPointer(&run.ID)
-	return continuationRuntime.RunConfiguredUserInputContinuationStream(
+	// The run waits with its question; answering resumes it, and the run
+	// settles where the answer leaves the conversation. Without this the run
+	// stayed waiting after the conversation moved on.
+	held := run.Status == RunStatusWaiting && run.WaitingReason == runtimemodel.MessageStatusWaitingQuestion
+	if held {
+		if err := s.resumeHeldWorkflowRun(ctx, run); err != nil {
+			return nil, err
+		}
+	}
+	result, err := continuationRuntime.RunConfiguredUserInputContinuationStream(
 		ctx, runtimeScope, caller, config, conversationID, messageID, strings.TrimSpace(requestID), request, onEvent,
 	)
+	if held {
+		switch {
+		case err != nil:
+			// A rejected answer leaves the question open; hold the run again
+			// unless the message moved on.
+			if waiter, ok := s.store.(runWaitingStore); !ok ||
+				waiter.MarkRunWaiting(context.WithoutCancel(ctx), run.ID, runtimemodel.MessageStatusWaitingQuestion, s.now()) != nil {
+				s.settleWorkflowContinuationRun(ctx, run, "", "", nil)
+			}
+		case result != nil:
+			s.settleWorkflowContinuationRun(ctx, run, result.Status, result.Answer, result.Metadata)
+		}
+	}
+	return result, err
 }
 
 func continuationRunOwnedByScope(run *Run, scope Scope, digitalHumanID uuid.UUID) bool {

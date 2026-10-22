@@ -626,12 +626,7 @@ func (s *RuntimeService) GetRunRuntimeLog(ctx context.Context, scope Scope, digi
 	if run.MessageID == nil || *run.MessageID == uuid.Nil {
 		return &RunRuntimeLog{Steps: channelContextRuntimeSteps(run, nil)}, nil
 	}
-	callerID := run.DigitalHumanID
-	message, conversation, err := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
-		Type:   runtimemodel.ConversationCallerDigitalHuman,
-		ID:     &callerID,
-		Source: digitalHumanConversationSourceForRun(run),
-	}, *run.MessageID)
+	message, conversation, err := s.chat.GetMessageByCaller(ctx, runtimeScope(run), runConversationCaller(run), *run.MessageID)
 	if err != nil {
 		return nil, mapConversationRuntimeError(err)
 	}
@@ -1414,6 +1409,7 @@ func (s *RuntimeService) Reconcile(ctx context.Context) error {
 		s.store.RequeueStaleRunOutbox(ctx, now.Add(-defaultOutboxLease), now),
 		s.DispatchPending(ctx, defaultOutboxBatch),
 		s.recoverCompletedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
+		s.settleAnsweredWaitingRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
 		s.store.MarkStaleRunsUnknown(ctx, now.Add(-defaultStaleRunWindow), now),
 	)
 }
@@ -1431,10 +1427,7 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 		if run == nil || run.MessageID == nil || *run.MessageID == uuid.Nil || run.ActorID == nil || *run.ActorID == uuid.Nil {
 			continue
 		}
-		callerID := run.DigitalHumanID
-		message, conversation, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), chatruntime.Caller{
-			Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, Source: digitalHumanConversationSourceForRun(run),
-		}, *run.MessageID)
+		message, conversation, loadErr := s.chat.GetMessageByCaller(ctx, runtimeScope(run), runConversationCaller(run), *run.MessageID)
 		if loadErr != nil {
 			combined = errors.Join(combined, loadErr)
 			continue

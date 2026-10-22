@@ -234,6 +234,8 @@ export function useDigitalHumanRunRuntimeLog(
     queryFn: () => digitalHumanService.getRunRuntimeLog(id, runId),
     enabled: enabled && Boolean(id) && Boolean(runId),
     refetchInterval: query => {
+      // A log that cannot be read stays unreadable; do not keep asking.
+      if (query.state.status === 'error') return false;
       const status = query.state.data?.data?.detail?.status;
       return pollWhilePending || (status && isActiveDigitalHumanRunStatus(status)) ? 1_500 : false;
     },
