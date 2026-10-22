@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Ban, Bot, BookOpenText, Brain, Hash, Loader2, MessageSquareText, ScrollText, ShieldAlert, Sparkles, Workflow, Wrench } from 'lucide-react';
+import { Ban, Bot, BookOpenText, Brain, Hash, ListChecks, Loader2, MessageSquareText, ScrollText, ShieldAlert, Sparkles, Workflow, Wrench } from 'lucide-react';
 import { getAgentRuntimeStepDisplay } from '@/app/console/agents/[agentId]/logs/_components/agent-runtime-step-display';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -23,6 +23,7 @@ function stepIcon(type: string) {
   if (type === 'tool_call' || type === 'tool') return Wrench;
   if (type === 'skill_load' || type === 'skill') return Sparkles;
   if (type === 'workflow_run' || type === 'workflow_node' || type === 'workflow_approval') return Workflow;
+  if (type === 'task_approval') return ListChecks;
   if (type === 'reference_read') return BookOpenText;
   if (type === 'memory_mutation') return Brain;
   if (type === 'guardrail') return ShieldAlert;

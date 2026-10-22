@@ -1688,6 +1688,8 @@ const messages: WebappMessages = {
       workflowRun: '工作流运行',
       workflowNode: '工作流节点：{name}',
       workflowApproval: '工作流审批',
+      taskApproval: '任务确认',
+      taskApprovalNamed: '任务确认：{name}',
     },
     runtimeModelPhases: {
       final_answer: '最终回答生成',

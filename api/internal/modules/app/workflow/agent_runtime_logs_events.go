@@ -44,9 +44,42 @@ func runtimeWorkflowRunEvents(value interface{}) []map[string]interface{} {
 	runs := runtimeSkillInvocations(value)
 	events := make([]map[string]interface{}, 0, len(runs))
 	for runIndex, run := range runs {
+		// A digital human's task confirmation reuses the workflow
+		// continuation record but is not a workflow approval.
+		if runtimeString(run["kind"]) == "digital_human_task" {
+			events = append(events, runtimeTaskApprovalEvent(run, runIndex))
+			continue
+		}
 		events = append(events, runtimeWorkflowRunEvent(run, runIndex))
 	}
 	return events
+}
+
+// runtimeTaskApprovalEvent records a proposed task creation or change that
+// waited for the requester's confirmation.
+func runtimeTaskApprovalEvent(run map[string]interface{}, runIndex int) map[string]interface{} {
+	approval := runtimeMap(run["approval"])
+	results := runtimeSkillInvocations(run["approval_results"])
+	if result := runtimeMap(run["approval_result"]); len(result) > 0 {
+		results = append(results, result)
+	}
+	status := runtimeString(run["status"])
+	if status == "" {
+		status = "pending_approval"
+	}
+	return compactAgentRuntimeMap(map[string]interface{}{
+		"kind":          "task_approval",
+		"status":        status,
+		"created_at":    run["created_at"],
+		"created_at_ms": run["created_at_ms"],
+		"sequence":      run["sequence"],
+		"task_id":       firstRuntimeString(run["task_id"], approval["task_id"]),
+		"task_name":     runtimeString(approval["task_name"]),
+		"task_action":   firstRuntimeString(run["task_action"], approval["task_action"]),
+		"approval_form": approval["approval_form"],
+		"results":       results,
+		"runtime_id":    strings.Join([]string{"task_approval", firstRuntimeString(run["task_id"], approval["task_id"]), strconv.Itoa(runIndex)}, ":"),
+	})
 }
 
 func runtimeWorkflowRunEvent(run map[string]interface{}, runIndex int) map[string]interface{} {
@@ -564,6 +597,8 @@ func agentRuntimeEventType(event map[string]interface{}) string {
 		return "workflow_node"
 	case "workflow_approval":
 		return "workflow_approval"
+	case "task_approval":
+		return "task_approval"
 	case "workflow_approval_submitted":
 		return "workflow_approval_submitted"
 	case "workflow_approval_expired":
@@ -628,6 +663,11 @@ func agentRuntimeEventTitle(event map[string]interface{}) string {
 		return agentRuntimeWorkflowNodeTitle(event)
 	case "workflow_approval":
 		return "Workflow approval"
+	case "task_approval":
+		if name := runtimeString(event["task_name"]); name != "" {
+			return "Task confirmation: " + name
+		}
+		return "Task confirmation"
 	case "workflow_approval_submitted":
 		return "Workflow approval submitted"
 	case "workflow_approval_expired":

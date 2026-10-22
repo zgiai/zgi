@@ -41,6 +41,12 @@ func agentRuntimeEventInput(event map[string]interface{}) interface{} {
 		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["inputs"]))
 	case "workflow_approval":
 		return sanitizeAgentRuntimeSensitiveValue(runtimeMap(event["approval_form"]))
+	case "task_approval":
+		return sanitizeAgentRuntimeSensitiveValue(compactAgentRuntimeMap(map[string]interface{}{
+			"task_id":     runtimeString(event["task_id"]),
+			"task_name":   runtimeString(event["task_name"]),
+			"task_action": runtimeString(event["task_action"]),
+		}))
 	case "workflow_approval_submitted":
 		return sanitizeAgentRuntimeSensitiveValue(compactAgentRuntimeMap(map[string]interface{}{
 			"approval_form_id": runtimeString(event["approval_form_id"]),
@@ -90,6 +96,12 @@ func agentRuntimeEventOutput(event map[string]interface{}) interface{} {
 			output["status"] = runtimeString(event["status"])
 		}
 		return sanitizeAgentRuntimeResultValue(output)
+	}
+	if agentRuntimeEventType(event) == "task_approval" {
+		return sanitizeAgentRuntimeResultValue(compactAgentRuntimeMap(map[string]interface{}{
+			"status":  runtimeString(event["status"]),
+			"results": event["results"],
+		}))
 	}
 	if agentRuntimeEventType(event) == "workflow_approval" {
 		return sanitizeAgentRuntimeResultValue(compactAgentRuntimeMap(map[string]interface{}{

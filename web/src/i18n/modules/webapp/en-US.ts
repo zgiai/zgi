@@ -1772,6 +1772,8 @@ const messages = {
       workflowRun: 'Workflow run',
       workflowNode: 'Workflow node: {name}',
       workflowApproval: 'Workflow approval',
+      taskApproval: 'Task confirmation',
+      taskApprovalNamed: 'Task confirmation: {name}',
     },
     runtimeModelPhases: {
       final_answer: 'Final answer generation',

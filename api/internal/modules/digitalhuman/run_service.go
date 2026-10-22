@@ -695,6 +695,11 @@ func pendingRunWorkflowApproval(run *Run, message *runtimemodel.Message) *RunWor
 		if !ok {
 			continue
 		}
+		// Task confirmations are answered in the conversation, not as a
+		// workflow approval form.
+		if kind, _ := workflowRun["kind"].(string); kind == "digital_human_task" {
+			continue
+		}
 		approval, ok := stringMap(workflowRun["approval"])
 		if !ok || !approvalStatusPending(approval["status"]) {
 			continue
