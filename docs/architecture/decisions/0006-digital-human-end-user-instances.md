@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-20
 - Builds on: ADR 0001, ADR 0002, ADR 0004, ADR 0005
+- Amended by: ADR 0010 (end-user management, quotas, and external access move to the Runtime Workspace)
 
 ## Context
 
@@ -40,7 +41,7 @@ In code and APIs the concept is always called an end-user instance (`end_user_in
 | `issuer_type`, `issuer_id` | How the end user arrived: an API key or a WebApp |
 | `status` | `active`, `suspended`, or `erased` |
 | `label` | Optional operator-set alias. Never derived from end-user input |
-| `quota_policy` | Optional per-instance points quota (see Quotas) |
+| `quota_policy` | Unused; quotas belong to the Runtime Workspace (ADR 0010) |
 | `first_seen_at`, `last_active_at` | Activity, updated at run admission |
 
 The pair (`digital_human_id`, `subject_id`) is unique. The instance is created lazily in run admission (`RuntimeService.SubmitInvocation`), in the same transaction that persists the run, for `external_end_user` runs that carry a durable user subject. It is fixed on the run, like the source trust level. Concurrent first requests resolve to one instance through the unique key.
@@ -74,44 +75,20 @@ Channel conversations, direct or group, are a way of using the DigitalHuman itse
 
 ### Operator management
 
-Console, for users with the DigitalHuman update permission:
-
-- list instances with label, issuer, status, first and last activity, conversation, task, and memory counts, and usage;
-- suspend and resume an instance. A suspended instance rejects new runs and pauses its scheduled tasks;
-- export an instance;
-- erase an instance. Erasure removes conversations, messages, files, instance memory, relationship memory, and tasks, and keeps a tombstone that records the subject identifier, time, and operator only;
-- set a per-instance quota (see Quotas).
-
-External API, for server-side integrations using an API key:
-
-- `GET /end-users/{user}` returns the instance status and usage;
-- `POST /end-users/{user}/export` exports it;
-- `DELETE /end-users/{user}` erases it.
-
-These endpoints derive the subject from `user` exactly as the chat endpoints do, so a key can manage only end users it can already reach.
-
-### Quotas
-
-Quotas are billing, not rate limiting: each instance's model usage is metered in the platform's points and charged against a quota of its own.
-
-- **Metering.** Model calls already record their points in `llm_usage_bills`, attributed to the organization, workspace, and application (the DigitalHuman). The billing context gains the DigitalHuman run and its `end_user_instance_id`, and the bill stores the instance with an index, so an instance's usage is the sum of its bills. Runs without an instance are billed as today.
-- **Quota.** A DigitalHuman sets a default quota for its instances, and an operator can override it per instance in `quota_policy`. A quota is a number of points per period (day or month). Unset means unlimited, which is the default.
-- **Enforcement.** Run admission rejects a new run of an instance whose usage in the current period has reached its quota, with a quota error the caller can show. Model calls inside an admitted run also check the remaining quota before each call, using the gateway's existing pre-deduction step, so one long run cannot overrun the quota by much. Scheduled tasks of an exhausted instance skip their runs with the same reason.
-- **Visibility.** Operators see each instance's usage and remaining quota in the instance list. The external `GET /end-users/{user}` returns the same figures to the integrating server.
-- The organization's own balance and plan limits still apply on top. An instance quota can only narrow what the organization may spend.
+End-user management, quotas, and the external management endpoints belong to the Runtime Workspace (ADR 0010), which covers Agents and DigitalHumans alike. An instance is the DigitalHuman's panel of an end user there: its instance memory, tasks, and per-user connections. Suspending or erasing the end user suspends or erases the instance; erasure also removes its conversations, files, instance memory, relationship memory, and tasks, and keeps a tombstone that records identifiers only.
 
 ### Audit
 
-Instance creation, suspension, export, erasure, quota changes, and memory promotion from an instance are audit events. They carry identifiers and enum values only.
+Instance creation, suspension, erasure, and memory promotion from an instance are audit events. They carry identifiers and enum values only.
 
 ### Resolved questions
 
 | Question | Decision |
 |---|---|
 | Does instance memory need a capacity limit or expiry? | Both exist and are set by environment variables; by default there is no limit and no expiry (see Instance memory). |
-| Should the same end user share one identity across DigitalHumans? | No. A subject is derived per DigitalHuman, so each DigitalHuman has its own instance for the same `user`. Linking them would let one DigitalHuman's relationship leak into another's. |
+| Should the same end user share one identity across DigitalHumans? | Through a Runtime Workspace, yes: the end user is one subject for every bound application (ADR 0010). Each DigitalHuman still has its own instance for that subject, so one relationship never leaks into another. Through a DigitalHuman's own API key, the subject stays per DigitalHuman. |
 | Do channel direct messages map to member instances? | No. A channel direct message is one way of using the DigitalHuman itself and keeps the `channel` scope from ADR 0004. |
-| Is quota billing or rate limiting? | Billing. Each instance's usage is metered and charged against its own quota (see Quotas). |
+| Is quota billing or rate limiting? | Billing in points, configured in the Runtime Workspace per end user (ADR 0010). |
 
 ### Delivery
 
@@ -119,7 +96,7 @@ Each step ships behind its flag and keeps existing behavior when the flag is off
 
 1. Instance record, creation in run admission, and `end_user_instance_id` on runs.
 2. Instance memory scope and its read and write rules.
-3. Console management, the external management endpoints, per-instance metering and quotas, and audit events.
+3. The DigitalHuman panel in Runtime Workspace end-user management (ADR 0010), suspension and erasure of instances, and audit events.
 4. Per-user connector credentials (ADR 0007).
 
 ## Consequences

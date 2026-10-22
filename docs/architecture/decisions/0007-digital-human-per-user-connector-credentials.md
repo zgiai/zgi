@@ -52,7 +52,7 @@ A task created in an instance or by a member runs with that requester's credenti
 
 ### Setup for end users
 
-- **External API.** `POST /end-users/{user}/connections` lets the integrating server submit a key-based credential for an end user. `GET` lists connection health and `DELETE` removes one. The integrator's API key is the trust anchor, and the subject is derived from `user` as in the chat endpoints.
+- **External API.** `POST /api/connect/v1/end-users/{user}/connections` (ADR 0010) lets the integrating server submit a key-based credential for an end user. `GET` lists connection health and `DELETE` removes one. The integrator's API key is the trust anchor, and the subject is derived from `user` as in the chat endpoints.
 - **WebApp.** A hosted connection page lets a signed-in end user enter a key for their instance. Anonymous sessions have no instance (ADR 0006) and cannot connect.
 - OAuth providers are outside this decision. The first implementation supports key-based Connectors only.
 
@@ -61,7 +61,7 @@ A task created in an instance or by a member runs with that requester's credenti
 - Operators see, per instance, which slots are connected and their health. They never see credentials. They can force a disconnect.
 - Erasing an instance deletes its Connections and makes their credentials unusable. Removing a ZGI connection does not revoke provider-side authorization, as today.
 - Credentials use the existing Connector keyring, are write-only, and are never returned, logged, or copied into run records.
-- Per-instance quotas (ADR 0006) apply to runs that use `per_user` operations.
+- End-user quotas of the Runtime Workspace (ADR 0010) apply to runs that use `per_user` operations.
 - Creation, use failures, disconnection, and erasure of instance Connections are audit events with identifiers and enum values only.
 
 ### Resolved questions
