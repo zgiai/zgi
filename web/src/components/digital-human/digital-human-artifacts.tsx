@@ -263,10 +263,12 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
             {formatTaskTime(version.created_at, locale)}
           </p>
         </div>
-        <Button size="sm" variant="outline" className="shrink-0" disabled={archive.isPending} onClick={() => archive.mutate(!data.archived_at)}>
-          {data.archived_at ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
-          {data.archived_at ? t('artifacts.restore') : t('artifacts.archive')}
-        </Button>
+        {data.can_manage ? (
+          <Button size="sm" variant="outline" className="shrink-0" disabled={archive.isPending} onClick={() => archive.mutate(!data.archived_at)}>
+            {data.archived_at ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+            {data.archived_at ? t('artifacts.restore') : t('artifacts.archive')}
+          </Button>
+        ) : null}
       </div>
       {data.archived_at ? <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">{t('artifacts.archivedNotice')}</p> : null}
       {version.note ? <p className="rounded-lg border-l-2 border-primary/60 bg-muted/40 px-3 py-2 text-sm">{version.note}</p> : null}

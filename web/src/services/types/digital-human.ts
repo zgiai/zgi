@@ -979,6 +979,8 @@ export interface DigitalHumanArtifact {
   updated_at: string;
   /** Set when the artifact is archived out of the default list. */
   archived_at?: string;
+  /** Whether the reader may archive or restore it. */
+  can_manage?: boolean;
   latest?: DigitalHumanArtifactVersion;
 }
 

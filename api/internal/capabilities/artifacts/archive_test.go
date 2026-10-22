@@ -12,31 +12,48 @@ func TestConversationFilesVersionAndSameContentIsKeptOnce(t *testing.T) {
 	ctx := t.Context()
 	scope := Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ApplicationType: "digital_human", ApplicationID: uuid.New()}
 	owner := Owner{Kind: OwnerAccount, ID: uuid.New()}
-	conversation := uuid.New()
-	publish := func(title string, data string, conversationID *uuid.UUID) *Published {
+	conversationA, conversationB := uuid.New(), uuid.New()
+	publish := func(title string, data string, conversationID *uuid.UUID, visibility Visibility) *Published {
 		t.Helper()
-		published, err := service.Publish(ctx, PublishRequest{Scope: scope, Owner: owner, Visibility: VisibilityOwner, Kind: KindFile, Title: title,
+		published, err := service.Publish(ctx, PublishRequest{Scope: scope, Owner: owner, Visibility: visibility, Kind: KindFile, Title: title,
 			File: &Blob{Name: title, MimeType: "application/pdf", Data: []byte(data)}, Source: SourceRun, SourceConversationID: conversationID})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return published
 	}
-	first := publish("report.pdf", "v1", &conversation)
-	second := publish("report.pdf", "v2", &conversation)
+	first := publish("report.pdf", "v1", &conversationA, VisibilityOwner)
+	second := publish("report.pdf", "v2", &conversationA, VisibilityOwner)
 	if first.Artifact.ID != second.Artifact.ID || second.Version.Number != 2 {
 		t.Fatalf("a conversation's file of the same name must version: %+v %+v", first.Artifact, second.Artifact)
 	}
-	other := publish("report.pdf", "v1", nil)
-	if !other.Created || other.Artifact.ID == first.Artifact.ID {
-		t.Fatalf("content that is not current anywhere must be kept as new: %+v", other)
-	}
-	renamed := publish("Quarterly report", "v2", nil)
+	renamed := publish("Quarterly report", "v2", &conversationA, VisibilityOwner)
 	if renamed.Created || renamed.Artifact.ID != first.Artifact.ID {
-		t.Fatalf("content the owner already keeps must not be kept twice: %+v", renamed)
+		t.Fatalf("content the conversation already keeps must not be kept twice: %+v", renamed)
 	}
+	if loose := publish("report.pdf", "v2", nil, VisibilityOwner); !loose.Created || loose.Artifact.ID == first.Artifact.ID {
+		t.Fatalf("content outside a task or conversation must be kept as its own artifact: %+v", loose)
+	}
+
+	// Another conversation keeps its own artifact, and versions it.
+	otherFirst := publish("report.pdf", "v2", &conversationB, VisibilityOwner)
+	otherSecond := publish("report.pdf", "v3", &conversationB, VisibilityOwner)
+	if otherFirst.Artifact.ID == first.Artifact.ID || otherSecond.Artifact.ID != otherFirst.Artifact.ID || otherSecond.Version.Number != 2 {
+		t.Fatalf("another conversation must version its own artifact: %+v %+v", otherFirst.Artifact, otherSecond.Version)
+	}
+
+	// A team publish never reuses a private artifact.
+	team := publish("report.pdf", "v2", &conversationA, VisibilityTeam)
+	if !team.Created || team.Artifact.ID == first.Artifact.ID || team.Artifact.Visibility != VisibilityTeam {
+		t.Fatalf("a team publish reused a private artifact: %+v", team.Artifact)
+	}
+	member := Reader{Scope: scope, Principal: Owner{Kind: OwnerAccount, ID: uuid.New()}, Member: true}
+	if _, err := service.Get(ctx, member, team.Artifact.ID); err != nil {
+		t.Fatalf("the team cannot read the team publish: %v", err)
+	}
+
 	stranger, err := service.Publish(ctx, PublishRequest{Scope: scope, Owner: Owner{Kind: OwnerAccount, ID: uuid.New()}, Visibility: VisibilityOwner, Kind: KindFile,
-		Title: "report.pdf", File: &Blob{Name: "report.pdf", MimeType: "application/pdf", Data: []byte("v2")}, SourceConversationID: &conversation})
+		Title: "report.pdf", File: &Blob{Name: "report.pdf", MimeType: "application/pdf", Data: []byte("v2")}, SourceConversationID: &conversationA})
 	if err != nil || !stranger.Created || stranger.Artifact.ID == first.Artifact.ID {
 		t.Fatalf("another owner's publish must never join this owner's artifact: %+v %v", stranger, err)
 	}
@@ -60,6 +77,12 @@ func TestArchivedArtifactsLeaveTheListAndComeBackWhenPublished(t *testing.T) {
 	first := publish("# One")
 	reader := Reader{Scope: scope, Principal: owner, Member: true}
 	colleague := Reader{Scope: scope, Principal: Owner{Kind: OwnerAccount, ID: uuid.New()}, Member: true}
+	if got, err := service.Get(ctx, colleague, first.Artifact.ID); err != nil || got.CanManage {
+		t.Fatalf("a colleague is offered to manage another member's artifact: %+v %v", got, err)
+	}
+	if got, err := service.Get(ctx, reader, first.Artifact.ID); err != nil || !got.CanManage {
+		t.Fatalf("the owner is not offered to manage their artifact: %+v %v", got, err)
+	}
 	if _, err := service.SetArchived(ctx, colleague, first.Artifact.ID, true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a member must not archive a colleague's artifact: %v", err)
 	}

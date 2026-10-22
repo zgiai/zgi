@@ -249,15 +249,15 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		return ""
 	}
 	// Artifacts are read with view permission; the artifact center decides
-	// which ones the reader sees. Archiving one needs run permission, and the
-	// artifact center then requires the reader to manage it.
+	// which ones the reader sees and which they may archive, and reports the
+	// latter so the console offers archiving only where it applies.
 	if strings.Contains(path, "/digital-humans/:id/artifacts") {
 		switch method {
 		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView
 		case http.MethodPost:
 			if strings.HasSuffix(path, "/archive") || strings.HasSuffix(path, "/restore") {
-				return workspacemodel.WorkspacePermissionDigitalHumanRun
+				return workspacemodel.WorkspacePermissionDigitalHumanView
 			}
 			return ""
 		default:

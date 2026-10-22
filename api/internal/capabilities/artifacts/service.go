@@ -127,6 +127,8 @@ type Published struct {
 type Summary struct {
 	Artifact
 	Latest *Version `json:"latest,omitempty"`
+	// CanManage says whether the reader may archive or restore it.
+	CanManage bool `json:"can_manage"`
 }
 
 // ArchiveFilter selects artifacts by whether they are archived.
@@ -263,7 +265,11 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, 
 
 // target finds the artifact a publish adds a version to, if any: the one
 // named, else the task's or the conversation's artifact of that title, else
-// the owner's artifact whose current version already holds this content.
+// the task's or the conversation's artifact whose current version already
+// holds this content. Implicit matches keep the requested visibility, so a
+// team publish never reuses a private artifact, and content is reused only
+// where the same title would version it, so each conversation keeps the
+// artifact it returned.
 func (s *Service) target(ctx context.Context, req PublishRequest, title, checksum string) (*Artifact, error) {
 	owned := func() *gorm.DB {
 		return s.db.WithContext(ctx).Model(&Artifact{}).
@@ -278,16 +284,25 @@ func (s *Service) target(ctx context.Context, req PublishRequest, title, checksu
 		}
 		return &artifact, nil
 	}
+	same := func() *gorm.DB {
+		return owned().Where("artifacts.visibility = ? AND artifacts.kind = ?", req.Visibility, req.Kind)
+	}
 	var candidates []*gorm.DB
+	var origins []string
+	var originArgs []any
 	if req.SourceTaskID != nil {
-		candidates = append(candidates, owned().Where("artifacts.source_task_id = ? AND artifacts.title = ? AND artifacts.kind = ?", *req.SourceTaskID, title, req.Kind))
+		candidates = append(candidates, same().Where("artifacts.source_task_id = ? AND artifacts.title = ?", *req.SourceTaskID, title))
+		origins, originArgs = append(origins, "artifacts.source_task_id = ?"), append(originArgs, *req.SourceTaskID)
 	}
 	if req.SourceConversationID != nil {
-		candidates = append(candidates, owned().Where("artifacts.source_conversation_id = ? AND artifacts.title = ? AND artifacts.kind = ?", *req.SourceConversationID, title, req.Kind))
+		candidates = append(candidates, same().Where("artifacts.source_conversation_id = ? AND artifacts.title = ?", *req.SourceConversationID, title))
+		origins, originArgs = append(origins, "artifacts.source_conversation_id = ?"), append(originArgs, *req.SourceConversationID)
 	}
-	candidates = append(candidates, owned().
-		Joins("JOIN artifact_versions ON artifact_versions.artifact_id = artifacts.id AND artifact_versions.number = artifacts.current_version").
-		Where("artifacts.kind = ? AND artifact_versions.checksum = ?", req.Kind, checksum))
+	if len(origins) > 0 {
+		candidates = append(candidates, same().
+			Joins("JOIN artifact_versions ON artifact_versions.artifact_id = artifacts.id AND artifact_versions.number = artifacts.current_version").
+			Where("artifact_versions.checksum = ?", checksum).Where("("+strings.Join(origins, " OR ")+")", originArgs...))
+	}
 	for _, query := range candidates {
 		var artifact Artifact
 		err := query.Order("artifacts.created_at").First(&artifact).Error
@@ -322,9 +337,7 @@ func (s *Service) SetArchived(ctx context.Context, reader Reader, id uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	own := artifact.OwnerKind == reader.Principal.Kind && artifact.OwnerID == reader.Principal.ID
-	shared := reader.Member && artifact.OwnerKind == OwnerWorkspace && artifact.Visibility == VisibilityTeam
-	if !own && !reader.Operator && !shared {
+	if !canManage(reader, artifact) {
 		return nil, ErrNotFound
 	}
 	if (artifact.ArchivedAt != nil) == archived {
@@ -340,6 +353,14 @@ func (s *Service) SetArchived(ctx context.Context, reader Reader, id uuid.UUID, 
 	}
 	artifact.ArchivedAt = value
 	return artifact, nil
+}
+
+// canManage reports whether reader may archive or restore artifact: its
+// owner, an operator, or any member for a workspace's team artifact.
+func canManage(reader Reader, artifact *Artifact) bool {
+	own := artifact.OwnerKind == reader.Principal.Kind && artifact.OwnerID == reader.Principal.ID
+	shared := reader.Member && artifact.OwnerKind == OwnerWorkspace && artifact.Visibility == VisibilityTeam
+	return own || reader.Operator || shared
 }
 
 // List returns the artifacts reader may see, newest first.
@@ -388,7 +409,7 @@ func (s *Service) List(ctx context.Context, reader Reader, query ListQuery) (*Li
 	}
 	items := make([]*Summary, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, &Summary{Artifact: *row, Latest: latest[row.ID]})
+		items = append(items, &Summary{Artifact: *row, Latest: latest[row.ID], CanManage: canManage(reader, row)})
 	}
 	return &ListResult{Items: items, Total: total, Page: page, PageSize: size}, nil
 }
@@ -403,7 +424,7 @@ func (s *Service) Get(ctx context.Context, reader Reader, id uuid.UUID) (*Summar
 	if err != nil {
 		return nil, err
 	}
-	return &Summary{Artifact: *artifact, Latest: latest[artifact.ID]}, nil
+	return &Summary{Artifact: *artifact, Latest: latest[artifact.ID], CanManage: canManage(reader, artifact)}, nil
 }
 
 // Versions lists an artifact's versions, newest first.
