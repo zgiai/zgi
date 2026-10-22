@@ -3,6 +3,9 @@ package digitalhumantask
 import (
 	"testing"
 
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 )
@@ -29,5 +32,23 @@ func TestTaskReportOriginNamesWhereTheTaskWasAsked(t *testing.T) {
 	}
 	if origin := taskReportOrigin(&automationmodel.AutomationTask{OriginSurface: &console}, true); origin != nil {
 		t.Fatalf("task without a conversation has origin %+v", origin)
+	}
+}
+
+// A task created in the task center is held by the member who created it, who
+// reads its reports as their own; another member does not hold it.
+func TestTaskCenterTaskIsHeldByItsCreator(t *testing.T) {
+	owner := automationmodel.AutomationTaskOwnerDigitalHuman
+	creator := "81031798-75f3-49aa-8ca1-f3ad9012d653"
+	task := &automationmodel.AutomationTask{OwnerKind: &owner, CreatedBy: creator}
+	reader := func(id string) digitalhuman.TaskAccessContext {
+		return digitalhuman.TaskAccessContext{Principal: invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: id},
+			Owner: digitalhuman.UserTaskOwner(usersubject.Ref{Kind: usersubject.Account, ID: uuid.MustParse(id)})}
+	}
+	if !taskHeldBy(task, reader(creator)) {
+		t.Fatal("the creator does not hold their task center task")
+	}
+	if taskHeldBy(task, reader(uuid.NewString())) {
+		t.Fatal("another member holds the task")
 	}
 }

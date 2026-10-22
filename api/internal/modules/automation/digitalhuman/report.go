@@ -451,7 +451,7 @@ func publicTaskReport(row *taskReportRow, task *automationmodel.AutomationTask, 
 		report.TaskName = task.Name
 		report.ClientReference = pointerValue(task.ClientReference)
 		report.CanReview = row.Final && access.CurrentTaskID == nil && canReviewReport(task, access)
-		report.RequestedByReader = taskRequestedBy(task, access)
+		report.RequestedByReader = taskHeldBy(task, access)
 		report.Origin = taskReportOrigin(task, report.RequestedByReader)
 	}
 	return report
@@ -460,7 +460,20 @@ func publicTaskReport(row *taskReportRow, task *automationmodel.AutomationTask, 
 // canReviewReport mirrors who may change the task: its requester or a task
 // center manager.
 func canReviewReport(task *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) bool {
-	return taskCenterManager(access) || taskRequestedBy(task, access)
+	return taskCenterManager(access) || taskHeldBy(task, access)
+}
+
+// taskHeldBy reports whether the reader holds the task: its requester, or the
+// member who created a task in the task center, reading it as their own.
+func taskHeldBy(task *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) bool {
+	if task == nil {
+		return false
+	}
+	if taskRequestedBy(task, access) {
+		return true
+	}
+	return pointerValue(task.OwnerKind) == string(automationmodel.AutomationTaskOwnerDigitalHuman) &&
+		task.OwnerSubjectID == nil && task.OwnerConversationID == nil && task.CreatedBy == accessActorID(access).String()
 }
 
 func reviewTransitionAllowed(current digitalhuman.TaskReportReviewState, action digitalhuman.TaskReportReviewAction) bool {
