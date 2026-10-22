@@ -16,6 +16,37 @@ import (
 )
 
 // RuntimePublishedVersion resolves the exact immutable identity used by an invocation.
+// RuntimeDraftVersion returns a DigitalHuman with its editable draft, for a
+// configuration preview.
+func (r *GormRepository) RuntimeDraftVersion(ctx context.Context, subject runtimeidentity.SubjectRef) (*Definition, *Version, error) {
+	if subject.Type != runtimeidentity.SubjectTypeDigitalHuman || subject.ID == uuid.Nil || subject.OrganizationID == uuid.Nil || subject.WorkspaceID == uuid.Nil {
+		return nil, nil, ErrInvalidRequest
+	}
+	var definition Definition
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND workspace_id = ? AND deleted_at IS NULL", subject.ID, subject.OrganizationID, subject.WorkspaceID).
+		Take(&definition).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("resolve DigitalHuman draft definition: %w", err)
+	}
+	if definition.DraftVersionID == nil || *definition.DraftVersionID == uuid.Nil {
+		return nil, nil, ErrVersionNotFound
+	}
+	var version Version
+	if err := r.db.WithContext(ctx).Where(
+		"id = ? AND digital_human_id = ? AND organization_id = ? AND workspace_id = ? AND state = ?",
+		*definition.DraftVersionID, subject.ID, subject.OrganizationID, subject.WorkspaceID, VersionStateDraft,
+	).Take(&version).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrVersionNotFound
+		}
+		return nil, nil, fmt.Errorf("resolve DigitalHuman draft version: %w", err)
+	}
+	return &definition, &version, nil
+}
+
 func (r *GormRepository) RuntimePublishedVersion(ctx context.Context, subject runtimeidentity.SubjectRef, versionID *uuid.UUID) (*Definition, *Version, error) {
 	if subject.Type != runtimeidentity.SubjectTypeDigitalHuman || subject.ID == uuid.Nil || subject.OrganizationID == uuid.Nil || subject.WorkspaceID == uuid.Nil {
 		return nil, nil, ErrInvalidRequest

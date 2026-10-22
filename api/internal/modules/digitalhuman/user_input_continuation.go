@@ -141,7 +141,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
 		}
 	}
-	if s.memory != nil {
+	if s.memory != nil && !previewRun(run) {
 		preparation, prepareErr := s.memory.Prepare(ctx, run, resolved, event)
 		if prepareErr != nil {
 			return runtimeservice.RunConfig{}, cleanup, prepareErr
@@ -153,7 +153,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
 		}
 	}
-	if s.tasks != nil {
+	if s.tasks != nil && !previewRun(run) {
 		preparation, prepareErr := s.tasks.Prepare(ctx, run, event)
 		if prepareErr != nil {
 			return runtimeservice.RunConfig{}, cleanup, prepareErr

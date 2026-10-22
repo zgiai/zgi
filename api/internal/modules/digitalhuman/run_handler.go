@@ -95,6 +95,23 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/runtime/conversations/:conversation_id/events", h.StreamConversationEvents)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueTaskApproval)
 	group.POST("/runtime/messages/:message_id/regenerate", h.RegenerateMessage)
+
+	// The configuration preview chats with the draft through the same
+	// handlers; its conversations and runs stay apart from real ones.
+	preview := router.Group("/digital-humans/:id/preview")
+	preview.Use(func(c *gin.Context) { c.Set(previewSurfaceContextKey, true) })
+	preview.POST("/invocations", h.SubmitManual)
+	preview.GET("/runs/:run_id", h.GetRun)
+	preview.POST("/runs/:run_id/cancel", h.CancelRun)
+	preview.GET("/runtime/conversations", h.ListConversations)
+	preview.GET("/runtime/conversations/:conversation_id", h.GetConversation)
+	preview.DELETE("/runtime/conversations/:conversation_id", h.DeleteConversation)
+	preview.GET("/runtime/conversations/:conversation_id/messages", h.ListConversationMessages)
+	preview.GET("/runtime/conversations/:conversation_id/files/:file_id", h.GetExecutionFile)
+	preview.POST("/runtime/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
+	preview.POST("/runtime/conversations/:conversation_id/stop", h.StopConversation)
+	preview.GET("/runtime/conversations/:conversation_id/events", h.StreamConversationEvents)
+	preview.POST("/runtime/messages/:message_id/regenerate", h.RegenerateMessage)
 }
 
 func (h *RuntimeHandler) RegenerateMessage(c *gin.Context) {

@@ -197,6 +197,10 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 	if path == "" {
 		return ""
 	}
+	// Previewing the draft is part of editing it.
+	if strings.Contains(path, "/digital-humans/:id/preview/") {
+		return workspacemodel.WorkspacePermissionDigitalHumanUpdate
+	}
 	// Creation needs the workspace's bindable skills and owner Connector
 	// connections before the draft exists, so these routes are owned by the
 	// create permission rather than the view one.

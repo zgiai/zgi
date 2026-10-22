@@ -140,7 +140,7 @@ func (r *GormRepository) RunByIdempotency(ctx context.Context, organizationID, d
 func (r *GormRepository) ListRuns(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, query ListQuery) ([]*Run, int64, error) {
 	db := r.db.WithContext(ctx).Model(&Run{}).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ?", scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
-	)
+	).Where("surface <> ?", SurfacePreview) // Configuration previews are not work the DigitalHuman did.
 	var total int64
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("count DigitalHuman runs: %w", err)

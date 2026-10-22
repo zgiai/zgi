@@ -480,7 +480,7 @@ const messages = {
     description:
       'Describe who this digital human is, how it communicates, and which boundaries it follows.',
     modelTitle: 'Runtime model',
-    modelDescription: 'Only models marked for Agent use and capable of tool calling are shown.',
+    modelDescription: 'It must support tool calls. Stronger models follow instructions and run tools more reliably, but each conversation costs more and answers more slowly.',
     modelPlaceholder: 'Select an Agent model',
     modelUnavailable:
       'The current model no longer meets Agent runtime requirements. Select another model and save.',
@@ -584,7 +584,45 @@ const messages = {
     draftHint: 'Changes save to the draft immediately and go live after you publish.',
     pendingPublish: 'Unpublished changes',
   },
+  callbackGuide: {
+    open: 'How to integrate',
+    title: 'Receive API callbacks',
+    description: "Receive the digital human's pushes on your server: check the signature, then read the full content by its identifier.",
+    eventsTitle: 'Events',
+    events: {
+      report_created: 'A task handed back a report.',
+      task_failed: 'A task still failed after its retries.',
+      task_approval_requested: 'The digital human proposed a task change in a conversation and waits for the user.',
+      notification_test: 'Sent when you click Send test below.',
+    },
+    payloadTitle: 'Payload',
+    payloadDescription: 'The body is JSON with identifiers and one line. Read the full report with GET /reports/{report_id}.',
+    verifyTitle: 'Check the signature',
+    verifyDescription: 'Every push carries X-ZGI-Timestamp and X-ZGI-Signature. HMAC-SHA256 "timestamp.raw body" with the signing secret and compare; reject pushes older than 5 minutes.',
+    deliveryTitle: 'Delivery',
+    delivery: {
+      respond: 'A 2xx within 10 seconds counts as delivered; any other status or a timeout is a failure.',
+      retry: 'Failures retry automatically, up to 5 attempts; after that you can send one again from the delivery log.',
+      dedupe: 'X-ZGI-Delivery stays the same across retries of one push; use it to drop duplicates.',
+      route: 'Pushes carry no user identifier. Pass client_reference when creating a task and it comes back in every push, so you can find the user or ticket.',
+      public: 'Only public addresses can receive pushes.',
+    },
+  },
+  preview: {
+    title: 'Preview',
+    description: 'Chat with the current draft without publishing it.',
+    open: 'Preview',
+    close: 'Close preview',
+    conversations: 'Previews',
+    newConversation: 'New preview',
+    homeTitle: "Try {name}'s draft",
+    homeDescription: 'Change the persona, rules, or capabilities and try them here. The draft is saved before each message.',
+    sandboxNote: "Previews don't create or change tasks, save artifacts, write memory, or act in connected systems, and they stay out of the conversation list and run logs.",
+  },
   configurationHub: {
+    sectionNav: 'Configuration sections',
+    conversationTitle: 'Conversation',
+    conversationDescription: 'What files people can upload, and how replies behave in channels.',
     title: 'Configuration',
     description:
       'Manage identity, response behavior, and approved resources in one versioned draft.',
@@ -1228,7 +1266,7 @@ const messages = {
       deleteTitle: 'Delete this channel connection?',
       deleteDescription:
         'New messages will stop after deletion and automatic routes will be cleaned up. Historical events and deliveries remain auditable.',
-      webhook: 'Callback URL',
+      webhook: 'Message receiving URL',
       webhookDescription:
         'Paste this into the robot message callback URL for the selected platform.',
       copy: 'Copy',

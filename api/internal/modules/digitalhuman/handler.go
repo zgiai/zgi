@@ -593,8 +593,15 @@ func (h *Handler) scope(c *gin.Context) (Scope, bool) {
 		h.writeError(c, apperror.New(appcatalog.CodeAuthenticationRequired, apperror.WithOperation("digital_human.scope")))
 		return Scope{}, false
 	}
-	return Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}, true
+	scope := Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}
+	if c.GetBool(previewSurfaceContextKey) {
+		scope.Surface = SurfacePreview
+	}
+	return scope, true
 }
+
+// previewSurfaceContextKey marks requests on the configuration preview routes.
+const previewSurfaceContextKey = "digital_human_preview_surface"
 
 func (h *Handler) decode(c *gin.Context, target any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxDigitalHumanRequestBytes)

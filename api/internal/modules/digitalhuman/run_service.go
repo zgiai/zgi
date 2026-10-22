@@ -133,6 +133,34 @@ func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRu
 	return service
 }
 
+// draftResolver resolves a configuration preview against the draft.
+type draftResolver interface {
+	ResolveDraft(context.Context, invocation.Event) (*ResolvedExecution, error)
+}
+
+func (s *RuntimeService) resolveInvocation(ctx context.Context, scope Scope, event invocation.Event) (*ResolvedExecution, error) {
+	if scope.Surface != SurfacePreview {
+		return s.resolver.Resolve(ctx, event, nil)
+	}
+	resolver, ok := s.resolver.(draftResolver)
+	if !ok {
+		return nil, ErrInvalidRequest
+	}
+	return resolver.ResolveDraft(ctx, event)
+}
+
+// previewRun reports whether a run is a configuration preview, which gets no
+// task, artifact, or memory tools and leaves no memory behind.
+func previewRun(run *Run) bool {
+	return run != nil && run.Surface == SurfacePreview
+}
+
+// previewGuidance tells the model what a preview cannot do, so it explains
+// instead of pretending to act.
+const previewGuidance = "This conversation is a configuration preview of an unpublished draft. " +
+	"Creating or changing tasks, saving artifacts, changing memory, and acting in connected systems are turned off here. " +
+	"When asked to do one of these, say what you would do once published instead of claiming it was done."
+
 // RuntimeServiceOption configures optional subject-owned runtime capabilities.
 type RuntimeServiceOption func(*RuntimeService)
 
@@ -195,12 +223,19 @@ func (s *RuntimeService) SubmitManual(ctx context.Context, scope Scope, digitalH
 		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
 		OccurredAt: s.now(), Context: map[string]any{"query": query, "surface": SurfaceConsole},
 	}
+	// The configuration preview submits through the same path with its own
+	// surface, which resolves the draft instead of the published version.
+	surface := SurfaceConsole
+	if scope.Surface == SurfacePreview {
+		surface = SurfacePreview
+		event.Context["surface"] = surface
+	}
 	scope.PrincipalType = string(invocation.PrincipalAccount)
 	scope.PrincipalID = scope.ActorID
 	subjectID := scope.ActorID
 	scope.UserSubjectKind = string(usersubject.Account)
 	scope.UserSubjectID = &subjectID
-	scope.Surface = SurfaceConsole
+	scope.Surface = surface
 	if len(request.FileIDs) > 0 {
 		if s.manualFiles == nil {
 			return nil, false, ErrConsoleFileNotAccessible
@@ -242,7 +277,7 @@ func (s *RuntimeService) SubmitRegeneration(ctx context.Context, scope Scope, di
 		surface = SurfaceConsole
 		scope.Surface = surface
 	}
-	if surface != SurfaceConsole && surface != SurfaceAPI && surface != SurfaceWebApp {
+	if surface != SurfaceConsole && surface != SurfaceAPI && surface != SurfaceWebApp && surface != SurfacePreview {
 		return nil, false, ErrInvalidRequest
 	}
 	if surface == SurfaceConsole {
@@ -405,7 +440,7 @@ func (s *RuntimeService) SubmitInvocation(ctx context.Context, scope Scope, even
 		return nil, false, loadErr
 	}
 
-	resolved, err := s.resolver.Resolve(ctx, validated, nil)
+	resolved, err := s.resolveInvocation(ctx, scope, validated)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1010,7 +1045,10 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			config.RuntimeTools = append(config.RuntimeTools, channelContextPreparation.Tools...)
 		}
 	}
-	if s.memory != nil {
+	if previewRun(run) {
+		config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + previewGuidance
+	}
+	if s.memory != nil && !previewRun(run) {
 		memoryPreparation, memoryErr := s.memory.Prepare(ctx, run, resolved, event)
 		if memoryErr != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.memory.prepare_failed", "The DigitalHuman could not prepare its long-term memory context.", s.now())
@@ -1023,7 +1061,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			config.RuntimeTools = append(config.RuntimeTools, memoryPreparation.Tools...)
 		}
 	}
-	if s.tasks != nil {
+	if s.tasks != nil && !previewRun(run) {
 		taskPreparation, taskErr := s.tasks.Prepare(ctx, run, event)
 		if taskErr != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.tasks.prepare_failed", "The DigitalHuman could not prepare its task tools.", s.now())
@@ -1177,7 +1215,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		result.Metadata["channel_context"] = []interface{}{channelContextPreparation.Diagnostics}
 		recordChannelContextMetrics(ctx, channelContextPreparation.Diagnostics)
 	}
-	if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok {
+	if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok && !previewRun(run) {
 		if err := finalizer.Finalize(ctx, run, prepared, result); err != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.memory.schedule_failed", "The DigitalHuman could not schedule its memory extraction task.", s.now())
 			return err
@@ -1407,7 +1445,7 @@ func (s *RuntimeService) recoverCompletedRuns(ctx context.Context, updatedBefore
 			}
 			continue
 		}
-		if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok {
+		if finalizer, ok := s.memory.(memoryRuntimeFinalizer); ok && !previewRun(run) {
 			prepared := &chatruntime.PreparedChat{Conversation: conversation, Message: message}
 			result := &chatruntime.ChatResult{Answer: message.Answer, Metadata: message.Metadata, Status: message.Status}
 			if finalizeErr := finalizer.Finalize(ctx, run, prepared, result); finalizeErr != nil {

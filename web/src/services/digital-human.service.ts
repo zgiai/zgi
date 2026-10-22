@@ -277,11 +277,13 @@ class DigitalHumanService extends BaseService {
     return this.request('put', `/digital-humans/${id}/draft/bindings`, body);
   }
 
+  // `preview` runs the configuration draft instead of the published version.
   submitInvocation(
     id: string,
-    data: ManualDigitalHumanInvocationRequest
+    data: ManualDigitalHumanInvocationRequest,
+    preview = false
   ): Promise<ApiResponseData<ManualDigitalHumanInvocationResponse>> {
-    return this.request('post', `/digital-humans/${id}/invocations`, data);
+    return this.request('post', `/digital-humans/${id}${preview ? '/preview' : ''}/invocations`, data);
   }
 
   listRuns(
@@ -291,16 +293,16 @@ class DigitalHumanService extends BaseService {
     return this.request('get', `/digital-humans/${id}/runs`, undefined, { params });
   }
 
-  getRun(id: string, runId: string): Promise<ApiResponseData<DigitalHumanRun>> {
-    return this.request('get', `/digital-humans/${id}/runs/${runId}`);
+  getRun(id: string, runId: string, preview = false): Promise<ApiResponseData<DigitalHumanRun>> {
+    return this.request('get', `/digital-humans/${id}${preview ? '/preview' : ''}/runs/${runId}`);
   }
 
   getRunRuntimeLog(id: string, runId: string): Promise<ApiResponseData<DigitalHumanRunRuntimeLog>> {
     return this.request('get', `/digital-humans/${id}/runs/${runId}/runtime-log`);
   }
 
-  cancelRun(id: string, runId: string): Promise<ApiResponseData<{ run: DigitalHumanRun }>> {
-    return this.request('post', `/digital-humans/${id}/runs/${runId}/cancel`, {});
+  cancelRun(id: string, runId: string, preview = false): Promise<ApiResponseData<{ run: DigitalHumanRun }>> {
+    return this.request('post', `/digital-humans/${id}${preview ? '/preview' : ''}/runs/${runId}/cancel`, {});
   }
 
   listMemories(

@@ -14,6 +14,10 @@ const (
 	SurfaceAPI     = "digital_human_api"
 	SurfaceTask    = "digital_human_task"
 	SurfaceChannel = "channel"
+	// SurfacePreview is the configuration page's preview: a person who may
+	// edit the DigitalHuman chats with its unpublished draft. It never
+	// changes tasks, artifacts, memory, or connected systems.
+	SurfacePreview = "digital_human_preview"
 )
 
 // Scope is the authenticated organization, workspace, and actor boundary.
