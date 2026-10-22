@@ -122,6 +122,13 @@ export const LOGO_REDIRECT_URL: string = withBasePathIfInternal(
 );
 
 /**
+ * Back button on agent landing pages (WebApps). Empty hides it; "back"
+ * returns to the previous page; any other value is the link it opens, an
+ * internal path or a full URL.
+ */
+export const WEBAPP_BACK_TARGET: string = (readPublicEnvRaw('NEXT_PUBLIC_WEBAPP_BACK_URL') || '').trim();
+
+/**
  * Redirect URL after logout completes.
  * Supports internal paths and full external URLs.
  */
