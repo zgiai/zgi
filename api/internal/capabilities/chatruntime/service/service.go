@@ -41,7 +41,7 @@ const (
 	searchSnippetRunes       = 120
 	staleActiveMessageError  = "runtime_lease_expired"
 	streamEventsExpiredError = "stream events expired"
-	titleGenerationTimeout   = 15 * time.Second
+	titleGenerationTimeout   = 25 * time.Second
 	runtimeContextMaxRunes   = 8000
 	runtimeLeaseHeartbeat    = 15 * time.Second
 	runtimeLeaseFailureTTL   = 90 * time.Second

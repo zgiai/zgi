@@ -200,6 +200,37 @@ func TestGenerateReturnsFallbackWhenAllCandidatesFail(t *testing.T) {
 	}
 }
 
+func TestGenerateStopsAfterTimeoutWithoutTryingNextCandidate(t *testing.T) {
+	defaults := &fakeDefaultModelService{
+		primary: &llmdefaultservice.ResolvedModel{
+			UseCase:  string(llmmodelmodel.UseCaseTextChat),
+			Provider: "openai",
+			Model:    "slow-model",
+			Source:   llmdefaultservice.SourceExplicit,
+		},
+	}
+	llm := &fakeTitleLLM{errByModel: map[string]error{"slow-model": context.DeadlineExceeded}}
+	svc := NewService(llm, defaults)
+
+	result, err := svc.Generate(context.Background(), GenerateRequest{
+		OrganizationID:    uuid.New(),
+		AccountID:         uuid.New(),
+		Messages:          []Message{{Role: "user", Content: "Explain project setup"}},
+		FallbackTitle:     "Explain project setup",
+		PreferredModel:    "other-model",
+		PreferredProvider: "openai",
+	})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if result.Source != SourceFallback {
+		t.Fatalf("result = %#v, want fallback", result)
+	}
+	if len(llm.calls) != 1 {
+		t.Fatalf("calls = %v, want a single attempt after timeout", llm.calls)
+	}
+}
+
 func TestGenerateAcceptsRawTitleWhenJsonParsingFails(t *testing.T) {
 	defaults := &fakeDefaultModelService{
 		primary: &llmdefaultservice.ResolvedModel{
