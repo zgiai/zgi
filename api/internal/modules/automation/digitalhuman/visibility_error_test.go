@@ -10,7 +10,6 @@ import (
 )
 
 func TestReadOnlyCheckKeepsDatabaseErrors(t *testing.T) {
-	t.Setenv("ZGI_DIGITAL_HUMAN_TASK_VISIBILITY_ENABLED", "true")
 	fixture := newVisibilityFixture(t)
 	outage := errors.New("visibility probe timed out")
 	// Fail the visibility count that follows a change outside the caller's
