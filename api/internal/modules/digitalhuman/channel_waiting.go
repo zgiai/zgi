@@ -65,12 +65,33 @@ func (s *RuntimeService) deliverChannelWaitingPrompt(ctx context.Context, run *R
 	if !ok {
 		return
 	}
-	// One prompt per message and wait: a resumed loop that waits again on the
-	// same message asks anew.
-	key := "waiting:" + messageID.String() + ":" + status
+	// One prompt per wait: a resumed loop that waits again on the same message
+	// asks anew, while a retry of the same wait stays one delivery.
+	key := "waiting:" + uuid.NewSHA1(uuid.NameSpaceOID, []byte(messageID.String()+"\x00"+status+"\x00"+channelWaitIdentity(run, status, metadata))).String()
 	if err := deliveryStore.EnqueueRunChannelFinalDelivery(context.WithoutCancel(ctx), run.ID, key, text, s.now()); err != nil {
 		logger.WarnContext(ctx, "failed to deliver digital human channel waiting prompt", "run_id", run.ID.String(), "status", status, err)
 	}
+}
+
+// channelWaitIdentity names one wait of a message: the question's request,
+// the approval's token, or the connector confirmation's receipt.
+func channelWaitIdentity(run *Run, status string, metadata map[string]interface{}) string {
+	metadata = jsonNormalizedMap(metadata)
+	switch status {
+	case runtimemodel.MessageStatusWaitingQuestion:
+		request, _ := metadata["user_input_request"].(map[string]interface{})
+		return strings.TrimSpace(stringValue(request["request_id"]))
+	case runtimemodel.MessageStatusWaitingApproval:
+		if run != nil && run.WaitingReceipt != nil {
+			return run.WaitingReceipt.String()
+		}
+		state := workflowContinuationRecord(metadata)
+		if token := strings.TrimSpace(stringValue(state["approval_token"])); token != "" {
+			return token
+		}
+		return strings.TrimSpace(stringValue(state["workflow_run_id"]))
+	}
+	return ""
 }
 
 func channelWaitingPromptText(run *Run, status, answer string, metadata map[string]interface{}) string {

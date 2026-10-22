@@ -163,3 +163,32 @@ func TestChannelWaitingPromptReadsQuestionsHeldInMemory(t *testing.T) {
 		}
 	}
 }
+
+type channelPromptKeyStore struct {
+	*channelApprovalStoreStub
+	keys []string
+}
+
+func (s *channelPromptKeyStore) EnqueueRunChannelFinalDelivery(_ context.Context, _ uuid.UUID, key string, text string, _ time.Time) error {
+	s.keys = append(s.keys, key)
+	return nil
+}
+
+// A second question on the same message is a new prompt; the same question
+// sent again stays one delivery.
+func TestChannelWaitingPromptKeyFollowsEachWait(t *testing.T) {
+	store := &channelPromptKeyStore{channelApprovalStoreStub: &channelApprovalStoreStub{}}
+	service := &RuntimeService{store: store, now: time.Now}
+	run, messageID := &Run{ID: uuid.New()}, uuid.New()
+	question := func(requestID string) map[string]interface{} {
+		return map[string]interface{}{"user_input_request": map[string]interface{}{
+			"request_id": requestID, "questions": []interface{}{map[string]interface{}{"id": "q", "question": "几点？"}},
+		}}
+	}
+	service.deliverChannelWaitingPrompt(context.Background(), run, messageID, runtimemodel.MessageStatusWaitingQuestion, "", question("call_1"))
+	service.deliverChannelWaitingPrompt(context.Background(), run, messageID, runtimemodel.MessageStatusWaitingQuestion, "", question("call_1"))
+	service.deliverChannelWaitingPrompt(context.Background(), run, messageID, runtimemodel.MessageStatusWaitingQuestion, "", question("call_2"))
+	if len(store.keys) != 3 || store.keys[0] != store.keys[1] || store.keys[1] == store.keys[2] || len(store.keys[2]) > 128 {
+		t.Fatalf("prompt keys = %v", store.keys)
+	}
+}
