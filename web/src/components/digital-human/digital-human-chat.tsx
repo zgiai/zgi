@@ -27,6 +27,7 @@ import {
 import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { digitalHumanService } from '@/services/digital-human.service';
 import { inboxService } from '@/services/inbox.service';
 import type { DigitalHumanTaskPendingChange } from '@/services/types/digital-human';
@@ -44,6 +45,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
   const permissions = useAccountPermissions();
   const canRun = permissions.hasPermission('digital_human.run');
   const [mobileTasksOpen, setMobileTasksOpen] = useState(false);
+  const [tasksWide, setTasksWide] = useState(false);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const taskRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const published = detail?.published;
@@ -357,13 +359,20 @@ export function DigitalHumanChat({ id }: { id: string }) {
         />
       </div>
       {canRun ? (
-        <div className="hidden w-[22rem] shrink-0 xl:block">
+        // The panel widens while a task or report is open beside the chat.
+        <div
+          className={cn(
+            'hidden shrink-0 border-l transition-[width] duration-200 ease-out motion-reduce:transition-none xl:block',
+            tasksWide ? 'w-[36rem] 2xl:w-[40rem]' : 'w-[24rem] 2xl:w-[26rem]'
+          )}
+        >
           <DigitalHumanTaskPanel
             client={taskClient}
             compact
             refreshKey={taskRefreshKey}
             onOpenPendingChange={openPendingChange}
             focusTaskId={focusTaskId}
+            onWideChange={setTasksWide}
           />
         </div>
       ) : null}

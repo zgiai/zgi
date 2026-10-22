@@ -1494,6 +1494,7 @@ const messages: DigitalHumansMessages = {
       last: '上次 {time}',
       newReport: '有新汇报',
       backToReports: '返回汇报',
+      backToTasks: '返回任务列表',
       noReportsToReview: '没有待查看的汇报。',
     },
     myDescription: '你在这个数字人下发起的任务；与工作空间共享的任务也可能以只读方式显示在这里。',

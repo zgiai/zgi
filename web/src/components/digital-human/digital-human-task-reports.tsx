@@ -644,6 +644,7 @@ export function TaskPanelReportFeed({
   refreshKey = 0,
   openReportId,
   onOpenHandled,
+  onOpenChange,
   onChanged,
 }: {
   client: TaskReportClient;
@@ -651,6 +652,8 @@ export function TaskPanelReportFeed({
   // A report to open, e.g. from a task's "New report"; handled once listed.
   openReportId?: string | null;
   onOpenHandled?: () => void;
+  // A report opened or closed, for a panel that widens to read it.
+  onOpenChange?: (open: boolean) => void;
   onChanged?: () => void;
 }) {
   const t = useT('digitalHumans');
@@ -704,6 +707,10 @@ export function TaskPanelReportFeed({
   useEffect(() => {
     if (open) clientRef.current.viewed?.(open.id);
   }, [open]);
+  const isOpen = open !== null;
+  useEffect(() => {
+    onOpenChange?.(isOpen);
+  }, [isOpen, onOpenChange]);
 
   if (open) {
     return (

@@ -3,6 +3,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
+  ArrowLeft,
   ArrowRight,
   CalendarClock,
   CheckCircle2,
@@ -25,7 +26,6 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
 import { useLocale } from '@/hooks/use-locale';
@@ -86,6 +86,7 @@ export function DigitalHumanTaskPanel({
   refreshKey = 0,
   onOpenPendingChange,
   focusTaskId,
+  onWideChange,
 }: {
   client: DigitalHumanTaskPanelClient;
   title?: 'my' | 'shared';
@@ -95,6 +96,8 @@ export function DigitalHumanTaskPanel({
   focusTaskId?: string | null;
   // Opens the conversation that holds a task's pending approval card.
   onOpenPendingChange?: (change: DigitalHumanTaskPendingChange) => void;
+  // A task or report is open and wants more room than the list.
+  onWideChange?: (wide: boolean) => void;
 }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
@@ -245,6 +248,11 @@ export function DigitalHumanTaskPanel({
     };
   }, [refreshKey, reportsRefresh, tasks]);
   const handledOpenReport = useCallback(() => setOpenReportId(null), []);
+  const [reportOpen, setReportOpen] = useState(false);
+  const wide = compact && ((view === 'tasks' && detailOpen && Boolean(selected)) || (view === 'reports' && reportOpen));
+  useEffect(() => {
+    onWideChange?.(wide);
+  }, [onWideChange, wide]);
 
   const select = (task: DigitalHumanTask) => {
     setSelectedId(task.id);
@@ -364,11 +372,11 @@ export function DigitalHumanTaskPanel({
       }
     >
       {/* As tall as the conversation header beside it, so their lines meet. */}
-      <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3">
+      <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3 sm:h-14">
         <div className="flex min-w-0 items-center gap-1">
           {reportFeed ? (
             <div role="tablist" aria-label={titleText} className="flex min-w-0 items-center gap-0.5 rounded-lg bg-muted p-0.5">
-              <TaskPanelTab active={view === 'tasks'} label={titleText} count={tasks?.total} onSelect={() => setView('tasks')} />
+              <TaskPanelTab active={view === 'tasks'} label={titleText} count={tasks?.total} onSelect={() => { setView('tasks'); setDetailOpen(false); }} />
               <TaskPanelTab
                 active={view === 'reports'}
                 label={t('tasks.panel.reports')}
@@ -464,11 +472,51 @@ export function DigitalHumanTaskPanel({
             refreshKey={refreshKey + reportsRefresh}
             openReportId={openReportId}
             onOpenHandled={handledOpenReport}
+            onOpenChange={setReportOpen}
             onChanged={() => {
               setReportsRefresh(value => value + 1);
               void load();
             }}
           />
+        </div>
+      ) : compact && detailOpen && selected ? (
+        // A task opens in place of the list, in the widened panel, so the
+        // conversation stays in view.
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+            <Button variant="ghost" size="sm" className="-ml-1 h-7 px-2 text-xs" onClick={() => setDetailOpen(false)}>
+              <ArrowLeft className="size-3.5" />
+              {t('tasks.panel.backToTasks')}
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <TaskDetailContent
+                selected={selected}
+              editing={editing}
+              draft={draft}
+              history={{ runs, activities, runPage, activityPage, historyError,
+                onRunPage: page => { setRunPage(page); setRuns(null); },
+              onActivityPage: page => { setActivityPage(page); setActivities(null); },
+                onRetry: () => setHistoryRefresh(value => value + 1) }}
+              title={title}
+              onDraftChange={setDraft}
+              onCreate={create}
+              onUpdate={update}
+              onCancelEdit={() => setEditing(false)}
+              onAction={action}
+              onChangeVisibility={changeVisibility}
+              onChangeChannels={changeChannels}
+              reportClient={client.reports}
+              onReportsChanged={() => void load()}
+              allowProposalApproval={false}
+              allowDirectMutations={allowDirectMutations}
+              allowDirectEdit={allowDirectEdit}
+              onStartEdit={task => {
+                setDraft({ name: task.name, goal: task.goal });
+                setEditing(true);
+              }}
+            />
+          </div>
         </div>
       ) : (
       <>
@@ -658,41 +706,6 @@ export function DigitalHumanTaskPanel({
       </div>
       </>
       )}
-      {compact ? (
-        <Sheet open={detailOpen && Boolean(selected)} onOpenChange={setDetailOpen}>
-          <SheetContent side="right" className="w-full overflow-y-auto p-0 sm:max-w-lg">
-            <SheetTitle className="sr-only">{selected?.name ?? t('tasks.myTitle')}</SheetTitle>
-            <div className="p-4">
-              <TaskDetailContent
-                selected={selected}
-                editing={editing}
-                draft={draft}
-                history={{ runs, activities, runPage, activityPage, historyError,
-                  onRunPage: page => { setRunPage(page); setRuns(null); },
-                onActivityPage: page => { setActivityPage(page); setActivities(null); },
-                  onRetry: () => setHistoryRefresh(value => value + 1) }}
-                title={title}
-                onDraftChange={setDraft}
-                onCreate={create}
-                onUpdate={update}
-                onCancelEdit={() => setEditing(false)}
-                onAction={action}
-                onChangeVisibility={changeVisibility}
-                onChangeChannels={changeChannels}
-                reportClient={client.reports}
-                onReportsChanged={() => void load()}
-                allowProposalApproval={false}
-                allowDirectMutations={allowDirectMutations}
-                allowDirectEdit={allowDirectEdit}
-                onStartEdit={task => {
-                  setDraft({ name: task.name, goal: task.goal });
-                  setEditing(true);
-                }}
-              />
-            </div>
-          </SheetContent>
-        </Sheet>
-      ) : null}
     </section>
   );
 }

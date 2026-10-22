@@ -1609,6 +1609,7 @@ const messages = {
       last: 'last {time}',
       newReport: 'New report',
       backToReports: 'Back to reports',
+      backToTasks: 'Back to tasks',
       noReportsToReview: 'No reports to review.',
     },
     myDescription:
