@@ -370,7 +370,7 @@ func (r *MemoryExtractionRunner) applyDrafts(
 			ExpectedRevision: expectedRevision, ConfigRevision: job.ConfigRevision, MemoryEpoch: job.MemoryEpoch,
 			SupersedesID: draft.SupersedesID, ExpectedSupersededRevision: draft.ExpectedSupersededRevision,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
-			Visibility: MemoryVisibilityWorkspace, Confidence: draft.Confidence, RunID: &run.ID,
+			Visibility: target.visibility(), Confidence: draft.Confidence, RunID: &run.ID,
 			SourceContext: MemorySourceContext{PrivateConversation: false, SourceTrust: target.Trust}, OccurredAt: source.CompletedAt,
 		}
 		result, err := r.service.ApplyAutonomousMemoryProposal(ctx, scope, job.DigitalHumanID, request)

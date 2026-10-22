@@ -288,6 +288,9 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 				return ErrMemoryPolicyRejected
 			}
 		}
+		if capacityErr := checkInstanceMemoryCapacity(ctx, tx, scope, digitalHumanID, request); capacityErr != nil {
+			return capacityErr
+		}
 		memory, before, supersededBefore, applyErr := applyMemoryMutation(ctx, tx, scope, digitalHumanID, request, state, s.now())
 		if applyErr != nil {
 			return applyErr
@@ -334,6 +337,9 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 		result = &MemoryMutationResult{Memory: memory, Event: event}
 		return nil
 	})
+	if errors.Is(err, errInstanceMemoryFull) {
+		s.recordRejectedMemoryProposal(ctx, scope, digitalHumanID, request, err)
+	}
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.propose")
 	}

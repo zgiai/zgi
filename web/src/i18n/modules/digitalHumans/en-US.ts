@@ -2020,6 +2020,7 @@ const messages = {
       customer: 'Customer',
       campaign: 'Campaign',
       channel: 'Channel',
+      instance: 'End user',
     },
     source: 'Source',
     sourceSummary: 'Source: {source}',

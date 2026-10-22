@@ -457,7 +457,8 @@ export type DigitalHumanMemoryScopeType =
   | 'project'
   | 'customer'
   | 'campaign'
-  | 'channel';
+  | 'channel'
+  | 'instance';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {

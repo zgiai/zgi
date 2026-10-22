@@ -72,6 +72,7 @@ const scopeTypes: DigitalHumanMemoryScopeType[] = [
   'customer',
   'campaign',
   'channel',
+  'instance',
 ];
 
 export function DigitalHumanMemory({ id }: { id: string }) {

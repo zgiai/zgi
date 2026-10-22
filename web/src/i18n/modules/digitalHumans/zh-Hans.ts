@@ -1891,6 +1891,7 @@ const messages: DigitalHumansMessages = {
       customer: '客户',
       campaign: '活动',
       channel: '渠道',
+      instance: '终端用户',
     },
     source: '来源',
     sourceSummary: '来源：{source}',
