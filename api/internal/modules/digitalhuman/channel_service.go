@@ -1019,11 +1019,14 @@ func (service *ChannelService) handleInboundMessage(
 			return &ChannelWebhookResult{Response: acknowledgement, Accepted: true, Duplicate: !created, EventID: stored.ID}, nil
 		}
 	}
-	// 采纳 or 返工：意见 reviews the conversation's latest task report.
-	if reviewer, ok := service.runtime.(channelReportReviewRuntime); ok {
+	// 采纳 or 返工：意见 reviews the conversation's latest task report. Its
+	// tasks belong to the stable channel conversation, not the local one.
+	ownerConversationID, ownerErr := ChannelTaskConversationID(installation.OrganizationID, installation.WorkspaceID, route.Binding.SubjectID,
+		installation.Provider, installation.ID.String(), message.ExternalConversationID)
+	if reviewer, ok := service.runtime.(channelReportReviewRuntime); ok && ownerErr == nil {
 		handled, reviewErr := reviewer.ReviewChannelTaskReport(ctx,
 			Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
-			route.Binding.SubjectID, conversationID, ChannelApprovalReply{
+			route.Binding.SubjectID, ownerConversationID, ChannelApprovalReply{
 				Text: channelInvocationQuery(message), SenderExternalID: strings.TrimSpace(message.SenderExternalID), ConversationType: message.ConversationType,
 			})
 		if reviewErr != nil {

@@ -22,7 +22,7 @@ const (
 // channel reply. It reports false when the reply is not a review, or there is
 // no report to review, so the reply is handled as an ordinary message.
 type channelReportReviewRuntime interface {
-	ReviewChannelTaskReport(ctx context.Context, scope Scope, digitalHumanID, conversationID uuid.UUID, reply ChannelApprovalReply) (bool, error)
+	ReviewChannelTaskReport(ctx context.Context, scope Scope, digitalHumanID, ownerConversationID uuid.UUID, reply ChannelApprovalReply) (bool, error)
 }
 
 var _ channelReportReviewRuntime = (*RuntimeService)(nil)
@@ -45,7 +45,9 @@ func channelReportReviewAction(text string) (TaskReportReviewAction, string, boo
 	return "", "", false
 }
 
-func (s *RuntimeService) ReviewChannelTaskReport(ctx context.Context, scope Scope, digitalHumanID, conversationID uuid.UUID, reply ChannelApprovalReply) (bool, error) {
+// ownerConversationID is the stable channel conversation its tasks belong to.
+func (s *RuntimeService) ReviewChannelTaskReport(ctx context.Context, scope Scope, digitalHumanID, ownerConversationID uuid.UUID, reply ChannelApprovalReply) (bool, error) {
+	conversationID := ownerConversationID
 	action, feedback, ok := channelReportReviewAction(reply.Text)
 	if !ok || s == nil || s.taskService == nil || conversationID == uuid.Nil {
 		return false, nil

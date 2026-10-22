@@ -144,3 +144,22 @@ func TestChannelReplyDecidesConnectorConfirmation(t *testing.T) {
 		t.Fatalf("other member delivered=%v", store.delivered)
 	}
 }
+
+// A run that has just stopped holds its question as Go values; the channel
+// still sees the model's lead-in and every question.
+func TestChannelWaitingPromptReadsQuestionsHeldInMemory(t *testing.T) {
+	metadata := map[string]interface{}{"user_input_request": map[string]interface{}{
+		"request_id": "call_1",
+		"message":    "渠道测试第 1 题与第 2 题如下，请分别作答。",
+		"questions": []map[string]interface{}{
+			{"id": "test_q1", "question": "消息显示与发送是否都正常？"},
+			{"id": "test_q2", "question": "提醒希望以什么形式送达？"},
+		},
+	}}
+	text := channelWaitingPromptText(nil, runtimemodel.MessageStatusWaitingQuestion, "", metadata)
+	for _, want := range []string{"渠道测试第 1 题与第 2 题如下", "1. 消息显示与发送是否都正常？", "2. 提醒希望以什么形式送达？", channelReplyQuestion} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("prompt = %q, want it to contain %q", text, want)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -73,6 +74,9 @@ func (s *RuntimeService) deliverChannelWaitingPrompt(ctx context.Context, run *R
 }
 
 func channelWaitingPromptText(run *Run, status, answer string, metadata map[string]interface{}) string {
+	// A run that has just stopped holds its metadata as Go values, not the
+	// JSON it is stored as; read it the way it is stored.
+	metadata = jsonNormalizedMap(metadata)
 	answer = strings.TrimSpace(answer)
 	parts := make([]string, 0, 3)
 	if answer != "" {
@@ -84,6 +88,10 @@ func channelWaitingPromptText(run *Run, status, answer string, metadata map[stri
 		if source, _ := request["source"].(string); strings.EqualFold(strings.TrimSpace(source), "agent_workflow_question_answer") {
 			parts = append(parts, channelWorkflowQuestionNotice)
 			break
+		}
+		// The model's own lead-in to its questions, when it wrote no answer.
+		if message := strings.TrimSpace(stringValue(request["message"])); message != "" && !strings.Contains(answer, message) {
+			parts = append(parts, message)
 		}
 		if questions := channelQuestionTexts(request); len(questions) > 0 && !containsAll(answer, questions) {
 			parts = append(parts, strings.Join(questions, "\n"))
@@ -120,6 +128,21 @@ func channelWaitingPromptText(run *Run, status, answer string, metadata map[stri
 		parts = append(parts, channelUnsupportedWaitNotice)
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+func jsonNormalizedMap(value map[string]interface{}) map[string]interface{} {
+	if len(value) == 0 {
+		return value
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	normalized := map[string]interface{}{}
+	if json.Unmarshal(encoded, &normalized) != nil {
+		return value
+	}
+	return normalized
 }
 
 func channelQuestionTexts(request map[string]interface{}) []string {
