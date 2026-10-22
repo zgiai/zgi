@@ -111,8 +111,12 @@ const digitalHumanOriginVersion = 2
 // continuation may reach the execution Router. It deliberately carries no
 // credential, provider value, frozen operation, or request input.
 type DigitalHumanContinuationGuardRequest struct {
-	OrganizationID        uuid.UUID
-	OwnerAccountID        uuid.UUID
+	OrganizationID uuid.UUID
+	OwnerAccountID uuid.UUID
+	// DeciderID is who confirms or cancels: the run's requester. It is the
+	// owner when the owner requested the run, and differs from the owner
+	// when the run uses a binding its owner delegated to the DigitalHuman.
+	DeciderID             uuid.UUID
 	DigitalHumanID        uuid.UUID
 	DigitalHumanVersionID uuid.UUID
 	RunID                 uuid.UUID
@@ -127,6 +131,15 @@ type DigitalHumanContinuationGuardRequest struct {
 // credentials or invoke a provider.
 type DigitalHumanContinuationGuard interface {
 	AuthorizeContinuation(context.Context, DigitalHumanContinuationGuardRequest) error
+	// AuthorizeDecider checks only that the decider requested the run, at
+	// any run state, for reading a confirmation's status.
+	AuthorizeDecider(context.Context, DigitalHumanContinuationGuardRequest) error
+}
+
+// receiptLoader loads a continuation by receipt for a decider who is not its
+// owner.
+type receiptLoader interface {
+	LoadByReceipt(context.Context, uuid.UUID, execution.RouteClaimReceipt) (execution.ConfirmationContinuation, error)
 }
 
 // Service owns terminal continuation semantics around the shared execution
@@ -178,15 +191,15 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 		return Result{}, err
 	}
 
-	continuation, err := service.store.Load(
-		ctx,
-		command.OrganizationID,
-		command.OwnerAccountID,
-		command.RouteReceipt,
-	)
+	// The command names its decider. A DigitalHuman run's requester decides
+	// even when the run uses a binding its owner delegated; from here on the
+	// command is owner-scoped, like the store and the frozen request.
+	decider := command.OwnerAccountID
+	continuation, err := service.loadForDecider(ctx, command)
 	if err != nil {
 		return Result{}, err
 	}
+	command.OwnerAccountID = continuation.Frozen.Request.OwnerAccountID
 	// The surface is selected only by the trusted frozen origin. Remembering a
 	// session grant is a Chat/Agent/Workflow governance preference that the
 	// DigitalHuman surface never supports: execution ignores session grants for
@@ -207,7 +220,7 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 	// A DigitalHuman host may only resume the exact waiting run that owns the
 	// receipt. This check is performed before Router.Route so an invalid or
 	// stale host state can never reach credential resolution or a provider.
-	if err := service.authorizeDigitalHumanContinuation(ctx, continuation); err != nil {
+	if err := service.authorizeDigitalHumanContinuation(ctx, continuation, decider); err != nil {
 		return Result{}, err
 	}
 
@@ -471,6 +484,7 @@ func rejectDigitalHumanSessionGrant(
 func (service *Service) authorizeDigitalHumanContinuation(
 	ctx context.Context,
 	continuation execution.ConfirmationContinuation,
+	decider uuid.UUID,
 ) error {
 	if continuation.Frozen.Origin.Surface != core.TargetTypeDigitalHuman {
 		return nil
@@ -479,10 +493,32 @@ func (service *Service) authorizeDigitalHumanContinuation(
 	if err != nil {
 		return err
 	}
+	request.DeciderID = decider
 	if service.digitalHumanGuard == nil {
 		return core.NewError(core.ErrorCodeInternal, false, nil)
 	}
 	return service.digitalHumanGuard.AuthorizeContinuation(ctx, request)
+}
+
+// loadForDecider loads the continuation a decider may decide: their own, or
+// one frozen in a DigitalHuman run they requested through a binding its
+// owner delegated. The second is authorized against the run by the guard
+// before anything routes.
+func (service *Service) loadForDecider(ctx context.Context, command Command) (execution.ConfirmationContinuation, error) {
+	continuation, err := service.store.Load(ctx, command.OrganizationID, command.OwnerAccountID, command.RouteReceipt)
+	if err == nil || !core.IsErrorCode(err, core.ErrorCodeAccessDenied) || service.digitalHumanGuard == nil {
+		return continuation, err
+	}
+	loader, ok := service.store.(receiptLoader)
+	if !ok {
+		return continuation, err
+	}
+	delegated, loadErr := loader.LoadByReceipt(ctx, command.OrganizationID, command.RouteReceipt)
+	if loadErr != nil || delegated.Frozen.Origin.Surface != core.TargetTypeDigitalHuman ||
+		delegated.Frozen.Request.OwnerAccountID == command.OwnerAccountID {
+		return execution.ConfirmationContinuation{}, err
+	}
+	return delegated, nil
 }
 
 // digitalHumanGuardRequest restores and validates the exact non-secret host

@@ -174,6 +174,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 	appGroup.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation, dhRoute("continue.workflow")))
 	appGroup.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeUserInput, dhRoute("continue.user_input")))
 	appGroup.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", app(nil, dhRoute("continue.tool_governance")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/connector-confirmation", app(nil, dhRoute("continue.connector_confirmation")))
 	appGroup.POST("/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeTokenBudget, dhRoute("continue.token_budget")))
 	appGroup.POST("/conversations/:conversation_id/messages/:message_id/regenerate", app(nil, dhRoute("regenerate")))
 	appGroup.POST("/messages/:message_id/regenerate", app(deps.AgentHandler.RegenerateAPIKeyAgentRuntimeMessage, nil))

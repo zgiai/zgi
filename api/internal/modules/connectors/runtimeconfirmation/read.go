@@ -68,9 +68,22 @@ func (service *Service) ReadStatus(ctx context.Context, query StatusQuery) (Stat
 	if err := validateCommand(command); err != nil {
 		return StatusResult{}, err
 	}
-	continuation, err := service.store.Load(ctx, query.OrganizationID, query.OwnerAccountID, query.RouteReceipt)
+	continuation, err := service.loadForDecider(ctx, command)
 	if err != nil {
 		return StatusResult{}, err
+	}
+	if owner := continuation.Frozen.Request.OwnerAccountID; owner != query.OwnerAccountID {
+		// A requester reads a confirmation frozen with the owner's delegated
+		// credential only for a DigitalHuman run they requested.
+		guardRequest, guardErr := digitalHumanGuardRequest(continuation)
+		if guardErr != nil {
+			return StatusResult{}, guardErr
+		}
+		guardRequest.DeciderID = query.OwnerAccountID
+		if err := service.digitalHumanGuard.AuthorizeDecider(ctx, guardRequest); err != nil {
+			return StatusResult{}, err
+		}
+		command.OwnerAccountID = owner
 	}
 	if err := authorizeFrozenRequest(command, continuation.Frozen); err != nil {
 		return StatusResult{}, err
