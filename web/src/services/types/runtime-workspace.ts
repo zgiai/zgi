@@ -181,7 +181,7 @@ export interface RuntimeEndUserPatch {
 export interface RuntimeEndUserEvent {
   id: string;
   subject_id: string;
-  action: 'suspended' | 'resumed' | 'quota_set' | 'quota_reset';
+  action: 'suspended' | 'resumed' | 'quota_set' | 'quota_reset' | 'exported' | 'erased';
   actor_kind: 'account' | 'credential';
   actor_id?: string;
   details: Record<string, unknown>;

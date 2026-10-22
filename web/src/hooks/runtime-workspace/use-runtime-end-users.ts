@@ -35,7 +35,31 @@ export function useRuntimeEndUsers(
       toast.error(getErrorMessage(error));
     },
   });
-  return { list, update };
+  const exportData = useMutation({
+    mutationFn: (subjectId: string) =>
+      runtimeWorkspaceService.exportEndUser(runtimeWorkspaceId as string, subjectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: RUNTIME_WORKSPACE_KEYS.endUsers(runtimeWorkspaceId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error));
+    },
+  });
+  const erase = useMutation({
+    mutationFn: (subjectId: string) =>
+      runtimeWorkspaceService.eraseEndUser(runtimeWorkspaceId as string, subjectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: RUNTIME_WORKSPACE_KEYS.endUsers(runtimeWorkspaceId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error));
+    },
+  });
+  return { list, update, exportData, erase };
 }
 
 /** The recorded changes to one end user. */

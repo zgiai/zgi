@@ -315,6 +315,8 @@ GET 返回当前记忆开关、自动捕获开关、可写槽位和配置 revisi
 | --- | --- | --- |
 | GET | `/end-users/{user}` | 查看状态、额度，以及最近 24 小时、7 天、30 天的积分用量（总计和按 App） |
 | PATCH | `/end-users/{user}` | 停用或恢复该终端用户，或为其单独设置额度 |
+| POST | `/end-users/{user}/export` | 将该终端用户的全部数据导出为一个 JSON 文档 |
+| DELETE | `/end-users/{user}` | 在所有 App 中删除该终端用户 |
 
 <CodeGroup title="为终端用户单独设置额度">
 
@@ -330,6 +332,8 @@ curl -X PATCH '{apibase}/end-users/customer-42' \
 - `status` 取值为 `active` 或 `suspended`。停用后仍可读取对话、文件和记忆，但发起新的对话或运行会返回 403 `end_user.suspended`。
 - `quota` 替代控制台为每个终端用户设置的限额：`{"limits": [...]}`，窗口为 `24h`、`7d` 或 `30d`，积分最小 0.001；或 `{"unlimited": true}`。单个 App 的额外上限仍然生效。`"quota": null` 表示恢复使用控制台限额。
 - 终端用户超出额度后，发起对话或运行会返回 429 `quota.exceeded`，直到窗口内用量回落到限额以下。
+- 导出内容包括对话及消息、记忆、上传文件信息，以及数字人实例、实例记忆、运行、任务、报告、通知和产物。历史过长时会截断，并标记 `truncated`。
+- 删除会在所有 App 中删除上述数据，之后 `GET` 返回状态为 `erased`、不含 External User ID 的记录。用量和审计记录仅保留标识。之后使用相同 External User ID 的请求会作为一个新的空白终端用户。
 
 ---
 

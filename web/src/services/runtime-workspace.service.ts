@@ -173,6 +173,25 @@ class RuntimeWorkspaceService extends BaseService {
     return response.data;
   }
 
+  async exportEndUser(workspaceId: string, subjectId: string): Promise<Record<string, unknown>> {
+    const response = await this.request<ApiResponseData<Record<string, unknown>>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/export`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async eraseEndUser(workspaceId: string, subjectId: string): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'delete',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+  }
+
   async listEndUserEvents(workspaceId: string, subjectId: string): Promise<RuntimeEndUserEvent[]> {
     const response = await this.request<ApiResponseData<{ items: RuntimeEndUserEvent[] }>>(
       'get',

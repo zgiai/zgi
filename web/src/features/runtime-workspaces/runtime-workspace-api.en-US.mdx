@@ -311,6 +311,8 @@ An end user is an External User ID that has made at least one request. Manage th
 | --- | --- | --- |
 | GET | `/end-users/{user}` | Status, quota, and points used over the last 24 hours, 7 days, and 30 days, in total and per App |
 | PATCH | `/end-users/{user}` | Suspend or resume the end user, or set their own quota |
+| POST | `/end-users/{user}/export` | Export everything kept for the end user as one JSON document |
+| DELETE | `/end-users/{user}` | Erase the end user from every App |
 
 <CodeGroup title="Give an end user their own quota">
 
@@ -326,6 +328,8 @@ curl -X PATCH '{apibase}/end-users/customer-42' \
 - `status` is `active` or `suspended`. A suspended end user can still read conversations, files, and memory, but new chats and runs return 403 `end_user.suspended`.
 - `quota` replaces the console's per-end-user limits for this end user: `{"limits": [...]}` with windows `24h`, `7d`, or `30d` and points down to 0.001, or `{"unlimited": true}`. Caps set for single Apps still apply. `"quota": null` returns the end user to the console's limits.
 - An end user over a quota gets 429 `quota.exceeded` when starting a chat or run, until usage in the window falls below the limit.
+- Export returns conversations with their messages, memory, uploaded file details, and DigitalHuman instances, instance memory, runs, tasks, reports, notifications, and artifacts. Large histories are capped and marked `truncated`.
+- Erasure deletes all of that in every App, and `GET` then returns the end user with status `erased` and no External User ID. Usage and audit records keep identifiers only. A later request with the same External User ID starts a new, empty end user.
 
 ---
 

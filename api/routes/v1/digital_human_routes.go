@@ -430,6 +430,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		if err != nil {
 			panic("initialize DigitalHuman memory vector store: " + err.Error())
 		}
+		digitalhuman.UseEndUserMemoryVectors(vectorStore)
 		knowledgeService := deps.KnowledgeRetrievalService
 		if knowledgeService == nil {
 			knowledgeService = datasetservice.NewKnowledgeRetrievalService(deps.DB, config.Current(), deps.LLMClient, deps.DefaultModelService, nil)

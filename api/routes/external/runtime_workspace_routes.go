@@ -55,6 +55,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 	// Every chat runtime meters and stops Runtime Workspace end users by the
 	// same points quotas (ADR 0010).
 	runtimeservice.UseEndUserQuotaGuard(runtimeworkspace.NewQuotaGuard(deps.DB))
+	runtimeworkspace.UseEndUserDataOwner(digitalhuman.NewEndUserData())
 	dh := deps.DigitalHuman
 	app := func(agent, digitalHuman gin.HandlerFunc) gin.HandlerFunc {
 		return runtimeAppRoute(dh, agent, digitalHuman)
@@ -122,6 +123,24 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 			return
 		}
 		response.Success(c, view)
+	}))
+	group.POST("/end-users/:user/export", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		export, err := service.ExportEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID})
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		response.Success(c, export)
+	}))
+	group.DELETE("/end-users/:user", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		if err := service.EraseEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID}); err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
 	}))
 
 	appGroup := group.Group("/apps/:app_key")

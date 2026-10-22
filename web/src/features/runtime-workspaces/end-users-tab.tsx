@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Ban, Loader2, PlayCircle, Search, UserRound } from 'lucide-react';
+import { Ban, Download, Loader2, PlayCircle, Search, Trash2, UserRound } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -121,7 +122,8 @@ export function RuntimeEndUsersTab({
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
-  const { list, update } = useRuntimeEndUsers(runtimeWorkspaceId, {
+  const [eraseTarget, setEraseTarget] = React.useState<RuntimeEndUser | null>(null);
+  const { list, update, exportData, erase } = useRuntimeEndUsers(runtimeWorkspaceId, {
     search,
     status,
     page,
@@ -130,6 +132,25 @@ export function RuntimeEndUsersTab({
   const users = list.data?.items ?? [];
   const selected = users.find(user => user.subject_id === selectedId) ?? null;
   const appNames = React.useMemo(() => new Map(apps.map(app => [app.agent_id, app.name])), [apps]);
+
+  const downloadExport = async (user: RuntimeEndUser) => {
+    const data = await exportData.mutateAsync(user.subject_id);
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `end-user-${user.subject_id.slice(0, 8)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const eraseUser = async (user: RuntimeEndUser) => {
+    await erase.mutateAsync(user.subject_id);
+    setEraseTarget(null);
+    setSelectedId(null);
+    toast.success(t('runtime.endUsers.erased'));
+  };
 
   const changeStatus = async (user: RuntimeEndUser) => {
     await update.mutateAsync({
@@ -315,6 +336,28 @@ export function RuntimeEndUsersTab({
           if (!selected) return;
           await update.mutateAsync({ subjectId: selected.subject_id, patch: { quota } });
         }}
+        exporting={exportData.isPending}
+        onExport={() => {
+          if (selected) void downloadExport(selected);
+        }}
+        onErase={() => setEraseTarget(selected)}
+      />
+
+      <ConfirmDialog
+        open={Boolean(eraseTarget)}
+        onOpenChange={open => {
+          if (!open) setEraseTarget(null);
+        }}
+        title={t('runtime.endUsers.eraseTitle')}
+        description={t('runtime.endUsers.eraseDescription')}
+        confirmText={t('runtime.endUsers.erase')}
+        cancelText={tCommon('cancel')}
+        variant="danger"
+        loading={erase.isPending}
+        closeOnConfirm={false}
+        onConfirm={() => {
+          if (eraseTarget) void eraseUser(eraseTarget);
+        }}
       />
     </section>
   );
@@ -327,6 +370,9 @@ function EndUserSheet({
   saving,
   onClose,
   onSaveQuota,
+  exporting,
+  onExport,
+  onErase,
 }: {
   runtimeWorkspaceId: string;
   user: RuntimeEndUser | null;
@@ -334,6 +380,9 @@ function EndUserSheet({
   saving: boolean;
   onClose: () => void;
   onSaveQuota: (quota: RuntimeEndUser['quota'] | null) => Promise<void>;
+  exporting: boolean;
+  onExport: () => void;
+  onErase: () => void;
 }) {
   const t = useT('workspace');
   const events = useRuntimeEndUserEvents(runtimeWorkspaceId, user?.subject_id ?? null);
@@ -480,6 +529,41 @@ function EndUserSheet({
                   >
                     {saving ? <Loader2 className="size-4 animate-spin" /> : null}
                     {t('runtime.endUsers.saveQuota')}
+                  </Button>
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <div>
+                  <h3 className="text-sm font-medium">{t('runtime.endUsers.data')}</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    {t('runtime.endUsers.dataDescription')}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={exporting}
+                    onClick={onExport}
+                  >
+                    {exporting ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Download className="size-4" />
+                    )}
+                    {t('runtime.endUsers.export')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="text-destructive hover:text-destructive"
+                    onClick={onErase}
+                  >
+                    <Trash2 className="size-4" />
+                    {t('runtime.endUsers.erase')}
                   </Button>
                 </div>
               </section>

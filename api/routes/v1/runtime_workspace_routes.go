@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -35,6 +36,8 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		panic("runtime workspace credential replay protection is unavailable")
 	}
 	service := runtimeworkspace.NewService(db, runtimeworkspace.WithCredentialReplayProtector(replayProtector))
+	// End-user erasure and export reach the DigitalHuman data of end users.
+	runtimeworkspace.UseEndUserDataOwner(digitalhuman.NewEndUserData())
 	group := router.Group("/runtime-workspaces")
 	group.Use(middleware.JWTWithOrganizationAndService(accountService))
 	group.GET("", runtimeWorkspaceManagementScope(), runtimeWorkspaceManagerRequiredWithDB(db, workspaceService), func(c *gin.Context) {
@@ -277,6 +280,24 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			return
 		}
 		response.Success(c, view)
+	}))
+	scoped.POST("/end-users/:subject_id/export", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		export, err := service.ExportEndUser(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID})
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		response.Success(c, export)
+	}))
+	scoped.DELETE("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		if err := service.EraseEndUser(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}); err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
 	}))
 	scoped.GET("/end-users/:subject_id/events", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
 		events, err := service.ListEndUserEvents(c.Request.Context(), workspaceID, subjectID)

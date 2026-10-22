@@ -80,6 +80,21 @@ func TeardownAttachedWorkspace(ctx context.Context, tx *gorm.DB, workspaceID uui
 	}
 
 	if len(subjectIDs) > 0 {
+		// Application domains such as DigitalHumans keep end-user data that
+		// references the subjects; they purge it, tombstones included, first.
+		for _, owner := range registeredEndUserDataOwners() {
+			for _, subjectID := range subjectIDs {
+				erasure, err := owner.EraseEndUser(ctx, tx, subjectID, true)
+				if err != nil {
+					return nil, fmt.Errorf("purge Runtime end-user app data: %w", err)
+				}
+				// Cleanup outside the database is skipped: the scrubbed projection
+				// it would tidy up goes with the workspace.
+				if err := scheduleObjectDeletions(ctx, tx, erasure.ObjectKeys, now); err != nil {
+					return nil, err
+				}
+			}
+		}
 		var relationshipIDs []uuid.UUID
 		if err := tx.WithContext(ctx).Table("user_memory_relationships").Where("subject_id IN ?", subjectIDs).Pluck("id", &relationshipIDs).Error; err != nil {
 			return nil, fmt.Errorf("list Runtime memory relationships: %w", err)
