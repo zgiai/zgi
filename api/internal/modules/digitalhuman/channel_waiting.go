@@ -93,7 +93,10 @@ func channelWaitingPromptText(run *Run, status, answer string, metadata map[stri
 		state := workflowContinuationRecord(metadata)
 		switch {
 		case strings.TrimSpace(stringValue(state["kind"])) == "digital_human_task":
-			if answer == "" {
+			// The proposal itself, as the console card shows it.
+			if details := channelTaskApprovalDetails(state); details != "" {
+				parts = append(parts, details)
+			} else if answer == "" {
 				if name := strings.TrimSpace(stringValue(state["task_name"])); name != "" {
 					parts = append(parts, "需要你确认任务「"+name+"」。")
 				}

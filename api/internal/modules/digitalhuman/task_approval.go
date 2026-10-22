@@ -361,7 +361,13 @@ func (s *RuntimeService) ContinueChannelTaskApproval(
 		if len(key) > 128 {
 			key = "approval:" + uuid.NewSHA1(uuid.NameSpaceOID, []byte(key)).String()
 		}
-		if err := deliveryStore.EnqueueRunChannelFinalDelivery(ctx, pendingRun.ID, key, result.Answer, time.Now().UTC()); err != nil {
+		text := result.Answer
+		// A revision ends with a new proposal; it is shown with its details
+		// and how to answer, like the first.
+		if !held && result.Status == runtimemodel.MessageStatusWaitingApproval {
+			text = channelWaitingPromptText(pendingRun, result.Status, result.Answer, result.Metadata)
+		}
+		if err := deliveryStore.EnqueueRunChannelFinalDelivery(ctx, pendingRun.ID, key, text, time.Now().UTC()); err != nil {
 			return false, err
 		}
 	}
