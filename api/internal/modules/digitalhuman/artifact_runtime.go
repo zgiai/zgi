@@ -21,6 +21,7 @@ const (
 	artifactPublishToolName = "publish_artifact"
 	artifactListToolName    = "list_artifacts"
 	artifactReadToolName    = "read_artifact"
+	artifactArchiveToolName = "archive_artifact"
 	// maxArtifactReadRunes bounds the document text one read returns.
 	maxArtifactReadRunes = 20000
 	// maxArtifactTextFileBytes bounds the text of a file version a read returns.
@@ -73,11 +74,13 @@ func (p *ArtifactRuntimeProvider) Prepare(ctx context.Context, run *Run, event i
 		preparation = &TaskRuntimePreparation{}
 	}
 	tools := artifactTools{service: p.artifacts, run: run, owner: owner, visibility: visibility, member: member, taskID: artifactContextUUID(event.Context, "task_id")}
-	preparation.Tools = append(preparation.Tools, tools.publish(), tools.list(), tools.read())
+	preparation.Tools = append(preparation.Tools, tools.publish(), tools.list(), tools.read(), tools.archive())
 	guidance := "Keep finished deliverables with " + artifactPublishToolName + " so later conversations can use them: documents as Markdown, files you produced by their file ID. " +
+		"Files you export from the sandbox are kept automatically, and the export result names the artifact; do not publish them again. " +
 		"When the requester refers to anything written or produced earlier, look it up with " + artifactListToolName + " and open it with " + artifactReadToolName + " before saying it cannot be found. " +
-		"Publishing the same title again from a task adds a version. " +
-		"Something is kept only once " + artifactPublishToolName + " succeeds: never tell the requester it was published, saved, or kept without that result."
+		"Publishing or exporting the same title again from a task or this conversation adds a version. " +
+		"Archive artifacts that are superseded, drafts, or no longer needed with " + artifactArchiveToolName + ", and restore them the same way; archived artifacts stay readable. " +
+		"Something is kept only once " + artifactPublishToolName + " or an export succeeds: never tell the requester it was published, saved, or kept without that result."
 	if index := tools.recentIndex(ctx); index != "" {
 		guidance += "\n" + index
 	}
@@ -166,7 +169,7 @@ func (a artifactTools) publish() skillloop.RuntimeTool {
 		}
 		runID := a.run.ID
 		req := artifacts.PublishRequest{Scope: a.scope(), Owner: a.owner, Visibility: visibility, Kind: artifacts.Kind(args.Kind), Title: args.Title, Note: args.Note,
-			ArtifactID: args.ArtifactID, Source: artifacts.SourceRun, SourceTaskID: a.taskID, SourceRunID: &runID,
+			ArtifactID: args.ArtifactID, Source: artifacts.SourceRun, SourceTaskID: a.taskID, SourceConversationID: cloneUUIDPointer(a.run.ConversationID), SourceRunID: &runID,
 			Actor: artifacts.Actor{Kind: "digital_human_run", ID: a.run.ID.String()}}
 		if req.Kind == artifacts.KindDocument {
 			req.Text = args.Content
@@ -191,6 +194,7 @@ type listArtifactsArguments struct {
 	Query    string `json:"query"`
 	Kind     string `json:"kind"`
 	MineOnly bool   `json:"mine_only"`
+	Archived string `json:"archived"`
 	Limit    int    `json:"limit"`
 }
 
@@ -201,7 +205,9 @@ func (a artifactTools) list() skillloop.RuntimeTool {
 			"query":     map[string]any{"type": "string", "description": "Words in the title."},
 			"kind":      map[string]any{"type": "string", "enum": []string{string(artifacts.KindDocument), string(artifacts.KindFile), string(artifacts.KindImage), string(artifacts.KindTable)}},
 			"mine_only": map[string]any{"type": "boolean", "description": "Only the requester's own artifacts."},
-			"limit":     map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
+			"archived": map[string]any{"type": "string", "enum": []string{"exclude", "only", "include"},
+				"description": "Archived artifacts are left out unless asked for: only lists them, include lists everything."},
+			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
 		}, "additionalProperties": false}}}
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 		var args listArtifactsArguments
@@ -212,14 +218,25 @@ func (a artifactTools) list() skillloop.RuntimeTool {
 		if limit < 1 || limit > 20 {
 			limit = 10
 		}
-		result, err := a.service.List(ctx, a.reader(), artifacts.ListQuery{Query: args.Query, Kind: artifacts.Kind(args.Kind), Mine: args.MineOnly, PageSize: limit})
+		filter := artifacts.ArchiveActive
+		switch args.Archived {
+		case "only":
+			filter = artifacts.ArchiveOnly
+		case "include":
+			filter = artifacts.ArchiveAll
+		}
+		result, err := a.service.List(ctx, a.reader(), artifacts.ListQuery{Query: args.Query, Kind: artifacts.Kind(args.Kind), Mine: args.MineOnly, Archive: filter, PageSize: limit})
 		if err != nil {
 			return artifactToolFailure(artifactErrorCode(err), false)
 		}
 		items := make([]map[string]any, 0, len(result.Items))
 		for _, item := range result.Items {
-			items = append(items, map[string]any{"artifact_id": item.ID, "title": item.Title, "kind": item.Kind, "version": item.CurrentVersion,
-				"updated_at": item.UpdatedAt.Format(time.RFC3339), "shared_with_team": item.Visibility == artifacts.VisibilityTeam})
+			entry := map[string]any{"artifact_id": item.ID, "title": item.Title, "kind": item.Kind, "version": item.CurrentVersion,
+				"updated_at": item.UpdatedAt.Format(time.RFC3339), "shared_with_team": item.Visibility == artifacts.VisibilityTeam}
+			if item.ArchivedAt != nil {
+				entry["archived"] = true
+			}
+			items = append(items, entry)
 		}
 		return taskToolSuccess(call, map[string]any{"items": items, "total": result.Total})
 	}
@@ -257,6 +274,39 @@ func (a artifactTools) read() skillloop.RuntimeTool {
 			result["content"], result["truncated"] = text, truncated
 		}
 		return taskToolSuccess(call, result)
+	}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanArtifacts, Handler: handler}
+}
+
+type archiveArtifactArguments struct {
+	ArtifactID uuid.UUID `json:"artifact_id"`
+	Restore    bool      `json:"restore"`
+}
+
+// archive lets a run tidy the artifacts it may manage: its owner's and, for
+// members' runs, the workspace's shared ones. Nothing is ever deleted.
+func (a artifactTools) archive() skillloop.RuntimeTool {
+	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: artifactArchiveToolName,
+		Description: "Archive an artifact so it leaves the default list, for example a superseded draft or an outdated file, or restore an archived one. " +
+			"Archived artifacts stay readable and come back when a new version is published. Nothing is deleted.",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{
+			"artifact_id": map[string]any{"type": "string", "format": "uuid"},
+			"restore":     map[string]any{"type": "boolean", "description": "Restore an archived artifact instead of archiving it."},
+		}, "required": []string{"artifact_id"}, "additionalProperties": false}}}
+	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+		var args archiveArtifactArguments
+		if decodeStrict(call.Function.Arguments, &args) != nil || args.ArtifactID == uuid.Nil {
+			return artifactToolFailure("invalid_arguments", true)
+		}
+		artifact, err := a.service.SetArchived(ctx, a.reader(), args.ArtifactID, !args.Restore)
+		if err != nil {
+			return artifactToolFailure(artifactErrorCode(err), errors.Is(err, artifacts.ErrNotFound))
+		}
+		status := "archived"
+		if artifact.ArchivedAt == nil {
+			status = "restored"
+		}
+		return taskToolSuccess(call, map[string]any{"status": status, "artifact_id": artifact.ID, "title": artifact.Title})
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanArtifacts, Handler: handler}
 }

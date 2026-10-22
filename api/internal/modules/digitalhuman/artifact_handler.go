@@ -37,6 +37,8 @@ func (h *ArtifactHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/:artifact_id", h.get)
 	group.GET("/:artifact_id/versions", h.versions)
 	group.GET("/:artifact_id/versions/:number/content", h.content)
+	group.POST("/:artifact_id/archive", h.archive(true))
+	group.POST("/:artifact_id/restore", h.archive(false))
 }
 
 func (h *ArtifactHandler) reader(c *gin.Context) (artifacts.Reader, bool) {
@@ -58,7 +60,7 @@ func (h *ArtifactHandler) list(c *gin.Context) {
 		return
 	}
 	query := artifacts.ListQuery{Kind: artifacts.Kind(strings.TrimSpace(c.Query("kind"))), Query: c.Query("q"), Mine: c.Query("scope") == "mine",
-		Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+		Archive: artifacts.ArchiveFilter(strings.TrimSpace(c.Query("archived"))), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
 	if raw := strings.TrimSpace(c.Query("task_id")); raw != "" {
 		taskID, err := uuid.Parse(raw)
 		if err != nil {
@@ -107,6 +109,31 @@ func (h *ArtifactHandler) versions(c *gin.Context) {
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, gin.H{"items": result})
+}
+
+// archive archives or restores an artifact the reader manages: their own,
+// a workspace's shared one, or any for a task manager.
+func (h *ArtifactHandler) archive(archived bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		reader, ok := h.reader(c)
+		if !ok {
+			return
+		}
+		id, ok := h.artifactID(c)
+		if !ok {
+			return
+		}
+		if _, err := h.artifacts.SetArchived(c.Request.Context(), reader, id, archived); err != nil {
+			h.writeError(c, err, "digital_human.artifact.archive")
+			return
+		}
+		result, err := h.artifacts.Get(c.Request.Context(), reader, id)
+		if err != nil {
+			h.writeError(c, err, "digital_human.artifact.archive")
+			return
+		}
+		writeDigitalHumanData(c, http.StatusOK, result)
+	}
 }
 
 // content streams a version: a document as Markdown, a file as itself. It is

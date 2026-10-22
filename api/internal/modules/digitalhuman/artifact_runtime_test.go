@@ -58,7 +58,7 @@ func TestArtifactToolsPublishVersionsAndReadAcrossRuns(t *testing.T) {
 	taskID := uuid.New()
 	event := invocation.Event{Context: map[string]any{"task_owner_kind": "digital_human", "task_id": taskID.String()}}
 	preparation, err := NewArtifactRuntimeProvider(nil, service).Prepare(t.Context(), run, event)
-	if err != nil || preparation == nil || len(preparation.Tools) != 3 {
+	if err != nil || preparation == nil || len(preparation.Tools) != 4 {
 		t.Fatalf("preparation = %#v, %v", preparation, err)
 	}
 	tools := map[string]func(string) map[string]any{}
@@ -154,7 +154,7 @@ func TestFirstMessageOfANewConversationGetsArtifactTools(t *testing.T) {
 	account := uuid.New()
 	run := &Run{ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New(), DigitalHumanID: uuid.New(), UserSubjectKind: "account", UserSubjectID: &account}
 	preparation, err := NewArtifactRuntimeProvider(nil, artifactServiceForTest(t)).Prepare(t.Context(), run, invocation.Event{})
-	if err != nil || preparation == nil || len(preparation.Tools) != 3 {
+	if err != nil || preparation == nil || len(preparation.Tools) != 4 {
 		t.Fatalf("preparation = %#v, %v", preparation, err)
 	}
 }

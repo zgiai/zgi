@@ -249,12 +249,20 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		return ""
 	}
 	// Artifacts are read with view permission; the artifact center decides
-	// which ones the reader sees.
+	// which ones the reader sees and which they may archive, and reports the
+	// latter so the console offers archiving only where it applies.
 	if strings.Contains(path, "/digital-humans/:id/artifacts") {
-		if method == http.MethodGet {
+		switch method {
+		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView
+		case http.MethodPost:
+			if strings.HasSuffix(path, "/archive") || strings.HasSuffix(path, "/restore") {
+				return workspacemodel.WorkspacePermissionDigitalHumanView
+			}
+			return ""
+		default:
+			return ""
 		}
-		return ""
 	}
 	// Team channels receive the reports of tasks shared with the workspace.
 	// Task center managers keep the list; anyone who can run a DigitalHuman
@@ -517,6 +525,7 @@ func newDigitalHumanLinuxExecution(deps DigitalHumanRuntimeDeps) *digitalhuman.L
 		EntryReady:  executionruntime.DigitalHumanEntryImplemented,
 		Files:       deps.FileService, Access: digitalhuman.NewAccessService(deps.DB), Entries: entries,
 		ArtifactManager: func() *tool_file.ToolFileManager { return tool_file.GlobalToolFileManager },
+		Artifacts:       deps.Artifacts,
 		AuthorizeConsole: func(ctx context.Context, scope digitalhuman.Scope) error {
 			if deps.OrganizationService == nil {
 				return digitalhuman.ErrNotFound

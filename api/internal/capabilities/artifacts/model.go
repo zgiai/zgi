@@ -65,12 +65,18 @@ type Artifact struct {
 	Kind            Kind       `gorm:"type:varchar(16);not null" json:"kind"`
 	Title           string     `gorm:"type:varchar(255);not null" json:"title"`
 	SourceTaskID    *uuid.UUID `gorm:"type:uuid" json:"source_task_id,omitempty"`
-	CurrentVersion  int        `gorm:"not null" json:"current_version"`
-	CreatedByKind   string     `gorm:"type:varchar(32);not null" json:"-"`
-	CreatedByID     string     `gorm:"type:varchar(64);not null" json:"-"`
-	CreatedAt       time.Time  `gorm:"not null" json:"created_at"`
-	UpdatedAt       time.Time  `gorm:"not null" json:"updated_at"`
-	DeletedAt       *time.Time `json:"-"`
+	// SourceConversationID is the conversation that first produced the
+	// artifact; a file of the same name it produces again adds a version.
+	SourceConversationID *uuid.UUID `gorm:"type:uuid" json:"source_conversation_id,omitempty"`
+	CurrentVersion       int        `gorm:"not null" json:"current_version"`
+	CreatedByKind        string     `gorm:"type:varchar(32);not null" json:"-"`
+	CreatedByID          string     `gorm:"type:varchar(64);not null" json:"-"`
+	CreatedAt            time.Time  `gorm:"not null" json:"created_at"`
+	UpdatedAt            time.Time  `gorm:"not null" json:"updated_at"`
+	// ArchivedAt hides an artifact from the default listing. It stays
+	// readable, and publishing to it again restores it.
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
+	DeletedAt  *time.Time `json:"-"`
 }
 
 // TableName binds artifacts to their table.

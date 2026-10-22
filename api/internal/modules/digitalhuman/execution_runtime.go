@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	execution "github.com/zgiai/zgi/api/internal/capabilities/agentexecution"
 	executionruntime "github.com/zgiai/zgi/api/internal/capabilities/agentexecution/runtime"
+	"github.com/zgiai/zgi/api/internal/capabilities/artifacts"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
@@ -47,6 +48,8 @@ type LinuxExecutionOptions struct {
 	Entries          execution.EntryAdmission
 	ErrorProjector   *apptransport.Projector
 	PlatformCLI      bool
+	// Artifacts keeps exported files in the artifact center when it is set.
+	Artifacts *artifacts.Service
 }
 
 // LinuxExecutionRuntime attaches identity-scoped tools to approved runs.
@@ -200,7 +203,7 @@ func (r *LinuxExecutionRuntime) prepare(ctx context.Context, run *Run, resolved 
 			if err != nil {
 				return nil
 			}
-			return persister
+			return withExportArtifacts(persister, o.Artifacts, frozenRun, frozenEvent.Context)
 		},
 		ResolveFiles: func(prepared *chatruntime.PreparedChat, scope execution.Scope) (*executionruntime.ScopedAttachmentReader, error) {
 			return executionruntime.NewScopedAttachmentReader(o.Files, scope, prepared.RuntimeAttachmentRefs(), func(ctx context.Context, file *dto.UploadFile) error {

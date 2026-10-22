@@ -977,6 +977,10 @@ export interface DigitalHumanArtifact {
   current_version: number;
   created_at: string;
   updated_at: string;
+  /** Set when the artifact is archived out of the default list. */
+  archived_at?: string;
+  /** Whether the reader may archive or restore it. */
+  can_manage?: boolean;
   latest?: DigitalHumanArtifactVersion;
 }
 
@@ -992,6 +996,8 @@ export interface DigitalHumanArtifactParams {
   kind?: DigitalHumanArtifactKind;
   q?: string;
   task_id?: string;
+  /** Archived artifacts are left out unless asked for. */
+  archived?: 'archived' | 'all';
   page?: number;
   page_size?: number;
 }

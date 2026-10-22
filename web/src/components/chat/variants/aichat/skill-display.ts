@@ -857,6 +857,10 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
       en_US: 'Read artifact',
       zh_Hans: '读取成果',
     },
+    archive_artifact: {
+      en_US: 'Archive artifact',
+      zh_Hans: '归档成果',
+    },
   },
 };
 

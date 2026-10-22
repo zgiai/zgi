@@ -4,8 +4,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
-import { Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Users } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { Archive, ArchiveRestore, Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Users } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { ProtectedGeneratedFileCard } from '@/components/chat/variants/aichat/protected-generated-file-card';
 import { useOpenTaskReport } from '@/components/digital-human/task-report-drawer';
@@ -19,6 +20,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import { digitalHumanService } from '@/services/digital-human.service';
+import { getErrorMessage } from '@/utils/error-notifications';
 import type {
   DigitalHumanArtifact,
   DigitalHumanArtifactKind,
@@ -84,9 +86,17 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
   const [search, setSearch] = useState('');
   const [mine, setMine] = useState(false);
   const [kind, setKind] = useState<DigitalHumanArtifactKind | null>(null);
+  const [archived, setArchived] = useState(false);
   const query = useQuery({
-    queryKey: ['digital-human-artifacts', id, search.trim(), mine, kind],
-    queryFn: () => digitalHumanService.listArtifacts(id, { q: search.trim() || undefined, scope: mine ? 'mine' : undefined, kind: kind ?? undefined, page_size: 100 }),
+    queryKey: ['digital-human-artifacts', id, search.trim(), mine, kind, archived],
+    queryFn: () =>
+      digitalHumanService.listArtifacts(id, {
+        q: search.trim() || undefined,
+        scope: mine ? 'mine' : undefined,
+        kind: kind ?? undefined,
+        archived: archived ? 'archived' : undefined,
+        page_size: 100,
+      }),
   });
   const items = query.data?.data.items ?? [];
 
@@ -121,6 +131,11 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
               {t(`artifacts.kind.${item}`)}
             </Button>
           ))}
+          <span className="mx-1 w-px self-stretch bg-border" />
+          <Button size="sm" variant={archived ? 'default' : 'outline'} className="h-8 rounded-full" onClick={() => setArchived(!archived)}>
+            <Archive className="size-3.5" />
+            {t('artifacts.showArchived')}
+          </Button>
         </div>
       </div>
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
@@ -132,8 +147,8 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
         ) : items.length === 0 ? (
           <div className="rounded-xl border border-dashed p-8 text-center">
             <Package className="mx-auto size-7 text-muted-foreground/50" />
-            <p className="mt-2 text-sm font-medium">{t('artifacts.empty')}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{t('artifacts.emptyDescription')}</p>
+            <p className="mt-2 text-sm font-medium">{archived ? t('artifacts.emptyArchived') : t('artifacts.empty')}</p>
+            {archived ? null : <p className="mt-1 text-xs text-muted-foreground">{t('artifacts.emptyDescription')}</p>}
           </div>
         ) : (
           <ul className="divide-y overflow-hidden rounded-xl border bg-background">
@@ -165,6 +180,12 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
                         <span className="inline-flex items-center gap-0.5">
                           <Users className="size-3" />
                           {t('artifacts.visibility.team')}
+                        </span>
+                      ) : null}
+                      {item.archived_at ? (
+                        <span className="inline-flex items-center gap-0.5">
+                          <Archive className="size-3" />
+                          {t('artifacts.archived')}
                         </span>
                       ) : null}
                     </span>
@@ -212,6 +233,16 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
     queryFn: () => digitalHumanService.listArtifactVersions(digitalHumanId, artifactId),
   });
   const [number, setNumber] = useState<number | null>(null);
+  const queryClient = useQueryClient();
+  const archive = useMutation({
+    mutationFn: (archived: boolean) => digitalHumanService.setArtifactArchived(digitalHumanId, artifactId, archived),
+    onSuccess: (result, archived) => {
+      queryClient.setQueryData(['digital-human-artifact', digitalHumanId, artifactId], result);
+      void queryClient.invalidateQueries({ queryKey: ['digital-human-artifacts', digitalHumanId] });
+      toast.success(archived ? t('artifacts.archiveDone') : t('artifacts.restoreDone'));
+    },
+    onError: error => toast.error(getErrorMessage(error) || t('artifacts.archiveError')),
+  });
   const data = artifact.data?.data;
   const items = versions.data?.data.items ?? [];
   const version = items.find(item => item.number === (number ?? data?.current_version)) ?? data?.latest;
@@ -232,7 +263,14 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
             {formatTaskTime(version.created_at, locale)}
           </p>
         </div>
+        {data.can_manage ? (
+          <Button size="sm" variant="outline" className="shrink-0" disabled={archive.isPending} onClick={() => archive.mutate(!data.archived_at)}>
+            {data.archived_at ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+            {data.archived_at ? t('artifacts.restore') : t('artifacts.archive')}
+          </Button>
+        ) : null}
       </div>
+      {data.archived_at ? <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">{t('artifacts.archivedNotice')}</p> : null}
       {version.note ? <p className="rounded-lg border-l-2 border-primary/60 bg-muted/40 px-3 py-2 text-sm">{version.note}</p> : null}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border px-4 py-3 text-sm sm:grid-cols-4">
         <ArtifactFact label={t('artifacts.facts.kind')} value={t(`artifacts.kind.${data.kind}`)} />
