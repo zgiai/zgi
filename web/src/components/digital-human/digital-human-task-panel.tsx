@@ -1037,13 +1037,13 @@ function TaskPendingChangeLink({
     </>
   );
   if (!onOpen) {
-    return <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-warning-foreground">{content}</div>;
+    return <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-warning">{content}</div>;
   }
   return (
     <button
       type="button"
       onClick={() => onOpen(change)}
-      className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-xs font-medium text-warning-foreground hover:bg-warning/10"
+      className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-xs font-medium text-warning hover:bg-warning/10"
       aria-label={t('tasks.pendingChangeOpen')}
     >
       {content}
@@ -1056,7 +1056,7 @@ function taskStatusTone(status: string): { dot: string; text: string } {
   switch (status) {
     case 'proposed':
     case 'waiting':
-      return { dot: 'bg-warning', text: 'text-warning-foreground' };
+      return { dot: 'bg-warning', text: 'text-warning' };
     case 'blocked':
       return { dot: 'bg-destructive', text: 'text-destructive' };
     case 'in_progress':
@@ -1064,7 +1064,7 @@ function taskStatusTone(status: string): { dot: string; text: string } {
     case 'recurring_active':
     case 'manual_ready':
     case 'pending':
-      return { dot: 'bg-success', text: 'text-success-foreground' };
+      return { dot: 'bg-success', text: 'text-success' };
     default:
       return { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground' };
   }
