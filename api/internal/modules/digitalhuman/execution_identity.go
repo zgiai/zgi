@@ -20,6 +20,8 @@ type executionAccess struct {
 	kind                                              usersubject.Kind
 	background                                        bool
 	billing                                           uuid.UUID
+	// runtimeWorkspace is the Runtime Workspace an API run came through.
+	runtimeWorkspace uuid.UUID
 }
 
 func executionAccessFor(run *Run, resolved *ResolvedExecution, event invocation.Event) (executionAccess, error) {
@@ -71,6 +73,14 @@ func executionAccessFor(run *Run, resolved *ResolvedExecution, event invocation.
 			a.kind != usersubject.APIEndUser || run.ActorID != nil {
 			return executionAccess{}, invalid
 		}
+		if raw, present := event.Context[runtimeWorkspaceEventContextKey]; present {
+			text, _ := raw.(string)
+			id, err := uuid.Parse(text)
+			if err != nil || id == uuid.Nil || id.String() != text {
+				return executionAccess{}, invalid
+			}
+			a.runtimeWorkspace = id
+		}
 	default:
 		return executionAccess{}, invalid
 	}
@@ -93,6 +103,10 @@ func (a executionAccess) scope() Scope {
 	if a.webApp != uuid.Nil {
 		webApp := a.webApp
 		scope.WebAppID = &webApp
+	}
+	if a.runtimeWorkspace != uuid.Nil {
+		runtimeWorkspace := a.runtimeWorkspace
+		scope.RuntimeWorkspaceID = &runtimeWorkspace
 	}
 	return scope
 }

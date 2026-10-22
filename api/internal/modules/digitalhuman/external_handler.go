@@ -633,6 +633,14 @@ func (h *ExternalHandler) apiUserScope(c *gin.Context, key *APIKey, access *Publ
 		h.writeAuthError(c, false)
 		return Scope{}, false
 	}
+	if value, found := c.Get(externalRuntimeCallerContext); found {
+		caller, ok := value.(runtimeWorkspaceCaller)
+		if !ok || caller.CredentialID != key.ID || caller.SubjectID == uuid.Nil {
+			h.writeAuthError(c, false)
+			return Scope{}, false
+		}
+		return runtimeWorkspaceScope(caller, access), true
+	}
 	subject, err := usersubject.DigitalHumanAPIEndUserSubject(access.Definition.WorkspaceID, access.Definition.ID, user)
 	if err != nil {
 		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.external.user")

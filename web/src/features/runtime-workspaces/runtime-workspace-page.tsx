@@ -39,6 +39,7 @@ import type {
   RuntimeCredential,
   RuntimeApp,
   RuntimeSourceWorkspace,
+  RuntimeWorkspaceAgentSelectionInput,
 } from '@/services/types/runtime-workspace';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -457,7 +458,7 @@ function AppsTab({
   crossWorkspaceEnabled: boolean;
   sourceWorkspaces: RuntimeSourceWorkspace[];
   hostWorkspaceId: string;
-  onSync: (input: { expected_revision: number; agent_ids: string[] }) => Promise<void>;
+  onSync: (input: RuntimeWorkspaceAgentSelectionInput) => Promise<void>;
   isSyncing: boolean;
 }) {
   const t = useT('workspace');
@@ -493,6 +494,22 @@ function AppsTab({
     () => [...candidates, ...crossWorkspaceCandidates],
     [candidates, crossWorkspaceCandidates]
   );
+  // Agents and DigitalHumans share one ID space; the sync request names each
+  // kind separately.
+  const digitalHumanIds = React.useMemo(
+    () =>
+      new Set(
+        [...apps, ...allCandidates]
+          .filter(item => item.app_type === 'digital_human')
+          .map(item => item.agent_id)
+      ),
+    [allCandidates, apps]
+  );
+  const selection = (ids: string[]) => ({
+    expected_revision: revision,
+    agent_ids: ids.filter(id => !digitalHumanIds.has(id)),
+    digital_human_ids: ids.filter(id => digitalHumanIds.has(id)),
+  });
   const availableCandidates = React.useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     const scoped =
@@ -539,10 +556,7 @@ function AppsTab({
   };
   const submitAdd = async () => {
     if (selectedCandidateIds.size === 0) return;
-    await onSync({
-      expected_revision: revision,
-      agent_ids: [...activeAgentIds, ...selectedCandidateIds],
-    });
+    await onSync(selection([...activeAgentIds, ...selectedCandidateIds]));
     toast.success(t('runtime.messages.agentsAdded', { count: selectedCandidateIds.size }));
     resetAdd();
     setOpen(false);
@@ -550,7 +564,7 @@ function AppsTab({
   const confirmRemove = async () => {
     if (!pendingRemoveIds?.size) return;
     const desired = [...activeAgentIds].filter(agentID => !pendingRemoveIds.has(agentID));
-    await onSync({ expected_revision: revision, agent_ids: desired });
+    await onSync(selection(desired));
     toast.success(t('runtime.messages.agentsRemoved', { count: pendingRemoveIds.size }));
     setPendingRemoveIds(null);
     setSelectedBoundIds(new Set());
@@ -752,8 +766,18 @@ function AppsTab({
                                 <Checkbox checked={selected} tabIndex={-1} aria-hidden />
                               </div>
                               <div>
-                                <div className="line-clamp-1 font-semibold" title={candidate.name}>
-                                  {candidate.name}
+                                <div className="flex items-center gap-1.5">
+                                  <div
+                                    className="line-clamp-1 font-semibold"
+                                    title={candidate.name}
+                                  >
+                                    {candidate.name}
+                                  </div>
+                                  {candidate.app_type === 'digital_human' ? (
+                                    <Badge variant="subtle" className="shrink-0 font-normal">
+                                      {t('runtime.apps.digitalHuman')}
+                                    </Badge>
+                                  ) : null}
                                 </div>
                                 <div className="mt-1 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
                                   {candidate.description || t('runtime.apps.noDescription')}
@@ -942,8 +966,15 @@ function AppsTab({
                     <div className="flex items-start gap-3">
                       <RuntimeAgentIcon agent={app} />
                       <div className="min-w-0 flex-1">
-                        <div className="line-clamp-1 font-semibold" title={app.name}>
-                          {app.name}
+                        <div className="flex items-center gap-1.5">
+                          <div className="line-clamp-1 font-semibold" title={app.name}>
+                            {app.name}
+                          </div>
+                          {app.app_type === 'digital_human' ? (
+                            <Badge variant="subtle" className="shrink-0 font-normal">
+                              {t('runtime.apps.digitalHuman')}
+                            </Badge>
+                          ) : null}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                           {crossWorkspace ? (

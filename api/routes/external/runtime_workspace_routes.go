@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -34,6 +35,9 @@ type RuntimeWorkspaceRouteDeps struct {
 	DB           *gorm.DB
 	FileService  interfaces.FileService
 	AgentHandler *agents.AgentsHandler
+	// DigitalHuman serves bound DigitalHumans; without it they answer not
+	// found (ADR 0010).
+	DigitalHuman *digitalhuman.ExternalHandler
 }
 
 func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspaceRouteDeps) {
@@ -44,6 +48,19 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		panic("runtime workspace routes require db, file service, and agent handler")
 	}
 	service := runtimeworkspace.NewService(deps.DB)
+	// Every DigitalHuman access service, including those built for
+	// background execution, trusts the callers of bound Runtime Workspaces.
+	digitalhuman.UseRuntimeWorkspaceAccess(func(db *gorm.DB) digitalhuman.RuntimeWorkspaceAccess { return runtimeworkspace.NewService(db) })
+	dh := deps.DigitalHuman
+	app := func(agent, digitalHuman gin.HandlerFunc) gin.HandlerFunc {
+		return runtimeAppRoute(dh, agent, digitalHuman)
+	}
+	var dhRoute func(name string) gin.HandlerFunc
+	if dh != nil {
+		dhRoute = func(name string) gin.HandlerFunc { return dh.RuntimeWorkspaceHandler(name) }
+	} else {
+		dhRoute = func(string) gin.HandlerFunc { return nil }
+	}
 	group := router.Group("/connect/v1")
 	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceRequestLease(service), runtimeWorkspaceAudit(service), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service))
 	group.GET("/apps", func(c *gin.Context) {
@@ -72,30 +89,57 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		}
 		response.Success(c, app)
 	})
-	appGroup.GET("/config", deps.AgentHandler.GetAPIKeyAgentRuntimeConfig)
-	appGroup.GET("/parameters", runtimeAppParameters(service, deps.FileService))
-	appGroup.POST("/chat", deps.AgentHandler.ChatAPIKeyAgent)
-	appGroup.GET("/conversations", deps.AgentHandler.ListAPIKeyAgentRuntimeConversations)
-	appGroup.GET("/conversations/search", deps.AgentHandler.SearchAPIKeyAgentRuntimeConversations)
-	appGroup.POST("/conversations", deps.AgentHandler.CreateAPIKeyAgentRuntimeConversation)
-	appGroup.GET("/conversations/:conversation_id", deps.AgentHandler.GetAPIKeyAgentRuntimeConversation)
-	appGroup.PATCH("/conversations/:conversation_id", deps.AgentHandler.UpdateAPIKeyAgentRuntimeConversation)
-	appGroup.DELETE("/conversations/:conversation_id", deps.AgentHandler.DeleteAPIKeyAgentRuntimeConversation)
-	appGroup.GET("/conversations/:conversation_id/messages", deps.AgentHandler.ListAPIKeyAgentRuntimeMessages)
-	appGroup.GET("/conversations/:conversation_id/events", deps.AgentHandler.StreamAPIKeyAgentRuntimeEvents)
-	appGroup.POST("/conversations/:conversation_id/stop", deps.AgentHandler.StopAPIKeyAgentRuntimeConversation)
-	appGroup.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", deps.AgentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation)
-	appGroup.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", deps.AgentHandler.ContinueAPIKeyAgentRuntimeUserInput)
-	appGroup.POST("/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", deps.AgentHandler.ContinueAPIKeyAgentRuntimeTokenBudget)
-	appGroup.POST("/messages/:message_id/regenerate", deps.AgentHandler.RegenerateAPIKeyAgentRuntimeMessage)
-	appGroup.GET("/memory", deps.AgentHandler.GetAPIKeyAgentMemory)
-	appGroup.GET("/memory/export", deps.AgentHandler.ExportAPIKeyAgentMemory)
-	appGroup.PUT("/memory/:key", deps.AgentHandler.PutAPIKeyAgentMemory)
-	appGroup.DELETE("/memory/:key", deps.AgentHandler.DeleteAPIKeyAgentMemoryValue)
-	appGroup.DELETE("/memory", deps.AgentHandler.DeleteAllAPIKeyAgentMemory)
-	appGroup.POST("/memory/operations/:operation_id/undo", deps.AgentHandler.UndoAPIKeyAgentMemoryOperation)
-	appGroup.GET("/memory/settings", deps.AgentHandler.GetAPIKeyAgentMemorySettings)
-	appGroup.PATCH("/memory/settings", deps.AgentHandler.PatchAPIKeyAgentMemorySettings)
+	// Each app route serves the bound app's own operation: an Agent's or a
+	// DigitalHuman's (ADR 0010). Operations one type lacks answer not found.
+	appGroup.GET("/config", app(deps.AgentHandler.GetAPIKeyAgentRuntimeConfig, dhRoute("config")))
+	appGroup.GET("/parameters", app(runtimeAppParameters(service, deps.FileService), dhRoute("config")))
+	appGroup.POST("/chat", app(deps.AgentHandler.ChatAPIKeyAgent, dhRoute("chat")))
+	appGroup.GET("/conversations", app(deps.AgentHandler.ListAPIKeyAgentRuntimeConversations, dhRoute("conversations.list")))
+	appGroup.GET("/conversations/search", app(deps.AgentHandler.SearchAPIKeyAgentRuntimeConversations, dhRoute("conversations.search")))
+	appGroup.POST("/conversations", app(deps.AgentHandler.CreateAPIKeyAgentRuntimeConversation, nil))
+	appGroup.GET("/conversations/:conversation_id", app(deps.AgentHandler.GetAPIKeyAgentRuntimeConversation, dhRoute("conversations.get")))
+	appGroup.PATCH("/conversations/:conversation_id", app(deps.AgentHandler.UpdateAPIKeyAgentRuntimeConversation, dhRoute("conversations.update")))
+	appGroup.DELETE("/conversations/:conversation_id", app(deps.AgentHandler.DeleteAPIKeyAgentRuntimeConversation, dhRoute("conversations.delete")))
+	appGroup.GET("/conversations/:conversation_id/messages", app(deps.AgentHandler.ListAPIKeyAgentRuntimeMessages, dhRoute("conversations.messages")))
+	appGroup.GET("/conversations/:conversation_id/events", app(deps.AgentHandler.StreamAPIKeyAgentRuntimeEvents, nil))
+	appGroup.POST("/conversations/:conversation_id/stop", app(deps.AgentHandler.StopAPIKeyAgentRuntimeConversation, nil))
+	appGroup.GET("/conversations/:conversation_id/files/:file_id", app(nil, dhRoute("conversations.file")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation, dhRoute("continue.workflow")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeUserInput, dhRoute("continue.user_input")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", app(nil, dhRoute("continue.tool_governance")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeTokenBudget, dhRoute("continue.token_budget")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/regenerate", app(nil, dhRoute("regenerate")))
+	appGroup.POST("/messages/:message_id/regenerate", app(deps.AgentHandler.RegenerateAPIKeyAgentRuntimeMessage, nil))
+	appGroup.GET("/runs/:run_id", app(nil, dhRoute("runs.get")))
+	appGroup.GET("/runs/:run_id/events", app(nil, dhRoute("runs.events")))
+	appGroup.POST("/runs/:run_id/stop", app(nil, dhRoute("runs.stop")))
+	appGroup.POST("/runs/:run_id/runtime-input", app(nil, dhRoute("runs.runtime_input")))
+	appGroup.GET("/tasks", app(nil, dhRoute("tasks.list")))
+	appGroup.POST("/tasks", app(nil, dhRoute("tasks.create")))
+	appGroup.POST("/tasks/schedule-preview", app(nil, dhRoute("tasks.schedule_preview")))
+	appGroup.GET("/tasks/:task_id", app(nil, dhRoute("tasks.get")))
+	appGroup.PATCH("/tasks/:task_id", app(nil, dhRoute("tasks.update")))
+	appGroup.POST("/tasks/:task_id/actions/:action", app(nil, dhRoute("tasks.action")))
+	appGroup.GET("/tasks/:task_id/runs", app(nil, dhRoute("tasks.runs")))
+	appGroup.GET("/tasks/:task_id/activities", app(nil, dhRoute("tasks.activities")))
+	appGroup.GET("/reports", app(nil, dhRoute("reports.list")))
+	appGroup.GET("/reports/:report_id", app(nil, dhRoute("reports.get")))
+	appGroup.POST("/reports/:report_id/review", app(nil, dhRoute("reports.review")))
+	appGroup.GET("/reports/:report_id/files/:file_id", app(nil, dhRoute("reports.file")))
+	appGroup.GET("/notifications", app(nil, dhRoute("notifications.list")))
+	appGroup.POST("/notifications/read", app(nil, dhRoute("notifications.read")))
+	appGroup.GET("/notifications/unread-count", app(nil, dhRoute("notifications.unread_count")))
+	appGroup.POST("/notifications/read-all", app(nil, dhRoute("notifications.read_all")))
+	appGroup.GET("/memory", app(deps.AgentHandler.GetAPIKeyAgentMemory, dhRoute("memory.get")))
+	appGroup.GET("/memory/export", app(deps.AgentHandler.ExportAPIKeyAgentMemory, nil))
+	appGroup.PUT("/memory/:key", app(deps.AgentHandler.PutAPIKeyAgentMemory, nil))
+	appGroup.DELETE("/memory/:key", app(deps.AgentHandler.DeleteAPIKeyAgentMemoryValue, nil))
+	appGroup.DELETE("/memory/items/:key", app(nil, dhRoute("memory.delete_item")))
+	appGroup.POST("/memory/clear", app(nil, dhRoute("memory.clear")))
+	appGroup.DELETE("/memory", app(deps.AgentHandler.DeleteAllAPIKeyAgentMemory, nil))
+	appGroup.POST("/memory/operations/:operation_id/undo", app(deps.AgentHandler.UndoAPIKeyAgentMemoryOperation, nil))
+	appGroup.GET("/memory/settings", app(deps.AgentHandler.GetAPIKeyAgentMemorySettings, nil))
+	appGroup.PATCH("/memory/settings", app(deps.AgentHandler.PatchAPIKeyAgentMemorySettings, nil))
 
 	fileGroup := group.Group("/files")
 	fileGroup.POST("", runtimeUploadFile(deps.DB, deps.FileService))
@@ -267,9 +311,41 @@ func runtimeWorkspaceSubjectAuth(service *runtimeworkspace.Service) gin.HandlerF
 		// because Runtime Subjects are intentionally not members.
 		c.Set("runtime_file_authorizer", service)
 		if principal.Agent != nil {
-			c.Set("agent_id", principal.Agent.AgentID.String())
+			if principal.Agent.AppType == runtimeworkspace.AppTypeDigitalHuman {
+				c.Set(runtimeAppTypeContextKey, runtimeworkspace.AppTypeDigitalHuman)
+				c.Set(digitalhuman.RuntimeDigitalHumanIDContextKey, principal.Agent.AgentID.String())
+			} else {
+				c.Set(runtimeAppTypeContextKey, runtimeworkspace.AppTypeAgent)
+				c.Set("agent_id", principal.Agent.AgentID.String())
+			}
 		}
 		c.Next()
+	}
+}
+
+const runtimeAppTypeContextKey = "runtime_app_type"
+
+// runtimeAppRoute serves an app route with the handler of the bound app's
+// type: an Agent's or a DigitalHuman's. A type without a handler for the
+// route answers that the app has no such operation.
+func runtimeAppRoute(digitalHumans *digitalhuman.ExternalHandler, agent, digitalHuman gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetString(runtimeAppTypeContextKey) == runtimeworkspace.AppTypeDigitalHuman {
+			if digitalHumans == nil || digitalHuman == nil {
+				runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+				return
+			}
+			if !digitalHumans.PrepareRuntimeWorkspaceCaller(c) {
+				return
+			}
+			digitalHuman(c)
+			return
+		}
+		if agent == nil {
+			runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+			return
+		}
+		agent(c)
 	}
 }
 
@@ -318,8 +394,10 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 			return
 		}
 		var agentID uuid.UUID
+		appType := ""
 		if runtimePrincipal.Agent != nil {
 			agentID = runtimePrincipal.Agent.AgentID
+			appType = runtimePrincipal.Agent.AppType
 		}
 		details := map[string]any{
 			"external_user_id_hash": runtimeExternalUserHash(runtimePrincipal.ExternalUserID),
@@ -341,6 +419,7 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 			CredentialID:       runtimePrincipal.Credential.ID,
 			SubjectID:          runtimePrincipal.SubjectID,
 			AgentID:            agentID,
+			AppType:            appType,
 			Method:             c.Request.Method,
 			Route:              route,
 			StatusCode:         c.Writer.Status(),

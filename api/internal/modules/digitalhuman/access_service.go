@@ -60,10 +60,11 @@ type PublishedAccess struct {
 
 // AccessService owns DigitalHuman external surfaces and API credentials.
 type AccessService struct {
-	db          *gorm.DB
-	repo        *GormRepository
-	runtimeAuth *runtimeauth.Store
-	now         func() time.Time
+	db                *gorm.DB
+	repo              *GormRepository
+	runtimeAuth       *runtimeauth.Store
+	runtimeWorkspaces RuntimeWorkspaceAccess
+	now               func() time.Time
 }
 
 func NewAccessService(db *gorm.DB) *AccessService {
@@ -469,6 +470,9 @@ func (s *AccessService) ValidateExternalFiles(ctx context.Context, scope Scope, 
 			return ErrWebAppFileRequiresLogin
 		}
 		return ErrNotFound
+	}
+	if scope.RuntimeWorkspaceID != nil {
+		return s.validateRuntimeWorkspaceFiles(ctx, scope, fileIDs)
 	}
 	parsed := make([]uuid.UUID, 0, len(fileIDs))
 	seen := make(map[uuid.UUID]struct{}, len(fileIDs))

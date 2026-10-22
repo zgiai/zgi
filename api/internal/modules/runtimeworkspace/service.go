@@ -221,6 +221,7 @@ func (s *Service) ResolveRuntimeID(ctx context.Context, identifier uuid.UUID) (u
 
 type runtimeAgentRecord struct {
 	ID              uuid.UUID
+	AppType         string                          `gorm:"-"`
 	TenantID        uuid.UUID                       `gorm:"column:tenant_id"`
 	OrganizationID  uuid.UUID                       `gorm:"column:organization_id"`
 	WorkspaceName   string                          `gorm:"column:workspace_name"`
@@ -309,14 +310,28 @@ func runtimeAgentCapabilities(presentation runtimePublishedPresentation) []strin
 	return capabilities
 }
 
+// loadBoundAgents loads the applications of bindings, Agents and
+// DigitalHumans, and reports which of them the Runtime Workspace may call.
 func (s *Service) loadBoundAgents(ctx context.Context, runtimeWorkspace *RuntimeWorkspace, bindings []AgentBinding) (map[uuid.UUID]runtimeAgentRecord, map[uuid.UUID]struct{}, error) {
 	agentsByID := make(map[uuid.UUID]runtimeAgentRecord, len(bindings))
 	if runtimeWorkspace == nil || len(bindings) == 0 {
 		return agentsByID, map[uuid.UUID]struct{}{}, nil
 	}
 	agentIDs := make([]uuid.UUID, 0, len(bindings))
+	var digitalHumanIDs []uuid.UUID
 	for _, binding := range bindings {
+		if bindingAppType(binding) == AppTypeDigitalHuman {
+			digitalHumanIDs = append(digitalHumanIDs, binding.AgentID)
+			continue
+		}
 		agentIDs = append(agentIDs, binding.AgentID)
+	}
+	digitalHumans, authorizedDigitalHumans, err := s.loadBoundDigitalHumans(ctx, runtimeWorkspace, digitalHumanIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(agentIDs) == 0 {
+		return digitalHumans, authorizedDigitalHumans, nil
 	}
 	var records []runtimeAgentRecord
 	if err := s.db.WithContext(ctx).Table("agents AS agents").
@@ -328,6 +343,7 @@ func (s *Service) loadBoundAgents(ctx context.Context, runtimeWorkspace *Runtime
 	}
 	candidates := make([]runtimeauth.ResourceAuthorizationCandidate, 0, len(records))
 	for _, record := range records {
+		record.AppType = AppTypeAgent
 		agentsByID[record.ID] = record
 		if record.OrganizationID != runtimeWorkspace.OrganizationID || record.WorkspaceStatus != workspace_model.WorkspaceStatusNormal || !record.Published || !record.EnableAPI || strings.TrimSpace(record.WebAppStatus) != runtimeauth.WebAppStatusActive {
 			continue
@@ -339,14 +355,48 @@ func (s *Service) loadBoundAgents(ctx context.Context, runtimeWorkspace *Runtime
 	if err != nil {
 		return nil, nil, fmt.Errorf("authorize runtime workspace agents: %w", err)
 	}
-	authorized := make(map[uuid.UUID]struct{}, len(authorizedIDs))
+	authorized := make(map[uuid.UUID]struct{}, len(authorizedIDs)+len(authorizedDigitalHumans))
 	for _, agentID := range authorizedIDs {
 		authorized[agentID] = struct{}{}
+	}
+	for id, record := range digitalHumans {
+		agentsByID[id] = record
+	}
+	for id := range authorizedDigitalHumans {
+		authorized[id] = struct{}{}
 	}
 	return agentsByID, authorized, nil
 }
 
+// runtimeAppCapabilities lists what /api/connect/v1 serves for an app.
+func runtimeAppCapabilities(record runtimeAgentRecord, presentation runtimePublishedPresentation) []string {
+	if record.AppType == AppTypeDigitalHuman {
+		return append([]string(nil), digitalHumanCapabilities...)
+	}
+	return runtimeAgentCapabilities(presentation)
+}
+
+// runtimeAppType reports a record's application type, Agent by default.
+func runtimeAppType(record runtimeAgentRecord) string {
+	if record.AppType == AppTypeDigitalHuman {
+		return AppTypeDigitalHuman
+	}
+	return AppTypeAgent
+}
+
 func runtimeAgentUnavailableReason(record runtimeAgentRecord, found, authorized bool) string {
+	if found && record.AppType == AppTypeDigitalHuman {
+		switch {
+		case record.WorkspaceStatus != workspace_model.WorkspaceStatusNormal:
+			return "source_workspace_archived"
+		case !record.Published:
+			return "digital_human_not_published"
+		case !authorized:
+			return "digital_human_api_disabled"
+		default:
+			return ""
+		}
+	}
 	switch {
 	case !found:
 		return "agent_not_found"
@@ -493,11 +543,11 @@ func (s *Service) GetApp(ctx context.Context, runtimeWorkspaceID uuid.UUID, appK
 	}
 	presentation := runtimeAgentPresentation(agent)
 	return &App{
-		AppKey: binding.PublicAppKey, Name: agent.Name, Description: agent.Description,
+		AppKey: binding.PublicAppKey, AppType: runtimeAppType(agent), Name: agent.Name, Description: agent.Description,
 		Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent), Version: agent.Version, VersionUUID: agent.VersionUUID.String(),
 		HomeTitle: presentation.HomeTitle, OpeningStatement: presentation.OpeningStatement, InputPlaceholder: presentation.InputPlaceholder, ThemeColor: presentation.ThemeColor, SuggestedQuestions: presentation.SuggestedQuestions,
 		Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-		AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), MemoryRequiresUser: relationshipmemory.RuntimeEnabled() && runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAgentCapabilities(presentation),
+		AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), MemoryRequiresUser: relationshipmemory.RuntimeEnabled() && runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAppCapabilities(agent, presentation),
 	}, nil
 }
 
@@ -549,11 +599,11 @@ func (s *Service) ListApps(ctx context.Context, runtimeWorkspaceID uuid.UUID) ([
 		}
 		presentation := runtimeAgentPresentation(agent)
 		apps = append(apps, App{
-			AppKey: binding.PublicAppKey, Name: agent.Name, Description: agent.Description,
+			AppKey: binding.PublicAppKey, AppType: runtimeAppType(agent), Name: agent.Name, Description: agent.Description,
 			Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent), Version: agent.Version, VersionUUID: agent.VersionUUID.String(),
 			HomeTitle: presentation.HomeTitle, OpeningStatement: presentation.OpeningStatement, InputPlaceholder: presentation.InputPlaceholder, ThemeColor: presentation.ThemeColor, SuggestedQuestions: presentation.SuggestedQuestions,
 			Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), MemoryRequiresUser: relationshipmemory.RuntimeEnabled() && runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAgentCapabilities(presentation),
+			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), MemoryRequiresUser: relationshipmemory.RuntimeEnabled() && runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAppCapabilities(agent, presentation),
 			Tags: tagsByAgent[binding.AgentID],
 		})
 	}
@@ -585,12 +635,15 @@ func (s *Service) ListBindings(ctx context.Context, runtimeWorkspaceID uuid.UUID
 			reason = "binding_disabled"
 		}
 		presentation := runtimeAgentPresentation(agent)
+		if !found {
+			agent.AppType = bindingAppType(binding)
+		}
 		apps = append(apps, ManagementApp{
-			AgentID: binding.AgentID.String(), AppKey: binding.PublicAppKey, WorkspaceID: agent.TenantID.String(), WorkspaceName: agent.WorkspaceName,
+			AgentID: binding.AgentID.String(), AppType: bindingAppType(binding), AppKey: binding.PublicAppKey, WorkspaceID: agent.TenantID.String(), WorkspaceName: agent.WorkspaceName,
 			Name: agent.Name, Description: agent.Description, Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent),
 			Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
 			Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAgentCapabilities(presentation),
+			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAppCapabilities(agent, presentation),
 			Tags:     tagsByAgent[binding.AgentID],
 			Callable: binding.Status == AgentBindingActive && allowed, UnavailableReason: reason,
 		})
@@ -641,10 +694,18 @@ func (s *Service) ListAgentCandidates(ctx context.Context, runtimeWorkspaceID, a
 			return nil, fmt.Errorf("list runtime workspace agent candidate ids: %w", err)
 		}
 	}
-	bindings := make([]AgentBinding, 0, len(agentIDs))
-	for _, agentID := range agentIDs {
-		bindings = append(bindings, AgentBinding{RuntimeWorkspaceID: runtimeID, AgentID: agentID})
+	digitalHumanIDs, err := s.digitalHumanCandidateIDs(ctx, workspaceIDs)
+	if err != nil {
+		return nil, err
 	}
+	bindings := make([]AgentBinding, 0, len(agentIDs)+len(digitalHumanIDs))
+	for _, agentID := range agentIDs {
+		bindings = append(bindings, AgentBinding{RuntimeWorkspaceID: runtimeID, AgentID: agentID, AppType: AppTypeAgent})
+	}
+	for _, id := range digitalHumanIDs {
+		bindings = append(bindings, AgentBinding{RuntimeWorkspaceID: runtimeID, AgentID: id, AppType: AppTypeDigitalHuman})
+	}
+	agentIDs = append(agentIDs, digitalHumanIDs...)
 	agentsByID, authorized, err := s.loadBoundAgents(ctx, runtimeWorkspace, bindings)
 	if err != nil {
 		return nil, err
@@ -661,11 +722,11 @@ func (s *Service) ListAgentCandidates(ctx context.Context, runtimeWorkspaceID, a
 		agent := agentsByID[agentID]
 		presentation := runtimeAgentPresentation(agent)
 		candidates = append(candidates, AgentCandidate{
-			AgentID: agentID.String(), WorkspaceID: agent.TenantID.String(), WorkspaceName: agent.WorkspaceName,
+			AgentID: agentID.String(), AppType: runtimeAppType(agent), WorkspaceID: agent.TenantID.String(), WorkspaceName: agent.WorkspaceName,
 			Name: agent.Name, Description: agent.Description, Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent),
 			Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
 			FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAgentCapabilities(presentation),
+			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAppCapabilities(agent, presentation),
 			Tags: tagsByAgent[agentID],
 		})
 	}
@@ -927,15 +988,30 @@ func (s *Service) RevokeCredential(ctx context.Context, runtimeWorkspaceID, cred
 }
 
 func (s *Service) SyncAgentBindings(ctx context.Context, runtimeWorkspaceID, actingAccountID uuid.UUID, expectedRevision int64, requestedAgentIDs []uuid.UUID) (*ManagementAppSet, error) {
+	refs := make([]AppRef, 0, len(requestedAgentIDs))
+	for _, agentID := range requestedAgentIDs {
+		refs = append(refs, AppRef{Type: AppTypeAgent, ID: agentID})
+	}
+	return s.SyncAppBindings(ctx, runtimeWorkspaceID, actingAccountID, expectedRevision, refs)
+}
+
+// SyncAppBindings makes the Runtime Workspace bind exactly the requested
+// Agents and DigitalHumans.
+func (s *Service) SyncAppBindings(ctx context.Context, runtimeWorkspaceID, actingAccountID uuid.UUID, expectedRevision int64, requested []AppRef) (*ManagementAppSet, error) {
 	if runtimeWorkspaceID == uuid.Nil || actingAccountID == uuid.Nil || expectedRevision < 0 {
 		return nil, ErrInvalidBinding
 	}
-	desired := make(map[uuid.UUID]struct{}, len(requestedAgentIDs))
-	for _, agentID := range requestedAgentIDs {
-		if agentID == uuid.Nil {
+	desired := make(map[uuid.UUID]struct{}, len(requested))
+	desiredType := make(map[uuid.UUID]string, len(requested))
+	for _, ref := range requested {
+		if ref.ID == uuid.Nil || (ref.Type != AppTypeAgent && ref.Type != AppTypeDigitalHuman) {
 			return nil, ErrInvalidBinding
 		}
-		desired[agentID] = struct{}{}
+		if previous, seen := desiredType[ref.ID]; seen && previous != ref.Type {
+			return nil, ErrInvalidBinding
+		}
+		desired[ref.ID] = struct{}{}
+		desiredType[ref.ID] = ref.Type
 	}
 	if len(desired) > maxRuntimeWorkspaceAgents {
 		return nil, ErrInvalidBinding
@@ -962,6 +1038,9 @@ func (s *Service) SyncAgentBindings(ctx context.Context, runtimeWorkspaceID, act
 		existingByAgent := make(map[uuid.UUID]AgentBinding, len(existing))
 		active := make(map[uuid.UUID]struct{}, len(existing))
 		for _, binding := range existing {
+			if want, requested := desiredType[binding.AgentID]; requested && want != bindingAppType(binding) {
+				return ErrInvalidBinding
+			}
 			existingByAgent[binding.AgentID] = binding
 			if binding.Status == AgentBindingActive {
 				active[binding.AgentID] = struct{}{}
@@ -981,7 +1060,7 @@ func (s *Service) SyncAgentBindings(ctx context.Context, runtimeWorkspaceID, act
 		}
 		desiredBindings := make([]AgentBinding, 0, len(desired))
 		for agentID := range desired {
-			desiredBindings = append(desiredBindings, AgentBinding{RuntimeWorkspaceID: runtimeWorkspaceID, AgentID: agentID})
+			desiredBindings = append(desiredBindings, AgentBinding{RuntimeWorkspaceID: runtimeWorkspaceID, AgentID: agentID, AppType: desiredType[agentID]})
 		}
 		txService := NewService(tx, WithClock(s.now))
 		agentsByID, authorized, err := txService.loadBoundAgents(ctx, &runtimeWorkspace, desiredBindings)
@@ -1024,7 +1103,7 @@ func (s *Service) SyncAgentBindings(ctx context.Context, runtimeWorkspaceID, act
 				}
 				continue
 			}
-			binding := AgentBinding{RuntimeWorkspaceID: runtimeWorkspaceID, AgentID: agentID, PublicAppKey: "app_" + shortID(), Status: AgentBindingActive, CreatedAt: now, UpdatedAt: now}
+			binding := AgentBinding{RuntimeWorkspaceID: runtimeWorkspaceID, AgentID: agentID, AppType: desiredType[agentID], PublicAppKey: "app_" + shortID(), Status: AgentBindingActive, CreatedAt: now, UpdatedAt: now}
 			if err := tx.Create(&binding).Error; err != nil {
 				var pgErr *pgconn.PgError
 				if errors.Is(err, gorm.ErrDuplicatedKey) || errors.As(err, &pgErr) && pgErr.Code == "23505" {

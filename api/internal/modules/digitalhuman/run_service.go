@@ -116,7 +116,7 @@ type RuntimeService struct {
 	approvalNotifier TaskApprovalNotifier
 	// channelConnectors decides connector confirmations from channel replies.
 	channelConnectors ChannelConnectorConfirmer
-	now              func() time.Time
+	now               func() time.Time
 }
 
 func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRuntimeAdapter, chat ChatRuntime, dispatcher RunDispatcher, options ...RuntimeServiceOption) *RuntimeService {
@@ -396,6 +396,11 @@ func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope,
 	appendInvocationRequestContext(event.Context, request)
 	if request.ConversationID != nil && *request.ConversationID != uuid.Nil {
 		event.Context["conversation_id"] = request.ConversationID.String()
+	}
+	if surface == SurfaceAPI && scope.RuntimeWorkspaceID != nil && *scope.RuntimeWorkspaceID != uuid.Nil {
+		// Execution re-authorizes the Runtime Workspace credential from the
+		// stored run, so the run keeps which Runtime Workspace it came through.
+		event.Context[runtimeWorkspaceEventContextKey] = scope.RuntimeWorkspaceID.String()
 	}
 	scope.Surface = surface
 	return s.SubmitInvocation(ctx, scope, event, query, request.ConversationID)

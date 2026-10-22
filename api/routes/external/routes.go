@@ -63,7 +63,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 		if deps.DB != nil {
 			notifications = inbox.NewService(deps.DB)
 		}
-		RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.DigitalHumanTasks, deps.FileService, deps.ApplicationErrorCatalog, notifications)
+		digitalHumans := RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.DigitalHumanTasks, deps.FileService, deps.ApplicationErrorCatalog, notifications)
 
 		// APIs that require API key authentication
 		RegisterAPIKeyRoutes(
@@ -86,6 +86,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.WorkflowEngineFactory,
 			deps.SkillManifestResolver,
 			deps.ConnectorDispatcher, deps.ConnectorAgentRuntime, deps.ConnectorConfirmationStore, deps.ConnectorCatalog,
+			APIKeyRouteExtras{DigitalHuman: digitalHumans},
 		)
 	}
 

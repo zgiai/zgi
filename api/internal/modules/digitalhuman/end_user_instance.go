@@ -74,6 +74,9 @@ func endUserInstanceForRun(scope Scope, run *Run, now time.Time) *EndUserInstanc
 	switch run.Surface {
 	case SurfaceAPI:
 		instance.IssuerID = cloneUUIDPointer(&scope.PrincipalID)
+		if scope.RuntimeWorkspaceID != nil {
+			instance.IssuerType, instance.IssuerID = runtimeWorkspaceInstanceIssuer, cloneUUIDPointer(scope.RuntimeWorkspaceID)
+		}
 	case SurfaceWebApp:
 		instance.IssuerID = cloneUUIDPointer(scope.WebAppID)
 	default:
@@ -100,6 +103,12 @@ func (r *GormRepository) CreateRunWithOutboxForEndUser(ctx context.Context, run 
 		if subject.Subject.Kind == usersubject.APIEndUser {
 			issuerID := instance.DigitalHumanID
 			subject.IssuerType, subject.IssuerID = SurfaceAPI, &issuerID
+			// A Runtime Workspace end user keeps the issuer the Runtime
+			// Workspace registered them with (ADR 0010).
+			if instance.IssuerType == runtimeWorkspaceInstanceIssuer && instance.IssuerID != nil {
+				runtimeWorkspaceID := *instance.IssuerID
+				subject.IssuerType, subject.IssuerID = runtimeWorkspaceSubjectIssuer, &runtimeWorkspaceID
+			}
 		}
 		if _, err := usersubject.NewService(tx.db).Ensure(ctx, subject); err != nil {
 			return fmt.Errorf("admit DigitalHuman end user subject: %w", err)

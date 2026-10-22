@@ -31,6 +31,9 @@ type Scope struct {
 	UserSubjectID   *uuid.UUID
 	WebAppID        *uuid.UUID
 	Surface         string
+	// RuntimeWorkspaceID is set when a Runtime Workspace credential is the
+	// API caller instead of a DigitalHuman API key (ADR 0010).
+	RuntimeWorkspaceID *uuid.UUID
 }
 
 // PresentationPolicy is the versioned public appearance of a DigitalHuman.

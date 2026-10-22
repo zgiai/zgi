@@ -229,21 +229,45 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		var req struct {
 			ExpectedRevision *int64    `json:"expected_revision" binding:"required"`
 			AgentIDs         *[]string `json:"agent_ids" binding:"required,max=100,dive,uuid"`
+			// DigitalHumanIDs is optional; when it is left out, the bound
+			// DigitalHumans stay as they are, so older clients keep them.
+			DigitalHumanIDs *[]string `json:"digital_human_ids" binding:"omitempty,max=100,dive,uuid"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedRevision == nil || req.AgentIDs == nil || *req.ExpectedRevision < 0 {
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
-		agentIDs := make([]uuid.UUID, 0, len(*req.AgentIDs))
+		refs := make([]runtimeworkspace.AppRef, 0, len(*req.AgentIDs))
 		for _, rawAgentID := range *req.AgentIDs {
 			agentID, err := uuid.Parse(strings.TrimSpace(rawAgentID))
 			if err != nil {
 				response.Fail(c, response.ErrInvalidParam)
 				return
 			}
-			agentIDs = append(agentIDs, agentID)
+			refs = append(refs, runtimeworkspace.AppRef{Type: runtimeworkspace.AppTypeAgent, ID: agentID})
 		}
-		apps, err := service.SyncAgentBindings(c.Request.Context(), workspaceID, accountID, *req.ExpectedRevision, agentIDs)
+		if req.DigitalHumanIDs != nil {
+			for _, rawID := range *req.DigitalHumanIDs {
+				id, err := uuid.Parse(strings.TrimSpace(rawID))
+				if err != nil {
+					response.Fail(c, response.ErrInvalidParam)
+					return
+				}
+				refs = append(refs, runtimeworkspace.AppRef{Type: runtimeworkspace.AppTypeDigitalHuman, ID: id})
+			}
+		} else {
+			current, err := service.ListBindings(c.Request.Context(), workspaceID)
+			if err != nil {
+				managementFail(c, err)
+				return
+			}
+			for _, item := range current.Items {
+				if id, err := uuid.Parse(item.AgentID); err == nil && item.AppType == runtimeworkspace.AppTypeDigitalHuman && item.Status == runtimeworkspace.AgentBindingActive {
+					refs = append(refs, runtimeworkspace.AppRef{Type: runtimeworkspace.AppTypeDigitalHuman, ID: id})
+				}
+			}
+		}
+		apps, err := service.SyncAppBindings(c.Request.Context(), workspaceID, accountID, *req.ExpectedRevision, refs)
 		if err != nil {
 			managementFail(c, err)
 			return

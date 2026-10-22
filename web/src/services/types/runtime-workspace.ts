@@ -34,9 +34,13 @@ export interface RuntimeCredential {
   updated_at: string;
 }
 
+/** What a Runtime Workspace app is: an Agent or a DigitalHuman. */
+export type RuntimeAppType = 'agent' | 'digital_human';
+
 export interface RuntimeApp {
   app_key: string;
   agent_id: string;
+  app_type?: RuntimeAppType;
   workspace_id: string;
   workspace_name: string;
   name: string;
@@ -73,6 +77,7 @@ export interface RuntimeAgentCandidateSet {
 
 export interface RuntimeAgentCandidate {
   agent_id: string;
+  app_type?: RuntimeAppType;
   workspace_id: string;
   workspace_name: string;
   name: string;
@@ -109,4 +114,5 @@ export interface RuntimeAppCollection {
 export interface RuntimeWorkspaceAgentSelectionInput {
   expected_revision: number;
   agent_ids: string[];
+  digital_human_ids?: string[];
 }
