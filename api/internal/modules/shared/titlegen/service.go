@@ -488,7 +488,6 @@ func titleChatRequest(resolved *llmdefaultservice.ResolvedModel, promptText stri
 		Messages: []adapter.Message{
 			{Role: "user", Content: promptText},
 		},
-		ResponseFormat: &adapter.ResponseFormat{Type: "json_object"},
 	}
 }
 
