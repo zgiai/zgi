@@ -372,8 +372,10 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
         completedToday={todayCompleted}
       />
 
-      <div className="grid gap-5 @[1180px]/dashboard:grid-cols-[minmax(0,1fr)_340px] @[1480px]/dashboard:grid-cols-[minmax(0,1fr)_380px] 2xl:gap-6">
-        <div className="min-w-0">
+      {/* Four equal columns, shared with the indicators above: the main
+          column takes three, the side column one. */}
+      <div className="grid gap-5 @[1280px]/dashboard:grid-cols-4 2xl:gap-6">
+        <div className="flex min-w-0 flex-col gap-5 @[1280px]/dashboard:col-span-3 2xl:gap-6">
           <section id="dashboard-attention" className="scroll-mt-4 overflow-hidden rounded-xl border bg-background">
             <div className="flex min-h-[61px] flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5">
               <div className="flex items-center gap-2">
@@ -443,9 +445,40 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
               </>
             )}
           </section>
+        <section className="overflow-hidden rounded-xl border bg-background">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h2 className="font-semibold">{t('dashboard.recentActivity')}</h2>
+            <Button asChild variant="ghost" size="sm" className="-mr-2">
+              <Link href={`/console/digital-humans/${id}/runs`}>
+                {t('dashboard.viewAllActivity')}
+                <ArrowRight className="size-4" />
+              </Link>
+            </Button>
+          </div>
+          {runs.isLoading ? (
+            <div className="space-y-3 p-5">
+              {[0, 1, 2].map(item => (
+                <Skeleton key={item} className="h-8 rounded-md" />
+              ))}
+            </div>
+          ) : recentRuns.length === 0 ? (
+            <InlineState
+              compact
+              icon={<Activity className="size-5 text-muted-foreground" />}
+              title={t('dashboard.noActivity')}
+              description={t('dashboard.noActivityDescription')}
+            />
+          ) : (
+            <div className="divide-y px-5">
+              {recentRuns.map(run => (
+                <RecentRunRow key={run.id} id={id} run={run} locale={locale} />
+              ))}
+            </div>
+          )}
+        </section>
         </div>
 
-        <aside className="flex min-w-0 flex-col gap-5 2xl:gap-6">
+        <aside className="flex min-w-0 flex-col gap-5 @[1280px]/dashboard:col-span-1 2xl:gap-6">
           <UpcomingTasks id={id} tasks={upcomingTasks} locale={locale} />
           <RecentArtifacts id={id} locale={locale} />
           <section className="overflow-hidden rounded-xl border bg-background">
@@ -481,37 +514,6 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
         </aside>
       </div>
 
-      <section className="overflow-hidden rounded-xl border bg-background">
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h2 className="font-semibold">{t('dashboard.recentActivity')}</h2>
-          <Button asChild variant="ghost" size="sm" className="-mr-2">
-            <Link href={`/console/digital-humans/${id}/runs`}>
-              {t('dashboard.viewAllActivity')}
-              <ArrowRight className="size-4" />
-            </Link>
-          </Button>
-        </div>
-        {runs.isLoading ? (
-          <div className="space-y-3 p-5">
-            {[0, 1, 2].map(item => (
-              <Skeleton key={item} className="h-8 rounded-md" />
-            ))}
-          </div>
-        ) : recentRuns.length === 0 ? (
-          <InlineState
-            compact
-            icon={<Activity className="size-5 text-muted-foreground" />}
-            title={t('dashboard.noActivity')}
-            description={t('dashboard.noActivityDescription')}
-          />
-        ) : (
-          <div className="divide-y px-5">
-            {recentRuns.map(run => (
-              <RecentRunRow key={run.id} id={id} run={run} locale={locale} />
-            ))}
-          </div>
-        )}
-      </section>
     </main>
   );
 }
@@ -1183,17 +1185,13 @@ function DashboardIndicators({ id, attentionCount, completedToday }: { id: strin
           </p>
         </Link>
   );
-  // On wide screens the tiles follow the columns below them: three over the
-  // main column and the artifacts over the side column, with the same gaps.
+  // Four equal tiles over the four columns below, with the same gaps.
   return (
     <nav
       aria-label={t('dashboard.indicators.label')}
-      className="grid grid-cols-2 gap-3 @[680px]/dashboard:grid-cols-4 @[1180px]/dashboard:grid-cols-[minmax(0,1fr)_340px] @[1180px]/dashboard:gap-5 @[1480px]/dashboard:grid-cols-[minmax(0,1fr)_380px] 2xl:gap-6"
+      className="grid grid-cols-2 gap-3 @[680px]/dashboard:grid-cols-4 @[1280px]/dashboard:gap-5 2xl:gap-6"
     >
-      <div className="contents @[1180px]/dashboard:grid @[1180px]/dashboard:grid-cols-3 @[1180px]/dashboard:gap-5 2xl:gap-6">
-        {tiles.slice(0, 3).map(renderTile)}
-      </div>
-      {renderTile(tiles[3])}
+      {tiles.map(renderTile)}
     </nav>
   );
 }
