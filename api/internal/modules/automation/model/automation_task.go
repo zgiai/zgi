@@ -46,6 +46,7 @@ type AutomationTask struct {
 	SourceType              AutomationSourceType     `gorm:"column:source_type;type:varchar(32);not null" json:"source_type"`
 	SourceRef               *string                  `gorm:"column:source_ref;type:varchar(255)" json:"source_ref,omitempty"`
 	SourceSnapshot          map[string]interface{}   `gorm:"column:source_snapshot;type:jsonb;serializer:json" json:"source_snapshot,omitempty"`
+	ClientReference         *string                  `gorm:"column:client_reference;type:varchar(255)" json:"client_reference,omitempty"`
 	CreatedBy               string                   `gorm:"column:created_by;type:uuid;not null" json:"created_by"`
 	UpdatedBy               string                   `gorm:"column:updated_by;type:uuid;not null" json:"updated_by"`
 	CreatedAt               time.Time                `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`

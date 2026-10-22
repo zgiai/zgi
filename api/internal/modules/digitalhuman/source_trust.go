@@ -73,6 +73,9 @@ func (s *RuntimeService) classifySourceTrust(ctx context.Context, organizationID
 	case SurfaceTask:
 		origin, _ := event.Context["origin_surface"].(string)
 		return scheduledSourceTrust(origin)
+	case SurfacePreview:
+		// A preview never promotes memory, whoever runs it.
+		return SourceTrustWorkspaceMember
 	default:
 		return surfaceSourceTrust(surface)
 	}

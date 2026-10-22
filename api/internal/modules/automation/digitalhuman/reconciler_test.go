@@ -171,7 +171,7 @@ func newReconcilerDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&automationmodel.AutomationTask{}, &automationmodel.AutomationTaskRun{}, &automationmodel.AutomationTaskAction{}, &automationmodel.AutomationActionRun{}, &automationmodel.AutomationTaskActivity{}); err != nil {
+	if err := db.AutoMigrate(&automationmodel.AutomationTask{}, &automationmodel.AutomationTaskRun{}, &automationmodel.AutomationTaskAction{}, &automationmodel.AutomationActionRun{}, &automationmodel.AutomationTaskActivity{}, &taskReportRow{}); err != nil {
 		t.Fatalf("migrate reconciler: %v", err)
 	}
 	return db

@@ -20,6 +20,7 @@ import {
   type ModelSelectorValue,
 } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import WorkflowApprovalInteractionCard, {
   type WorkflowApprovalInteractionMode,
@@ -37,7 +38,9 @@ import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
 import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import {
+  AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
@@ -236,6 +239,8 @@ interface AIChatInputAreaProps {
   enableUpload?: boolean;
   fileUploadPolicy?: FileUploadSelection | null;
   uploadScope?: AIChatUploadScope;
+  // Anonymous visitors see the upload buttons, which ask them to sign in.
+  uploadRequiresLogin?: boolean;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
   showConnectedApps?: boolean;
@@ -336,6 +341,7 @@ export function AIChatInputArea({
   enableUpload = true,
   fileUploadPolicy,
   uploadScope = { type: 'console' },
+  uploadRequiresLogin = false,
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
   showConnectedApps = false,
@@ -476,41 +482,28 @@ export function AIChatInputArea({
   }, [clearCompositionEndGuard]);
 
   const { data: uploadConfig } = useUploadConfig({
-    enabled: enableUpload,
+    // Visitors who have not signed in cannot read the upload config yet.
+    enabled: enableUpload && !uploadRequiresLogin,
     scope: uploadScope.type === 'console' ? undefined : uploadScope,
   });
+  const [loginPromptOpen, setLoginPromptOpen] = useState(false);
   const currentWorkspace = useCurrentWorkspace();
-  const attachmentLimit = uploadConfig?.chat_upload_policy?.number_limit ?? AICHAT_ATTACHMENT_LIMIT;
+  // The application's own policy decides kinds and count; the server's
+  // effective policy fills in when the application did not send one.
+  const attachmentLimit =
+    fileUploadPolicy?.number_limits || uploadConfig?.chat_upload_policy?.number_limit || AICHAT_ATTACHMENT_LIMIT;
   const turnMaxBytes = uploadConfig?.chat_upload_policy?.turn_max_bytes ?? 100 * 1024 * 1024;
+  const policyExtensions = useMemo(
+    () => chatPolicyExtensions(fileUploadPolicy, uploadConfig?.chat_upload_policy?.allowed_extensions),
+    [uploadConfig?.chat_upload_policy?.allowed_extensions, fileUploadPolicy]
+  );
   const allowedExtensions = useMemo(
-    () =>
-      fileUploadPolicy && !fileUploadPolicy.allowed_file_types.includes('document')
-        ? []
-        : filterLowercaseExtensions(
-            uploadConfig?.chat_upload_policy
-              ? uploadConfig.chat_upload_policy.allowed_file_types.includes('document')
-                ? uploadConfig.chat_upload_policy.allowed_extensions.filter(
-                    ext => !IMAGE_EXTENSIONS.includes(ext)
-                  )
-                : []
-              : [...AICHAT_DOCUMENT_EXTENSIONS]
-          ),
-    [uploadConfig?.chat_upload_policy, fileUploadPolicy]
+    () => filterLowercaseExtensions(policyExtensions.filter(ext => !IMAGE_EXTENSIONS.includes(ext))),
+    [policyExtensions]
   );
   const imageExtensions = useMemo(
-    () =>
-      fileUploadPolicy && !fileUploadPolicy.allowed_file_types.includes('image')
-        ? []
-        : filterLowercaseExtensions(
-            uploadConfig?.chat_upload_policy
-              ? uploadConfig.chat_upload_policy.allowed_file_types.includes('image')
-                ? uploadConfig.chat_upload_policy.allowed_extensions.filter(ext =>
-                    IMAGE_EXTENSIONS.includes(ext)
-                  )
-                : []
-              : [...IMAGE_EXTENSIONS]
-          ),
-    [uploadConfig?.chat_upload_policy, fileUploadPolicy]
+    () => filterLowercaseExtensions(policyExtensions.filter(ext => IMAGE_EXTENSIONS.includes(ext))),
+    [policyExtensions]
   );
   const allSelectableExtensions = useMemo(
     () => filterLowercaseExtensions([...allowedExtensions, ...imageExtensions]),
@@ -538,6 +531,15 @@ export function AIChatInputArea({
       turnMaxBytes / 1024 / 1024
     );
   }, [uploadConfig?.image_file_size_limit, uploadConfig?.chat_upload_policy, turnMaxBytes]);
+
+  const audioMaxSizeMB = Math.min(
+    (uploadConfig?.chat_upload_policy?.audio_max_bytes ?? 0) / 1024 / 1024 || uploadConfig?.audio_file_size_limit || 50,
+    turnMaxBytes / 1024 / 1024
+  );
+  const videoMaxSizeMB = Math.min(
+    (uploadConfig?.chat_upload_policy?.video_max_bytes ?? 0) / 1024 / 1024 || uploadConfig?.video_file_size_limit || 100,
+    turnMaxBytes / 1024 / 1024
+  );
 
   const isUploading = attachments.some(attachment => attachment.status === 'uploading');
   const hasUploadError = attachments.some(attachment => attachment.status === 'error');
@@ -790,13 +792,20 @@ export function AIChatInputArea({
           types: formatExtensionsForDisplay(extensions).join(', '),
         });
       }
-      const sizeLimitMB = kind === 'image' ? imageMaxSizeMB : maxSizeMB;
+      const sizeLimitMB =
+        kind === 'image'
+          ? imageMaxSizeMB
+          : AUDIO_EXTENSIONS.includes(extension)
+            ? audioMaxSizeMB
+            : VIDEO_EXTENSIONS.includes(extension)
+              ? videoMaxSizeMB
+              : maxSizeMB;
       if (file.size > sizeLimitMB * 1024 * 1024) {
         return t('consoleChat.attachments.fileTooLarge', { max: sizeLimitMB });
       }
       return null;
     },
-    [allowedExtensions, imageExtensions, imageMaxSizeMB, maxSizeMB, t]
+    [allowedExtensions, audioMaxSizeMB, imageExtensions, imageMaxSizeMB, maxSizeMB, t, videoMaxSizeMB]
   );
 
   const uploadOneFile = useCallback(
@@ -910,6 +919,10 @@ export function AIChatInputArea({
     (files: File[], fallbackKind?: AIChatAttachmentUploadKind) => {
       if (files.length === 0) return;
       if (!enableUpload) return;
+      if (uploadRequiresLogin) {
+        setLoginPromptOpen(true);
+        return;
+      }
       if (isSending || isUploading) {
         toast.error(t('consoleChat.attachments.uploadUnavailable'));
         return;
@@ -971,6 +984,7 @@ export function AIChatInputArea({
       isUploading,
       t,
       uploadOneFile,
+      uploadRequiresLogin,
       validateFile,
     ]
   );
@@ -1049,8 +1063,19 @@ export function AIChatInputArea({
   );
 
   const handleImageUpload = useCallback(() => {
+    if (uploadRequiresLogin) {
+      setLoginPromptOpen(true);
+      return;
+    }
     imageInputRef.current?.click();
-  }, []);
+  }, [uploadRequiresLogin]);
+  const handleDocumentUpload = useCallback(() => {
+    if (uploadRequiresLogin) {
+      setLoginPromptOpen(true);
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [uploadRequiresLogin]);
 
   const handleSystemFilesConfirm = useCallback(
     (files: FileItem[]) => {
@@ -1131,6 +1156,12 @@ export function AIChatInputArea({
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isPreparingSend || isUploading || hasUploadError || voiceInputBusy) return;
+    // Attachments belong to a signed-in visitor; if the session was lost after
+    // attaching, ask them to sign in instead of sending files the server rejects.
+    if (uploadRequiresLogin && attachments.length > 0) {
+      setLoginPromptOpen(true);
+      return;
+    }
     if (attachments.length > attachmentLimit) {
       toast.error(t('consoleChat.attachments.exceedCount', { max: attachmentLimit }));
       return;
@@ -1183,6 +1214,7 @@ export function AIChatInputArea({
     isPreparingSend,
     isUploading,
     onSend,
+    uploadRequiresLogin,
     uploadedFiles,
     useMemory,
     voiceInputBusy,
@@ -1418,6 +1450,18 @@ export function AIChatInputArea({
       <ToolGovernancePendingApprovalBridge
         enabled={enableToolGovernanceApprovals}
         onApprovalChange={setActiveToolGovernanceApproval}
+      />
+      <ConfirmDialog
+        open={loginPromptOpen}
+        onOpenChange={setLoginPromptOpen}
+        title={t('consoleChat.attachments.loginRequiredTitle')}
+        description={t('consoleChat.attachments.loginRequiredDescription')}
+        confirmText={t('consoleChat.attachments.goToLogin')}
+        onConfirm={() => {
+          setLoginPromptOpen(false);
+          const current = `${window.location.pathname}${window.location.search}`;
+          window.location.assign(`/login?redirect=${encodeURIComponent(current)}`);
+        }}
       />
       {enableUpload && !hasBlockingApproval && isDraggingFiles ? (
         <AIChatDragUploadOverlay
@@ -1732,7 +1776,7 @@ export function AIChatInputArea({
                 surface={surface}
                 onModelChange={onModelChange}
                 onModelPropsChange={handleModelPropsChange}
-                onUploadDocument={() => fileInputRef.current?.click()}
+                onUploadDocument={handleDocumentUpload}
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
                 onOpenConnectedApps={onOpenConnectedApps}
@@ -1768,4 +1812,24 @@ export function AIChatInputArea({
       </div>
     </>
   );
+}
+
+/**
+ * The extensions a chat may attach. An application's own selection decides;
+ * without one, the server's effective policy (or the default document and
+ * image lists) applies.
+ */
+function chatPolicyExtensions(policy: FileUploadSelection | null | undefined, serverExtensions?: string[]): string[] {
+  if (!policy) {
+    return serverExtensions?.length ? serverExtensions : [...AICHAT_DOCUMENT_EXTENSIONS, ...IMAGE_EXTENSIONS];
+  }
+  const extensions: string[] = [];
+  for (const kind of policy.allowed_file_types) {
+    if (kind === 'document') extensions.push(...AICHAT_DOCUMENT_EXTENSIONS);
+    if (kind === 'image') extensions.push(...IMAGE_EXTENSIONS);
+    if (kind === 'audio') extensions.push(...AUDIO_EXTENSIONS);
+    if (kind === 'video') extensions.push(...VIDEO_EXTENSIONS);
+    if (kind === 'custom') extensions.push(...(policy.allowed_file_extensions ?? []));
+  }
+  return extensions;
 }

@@ -37,6 +37,7 @@ const AGENT_DATABASE_SKILL_ID = 'agent-database';
 const AGENT_WORKFLOW_SKILL_ID = 'agent-workflow';
 const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
 const DIGITAL_HUMAN_TASKS_SKILL_ID = 'digital-human-tasks';
+const DIGITAL_HUMAN_ARTIFACTS_SKILL_ID = 'digital-human-artifacts';
 const CONNECTOR_RUNTIME_SKILL_ID = 'connector-runtime';
 // The request-scoped Skill of the ZGI Market tools bound to an agent or a digital human.
 const ZGI_MARKET_TOOLS_SKILL_ID = 'zgi-market-tools';
@@ -79,6 +80,7 @@ export function isHiddenSystemSkill(skillId: unknown): boolean {
     normalized === AGENT_WORKFLOW_SKILL_ID ||
     normalized === AGENT_MANAGEMENT_SKILL_ID ||
     normalized === DIGITAL_HUMAN_TASKS_SKILL_ID ||
+    normalized === DIGITAL_HUMAN_ARTIFACTS_SKILL_ID ||
     normalized === CONNECTOR_RUNTIME_SKILL_ID ||
     normalized === ZGI_MARKET_TOOLS_SKILL_ID ||
     normalized === RETIRED_WEB_SEARCH_SKILL_ID
@@ -510,22 +512,42 @@ const SYSTEM_SKILL_DISPLAY: Record<
   [DIGITAL_HUMAN_TASKS_SKILL_ID]: {
     label: {
       en_US: 'Digital Human Tasks',
-      zh_Hans: '数字人待办',
+      zh_Hans: '数字人任务',
     },
     description: {
       en_US: 'Creates and manages tasks that belong to the current digital human user.',
-      zh_Hans: '创建和管理当前数字人下属于用户的待办任务。',
+      zh_Hans: '创建和管理当前数字人下属于用户的任务。',
     },
     whenToUse: {
       en_US: 'Use when the user asks the digital human to create, update, or check a task.',
-      zh_Hans: '当用户要求数字人创建、更新或查询待办时使用。',
+      zh_Hans: '当用户要求数字人创建、更新或查询任务时使用。',
     },
     tags: {
       en_US: ['Tasks', 'Digital Human'],
-      zh_Hans: ['待办', '数字人'],
+      zh_Hans: ['任务', '数字人'],
     },
     category: 'productivity',
     icon: 'list-todo',
+  },
+  [DIGITAL_HUMAN_ARTIFACTS_SKILL_ID]: {
+    label: {
+      en_US: 'Artifacts',
+      zh_Hans: '成果',
+    },
+    description: {
+      en_US: 'Keeps deliverables in the artifact center and reads earlier ones.',
+      zh_Hans: '把交付物保存到成果中心，并读取以前的成果。',
+    },
+    whenToUse: {
+      en_US: 'Use when work should be kept or earlier work reused.',
+      zh_Hans: '需要保存成果或复用以前的成果时使用。',
+    },
+    tags: {
+      en_US: ['Artifacts', 'Digital Human'],
+      zh_Hans: ['成果', '数字人'],
+    },
+    category: 'productivity',
+    icon: 'file',
   },
 };
 
@@ -807,15 +829,33 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
   [DIGITAL_HUMAN_TASKS_SKILL_ID]: {
     list_digital_human_tasks: {
       en_US: 'List tasks',
-      zh_Hans: '查看待办列表',
+      zh_Hans: '查看任务列表',
     },
     get_digital_human_task: {
       en_US: 'View task',
-      zh_Hans: '查看待办',
+      zh_Hans: '查看任务',
     },
     manage_digital_human_task: {
       en_US: 'Manage task',
-      zh_Hans: '管理待办',
+      zh_Hans: '管理任务',
+    },
+    submit_digital_human_task_report: {
+      en_US: 'Submit task report',
+      zh_Hans: '提交任务汇报',
+    },
+  },
+  [DIGITAL_HUMAN_ARTIFACTS_SKILL_ID]: {
+    publish_artifact: {
+      en_US: 'Publish artifact',
+      zh_Hans: '发布成果',
+    },
+    list_artifacts: {
+      en_US: 'Look up artifacts',
+      zh_Hans: '查找成果',
+    },
+    read_artifact: {
+      en_US: 'Read artifact',
+      zh_Hans: '读取成果',
     },
   },
 };

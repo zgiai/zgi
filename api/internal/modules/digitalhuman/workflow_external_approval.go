@@ -165,6 +165,14 @@ func workflowResumeNotStarted(err error) bool {
 	return errors.Is(err, workflowpause.ErrPauseNotFound) || errors.Is(err, workflowpause.ErrPauseNotResumeReady) || errors.Is(err, workflowpause.ErrResumeAlreadyRunning)
 }
 
+// runConversationCaller reads a run's conversation as the caller it belongs
+// to. A WebApp conversation also needs its web app, or it is not found.
+func runConversationCaller(run *Run) chatruntime.Caller {
+	caller := workflowRunCaller(run)
+	caller.RunID = nil
+	return caller
+}
+
 // workflowRunCaller is the conversation caller the run executed as.
 func workflowRunCaller(run *Run) chatruntime.Caller {
 	digitalHumanID := run.DigitalHumanID

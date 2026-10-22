@@ -42,9 +42,12 @@ type ExecutionSnapshot struct {
 	UseUserMemory                bool                       `json:"use_user_memory"`
 	UseAgentMemory               bool                       `json:"use_agent_memory"`
 	UserMemoryAutoCaptureAllowed bool                       `json:"user_memory_auto_capture_allowed"`
-	ChannelResponsePolicy        *ChannelResponsePolicy     `json:"channel_response_policy,omitempty"`
-	ExecutionRuntime             *ExecutionRuntimeConfig    `json:"execution_runtime,omitempty"`
-	ResolvedAt                   time.Time                  `json:"resolved_at"`
+	// Phase is "draft" for a configuration preview; published runs leave it
+	// empty so their snapshot revisions are unchanged.
+	Phase                 string                  `json:"phase,omitempty"`
+	ChannelResponsePolicy *ChannelResponsePolicy  `json:"channel_response_policy,omitempty"`
+	ExecutionRuntime      *ExecutionRuntimeConfig `json:"execution_runtime,omitempty"`
+	ResolvedAt            time.Time               `json:"resolved_at"`
 }
 
 type ResolvedExecution struct {
@@ -80,8 +83,42 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 	if definition.Status != StatusActive {
 		return nil, ErrPublishInvalid
 	}
+	return r.resolveVersion(ctx, event, definition, version, resourcebindings.PhasePublished)
+}
+
+// draftVersionStore reads the editable draft of a DigitalHuman.
+type draftVersionStore interface {
+	RuntimeDraftVersion(context.Context, runtimeidentity.SubjectRef) (*Definition, *Version, error)
+}
+
+// ResolveDraft prepares a preview of the unpublished draft. The draft must be
+// complete enough to publish; it need not have been published before.
+func (r *Resolver) ResolveDraft(ctx context.Context, event invocation.Event) (*ResolvedExecution, error) {
+	event, err := invocation.ValidateEvent(event)
+	if err != nil {
+		return nil, fmt.Errorf("validate DigitalHuman invocation: %w", err)
+	}
+	if event.Target.Type != runtimeidentity.SubjectTypeDigitalHuman {
+		return nil, fmt.Errorf("%w: invocation target is not a DigitalHuman", ErrInvalidRequest)
+	}
+	store, ok := r.store.(draftVersionStore)
+	if !ok {
+		return nil, ErrVersionNotFound
+	}
+	definition, version, err := store.RuntimeDraftVersion(ctx, event.Target)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePublishable(version); err != nil {
+		return nil, err
+	}
+	return r.resolveVersion(ctx, event, definition, version, resourcebindings.PhaseDraft)
+}
+
+func (r *Resolver) resolveVersion(ctx context.Context, event invocation.Event, definition *Definition, version *Version, phase resourcebindings.Phase) (*ResolvedExecution, error) {
+	var err error
 	policyRefs := make([]runspec.VersionRef, 0)
-	snapshotRef := resourcebindings.SnapshotRef{Subject: event.Target, Phase: resourcebindings.PhasePublished, VersionID: &version.ID}
+	snapshotRef := resourcebindings.SnapshotRef{Subject: event.Target, Phase: phase, VersionID: &version.ID}
 	bindings, err := r.store.ListSnapshot(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
@@ -116,6 +153,10 @@ func (r *Resolver) Resolve(ctx context.Context, event invocation.Event, versionI
 		ChannelResponsePolicy:        channelResponsePolicyPointer(channelResponsePolicyFromTriggerPolicy(version.TriggerPolicy)),
 		ExecutionRuntime:             cloneExecutionRuntime(version.ExecutionRuntime),
 		ResolvedAt:                   now,
+	}
+	if phase == resourcebindings.PhaseDraft {
+		// A preview neither remembers its user nor runs in a Linux sandbox.
+		snapshot.Phase, snapshot.UseUserMemory, snapshot.UserMemoryAutoCaptureAllowed, snapshot.ExecutionRuntime = string(phase), false, false, nil
 	}
 	snapshot.Revision, err = executionSnapshotRevision(snapshot)
 	if err != nil {

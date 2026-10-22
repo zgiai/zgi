@@ -39,6 +39,15 @@ npx --yes @e2b/cli@2.20.0 template create <approved-template-name> \
   --ready-cmd 'test -x /usr/local/bin/zgi-runtime-agent && test -x /usr/local/bin/zgi-runtime-agent-bootstrap && zgi --help >/dev/null'
 ```
 
+On Windows, run the `template create` command from Git Bash with
+`MSYS_NO_PATHCONV=1` set (for example `MSYS_NO_PATHCONV=1 npx --yes @e2b/cli@2.20.0 template create ...`);
+otherwise MSYS rewrites the `--cmd` and `--ready-cmd` paths into Windows paths.
+The repository's `.gitattributes` forces LF line endings for everything under
+`sandbox/profiles/` and `sandbox/scripts/`, so a `core.autocrlf=true` checkout
+can build the template directly. A checkout made before that rule existed still
+has CRLF copies; delete those two directories and run
+`git checkout -- sandbox/profiles sandbox/scripts` before building.
+
 Build the package-install template as a separate immutable E2B template. The
 build-time defaults are part of the template snapshot and must not rely on
 per-Sandbox environment overrides:

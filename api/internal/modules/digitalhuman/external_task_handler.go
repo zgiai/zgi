@@ -22,6 +22,9 @@ type ExternalTaskCreateRequest struct {
 	DeliveryMode            TaskDeliveryMode `json:"delivery_mode,omitempty"`
 	ExecutionTimeoutSeconds int              `json:"execution_timeout_seconds,omitempty"`
 	MaxAttempts             int              `json:"max_attempts,omitempty"`
+	// ClientReference is the integrator's own identifier, echoed back in
+	// reports, notifications, and webhooks.
+	ClientReference string `json:"client_reference,omitempty"`
 }
 
 func (r ExternalTaskCreateRequest) taskRequest() CreateTaskRequest {
@@ -34,6 +37,7 @@ func (r ExternalTaskCreateRequest) taskRequest() CreateTaskRequest {
 		DeliveryMode:            r.DeliveryMode,
 		ExecutionTimeoutSeconds: r.ExecutionTimeoutSeconds,
 		MaxAttempts:             r.MaxAttempts,
+		ClientReference:         r.ClientReference,
 	}
 }
 
@@ -48,6 +52,7 @@ type ExternalTaskUpdateRequest struct {
 	DeliveryMode            *TaskDeliveryMode `json:"delivery_mode,omitempty"`
 	ExecutionTimeoutSeconds *int              `json:"execution_timeout_seconds,omitempty"`
 	MaxAttempts             *int              `json:"max_attempts,omitempty"`
+	ClientReference         *string           `json:"client_reference,omitempty"`
 }
 
 func (r ExternalTaskUpdateRequest) taskRequest() UpdateTaskRequest {
@@ -61,6 +66,7 @@ func (r ExternalTaskUpdateRequest) taskRequest() UpdateTaskRequest {
 		DeliveryMode:            r.DeliveryMode,
 		ExecutionTimeoutSeconds: r.ExecutionTimeoutSeconds,
 		MaxAttempts:             r.MaxAttempts,
+		ClientReference:         r.ClientReference,
 	}
 }
 
@@ -379,12 +385,27 @@ func (h *ExternalHandler) listTasks(c *gin.Context, access TaskAccessContext, op
 		h.writeTaskApplicationError(c, err, operation)
 		return
 	}
+	h.markPendingChanges(c, access, result.Items)
 	writeExternalData(c, http.StatusOK, result)
 }
 
 func (h *ExternalHandler) getTask(c *gin.Context, access TaskAccessContext, taskID uuid.UUID, operation string) {
 	result, err := h.tasks.GetTask(c.Request.Context(), access, taskID)
+	if err == nil && result != nil {
+		h.markPendingChanges(c, access, []*Task{result})
+	}
 	h.writeTaskResult(c, http.StatusOK, result, err, operation)
+}
+
+// markPendingChanges points an end user's tasks to approvals that wait for
+// them in their own conversations, as the console's personal view does.
+func (h *ExternalHandler) markPendingChanges(c *gin.Context, access TaskAccessContext, tasks []*Task) {
+	source, ok := h.runtime.store.(TaskPendingChangeSource)
+	if !ok || access.Owner.Subject.ID == uuid.Nil {
+		return
+	}
+	scope := Scope{OrganizationID: access.OrganizationID, WorkspaceID: access.WorkspaceID, ActorID: access.Owner.Subject.ID, Surface: access.Surface}
+	withPendingChanges(c.Request.Context(), source, scope, access.DigitalHumanID, tasks)
 }
 
 func (h *ExternalHandler) listTaskRuns(c *gin.Context, access TaskAccessContext, taskID uuid.UUID, operation string) {
@@ -425,7 +446,8 @@ func (h *ExternalHandler) writeTaskApplicationError(c *gin.Context, err error, o
 }
 
 func externalTaskListQuery(c *gin.Context) (TaskListQuery, error) {
-	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ClientReference: c.Query("client_reference"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+		IncludeUnreviewed: c.Query("include_unreviewed") == "true"}
 	var err error
 	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
 	if err != nil {

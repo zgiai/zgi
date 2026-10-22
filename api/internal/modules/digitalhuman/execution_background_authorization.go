@@ -172,8 +172,10 @@ func (s *AccessService) authorizeBackgroundAccount(ctx context.Context, run *Run
 	err := s.db.WithContext(ctx).Table("accounts AS accounts").
 		Joins("JOIN workspace_members AS members ON members.account_id = accounts.id").
 		Joins("JOIN workspaces ON workspaces.id = members.workspace_id").
-		Where("accounts.id = ? AND accounts.status = ? AND accounts.deleted_at IS NULL AND members.workspace_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?",
-			account, "active", run.WorkspaceID, run.OrganizationID, "normal").Count(&count).Error
+		// A pending account, such as the administrator created during setup,
+		// signs in and owns its tasks like an active one.
+		Where("accounts.id = ? AND accounts.status IN ? AND accounts.deleted_at IS NULL AND members.workspace_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?",
+			account, []string{"active", "pending"}, run.WorkspaceID, run.OrganizationID, "normal").Count(&count).Error
 	if err != nil {
 		return err
 	}

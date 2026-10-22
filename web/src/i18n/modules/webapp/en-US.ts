@@ -451,6 +451,11 @@ const messages = {
     },
   },
   consoleChat: {
+    taskReport: {
+      title: 'Task report',
+      view: 'Review',
+      outcome: { done: 'Done', partial: 'Partly done', not_done: 'Not done', failed: 'Failed' },
+    },
     title: 'Workbench assistant',
     loading: 'Loading chat service...',
     loadError: 'Failed to load chat service',
@@ -1569,6 +1574,22 @@ const messages = {
         other: 'Other',
       },
     },
+    uploadSettings: {
+      title: 'File uploads',
+      description: 'People can attach files in the chat.',
+      configure: 'Upload settings',
+      dialogTitle: 'File upload settings',
+      count: 'Files per message',
+      countValue: '{count}',
+      summary: '{kinds} · up to {count} per message',
+      customExtensions: 'Allowed extensions',
+      customPlaceholder: 'Type an extension, e.g. .dwg',
+      documentNote: 'Text is read for the model.',
+      imageNote: 'Vision models can see them.',
+      storedNote: 'Kept as files; code execution can open them.',
+      separator: ', ',
+      kinds: { document: 'Documents', image: 'Images', audio: 'Audio', video: 'Video', custom: 'Custom' },
+    },
     attachments: {
       upload: 'Upload files',
       uploadDocument: 'Upload document',
@@ -1607,6 +1628,9 @@ const messages = {
       turnTooLarge: 'Attachments in one message must total no more than {max} MiB',
       imageDisabled: 'Image attachments are disabled for this application.',
       allowedTypes: 'Allowed attachments',
+      loginRequiredTitle: 'Sign in to upload',
+      loginRequiredDescription: 'You can chat without signing in. Uploading files needs an account, and signing in starts a new conversation.',
+      goToLogin: 'Sign in',
       documentType: 'Documents',
       imageType: 'Images',
       imageFileHint:
@@ -1748,6 +1772,8 @@ const messages = {
       workflowRun: 'Workflow run',
       workflowNode: 'Workflow node: {name}',
       workflowApproval: 'Workflow approval',
+      taskApproval: 'Task confirmation',
+      taskApprovalNamed: 'Task confirmation: {name}',
     },
     runtimeModelPhases: {
       final_answer: 'Final answer generation',

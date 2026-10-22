@@ -34,11 +34,17 @@ var (
 	ErrRunNotFound = errors.New("digital human run not found")
 	// ErrRunConflict indicates an invalid durable run state transition.
 	ErrRunConflict = errors.New("digital human run state conflict")
+	// ErrEndUserSuspended indicates that an operator suspended this end user's
+	// instance, so the DigitalHuman accepts no new runs for them.
+	ErrEndUserSuspended = errors.New("digital human end user is suspended")
 	// ErrConversationNotFound indicates that a caller-scoped conversation does not exist.
 	ErrConversationNotFound = errors.New("digital human conversation not found")
 	// ErrConsoleFileNotAccessible hides whether a requested console attachment
 	// exists outside the current account and workspace boundary.
 	ErrConsoleFileNotAccessible = errors.New("digital human console file not accessible")
+	// ErrWebAppFileRequiresLogin indicates that an anonymous WebApp visitor
+	// attached files: only signed-in visitors own uploaded WebApp files.
+	ErrWebAppFileRequiresLogin = errors.New("digital human webapp files require sign-in")
 	// ErrMemoryNotFound indicates that scoped DigitalHuman memory does not exist.
 	ErrMemoryNotFound = errors.New("digital human memory not found")
 	// ErrMemoryConflict indicates a stale revision, configuration, epoch, or operation.
@@ -58,10 +64,12 @@ var (
 	ErrTaskConflict = errors.New("digital human task conflict")
 	// ErrTaskPolicyRejected indicates that the invocation cannot manage tasks.
 	ErrTaskPolicyRejected = errors.New("digital human task policy rejected")
-	// ErrTaskVisibilityForbidden indicates that only a task center manager may
-	// change who can see a task. It is a task policy rejection that is
-	// reported as missing permission rather than as an unsupported surface.
-	ErrTaskVisibilityForbidden = fmt.Errorf("%w: task visibility requires a task center manager", ErrTaskPolicyRejected)
+	// ErrTaskVisibilityForbidden indicates that the reader may not set the
+	// requested visibility: only the requester shares or withdraws a task, and
+	// a task center manager only narrows someone else's. It is a task policy
+	// rejection that is reported as missing permission rather than as an
+	// unsupported surface.
+	ErrTaskVisibilityForbidden = fmt.Errorf("%w: this reader may not set that task visibility", ErrTaskPolicyRejected)
 	// ErrTaskReadOnly indicates a task the caller can see but not change,
 	// such as a workspace task another account requested. Tasks the caller
 	// cannot see keep reporting ErrTaskNotFound.

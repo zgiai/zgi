@@ -29,7 +29,7 @@ func registerAttachmentReadFiles(parts *chatRequestParts, branch []*runtimemodel
 			return
 		}
 		for _, file := range bundle.Files {
-			if file.ID != "" && !file.isImage() {
+			if file.ID != "" && !file.isImage() && file.FilteredReason != attachmentFilteredReasonStoredOnly {
 				parts.AttachmentReadFiles[file.ID] = RuntimeAttachmentRef{ID: file.ID, Name: file.Name, Size: file.Size}
 			}
 		}

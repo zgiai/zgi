@@ -566,8 +566,7 @@ func (s *service) prepareUserInputContinuationChat(
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
-	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(userInputContinuationMessage(message, continuation.Request, continuation.Response), parts.ExecutionMode))
-	return &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation:     continuation.Conversation,
 		Message:          message,
 		LLMRequest:       llmRequest,
@@ -580,7 +579,9 @@ func (s *service) prepareUserInputContinuationChat(
 		parts:            parts,
 		contextBudget:    contextResult,
 		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
-	}, nil
+	}
+	prepared.resumeWith(continuationMessageForExecutionMode(userInputContinuationMessage(message, continuation.Request, continuation.Response), parts.ExecutionMode))
+	return prepared, nil
 }
 
 func userInputContinuationMessage(message *runtimemodel.Message, request map[string]interface{}, response map[string]interface{}) adapter.Message {

@@ -16,6 +16,7 @@ import {
   Sparkles,
   Wrench,
   Workflow,
+  ListChecks,
 } from 'lucide-react';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useT } from '@/i18n/translations';
@@ -276,6 +277,7 @@ function stepIcon(type: string) {
   if (type === 'workflow_run' || type === 'workflow_node' || type === 'workflow_approval') {
     return Workflow;
   }
+  if (type === 'task_approval') return ListChecks;
   if (type === 'reference_read') return BookOpenText;
   if (type === 'memory_mutation') return Brain;
   if (type === 'guardrail') return ShieldAlert;

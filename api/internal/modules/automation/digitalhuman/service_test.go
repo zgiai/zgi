@@ -424,9 +424,18 @@ func newTaskService(t *testing.T) (*Service, *recordingDispatcher, digitalhuman.
 		&usersubject.Subject{},
 		&automationmodel.AutomationTask{}, &automationmodel.AutomationTaskAction{},
 		&automationmodel.AutomationTaskRun{}, &automationmodel.AutomationActionRun{},
-		&automationmodel.AutomationTaskActivity{},
+		&automationmodel.AutomationTaskActivity{}, &taskReportRow{},
 	); err != nil {
 		t.Fatalf("migrate task service: %v", err)
+	}
+	// Requester names come from tables other modules own.
+	for _, statement := range []string{
+		"CREATE TABLE accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL)",
+		"CREATE TABLE digital_human_end_user_instances (organization_id TEXT, workspace_id TEXT, digital_human_id TEXT, subject_id TEXT, label TEXT, updated_at DATETIME)",
+	} {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatalf("create requester table: %v", err)
+		}
 	}
 	dispatcher := &recordingDispatcher{}
 	digitalHumanID, accountID := uuid.New(), uuid.New()

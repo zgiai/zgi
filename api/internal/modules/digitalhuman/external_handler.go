@@ -43,6 +43,8 @@ type ExternalHandler struct {
 	base        *Handler
 	sessions    *WebAppSessionSigner
 	pollEvery   time.Duration
+	// notifications serves API end users' in-app notifications when set.
+	notifications EndUserNotifications
 }
 
 func NewExternalHandler(runtime *RuntimeService, access *AccessService, tasks TaskHandlerService, fileService interfaces.FileService, projector *apptransport.Projector, sessions *WebAppSessionSigner) *ExternalHandler {
@@ -86,6 +88,8 @@ func (h *ExternalHandler) RegisterAPIRoutes(router *gin.RouterGroup) {
 	group.POST("/tasks/:task_id/actions/:action", h.ApplyAPITaskAction)
 	group.GET("/tasks/:task_id/runs", h.ListAPITaskRuns)
 	group.GET("/tasks/:task_id/activities", h.ListAPITaskActivities)
+	h.registerAPIReportRoutes(group)
+	h.registerAPIEndUserRoutes(group)
 }
 
 func (h *ExternalHandler) authenticateAPIKey(c *gin.Context) {

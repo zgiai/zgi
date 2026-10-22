@@ -27,7 +27,11 @@ import {
 import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { digitalHumanService } from '@/services/digital-human.service';
+import { digitalHumanChatFollowUpHref } from '@/components/digital-human/digital-human-task-reports';
+import { inboxService } from '@/services/inbox.service';
+import type { DigitalHumanTaskPendingChange } from '@/services/types/digital-human';
 
 const conversationParam = 'conversation';
 
@@ -36,10 +40,13 @@ export function DigitalHumanChat({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // `task` opens one of the reader's tasks in the panel, e.g. from a report.
+  const focusTaskId = searchParams.get('task');
   const detail = useDigitalHuman(id).data?.data;
   const permissions = useAccountPermissions();
   const canRun = permissions.hasPermission('digital_human.run');
   const [mobileTasksOpen, setMobileTasksOpen] = useState(false);
+  const [tasksWide, setTasksWide] = useState(false);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const taskRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const published = detail?.published;
@@ -54,6 +61,14 @@ export function DigitalHumanChat({ id }: { id: string }) {
         digitalHumanService.applyMyTaskAction(id, taskId, action, revision),
       runs: (taskId, page) => digitalHumanService.listMyTaskRuns(id, taskId, page),
       activities: (taskId, page) => digitalHumanService.listMyTaskActivities(id, taskId, page),
+      reports: {
+        list: taskId => digitalHumanService.listTaskReports(id, { task_id: taskId }, true),
+        feed: params => digitalHumanService.listTaskReports(id, params, true),
+        followUpHref: (draft, conversationId) => digitalHumanChatFollowUpHref(id, draft, conversationId),
+        review: (reportId, request) => digitalHumanService.reviewTaskReport(id, reportId, request, true),
+        readFile: (reportId, fileId, signal) => digitalHumanService.downloadTaskReportFile(id, reportId, fileId, true, signal),
+        viewed: reportId => void inboxService.markRead({ source_type: 'digital_human_task_report', source_id: reportId }).catch(() => undefined),
+      },
     }),
     [id]
   );
@@ -144,6 +159,92 @@ export function DigitalHumanChat({ id }: { id: string }) {
     },
     [initialConversationId, replaceConversationParam]
   );
+
+  // Brings a pending task approval into view once its conversation shows it.
+  // The approval may be older than the first page of history, so older pages
+  // are loaded until it appears. It may also sit on a branch the reader has
+  // since switched away from, so that branch is selected first; its
+  // confirmation form needs it current.
+  const [approvalTarget, setApprovalTarget] = useState<DigitalHumanTaskPendingChange | null>(
+    null
+  );
+  const controllerStore = controller.store;
+  const switchBranch = controller.switchBranch;
+  const loadOlderMessages = controller.loadOlderMessages;
+  useEffect(() => {
+    if (!approvalTarget) return;
+    const { conversation_id: conversationId, message_id: messageId } = approvalTarget;
+    let attempts = 0;
+    let olderPagesLoaded = 0;
+    let branchSelected = false;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      const target = document.querySelector<HTMLElement>(
+        `[data-chat-message-id="${CSS.escape(messageId)}"]`
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (!branchSelected) {
+        const state = controllerStore.getState();
+        const loaded = state.messagesByConversation[conversationId]?.some(
+          message => message.id === messageId
+        );
+        const ready = state.activeConversationId === conversationId && !state.isLoadingMessages;
+        if (ready && loaded && !state.isSending) {
+          branchSelected = true;
+          switchBranch(messageId);
+        } else if (
+          ready &&
+          !loaded &&
+          olderPagesLoaded < 10 &&
+          state.messagePaginationByConversation[conversationId]?.hasMore &&
+          !state.loadingOlderByConversation[conversationId]
+        ) {
+          // Each loaded page restarts the wait for the approval to render.
+          olderPagesLoaded += 1;
+          attempts = 0;
+          void loadOlderMessages(conversationId);
+        }
+      }
+      if (target || attempts >= 40) {
+        window.clearInterval(timer);
+        setApprovalTarget(null);
+      }
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [approvalTarget, controllerStore, loadOlderMessages, switchBranch]);
+
+  const openPendingChange = useCallback(
+    (change: DigitalHumanTaskPendingChange) => {
+      selectConversation(change.conversation_id);
+      setApprovalTarget(change);
+    },
+    [selectConversation]
+  );
+
+  // `draft` is a follow-up written for the reader, e.g. from a report that
+  // needs more; it fills the composer once and is then dropped.
+  const draftParam = searchParams.get('draft');
+  const [initialDraft, setInitialDraft] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!draftParam) return;
+    setInitialDraft(draftParam);
+    const params = new URLSearchParams(window.location.search);
+    params.delete('draft');
+    const next = params.toString();
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [draftParam, pathname, router]);
+
+  // `approval` names the message of a pending confirmation or question, e.g.
+  // from a waiting run's drawer; it is handled once and then dropped.
+  const approvalMessageId = searchParams.get('approval');
+  useEffect(() => {
+    if (!approvalMessageId || !initialConversationId) return;
+    openPendingChange({ conversation_id: initialConversationId, message_id: approvalMessageId });
+    const params = new URLSearchParams(window.location.search);
+    params.delete('approval');
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [approvalMessageId, initialConversationId, openPendingChange, pathname, router]);
 
   const handleStartNewConversation = useCallback(() => {
     startNewConversationRef.current();
@@ -243,39 +344,67 @@ export function DigitalHumanChat({ id }: { id: string }) {
           onSelectConversation={selectConversation}
           onStartNewConversation={handleStartNewConversation}
           headerRightAction={
-            <Button variant="ghost" size="sm" asChild>
-              <Link
-                href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
-              >
-                <Brain className="mr-2 size-4" />
-                {t('chat.manageMemory')}
-              </Link>
-            </Button>
+            <div className="flex items-center gap-1">
+              {canRun ? (
+                // Below xl the task panel is a sheet. A floating button sat
+                // under the composer on phones, so it lives in the header.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="xl:hidden"
+                  onClick={() => setMobileTasksOpen(true)}
+                  aria-label={t('tasks.myTitle')}
+                  title={t('tasks.myTitle')}
+                >
+                  <ListTodo className="size-4 sm:mr-2" />
+                  <span className="hidden sm:inline">{t('tasks.myTitle')}</span>
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" asChild>
+                <Link
+                  href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
+                >
+                  <Brain className="mr-2 size-4" />
+                  {t('chat.manageMemory')}
+                </Link>
+              </Button>
+            </div>
           }
           onTaskMutation={handleTaskMutation}
+          initialInput={initialDraft}
         />
       </div>
       {canRun ? (
-        <div className="hidden w-[22rem] shrink-0 xl:block">
-          <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
-        </div>
-      ) : null}
-      {canRun ? (
-        <Button
-          variant="outline"
-          size="sm"
-          className="absolute bottom-4 right-4 z-10 gap-2 shadow-md xl:hidden"
-          onClick={() => setMobileTasksOpen(true)}
+        // The panel widens while a task or report is open beside the chat.
+        <div
+          className={cn(
+            'hidden shrink-0 border-l transition-[width] duration-200 ease-out motion-reduce:transition-none xl:block',
+            tasksWide ? 'w-[36rem] 2xl:w-[40rem]' : 'w-[24rem] 2xl:w-[26rem]'
+          )}
         >
-          <ListTodo className="size-4" />
-          {t('tasks.myTitle')}
-        </Button>
+          <DigitalHumanTaskPanel
+            client={taskClient}
+            compact
+            refreshKey={taskRefreshKey}
+            onOpenPendingChange={openPendingChange}
+            focusTaskId={focusTaskId}
+            onWideChange={setTasksWide}
+          />
+        </div>
       ) : null}
       {canRun ? (
         <Sheet open={mobileTasksOpen} onOpenChange={setMobileTasksOpen}>
           <SheetContent side="right" className="w-full max-w-none p-0 sm:max-w-lg">
             <SheetTitle className="sr-only">{t('tasks.myTitle')}</SheetTitle>
-            <DigitalHumanTaskPanel client={taskClient} compact refreshKey={taskRefreshKey} />
+            <DigitalHumanTaskPanel
+              client={taskClient}
+              compact
+              refreshKey={taskRefreshKey}
+              onOpenPendingChange={change => {
+                setMobileTasksOpen(false);
+                openPendingChange(change);
+              }}
+            />
           </SheetContent>
         </Sheet>
       ) : null}

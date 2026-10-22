@@ -34,7 +34,8 @@ func NewConsoleFileValidator(files ConsoleFileLookup) ManualInvocationFileValida
 }
 
 func (v *consoleFileValidator) Validate(ctx context.Context, scope Scope, fileIDs []string) ([]string, error) {
-	if !validScope(scope) || scope.Surface != SurfaceConsole || len(fileIDs) > maxConsoleInvocationFiles {
+	// The configuration preview attaches console uploads the same way.
+	if !validScope(scope) || (scope.Surface != SurfaceConsole && scope.Surface != SurfacePreview) || len(fileIDs) > maxConsoleInvocationFiles {
 		return nil, ErrInvalidRequest
 	}
 	seen := make(map[uuid.UUID]struct{}, len(fileIDs))

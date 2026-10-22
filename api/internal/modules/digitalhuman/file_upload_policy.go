@@ -25,8 +25,5 @@ func effectiveFileUploadPolicy(version *Version, config *interfaces.FileUploadCo
 	if version != nil {
 		policy = version.FileUploadPolicy
 	}
-	if config == nil {
-		return chatfile.Resolve(policy, 50, 10, chatfile.DefaultCount)
-	}
-	return chatfile.Resolve(policy, config.FileSizeLimit, config.ImageFileSizeLimit, chatfile.DefaultCount)
+	return chatfile.ResolveLimits(policy, config.ChatLimits())
 }

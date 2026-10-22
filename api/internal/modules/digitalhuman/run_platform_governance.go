@@ -15,6 +15,28 @@ const platformCLIApprovalOrigin = "platform_cli"
 // bound workflow raised inside the Agent loop.
 const workflowApprovalOrigin = "workflow"
 
+// taskApprovalOrigin marks a run held by a DigitalHuman task approval in an
+// interactive conversation; answering the approval resumes and settles it.
+const taskApprovalOrigin = "task"
+
+// runHasTaskApprovalMessage reports whether the run's own message waits on a
+// DigitalHuman task approval on an interactive surface.
+func runHasTaskApprovalMessage(tx *gorm.DB, run *Run, status string) (bool, error) {
+	if run == nil || run.MessageID == nil || run.ConversationID == nil || !workflowContinuationSurface(run.Surface) {
+		return false, nil
+	}
+	var message runtimemodel.Message
+	if err := tx.Where("id = ? AND conversation_id = ? AND status = ? AND deleted_at IS NULL",
+		*run.MessageID, *run.ConversationID, status).Take(&message).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	kind, _ := workflowContinuationRecord(message.Metadata)["kind"].(string)
+	return strings.TrimSpace(kind) == "digital_human_task", nil
+}
+
 // Platform CLI approvals are message-owned, not Connector route receipts. Only
 // the persisted, sealed invocation may put their host run into a waiting state.
 func runHasPlatformGovernanceMessage(tx *gorm.DB, run *Run, status string) (bool, error) {

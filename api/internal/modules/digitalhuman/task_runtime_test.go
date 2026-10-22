@@ -99,6 +99,22 @@ func TestTaskRuntimeChannelIsWritableByDefault(t *testing.T) {
 	}
 }
 
+func TestTaskManagementToolAsksToRewriteStatedTimesWithTheSchedule(t *testing.T) {
+	run, event := taskRuntimeFixture(invocation.OriginManual)
+	preparation, err := NewTaskRuntimeProvider(taskRuntimeService{}).Prepare(t.Context(), run, event)
+	if err != nil || len(preparation.Tools) != 3 {
+		t.Fatalf("Prepare() = %#v, %v", preparation, err)
+	}
+	manage := preparation.Tools[2].Definition.Function
+	if manage.Name != taskManageToolName || !strings.Contains(manage.Description, "use update rather than schedule") {
+		t.Fatalf("task management tool description = %q", manage.Description)
+	}
+	schedule := manage.Parameters.(map[string]any)["properties"].(map[string]any)["schedule"].(map[string]any)
+	if description, _ := schedule["description"].(string); !strings.Contains(description, "goal or success criteria") {
+		t.Fatalf("schedule property = %#v", schedule)
+	}
+}
+
 func TestTaskRuntimeManualAndCurrentScheduleAreWritable(t *testing.T) {
 	provider := NewTaskRuntimeProvider(taskRuntimeService{})
 	run, manual := taskRuntimeFixture(invocation.OriginManual)

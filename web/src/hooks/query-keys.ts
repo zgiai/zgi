@@ -163,6 +163,14 @@ export const DIGITAL_HUMAN_KEYS = {
     [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'runs'] as const,
   taskActivities: (id: string, taskId: string) =>
     [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'activities'] as const,
+  taskReports: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'task-reports', params].filter(Boolean),
+} as const;
+
+export const INBOX_KEYS = {
+  all: ['inbox'] as const,
+  list: (params?: unknown) => [...INBOX_KEYS.all, 'list', params].filter(Boolean),
+  unread: () => [...INBOX_KEYS.all, 'unread'] as const,
 } as const;
 
 export const CONNECTOR_KEYS = {
