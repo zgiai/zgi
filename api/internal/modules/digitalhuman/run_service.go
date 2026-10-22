@@ -1025,7 +1025,10 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		config.RuntimeToolFactory = factory
 	}
 	config.ConnectorRunID = run.ID.String()
-	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual
+	// A channel member who asked can confirm by reply; a run without a known
+	// requester stays non-interactive and cannot ask.
+	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual ||
+		(event.Origin.Kind == invocation.OriginChannel && event.Sender.Type == invocation.PrincipalExternalUser && strings.TrimSpace(event.Sender.ID) != "")
 	applyScheduledConnectorPolicy(&config, run, event)
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
@@ -1209,6 +1212,10 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			s.notifyTaskApproval(ctx, &linked)
 		}
 		if err := waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now()); err != nil {
+			if errors.Is(err, ErrRunConflict) && event.Origin.Kind == invocation.OriginChannel && result.Status == runtimemodel.MessageStatusWaitingApproval {
+				prompt := channelWaitingPromptText(run, result.Status, result.Answer, result.Metadata)
+				return s.store.CompleteRunWithDelivery(ctx, run.ID, prompt, executionTraceFromMetadata(result.Metadata), s.now())
+			}
 			return err
 		}
 		// A channel has no card or form: it is told what the run waits for
