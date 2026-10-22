@@ -1156,6 +1156,12 @@ export function AIChatInputArea({
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isPreparingSend || isUploading || hasUploadError || voiceInputBusy) return;
+    // Attachments belong to a signed-in visitor; if the session was lost after
+    // attaching, ask them to sign in instead of sending files the server rejects.
+    if (uploadRequiresLogin && attachments.length > 0) {
+      setLoginPromptOpen(true);
+      return;
+    }
     if (attachments.length > attachmentLimit) {
       toast.error(t('consoleChat.attachments.exceedCount', { max: attachmentLimit }));
       return;
@@ -1208,6 +1214,7 @@ export function AIChatInputArea({
     isPreparingSend,
     isUploading,
     onSend,
+    uploadRequiresLogin,
     uploadedFiles,
     useMemory,
     voiceInputBusy,

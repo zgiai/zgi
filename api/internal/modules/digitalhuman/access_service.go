@@ -459,8 +459,15 @@ func (s *AccessService) ValidateExternalFiles(ctx context.Context, scope Scope, 
 	if len(fileIDs) == 0 {
 		return nil
 	}
-	if digitalHumanID == uuid.Nil || scope.UserSubjectID == nil || *scope.UserSubjectID == uuid.Nil ||
-		strings.TrimSpace(scope.UserSubjectKind) == "" || (surface != SurfaceAPI && surface != SurfaceWebApp) || scope.Surface != surface {
+	if digitalHumanID == uuid.Nil || (surface != SurfaceAPI && surface != SurfaceWebApp) || scope.Surface != surface {
+		return ErrNotFound
+	}
+	if scope.UserSubjectID == nil || *scope.UserSubjectID == uuid.Nil || strings.TrimSpace(scope.UserSubjectKind) == "" {
+		// WebApp files are bound to the signed-in visitor who uploaded them, so
+		// an anonymous visitor cannot own any; say so instead of "not found".
+		if surface == SurfaceWebApp {
+			return ErrWebAppFileRequiresLogin
+		}
 		return ErrNotFound
 	}
 	parsed := make([]uuid.UUID, 0, len(fileIDs))

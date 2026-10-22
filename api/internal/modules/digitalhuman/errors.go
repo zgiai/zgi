@@ -42,6 +42,9 @@ var (
 	// ErrConsoleFileNotAccessible hides whether a requested console attachment
 	// exists outside the current account and workspace boundary.
 	ErrConsoleFileNotAccessible = errors.New("digital human console file not accessible")
+	// ErrWebAppFileRequiresLogin indicates that an anonymous WebApp visitor
+	// attached files: only signed-in visitors own uploaded WebApp files.
+	ErrWebAppFileRequiresLogin = errors.New("digital human webapp files require sign-in")
 	// ErrMemoryNotFound indicates that scoped DigitalHuman memory does not exist.
 	ErrMemoryNotFound = errors.New("digital human memory not found")
 	// ErrMemoryConflict indicates a stale revision, configuration, epoch, or operation.
