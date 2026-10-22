@@ -114,6 +114,8 @@ type RuntimeService struct {
 	trustAuthorizer MemoryPromotionAuthorizer
 	// approvalNotifier tells API end users about approvals that wait for them.
 	approvalNotifier TaskApprovalNotifier
+	// channelConnectors decides connector confirmations from channel replies.
+	channelConnectors ChannelConnectorConfirmer
 	now              func() time.Time
 }
 
@@ -1206,7 +1208,20 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			linked.ConversationID, linked.MessageID = &prepared.Conversation.ID, &prepared.Message.ID
 			s.notifyTaskApproval(ctx, &linked)
 		}
-		return waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now())
+		if err := waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now()); err != nil {
+			return err
+		}
+		// A channel has no card or form: it is told what the run waits for
+		// and how to answer by replying.
+		if event.Origin.Kind == invocation.OriginChannel {
+			waiting := *run
+			waiting.ConversationID, waiting.MessageID = &prepared.Conversation.ID, &prepared.Message.ID
+			if refreshed, lookupErr := s.store.RunByID(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, run.ID); lookupErr == nil && refreshed != nil {
+				waiting.WaitingReceipt = refreshed.WaitingReceipt
+			}
+			s.deliverChannelWaitingPrompt(ctx, &waiting, prepared.Message.ID, result.Status, result.Answer, result.Metadata)
+		}
+		return nil
 	}
 	if channelContextPreparation != nil {
 		if result.Metadata == nil {
