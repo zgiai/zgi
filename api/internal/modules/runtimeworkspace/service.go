@@ -801,7 +801,7 @@ func (s *Service) UpdateWorkspace(ctx context.Context, workspaceID uuid.UUID, st
 	}
 	if policy != nil {
 		var policyObject map[string]json.RawMessage
-		if !json.Valid(policy) || json.Unmarshal(policy, &policyObject) != nil || policyObject == nil {
+		if !json.Valid(policy) || json.Unmarshal(policy, &policyObject) != nil || policyObject == nil || ValidateEndUserQuota(policy) != nil {
 			return nil, ErrInvalidWorkspace
 		}
 		updates["policy_json"] = string(policy)

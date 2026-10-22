@@ -3,6 +3,7 @@ package external
 import (
 	"context"
 	"errors"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -51,6 +52,9 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 	// Every DigitalHuman access service, including those built for
 	// background execution, trusts the callers of bound Runtime Workspaces.
 	digitalhuman.UseRuntimeWorkspaceAccess(func(db *gorm.DB) digitalhuman.RuntimeWorkspaceAccess { return runtimeworkspace.NewService(db) })
+	// Every chat runtime meters and stops Runtime Workspace end users by the
+	// same points quotas (ADR 0010).
+	runtimeservice.UseEndUserQuotaGuard(runtimeworkspace.NewQuotaGuard(deps.DB))
 	dh := deps.DigitalHuman
 	app := func(agent, digitalHuman gin.HandlerFunc) gin.HandlerFunc {
 		return runtimeAppRoute(dh, agent, digitalHuman)

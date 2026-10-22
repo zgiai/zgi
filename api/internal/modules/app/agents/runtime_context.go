@@ -693,13 +693,21 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 }
 
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
-	if apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) {
-		if h.appErrorProjector == nil {
+	if apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) || apperror.IsCode(err, appcatalog.CodeQuotaExceeded) {
+		projector := h.appErrorProjector
+		if projector == nil {
+			// Handlers built without a catalog, like the external API's, use
+			// the one published at bootstrap.
+			if catalog := runtimeservice.ApplicationErrorCatalog(); catalog != nil {
+				projector, _ = apptransport.NewProjector(catalog)
+			}
+		}
+		if projector == nil {
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
 		locale, _ := appcatalog.ParseLocale(c.GetHeader("Accept-Language"))
-		presentation := h.appErrorProjector.Project(err, locale).Presentation
+		presentation := projector.Project(err, locale).Presentation
 		c.Header(apptransport.HeaderApplicationErrorCode, presentation.Code.String())
 		c.JSON(presentation.HTTPStatus, gin.H{"code": presentation.Code.String(), "message": presentation.Message})
 		return

@@ -220,6 +220,11 @@ type RunConfig struct {
 	AgentMemoryConfigRevision string
 	BillingAppID              string
 	BillingAppType            string
+	// BillingRuntimeWorkspaceID and BillingEndUserSubjectID name the Runtime
+	// Workspace end user a run is made for when its scope does not, such as
+	// a DigitalHuman run; model calls are metered and quota-checked for them.
+	BillingRuntimeWorkspaceID string
+	BillingEndUserSubjectID   string
 	BindingReader             resourcebindings.Reader
 	BindingSnapshot           resourcebindings.SnapshotRef
 	// RuntimeTools are caller-scoped first-party capabilities supplied by a
@@ -616,7 +621,7 @@ func NewServiceWithSkillRuntime(
 	}
 	return &service{
 		repos:                          repos,
-		llmClient:                      llmClient,
+		llmClient:                      withEndUserQuotaGuard(llmClient),
 		streams:                        newStreamRegistry(),
 		events:                         newStreamEventStore(redisutil.GetClient()),
 		titleGen:                       titleGen,

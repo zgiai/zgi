@@ -46,28 +46,32 @@ type BillingService struct {
 
 // BillingContext contains billing-related information for a request
 type BillingContext struct {
-	ToolPostpaid          bool
-	ToolSettlement        *toolSettlement
-	APIKeyID              string
-	OrganizationID        string
-	DeductionID           string
-	AttemptID             string
-	QuotaSubjectType      string
-	QuotaSubjectID        string
-	AccountID             *uuid.UUID // Internal user ID when using models
-	PrincipalType         string
-	PrincipalID           string
-	AccessGrantID         string
-	AuthMethod            string
-	GroupID               *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
-	WorkspaceID           string
-	AppID                 *uuid.UUID // App ID (agent or dataset)
-	AppType               *string    // App type: 'agent' or 'dataset'
-	InvocationSource      InvocationSource
-	SessionID             string
-	ConversationID        string
-	WorkflowID            string
-	WorkflowRunID         string
+	ToolPostpaid     bool
+	ToolSettlement   *toolSettlement
+	APIKeyID         string
+	OrganizationID   string
+	DeductionID      string
+	AttemptID        string
+	QuotaSubjectType string
+	QuotaSubjectID   string
+	AccountID        *uuid.UUID // Internal user ID when using models
+	PrincipalType    string
+	PrincipalID      string
+	AccessGrantID    string
+	AuthMethod       string
+	GroupID          *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
+	WorkspaceID      string
+	AppID            *uuid.UUID // App ID (agent or dataset)
+	AppType          *string    // App type: 'agent' or 'dataset'
+	InvocationSource InvocationSource
+	SessionID        string
+	ConversationID   string
+	WorkflowID       string
+	WorkflowRunID    string
+	// RuntimeWorkspaceID and EndUserSubjectID meter the call for a Runtime
+	// Workspace end user's quota. They only label the bill.
+	RuntimeWorkspaceID    *uuid.UUID
+	EndUserSubjectID      *uuid.UUID
 	NodeID                string
 	NodeType              string
 	ModelID               uuid.UUID

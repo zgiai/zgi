@@ -107,6 +107,12 @@ type AppContext struct {
 	// SuppressInvocationContent keeps request and response bodies out of
 	// invocation-content storage and full-content traces.
 	SuppressInvocationContent bool
+
+	// EndUserSubjectID attributes the call to an external end user, whose
+	// usage is metered for Runtime Workspace quotas; RuntimeWorkspaceID is set
+	// when the caller knows it.
+	RuntimeWorkspaceID string
+	EndUserSubjectID   string
 }
 
 // Validate checks if the AppContext has required fields

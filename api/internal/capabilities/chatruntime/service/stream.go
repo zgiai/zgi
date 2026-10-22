@@ -619,6 +619,7 @@ func newBillingAppContext(prepared *PreparedChat) *llmclient.AppContext {
 	if prepared.Conversation.WorkspaceID != nil {
 		appCtx.WorkspaceID = prepared.Conversation.WorkspaceID.String()
 	}
+	applyEndUserBilling(appCtx, prepared)
 	return appCtx
 }
 

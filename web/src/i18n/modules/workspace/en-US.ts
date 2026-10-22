@@ -159,6 +159,18 @@ const messages = {
       credentials: 'Access keys',
       docs: 'API Docs',
     },
+    quota: {
+      title: 'End-user quotas',
+      description: 'Limit the points each end user may spend over a rolling window. Once spent, new chats and runs are refused. Leave a field empty for no limit.',
+      perEndUser: 'Per end user, across all apps',
+      perApp: 'Extra caps for single apps',
+      addApp: 'Add app cap',
+      removeApp: 'Remove',
+      noAppCaps: 'No app has its own cap.',
+      unlimited: 'No limit',
+      save: 'Save quotas',
+      windows: { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' },
+    },
     apps: {
       title: 'Connected apps',
       titleWithCount: 'Connected apps {count}',
@@ -273,6 +285,7 @@ const messages = {
       permission: 'Only Workspace managers can configure external access.',
     },
     messages: {
+      quotaSaved: 'Quotas saved',
       enabled: 'External access enabled',
       disabled: 'External access paused',
       keyCreated: 'Access key created',

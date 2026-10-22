@@ -19,6 +19,11 @@ func SetApplicationErrorCatalog(catalog *appcatalog.Catalog) {
 	applicationErrorCatalog.Store(catalog)
 }
 
+// ApplicationErrorCatalog returns the catalog published at bootstrap, or nil.
+func ApplicationErrorCatalog() *appcatalog.Catalog {
+	return applicationErrorCatalog.Load()
+}
+
 // streamErrorRetryable resolves the catalog-owned retryable flag for a stable
 // application error code. It reports false when the code is unknown or the
 // catalog has not been published, so callers never invent a retry guidance.

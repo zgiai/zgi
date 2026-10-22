@@ -36,16 +36,16 @@ ADR 0006 planned per-instance quotas and end-user management inside the DigitalH
 Quotas are billing in points, configured only in the Runtime Workspace, never in an Agent's or DigitalHuman's own settings.
 
 - **Policy.** The Runtime Workspace policy holds, next to its request rate limit:
-  - a default points quota per end user over a rolling window (24 hours, 7 days, or 30 days). Unset means unlimited, the default;
+  - a default points quota per end user over a rolling window (24 hours, 7 days, or 30 days). Points may be fractional down to 0.001, since a model call often costs less than a point. Unset means unlimited, the default;
   - optional per-application caps over the same windows.
   - Per-end-user overrides are set in end-user management.
-- **Metering.** The LLM gateway records the Runtime Workspace and the end-user subject on each usage bill, with an index, and changes nothing about deduction. An end user's usage is the sum of their bills' points in the window. Bills of calls without a Runtime Workspace end user are unchanged.
+- **Metering.** The LLM gateway records the end-user subject on each usage bill, and the Runtime Workspace when the caller knows it, with an index, and changes nothing about deduction. An end user's usage is the sum of their bills' points in the window; the subject alone identifies the Runtime Workspace that issued it. Bills of calls without a Runtime Workspace end user are unchanged.
 - **Enforcement** is in the chat runtime, shared by Agents and DigitalHumans:
-  - at run start, a run of an end user whose usage has reached a quota is rejected;
+  - at run start, a run of an end user whose usage has reached a quota is rejected before any conversation turn is written;
   - before every model round and every platform model call, the same check stops the run;
   - DigitalHumans also check before queueing a run, so queued and scheduled runs stop early.
   - Bills settle after each model call, so a run can exceed a quota by at most the call in progress.
-- The error is `end_user.quota_exhausted` (HTTP 429), the same for both application types.
+- The error is the catalog's `quota.exceeded` (HTTP 429), the same for both application types.
 - Organization balances and plan limits still apply. A quota only narrows what an end user may spend.
 
 ### End-user management

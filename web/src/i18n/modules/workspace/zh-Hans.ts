@@ -153,6 +153,18 @@ const messages: WorkspaceMessages = {
       credentials: '访问密钥',
       docs: 'API 文档',
     },
+    quota: {
+      title: '终端用户额度',
+      description: '按积分限制每个终端用户在最近一段时间内的用量，用完后新的对话和运行会被拒绝。留空表示不限。',
+      perEndUser: '每个终端用户（所有应用合计）',
+      perApp: '单个应用的额外上限',
+      addApp: '添加应用上限',
+      removeApp: '移除',
+      noAppCaps: '没有单独设置上限的应用。',
+      unlimited: '不限',
+      save: '保存额度',
+      windows: { '24h': '最近 24 小时', '7d': '最近 7 天', '30d': '最近 30 天' },
+    },
     apps: {
       title: '已接入应用',
       titleWithCount: '已接入应用 {count}',
@@ -261,6 +273,7 @@ const messages: WorkspaceMessages = {
       permission: '只有工作空间管理员可以配置外部接入。',
     },
     messages: {
+      quotaSaved: '额度已保存',
       enabled: '外部接入已启用',
       disabled: '外部接入已暂停',
       keyCreated: '访问密钥创建成功',

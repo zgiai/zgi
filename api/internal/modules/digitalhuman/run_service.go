@@ -374,6 +374,14 @@ func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope,
 		(request.MaxTaskTokens > 0 && surface != SurfaceAPI) {
 		return nil, false, ErrInvalidRequest
 	}
+	if surface == SurfaceAPI && scope.RuntimeWorkspaceID != nil && scope.UserSubjectID != nil {
+		// A Runtime Workspace end user over their quota is turned away
+		// before a run is queued (ADR 0010).
+		if err := chatruntime.CheckEndUserQuota(ctx, chatruntime.EndUserQuotaRef{RuntimeWorkspaceID: *scope.RuntimeWorkspaceID, SubjectID: *scope.UserSubjectID,
+			AppType: runtimemodel.ConversationCallerDigitalHuman, AppID: digitalHumanID.String()}); err != nil {
+			return nil, false, err
+		}
+	}
 	eventID := request.RequestID.String()
 	if scope.UserSubjectID != nil && *scope.UserSubjectID != uuid.Nil {
 		eventID = scope.UserSubjectID.String() + ":" + eventID
@@ -1030,6 +1038,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		config.RuntimeToolFactory = factory
 	}
 	config.ConnectorRunID = run.ID.String()
+	applyRunEndUserBilling(&config, run)
 	// A channel member who asked can confirm by reply; a run without a known
 	// requester stays non-interactive and cannot ask.
 	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual ||

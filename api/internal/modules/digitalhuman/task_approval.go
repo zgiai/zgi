@@ -151,6 +151,7 @@ func (s *RuntimeService) taskApprovalContinuationConfigForRun(ctx context.Contex
 		return service.RunConfig{}, err
 	}
 	s.attachAttachmentReader(&config, run, resolved, event, nil)
+	applyRunEndUserBilling(&config, run)
 	if s.tasks == nil {
 		return config, nil
 	}

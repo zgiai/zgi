@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"gorm.io/gorm"
@@ -222,4 +223,13 @@ func (h *ExternalHandler) RuntimeWorkspaceHandler(name string) gin.HandlerFunc {
 		handlers["notifications.unread_count"], handlers["notifications.read_all"] = h.CountAPIUnreadNotifications, h.ReadAllAPINotifications
 	}
 	return handlers[name]
+}
+
+// applyRunEndUserBilling meters an external end user's run, so a Runtime
+// Workspace end user's model calls count against their quota (ADR 0010).
+func applyRunEndUserBilling(config *chatruntime.RunConfig, run *Run) {
+	if config == nil || run == nil || run.UserSubjectID == nil || *run.UserSubjectID == uuid.Nil || run.UserSubjectKind != string(usersubject.APIEndUser) {
+		return
+	}
+	config.BillingEndUserSubjectID = run.UserSubjectID.String()
 }

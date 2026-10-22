@@ -74,8 +74,12 @@ export function useRuntimeWorkspace(workspaceId: string | null) {
   const update = useMutation({
     mutationFn: (data: { status?: RuntimeWorkspaceStatus; policy_json?: Record<string, unknown> }) =>
       runtimeWorkspaceService.update(current.data?.workspace_id as string, data),
-    onSuccess: data => {
+    onSuccess: (data, variables) => {
       queryClient.setQueryData(RUNTIME_WORKSPACE_KEYS.current(workspaceId), data);
+      if (variables.policy_json && !variables.status) {
+        toast.success(t('runtime.messages.quotaSaved'));
+        return;
+      }
       toast.success(data.status === 'active' ? t('runtime.messages.enabled') : t('runtime.messages.disabled'));
     },
     onError: reportError,

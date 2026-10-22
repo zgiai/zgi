@@ -31,6 +31,7 @@ import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useRuntimeWorkspace } from '@/hooks/runtime-workspace/use-runtime-workspace';
+import { EndUserQuotaCard } from '@/features/runtime-workspaces/end-user-quota-card';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { cn } from '@/lib/utils';
 import type {
@@ -1597,6 +1598,14 @@ export default function RuntimeWorkspacePage({
               isUpdating={runtime.update.isPending}
               onEnable={() => runtime.update.mutate({ status: 'active' })}
               onOpenSection={openSection}
+            />
+            <EndUserQuotaCard
+              policyJson={runtime.current.data?.policy_json}
+              apps={appCollection.items.filter(app => app.status === 'active')}
+              saving={runtime.update.isPending}
+              onSave={async policy => {
+                await runtime.update.mutateAsync({ policy_json: policy });
+              }}
             />
             <div id="runtime-keys" className="scroll-mt-4">
               <CredentialsTab
