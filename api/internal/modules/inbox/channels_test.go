@@ -50,7 +50,7 @@ func newChannelFixture(t *testing.T) (*Service, *Channels, *Dispatcher, *[]sentE
 		return nil
 	})
 	queued := &[]uuid.UUID{}
-	dispatcher := NewDispatcher(service.db, channels, func(_ context.Context, id uuid.UUID) error {
+	dispatcher := NewDispatcher(service.db, channels, func(_ context.Context, id uuid.UUID, _ string) error {
 		*queued = append(*queued, id)
 		return nil
 	}, "https://zgi.example", true)

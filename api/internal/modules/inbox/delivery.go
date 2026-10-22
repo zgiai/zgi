@@ -50,8 +50,11 @@ type Delivery struct {
 // TableName binds deliveries to their table.
 func (Delivery) TableName() string { return "notification_deliveries" }
 
-// DeliveryEnqueuer schedules one delivery attempt in the background.
-type DeliveryEnqueuer func(ctx context.Context, deliveryID uuid.UUID) error
+// DeliveryEnqueuer schedules a delivery in the background. Round names a
+// manual redelivery and is empty for the first send: the first send's queue
+// task stays archived once its retries run out, so a redelivery must be a
+// task of its own.
+type DeliveryEnqueuer func(ctx context.Context, deliveryID uuid.UUID, round string) error
 
 // Dispatcher fans inbox notifications out to the recipients' channels.
 type Dispatcher struct {
@@ -136,7 +139,7 @@ func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error
 			return fmt.Errorf("create notification delivery: %w", result.Error)
 		}
 		if result.RowsAffected == 1 && d.enqueue != nil {
-			_ = d.enqueue(ctx, delivery.ID)
+			_ = d.enqueue(ctx, delivery.ID, "")
 		}
 	}
 	return nil

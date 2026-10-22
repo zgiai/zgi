@@ -41,10 +41,17 @@ func RegisterDeliveryTasks(registry TaskRegistry, queue TaskQueue, dispatcher fu
 	}) {
 		panic("notification delivery task handler is already registered")
 	}
-	return func(_ context.Context, deliveryID uuid.UUID) error {
-		task := asynq.NewTask(taskType, []byte(deliveryID.String()),
-			asynq.Queue("default"), asynq.MaxRetry(MaxDeliveryAttempts-1), asynq.Timeout(time.Minute), asynq.TaskID("inbox-delivery-"+deliveryID.String()))
-		if _, err := queue.EnqueueTask(task); err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) && !errors.Is(err, asynq.ErrDuplicateTask) {
+	return func(_ context.Context, deliveryID uuid.UUID, round string) error {
+		taskID := "inbox-delivery-" + deliveryID.String()
+		if round != "" {
+			taskID += "-" + round
+		}
+		task := asynq.NewTask(taskType, []byte(deliveryID.String()))
+		_, err := queue.EnqueueTask(task,
+			asynq.Queue("default"), asynq.MaxRetry(MaxDeliveryAttempts-1), asynq.Timeout(time.Minute), asynq.TaskID(taskID))
+		// A repeated first send finds its own task; a redelivery's ID is new, so
+		// a conflict there is a real failure, not an active task.
+		if err != nil && (round != "" || (!errors.Is(err, asynq.ErrTaskIDConflict) && !errors.Is(err, asynq.ErrDuplicateTask))) {
 			return fmt.Errorf("enqueue notification delivery: %w", err)
 		}
 		return nil

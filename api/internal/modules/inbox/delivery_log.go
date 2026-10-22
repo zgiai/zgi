@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -82,7 +83,8 @@ func (d *Dispatcher) Redeliver(ctx context.Context, owner ChannelOwner, channelI
 		return ErrChannelConflict
 	}
 	if d.enqueue != nil {
-		return d.enqueue(ctx, deliveryID)
+		// The reset above admits one redelivery at a time, so its round is unique.
+		return d.enqueue(ctx, deliveryID, strconv.FormatInt(d.now().UnixNano(), 36))
 	}
 	return nil
 }
