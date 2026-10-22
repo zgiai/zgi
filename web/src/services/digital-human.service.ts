@@ -288,7 +288,7 @@ class DigitalHumanService extends BaseService {
 
   listRuns(
     id: string,
-    params?: { page?: number; page_size?: number }
+    params?: { page?: number; page_size?: number; 'requester_kind[]'?: string[]; requester_id?: string }
   ): Promise<ApiResponseData<DigitalHumanRunList>> {
     return this.request('get', `/digital-humans/${id}/runs`, undefined, { params });
   }

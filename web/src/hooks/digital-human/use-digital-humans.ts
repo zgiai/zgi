@@ -192,10 +192,15 @@ export function useDigitalHumanBindingCandidates(
   });
 }
 
-export function useDigitalHumanRuns(id: string, enabled = true) {
+export function useDigitalHumanRuns(
+  id: string,
+  enabled = true,
+  // Narrows runs to who asked for them.
+  requester?: { 'requester_kind[]'?: string[]; requester_id?: string }
+) {
   return useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.runs(id),
-    queryFn: () => digitalHumanService.listRuns(id, { page: 1, page_size: 100 }),
+    queryKey: requester ? [...DIGITAL_HUMAN_KEYS.runs(id), requester] : DIGITAL_HUMAN_KEYS.runs(id),
+    queryFn: () => digitalHumanService.listRuns(id, { page: 1, page_size: 100, ...requester }),
     enabled: enabled && Boolean(id),
     refetchInterval: query => {
       const active = query.state.data?.data?.items.some(run =>

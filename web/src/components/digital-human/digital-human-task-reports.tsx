@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
+import { RequesterOrigin } from '@/components/digital-human/digital-human-task-requesters';
 import { ArrowLeft, CheckCircle2, ChevronDown, CircleDashed, FileText, Paperclip, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -195,6 +196,7 @@ export function TaskReportDetailView({
             {report.attempt > 1 ? ` · ${t('tasks.reports.attempt', { value: report.attempt })}` : ''}
           </span>
         </div>
+        <RequesterOrigin requester={report.requester} />
         {/* The summary is what the reader needs first. */}
         <p className="rounded-lg border-l-2 border-primary/60 bg-muted/40 px-3 py-2.5 text-sm font-medium leading-6">{report.summary}</p>
       </div>

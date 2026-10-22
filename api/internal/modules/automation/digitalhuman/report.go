@@ -130,9 +130,13 @@ func (s *Service) ListTaskReports(ctx context.Context, access digitalhuman.TaskA
 		return nil, err
 	}
 	page, pageSize := normalizePage(query.Page, query.PageSize)
+	visibleTasks, err := applyRequesterFilter(s.taskQuery(ctx, access), digitalhuman.TaskListQuery{RequesterKinds: query.RequesterKinds, RequesterID: query.RequesterID})
+	if err != nil {
+		return nil, err
+	}
 	base := s.db.WithContext(ctx).Model(&taskReportRow{}).
 		Where("organization_id = ? AND workspace_id = ? AND digital_human_id = ?", access.OrganizationID, access.WorkspaceID, access.DigitalHumanID).
-		Where("task_id IN (?)", s.taskQuery(ctx, access).Select("id"))
+		Where("task_id IN (?)", visibleTasks.Select("id"))
 	if query.TaskID != nil {
 		base = base.Where("task_id = ?", *query.TaskID)
 	} else {
@@ -168,6 +172,9 @@ func (s *Service) ListTaskReports(ctx context.Context, access digitalhuman.TaskA
 	for _, row := range rows {
 		items = append(items, publicTaskReport(row, tasks[row.TaskID], access))
 	}
+	if err := s.attachReportRequesters(ctx, access, rows, tasks, items); err != nil {
+		return nil, err
+	}
 	return &digitalhuman.TaskReportList{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
@@ -177,7 +184,40 @@ func (s *Service) GetTaskReport(ctx context.Context, access digitalhuman.TaskAcc
 	if err != nil {
 		return nil, normalizeError(err)
 	}
-	return publicTaskReport(row, task, access), nil
+	report := publicTaskReport(row, task, access)
+	if err := s.attachReportRequesters(ctx, access, []*taskReportRow{row}, map[string]*automationmodel.AutomationTask{row.TaskID: task}, []*digitalhuman.TaskReport{report}); err != nil {
+		return nil, err
+	}
+	return report, nil
+}
+
+// attachReportRequesters sets who asked for each report's task, for readers
+// who see requesters.
+func (s *Service) attachReportRequesters(ctx context.Context, access digitalhuman.TaskAccessContext, rows []*taskReportRow, tasks map[string]*automationmodel.AutomationTask, items []*digitalhuman.TaskReport) error {
+	if !showsRequesters(access) || len(rows) == 0 {
+		return nil
+	}
+	keys := make([]requesterKey, 0, len(rows))
+	for _, row := range rows {
+		if task := tasks[row.TaskID]; task != nil {
+			keys = append(keys, taskRequesterKey(task))
+		}
+	}
+	requesters, err := s.describeRequesters(ctx, access, keys)
+	if err != nil {
+		return err
+	}
+	for index, row := range rows {
+		task := tasks[row.TaskID]
+		if task == nil {
+			continue
+		}
+		if requester := requesters[taskRequesterKey(task)]; requester != nil {
+			copied := *requester
+			items[index].Requester = &copied
+		}
+	}
+	return nil
 }
 
 // ReviewTaskReport accepts a final report or asks for rework. Rework records

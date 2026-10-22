@@ -267,6 +267,7 @@ const messages = {
     memory: 'Memory',
   },
   dashboard: {
+    scope: { label: 'Showing', all: 'Everyone', mine: 'Mine', member: 'ZGI members', api_user: 'API users', channel: 'Channel chats' },
     waitingOnYou: 'Waiting for you',
     upcoming: 'Up next',
     noUpcoming: 'No task is scheduled',
@@ -1802,6 +1803,7 @@ const messages = {
       channelGroup: '{provider} group chat',
       unknown: 'Unknown source',
     },
+    origin: { source: 'Source', requester: 'Requested by', kind: { member: 'ZGI member', api_user: 'API user' } },
     requester: {
       member: 'ZGI members',
       api_user: 'API users',
@@ -1814,6 +1816,7 @@ const messages = {
       labelPlaceholder: 'For example: Alex (enterprise customer)',
       labelSaved: 'Label saved',
       labelFailed: 'Could not save the label',
+      visitor: 'Visitor (not signed in)',
     },
     runStatus: {
       queued: 'Queued',

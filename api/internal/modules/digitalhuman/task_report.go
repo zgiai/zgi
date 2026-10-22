@@ -75,6 +75,8 @@ type TaskReport struct {
 	// CanReview tells the reader whether it may accept the report or ask for
 	// rework: only the task's requester or a task center manager may.
 	CanReview bool `json:"can_review"`
+	// Requester is who asked for the task, for task center readers.
+	Requester *TaskRequester `json:"requester,omitempty"`
 	// FileIDs are the run files the DigitalHuman chose to attach. When empty,
 	// the report carries every file its run produced.
 	FileIDs []uuid.UUID `json:"-"`
@@ -122,8 +124,11 @@ type TaskReportListQuery struct {
 	TaskID       *uuid.UUID
 	ReviewStates []TaskReportReviewState
 	Outcomes     []TaskReportOutcome
-	Page         int
-	PageSize     int
+	// RequesterKinds and RequesterID narrow reports to who asked for the task.
+	RequesterKinds []TaskRequesterKind
+	RequesterID    string
+	Page           int
+	PageSize       int
 }
 
 // TaskReportList is one page of reports.

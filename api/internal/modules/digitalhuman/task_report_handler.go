@@ -179,6 +179,10 @@ func (h *TaskHandler) reportListQuery(c *gin.Context) (TaskReportListQuery, bool
 			return query, false
 		}
 	}
+	for _, value := range append(c.QueryArray("requester_kind"), c.QueryArray("requester_kind[]")...) {
+		query.RequesterKinds = append(query.RequesterKinds, TaskRequesterKind(strings.TrimSpace(value)))
+	}
+	query.RequesterID = c.Query("requester_id")
 	for _, value := range c.QueryArray("outcome[]") {
 		switch outcome := TaskReportOutcome(strings.TrimSpace(value)); outcome {
 		case TaskReportDone, TaskReportPartial, TaskReportNotDone, TaskReportFailed:

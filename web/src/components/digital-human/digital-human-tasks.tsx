@@ -59,7 +59,7 @@ import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import { TaskLatestReport, TaskReportFeed, TaskReportView } from '@/components/digital-human/digital-human-task-reports';
 import { TaskReportDestinations } from '@/components/digital-human/digital-human-task-destinations';
-import { TaskRequesterLabelButton, TaskRequesterPicker, requesterName } from '@/components/digital-human/digital-human-task-requesters';
+import { RequesterOrigin, TaskRequesterLabelButton, TaskRequesterPicker, requesterName } from '@/components/digital-human/digital-human-task-requesters';
 import { DigitalHumanRunTimeline } from '@/components/digital-human/digital-human-run-timeline';
 import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
 import { TEAM_NOTIFICATION_CHANNELS_PATH } from '@/services/notification-channel.service';
@@ -767,6 +767,7 @@ export function TaskDetailSheet({
                   {t(`tasks.schedule.${task.schedule.type}`)}
                 </Badge>
               </div>
+              <RequesterOrigin source={sourceLabel(task, t)} requester={task.requester} className="-mt-3" />
               <section>
                 <h3 className="text-sm font-semibold">{t('tasks.reports.history')}</h3>
                 <div className="mt-3">

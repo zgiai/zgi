@@ -103,6 +103,9 @@ type ListQuery struct {
 	Page     int
 	PageSize int
 	Search   string
+	// RequesterKinds and RequesterID narrow runs to who asked for them.
+	RequesterKinds []TaskRequesterKind
+	RequesterID    string
 }
 
 // ListResult is one page of DigitalHuman definitions.

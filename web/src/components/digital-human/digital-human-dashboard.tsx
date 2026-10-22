@@ -25,6 +25,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useAuthStore } from '@/store/auth-store';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { getAgentTextIconDisplay } from '@/components/agents/agent-runtime/utils';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -82,15 +84,34 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
   const detail = useDigitalHuman(id);
-  const tasks = useDigitalHumanTasks(id, currentLocalDayRunWindow());
   const permissions = useAccountPermissions();
+  const accountId = useAuthStore.use.user()?.id;
+  // Whose work the workspace shows, so many API users or channel chats do not
+  // bury the rest. The server filters, so counts and pages stay true.
+  const [scope, setScope] = useState<DashboardScope>(() => readDashboardScope(id));
+  const requester = dashboardRequesterFilter(scope, accountId);
+  const tasks = useDigitalHumanTasks(id, {
+    ...currentLocalDayRunWindow(),
+    ...(requester.kind ? { requester_kind: [requester.kind] } : {}),
+    ...(requester.id ? { requester_id: requester.id } : {}),
+  });
   // The reader's own tasks: private tasks are not in the task center list for
   // members, but their proposals, failures, and reports still need attention.
-  const myTasks = useDigitalHumanMyTasks(id, {}, permissions.hasPermission('digital_human.run'));
+  const myTasks = useDigitalHumanMyTasks(
+    id,
+    {},
+    permissions.hasPermission('digital_human.run') && (scope === 'all' || scope === 'mine' || scope === 'member')
+  );
   const taskMutations = useDigitalHumanTaskMutations(id);
   const myTaskMutations = useDigitalHumanMyTaskMutations(id);
   const [pendingTaskAction, setPendingTaskAction] = useState<string | null>(null);
-  const runs = useDigitalHumanRuns(id);
+  const runs = useDigitalHumanRuns(
+    id,
+    true,
+    requester.kind || requester.id
+      ? { ...(requester.kind ? { 'requester_kind[]': [requester.kind] } : {}), ...(requester.id ? { requester_id: requester.id } : {}) }
+      : undefined
+  );
   const channels = useDigitalHumanChannels(id, true);
   const channelMutations = useDigitalHumanChannelMutations(id);
   const canManageDeliveries = permissions.hasPermission('digital_human.run');
@@ -111,7 +132,14 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   useEffect(() => {
     setIgnoredAttentionKeys(readIgnoredAttentionKeys(id));
     setAttentionPage(1);
+    setScope(readDashboardScope(id));
   }, [id]);
+
+  function changeScope(next: DashboardScope) {
+    setScope(next);
+    setAttentionPage(1);
+    writeDashboardScope(id, next);
+  }
 
   function ignoreAttention(key: string) {
     setIgnoredAttentionKeys(current => {
@@ -178,7 +206,10 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const published = detail.data.data.published;
   const taskItems = tasks.data?.data.items ?? [];
   const taskCenterIds = new Set(taskItems.map(task => task.id));
-  const ownTaskItems = (myTasks.data?.data.items ?? []).filter(task => !taskCenterIds.has(task.id));
+  const ownTaskItems =
+    scope === 'all' || scope === 'mine' || scope === 'member'
+      ? (myTasks.data?.data.items ?? []).filter(task => !taskCenterIds.has(task.id))
+      : [];
   const attentionCandidates = [...taskItems, ...ownTaskItems];
   // Task center tasks open over the workspace; a member's own private task
   // lives in their conversation panel.
@@ -211,9 +242,11 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
   const runningRun = runItems.find(run => isRunningDigitalHumanRunStatus(run.status));
   const waitingRun = runItems.find(run => isWaitingDigitalHumanRunStatus(run.status));
   const currentTask = currentDashboardTask(taskItems, runItems);
-  const failedDeliveries = deliveries.filter(delivery =>
-    ['failed', 'unknown'].includes(delivery.status)
-  );
+  // Channel deliveries belong to channel conversations.
+  const failedDeliveries =
+    scope === 'all' || scope === 'channel'
+      ? deliveries.filter(delivery => ['failed', 'unknown'].includes(delivery.status))
+      : [];
   const attentionTasks = attentionCandidates
     .filter(task => ['proposed', 'blocked'].includes(task.work_status))
     .sort((left, right) => taskStatusOrder[left.work_status] - taskStatusOrder[right.work_status]);
@@ -289,6 +322,19 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex items-center justify-between gap-3 @[680px]/dashboard:justify-end">
+          <Select value={scope} onValueChange={value => changeScope(value as DashboardScope)}>
+            <SelectTrigger className="h-8 w-auto min-w-[8.5rem] shrink-0 gap-2 text-xs" aria-label={t('dashboard.scope.label')}>
+              <span className="text-muted-foreground">{t('dashboard.scope.label')}</span>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {dashboardScopes.map(value => (
+                <SelectItem key={value} value={value} disabled={value === 'mine' && !accountId}>
+                  {t(`dashboard.scope.${value}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <p className="min-w-0 truncate text-xs text-muted-foreground" aria-live="polite">
             {refreshState === 'success'
               ? t('dashboard.refreshed')
@@ -411,6 +457,7 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
       </section>
 
       <DashboardIndicators
+        requester={requester}
         id={id}
         attentionCount={attentionCount}
         completedToday={todayCompleted}
@@ -1229,9 +1276,24 @@ function formatClock(value: Date, locale: string) {
 }
 
 /** Counts that lead to the work: reports to read, items to handle, today's results, artifacts. */
-function DashboardIndicators({ id, attentionCount, completedToday }: { id: string; attentionCount: number; completedToday: number }) {
+function DashboardIndicators({
+  id,
+  attentionCount,
+  completedToday,
+  requester,
+}: {
+  id: string;
+  attentionCount: number;
+  completedToday: number;
+  requester: DashboardRequesterFilter;
+}) {
   const t = useT('digitalHumans');
-  const reports = useDigitalHumanTaskReports(id, { 'review_state[]': ['new'], page_size: 1 });
+  const reports = useDigitalHumanTaskReports(id, {
+    'review_state[]': ['new'],
+    page_size: 1,
+    ...(requester.kind ? { 'requester_kind[]': [requester.kind] } : {}),
+    ...(requester.id ? { requester_id: requester.id } : {}),
+  });
   const artifacts = useQuery({
     queryKey: ['digital-human-artifacts', id, 'count'],
     queryFn: () => digitalHumanService.listArtifacts(id, { page_size: 1 }),
@@ -1399,4 +1461,41 @@ function AttentionTaskActions({
     );
   }
   return null;
+}
+
+type DashboardScope = 'all' | 'mine' | 'member' | 'api_user' | 'channel';
+const dashboardScopes: readonly DashboardScope[] = ['all', 'mine', 'member', 'api_user', 'channel'];
+
+interface DashboardRequesterFilter {
+  kind?: 'member' | 'api_user' | 'channel';
+  id?: string;
+}
+
+function dashboardRequesterFilter(scope: DashboardScope, accountId?: string): DashboardRequesterFilter {
+  if (scope === 'mine') return accountId ? { id: accountId } : {};
+  if (scope === 'all') return {};
+  return { kind: scope };
+}
+
+// The chosen scope is a per-reader convenience, so it lives in this browser.
+function dashboardScopeKey(id: string) {
+  return `zgi:digital-human:${id}:dashboard-scope`;
+}
+
+function readDashboardScope(id: string): DashboardScope {
+  try {
+    const value = window.localStorage.getItem(dashboardScopeKey(id));
+    return dashboardScopes.includes(value as DashboardScope) ? (value as DashboardScope) : 'all';
+  } catch {
+    return 'all';
+  }
+}
+
+function writeDashboardScope(id: string, scope: DashboardScope) {
+  try {
+    if (scope === 'all') window.localStorage.removeItem(dashboardScopeKey(id));
+    else window.localStorage.setItem(dashboardScopeKey(id), scope);
+  } catch {
+    // The scope then lasts for this visit only.
+  }
 }

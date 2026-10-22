@@ -393,6 +393,8 @@ export interface DigitalHumanRun {
   message_id?: string | null;
   /** Where the run was asked from: console, webapp, api, task, channel, preview. */
   surface?: string;
+  /** Who asked for the run; console readers only. */
+  requester?: DigitalHumanTaskRequester;
   result_summary?: string;
   error_code?: string;
   error_message?: string;
@@ -859,7 +861,8 @@ export interface DigitalHumanTask {
   updated_at: string;
 }
 
-export type DigitalHumanTaskRequesterKind = 'member' | 'api_user' | 'channel';
+// `visitor` is a landing page visitor who has not signed in; only runs have them.
+export type DigitalHumanTaskRequesterKind = 'member' | 'api_user' | 'channel' | 'visitor';
 
 /**
  * Who asked for a task. API end users are named by their instance label,
@@ -1023,6 +1026,8 @@ export interface DigitalHumanTaskReport {
   reviewed_at?: string;
   can_review: boolean;
   created_at: string;
+  /** Who asked for the report's task; task center readers only. */
+  requester?: DigitalHumanTaskRequester;
 }
 
 export interface DigitalHumanTaskReportList {
@@ -1034,6 +1039,9 @@ export interface DigitalHumanTaskReportList {
 
 export interface DigitalHumanTaskReportParams {
   task_id?: string;
+  // Task center only: who asked for the report's task.
+  'requester_kind[]'?: DigitalHumanTaskRequesterKind[];
+  requester_id?: string;
   'review_state[]'?: DigitalHumanTaskReportReviewState[];
   'outcome[]'?: DigitalHumanTaskReportOutcome[];
   page?: number;

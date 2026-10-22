@@ -288,11 +288,16 @@ func (h *RuntimeHandler) ListRuns(c *gin.Context) {
 		h.base.writeError(c, applicationError(err, "digital_human.run.list"))
 		return
 	}
+	for _, value := range append(c.QueryArray("requester_kind"), c.QueryArray("requester_kind[]")...) {
+		query.RequesterKinds = append(query.RequesterKinds, TaskRequesterKind(strings.TrimSpace(value)))
+	}
+	query.RequesterID = c.Query("requester_id")
 	result, err := h.service.ListRuns(c.Request.Context(), scope, digitalHumanID, query)
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.run.list"))
 		return
 	}
+	h.describeRunRequesters(c, scope, digitalHumanID, result.Items...)
 	writeDigitalHumanData(c, http.StatusOK, publicRunList(result))
 }
 
@@ -306,7 +311,16 @@ func (h *RuntimeHandler) GetRun(c *gin.Context) {
 		h.base.writeError(c, applicationError(err, "digital_human.run.get"))
 		return
 	}
+	h.describeRunRequesters(c, scope, digitalHumanID, run)
 	writeDigitalHumanData(c, http.StatusOK, publicRun(run))
+}
+
+// describeRunRequesters names who asked for each run. It is best effort: a run
+// without its requester is still worth showing.
+func (h *RuntimeHandler) describeRunRequesters(c *gin.Context, scope Scope, digitalHumanID uuid.UUID, runs ...*Run) {
+	if describer, ok := h.service.(runRequesterDescriber); ok {
+		_ = describer.DescribeRunRequesters(c.Request.Context(), scope, digitalHumanID, runs)
+	}
 }
 
 func (h *RuntimeHandler) GetRunRuntimeLog(c *gin.Context) {

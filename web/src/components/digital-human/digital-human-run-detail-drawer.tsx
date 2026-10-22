@@ -29,6 +29,7 @@ import {
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth-store';
+import { requesterName } from '@/components/digital-human/digital-human-task-requesters';
 import type { AgentRuntimeRunItem } from '@/services/types/agent-runtime-log';
 import type { DigitalHumanRun } from '@/services/types/digital-human';
 
@@ -185,7 +186,7 @@ export function DigitalHumanRunDetailDrawer({
       steps={runtimeSteps}
       isLoading={runQuery.isLoading || runtimeQuery.isLoading}
       error={error}
-      sourceLabel={run ? runSourceLabel(run, t) : null}
+      sourceLabel={run ? [runSourceLabel(run, t), run.requester ? requesterName(run.requester, t) : null].filter(Boolean).join(' · ') : null}
       footer={
         run && active ? (
           <div className="flex flex-col gap-3">

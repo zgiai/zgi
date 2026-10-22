@@ -248,6 +248,7 @@ const messages: DigitalHumansMessages = {
     memory: '记忆',
   },
   dashboard: {
+    scope: { label: '范围', all: '全部', mine: '我发起的', member: 'ZGI 成员', api_user: 'API 用户', channel: '渠道会话' },
     waitingOnYou: '需要你处理',
     upcoming: '即将执行',
     noUpcoming: '没有已安排的任务',
@@ -1680,6 +1681,7 @@ const messages: DigitalHumansMessages = {
       channelGroup: '{provider}群聊',
       unknown: '未知来源',
     },
+    origin: { source: '来源', requester: '发起人', kind: { member: 'ZGI 成员', api_user: 'API 用户' } },
     requester: {
       member: 'ZGI 成员',
       api_user: 'API 用户',
@@ -1692,6 +1694,7 @@ const messages: DigitalHumansMessages = {
       labelPlaceholder: '例如：张三（企业版客户）',
       labelSaved: '备注已保存',
       labelFailed: '备注保存失败',
+      visitor: '未登录访客',
     },
     runStatus: {
       queued: '排队中',

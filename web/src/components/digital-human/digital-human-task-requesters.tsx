@@ -32,6 +32,7 @@ export function requesterName(requester: DigitalHumanTaskRequester, t: Translate
     return requester.name || t('tasks.requester.apiUser', { id: (requester.id ?? '').slice(0, 8) });
   }
   if (requester.kind === 'channel') return t('tasks.requester.channel');
+  if (requester.kind === 'visitor') return t('tasks.requester.visitor');
   return requester.name || requester.email || t('tasks.requester.unknownMember');
 }
 
@@ -221,5 +222,43 @@ export function TaskRequesterLabelButton({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * Where something came from and who asked for it, in one line, for the
+ * details of tasks, runs, and reports. Either part may be missing.
+ */
+export function RequesterOrigin({
+  source,
+  requester,
+  className,
+}: {
+  source?: string | null;
+  requester?: DigitalHumanTaskRequester | null;
+  className?: string;
+}) {
+  const t = useT('digitalHumans');
+  if (!source && !requester) return null;
+  return (
+    <dl className={cn('flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground', className)}>
+      {source ? (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <dt>{t('tasks.origin.source')}</dt>
+          <dd className="truncate font-medium text-foreground/80">{source}</dd>
+        </div>
+      ) : null}
+      {requester ? (
+        <div className="flex min-w-0 items-center gap-1.5" title={requester.email || undefined}>
+          <dt>{t('tasks.origin.requester')}</dt>
+          <dd className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-medium text-foreground/80">{requesterName(requester, t)}</span>
+            {requester.kind !== 'channel' && requester.kind !== 'visitor' ? (
+              <span className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[11px]">{t(`tasks.origin.kind.${requester.kind}`)}</span>
+            ) : null}
+          </dd>
+        </div>
+      ) : null}
+    </dl>
   );
 }
