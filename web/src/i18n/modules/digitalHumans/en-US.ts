@@ -267,7 +267,7 @@ const messages = {
     memory: 'Memory',
   },
   dashboard: {
-    scope: { label: 'Showing', all: 'Everyone', mine: 'Mine', member: 'ZGI members', api_user: 'API users', channel: 'Channel chats' },
+    scope: { label: 'Show work from', all: 'Everyone', mine: 'Mine', member: 'ZGI members', api_user: 'API users', channel: 'Channel chats' },
     waitingOnYou: 'Waiting for you',
     upcoming: 'Up next',
     noUpcoming: 'No task is scheduled',

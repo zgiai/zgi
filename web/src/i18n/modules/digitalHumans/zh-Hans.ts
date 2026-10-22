@@ -248,7 +248,7 @@ const messages: DigitalHumansMessages = {
     memory: '记忆',
   },
   dashboard: {
-    scope: { label: '范围', all: '全部', mine: '我发起的', member: 'ZGI 成员', api_user: 'API 用户', channel: '渠道会话' },
+    scope: { label: '查看范围', all: '全部', mine: '我发起的', member: 'ZGI 成员', api_user: 'API 用户', channel: '渠道会话' },
     waitingOnYou: '需要你处理',
     upcoming: '即将执行',
     noUpcoming: '没有已安排的任务',

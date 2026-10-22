@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   Activity,
@@ -21,11 +21,17 @@ import {
   RotateCcw,
   Loader2,
   XCircle,
+  Building2,
+  KeyRound,
+  MessagesSquare,
+  UserRound,
+  Users,
+  type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuthStore } from '@/store/auth-store';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { getAgentTextIconDisplay } from '@/components/agents/agent-runtime/utils';
@@ -323,15 +329,41 @@ export function DigitalHumanDashboard({ id }: { id: string }) {
         </div>
         <div className="flex items-center justify-between gap-3 @[680px]/dashboard:justify-end">
           <Select value={scope} onValueChange={value => changeScope(value as DashboardScope)}>
-            <SelectTrigger className="h-8 w-auto min-w-[8.5rem] shrink-0 gap-2 text-xs" aria-label={t('dashboard.scope.label')}>
-              <span className="text-muted-foreground">{t('dashboard.scope.label')}</span>
+            {/* A narrowed workspace is tinted, so it is not mistaken for everything. */}
+            <SelectTrigger
+              className={cn(
+                // The shared trigger lets its value grow from zero, so it needs a width.
+                'h-8 w-[9.5rem] shrink-0 gap-1.5 px-2.5 text-xs font-medium',
+                scope !== 'all' && 'border-primary/40 bg-primary/5 text-primary hover:border-primary/60 dark:bg-primary/10'
+              )}
+              aria-label={t('dashboard.scope.label')}
+              title={t('dashboard.scope.label')}
+            >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent align="end">
-              {dashboardScopes.map(value => (
-                <SelectItem key={value} value={value} disabled={value === 'mine' && !accountId}>
-                  {t(`dashboard.scope.${value}`)}
-                </SelectItem>
+            <SelectContent align="end" className="min-w-[11rem]">
+              {dashboardScopeGroups.map((group, index) => (
+                <Fragment key={group.join()}>
+                  {index > 0 ? <SelectSeparator /> : null}
+                  <SelectGroup>
+                    {index === 0 ? (
+                      <SelectLabel className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                        {t('dashboard.scope.label')}
+                      </SelectLabel>
+                    ) : null}
+                    {group.map(value => {
+                      const Icon = dashboardScopeIcons[value];
+                      return (
+                        <SelectItem key={value} value={value} disabled={value === 'mine' && !accountId}>
+                          <span className="flex items-center gap-2">
+                            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                            {t(`dashboard.scope.${value}`)}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectGroup>
+                </Fragment>
               ))}
             </SelectContent>
           </Select>
@@ -1465,6 +1497,15 @@ function AttentionTaskActions({
 
 type DashboardScope = 'all' | 'mine' | 'member' | 'api_user' | 'channel';
 const dashboardScopes: readonly DashboardScope[] = ['all', 'mine', 'member', 'api_user', 'channel'];
+// Whose work, then which kind of requester.
+const dashboardScopeGroups: ReadonlyArray<readonly DashboardScope[]> = [['all', 'mine'], ['member', 'api_user', 'channel']];
+const dashboardScopeIcons: Record<DashboardScope, LucideIcon> = {
+  all: Users,
+  mine: UserRound,
+  member: Building2,
+  api_user: KeyRound,
+  channel: MessagesSquare,
+};
 
 interface DashboardRequesterFilter {
   kind?: 'member' | 'api_user' | 'channel';
