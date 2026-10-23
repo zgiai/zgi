@@ -294,6 +294,10 @@ export interface RuntimeEndUserPlan {
 export interface RuntimeUsageDay {
   date: string;
   points: number;
+  /** Distinct end users with usage that day. */
+  end_users: number;
+  /** Metered model calls that day. */
+  calls: number;
   apps: Record<string, number>;
 }
 

@@ -1,7 +1,3 @@
-# Runtime Workspace API
-
-通过一组可轮换的 Runtime Key，从业务服务端调用当前 Runtime Workspace 中已添加的多个 Agent。
-
 ## 接入概览
 
 ### Base URL
@@ -18,11 +14,11 @@
 
 | 名称 | 用途 | 处理要求 |
 | --- | --- | --- |
-| Runtime Key | 鉴权当前 Runtime Workspace 的所有请求 | 必须保密 |
-| App ID | 标识要调用的 Agent，出现在接口路径中 | 可公开 |
+| Runtime Key | 鉴权当前外部接入的所有请求 | 必须保密 |
+| App ID | 标识要调用的 App（智能体或数字人），出现在接口路径中 | 可公开 |
 | External User ID | 标识业务系统中的最终用户，隔离文件、会话和记忆 | 使用不透明标识，不包含个人信息 |
 
-App ID 由系统生成并保持稳定。Agent 重新发布或 Runtime Key 轮换不会改变 App ID。
+App ID 由系统生成并保持稳定。App 重新发布或 Runtime Key 轮换不会改变 App ID。
 
 ### 通用请求头
 
@@ -36,7 +32,7 @@ App ID 由系统生成并保持稳定。Agent 重新发布或 Runtime Key 轮换
 
 Runtime Key 只应保存在业务服务端。浏览器或移动端应通过业务 BFF 调用 ZGI。
 
-Runtime Workspace 可以由管理员配置 `requests_per_minute` 限流策略。触发限流时返回 `429`，并携带 `Retry-After`、`X-RateLimit-Limit` 和 `X-RateLimit-Remaining`，客户端应按窗口退避重试。
+管理员可以为外部接入配置 `requests_per_minute` 限流策略。触发限流时返回 `429`，并携带 `Retry-After`、`X-RateLimit-Limit` 和 `X-RateLimit-Remaining`，客户端应按窗口退避重试。
 
 ## 快速开始
 
@@ -100,16 +96,16 @@ curl -N -X POST '{apibase}/apps/app_34ab5c8d91ef/chat' \
 
 <Heading url="/apps" method="GET" title="获取 App 列表" name="#List-Apps" />
 
-返回当前 Runtime Workspace 中可调用的 Agent。该接口只需要 Runtime Key。
+返回当前外部接入中可调用的 App（智能体和数字人）。该接口只需要 Runtime Key。
 
 <Heading url="/apps/{app_key}" method="GET" title="获取 App 详情" name="#Get-App" />
 
-只需要 Runtime Key，不需要 External User ID。返回 Agent 最新发布版本的公开展示信息和当前可用能力。
+只需要 Runtime Key，不需要 External User ID。返回 App 最新发布版本的公开展示信息和当前可用能力。
 
 <Properties>
   <Property name='app_key' type='string' propKey='app_key'>稳定的 App ID。</Property>
-  <Property name='name / description' type='string' propKey='name'>Agent 的公开名称与描述。</Property>
-  <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>Agent 图标信息。</Property>
+  <Property name='name / description' type='string' propKey='name'>App 的公开名称与描述。</Property>
+  <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>App 图标信息。</Property>
   <Property name='version / version_uuid' type='string' propKey='version'>当前最新发布版本。</Property>
   <Property name='opening_statement' type='string' propKey='opening_statement'>开场白。</Property>
   <Property name='input_placeholder' type='string' propKey='input_placeholder'>输入提示。</Property>
@@ -168,13 +164,13 @@ SSE 的 `id` 是可恢复事件游标。断线后通过 events 接口和最后�
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/stop" method="POST" title="停止生成" name="#Stop-Conversation" />
 
-停止当前 External User ID 在该 Agent 会话中的活动生成。
+停止当前 External User ID 在该 App 会话中的活动生成。
 
 ---
 
 ## Conversations
 
-会话按 Runtime Workspace、External User ID 和 Agent 隔离。
+会话按外部接入、External User ID 和 App 隔离。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -207,7 +203,7 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 <Heading url="/apps/{app_key}/conversations/search" method="GET" title="搜索会话与消息" name="#Search-Conversations" />
 
-使用 `query` 搜索当前 External User ID 和 App 范围内的会话标题、用户输入与 Agent 回答。支持 `limit`，不会返回其他用户或其他 App 的结果。
+使用 `query` 搜索当前 External User ID 和 App 范围内的会话标题、用户输入与 App 回答。支持 `limit`，不会返回其他用户或其他 App 的结果。
 
 <Heading url="/apps/{app_key}/messages/{message_id}/regenerate" method="POST" title="重新生成根消息" name="#Regenerate-Message" />
 
@@ -215,11 +211,11 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue" method="POST" title="继续 Skill 补充输入" name="#Continue-User-Input" />
 
-请求体为 `{"answers":{"question_id":"answer"}}`。服务端校验 Runtime Subject、Agent、会话、消息和请求 ID 的归属后，以 SSE 继续同一轮消息。
+请求体为 `{"answers":{"question_id":"answer"}}`。服务端校验 Runtime Subject、App、会话、消息和请求 ID 的归属后，以 SSE 继续同一轮消息。
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation" method="POST" title="继续工作流交互" name="#Continue-Workflow" />
 
-审批使用 `{"type":"approval","approval_token":"...","action":"approve","inputs":{}}`；工作流问答使用 `{"type":"question_answer","inputs":{"query":"..."}}`。响应均为 SSE，且不能跨 External User ID 或 Agent 继续其他消息。
+审批使用 `{"type":"approval","approval_token":"...","action":"approve","inputs":{}}`；工作流问答使用 `{"type":"question_answer","inputs":{"query":"..."}}`。响应均为 SSE，且不能跨 External User ID 或 App 继续其他消息。
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue" method="POST" title="继续任务 Token 预算" name="#Continue-Token-Budget" />
 
@@ -229,7 +225,7 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 ## Files
 
-文件按 Runtime Workspace 和 External User ID 隔离，同一用户可以在多个已添加 Agent 中使用同一批文件。删除所属工作空间后，文件会立即停止访问，存储对象保留 30 天后由系统定期清理。
+文件按外部接入和 External User ID 隔离，同一用户可以在多个已添加的 App 中使用同一批文件。删除所属工作空间后，文件会立即停止访问，存储对象保留 30 天后由系统定期清理。
 
 <Heading url="/files" method="POST" title="上传文件" name="#Upload-File" />
 
@@ -266,7 +262,7 @@ curl -X POST '{apibase}/files' \
 
 ## Memory
 
-记忆按 Runtime Workspace、External User ID 和 Agent 隔离。不同 Agent 不共享记忆。
+记忆按外部接入、External User ID 和 App 隔离。不同 App 不共享记忆。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -274,7 +270,7 @@ curl -X POST '{apibase}/files' \
 | GET | `/apps/{app_key}/memory/export` | 导出记忆 JSON |
 | PUT | `/apps/{app_key}/memory/{key}` | 创建或更新一个记忆值 |
 | DELETE | `/apps/{app_key}/memory/{key}` | 删除一个记忆值 |
-| DELETE | `/apps/{app_key}/memory` | 清空该用户在当前 Agent 中的记忆 |
+| DELETE | `/apps/{app_key}/memory` | 清空该用户在当前 App 中的记忆 |
 | GET | `/apps/{app_key}/memory/settings` | 获取记忆设置和配置 revision |
 | PATCH | `/apps/{app_key}/memory/settings` | 更新记忆和自动捕获设置 |
 | POST | `/apps/{app_key}/memory/operations/{operation_id}/undo` | 撤销一次可撤销记忆操作 |
@@ -435,7 +431,7 @@ Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、�
 | --- | --- |
 | 400 | 校验请求参数和请求体 |
 | 401 | 检查 Runtime Key 是否缺失、过期或已撤销 |
-| 403 | 检查 Runtime Workspace 或 App 状态；`end_user.suspended` 表示该终端用户已被停用 |
+| 403 | 检查外部接入或 App 状态；`end_user.suspended` 表示该终端用户已被停用 |
 | 404 | 资源不存在，或不属于当前 External User ID |
 | 409 | 重新读取 revision，或检查幂等请求 |
 | 413 | 根据上传限制缩小文件 |
@@ -450,9 +446,9 @@ Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、�
 
 | 资源 | 隔离范围 |
 | --- | --- |
-| Runtime Key | Runtime Workspace |
-| App | Runtime Workspace + App ID |
-| External Subject | Runtime Workspace + External User ID |
-| File | Runtime Workspace + External Subject |
-| Conversation | Runtime Workspace + External Subject + Agent |
-| Memory | Runtime Workspace + External Subject + Agent |
+| Runtime Key | 外部接入 |
+| App | 外部接入 + App ID |
+| External Subject | 外部接入 + External User ID |
+| File | 外部接入 + External Subject |
+| Conversation | 外部接入 + External Subject + App |
+| Memory | 外部接入 + External Subject + App |

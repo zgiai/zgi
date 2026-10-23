@@ -20,6 +20,7 @@ import MDComponents, {
   Ul,
 } from '@/components/agents/api/ui/md';
 import { Button } from '@/components/ui/button';
+import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { API_URL } from '@/lib/config';
@@ -58,22 +59,32 @@ export function RuntimeWorkspaceAPIDocs() {
   };
 
   return (
-    <div className="@container/api-docs p-4">
+    <div className="@container/api-docs mx-auto w-full max-w-7xl px-4 py-5 @md/console:px-6 @md/console:py-6">
       <ApiDocsProvider apibase={apiBase}>
-        <div className="mx-auto mb-3 flex w-full max-w-[1360px] justify-end">
-          <Button variant="outline" size="sm" asChild>
-            <a href={`${API_URL}/api/runtime-workspace-openapi.yaml`} target="_blank" rel="noreferrer">
-              {t('runtime.integration.openApi')}
-            </a>
-          </Button>
+        <div className="mb-6">
+          <RuntimePageHeader
+            title={t('runtime.tabs.docs')}
+            description={t('runtime.docsPage.description')}
+            actions={
+              <Button variant="outline" size="sm" asChild>
+                <a
+                  href={`${API_URL}/api/runtime-workspace-openapi.yaml`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {t('runtime.integration.openApi')}
+                </a>
+              </Button>
+            }
+          />
         </div>
-        <div className="mx-auto grid w-full max-w-[1360px] items-start gap-8 @5xl/api-docs:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="grid w-full items-start gap-8 @4xl/api-docs:grid-cols-[minmax(0,1fr)_280px]">
           <div ref={contentRef} className="prose min-w-0 max-w-5xl text-[14px] dark:prose-invert">
             <MDXProvider components={components}>
               <Docs components={components} />
             </MDXProvider>
           </div>
-          <div className="hidden self-stretch @5xl/api-docs:block">
+          <div className="hidden self-stretch @4xl/api-docs:block">
             <FloatingToc rootRef={contentRef} />
           </div>
         </div>

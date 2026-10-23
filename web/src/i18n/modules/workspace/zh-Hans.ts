@@ -4,6 +4,8 @@ const messages: WorkspaceMessages = {
   pageTitle: '工作空间管理',
   pageDescription: '管理当前工作空间的成员和设置',
   navigation: {
+    collapse: '收起导航',
+    expand: '展开导航',
     overview: '概览',
     overviewDesc: '当前工作空间的管理入口',
     members: '成员管理',
@@ -352,6 +354,9 @@ const messages: WorkspaceMessages = {
       applyHint: '应用后在页面底部保存额度设置才会生效。',
       unlimited: '不限',
     },
+    docsPage: {
+      description: '业务服务端用一组可轮换的访问密钥，调用当前外部接入中已添加的智能体和数字人，并管理终端用户、额度、积分和 Webhook。',
+    },
     integrationPage: {
       description: '业务系统调用 API 用的访问密钥，以及额度、积分和套餐事件的 Webhook 通知。',
     },
@@ -361,6 +366,12 @@ const messages: WorkspaceMessages = {
       windowShort: { '24h': '24小时', '7d': '7天', '30d': '30天' },
       change: '较上一周期 {percent}',
       noPrevious: '上一周期无用量',
+      metrics: { points: '积分', end_users: '活跃用户', calls: '调用次数' },
+      metricDescriptions: {
+        points: '终端用户每天消耗的积分，按应用堆叠。',
+        end_users: '每天产生用量的终端用户数。',
+        calls: '终端用户每天的模型调用次数。',
+      },
       title: '终端用户用量',
       description: '查看终端用户消耗了多少积分、谁接近上限，并统一设置适用于他们的限额。',
       pointsIn: '积分 · {window}',

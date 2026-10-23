@@ -230,7 +230,8 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 	}
 	series, err := service.EndUserUsageSeries(t.Context(), workspaceID, nil, 30, "Asia/Shanghai")
 	if err != nil || len(series.Days) != 30 || series.Days[29].Date != "2026-10-23" || series.Days[29].Points != 18.5 ||
-		series.Days[19].Points != 30 || series.Days[29].Apps[appID.String()] != 17 || len(series.Apps) != 1 || series.Apps[0].AppKey != "app_one" {
+		series.Days[19].Points != 30 || series.Days[29].Apps[appID.String()] != 17 || len(series.Apps) != 1 || series.Apps[0].AppKey != "app_one" ||
+		series.Days[29].EndUsers != 1 || series.Days[29].Calls != 4 || series.Days[19].Calls != 1 {
 		t.Fatalf("series = %+v %v", series, err)
 	}
 	if own, err := service.EndUserUsageSeries(t.Context(), workspaceID, &bob, 7, ""); err != nil || len(own.Days) != 7 || own.Days[6].Points != 0 {

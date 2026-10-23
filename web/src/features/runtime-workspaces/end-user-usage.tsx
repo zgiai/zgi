@@ -112,24 +112,36 @@ const maxSeriesApps = 5;
  * @component UsageTrendChart
  * @category Feature
  * @status Beta
- * @description Daily points of end users as bars stacked by app; apps beyond
- * the five largest, and usage without an app, are grouped.
+ * @description Daily usage of end users: points as bars stacked by app, with
+ * apps beyond the five largest and usage without an app grouped; or the
+ * daily count of active end users or model calls.
  * @usage Used on the quota page and in the end-user detail.
  * @example
  * <UsageTrendChart series={series} appNames={names} />
  */
+export type UsageMetric = 'points' | 'end_users' | 'calls';
+
 export function UsageTrendChart({
   series,
   appNames,
   height = 240,
+  metric = 'points',
 }: {
   series?: RuntimeUsageSeries;
   appNames: Map<string, string>;
   height?: number;
+  /** Points are stacked by app; counts are one series. */
+  metric?: UsageMetric;
 }) {
   const t = useT('workspace');
   const { rows, keys } = React.useMemo(() => {
     const days = series?.days ?? [];
+    if (metric !== 'points') {
+      return {
+        rows: days.map(day => ({ date: day.date, total: day[metric], [metric]: day[metric] })),
+        keys: [{ key: metric, name: t(`runtime.usage.metrics.${metric}`), color: seriesColors[0] }],
+      };
+    }
     const totals = new Map<string, number>();
     for (const day of days) {
       for (const [appId, points] of Object.entries(day.apps)) {
@@ -167,7 +179,7 @@ export function UsageTrendChart({
       });
     }
     return { rows, keys };
-  }, [series, appNames, t]);
+  }, [series, appNames, metric, t]);
 
   const formatDay = (value: string) => value.slice(5).replace('-', '/');
 

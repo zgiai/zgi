@@ -22,6 +22,7 @@ import {
   pointsFormat,
   quotaWindows,
   UsageTrendChart,
+  type UsageMetric,
 } from '@/features/runtime-workspaces/end-user-usage';
 import {
   useRuntimeEndUserSummary,
@@ -184,6 +185,7 @@ export function RuntimeUsageOverview({
 }) {
   const t = useT('workspace');
   const [days, setDays] = React.useState<(typeof trendRanges)[number]>(30);
+  const [metric, setMetric] = React.useState<UsageMetric>('points');
   const summary = useRuntimeEndUserSummary(runtimeWorkspaceId);
   const series = useRuntimeEndUserUsageSeries(runtimeWorkspaceId, null, days);
   const appNames = React.useMemo(() => new Map(apps.map(app => [app.agent_id, app.name])), [apps]);
@@ -264,32 +266,48 @@ export function RuntimeUsageOverview({
       <div className="grid gap-5 @5xl/console:grid-cols-[minmax(0,5fr)_minmax(0,3fr)]">
         <Card className="border-border/80">
           <CardContent className="space-y-4 p-5">
-            <div className="flex flex-col gap-3 @2xl/console:flex-row @2xl/console:items-start @2xl/console:justify-between">
+            <div className="flex flex-col gap-3">
               <div>
                 <h3 className="text-base font-semibold">{t('runtime.usage.trend')}</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {t('runtime.usage.trendDescription')}
+                  {t(`runtime.usage.metricDescriptions.${metric}`)}
                 </p>
               </div>
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                value={String(days)}
-                onValueChange={value => {
-                  if (value) setDays(Number(value) as (typeof trendRanges)[number]);
-                }}
-              >
-                {trendRanges.map(range => (
-                  <ToggleGroupItem key={range} value={String(range)} className="px-3 text-xs">
-                    {t('runtime.usage.lastDays', { count: range })}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  value={metric}
+                  onValueChange={value => {
+                    if (value) setMetric(value as UsageMetric);
+                  }}
+                >
+                  {(['points', 'end_users', 'calls'] as const).map(item => (
+                    <ToggleGroupItem key={item} value={item} className="px-3 text-xs">
+                      {t(`runtime.usage.metrics.${item}`)}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  value={String(days)}
+                  onValueChange={value => {
+                    if (value) setDays(Number(value) as (typeof trendRanges)[number]);
+                  }}
+                >
+                  {trendRanges.map(range => (
+                    <ToggleGroupItem key={range} value={String(range)} className="px-3 text-xs">
+                      {t('runtime.usage.lastDays', { count: range })}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
             </div>
             {series.isLoading ? (
               <Skeleton className="h-60 w-full" />
             ) : (
-              <UsageTrendChart series={series.data} appNames={appNames} />
+              <UsageTrendChart series={series.data} appNames={appNames} metric={metric} />
             )}
           </CardContent>
         </Card>

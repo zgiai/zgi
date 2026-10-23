@@ -316,10 +316,14 @@ func (s *Service) SummarizeEndUsers(ctx context.Context, workspaceID uuid.UUID) 
 }
 
 // UsageDay is one day of end-user usage, in total and per app.
+// EndUsers counts distinct end users with usage that day, and Calls the
+// metered model calls.
 type UsageDay struct {
-	Date   string             `json:"date"`
-	Points float64            `json:"points"`
-	Apps   map[string]float64 `json:"apps"`
+	Date     string             `json:"date"`
+	Points   float64            `json:"points"`
+	EndUsers int64              `json:"end_users"`
+	Calls    int64              `json:"calls"`
+	Apps     map[string]float64 `json:"apps"`
 }
 
 // UsageSeries is end-user usage per day.
@@ -363,6 +367,16 @@ func (s *Service) EndUserUsageSeries(ctx context.Context, workspaceID uuid.UUID,
 	if err := s.db.WithContext(ctx).Raw(query+` GROUP BY 1, 2`, args).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("load end-user usage series: %w", err)
 	}
+	var activity []struct {
+		Day      string
+		EndUsers int64
+		Calls    int64
+	}
+	activityQuery := strings.Replace(query, `b.app_id::text AS app_id,
+			COALESCE(SUM(b.total_points), 0) AS points`, `COUNT(DISTINCT b.end_user_subject_id) AS end_users, COUNT(*) AS calls`, 1)
+	if err := s.db.WithContext(ctx).Raw(activityQuery+` GROUP BY 1`, args).Scan(&activity).Error; err != nil {
+		return nil, fmt.Errorf("load end-user activity series: %w", err)
+	}
 	byDay := map[string]*UsageDay{}
 	series := &UsageSeries{Days: make([]UsageDay, 0, days), Apps: []AppUsage{}}
 	for day := 0; day < days; day++ {
@@ -371,6 +385,11 @@ func (s *Service) EndUserUsageSeries(ctx context.Context, workspaceID uuid.UUID,
 	}
 	for index := range series.Days {
 		byDay[series.Days[index].Date] = &series.Days[index]
+	}
+	for _, row := range activity {
+		if day, ok := byDay[row.Day]; ok {
+			day.EndUsers, day.Calls = row.EndUsers, row.Calls
+		}
 	}
 	seenApps := map[string]bool{}
 	for _, row := range rows {

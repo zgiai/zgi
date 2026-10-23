@@ -2,6 +2,8 @@ const messages = {
   pageTitle: 'Workspace Management',
   pageDescription: 'Manage workspace members and settings',
   navigation: {
+    collapse: 'Collapse navigation',
+    expand: 'Expand navigation',
     overview: 'Overview',
     overviewDesc: 'Current workspace management entry points',
     members: 'Members',
@@ -358,6 +360,9 @@ const messages = {
       applyHint: 'Save the quota settings at the bottom of the page for this to take effect.',
       unlimited: 'No limit',
     },
+    docsPage: {
+      description: 'Your business server calls the assistants and digital humans of this external access with rotatable access keys, and manages end users, quotas, credits, and webhooks.',
+    },
     integrationPage: {
       description: 'Access keys your business systems call the API with, and webhooks for quota, credit, and plan events.',
     },
@@ -367,6 +372,12 @@ const messages = {
       windowShort: { '24h': '24h', '7d': '7d', '30d': '30d' },
       change: '{percent} vs. previous period',
       noPrevious: 'No usage in the previous period',
+      metrics: { points: 'Points', end_users: 'Active users', calls: 'Calls' },
+      metricDescriptions: {
+        points: 'Points end users spend each day, stacked by app.',
+        end_users: 'End users with usage each day.',
+        calls: 'Model calls made for end users each day.',
+      },
       title: 'End-user usage',
       description: 'How many points end users spend, who is close to their limit, and the limits that apply to them.',
       pointsIn: 'Points, {window}',
