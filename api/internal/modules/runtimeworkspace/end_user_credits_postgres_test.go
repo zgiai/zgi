@@ -44,7 +44,7 @@ func TestEndUserCreditsPayBeyondLimitsPostgres(t *testing.T) {
 	exec("INSERT INTO accounts (id, name, email) VALUES (?, 'Credits owner', ?)", accountID, uuid.NewString()+"@example.invalid")
 	exec("INSERT INTO workspaces (id, name, organization_id) VALUES (?, 'Credits workspace', ?)", workspaceID, organizationID)
 	exec("INSERT INTO runtime_workspaces (workspace_id, organization_id, managed_by_account_id, status, mode, policy_json) VALUES (?, ?, ?, 'active', 'attached', ?)",
-		workspaceID, organizationID, accountID, `{"end_user_quota": {"limits": [{"window": "24h", "points": 10}], "plans": [{"key": "payg", "limits": [{"window": "24h", "points": 0}]}]}}`)
+		workspaceID, organizationID, accountID, `{"end_user_quota": {"limits": [{"window": "24h", "points": 10}], "plans": [{"key": "payg", "limits": [{"window": "24h", "points": 0}]}, {"key": "pro", "limits": [{"window": "24h", "points": 100}]}]}}`)
 	var runtime RuntimeWorkspace
 	if err := tx.Where("workspace_id = ?", workspaceID).First(&runtime).Error; err != nil {
 		t.Fatal(err)
@@ -199,6 +199,34 @@ func TestEndUserCreditsPayBeyondLimitsPostgres(t *testing.T) {
 		t.Fatalf("carol after 0.4 points = %v", got)
 	}
 
+	// Usage is settled under the plan it was incurred under: a plan that
+	// expires before the ledger is read still covers what was used under it.
+	dave := register("dave@example")
+	planEnds := clock.Add(30 * time.Minute)
+	if _, err := service.UpdateEndUser(t.Context(), workspaceID, dave, actor, EndUserPatch{Plan: &EndUserPlanAssignment{Key: "pro", ExpiresAt: &planEnds}}); err != nil {
+		t.Fatal(err)
+	}
+	grant(dave, "1", "dave-1")
+	bill(dave, 20_000, clock.Add(time.Second))
+	clock = planEnds.Add(time.Minute)
+	if got := balance(dave); got != 1 {
+		t.Fatalf("dave after 20 points under an expired plan = %v", got)
+	}
+	// Changing the plan settles the usage under the old one first.
+	erin := register("erin@example")
+	if _, err := service.UpdateEndUser(t.Context(), workspaceID, erin, actor, EndUserPatch{Plan: &EndUserPlanAssignment{Key: "pro"}}); err != nil {
+		t.Fatal(err)
+	}
+	grant(erin, "1", "erin-1")
+	bill(erin, 20_000, clock.Add(time.Second))
+	clock = clock.Add(time.Minute)
+	if _, err := service.UpdateEndUser(t.Context(), workspaceID, erin, actor, EndUserPatch{ClearPlan: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := balance(erin); got != 1 {
+		t.Fatalf("erin after leaving the plan = %v", got)
+	}
+
 	if err := service.EraseEndUser(t.Context(), workspaceID, alice, actor); err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +236,7 @@ func TestEndUserCreditsPayBeyondLimitsPostgres(t *testing.T) {
 		+ (SELECT count(*) FROM runtime_workspace_end_user_credit_bills WHERE subject_id = ?)`, alice, alice, alice).Scan(&left).Error; err != nil || left != 0 {
 		t.Fatalf("erased alice keeps %d credit rows: %v", left, err)
 	}
-	for status, want := range map[string]int64{"": 2, "erased": 1, "all": 3} {
+	for status, want := range map[string]int64{"": 4, "erased": 1, "all": 5} {
 		if list, err := service.ListEndUsers(t.Context(), workspaceID, EndUserListQuery{Status: status}); err != nil || list.Total != want {
 			t.Fatalf("end users with status %q = %+v %v", status, list, err)
 		}

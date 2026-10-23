@@ -289,11 +289,28 @@ func creditBalance(ctx context.Context, db *gorm.DB, user *EndUser, now time.Tim
 
 // settleEndUserCredits draws credits for the end user's bills not yet
 // settled, in order. A bill is charged the part of it beyond the limits that
-// apply, by the window it exceeds most; each settled bill is marked once.
-// The end user's row must be locked.
+// applied when it was incurred, so a plan that has since expired still
+// covers what was used under it, by the window it exceeds most; each settled
+// bill is marked once. The end user's row must be locked.
 func settleEndUserCredits(ctx context.Context, tx *gorm.DB, policy EndUserQuotaPolicy, user *EndUser, now time.Time) error {
+	_, err := settleEndUserCreditBatch(ctx, tx, policy, user, now)
+	return err
+}
+
+// settleAllEndUserCredits settles every unsettled bill, before the end
+// user's own quota or plan changes and the limits of those bills with it.
+func settleAllEndUserCredits(ctx context.Context, tx *gorm.DB, policy EndUserQuotaPolicy, user *EndUser, now time.Time) error {
+	for {
+		settled, err := settleEndUserCreditBatch(ctx, tx, policy, user, now)
+		if err != nil || settled < creditSettleBatch {
+			return err
+		}
+	}
+}
+
+func settleEndUserCreditBatch(ctx context.Context, tx *gorm.DB, policy EndUserQuotaPolicy, user *EndUser, now time.Time) (int, error) {
 	if user == nil || user.CreditsSince == nil {
-		return nil
+		return 0, nil
 	}
 	db := tx.WithContext(ctx)
 	var bills []struct {
@@ -307,20 +324,19 @@ func settleEndUserCredits(ctx context.Context, tx *gorm.DB, policy EndUserQuotaP
 			AND NOT EXISTS (SELECT 1 FROM runtime_workspace_end_user_credit_bills c WHERE c.bill_id = b.id)
 		ORDER BY b.request_created_at, b.id
 		LIMIT ?`, user.SubjectID, *user.CreditsSince, creditSettleBatch).Scan(&bills).Error; err != nil {
-		return fmt.Errorf("list unsettled end-user bills: %w", err)
+		return 0, fmt.Errorf("list unsettled end-user bills: %w", err)
 	}
 	if len(bills) == 0 {
-		return nil
+		return 0, nil
 	}
-	limits := appliedQuota(policy, user, now).Limits
 	_, balanceBefore, err := creditBalance(ctx, tx, user, now, false)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	debt := user.CreditDebt
 	for _, bill := range bills {
 		var charge int64
-		for _, limit := range limits {
+		for _, limit := range appliedQuota(policy, user, bill.RequestCreatedAt).Limits {
 			window, ok := QuotaWindows[limit.Window]
 			if !ok || bill.TotalPoints <= 0 {
 				continue
@@ -331,7 +347,7 @@ func settleEndUserCredits(ctx context.Context, tx *gorm.DB, policy EndUserQuotaP
 				WHERE end_user_subject_id = ? AND request_created_at >= ?
 					AND (request_created_at < ? OR (request_created_at = ? AND id < ?))`,
 				user.SubjectID, bill.RequestCreatedAt.Add(-window), bill.RequestCreatedAt, bill.RequestCreatedAt, bill.ID).Scan(&before).Error; err != nil {
-				return fmt.Errorf("sum end-user usage before a bill: %w", err)
+				return 0, fmt.Errorf("sum end-user usage before a bill: %w", err)
 			}
 			allowed := limit.MilliPoints().Int64()
 			charge = max(charge, max(0, before+bill.TotalPoints-allowed)-max(0, before-allowed))
@@ -339,37 +355,37 @@ func settleEndUserCredits(ctx context.Context, tx *gorm.DB, policy EndUserQuotaP
 		marked := db.Exec(`INSERT INTO runtime_workspace_end_user_credit_bills (bill_id, runtime_workspace_id, subject_id, charged, created_at)
 			VALUES (?, ?, ?, ?, ?) ON CONFLICT (bill_id) DO NOTHING`, bill.ID, user.RuntimeWorkspaceID, user.SubjectID, charge, now)
 		if marked.Error != nil {
-			return fmt.Errorf("mark settled bill: %w", marked.Error)
+			return 0, fmt.Errorf("mark settled bill: %w", marked.Error)
 		}
 		if marked.RowsAffected == 0 || charge == 0 {
 			continue
 		}
 		uncovered, err := drawCreditLots(ctx, tx, user.SubjectID, charge, now)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		debt += uncovered
 		user.CreditDebt = debt
 		_, balance, err := creditBalance(ctx, tx, user, now, false)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		billID := bill.ID
 		entry := CreditEntry{ID: uuid.New(), RuntimeWorkspaceID: user.RuntimeWorkspaceID, SubjectID: user.SubjectID,
 			Kind: CreditEntryUsage, Amount: -charge, BalanceAfter: balance,
 			BillID: &billID, CreatedAt: now}
 		if err := db.Create(&entry).Error; err != nil {
-			return fmt.Errorf("record credit usage: %w", err)
+			return 0, fmt.Errorf("record credit usage: %w", err)
 		}
 	}
 	if err := db.Model(&EndUser{}).Where("subject_id = ?", user.SubjectID).Update("credit_debt", debt).Error; err != nil {
-		return fmt.Errorf("update end-user credit debt: %w", err)
+		return 0, fmt.Errorf("update end-user credit debt: %w", err)
 	}
 	_, balanceAfter, err := creditBalance(ctx, tx, user, now, false)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return notifyCreditsLow(ctx, tx, user, balanceBefore, balanceAfter, now)
+	return len(bills), notifyCreditsLow(ctx, tx, user, balanceBefore, balanceAfter, now)
 }
 
 // settledCredits settles an end user's credits under a lock and returns

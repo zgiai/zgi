@@ -296,6 +296,13 @@ func (s *Service) UpdateEndUser(ctx context.Context, workspaceID, subjectID uuid
 			return ErrEndUserNotFound
 		}
 		now := s.now()
+		// Usage so far is settled under the quota it was incurred under,
+		// before that quota changes.
+		if patch.Quota != nil || patch.ResetQuota || patch.Plan != nil || patch.ClearPlan {
+			if err := settleAllEndUserCredits(ctx, tx, EndUserQuota(runtimeWorkspace.PolicyJSON), user, now); err != nil {
+				return err
+			}
+		}
 		updates := map[string]any{}
 		var events []EndUserEvent
 		event := func(action string, details map[string]any) {
