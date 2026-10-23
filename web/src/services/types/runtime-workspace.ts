@@ -185,7 +185,13 @@ export interface RuntimeEndUserListParams {
 }
 
 export interface RuntimeEndUserSummary {
-  usage: Array<{ window: RuntimeQuotaWindow; points: number; end_users: number }>;
+  usage: Array<{
+    window: RuntimeQuotaWindow;
+    points: number;
+    /** The same window just before, for comparison. */
+    previous_points: number;
+    end_users: number;
+  }>;
   end_users: {
     total: number;
     active_7d: number;

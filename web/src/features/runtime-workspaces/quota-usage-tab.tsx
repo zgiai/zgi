@@ -2,7 +2,16 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, Ban, Gauge, SlidersHorizontal, Users } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowRight,
+  ArrowUpRight,
+  Ban,
+  Gauge,
+  SlidersHorizontal,
+  Users,
+} from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -20,7 +29,11 @@ import {
 } from '@/hooks/runtime-workspace/use-runtime-end-users';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { RuntimeApp } from '@/services/types/runtime-workspace';
+import type {
+  RuntimeApp,
+  RuntimeEndUserSummary,
+  RuntimeQuotaWindow,
+} from '@/services/types/runtime-workspace';
 
 const endUsersPath = '/console/workspace/runtime-workspaces/end-users';
 const trendRanges = [7, 30, 90] as const;
@@ -86,6 +99,71 @@ function StatTile({
 }
 
 /**
+ * @component PointsTile
+ * @category Feature
+ * @status Beta
+ * @description Points end users spent over a chosen window, how many of them
+ * spent, and the change from the window just before.
+ * @usage The first KPI of the Runtime Workspace usage overview.
+ * @example
+ * <PointsTile usage={summary.usage} />
+ */
+function PointsTile({ usage }: { usage: RuntimeEndUserSummary['usage'] }) {
+  const t = useT('workspace');
+  const [window, setWindow] = React.useState<RuntimeQuotaWindow>('24h');
+  const current = usage.find(item => item.window === window);
+  const points = current?.points ?? 0;
+  const previous = current?.previous_points ?? 0;
+  const change = previous > 0 ? (points - previous) / previous : null;
+  return (
+    <Card className="h-full border-border/80 @3xl/console:col-span-2">
+      <CardContent className="flex h-full flex-col gap-1 p-4">
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <Gauge className="size-4" />
+            {t('runtime.usage.points')}
+          </span>
+          <ToggleGroup
+            type="single"
+            size="sm"
+            variant="outline"
+            value={window}
+            onValueChange={value => {
+              if (value) setWindow(value as RuntimeQuotaWindow);
+            }}
+          >
+            {quotaWindows.map(item => (
+              <ToggleGroupItem key={item} value={item} className="h-6 px-2 text-[11px]">
+                {t(`runtime.usage.windowShort.${item}`)}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </div>
+        <div className="text-2xl font-semibold tabular-nums">{pointsFormat.format(points)}</div>
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          <span>{t('runtime.usage.usersWithUsage', { count: current?.end_users ?? 0 })}</span>
+          <span aria-hidden>·</span>
+          {change === null ? (
+            <span>{t('runtime.usage.noPrevious')}</span>
+          ) : (
+            <span className="flex items-center gap-0.5">
+              {change >= 0 ? (
+                <ArrowUpRight className="size-3.5" />
+              ) : (
+                <ArrowDownRight className="size-3.5" />
+              )}
+              {t('runtime.usage.change', {
+                percent: `${change >= 0 ? '+' : ''}${Math.round(change * 100)}%`,
+              })}
+            </span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
  * @component RuntimeUsageOverview
  * @category Feature
  * @status Beta
@@ -132,27 +210,17 @@ export function RuntimeUsageOverview({
       </div>
 
       {summary.isLoading ? (
-        <div className="grid grid-cols-2 gap-3 @3xl/console:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, index) => (
-            <Skeleton key={index} className="h-24" />
+        <div className="grid grid-cols-2 gap-3 @3xl/console:grid-cols-4 @6xl/console:grid-cols-7">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton
+              key={index}
+              className={cn('h-24', index === 0 && '@3xl/console:col-span-2')}
+            />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 @3xl/console:grid-cols-4">
-          {quotaWindows.map((window, index) => {
-            const usage = summary.data?.usage.find(item => item.window === window);
-            return (
-              <StatTile
-                key={window}
-                label={t('runtime.usage.pointsIn', {
-                  window: t(`runtime.quota.windows.${window}`),
-                })}
-                value={pointsFormat.format(usage?.points ?? 0)}
-                hint={t('runtime.usage.usersWithUsage', { count: usage?.end_users ?? 0 })}
-                icon={index === 0 ? Gauge : undefined}
-              />
-            );
-          })}
+        <div className="grid grid-cols-2 gap-3 @3xl/console:grid-cols-4 @6xl/console:grid-cols-7">
+          <PointsTile usage={summary.data?.usage ?? []} />
           <StatTile
             label={t('runtime.usage.endUsers')}
             value={counts?.total ?? 0}

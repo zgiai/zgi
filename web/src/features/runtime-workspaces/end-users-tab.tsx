@@ -7,6 +7,7 @@ import {
   ArrowUpDown,
   Ban,
   ChevronDown,
+  Filter,
   Crown,
   Download,
   Loader2,
@@ -42,6 +43,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -57,6 +59,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -68,6 +71,7 @@ import {
 import { EndUserCreditsSection } from '@/features/runtime-workspaces/end-user-credits';
 import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
 import {
+  endUserRatio,
   parsePlans,
   PlanAssignmentEditor,
   PlanBadge,
@@ -76,6 +80,7 @@ import {
   planOfDraft,
   pointsFormat,
   QuotaOverrideEditor,
+  usageRatio,
   quotaDraftOf,
   quotaOfDraft,
   quotaWindows,
@@ -141,6 +146,56 @@ function displayName(user: RuntimeEndUser, unnamed: string) {
   return user.external_user_id || `${unnamed} · ${user.subject_id.slice(0, 8)}`;
 }
 
+function QuotaCell({ user }: { user: RuntimeEndUser }) {
+  const t = useT('workspace');
+  const ratio = endUserRatio(user);
+  if (ratio === null) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        {user.quota_source === 'unlimited'
+          ? t('runtime.quota.unlimited')
+          : t('runtime.endUsers.noLimit')}
+      </span>
+    );
+  }
+  const usage = user.usage.find(item => usageRatio(item) === ratio);
+  return (
+    <div className="min-w-36 space-y-1">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span
+          className={cn(
+            'font-medium tabular-nums',
+            ratio >= 1 ? 'text-destructive' : ratio >= 0.8 ? 'text-warning' : undefined
+          )}
+        >
+          {Math.round(ratio * 100)}%
+        </span>
+        {usage ? (
+          <span className="text-muted-foreground">
+            {t(`runtime.usage.windowShort.${usage.window}`)}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        title={
+          usage?.limit !== undefined
+            ? `${pointsFormat.format(usage.points)} / ${pointsFormat.format(usage.limit)}`
+            : undefined
+        }
+      >
+        <div
+          className={cn(
+            'h-full rounded-full',
+            ratio >= 1 ? 'bg-destructive' : ratio >= 0.8 ? 'bg-warning' : 'bg-primary'
+          )}
+          style={{ width: `${Math.min(100, Math.max(ratio * 100, ratio > 0 ? 2 : 0))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function SortHeader({
   label,
   sort,
@@ -204,6 +259,7 @@ export function RuntimeEndUsersTab({
   const [status, setStatus] = React.useState<RuntimeEndUserStatus | ''>('');
   const [quotaState, setQuotaState] = React.useState<RuntimeEndUserQuotaState | ''>('');
   const [planFilter, setPlanFilter] = React.useState('');
+  const [usageWindow, setUsageWindow] = React.useState<RuntimeQuotaWindow>('24h');
   const [bulkPlanOpen, setBulkPlanOpen] = React.useState(false);
   const [bulkPlan, setBulkPlan] = React.useState<PlanDraft>({ key: '', until: '' });
   const plans = React.useMemo(() => parsePlans(policyJson), [policyJson]);
@@ -231,7 +287,11 @@ export function RuntimeEndUsersTab({
       setStatus(linkedStatus);
     }
     const linkedSort = params.get('sort') as RuntimeEndUserSort | null;
-    if (linkedSort && sorts.includes(linkedSort)) setSort(linkedSort);
+    if (linkedSort && sorts.includes(linkedSort)) {
+      setSort(linkedSort);
+      const linkedWindow = quotaWindows.find(window => windowSorts[window] === linkedSort);
+      if (linkedWindow) setUsageWindow(linkedWindow);
+    }
     const linkedPlan = params.get('plan');
     if (linkedPlan) setPlanFilter(linkedPlan);
     const linkedUser = params.get('user');
@@ -271,6 +331,41 @@ export function RuntimeEndUsersTab({
   const selectable = users.filter(user => user.status !== 'erased');
   const pageChecked = selectable.filter(user => checked.has(user.subject_id)).length;
   const filtered = Boolean(search || status || quotaState || planFilter);
+  const filterCount = [status, quotaState, planFilter].filter(Boolean).length;
+  const clearFilters = () => {
+    setSearchInput('');
+    setSearch('');
+    setStatus('');
+    setQuotaState('');
+    setPlanFilter('');
+    setPage(1);
+  };
+  const changeUsageWindow = (window: RuntimeQuotaWindow) => {
+    setUsageWindow(window);
+    if (Object.values(windowSorts).includes(sort)) setSort(windowSorts[window]);
+  };
+  const filterChips = [
+    status
+      ? { key: 'status', label: t(`runtime.endUsers.status.${status}`), clear: () => setStatus('') }
+      : null,
+    quotaState
+      ? {
+          key: 'quota',
+          label: t(`runtime.endUsers.quotaState.${quotaState}`),
+          clear: () => setQuotaState(''),
+        }
+      : null,
+    planFilter
+      ? {
+          key: 'plan',
+          label:
+            planFilter === 'none'
+              ? t('runtime.plans.none')
+              : planLabel(plans.find(plan => plan.key === planFilter) ?? { key: planFilter }),
+          clear: () => setPlanFilter(''),
+        }
+      : null,
+  ].filter((chip): chip is { key: string; label: string; clear: () => void } => chip !== null);
 
   const changeSort = (next: RuntimeEndUserSort) => {
     if (next === sort) setAscending(!ascending);
@@ -345,92 +440,134 @@ export function RuntimeEndUsersTab({
         description={t('runtime.endUsers.description')}
       />
 
-      <div className="flex flex-col gap-2 @3xl/console:flex-row @3xl/console:items-center">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchInput}
-            onChange={event => setSearchInput(event.target.value)}
-            placeholder={t('runtime.endUsers.searchPlaceholder')}
-            className="h-9 pl-9"
-          />
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchInput}
+              onChange={event => setSearchInput(event.target.value)}
+              placeholder={t('runtime.endUsers.searchPlaceholder')}
+              className="h-9 pl-9"
+            />
+          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" className="h-9 shrink-0">
+                <Filter className="size-4" />
+                {t('runtime.endUsers.filters')}
+                {filterCount > 0 ? (
+                  <Badge className="ml-0.5 h-5 min-w-5 justify-center rounded-full px-1.5 text-[11px]">
+                    {filterCount}
+                  </Badge>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 space-y-3">
+              <label className="block space-y-1">
+                <span className="text-xs text-muted-foreground">
+                  {t('runtime.endUsers.columns.status')}
+                </span>
+                <Select
+                  value={status || 'all'}
+                  onValueChange={value => {
+                    setStatus(value === 'all' ? '' : (value as RuntimeEndUserStatus));
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('runtime.endUsers.allStatuses')}</SelectItem>
+                    <SelectItem value="active">{t('runtime.endUsers.status.active')}</SelectItem>
+                    <SelectItem value="suspended">
+                      {t('runtime.endUsers.status.suspended')}
+                    </SelectItem>
+                    <SelectItem value="erased">{t('runtime.endUsers.status.erased')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-muted-foreground">
+                  {t('runtime.endUsers.columns.quota')}
+                </span>
+                <Select
+                  value={quotaState || 'all'}
+                  onValueChange={value => {
+                    setQuotaState(value === 'all' ? '' : (value as RuntimeEndUserQuotaState));
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('runtime.endUsers.allQuotaStates')}</SelectItem>
+                    {quotaStates.map(item => (
+                      <SelectItem key={item} value={item}>
+                        {t(`runtime.endUsers.quotaState.${item}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              {plans.length > 0 || planFilter ? (
+                <label className="block space-y-1">
+                  <span className="text-xs text-muted-foreground">{t('runtime.plans.plan')}</span>
+                  <Select
+                    value={planFilter || 'all'}
+                    onValueChange={value => {
+                      setPlanFilter(value === 'all' ? '' : value);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('runtime.plans.allPlans')}</SelectItem>
+                      <SelectItem value="none">{t('runtime.plans.none')}</SelectItem>
+                      {plans.map(plan => (
+                        <SelectItem key={plan.key} value={plan.key}>
+                          {planLabel(plan)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              ) : null}
+            </PopoverContent>
+          </Popover>
         </div>
-        <Select
-          value={status || 'all'}
-          onValueChange={value => {
-            setStatus(value === 'all' ? '' : (value as RuntimeEndUserStatus));
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="h-9 w-full @3xl/console:w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('runtime.endUsers.allStatuses')}</SelectItem>
-            <SelectItem value="active">{t('runtime.endUsers.status.active')}</SelectItem>
-            <SelectItem value="suspended">{t('runtime.endUsers.status.suspended')}</SelectItem>
-            <SelectItem value="erased">{t('runtime.endUsers.status.erased')}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select
-          value={quotaState || 'all'}
-          onValueChange={value => {
-            setQuotaState(value === 'all' ? '' : (value as RuntimeEndUserQuotaState));
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="h-9 w-full @3xl/console:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('runtime.endUsers.allQuotaStates')}</SelectItem>
-            {quotaStates.map(item => (
-              <SelectItem key={item} value={item}>
-                {t(`runtime.endUsers.quotaState.${item}`)}
-              </SelectItem>
+        {filterChips.length > 0 || search ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {filterChips.map(chip => (
+              <Badge key={chip.key} variant="secondary" className="h-6 gap-1 pr-1 font-normal">
+                {chip.label}
+                <button
+                  type="button"
+                  className="rounded-sm p-0.5 hover:bg-muted"
+                  aria-label={t('runtime.endUsers.removeFilter')}
+                  onClick={() => {
+                    chip.clear();
+                    setPage(1);
+                  }}
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
             ))}
-          </SelectContent>
-        </Select>
-        {plans.length > 0 || planFilter ? (
-          <Select
-            value={planFilter || 'all'}
-            onValueChange={value => {
-              setPlanFilter(value === 'all' ? '' : value);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="h-9 w-full @3xl/console:w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('runtime.plans.allPlans')}</SelectItem>
-              <SelectItem value="none">{t('runtime.plans.none')}</SelectItem>
-              {plans.map(plan => (
-                <SelectItem key={plan.key} value={plan.key}>
-                  {planLabel(plan)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : null}
-        {filtered ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-9"
-            onClick={() => {
-              setSearchInput('');
-              setSearch('');
-              setStatus('');
-              setQuotaState('');
-              setPlanFilter('');
-              setPage(1);
-            }}
-          >
-            <X className="size-4" />
-            {t('runtime.endUsers.clearFilters')}
-          </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={clearFilters}
+            >
+              {t('runtime.endUsers.clearFilters')}
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -543,17 +680,51 @@ export function RuntimeEndUsersTab({
                       ascending={ascending}
                       onSort={changeSort}
                     />
-                    {quotaWindows.map(window => (
-                      <SortHeader
-                        key={window}
-                        label={t(`runtime.quota.windows.${window}`)}
-                        sort={windowSorts[window]}
-                        current={sort}
-                        ascending={ascending}
-                        onSort={changeSort}
-                        className="text-right [&>button]:ml-auto [&>button]:flex"
-                      />
-                    ))}
+                    <TableHead className="whitespace-nowrap text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => changeSort(windowSorts[usageWindow])}
+                          className={cn(
+                            'inline-flex items-center gap-1 hover:text-foreground',
+                            sort === windowSorts[usageWindow] && 'text-foreground'
+                          )}
+                        >
+                          {t('runtime.endUsers.columns.usage')}
+                          {sort !== windowSorts[usageWindow] ? (
+                            <ArrowUpDown className="size-3.5 opacity-40" />
+                          ) : ascending ? (
+                            <ArrowUp className="size-3.5" />
+                          ) : (
+                            <ArrowDown className="size-3.5" />
+                          )}
+                        </button>
+                        <Select
+                          value={usageWindow}
+                          onValueChange={value => changeUsageWindow(value as RuntimeQuotaWindow)}
+                        >
+                          <SelectTrigger className="h-7 w-20 gap-1 px-2 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent align="end">
+                            {quotaWindows.map(window => (
+                              <SelectItem key={window} value={window}>
+                                {t(`runtime.usage.windowShort.${window}`)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </TableHead>
+                    <SortHeader
+                      label={t('runtime.endUsers.columns.quota')}
+                      sort="quota"
+                      current={sort}
+                      ascending={ascending}
+                      onSort={changeSort}
+                      className="min-w-40"
+                    />
+                    <TableHead className="text-right">{t('runtime.credits.title')}</TableHead>
                     <TableHead className="text-right">{tCommon('actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -578,24 +749,9 @@ export function RuntimeEndUsersTab({
                           {displayName(user, t('runtime.endUsers.unnamed'))}
                         </div>
                         {user.plan ||
-                        user.credits ||
                         (user.quota_source !== 'default' && user.quota_source !== 'plan') ? (
                           <div className="mt-1 flex flex-wrap gap-1">
                             <PlanBadge plan={user.plan} />
-                            {user.credits ? (
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  'h-5 px-1.5 text-[11px] font-normal tabular-nums',
-                                  user.credits.balance < 0 &&
-                                    'border-destructive/40 text-destructive'
-                                )}
-                              >
-                                {t('runtime.credits.badge', {
-                                  points: pointsFormat.format(user.credits.balance),
-                                })}
-                              </Badge>
-                            ) : null}
                             {user.quota_source === 'custom' || user.quota_source === 'unlimited' ? (
                               <Badge
                                 variant="outline"
@@ -613,11 +769,26 @@ export function RuntimeEndUsersTab({
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                         {formatTime(user.last_seen_at)}
                       </TableCell>
-                      {quotaWindows.map(window => (
-                        <TableCell key={window} className="text-right">
-                          <UsageMeter usage={user.usage.find(item => item.window === window)} />
-                        </TableCell>
-                      ))}
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">
+                        {pointsFormat.format(
+                          user.usage.find(item => item.window === usageWindow)?.points ?? 0
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <QuotaCell user={user} />
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          'whitespace-nowrap text-right tabular-nums',
+                          (user.credits?.balance ?? 0) < 0 && 'text-destructive'
+                        )}
+                      >
+                        {user.credits ? (
+                          pointsFormat.format(user.credits.balance)
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         {user.status !== 'erased' ? (
                           <Button
@@ -862,6 +1033,10 @@ function EndUserSheet({
   const series = useRuntimeEndUserUsageSeries(runtimeWorkspaceId, subjectId, 30, Boolean(user));
   const [draft, setDraft] = React.useState<QuotaOverrideDraft>(quotaDraftOf(null));
   const [planDraft, setPlanDraft] = React.useState<PlanDraft>(planDraftOf(null));
+  const [tab, setTab] = React.useState('overview');
+  React.useEffect(() => {
+    setTab('overview');
+  }, [subjectId]);
 
   React.useEffect(() => {
     if (user) {
@@ -933,168 +1108,190 @@ function EndUserSheet({
               ) : null}
             </SheetHeader>
 
-            <div className="mt-6 space-y-6">
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">{t('runtime.endUsers.usage')}</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {quotaWindows.map(window => {
-                    const usage = user.usage.find(item => item.window === window);
-                    return (
-                      <div key={window} className="space-y-1.5 rounded-lg border p-3">
-                        <div className="text-xs text-muted-foreground">
-                          {t(`runtime.quota.windows.${window}`)}
-                        </div>
-                        <UsageMeter
-                          usage={usage}
-                          align="left"
-                          className="text-base font-semibold"
-                        />
-                        <div className="text-xs text-muted-foreground">
-                          {usage?.remaining !== undefined
-                            ? t('runtime.endUsers.remaining', {
-                                points: pointsFormat.format(usage.remaining),
-                              })
-                            : t('runtime.quota.unlimited')}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">{t('runtime.endUsers.trend')}</h3>
-                {series.isLoading ? (
-                  <Skeleton className="h-44 w-full" />
-                ) : (
-                  <UsageTrendChart series={series.data} appNames={appNames} height={176} />
-                )}
-              </section>
-
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">{t('runtime.endUsers.byApp')}</h3>
-                {user.apps.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('runtime.endUsers.noUsage')}</p>
-                ) : (
-                  <div className="divide-y rounded-lg border">
-                    {user.apps.map(app => (
-                      <div key={app.app_id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                        <span className="min-w-0 flex-1 truncate">
-                          {appNames.get(app.app_id) ?? app.app_key ?? app.app_id}
-                        </span>
-                        {quotaWindows.map(window => (
+            <Tabs value={tab} onValueChange={setTab} className="mt-5">
+              <TabsList className="w-full justify-start">
+                {(erased
+                  ? ['overview', 'history']
+                  : ['overview', 'quota', 'credits', 'history']
+                ).map(item => (
+                  <TabsTrigger key={item} value={item}>
+                    {t(
+                      `runtime.endUsers.tabs.${item as 'overview' | 'quota' | 'credits' | 'history'}`
+                    )}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <TabsContent value="overview" className="mt-5 space-y-6">
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium">{t('runtime.endUsers.usage')}</h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {quotaWindows.map(window => {
+                      const usage = user.usage.find(item => item.window === window);
+                      return (
+                        <div key={window} className="space-y-1.5 rounded-lg border p-3">
+                          <div className="text-xs text-muted-foreground">
+                            {t(`runtime.quota.windows.${window}`)}
+                          </div>
                           <UsageMeter
-                            key={window}
-                            className="w-24"
-                            usage={app.usage.find(item => item.window === window)}
+                            usage={usage}
+                            align="left"
+                            className="text-base font-semibold"
                           />
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              {!erased && (plans.length > 0 || user.plan) ? (
-                <section className="space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-sm font-medium">{t('runtime.plans.plan')}</h3>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {t('runtime.plans.assignDescription')}
-                      </p>
-                    </div>
-                    <PlanBadge plan={user.plan} />
-                  </div>
-                  {user.plan && !user.plan.active ? (
-                    <p className="text-xs text-warning">{t('runtime.plans.inactive')}</p>
-                  ) : null}
-                  <PlanAssignmentEditor plans={plans} value={planDraft} onChange={setPlanDraft} />
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={saving || !planDirty}
-                      onClick={() => void onSavePlan(planOfDraft(planDraft))}
-                    >
-                      {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-                      {t('runtime.plans.save')}
-                    </Button>
+                          <div className="text-xs text-muted-foreground">
+                            {usage?.remaining !== undefined
+                              ? t('runtime.endUsers.remaining', {
+                                  points: pointsFormat.format(usage.remaining),
+                                })
+                              : t('runtime.quota.unlimited')}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </section>
-              ) : null}
 
-              {!erased ? (
-                <EndUserCreditsSection
-                  runtimeWorkspaceId={runtimeWorkspaceId}
-                  subjectId={user.subject_id}
-                />
-              ) : null}
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium">{t('runtime.endUsers.trend')}</h3>
+                  {series.isLoading ? (
+                    <Skeleton className="h-44 w-full" />
+                  ) : (
+                    <UsageTrendChart series={series.data} appNames={appNames} height={176} />
+                  )}
+                </section>
 
-              {!erased ? (
-                <section className="space-y-3">
-                  <div>
-                    <h3 className="text-sm font-medium">{t('runtime.endUsers.ownQuota')}</h3>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {t('runtime.endUsers.ownQuotaDescription')}
-                    </p>
-                  </div>
-                  <QuotaOverrideEditor value={draft} onChange={setDraft} />
-                  <div className="flex items-center justify-end gap-2">
-                    {dirty ? (
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium">{t('runtime.endUsers.byApp')}</h3>
+                  {user.apps.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">{t('runtime.endUsers.noUsage')}</p>
+                  ) : (
+                    <div className="divide-y rounded-lg border">
+                      {user.apps.map(app => (
+                        <div key={app.app_id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                          <span className="min-w-0 flex-1 truncate">
+                            {appNames.get(app.app_id) ?? app.app_key ?? app.app_id}
+                          </span>
+                          {quotaWindows.map(window => (
+                            <UsageMeter
+                              key={window}
+                              className="w-24"
+                              usage={app.usage.find(item => item.window === window)}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </TabsContent>
+
+              <TabsContent value="quota" className="mt-5 space-y-6">
+                {!erased && (plans.length > 0 || user.plan) ? (
+                  <section className="space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="text-sm font-medium">{t('runtime.plans.plan')}</h3>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {t('runtime.plans.assignDescription')}
+                        </p>
+                      </div>
+                      <PlanBadge plan={user.plan} />
+                    </div>
+                    {user.plan && !user.plan.active ? (
+                      <p className="text-xs text-warning">{t('runtime.plans.inactive')}</p>
+                    ) : null}
+                    <PlanAssignmentEditor plans={plans} value={planDraft} onChange={setPlanDraft} />
+                    <div className="flex justify-end">
                       <Button
                         type="button"
                         size="sm"
-                        variant="ghost"
-                        className="mr-auto"
-                        onClick={() => setDraft(quotaDraftOf(user))}
+                        disabled={saving || !planDirty}
+                        onClick={() => void onSavePlan(planOfDraft(planDraft))}
                       >
-                        <RotateCcw className="size-4" />
-                        {t('runtime.quota.discard')}
+                        {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+                        {t('runtime.plans.save')}
                       </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={saving || !dirty || quota === undefined}
-                      onClick={() => {
-                        if (quota !== undefined) void onSaveQuota(quota);
-                      }}
-                    >
-                      {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-                      {t('runtime.endUsers.saveQuota')}
-                    </Button>
-                  </div>
-                </section>
+                    </div>
+                  </section>
+                ) : null}
+
+                {!erased ? (
+                  <section className="space-y-3">
+                    <div>
+                      <h3 className="text-sm font-medium">{t('runtime.endUsers.ownQuota')}</h3>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {t('runtime.endUsers.ownQuotaDescription')}
+                      </p>
+                    </div>
+                    <QuotaOverrideEditor value={draft} onChange={setDraft} />
+                    <div className="flex items-center justify-end gap-2">
+                      {dirty ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="mr-auto"
+                          onClick={() => setDraft(quotaDraftOf(user))}
+                        >
+                          <RotateCcw className="size-4" />
+                          {t('runtime.quota.discard')}
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={saving || !dirty || quota === undefined}
+                        onClick={() => {
+                          if (quota !== undefined) void onSaveQuota(quota);
+                        }}
+                      >
+                        {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+                        {t('runtime.endUsers.saveQuota')}
+                      </Button>
+                    </div>
+                  </section>
+                ) : null}
+              </TabsContent>
+
+              {!erased ? (
+                <TabsContent value="credits" className="mt-5 space-y-6">
+                  <EndUserCreditsSection
+                    runtimeWorkspaceId={runtimeWorkspaceId}
+                    subjectId={user.subject_id}
+                  />
+                </TabsContent>
               ) : null}
 
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">{t('runtime.endUsers.history')}</h3>
-                {(events.data ?? []).length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('runtime.endUsers.noHistory')}</p>
-                ) : (
-                  <ol className="relative space-y-3 border-l pl-4">
-                    {(events.data ?? []).map(event => (
-                      <li key={event.id} className="relative text-sm">
-                        <span className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-border" />
-                        <div className="flex items-start justify-between gap-3">
-                          <span>
-                            {t(`runtime.endUsers.events.${event.action}`)}
-                            <span className="text-muted-foreground">
-                              {' · '}
-                              {t(`runtime.endUsers.actors.${event.actor_kind}`)}
+              <TabsContent value="history" className="mt-5 space-y-6">
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium">{t('runtime.endUsers.history')}</h3>
+                  {(events.data ?? []).length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t('runtime.endUsers.noHistory')}
+                    </p>
+                  ) : (
+                    <ol className="relative space-y-3 border-l pl-4">
+                      {(events.data ?? []).map(event => (
+                        <li key={event.id} className="relative text-sm">
+                          <span className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-border" />
+                          <div className="flex items-start justify-between gap-3">
+                            <span>
+                              {t(`runtime.endUsers.events.${event.action}`)}
+                              <span className="text-muted-foreground">
+                                {' · '}
+                                {t(`runtime.endUsers.actors.${event.actor_kind}`)}
+                              </span>
                             </span>
-                          </span>
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            {formatTime(event.created_at)}
-                          </span>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
-            </div>
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {formatTime(event.created_at)}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </section>
+              </TabsContent>
+            </Tabs>
           </>
         ) : null}
       </SheetContent>

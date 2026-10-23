@@ -219,6 +219,7 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 	}
 	summary, err := service.SummarizeEndUsers(t.Context(), workspaceID)
 	if err != nil || summary.Usage[0].Points != 15.5 || summary.Usage[0].EndUsers != 1 || summary.Usage[2].Points != 45.5 ||
+		summary.Usage[1].PreviousPoints != 30 || summary.Usage[0].PreviousPoints != 0 ||
 		summary.EndUsers.Total != 2 || summary.EndUsers.NearQuota != 1 || summary.EndUsers.CustomQuota != 2 || summary.EndUsers.Active7d != 2 ||
 		len(summary.Top) != 2 || summary.Top[0].SubjectID != alice.String() {
 		t.Fatalf("summary = %+v %v", summary, err)

@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Crown, Gauge, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import { Crown, Gauge, Loader2, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,6 +15,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { RuntimeApp } from '@/services/types/runtime-workspace';
@@ -111,6 +128,7 @@ export function EndUserQuotaCard({
   saving: boolean;
 }) {
   const t = useT('workspace');
+  const tCommon = useT('common');
   const initial = React.useMemo(() => {
     const quota = (parsePolicy(policyJson).end_user_quota ?? {}) as EndUserQuota;
     return {
@@ -184,8 +202,40 @@ export function EndUserQuotaCard({
     else delete policy.end_user_quota;
     await onSave(policy);
   };
-  const updatePlan = (index: number, patch: Partial<PlanDraft>) =>
-    setPlans(plans.map((plan, i) => (i === index ? { ...plan, ...patch } : plan)));
+  const [editing, setEditing] = React.useState<{ index: number | null; draft: PlanDraft } | null>(
+    null
+  );
+  const editingError = (() => {
+    if (!editing) return null;
+    const key = editing.draft.key.trim();
+    if (!planKeyPattern.test(key)) return t('runtime.plans.keyInvalid');
+    if (plans.some((plan, index) => index !== editing.index && plan.key.trim() === key)) {
+      return t('runtime.plans.keyTaken');
+    }
+    return null;
+  })();
+  const updateDraft = (patch: Partial<PlanDraft>) =>
+    setEditing(current =>
+      current ? { ...current, draft: { ...current.draft, ...patch } } : current
+    );
+  const applyDraft = () => {
+    if (!editing || editingError) return;
+    const draft = { ...editing.draft, key: editing.draft.key.trim() };
+    setPlans(
+      editing.index === null
+        ? [...plans, draft]
+        : plans.map((plan, index) => (index === editing.index ? draft : plan))
+    );
+    setEditing(null);
+  };
+  const limitSummary = (points: WindowPoints) => {
+    const limits = toLimits(points);
+    return limits.length === 0
+      ? t('runtime.plans.unlimited')
+      : limits
+          .map(limit => `${t(`runtime.usage.windowShort.${limit.window}`)} ${limit.points}`)
+          .join(' · ');
+  };
 
   const windowInputs = (value: WindowPoints, onChange: (next: WindowPoints) => void) => (
     <div className="grid grid-cols-3 gap-2">
@@ -308,9 +358,9 @@ export function EndUserQuotaCard({
               variant="outline"
               className="shrink-0"
               onClick={() =>
-                setPlans([
-                  ...plans,
-                  {
+                setEditing({
+                  index: null,
+                  draft: {
                     id: `new-${Date.now()}`,
                     key: '',
                     name: '',
@@ -318,7 +368,7 @@ export function EndUserQuotaCard({
                     saved: false,
                     noAppCaps: false,
                   },
-                ])
+                })
               }
             >
               <Plus className="size-4" />
@@ -328,76 +378,82 @@ export function EndUserQuotaCard({
           {plans.length === 0 ? (
             <p className="text-xs text-muted-foreground">{t('runtime.plans.empty')}</p>
           ) : (
-            plans.map((plan, index) => {
-              const error = planError(plan, index);
-              const holders = planCounts?.[plan.key] ?? 0;
-              return (
-                <div key={plan.id} className="space-y-3 rounded-lg border p-3">
-                  <div className="flex items-start gap-2">
-                    <Crown className="mt-2.5 size-4 shrink-0 text-primary" />
-                    <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
-                      <label className="space-y-1">
-                        <span className="text-xs text-muted-foreground">
-                          {t('runtime.plans.name')}
-                        </span>
-                        <Input
-                          value={plan.name}
-                          maxLength={64}
-                          placeholder={t('runtime.plans.namePlaceholder')}
-                          onChange={event => updatePlan(index, { name: event.target.value })}
-                          className="h-9"
-                        />
-                      </label>
-                      <label className="space-y-1">
-                        <span className="text-xs text-muted-foreground">
-                          {t('runtime.plans.key')}
-                        </span>
-                        <Input
-                          value={plan.key}
-                          maxLength={64}
-                          disabled={plan.saved}
-                          placeholder="pro"
-                          onChange={event =>
-                            updatePlan(index, { key: event.target.value.toLowerCase() })
-                          }
-                          className="h-9 font-mono"
-                        />
-                      </label>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="mt-5"
-                      aria-label={t('runtime.plans.remove')}
-                      onClick={() => setPlans(plans.filter((_, i) => i !== index))}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                  {error && plan.key ? <p className="text-xs text-destructive">{error}</p> : null}
-                  {windowInputs(plan.limits, next => updatePlan(index, { limits: next }))}
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Checkbox
-                        checked={plan.noAppCaps}
-                        onCheckedChange={value =>
-                          updatePlan(index, { noAppCaps: value === true, apps: undefined })
-                        }
-                      />
-                      {plan.apps
-                        ? t('runtime.plans.ownAppCaps', { count: plan.apps.length })
-                        : t('runtime.plans.noAppCaps')}
-                    </label>
-                    {plan.saved ? (
-                      <span className="text-xs text-muted-foreground">
-                        {t('runtime.plans.holders', { count: holders })}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })
+            <div className="overflow-x-auto rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('runtime.plans.name')}</TableHead>
+                    <TableHead>{t('runtime.plans.columns.limits')}</TableHead>
+                    <TableHead>{t('runtime.plans.columns.appCaps')}</TableHead>
+                    <TableHead className="text-right">
+                      {t('runtime.plans.columns.holders')}
+                    </TableHead>
+                    <TableHead className="w-20" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {plans.map((plan, index) => (
+                    <TableRow key={plan.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Crown className="size-4 shrink-0 text-primary" />
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">{plan.name || plan.key}</div>
+                            <code className="text-[11px] text-muted-foreground">{plan.key}</code>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm tabular-nums">
+                        {limitSummary(plan.limits)}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {plan.noAppCaps
+                          ? t('runtime.plans.appCapsNone')
+                          : plan.apps
+                            ? t('runtime.plans.appCapsOwn', { count: plan.apps.length })
+                            : t('runtime.plans.appCapsInherit')}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {plan.saved ? (
+                          <Link
+                            href={`/console/workspace/runtime-workspaces/end-users?plan=${encodeURIComponent(plan.key)}`}
+                            className="text-primary hover:underline"
+                          >
+                            {planCounts?.[plan.key] ?? 0}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="size-8 p-0"
+                            aria-label={t('runtime.plans.edit')}
+                            onClick={() => setEditing({ index, draft: { ...plan } })}
+                          >
+                            <Pencil className="size-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="size-8 p-0 text-muted-foreground hover:text-destructive"
+                            aria-label={t('runtime.plans.remove')}
+                            onClick={() => setPlans(plans.filter((_, i) => i !== index))}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
           {initial.plans.some(
             plan => !plans.some(next => next.key === plan.key) && (planCounts?.[plan.key] ?? 0) > 0
@@ -430,6 +486,76 @@ export function EndUserQuotaCard({
           </Button>
         </div>
       </CardContent>
+
+      <Sheet open={editing !== null} onOpenChange={open => (!open ? setEditing(null) : undefined)}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+          {editing ? (
+            <>
+              <SheetHeader>
+                <SheetTitle>
+                  {editing.index === null
+                    ? t('runtime.plans.createTitle')
+                    : t('runtime.plans.editTitle')}
+                </SheetTitle>
+                <SheetDescription>{t('runtime.plans.description')}</SheetDescription>
+              </SheetHeader>
+              <div className="mt-6 space-y-5">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">{t('runtime.plans.name')}</span>
+                    <Input
+                      value={editing.draft.name}
+                      maxLength={64}
+                      placeholder={t('runtime.plans.namePlaceholder')}
+                      onChange={event => updateDraft({ name: event.target.value })}
+                      className="h-9"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">{t('runtime.plans.key')}</span>
+                    <Input
+                      value={editing.draft.key}
+                      maxLength={64}
+                      disabled={editing.draft.saved}
+                      placeholder="pro"
+                      onChange={event => updateDraft({ key: event.target.value.toLowerCase() })}
+                      className="h-9 font-mono"
+                    />
+                  </label>
+                </div>
+                {editingError && editing.draft.key ? (
+                  <p className="text-xs text-destructive">{editingError}</p>
+                ) : null}
+                <section className="space-y-2">
+                  <h4 className="text-sm font-medium">{t('runtime.plans.columns.limits')}</h4>
+                  {windowInputs(editing.draft.limits, next => updateDraft({ limits: next }))}
+                  <p className="text-xs text-muted-foreground">{t('runtime.quota.zeroHint')}</p>
+                </section>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={editing.draft.noAppCaps}
+                    onCheckedChange={value =>
+                      updateDraft({ noAppCaps: value === true, apps: undefined })
+                    }
+                  />
+                  {editing.draft.apps
+                    ? t('runtime.plans.ownAppCaps', { count: editing.draft.apps.length })
+                    : t('runtime.plans.noAppCaps')}
+                </label>
+                <p className="text-xs text-muted-foreground">{t('runtime.plans.applyHint')}</p>
+              </div>
+              <SheetFooter className="mt-6">
+                <Button type="button" variant="outline" onClick={() => setEditing(null)}>
+                  {tCommon('cancel')}
+                </Button>
+                <Button type="button" disabled={Boolean(editingError)} onClick={applyDraft}>
+                  {t('runtime.plans.apply')}
+                </Button>
+              </SheetFooter>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </Card>
   );
 }

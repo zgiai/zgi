@@ -197,10 +197,12 @@ func (s *Service) listEndUsersRanked(ctx context.Context, runtimeWorkspace *Runt
 }
 
 // WindowTotal is a Runtime Workspace's end-user usage over one window.
+// PreviousPoints is the same window just before it, for comparison.
 type WindowTotal struct {
-	Window   string  `json:"window"`
-	Points   float64 `json:"points"`
-	EndUsers int64   `json:"end_users"`
+	Window         string  `json:"window"`
+	Points         float64 `json:"points"`
+	PreviousPoints float64 `json:"previous_points"`
+	EndUsers       int64   `json:"end_users"`
 }
 
 // EndUserCounts counts a Runtime Workspace's end users.
@@ -255,11 +257,26 @@ func (s *Service) SummarizeEndUsers(ctx context.Context, workspaceID uuid.UUID) 
 		FROM ranked`, nearQuotaRatio), args).Scan(&row).Error; err != nil {
 		return nil, fmt.Errorf("summarize end users: %w", err)
 	}
+	now := s.now()
+	var previous struct{ P24, P7, P30 int64 }
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(b.total_points) FILTER (WHERE b.request_created_at >= @from_24 AND b.request_created_at < @since_24h), 0) AS p24,
+			COALESCE(SUM(b.total_points) FILTER (WHERE b.request_created_at >= @from_7 AND b.request_created_at < @since_7d), 0) AS p7,
+			COALESCE(SUM(b.total_points) FILTER (WHERE b.request_created_at < @since_30d), 0) AS p30
+		FROM llm_usage_bills b
+		JOIN runtime_workspace_end_users e ON e.subject_id = b.end_user_subject_id
+		WHERE e.runtime_workspace_id = @runtime AND b.request_created_at >= @from_30`,
+		map[string]any{"runtime": runtimeWorkspace.LogicalID(),
+			"since_24h": args["since_24h"], "since_7d": args["since_7d"], "since_30d": args["since_30d"],
+			"from_24": now.Add(-2 * QuotaWindows["24h"]), "from_7": now.Add(-2 * QuotaWindows["7d"]), "from_30": now.Add(-2 * QuotaWindows["30d"]),
+		}).Scan(&previous).Error; err != nil {
+		return nil, fmt.Errorf("sum previous end-user usage: %w", err)
+	}
 	summary := &EndUserSummary{
 		Usage: []WindowTotal{
-			{Window: "24h", Points: pointsOf(millipoints.FromInt64(row.U24)), EndUsers: row.Users24},
-			{Window: "7d", Points: pointsOf(millipoints.FromInt64(row.U7)), EndUsers: row.Users7},
-			{Window: "30d", Points: pointsOf(millipoints.FromInt64(row.U30)), EndUsers: row.Users30},
+			{Window: "24h", Points: pointsOf(millipoints.FromInt64(row.U24)), PreviousPoints: pointsOf(millipoints.FromInt64(previous.P24)), EndUsers: row.Users24},
+			{Window: "7d", Points: pointsOf(millipoints.FromInt64(row.U7)), PreviousPoints: pointsOf(millipoints.FromInt64(previous.P7)), EndUsers: row.Users7},
+			{Window: "30d", Points: pointsOf(millipoints.FromInt64(row.U30)), PreviousPoints: pointsOf(millipoints.FromInt64(previous.P30)), EndUsers: row.Users30},
 		},
 		EndUsers: EndUserCounts{Total: row.Total, Active7d: row.Active7d, Suspended: row.Suspended, Erased: row.Erased,
 			CustomQuota: row.CustomQuota, OverQuota: row.OverQuota, NearQuota: row.NearQuota},
