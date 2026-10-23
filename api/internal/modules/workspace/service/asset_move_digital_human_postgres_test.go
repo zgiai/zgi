@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/migrations"
+	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -72,6 +73,14 @@ func TestWorkspaceAssetMoveMovesDigitalHumansPostgres(t *testing.T) {
 	}
 	exec("INSERT INTO automation_tasks (id, organization_id, workspace_id, name, task_kind, subject_type, subject_id, owner_kind, origin_surface, status, schedule_type, timezone, schedule_config, source_type, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, 'Weekly', 'digital_human', 'digital_human', ?, 'digital_human', 'console', 'active', 'manual', 'UTC', '{}', 'manual', ?, ?, now(), now())",
 		uuid.New(), organizationID, sourceID, digitalHumanID.String(), accountID, accountID)
+	// The hidden dataset projecting the memory, as retrieval creates it.
+	createdBy := accountID.String()
+	projection := &datasetmodel.Dataset{ID: uuid.New().String(), OrganizationID: organizationID.String(), WorkspaceID: sourceID.String(), Name: "DigitalHuman memory projection",
+		Provider: datasetmodel.ProviderDigitalHumanMemory, Permission: string(datasetmodel.DatasetPermissionOnlyMe), CreatedBy: createdBy, Owner: &createdBy}
+	if err := tx.Create(projection).Error; err != nil {
+		t.Fatal(err)
+	}
+	exec("UPDATE digital_human_memory_states SET memory_dataset_id = ? WHERE digital_human_id = ?", projection.ID, digitalHumanID)
 
 	authorization := &stubAssetMoveOrgService{allowed: true}
 	mover := NewWorkspaceAssetMoveService(tx, authorization, nil).RegisterAssetMover(digitalhuman.NewWorkspaceMover())
@@ -109,6 +118,9 @@ func TestWorkspaceAssetMoveMovesDigitalHumansPostgres(t *testing.T) {
 		if moved := count("SELECT count(*) FROM "+table+" WHERE digital_human_id = ? AND workspace_id = ?", digitalHumanID, targetID); moved == 0 {
 			t.Fatalf("%s has no rows in the target workspace", table)
 		}
+	}
+	if n := count("SELECT count(*) FROM datasets WHERE id = ? AND workspace_id = ?", projection.ID, targetID); n != 1 {
+		t.Fatal("the memory projection dataset stayed in the source workspace")
 	}
 	if n := count("SELECT count(*) FROM digital_humans WHERE id = ? AND workspace_id = ? AND identity_workspace_id = ?", digitalHumanID, targetID, sourceID); n != 1 {
 		t.Fatal("the DigitalHuman did not move with its identity workspace pinned")

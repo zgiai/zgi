@@ -176,6 +176,9 @@ func (m *WorkspaceMover) Move(ctx context.Context, tx *gorm.DB, organizationID, 
 		{"workspace artifacts", "UPDATE artifacts SET owner_id = ? WHERE application_type = ? AND application_id = ? AND owner_kind = ? AND owner_id = ?", []any{target, "digital_human", id, "workspace", source}},
 		{"artifacts", "UPDATE artifacts SET workspace_id = ? WHERE workspace_id = ? AND application_type = ? AND application_id = ?", []any{target, source, "digital_human", id}},
 		{"notification channels", "UPDATE notification_channels SET workspace_id = ? WHERE workspace_id = ? AND owner_kind = ? AND owner_id = ?", []any{target, source, "digital_human", id}},
+		// The hidden datasets that project the DigitalHuman's memory belong
+		// to its workspace; they move with the memory states naming them.
+		{"memory projections", "UPDATE datasets SET workspace_id = ? WHERE workspace_id = ? AND provider = ? AND id::text IN (SELECT memory_dataset_id::text FROM digital_human_memory_states WHERE digital_human_id = ? AND memory_dataset_id IS NOT NULL)", []any{target, source, "digital_human_memory", id}},
 		{"relationship memory", "UPDATE user_memory_relationships SET workspace_id = ? WHERE workspace_id = ? AND consumer_type = ? AND consumer_id = ?", []any{target, source, "digital_human", id}},
 		{"execution uploads", "UPDATE agent_execution_uploads SET workspace_id = ? WHERE workspace_id = ? AND application_type = ? AND application_id = ?", []any{target, source, "digital_human", id}},
 	}
