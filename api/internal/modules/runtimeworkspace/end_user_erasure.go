@@ -378,8 +378,16 @@ func (s *Service) ExportEndUser(ctx context.Context, workspaceID, subjectID uuid
 	if err := recordEndUserEvent(s.db.WithContext(ctx), runtimeWorkspace.LogicalID(), subjectID, EndUserEventExported, actor, s.now()); err != nil {
 		return nil, err
 	}
-	if export.History, err = s.ListEndUserEvents(ctx, workspaceID, subjectID); err != nil {
-		return nil, err
+	export.History = []EndUserEvent{}
+	for page := 1; ; page++ {
+		events, err := s.ListEndUserEvents(ctx, workspaceID, subjectID, page, 200)
+		if err != nil {
+			return nil, err
+		}
+		export.History = append(export.History, events.Items...)
+		if !events.HasMore {
+			break
+		}
 	}
 	return export, nil
 }

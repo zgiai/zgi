@@ -30,7 +30,10 @@ import { API_URL, ENABLE_RUNTIME_WORKSPACE, ICON_BG, ICON_TEXT } from '@/lib/con
 import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { useRuntimeWorkspace } from '@/hooks/runtime-workspace/use-runtime-workspace';
+import {
+  useRuntimeWorkspace,
+  useRuntimeWorkspaceAllCredentials,
+} from '@/hooks/runtime-workspace/use-runtime-workspace';
 import {
   RuntimeQuotaTab,
   RuntimeUsageOverview,
@@ -451,8 +454,21 @@ function CatalogTagBadges({ tags = [] }: { tags?: RuntimeCatalogTag[] }) {
   );
 }
 
+const unavailableReasons = [
+  'agent_not_found',
+  'source_workspace_archived',
+  'agent_not_published',
+  'digital_human_not_published',
+  'agent_disabled',
+  'digital_human_api_disabled',
+  'agent_not_authorized',
+  'binding_disabled',
+] as const;
+type UnavailableReason = (typeof unavailableReasons)[number];
+
 function AppsTab({
   revision,
+  limit,
   apps,
   candidates,
   crossWorkspaceCandidates,
@@ -463,6 +479,7 @@ function AppsTab({
   isSyncing,
 }: {
   revision: number;
+  limit: number;
   apps: RuntimeApp[];
   candidates: RuntimeAgentCandidate[];
   crossWorkspaceCandidates: RuntimeAgentCandidate[];
@@ -506,21 +523,21 @@ function AppsTab({
     [candidates, crossWorkspaceCandidates]
   );
   // Agents and DigitalHumans share one ID space; the sync request names each
-  // kind separately.
-  const digitalHumanIds = React.useMemo(
+  // kind separately. Apps of any other type are not sent (ADR 0012).
+  const appTypes = React.useMemo(
     () =>
-      new Set(
-        [...apps, ...allCandidates]
-          .filter(item => item.app_type === 'digital_human')
-          .map(item => item.agent_id)
+      new Map(
+        [...apps, ...allCandidates].map(item => [item.agent_id, item.app_type ?? 'agent'] as const)
       ),
     [allCandidates, apps]
   );
   const selection = (ids: string[]) => ({
     expected_revision: revision,
-    agent_ids: ids.filter(id => !digitalHumanIds.has(id)),
-    digital_human_ids: ids.filter(id => digitalHumanIds.has(id)),
+    agent_ids: ids.filter(id => (appTypes.get(id) ?? 'agent') === 'agent'),
+    digital_human_ids: ids.filter(id => appTypes.get(id) === 'digital_human'),
   });
+  const remaining = Math.max(0, limit - activeApps.length);
+  const overLimit = selectedCandidateIds.size > remaining;
   const availableCandidates = React.useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     const scoped =
@@ -609,6 +626,11 @@ function AppsTab({
     <section className="space-y-4">
       <RuntimePageHeader
         title={t('runtime.apps.titleWithCount', { count: activeApps.length })}
+        badge={
+          <Badge variant={activeApps.length >= limit ? 'warning' : 'subtle'}>
+            {t('runtime.apps.limitUsage', { count: activeApps.length, limit })}
+          </Badge>
+        }
         description={t('runtime.apps.description')}
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -701,10 +723,15 @@ function AppsTab({
                         disabled={isSyncing}
                       />
                     </div>
-                    <Badge variant="subtle">
+                    <Badge variant={overLimit ? 'warning' : 'subtle'}>
                       {t('runtime.apps.selectedCount', { count: selectedCandidateIds.size })}
                     </Badge>
                   </div>
+                  {overLimit ? (
+                    <p className="text-xs text-warning">
+                      {t('runtime.apps.overLimit', { limit, remaining })}
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <Button
                       type="button"
@@ -858,7 +885,7 @@ function AppsTab({
                   <Button
                     type="button"
                     onClick={() => void submitAdd()}
-                    disabled={selectedCandidateIds.size === 0 || isSyncing}
+                    disabled={selectedCandidateIds.size === 0 || overLimit || isSyncing}
                   >
                     {isSyncing ? (
                       <Loader2 className="size-4 animate-spin" />
@@ -995,7 +1022,16 @@ function AppsTab({
                           ) : null}
                           <span title={app.version}>{formatShortDate(app.published_at)}</span>
                           {!app.callable ? (
-                            <Badge variant="warning">{t('runtime.apps.unavailable')}</Badge>
+                            <Badge variant="warning">
+                              {app.unavailable_reason &&
+                              (unavailableReasons as readonly string[]).includes(
+                                app.unavailable_reason
+                              )
+                                ? t(
+                                    `runtime.apps.unavailableReasons.${app.unavailable_reason as UnavailableReason}`
+                                  )
+                                : t('runtime.apps.unavailable')}
+                            </Badge>
                           ) : null}
                         </div>
                       </div>
@@ -1112,13 +1148,19 @@ function AppsTab({
 }
 
 function CredentialsTab({
+  runtimeWorkspaceId,
   credentials,
+  inactiveCount,
+  limit,
   onCreate,
   onRevoke,
   isCreating,
   isRevoking,
 }: {
+  runtimeWorkspaceId: string;
   credentials: RuntimeCredential[];
+  inactiveCount: number;
+  limit: number;
   onCreate: (input: {
     name?: string;
     expires_at?: string;
@@ -1137,10 +1179,13 @@ function CredentialsTab({
   const [revokeId, setRevokeId] = React.useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = React.useState<string | null>(null);
   const [showRevoked, setShowRevoked] = React.useState(false);
-  const revokedCount = credentials.filter(credential => credential.status !== 'active').length;
-  const shown = showRevoked
-    ? credentials
-    : credentials.filter(credential => credential.status === 'active');
+  const revokedCount = inactiveCount;
+  const everyKey = useRuntimeWorkspaceAllCredentials(runtimeWorkspaceId, showRevoked);
+  const shown = showRevoked ? (everyKey.data?.items ?? credentials) : credentials;
+  const activeCount = credentials.filter(
+    credential => !credential.expires_at || new Date(credential.expires_at).getTime() > Date.now()
+  ).length;
+  const atLimit = activeCount >= limit;
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1172,10 +1217,20 @@ function CredentialsTab({
                 if (!value) setIdempotencyKey(null);
               }}
             >
-              <Button type="button" onClick={() => setOpen(true)}>
-                <Plus className="size-4" />
-                {t('runtime.credentials.create')}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Badge variant={atLimit ? 'warning' : 'subtle'}>
+                  {t('runtime.credentials.limitUsage', { count: activeCount, limit })}
+                </Badge>
+                <Button
+                  type="button"
+                  onClick={() => setOpen(true)}
+                  disabled={atLimit}
+                  title={atLimit ? t('runtime.credentials.atLimit', { limit }) : undefined}
+                >
+                  <Plus className="size-4" />
+                  {t('runtime.credentials.create')}
+                </Button>
+              </div>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>{t('runtime.credentials.createTitle')}</DialogTitle>
@@ -1417,7 +1472,7 @@ export default function RuntimeWorkspacePage({
   const callableAppCount = apps.filter(
     app => app.status === 'active' && app.callable !== false
   ).length;
-  const usableCredentialCount = (runtime.credentials.data ?? []).filter(item => {
+  const usableCredentialCount = (runtime.credentials.data?.items ?? []).filter(item => {
     if (item.status !== 'active') return false;
     return !item.expires_at || new Date(item.expires_at).getTime() > Date.now();
   }).length;
@@ -1629,7 +1684,10 @@ export default function RuntimeWorkspacePage({
             />
             <div id="runtime-keys" className="scroll-mt-4">
               <CredentialsTab
-                credentials={runtime.credentials.data ?? []}
+                runtimeWorkspaceId={runtime.current.data?.workspace_id ?? ''}
+                credentials={runtime.credentials.data?.items ?? []}
+                inactiveCount={runtime.credentials.data?.inactive ?? 0}
+                limit={runtime.credentials.data?.limit ?? 50}
                 onCreate={async input => {
                   const result = await runtime.createCredential.mutateAsync(input);
                   toast.success(t('runtime.messages.keyCreated'));
@@ -1669,6 +1727,7 @@ export default function RuntimeWorkspacePage({
         {section === 'agents' ? (
           <AppsTab
             revision={appCollection.revision}
+            limit={appCollection.limit ?? 100}
             apps={apps}
             candidates={currentCandidateSet.items}
             crossWorkspaceCandidates={crossCandidateSet.items}

@@ -1,6 +1,12 @@
 'use client';
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { runtimeWorkspaceService } from '@/services/runtime-workspace.service';
 import type {
@@ -81,13 +87,31 @@ export function useRuntimeEndUserCredits(
   subjectId: string | null
 ) {
   const queryClient = useQueryClient();
-  const ledger = useQuery({
+  const pages = useInfiniteQuery({
     queryKey: RUNTIME_WORKSPACE_KEYS.endUserCredits(runtimeWorkspaceId, subjectId),
-    queryFn: () =>
-      runtimeWorkspaceService.listEndUserCredits(runtimeWorkspaceId as string, subjectId as string),
+    queryFn: ({ pageParam }) =>
+      runtimeWorkspaceService.listEndUserCredits(
+        runtimeWorkspaceId as string,
+        subjectId as string,
+        pageParam
+      ),
+    initialPageParam: 1,
+    getNextPageParam: last => (last.has_more ? last.page + 1 : undefined),
     enabled: Boolean(runtimeWorkspaceId && subjectId),
     retry: false,
   });
+  const ledger = {
+    data: pages.data
+      ? {
+          credits: pages.data.pages[0]?.credits,
+          items: pages.data.pages.flatMap(page => page.items),
+        }
+      : undefined,
+    isLoading: pages.isLoading,
+    hasMore: Boolean(pages.hasNextPage),
+    loadingMore: pages.isFetchingNextPage,
+    loadMore: () => void pages.fetchNextPage(),
+  };
   const grant = useMutation({
     mutationFn: (data: RuntimeCreditGrant) =>
       runtimeWorkspaceService.grantEndUserCredits(
@@ -143,11 +167,23 @@ export function useRuntimeEndUserEvents(
   runtimeWorkspaceId: string | null,
   subjectId: string | null
 ) {
-  return useQuery({
+  const pages = useInfiniteQuery({
     queryKey: RUNTIME_WORKSPACE_KEYS.endUserEvents(runtimeWorkspaceId, subjectId),
-    queryFn: () =>
-      runtimeWorkspaceService.listEndUserEvents(runtimeWorkspaceId as string, subjectId as string),
+    queryFn: ({ pageParam }) =>
+      runtimeWorkspaceService.listEndUserEvents(
+        runtimeWorkspaceId as string,
+        subjectId as string,
+        pageParam
+      ),
+    initialPageParam: 1,
+    getNextPageParam: last => (last.has_more ? last.page + 1 : undefined),
     enabled: Boolean(runtimeWorkspaceId && subjectId),
     retry: false,
   });
+  return {
+    data: pages.data?.pages.flatMap(page => page.items),
+    hasMore: Boolean(pages.hasNextPage),
+    loadingMore: pages.isFetchingNextPage,
+    loadMore: () => void pages.fetchNextPage(),
+  };
 }

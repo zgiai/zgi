@@ -108,7 +108,24 @@ export interface RuntimeWorkspaceCredentialInput {
 
 export interface RuntimeAppCollection {
   revision: number;
+  /** How many apps the external access may expose. */
+  limit?: number;
   items: RuntimeApp[];
+}
+
+/** Active keys, with how many are revoked or expired and the active-key limit. */
+export interface RuntimeCredentialList {
+  items: RuntimeCredential[];
+  inactive: number;
+  limit: number;
+}
+
+/** A page of a newest-first list. */
+export interface RuntimePage<T> {
+  items: T[];
+  page: number;
+  limit: number;
+  has_more: boolean;
 }
 
 export interface RuntimeWorkspaceAgentSelectionInput {

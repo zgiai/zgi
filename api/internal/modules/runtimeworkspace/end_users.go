@@ -369,18 +369,37 @@ func (s *Service) UpdateEndUser(ctx context.Context, workspaceID, subjectID uuid
 	return s.GetEndUser(ctx, workspaceID, subjectID)
 }
 
-// ListEndUserEvents lists the recorded changes to an end user.
-func (s *Service) ListEndUserEvents(ctx context.Context, workspaceID, subjectID uuid.UUID) ([]EndUserEvent, error) {
+// EndUserEventPage is a page of an end user's recorded changes, newest
+// first.
+type EndUserEventPage struct {
+	Items   []EndUserEvent `json:"items"`
+	Page    int            `json:"page"`
+	Limit   int            `json:"limit"`
+	HasMore bool           `json:"has_more"`
+}
+
+// ListEndUserEvents lists the recorded changes to an end user, a page at a
+// time.
+func (s *Service) ListEndUserEvents(ctx context.Context, workspaceID, subjectID uuid.UUID, page, limit int) (*EndUserEventPage, error) {
 	runtimeWorkspace, user, err := s.loadEndUser(ctx, s.db, workspaceID, subjectID, false)
 	if err != nil {
 		return nil, err
 	}
+	page = max(page, 1)
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
 	var events []EndUserEvent
 	if err := s.db.WithContext(ctx).Where("runtime_workspace_id = ? AND subject_id = ?", runtimeWorkspace.LogicalID(), user.SubjectID).
-		Order("created_at DESC").Limit(200).Find(&events).Error; err != nil {
+		Order("created_at DESC").Order("id DESC").Limit(limit + 1).Offset((page - 1) * limit).Find(&events).Error; err != nil {
 		return nil, fmt.Errorf("list end-user events: %w", err)
 	}
-	return events, nil
+	result := &EndUserEventPage{Page: page, Limit: limit, HasMore: len(events) > limit}
+	if result.HasMore {
+		events = events[:limit]
+	}
+	result.Items = events
+	return result, nil
 }
 
 func (s *Service) loadEndUser(ctx context.Context, db *gorm.DB, workspaceID, subjectID uuid.UUID, lock bool) (*RuntimeWorkspace, *EndUser, error) {

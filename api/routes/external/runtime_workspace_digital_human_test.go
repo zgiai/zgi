@@ -33,6 +33,9 @@ func TestRuntimeAppRouteServesTheBoundAppType(t *testing.T) {
 	if code, body := serve("", agent, digitalHuman); code != http.StatusOK || body != "agent" {
 		t.Fatalf("untyped app = %d %q, want the Agent handler", code, body)
 	}
+	if code, body := serve("knowledge_base", agent, digitalHuman); code != http.StatusNotFound || body == "agent" {
+		t.Fatalf("an app of another type = %d %q, want not found", code, body)
+	}
 	if code, _ := serve(runtimeworkspace.AppTypeAgent, nil, digitalHuman); code == http.StatusOK {
 		t.Fatal("an Agent reached a DigitalHuman-only operation")
 	}

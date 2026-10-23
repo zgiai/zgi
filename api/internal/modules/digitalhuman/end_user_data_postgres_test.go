@@ -164,7 +164,8 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 	if err := rw.EraseEndUser(ctx, workspaceID, alice, actor); err != nil {
 		t.Fatalf("erasing twice = %v", err)
 	}
-	events, err := rw.ListEndUserEvents(ctx, workspaceID, alice)
+	page, err := rw.ListEndUserEvents(ctx, workspaceID, alice, 1, 50)
+	events := page.Items
 	if err != nil || len(events) != 2 {
 		t.Fatalf("alice events = %+v %v", events, err)
 	}

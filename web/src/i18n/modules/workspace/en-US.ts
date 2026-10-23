@@ -155,6 +155,9 @@ const messages = {
         key: 'Create an access key',
       },
     },
+    common: {
+      loadMore: 'Load more',
+    },
     tabs: {
       overview: 'Overview',
       apps: 'Apps',
@@ -399,6 +402,18 @@ const messages = {
       unattributed: 'No app',
     },
     apps: {
+      limitUsage: '{count} / {limit}',
+      overLimit: 'Up to {limit} apps can be exposed; {remaining} more can be added.',
+      unavailableReasons: {
+        agent_not_found: 'App deleted',
+        source_workspace_archived: 'Source workspace archived',
+        agent_not_published: 'Not published',
+        digital_human_not_published: 'Not published',
+        agent_disabled: 'API off',
+        digital_human_api_disabled: 'API off',
+        agent_not_authorized: 'Not authorized',
+        binding_disabled: 'Removed',
+      },
       title: 'Connected apps',
       titleWithCount: 'Connected apps {count}',
       description: 'Business systems call the latest published version of each assistant and digital human.',
@@ -462,6 +477,8 @@ const messages = {
       },
     },
     credentials: {
+      limitUsage: '{count} / {limit} active',
+      atLimit: 'At most {limit} active keys; revoke one you no longer use first.',
       title: 'Access keys',
       description:
         'Access keys let business systems call the API and can be revoked or expired at any time.',

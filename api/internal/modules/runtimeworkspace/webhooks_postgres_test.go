@@ -248,10 +248,11 @@ func TestRuntimeWorkspaceWebhooksReportEndUsersPostgres(t *testing.T) {
 	if err := worker.RunOnce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	deliveries, err := service.ListWebhookDeliveries(t.Context(), workspaceID, 50)
+	deliveryPage, err := service.ListWebhookDeliveries(t.Context(), workspaceID, 1, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
+	deliveries := deliveryPage.Items
 	status := map[string]string{}
 	for _, delivery := range deliveries {
 		status[delivery.Event] = delivery.Status

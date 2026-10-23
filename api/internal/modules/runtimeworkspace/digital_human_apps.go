@@ -18,12 +18,13 @@ import (
 var digitalHumanCapabilities = []string{"chat", "conversations", "files", "tasks", "reports"}
 
 // bindingAppType reads a binding's application type; rows written before
-// DigitalHumans could be bound are Agents.
+// DigitalHumans could be bound are Agents. Any other type is returned as it
+// is, so callers never take it for an Agent (ADR 0012).
 func bindingAppType(binding AgentBinding) string {
-	if binding.AppType == AppTypeDigitalHuman {
-		return AppTypeDigitalHuman
+	if binding.AppType == "" {
+		return AppTypeAgent
 	}
-	return AppTypeAgent
+	return binding.AppType
 }
 
 // loadBoundDigitalHumans loads the DigitalHumans of bindings and reports

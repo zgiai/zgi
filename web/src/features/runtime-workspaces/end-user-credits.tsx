@@ -184,7 +184,7 @@ export function EndUserCreditsSection({
         <p className="text-xs text-muted-foreground">{t('runtime.credits.noEntries')}</p>
       ) : (
         <div className="divide-y rounded-lg border">
-          {entries.slice(0, 20).map(entry => (
+          {entries.map(entry => (
             <div key={entry.id} className="flex items-start gap-3 px-3 py-2 text-sm">
               <div className="min-w-0 flex-1">
                 <div>{t(`runtime.credits.kinds.${entryKind(entry)}`)}</div>
@@ -211,6 +211,19 @@ export function EndUserCreditsSection({
           ))}
         </div>
       )}
+      {ledger.hasMore ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-full text-muted-foreground"
+          disabled={ledger.loadingMore}
+          onClick={ledger.loadMore}
+        >
+          {ledger.loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
+          {t('runtime.common.loadMore')}
+        </Button>
+      ) : null}
     </section>
   );
 }

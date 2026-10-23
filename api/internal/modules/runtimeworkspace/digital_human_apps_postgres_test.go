@@ -134,4 +134,30 @@ func TestRuntimeWorkspaceBindsAndAuthorizesDigitalHumansPostgres(t *testing.T) {
 	if err := service.SubjectBound(t.Context(), subjectID, digitalHumanID); err == nil {
 		t.Fatal("an end user stayed bound after API access was turned off")
 	}
+	openAPI(true)
+
+	// The bound-app limit is configurable and refused with its own error.
+	t.Setenv("ZGI_RUNTIME_WORKSPACE_MAX_APPS", "1")
+	listed, err := service.ListBindings(t.Context(), workspaceID)
+	if err != nil || listed.Limit != 1 {
+		t.Fatalf("bindings limit = %#v, %v", listed, err)
+	}
+	if _, err := service.SyncAppBindings(t.Context(), workspaceID, accountID, listed.Revision,
+		[]AppRef{{Type: AppTypeDigitalHuman, ID: digitalHumanID}, {Type: AppTypeAgent, ID: uuid.New()}}); !errors.Is(err, ErrAppLimitExceeded) {
+		t.Fatalf("binding past the limit = %v", err)
+	}
+
+	// A selection that still names a deleted app drops it instead of failing.
+	exec("UPDATE digital_humans SET deleted_at = ? WHERE id = ?", now, digitalHumanID)
+	listed, err = service.ListBindings(t.Context(), workspaceID)
+	if err != nil || len(listed.Items) != 1 || listed.Items[0].Callable {
+		t.Fatalf("bindings with a deleted app = %#v, %v", listed, err)
+	}
+	saved, err := service.SyncAppBindings(t.Context(), workspaceID, accountID, listed.Revision, []AppRef{{Type: AppTypeDigitalHuman, ID: digitalHumanID}})
+	if err != nil || len(saved.Items) != 0 {
+		t.Fatalf("saving a selection with a deleted app = %#v, %v", saved, err)
+	}
+	if _, err := service.SyncAppBindings(t.Context(), workspaceID, accountID, saved.Revision, []AppRef{{Type: AppTypeDigitalHuman, ID: uuid.New()}}); !errors.Is(err, ErrAppNotFound) {
+		t.Fatalf("binding an unknown app = %v", err)
+	}
 }

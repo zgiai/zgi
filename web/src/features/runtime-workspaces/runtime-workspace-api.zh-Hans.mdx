@@ -32,7 +32,7 @@ App ID 由系统生成并保持稳定。App 重新发布或 Runtime Key 轮换�
 
 Runtime Key 只应保存在业务服务端。浏览器或移动端应通过业务 BFF 调用 ZGI。
 
-管理员可以为外部接入配置 `requests_per_minute` 限流策略。触发限流时返回 `429`，并携带 `Retry-After`、`X-RateLimit-Limit` 和 `X-RateLimit-Remaining`，客户端应按窗口退避重试。
+管理员可以为外部接入配置 `requests_per_minute` 限流策略。触发限流时返回 `429`，并携带 `Retry-After`、`X-RateLimit-Limit` 和 `X-RateLimit-Remaining`，客户端应按窗口退避重试。限流按自然分钟计数；限流服务不可用时请求不受限。
 
 ## 快速开始
 
@@ -97,6 +97,8 @@ curl -N -X POST '{apibase}/apps/app_34ab5c8d91ef/chat' \
 ---
 
 ## Apps
+
+每个外部接入最多开放 100 个 App（智能体和数字人合计，部署方可调整）。
 
 <Heading url="/apps" method="GET" title="获取 App 列表" name="#List-Apps" />
 
@@ -394,7 +396,7 @@ curl -X POST '{apibase}/end-users/customer-42/credits' \
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/end-users/{user}/connections` | 查看各数字人 App 按用户连接的状态：`connected`、`needs_connection` 或 `reconnect_required` |
-| POST | `/end-users/{user}/connections` | 校验并连接一个连接项：`{"app_key", "slot_key", "values": {...}}`，需携带 `Idempotency-Key` 请求头 |
+| POST | `/end-users/{user}/connections` | 校验并连接一个连接项：`{"app_key", "slot_key", "values": {...}}`，需携带 `Idempotency-Key` 请求头（16–200 个字符，建议使用 UUID） |
 | DELETE | `/end-users/{user}/connections/{app_key}/{slot_key}` | 断开该连接项，并销毁已保存的 key |
 
 - key 校验失败返回 400，并给出连接器错误码，例如 `connector_key_invalid`。
@@ -413,7 +415,7 @@ curl -X POST '{apibase}/end-users/customer-42/credits' \
 
 ## Key 轮换
 
-推荐顺序：
+每个外部接入最多有 50 个可用 Key，已撤销或过期的 Key 不计入。推荐顺序：
 
 1. 在控制台创建新 Runtime Key。
 2. 将新 Key 部署到业务服务端。

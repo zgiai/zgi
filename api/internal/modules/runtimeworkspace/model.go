@@ -239,8 +239,10 @@ type CatalogTag struct {
 }
 
 type ManagementAppSet struct {
-	Revision int64           `json:"revision"`
-	Items    []ManagementApp `json:"items"`
+	Revision int64 `json:"revision"`
+	// Limit is how many apps the Runtime Workspace may bind.
+	Limit int             `json:"limit"`
+	Items []ManagementApp `json:"items"`
 }
 
 type SourceWorkspace struct {

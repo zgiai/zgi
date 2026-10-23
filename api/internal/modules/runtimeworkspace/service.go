@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -39,14 +41,31 @@ var (
 	ErrOperationInProgress       = errors.New("runtime workspace credential operation is in progress")
 	ErrSecretReplayExpired       = errors.New("runtime workspace credential secret replay window expired")
 	ErrRequestDrainTimeout       = errors.New("runtime workspace requests did not drain before teardown")
+	// ErrAppLimitExceeded reports more bound apps than a Runtime Workspace
+	// may have.
+	ErrAppLimitExceeded = errors.New("runtime workspace app limit exceeded")
+	// ErrCredentialLimitExceeded reports too many active access keys.
+	ErrCredentialLimitExceeded = errors.New("runtime workspace credential limit exceeded")
 )
+
+// MaxRuntimeWorkspaceApps is how many apps a Runtime Workspace may bind, of
+// all types together: ZGI_RUNTIME_WORKSPACE_MAX_APPS, 100 by default.
+func MaxRuntimeWorkspaceApps() int {
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("ZGI_RUNTIME_WORKSPACE_MAX_APPS"))); err == nil && value > 0 {
+		return value
+	}
+	return defaultRuntimeWorkspaceApps
+}
 
 const (
 	credentialSecretReplayTTL    = 30 * time.Minute
 	credentialOperationRecordTTL = 24 * time.Hour
-	maxRuntimeWorkspaceAgents    = 100
-	runtimeRequestDrainTimeout   = 30 * time.Second
-	runtimeRequestDrainPoll      = 50 * time.Millisecond
+	defaultRuntimeWorkspaceApps  = 100
+	// MaxActiveCredentials bounds the usable access keys of a Runtime
+	// Workspace; revoked and expired keys do not count.
+	MaxActiveCredentials       = 50
+	runtimeRequestDrainTimeout = 30 * time.Second
+	runtimeRequestDrainPoll    = 50 * time.Millisecond
 )
 
 type Service struct {
@@ -321,11 +340,13 @@ func (s *Service) loadBoundAgents(ctx context.Context, runtimeWorkspace *Runtime
 	agentIDs := make([]uuid.UUID, 0, len(bindings))
 	var digitalHumanIDs []uuid.UUID
 	for _, binding := range bindings {
-		if bindingAppType(binding) == AppTypeDigitalHuman {
+		switch bindingAppType(binding) {
+		case AppTypeDigitalHuman:
 			digitalHumanIDs = append(digitalHumanIDs, binding.AgentID)
-			continue
+		case AppTypeAgent:
+			agentIDs = append(agentIDs, binding.AgentID)
 		}
-		agentIDs = append(agentIDs, binding.AgentID)
+		// Bindings of other types load nothing and read as not found.
 	}
 	digitalHumans, authorizedDigitalHumans, err := s.loadBoundDigitalHumans(ctx, runtimeWorkspace, digitalHumanIDs)
 	if err != nil {
@@ -371,18 +392,23 @@ func (s *Service) loadBoundAgents(ctx context.Context, runtimeWorkspace *Runtime
 
 // runtimeAppCapabilities lists what /api/connect/v1 serves for an app.
 func runtimeAppCapabilities(record runtimeAgentRecord, presentation runtimePublishedPresentation) []string {
-	if record.AppType == AppTypeDigitalHuman {
+	switch record.AppType {
+	case AppTypeDigitalHuman:
 		return append([]string(nil), digitalHumanCapabilities...)
+	case AppTypeAgent, "":
+		return runtimeAgentCapabilities(presentation)
+	default:
+		return []string{}
 	}
-	return runtimeAgentCapabilities(presentation)
 }
 
-// runtimeAppType reports a record's application type, Agent by default.
+// runtimeAppType reports a record's application type; records loaded
+// before types were kept are Agents.
 func runtimeAppType(record runtimeAgentRecord) string {
-	if record.AppType == AppTypeDigitalHuman {
-		return AppTypeDigitalHuman
+	if record.AppType == "" {
+		return AppTypeAgent
 	}
-	return AppTypeAgent
+	return record.AppType
 }
 
 func runtimeAgentUnavailableReason(record runtimeAgentRecord, found, authorized bool) string {
@@ -652,7 +678,7 @@ func (s *Service) ListBindings(ctx context.Context, runtimeWorkspaceID uuid.UUID
 			Callable: binding.Status == AgentBindingActive && allowed, UnavailableReason: reason,
 		})
 	}
-	return &ManagementAppSet{Revision: runtimeWorkspace.BindingsRevision, Items: apps}, nil
+	return &ManagementAppSet{Revision: runtimeWorkspace.BindingsRevision, Limit: MaxRuntimeWorkspaceApps(), Items: apps}, nil
 }
 
 func (s *Service) ListAgentCandidates(ctx context.Context, runtimeWorkspaceID, accountID uuid.UUID, scope string, sourceWorkspaceID *uuid.UUID) (*AgentCandidateSet, error) {
@@ -921,6 +947,17 @@ func (s *Service) CreateCredential(ctx context.Context, runtimeWorkspaceID, acco
 			return nil
 		}
 
+		var activeCredentials int64
+		if err := tx.Model(&Credential{}).
+			Where("runtime_workspace_id = ? AND status = ? AND (expires_at IS NULL OR expires_at > ?)", runtimeWorkspaceID, CredentialActive, now).
+			Count(&activeCredentials).Error; err != nil {
+			return fmt.Errorf("count runtime workspace credentials: %w", err)
+		}
+		if activeCredentials >= MaxActiveCredentials {
+			// The claimed operation goes with the rolled-back transaction.
+			return ErrCredentialLimitExceeded
+		}
+
 		secret, prefix, hash, err := externalapikey.Generate()
 		if err != nil {
 			return fmt.Errorf("generate runtime workspace credential: %w", err)
@@ -1017,8 +1054,8 @@ func (s *Service) SyncAppBindings(ctx context.Context, runtimeWorkspaceID, actin
 		desired[ref.ID] = struct{}{}
 		desiredType[ref.ID] = ref.Type
 	}
-	if len(desired) > maxRuntimeWorkspaceAgents {
-		return nil, ErrInvalidBinding
+	if len(desired) > MaxRuntimeWorkspaceApps() {
+		return nil, ErrAppLimitExceeded
 	}
 	resolvedRuntimeID, err := s.ResolveRuntimeID(ctx, runtimeWorkspaceID)
 	if err != nil {
@@ -1050,18 +1087,6 @@ func (s *Service) SyncAppBindings(ctx context.Context, runtimeWorkspaceID, actin
 				active[binding.AgentID] = struct{}{}
 			}
 		}
-		unchanged := len(active) == len(desired)
-		if unchanged {
-			for agentID := range desired {
-				if _, found := active[agentID]; !found {
-					unchanged = false
-					break
-				}
-			}
-		}
-		if unchanged {
-			return nil
-		}
 		desiredBindings := make([]AgentBinding, 0, len(desired))
 		for agentID := range desired {
 			desiredBindings = append(desiredBindings, AgentBinding{RuntimeWorkspaceID: runtimeWorkspaceID, AgentID: agentID, AppType: desiredType[agentID]})
@@ -1076,6 +1101,10 @@ func (s *Service) SyncAppBindings(ctx context.Context, runtimeWorkspaceID, actin
 		for agentID := range desired {
 			agent, found := agentsByID[agentID]
 			if !found {
+				if _, bound := active[agentID]; bound {
+					delete(desired, agentID)
+					continue
+				}
 				return ErrAppNotFound
 			}
 			if _, allowed := authorized[agentID]; !allowed {
@@ -1094,6 +1123,19 @@ func (s *Service) SyncAppBindings(ctx context.Context, runtimeWorkspaceID, actin
 					return ErrSourceWorkspacePermission
 				}
 			}
+		}
+		// Checked once apps deleted since they were bound are dropped.
+		unchanged := len(active) == len(desired)
+		if unchanged {
+			for agentID := range desired {
+				if _, found := active[agentID]; !found {
+					unchanged = false
+					break
+				}
+			}
+		}
+		if unchanged {
+			return nil
 		}
 		now := s.now().UTC()
 		for agentID := range desired {

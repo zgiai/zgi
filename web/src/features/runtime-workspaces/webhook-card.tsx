@@ -309,6 +309,19 @@ export function RuntimeWebhookCard({ runtimeWorkspaceId }: { runtimeWorkspaceId:
                 ))}
               </div>
             )}
+            {deliveries.hasMore ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-full text-muted-foreground"
+                disabled={deliveries.loadingMore}
+                onClick={deliveries.loadMore}
+              >
+                {deliveries.loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
+                {t('runtime.common.loadMore')}
+              </Button>
+            ) : null}
           </section>
         ) : null}
       </CardContent>

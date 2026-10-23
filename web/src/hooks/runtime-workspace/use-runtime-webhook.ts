@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { runtimeWorkspaceService } from '@/services/runtime-workspace.service';
 import type { RuntimeWebhookInput } from '@/services/types/runtime-workspace';
@@ -21,13 +21,22 @@ export function useRuntimeWebhook(runtimeWorkspaceId: string | null) {
     enabled: Boolean(runtimeWorkspaceId),
     retry: false,
   });
-  const deliveries = useQuery({
+  const deliveryPages = useInfiniteQuery({
     queryKey: RUNTIME_WORKSPACE_KEYS.webhookDeliveries(runtimeWorkspaceId),
-    queryFn: () => runtimeWorkspaceService.listWebhookDeliveries(runtimeWorkspaceId as string),
+    queryFn: ({ pageParam }) =>
+      runtimeWorkspaceService.listWebhookDeliveries(runtimeWorkspaceId as string, pageParam),
+    initialPageParam: 1,
+    getNextPageParam: last => (last.has_more ? last.page + 1 : undefined),
     enabled: Boolean(runtimeWorkspaceId && webhook.data?.configured),
     refetchInterval: 10_000,
     retry: false,
   });
+  const deliveries = {
+    data: deliveryPages.data?.pages.flatMap(page => page.items),
+    hasMore: Boolean(deliveryPages.hasNextPage),
+    loadingMore: deliveryPages.isFetchingNextPage,
+    loadMore: () => void deliveryPages.fetchNextPage(),
+  };
   const save = useMutation({
     mutationFn: (input: RuntimeWebhookInput) =>
       runtimeWorkspaceService.saveWebhook(runtimeWorkspaceId as string, input),

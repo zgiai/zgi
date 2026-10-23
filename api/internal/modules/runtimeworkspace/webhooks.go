@@ -362,25 +362,38 @@ func webhookDeliveryView(delivery WebhookDelivery) WebhookDeliveryView {
 	return view
 }
 
-// ListWebhookDeliveries lists a Runtime Workspace's recent deliveries.
-func (s *Service) ListWebhookDeliveries(ctx context.Context, workspaceID uuid.UUID, limit int) ([]WebhookDeliveryView, error) {
+// WebhookDeliveryPage is a page of deliveries, newest first.
+type WebhookDeliveryPage struct {
+	Items   []WebhookDeliveryView `json:"items"`
+	Page    int                   `json:"page"`
+	Limit   int                   `json:"limit"`
+	HasMore bool                  `json:"has_more"`
+}
+
+// ListWebhookDeliveries lists a Runtime Workspace's deliveries, a page at a
+// time.
+func (s *Service) ListWebhookDeliveries(ctx context.Context, workspaceID uuid.UUID, page, limit int) (*WebhookDeliveryPage, error) {
 	runtimeWorkspace, err := s.loadRuntimeWorkspace(ctx, workspaceID)
 	if err != nil {
 		return nil, s.endUserLoadError(err)
 	}
+	page = max(page, 1)
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
 	var deliveries []WebhookDelivery
 	if err := s.db.WithContext(ctx).Where("runtime_workspace_id = ?", runtimeWorkspace.LogicalID()).
-		Order("created_at DESC").Order("id").Limit(limit).Find(&deliveries).Error; err != nil {
+		Order("created_at DESC").Order("id").Limit(limit + 1).Offset((page - 1) * limit).Find(&deliveries).Error; err != nil {
 		return nil, fmt.Errorf("list webhook deliveries: %w", err)
 	}
-	views := make([]WebhookDeliveryView, 0, len(deliveries))
-	for _, delivery := range deliveries {
-		views = append(views, webhookDeliveryView(delivery))
+	result := &WebhookDeliveryPage{Page: page, Limit: limit, HasMore: len(deliveries) > limit, Items: make([]WebhookDeliveryView, 0, len(deliveries))}
+	if result.HasMore {
+		deliveries = deliveries[:limit]
 	}
-	return views, nil
+	for _, delivery := range deliveries {
+		result.Items = append(result.Items, webhookDeliveryView(delivery))
+	}
+	return result, nil
 }
 
 // RetryWebhookDelivery sends a failed delivery again.

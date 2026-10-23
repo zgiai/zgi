@@ -1289,6 +1289,19 @@ function EndUserSheet({
                       ))}
                     </ol>
                   )}
+                  {events.hasMore ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-muted-foreground"
+                      disabled={events.loadingMore}
+                      onClick={events.loadMore}
+                    >
+                      {events.loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
+                      {t('runtime.common.loadMore')}
+                    </Button>
+                  ) : null}
                 </section>
               </TabsContent>
             </Tabs>

@@ -163,7 +163,12 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 	if _, err := service.UpdateEndUser(t.Context(), workspaceID, alice, actor, EndUserPatch{ResetQuota: true}); err != nil {
 		t.Fatal(err)
 	}
-	events, err := service.ListEndUserEvents(t.Context(), workspaceID, alice)
+	eventPage, err := service.ListEndUserEvents(t.Context(), workspaceID, alice, 1, 2)
+	if err != nil || len(eventPage.Items) != 2 || !eventPage.HasMore {
+		t.Fatalf("first page of alice events = %+v %v", eventPage, err)
+	}
+	eventPage, err = service.ListEndUserEvents(t.Context(), workspaceID, alice, 1, 50)
+	events := eventPage.Items
 	actions := map[string]int{}
 	for _, event := range events {
 		actions[event.Action]++
@@ -171,7 +176,8 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 	if err != nil || len(events) != 3 || actions[EndUserEventQuotaSet] != 2 || actions[EndUserEventQuotaReset] != 1 {
 		t.Fatalf("alice events = %+v %v", events, err)
 	}
-	if bobEvents, _ := service.ListEndUserEvents(t.Context(), workspaceID, bob); len(bobEvents) != 2 || bobEvents[0].ActorKind != EndUserActorAccount || bobEvents[0].ActorID == nil {
+	if bobPage, _ := service.ListEndUserEvents(t.Context(), workspaceID, bob, 1, 50); len(bobPage.Items) != 2 || bobPage.Items[0].ActorKind != EndUserActorAccount || bobPage.Items[0].ActorID == nil {
+		bobEvents := bobPage.Items
 		t.Fatalf("bob events = %+v", bobEvents)
 	}
 
@@ -310,7 +316,8 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 	if cleared, err := service.UpdateEndUser(t.Context(), workspaceID, bob, actor, EndUserPatch{ClearPlan: true}); err != nil || cleared.Plan != nil {
 		t.Fatalf("bob without a plan = %+v %v", cleared, err)
 	}
-	bobEvents, _ := service.ListEndUserEvents(t.Context(), workspaceID, bob)
+	bobPage, _ := service.ListEndUserEvents(t.Context(), workspaceID, bob, 1, 50)
+	bobEvents := bobPage.Items
 	planActions := map[string]bool{}
 	for _, event := range bobEvents {
 		planActions[event.Action] = true

@@ -149,6 +149,9 @@ const messages: WorkspaceMessages = {
         key: '创建访问密钥',
       },
     },
+    common: {
+      loadMore: '加载更多',
+    },
     tabs: {
       overview: '概览',
       apps: '应用',
@@ -393,6 +396,18 @@ const messages: WorkspaceMessages = {
       unattributed: '未关联应用',
     },
     apps: {
+      limitUsage: '{count} / {limit}',
+      overLimit: '最多可开放 {limit} 个应用，当前还能添加 {remaining} 个。',
+      unavailableReasons: {
+        agent_not_found: '应用已删除',
+        source_workspace_archived: '来源空间已归档',
+        agent_not_published: '未发布',
+        digital_human_not_published: '未发布',
+        agent_disabled: '未开启 API',
+        digital_human_api_disabled: '未开启 API',
+        agent_not_authorized: '未授权',
+        binding_disabled: '已移除',
+      },
       title: '已接入应用',
       titleWithCount: '已接入应用 {count}',
       description: '外部系统将调用智能体和数字人的最新发布版本。',
@@ -454,6 +469,8 @@ const messages: WorkspaceMessages = {
       },
     },
     credentials: {
+      limitUsage: '可用 {count} / {limit}',
+      atLimit: '最多 {limit} 个可用密钥，请先撤销不用的密钥。',
       title: '访问密钥',
       description: '访问密钥用于外部系统调用，可随时撤销或设置过期时间。',
       create: '创建访问密钥',

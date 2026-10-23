@@ -3,6 +3,7 @@ package v1
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -94,6 +95,8 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			Status     *string         `json:"status,omitempty"`
 			PolicyJSON json.RawMessage `json:"policy_json,omitempty"`
 		}
+		// Policies hold limits and plans; a quarter of a megabyte is ample.
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
 		if err := c.ShouldBindJSON(&req); err != nil {
 			response.Fail(c, response.ErrInvalidParam)
 			return
@@ -139,12 +142,24 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			managementFail(c, err)
 			return
 		}
+		// status=active lists usable keys only and counts the others, so a
+		// long history of revoked keys is not loaded.
+		query := db.WithContext(c.Request.Context()).Where("runtime_workspace_id = ?", runtimeID)
+		var inactive int64
+		if c.Query("status") == runtimeworkspace.CredentialActive {
+			if err := db.WithContext(c.Request.Context()).Model(&runtimeworkspace.Credential{}).
+				Where("runtime_workspace_id = ? AND status <> ?", runtimeID, runtimeworkspace.CredentialActive).Count(&inactive).Error; err != nil {
+				managementFail(c, err)
+				return
+			}
+			query = query.Where("status = ?", runtimeworkspace.CredentialActive)
+		}
 		var credentials []runtimeworkspace.Credential
-		if err := db.WithContext(c.Request.Context()).Where("runtime_workspace_id = ?", runtimeID).Order("created_at DESC").Find(&credentials).Error; err != nil {
+		if err := query.Order("created_at DESC").Find(&credentials).Error; err != nil {
 			managementFail(c, err)
 			return
 		}
-		response.Success(c, gin.H{"items": credentials})
+		response.Success(c, gin.H{"items": credentials, "inactive": inactive, "limit": runtimeworkspace.MaxActiveCredentials})
 	})
 	scoped.POST("/credentials/:credential_id/revoke", func(c *gin.Context) {
 		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
@@ -312,12 +327,13 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		if !ok {
 			return
 		}
-		deliveries, err := service.ListWebhookDeliveries(c.Request.Context(), workspaceID, managementPositiveQueryInt(c.Query("limit"), 50, 200))
+		deliveries, err := service.ListWebhookDeliveries(c.Request.Context(), workspaceID,
+			managementPositiveQueryInt(c.Query("page"), 1, 1_000_000), managementPositiveQueryInt(c.Query("limit"), 50, 200))
 		if err != nil {
 			managementFail(c, err)
 			return
 		}
-		response.Success(c, gin.H{"items": deliveries})
+		response.Success(c, deliveries)
 	})
 	scoped.POST("/webhook/deliveries/:delivery_id/retry", func(c *gin.Context) {
 		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
@@ -495,12 +511,13 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		response.Success(c, series)
 	}))
 	scoped.GET("/end-users/:subject_id/events", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
-		events, err := service.ListEndUserEvents(c.Request.Context(), workspaceID, subjectID)
+		events, err := service.ListEndUserEvents(c.Request.Context(), workspaceID, subjectID,
+			managementPositiveQueryInt(c.Query("page"), 1, 1_000_000), managementPositiveQueryInt(c.Query("limit"), 50, 200))
 		if err != nil {
 			managementFail(c, err)
 			return
 		}
-		response.Success(c, gin.H{"items": events})
+		response.Success(c, events)
 	}))
 	scoped.PUT("/agents", func(c *gin.Context) {
 		workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
@@ -508,11 +525,12 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			return
 		}
 		var req struct {
-			ExpectedRevision *int64    `json:"expected_revision" binding:"required"`
-			AgentIDs         *[]string `json:"agent_ids" binding:"required,max=100,dive,uuid"`
+			ExpectedRevision *int64 `json:"expected_revision" binding:"required"`
+			// The service enforces the bound-app limit across both lists.
+			AgentIDs *[]string `json:"agent_ids" binding:"required,max=1000,dive,uuid"`
 			// DigitalHumanIDs is optional; when it is left out, the bound
 			// DigitalHumans stay as they are, so older clients keep them.
-			DigitalHumanIDs *[]string `json:"digital_human_ids" binding:"omitempty,max=100,dive,uuid"`
+			DigitalHumanIDs *[]string `json:"digital_human_ids" binding:"omitempty,max=1000,dive,uuid"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedRevision == nil || req.AgentIDs == nil || *req.ExpectedRevision < 0 {
 			response.Fail(c, response.ErrInvalidParam)
@@ -630,6 +648,16 @@ func managementScope(c *gin.Context, requested string) (uuid.UUID, uuid.UUID, bo
 }
 
 func managementFail(c *gin.Context, err error) {
+	if errors.Is(err, runtimeworkspace.ErrCredentialLimitExceeded) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_credential_limit_exceeded",
+			Message: fmt.Sprintf("External access can have at most %d active access keys; revoke one first", runtimeworkspace.MaxActiveCredentials)})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrAppLimitExceeded) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_app_limit_exceeded",
+			Message: fmt.Sprintf("External access can expose at most %d apps", runtimeworkspace.MaxRuntimeWorkspaceApps())})
+		return
+	}
 	if errors.Is(err, runtimeworkspace.ErrWebhookNotFound) {
 		c.JSON(http.StatusNotFound, response.Response{Code: "runtime_webhook_not_found", Message: "No webhook is set up for this external access"})
 		return

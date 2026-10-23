@@ -3,12 +3,13 @@ import type { ApiResponseData } from './types/common';
 import type {
   RuntimeAgentCandidateSet,
   RuntimeAppCollection,
-  RuntimeCredential,
   RuntimeCredentialCreation,
   RuntimeEndUser,
   RuntimeCreditGrant,
   RuntimeCreditGrantResult,
   RuntimeCreditLedger,
+  RuntimeCredentialList,
+  RuntimePage,
   RuntimeEndUserBatchResult,
   RuntimeEndUserEvent,
   RuntimeEndUserList,
@@ -75,16 +76,18 @@ class RuntimeWorkspaceService extends BaseService {
     return response.data;
   }
 
-  async listCredentials(workspaceId: string): Promise<RuntimeCredential[]> {
-    const response = await this.request<
-      ApiResponseData<{ items: RuntimeCredential[] }>
-    >(
+  /** Active keys only, or every key with status 'all'. */
+  async listCredentials(
+    workspaceId: string,
+    status: 'active' | 'all' = 'active'
+  ): Promise<RuntimeCredentialList> {
+    const response = await this.request<ApiResponseData<RuntimeCredentialList>>(
       'get',
-      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/credentials${status === 'active' ? '?status=active' : ''}`,
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
-    return response.data?.items ?? [];
+    return response.data ?? { items: [], inactive: 0, limit: 50 };
   }
 
   async createCredential(
@@ -138,10 +141,15 @@ class RuntimeWorkspaceService extends BaseService {
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
-    return response.data ?? { scope, cross_workspace_enabled: false, source_workspaces: [], items: [] };
+    return (
+      response.data ?? { scope, cross_workspace_enabled: false, source_workspaces: [], items: [] }
+    );
   }
 
-  async syncAgents(workspaceId: string, data: RuntimeWorkspaceAgentSelectionInput): Promise<RuntimeAppCollection> {
+  async syncAgents(
+    workspaceId: string,
+    data: RuntimeWorkspaceAgentSelectionInput
+  ): Promise<RuntimeAppCollection> {
     const response = await this.request<ApiResponseData<RuntimeAppCollection>>(
       'put',
       `/runtime-workspaces/${encodeURIComponent(workspaceId)}/agents`,
@@ -201,10 +209,14 @@ class RuntimeWorkspaceService extends BaseService {
     return response.data;
   }
 
-  async listEndUserCredits(workspaceId: string, subjectId: string): Promise<RuntimeCreditLedger> {
+  async listEndUserCredits(
+    workspaceId: string,
+    subjectId: string,
+    page = 1
+  ): Promise<RuntimeCreditLedger> {
     const response = await this.request<ApiResponseData<RuntimeCreditLedger>>(
       'get',
-      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/credits?limit=50`,
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/credits?limit=20&page=${page}`,
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
@@ -278,14 +290,17 @@ class RuntimeWorkspaceService extends BaseService {
     return response.data;
   }
 
-  async listWebhookDeliveries(workspaceId: string): Promise<RuntimeWebhookDelivery[]> {
-    const response = await this.request<ApiResponseData<{ items: RuntimeWebhookDelivery[] }>>(
+  async listWebhookDeliveries(
+    workspaceId: string,
+    page = 1
+  ): Promise<RuntimePage<RuntimeWebhookDelivery>> {
+    const response = await this.request<ApiResponseData<RuntimePage<RuntimeWebhookDelivery>>>(
       'get',
-      this.webhookPath(workspaceId, '/deliveries?limit=30'),
+      this.webhookPath(workspaceId, `/deliveries?limit=20&page=${page}`),
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
-    return response.data?.items ?? [];
+    return response.data ?? { items: [], page, limit: 20, has_more: false };
   }
 
   async retryWebhookDelivery(workspaceId: string, deliveryId: string): Promise<void> {
@@ -346,14 +361,18 @@ class RuntimeWorkspaceService extends BaseService {
     );
   }
 
-  async listEndUserEvents(workspaceId: string, subjectId: string): Promise<RuntimeEndUserEvent[]> {
-    const response = await this.request<ApiResponseData<{ items: RuntimeEndUserEvent[] }>>(
+  async listEndUserEvents(
+    workspaceId: string,
+    subjectId: string,
+    page = 1
+  ): Promise<RuntimePage<RuntimeEndUserEvent>> {
+    const response = await this.request<ApiResponseData<RuntimePage<RuntimeEndUserEvent>>>(
       'get',
-      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/events`,
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/events?limit=30&page=${page}`,
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
-    return response.data?.items ?? [];
+    return response.data ?? { items: [], page, limit: 30, has_more: false };
   }
 }
 

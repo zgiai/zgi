@@ -439,10 +439,11 @@ func runtimeWorkspaceSubjectAuth(service *runtimeworkspace.Service) gin.HandlerF
 		// because Runtime Subjects are intentionally not members.
 		c.Set("runtime_file_authorizer", service)
 		if principal.Agent != nil {
-			if principal.Agent.AppType == runtimeworkspace.AppTypeDigitalHuman {
+			switch principal.Agent.AppType {
+			case runtimeworkspace.AppTypeDigitalHuman:
 				c.Set(runtimeAppTypeContextKey, runtimeworkspace.AppTypeDigitalHuman)
 				c.Set(digitalhuman.RuntimeDigitalHumanIDContextKey, principal.Agent.AgentID.String())
-			} else {
+			case runtimeworkspace.AppTypeAgent, "":
 				c.Set(runtimeAppTypeContextKey, runtimeworkspace.AppTypeAgent)
 				c.Set("agent_id", principal.Agent.AgentID.String())
 			}
@@ -455,10 +456,12 @@ const runtimeAppTypeContextKey = "runtime_app_type"
 
 // runtimeAppRoute serves an app route with the handler of the bound app's
 // type: an Agent's or a DigitalHuman's. A type without a handler for the
-// route answers that the app has no such operation.
+// route, or an app of any other type, answers that the app has no such
+// operation; nothing falls back to the Agent handler (ADR 0012).
 func runtimeAppRoute(digitalHumans *digitalhuman.ExternalHandler, agent, digitalHuman gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.GetString(runtimeAppTypeContextKey) == runtimeworkspace.AppTypeDigitalHuman {
+		switch c.GetString(runtimeAppTypeContextKey) {
+		case runtimeworkspace.AppTypeDigitalHuman:
 			if digitalHumans == nil || digitalHuman == nil {
 				runtimeFail(c, runtimeworkspace.ErrAppNotFound)
 				return
@@ -467,13 +470,16 @@ func runtimeAppRoute(digitalHumans *digitalhuman.ExternalHandler, agent, digital
 				return
 			}
 			digitalHuman(c)
-			return
-		}
-		if agent == nil {
+		case runtimeworkspace.AppTypeAgent, "":
+			// Untyped is a route whose app predates app types: an Agent.
+			if agent == nil {
+				runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+				return
+			}
+			agent(c)
+		default:
 			runtimeFail(c, runtimeworkspace.ErrAppNotFound)
-			return
 		}
-		agent(c)
 	}
 }
 
