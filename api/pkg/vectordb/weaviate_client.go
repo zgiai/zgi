@@ -361,6 +361,15 @@ func (c *WeaviateClient) SearchVectorsByFields(ctx context.Context, className, d
 	if strings.TrimSpace(dataSourceID) == "" {
 		return nil, fmt.Errorf("data source id is required")
 	}
+	return c.SearchVectorsWhereEqual(ctx, className, "data_source_id", dataSourceID, vector, limit, returnFields)
+}
+
+// SearchVectorsWhereEqual performs similarity search over the objects whose
+// text property equals a value and returns only the requested properties.
+func (c *WeaviateClient) SearchVectorsWhereEqual(ctx context.Context, className, property, value string, vector []float64, limit int, returnFields []string) ([]map[string]interface{}, error) {
+	if !validGraphQLIdentifier(property) {
+		return nil, fmt.Errorf("invalid filter property %q", property)
+	}
 	fields, err := graphQLFields(returnFields)
 	if err != nil {
 		return nil, err
@@ -369,22 +378,22 @@ func (c *WeaviateClient) SearchVectorsByFields(ctx context.Context, className, d
 	if err != nil {
 		return nil, err
 	}
-	encodedDataSourceID, err := json.Marshal(dataSourceID)
+	encodedValue, err := json.Marshal(value)
 	if err != nil {
-		return nil, fmt.Errorf("encode data source id: %w", err)
+		return nil, fmt.Errorf("encode filter value: %w", err)
 	}
 	query := fmt.Sprintf(`{
 		Get {
 			%s(
 				nearVector: {vector: %v}
-				where: {path: ["data_source_id"] operator: Equal valueText: %s}
+				where: {path: ["%s"] operator: Equal valueText: %s}
 				limit: %d
 			) {
 				_additional { id distance }
 				%s
 			}
 		}
-	}`, actualClassName, vector, encodedDataSourceID, limit, fields)
+	}`, actualClassName, vector, property, encodedValue, limit, fields)
 	return c.executeGraphQLGet(ctx, actualClassName, query)
 }
 
