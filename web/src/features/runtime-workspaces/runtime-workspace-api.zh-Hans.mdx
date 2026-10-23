@@ -49,6 +49,8 @@ curl '{apibase}/apps' \
 
 响应中的 `app_key` 即 App ID：
 
+<CodeGroup title="响应示例">
+
 ```json
 {
   "code": "0",
@@ -73,6 +75,8 @@ curl '{apibase}/apps' \
   }
 }
 ```
+
+</CodeGroup>
 
 ### 2. 发送第一条消息
 
@@ -370,10 +374,14 @@ curl -X POST '{apibase}/end-users/customer-42/credits' \
 | `credits.low` | 积分余额降到设定阈值或以下 |
 | `plan.expired` | 套餐到期 |
 
+<CodeGroup title="请求体示例">
+
 ```json
 {"id": "…", "event": "quota.near", "created_at": "2026-10-24T12:00:00Z", "runtime_workspace_id": "…",
  "data": {"user": "customer-42", "subject_id": "…", "window": "24h", "points": 8.5, "limit": 10}}
 ```
+
+</CodeGroup>
 
 - 请求头：`X-ZGI-Event`、`X-ZGI-Delivery`（与 `id` 相同）、`X-ZGI-Timestamp`（Unix 秒）、`X-ZGI-Signature: sha256=<hex>`。
 - 校验：用创建时显示的密钥对 `<timestamp>.<原始请求体>` 计算 HMAC-SHA256，与签名常量时间比较，并拒绝超过 5 分钟的时间戳。
@@ -420,12 +428,16 @@ Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、�
 
 错误响应格式：
 
+<CodeGroup title="错误响应示例">
+
 ```json
 {
   "code": "401001",
   "message": "Please login first"
 }
 ```
+
+</CodeGroup>
 
 | HTTP 状态 | 处理建议 |
 | --- | --- |

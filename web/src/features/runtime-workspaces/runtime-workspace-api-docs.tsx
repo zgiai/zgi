@@ -1,5 +1,6 @@
 'use client';
 
+import type * as React from 'react';
 import { useRef } from 'react';
 import { MDXProvider } from '@mdx-js/react';
 import RuntimeWorkspaceApiDocsEn from './runtime-workspace-api.en-US.mdx';
@@ -24,6 +25,22 @@ import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-he
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { API_URL } from '@/lib/config';
+
+// The shared docs table is at least 760px wide, wider than the column the
+// table of contents leaves; these tables are narrower, and code in a cell,
+// such as a long path, may wrap.
+function DocsTable(props: React.TableHTMLAttributes<HTMLTableElement>) {
+  return <MDComponents.Table {...props} className="min-w-[520px]" />;
+}
+
+function DocsTableCell(props: React.TdHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <MDComponents.TableCell
+      {...props}
+      className="[&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:[overflow-wrap:anywhere]"
+    />
+  );
+}
 
 export function RuntimeWorkspaceAPIDocs() {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -50,12 +67,12 @@ export function RuntimeWorkspaceAPIDocs() {
     ol: Ol,
     li: Li,
     code: InlineCode,
-    table: MDComponents.Table,
+    table: DocsTable,
     thead: MDComponents.TableHead,
     tbody: MDComponents.TableBody,
     tr: MDComponents.TableRow,
     th: MDComponents.TableHeaderCell,
-    td: MDComponents.TableCell,
+    td: DocsTableCell,
   };
 
   return (

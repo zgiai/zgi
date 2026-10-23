@@ -49,6 +49,8 @@ curl '{apibase}/apps' \
 
 The `app_key` value is the App ID:
 
+<CodeGroup title="Response">
+
 ```json
 {
   "code": "0",
@@ -73,6 +75,8 @@ The `app_key` value is the App ID:
   }
 }
 ```
+
+</CodeGroup>
 
 ### 2. Send a message
 
@@ -366,10 +370,14 @@ Once an endpoint is set up on the console's Quotas & usage page, these events ar
 | `credits.low` | The credit balance falls to the threshold you set or below |
 | `plan.expired` | A plan expires |
 
+<CodeGroup title="Payload">
+
 ```json
 {"id": "…", "event": "quota.near", "created_at": "2026-10-24T12:00:00Z", "runtime_workspace_id": "…",
  "data": {"user": "customer-42", "subject_id": "…", "window": "24h", "points": 8.5, "limit": 10}}
 ```
+
+</CodeGroup>
 
 - Headers: `X-ZGI-Event`, `X-ZGI-Delivery` (the same as `id`), `X-ZGI-Timestamp` (Unix seconds), `X-ZGI-Signature: sha256=<hex>`.
 - To verify, compute HMAC-SHA256 of `<timestamp>.<raw body>` with the secret shown when the webhook was created, compare it to the signature in constant time, and reject timestamps older than 5 minutes.
@@ -412,12 +420,16 @@ Rotation does not change App IDs, Subjects, files, conversations, or memory owne
 
 ## Error handling
 
+<CodeGroup title="Error response">
+
 ```json
 {
   "code": "401001",
   "message": "Please login first"
 }
 ```
+
+</CodeGroup>
 
 | HTTP status | Recommended action |
 | --- | --- |
