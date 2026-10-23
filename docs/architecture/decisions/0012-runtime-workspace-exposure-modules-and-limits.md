@@ -27,7 +27,8 @@ External access (Runtime Workspaces) was built for a few exposed apps. Integrato
 ### Scale
 
 - App lists and candidates are paged and searched on the server.
-- The Apps page is a table with type, status, and usage, and each app opens a detail with its own settings, including its per-app quota cap. Per-app caps move from the policy JSON to the binding and count in quota states.
+- The Apps page is a table with type, status, and usage, and each app opens a detail with its own settings, including its per-app quota cap. Per-app caps stay in the policy, next to the plans that override them, so there is one place for quota rules and no data migration; they are edited from the app and count in quota states.
+- Bound apps are managed with add and remove changes, so the console never sends the whole selection; candidates are matched and ordered by name on the server and authorized a chunk at a time until a page is full.
 - The bound-app limit stays, but is configurable (`ZGI_RUNTIME_WORKSPACE_MAX_APPS`, default 100), refused with its own error, shown in the console, and documented.
 
 ### Limits and leftovers
@@ -44,7 +45,7 @@ External access (Runtime Workspaces) was built for a few exposed apps. Integrato
 ### Delivery
 
 1. Explicit app types, the configurable app limit with its error and console counter, removed-app bindings, paging of cut-off lists, credential limits, bounded policy bodies, and documentation fixes.
-2. The Apps table, server-side paging and search, the per-app detail, and per-app caps on the binding.
+2. The Apps table, server-side paging and search, the per-app detail, and per-app caps in quota states.
 3. Access-event retention, the asynchronous export, per-end-user rate limits, and credential scopes.
 4. Knowledge base and database modules, when they are built.
 
@@ -52,4 +53,4 @@ External access (Runtime Workspaces) was built for a few exposed apps. Integrato
 
 - A new exposed resource adds a module instead of widening the app-type enum, so app code stays specific to apps.
 - Integrators see limits in the console and the documentation instead of generic errors.
-- Moving per-app caps to bindings needs a data migration from the policy JSON.
+- Per-app caps remain keyed by app key in the policy; a cap of an app that is no longer bound is ignored.
