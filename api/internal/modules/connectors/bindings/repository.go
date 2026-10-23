@@ -109,6 +109,10 @@ type Repository interface {
 
 type GormRepository struct {
 	db *gorm.DB
+	// repointPublished lets one write move a requester's own published
+	// binding to another of their Connections; see
+	// RepointRequesterBindingWithLifecycle.
+	repointPublished bool
 }
 
 var (
@@ -130,10 +134,23 @@ func (repository *GormRepository) UpsertBindingWithLifecycle(
 	expectedRevision int,
 	mutation BindingLifecycleMutation,
 ) (core.TargetBinding, bool, error) {
-	return repository.upsertBindingWithLifecycle(ctx, organizationID, ownerAccountID, binding, expectedRevision, mutation, false)
+	return repository.upsertBindingWithLifecycle(ctx, organizationID, ownerAccountID, binding, expectedRevision, mutation, false, false)
 }
 
-func (repository *GormRepository) upsertBindingWithLifecycle(ctx context.Context, organizationID, ownerAccountID uuid.UUID, binding core.TargetBinding, expectedRevision int, mutation BindingLifecycleMutation, replaceAuthorizedConstraint bool) (core.TargetBinding, bool, error) {
+// RepointRequesterBindingWithLifecycle moves a requester's own binding to a
+// published DigitalHuman per-user slot onto another of their Connections
+// (ADR 0007). Published editor bindings stay immutable; callers must have
+// verified that the binding serves a per-user slot of its owner.
+func (repository *GormRepository) RepointRequesterBindingWithLifecycle(ctx context.Context, organizationID, ownerAccountID uuid.UUID, binding core.TargetBinding, expectedRevision int, mutation BindingLifecycleMutation) (core.TargetBinding, error) {
+	if binding.Target.Type != core.TargetTypeDigitalHuman || binding.Target.EffectiveScope() != core.ScopePublished ||
+		binding.Status != core.BindingStatusActive || expectedRevision < 1 {
+		return core.TargetBinding{}, invalidInputError("repoint requester binding")
+	}
+	stored, _, err := repository.upsertBindingWithLifecycle(ctx, organizationID, ownerAccountID, binding, expectedRevision, mutation, false, true)
+	return stored, err
+}
+
+func (repository *GormRepository) upsertBindingWithLifecycle(ctx context.Context, organizationID, ownerAccountID uuid.UUID, binding core.TargetBinding, expectedRevision int, mutation BindingLifecycleMutation, replaceAuthorizedConstraint, repointPublished bool) (core.TargetBinding, bool, error) {
 	if err := repository.available(); err != nil {
 		return core.TargetBinding{}, false, err
 	}
@@ -176,7 +193,7 @@ func (repository *GormRepository) upsertBindingWithLifecycle(ctx context.Context
 			return lookupErr
 		}
 
-		nested := &GormRepository{db: tx.Session(&gorm.Session{DisableNestedTransaction: true})}
+		nested := &GormRepository{db: tx.Session(&gorm.Session{DisableNestedTransaction: true}), repointPublished: repointPublished}
 		if replaceAuthorizedConstraint {
 			if before == nil || before.ID != prepared.ID || before.ConnectionID != prepared.ConnectionID || before.Revision != expectedRevision {
 				return conflictError("replace DigitalHuman binding authority")
@@ -409,7 +426,9 @@ func (repository *GormRepository) upsertBinding(ctx context.Context, organizatio
 		if constraintErr != nil {
 			return constraintErr
 		}
-		if replaceAuthorizedConstraint {
+		if replaceAuthorizedConstraint || repository.repointPublished {
+			// A repointed requester binding takes the new Connection's
+			// operations; intersecting with the old one would only shrink.
 			narrowed = prepared.Constraint
 		} else {
 			// The prepared binding is the current explicit authorization choice.
@@ -435,7 +454,7 @@ func (repository *GormRepository) upsertBinding(ctx context.Context, organizatio
 			stored, lookupErr = existing.toDomain()
 			return lookupErr
 		}
-		if prepared.Target.EffectiveScope() == core.ScopePublished {
+		if prepared.Target.EffectiveScope() == core.ScopePublished && !repository.repointPublished {
 			return conflictError("published Connector snapshot is immutable")
 		}
 		if expectedRevision < 1 || existing.Revision != expectedRevision {

@@ -258,7 +258,15 @@ func ensurePerUserBinding(ctx context.Context, db *gorm.DB, connectorCatalog Con
 		revision, canonical.Revision = existing.Revision, existing.Revision
 	}
 	mutation := bindings.BindingLifecycleMutation{ID: uuid.New(), MutationType: bindings.MutationBindingUpserted, CorrelationID: "digital-human-per-user:" + uuid.NewString(), CreatedAt: now}
-	if _, _, err := bindings.NewGormRepository(db).UpsertBindingWithLifecycle(ctx, organizationID, requester, canonical, revision, mutation); err != nil {
+	native := bindings.NewGormRepository(db)
+	if found {
+		// The requester switched or reconnected their Connection; their own
+		// binding to this published slot follows it.
+		_, err = native.RepointRequesterBindingWithLifecycle(ctx, organizationID, requester, canonical, revision, mutation)
+	} else {
+		_, _, err = native.UpsertBindingWithLifecycle(ctx, organizationID, requester, canonical, revision, mutation)
+	}
+	if err != nil {
 		return slot, false, fmt.Errorf("bind per-user connector slot: %w", err)
 	}
 	slot.State = PerUserSlotConnected

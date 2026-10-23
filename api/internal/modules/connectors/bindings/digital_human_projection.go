@@ -20,7 +20,7 @@ func (repository *GormRepository) ReplaceDigitalHumanBindingWithLifecycle(ctx co
 	if binding.Target.Type != core.TargetTypeDigitalHuman || binding.Target.EffectiveScope() != core.ScopeDraft || expectedRevision < 1 || binding.Constraint == nil {
 		return core.TargetBinding{}, invalidInputError("replace DigitalHuman binding authority")
 	}
-	stored, _, err := repository.upsertBindingWithLifecycle(ctx, organizationID, ownerAccountID, binding, expectedRevision, mutation, true)
+	stored, _, err := repository.upsertBindingWithLifecycle(ctx, organizationID, ownerAccountID, binding, expectedRevision, mutation, true, false)
 	return stored, err
 }
 

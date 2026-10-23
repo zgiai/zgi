@@ -98,6 +98,25 @@ func TestPerUserConnectorSlotPostgres(t *testing.T) {
 	if _, err := preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, run(alice)); err != nil || count("SELECT count(*) FROM connector_lifecycle_decisions WHERE owner_account_id = ?", alice) != lifecycle {
 		t.Fatalf("a second run rebound alice's slot: %v", err)
 	}
+	// Alice removes her key and connects another; her binding to the
+	// published slot follows the new Connection.
+	if err := removeOwnerConnection(t.Context(), db, f.scope.OrganizationID, alice, connection.ID); err != nil {
+		t.Fatal(err)
+	}
+	replacement := connection
+	replacement.ID, replacement.Name, replacement.EncryptedCredentials = uuid.New(), "Alice's new key", "test-envelope-with-no-real-credentials-2"
+	if err := connections.NewGormRepository(db).CreateConnection(t.Context(), replacement); err != nil {
+		t.Fatal(err)
+	}
+	exec("UPDATE digital_human_connector_selections SET connection_id = ? WHERE owner_id = ?", replacement.ID, alice)
+	if missing, err := preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, run(alice)); err != nil || len(missing) != 0 {
+		t.Fatalf("alice's replaced connection = %#v, %v", missing, err)
+	}
+	owned, err = bindings.NewGormRepository(db).ListBindingsByTarget(t.Context(), f.scope.OrganizationID, alice, core.TargetTypeDigitalHuman, f.detail.Definition.ID.String(), bindings.ListOptions{Scope: core.ScopePublished, VersionID: versionID.String()})
+	if err != nil || len(owned) != 1 || owned[0].ConnectionID != replacement.ID || owned[0].Status != core.BindingStatusActive {
+		t.Fatalf("alice's binding after reconnecting = %#v, %v", owned, err)
+	}
+	connection = replacement
 	missing, err = preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, run(bob))
 	if err != nil || len(missing) != 1 || missing[0].SlotKey != slotKey || missing[0].State != PerUserSlotNeedsConnection || missing[0].Name != "Their own search" {
 		t.Fatalf("bob's unconnected slot = %#v, %v", missing, err)
