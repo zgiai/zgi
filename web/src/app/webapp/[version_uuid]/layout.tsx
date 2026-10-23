@@ -8,6 +8,7 @@ import { useMaybeMigrateUser } from '@/hooks/webapp/use-maybe-migrate-user';
 import { Logo } from '@/components/logo';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Button } from '@/components/ui/button';
+import { WebAppBackButton } from '@/components/webapp/back-button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   WebAppAccessState,
@@ -97,10 +98,16 @@ function WebappVersionLayoutContent({ children }: { children: React.ReactNode })
       {/* Webapp global header for this version */}
       <div className="w-full shrink-0 border-b bg-background/95 backdrop-blur">
         <div className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 md:grid-cols-[1fr_auto_1fr] md:gap-3 md:px-4 md:py-1">
-          <div className="hidden max-w-52 md:block">
-            <Logo routerToHome={false} showName={false} />
+          <div className="hidden min-w-0 items-center gap-3 md:flex">
+            <WebAppBackButton divider />
+            <div className="max-w-52">
+              <Logo routerToHome={false} showName={false} />
+            </div>
           </div>
           <div className="flex min-w-0 items-center gap-2">
+            <div className="flex shrink-0 items-center md:hidden">
+              <WebAppBackButton className="w-8 px-0" />
+            </div>
             {isLoading ? (
               <>
                 <Skeleton className="h-6 w-6 rounded-md" />

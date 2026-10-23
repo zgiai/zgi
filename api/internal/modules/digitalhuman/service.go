@@ -52,6 +52,14 @@ type Service struct {
 	now                func() time.Time
 }
 
+// SetConnectorCatalog lets draft saves and publication admit Connector
+// bindings; without it every Connector selection is rejected.
+func (s *Service) SetConnectorCatalog(connectorCatalog ConnectorCatalog) {
+	if s != nil && s.repo != nil {
+		s.repo.SetConnectorCatalog(connectorCatalog)
+	}
+}
+
 // SetIconResolver enables Agent-compatible image icon URLs without coupling the domain to file storage.
 // SetConnectorCatalog lets draft saves and publication admit Connector
 // bindings; without it every Connector selection is rejected.
