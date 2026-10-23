@@ -6,10 +6,13 @@ import type {
   RuntimeCredential,
   RuntimeCredentialCreation,
   RuntimeEndUser,
+  RuntimeEndUserBatchResult,
   RuntimeEndUserEvent,
   RuntimeEndUserList,
   RuntimeEndUserListParams,
   RuntimeEndUserPatch,
+  RuntimeEndUserSummary,
+  RuntimeUsageSeries,
   RuntimeWorkspace,
   RuntimeWorkspaceAgentSelectionInput,
   RuntimeWorkspaceCredentialInput,
@@ -148,6 +151,9 @@ class RuntimeWorkspaceService extends BaseService {
     const params = new URLSearchParams();
     if (query.search) params.set('search', query.search);
     if (query.status) params.set('status', query.status);
+    if (query.quota_state) params.set('quota_state', query.quota_state);
+    if (query.sort) params.set('sort', query.sort);
+    if (query.order) params.set('order', query.order);
     if (query.page) params.set('page', String(query.page));
     if (query.limit) params.set('limit', String(query.limit));
     const response = await this.request<ApiResponseData<RuntimeEndUserList>>(
@@ -171,6 +177,50 @@ class RuntimeWorkspaceService extends BaseService {
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data;
+  }
+
+  async batchUpdateEndUsers(
+    workspaceId: string,
+    subjectIds: string[],
+    data: RuntimeEndUserPatch
+  ): Promise<RuntimeEndUserBatchResult> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserBatchResult>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/batch`,
+      { ...data, subject_ids: subjectIds },
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async getEndUserSummary(workspaceId: string): Promise<RuntimeEndUserSummary> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserSummary>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/summary`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  /** Daily end-user usage of the workspace, or of one end user. */
+  async getEndUserUsageSeries(
+    workspaceId: string,
+    options: { subjectId?: string; days?: number; timezone?: string } = {}
+  ): Promise<RuntimeUsageSeries> {
+    const params = new URLSearchParams();
+    if (options.days) params.set('days', String(options.days));
+    if (options.timezone) params.set('tz', options.timezone);
+    const path = options.subjectId
+      ? `/end-users/${encodeURIComponent(options.subjectId)}/usage-series`
+      : '/end-users/usage-series';
+    const response = await this.request<ApiResponseData<RuntimeUsageSeries>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}${path}?${params.toString()}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data ?? { days: [], apps: [] };
   }
 
   async exportEndUser(workspaceId: string, subjectId: string): Promise<Record<string, unknown>> {

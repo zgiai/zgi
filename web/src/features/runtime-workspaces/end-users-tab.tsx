@@ -1,12 +1,44 @@
 'use client';
 
 import * as React from 'react';
-import { Ban, Download, Loader2, PlayCircle, Search, Trash2, UserRound } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Ban,
+  ChevronDown,
+  Download,
+  Loader2,
+  PlayCircle,
+  RotateCcw,
+  Search,
+  SlidersHorizontal,
+  Trash2,
+  UserRound,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
 import {
@@ -23,6 +55,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -31,25 +64,43 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+  pointsFormat,
+  QuotaOverrideEditor,
+  quotaDraftOf,
+  quotaOfDraft,
+  quotaWindows,
+  UsageMeter,
+  UsageTrendChart,
+  type QuotaOverrideDraft,
+} from '@/features/runtime-workspaces/end-user-usage';
 import {
   useRuntimeEndUserEvents,
   useRuntimeEndUsers,
+  useRuntimeEndUserUsageSeries,
 } from '@/hooks/runtime-workspace/use-runtime-end-users';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type {
   RuntimeApp,
   RuntimeEndUser,
+  RuntimeEndUserPatch,
+  RuntimeEndUserQuotaState,
+  RuntimeEndUserSort,
   RuntimeEndUserStatus,
   RuntimeQuotaWindow,
-  RuntimeWindowUsage,
 } from '@/services/types/runtime-workspace';
 
-const windows: RuntimeQuotaWindow[] = ['24h', '7d', '30d'];
 const pageSize = 20;
-type QuotaMode = 'default' | 'custom' | 'unlimited';
+const windowSorts: Record<RuntimeQuotaWindow, RuntimeEndUserSort> = {
+  '24h': 'usage_24h',
+  '7d': 'usage_7d',
+  '30d': 'usage_30d',
+};
+const sorts: RuntimeEndUserSort[] = ['last_seen', 'usage_24h', 'usage_7d', 'usage_30d', 'quota'];
+const quotaStates: RuntimeEndUserQuotaState[] = ['over', 'near', 'custom'];
 
-const pointsFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 });
+type BulkAction = 'suspend' | 'resume' | 'reset';
 
 function formatTime(value?: string): string {
   if (!value) return '—';
@@ -60,23 +111,16 @@ function formatTime(value?: string): string {
   );
 }
 
-function UsageCell({ usage }: { usage?: RuntimeWindowUsage }) {
-  if (!usage) return <span className="text-muted-foreground">—</span>;
-  const spent = usage.limit !== undefined && (usage.remaining ?? 0) <= 0;
-  return (
-    <span className={spent ? 'font-medium text-destructive' : undefined}>
-      {pointsFormat.format(usage.points)}
-      {usage.limit !== undefined ? (
-        <span className="text-muted-foreground"> / {pointsFormat.format(usage.limit)}</span>
-      ) : null}
-    </span>
-  );
-}
-
 function StatusBadge({ status }: { status: RuntimeEndUserStatus }) {
   const t = useT('workspace');
   return (
-    <Badge variant={status === 'active' ? 'secondary' : 'outline'} className="whitespace-nowrap">
+    <Badge
+      variant={status === 'active' ? 'secondary' : 'outline'}
+      className={cn(
+        'whitespace-nowrap',
+        status === 'suspended' && 'border-warning/40 text-warning'
+      )}
+    >
       {t(`runtime.endUsers.status.${status}`)}
     </Badge>
   );
@@ -86,14 +130,49 @@ function displayName(user: RuntimeEndUser, unnamed: string) {
   return user.external_user_id || `${unnamed} · ${user.subject_id.slice(0, 8)}`;
 }
 
+function SortHeader({
+  label,
+  sort,
+  current,
+  ascending,
+  onSort,
+  className,
+}: {
+  label: string;
+  sort: RuntimeEndUserSort;
+  current: RuntimeEndUserSort;
+  ascending: boolean;
+  onSort: (sort: RuntimeEndUserSort) => void;
+  className?: string;
+}) {
+  const active = current === sort;
+  const Icon = !active ? ArrowUpDown : ascending ? ArrowUp : ArrowDown;
+  return (
+    <TableHead className={cn('whitespace-nowrap', className)}>
+      <button
+        type="button"
+        onClick={() => onSort(sort)}
+        className={cn(
+          'inline-flex items-center gap-1 hover:text-foreground',
+          active && 'text-foreground'
+        )}
+      >
+        {label}
+        <Icon className={cn('size-3.5', !active && 'opacity-40')} />
+      </button>
+    </TableHead>
+  );
+}
+
 /**
  * @component RuntimeEndUsersTab
  * @category Feature
  * @status Beta
  * @description Manages the end users of a Runtime Workspace (ADR 0010): lists
- * them with their points usage over the quota windows, opens one to see its
- * usage per app and change history, sets its own quota, and suspends or
- * resumes it.
+ * them with their points usage against their limits, filters them by status
+ * and quota state, orders them by activity or usage, changes several at once,
+ * and opens one to see its daily usage, usage per app, and change history, to
+ * set its own quota, and to suspend, export, or erase it.
  * @usage Rendered as the End users section of the Runtime Workspace console.
  * @example
  * <RuntimeEndUsersTab runtimeWorkspaceId={id} apps={apps} />
@@ -110,28 +189,84 @@ export function RuntimeEndUsersTab({
   const [searchInput, setSearchInput] = React.useState('');
   const [search, setSearch] = React.useState('');
   const [status, setStatus] = React.useState<RuntimeEndUserStatus | ''>('');
+  const [quotaState, setQuotaState] = React.useState<RuntimeEndUserQuotaState | ''>('');
+  const [sort, setSort] = React.useState<RuntimeEndUserSort>('last_seen');
+  const [ascending, setAscending] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [checked, setChecked] = React.useState<Set<string>>(new Set());
   const [statusTarget, setStatusTarget] = React.useState<RuntimeEndUser | null>(null);
+  const [eraseTarget, setEraseTarget] = React.useState<RuntimeEndUser | null>(null);
+  const [bulkAction, setBulkAction] = React.useState<BulkAction | null>(null);
+  const [bulkQuotaOpen, setBulkQuotaOpen] = React.useState(false);
+  const [bulkQuota, setBulkQuota] = React.useState<QuotaOverrideDraft>({
+    mode: 'custom',
+    limits: {},
+  });
+
+  // Links from the quota page open the list filtered, ordered, or on one user.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linkedState = params.get('quota_state') as RuntimeEndUserQuotaState | null;
+    if (linkedState && quotaStates.includes(linkedState)) setQuotaState(linkedState);
+    const linkedStatus = params.get('status');
+    if (linkedStatus === 'active' || linkedStatus === 'suspended') setStatus(linkedStatus);
+    const linkedSort = params.get('sort') as RuntimeEndUserSort | null;
+    if (linkedSort && sorts.includes(linkedSort)) setSort(linkedSort);
+    const linkedUser = params.get('user');
+    if (linkedUser) {
+      setSearchInput(linkedUser);
+      setSearch(linkedUser);
+      setSelectedId(linkedUser);
+    }
+  }, []);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
       setSearch(searchInput.trim());
-      setPage(1);
     }, 300);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
-  const [eraseTarget, setEraseTarget] = React.useState<RuntimeEndUser | null>(null);
-  const { list, update, exportData, erase } = useRuntimeEndUsers(runtimeWorkspaceId, {
+  React.useEffect(() => {
+    setChecked(new Set());
+    setPage(1);
+  }, [search, status, quotaState]);
+
+  const { list, update, batchUpdate, exportData, erase } = useRuntimeEndUsers(runtimeWorkspaceId, {
     search,
     status,
+    quota_state: quotaState,
+    sort,
+    order: ascending ? 'asc' : 'desc',
     page,
     limit: pageSize,
   });
   const users = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
   const selected = users.find(user => user.subject_id === selectedId) ?? null;
   const appNames = React.useMemo(() => new Map(apps.map(app => [app.agent_id, app.name])), [apps]);
+  const selectable = users.filter(user => user.status !== 'erased');
+  const pageChecked = selectable.filter(user => checked.has(user.subject_id)).length;
+  const filtered = Boolean(search || status || quotaState);
+
+  const changeSort = (next: RuntimeEndUserSort) => {
+    if (next === sort) setAscending(!ascending);
+    else {
+      setSort(next);
+      setAscending(false);
+    }
+    setPage(1);
+  };
+
+  const toggle = (subjectId: string, on: boolean) => {
+    setChecked(current => {
+      const next = new Set(current);
+      if (on) next.add(subjectId);
+      else next.delete(subjectId);
+      return next;
+    });
+  };
 
   const downloadExport = async (user: RuntimeEndUser) => {
     const data = await exportData.mutateAsync(user.subject_id);
@@ -160,6 +295,26 @@ export function RuntimeEndUsersTab({
     setStatusTarget(null);
   };
 
+  const applyBulk = async (patch: RuntimeEndUserPatch) => {
+    const result = await batchUpdate.mutateAsync({ subjectIds: [...checked], patch });
+    if (result.failed.length > 0) {
+      toast.warning(
+        t('runtime.endUsers.bulk.partial', {
+          updated: result.updated,
+          failed: result.failed.length,
+        })
+      );
+      setChecked(new Set(result.failed));
+    } else {
+      toast.success(t('runtime.endUsers.bulk.done', { count: result.updated }));
+      setChecked(new Set());
+    }
+    setBulkAction(null);
+    setBulkQuotaOpen(false);
+  };
+
+  const bulkQuotaValue = quotaOfDraft(bulkQuota);
+
   return (
     <section className="space-y-4">
       <div className="flex flex-col gap-1">
@@ -169,7 +324,7 @@ export function RuntimeEndUsersTab({
         </p>
       </div>
 
-      <div className="flex flex-col gap-2 @2xl/console:flex-row @2xl/console:items-center">
+      <div className="flex flex-col gap-2 @3xl/console:flex-row @3xl/console:items-center">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -186,7 +341,7 @@ export function RuntimeEndUsersTab({
             setPage(1);
           }}
         >
-          <SelectTrigger className="h-9 w-full @2xl/console:w-40">
+          <SelectTrigger className="h-9 w-full @3xl/console:w-36">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -195,34 +350,150 @@ export function RuntimeEndUsersTab({
             <SelectItem value="suspended">{t('runtime.endUsers.status.suspended')}</SelectItem>
           </SelectContent>
         </Select>
+        <Select
+          value={quotaState || 'all'}
+          onValueChange={value => {
+            setQuotaState(value === 'all' ? '' : (value as RuntimeEndUserQuotaState));
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="h-9 w-full @3xl/console:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('runtime.endUsers.allQuotaStates')}</SelectItem>
+            {quotaStates.map(item => (
+              <SelectItem key={item} value={item}>
+                {t(`runtime.endUsers.quotaState.${item}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {filtered ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9"
+            onClick={() => {
+              setSearchInput('');
+              setSearch('');
+              setStatus('');
+              setQuotaState('');
+              setPage(1);
+            }}
+          >
+            <X className="size-4" />
+            {t('runtime.endUsers.clearFilters')}
+          </Button>
+        ) : null}
       </div>
+
+      {checked.size > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+          <span className="text-sm font-medium">
+            {t('runtime.endUsers.bulk.selected', { count: checked.size })}
+          </span>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setChecked(new Set())}>
+            {t('runtime.endUsers.bulk.clear')}
+          </Button>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setBulkQuota({ mode: 'custom', limits: {} });
+                setBulkQuotaOpen(true);
+              }}
+            >
+              <SlidersHorizontal className="size-4" />
+              {t('runtime.endUsers.bulk.setQuota')}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" size="sm" variant="outline">
+                  {t('runtime.endUsers.bulk.more')}
+                  <ChevronDown className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setBulkAction('resume')}>
+                  <PlayCircle className="size-4" />
+                  {t('runtime.endUsers.bulk.resume')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setBulkAction('reset')}>
+                  <RotateCcw className="size-4" />
+                  {t('runtime.endUsers.bulk.reset')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={() => setBulkAction('suspend')}
+                >
+                  <Ban className="size-4" />
+                  {t('runtime.endUsers.bulk.suspend')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      ) : null}
 
       <Card className="border-border/80">
         <CardContent className="p-0">
           {list.isLoading ? (
-            <div className="flex items-center justify-center py-16 text-muted-foreground">
-              <Loader2 className="size-5 animate-spin" />
+            <div className="space-y-2 p-4">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <Skeleton key={index} className="h-10 w-full" />
+              ))}
             </div>
           ) : users.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
               <UserRound className="size-8 text-muted-foreground" />
-              <p className="text-sm font-medium">{t('runtime.endUsers.emptyTitle')}</p>
+              <p className="text-sm font-medium">
+                {filtered ? t('runtime.endUsers.noMatchTitle') : t('runtime.endUsers.emptyTitle')}
+              </p>
               <p className="max-w-md text-xs leading-5 text-muted-foreground">
-                {t('runtime.endUsers.emptyDescription')}
+                {filtered
+                  ? t('runtime.endUsers.noMatchDescription')
+                  : t('runtime.endUsers.emptyDescription')}
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className={cn('overflow-x-auto', list.isFetching && 'opacity-70')}>
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        aria-label={t('runtime.endUsers.bulk.selectPage')}
+                        disabled={selectable.length === 0}
+                        checked={pageChecked > 0 && pageChecked === selectable.length}
+                        onCheckedChange={value => {
+                          for (const user of selectable) toggle(user.subject_id, value === true);
+                        }}
+                      />
+                    </TableHead>
                     <TableHead>{t('runtime.endUsers.columns.user')}</TableHead>
                     <TableHead>{t('runtime.endUsers.columns.status')}</TableHead>
-                    <TableHead>{t('runtime.endUsers.columns.lastSeen')}</TableHead>
-                    {windows.map(window => (
-                      <TableHead key={window} className="whitespace-nowrap text-right">
-                        {t(`runtime.quota.windows.${window}`)}
-                      </TableHead>
+                    <SortHeader
+                      label={t('runtime.endUsers.columns.lastSeen')}
+                      sort="last_seen"
+                      current={sort}
+                      ascending={ascending}
+                      onSort={changeSort}
+                    />
+                    {quotaWindows.map(window => (
+                      <SortHeader
+                        key={window}
+                        label={t(`runtime.quota.windows.${window}`)}
+                        sort={windowSorts[window]}
+                        current={sort}
+                        ascending={ascending}
+                        onSort={changeSort}
+                        className="text-right [&>button]:ml-auto [&>button]:flex"
+                      />
                     ))}
                     <TableHead className="text-right">{tCommon('actions')}</TableHead>
                   </TableRow>
@@ -231,17 +502,29 @@ export function RuntimeEndUsersTab({
                   {users.map(user => (
                     <TableRow
                       key={user.subject_id}
+                      data-state={checked.has(user.subject_id) ? 'selected' : undefined}
                       className="cursor-pointer"
                       onClick={() => setSelectedId(user.subject_id)}
                     >
+                      <TableCell onClick={event => event.stopPropagation()}>
+                        <Checkbox
+                          aria-label={t('runtime.endUsers.bulk.selectRow')}
+                          disabled={user.status === 'erased'}
+                          checked={checked.has(user.subject_id)}
+                          onCheckedChange={value => toggle(user.subject_id, value === true)}
+                        />
+                      </TableCell>
                       <TableCell className="max-w-64">
                         <div className="truncate font-medium">
                           {displayName(user, t('runtime.endUsers.unnamed'))}
                         </div>
                         {user.quota_source !== 'default' ? (
-                          <div className="mt-0.5 text-xs text-muted-foreground">
+                          <Badge
+                            variant="outline"
+                            className="mt-1 h-5 px-1.5 text-[11px] font-normal"
+                          >
                             {t(`runtime.endUsers.quotaSource.${user.quota_source}`)}
-                          </div>
+                          </Badge>
                         ) : null}
                       </TableCell>
                       <TableCell>
@@ -250,33 +533,40 @@ export function RuntimeEndUsersTab({
                       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                         {formatTime(user.last_seen_at)}
                       </TableCell>
-                      {windows.map(window => (
-                        <TableCell
-                          key={window}
-                          className="whitespace-nowrap text-right tabular-nums"
-                        >
-                          <UsageCell usage={user.usage.find(item => item.window === window)} />
+                      {quotaWindows.map(window => (
+                        <TableCell key={window} className="text-right">
+                          <UsageMeter usage={user.usage.find(item => item.window === window)} />
                         </TableCell>
                       ))}
                       <TableCell className="text-right">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={event => {
-                            event.stopPropagation();
-                            setStatusTarget(user);
-                          }}
-                        >
-                          {user.status === 'suspended' ? (
-                            <PlayCircle className="size-4" />
-                          ) : (
-                            <Ban className="size-4" />
-                          )}
-                          {user.status === 'suspended'
-                            ? t('runtime.endUsers.resume')
-                            : t('runtime.endUsers.suspend')}
-                        </Button>
+                        {user.status !== 'erased' ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="size-8 p-0"
+                            title={
+                              user.status === 'suspended'
+                                ? t('runtime.endUsers.resume')
+                                : t('runtime.endUsers.suspend')
+                            }
+                            aria-label={
+                              user.status === 'suspended'
+                                ? t('runtime.endUsers.resume')
+                                : t('runtime.endUsers.suspend')
+                            }
+                            onClick={event => {
+                              event.stopPropagation();
+                              setStatusTarget(user);
+                            }}
+                          >
+                            {user.status === 'suspended' ? (
+                              <PlayCircle className="size-4" />
+                            ) : (
+                              <Ban className="size-4" />
+                            )}
+                          </Button>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -287,14 +577,21 @@ export function RuntimeEndUsersTab({
         </CardContent>
       </Card>
 
-      {(list.data?.total ?? 0) > pageSize ? (
-        <Pagination
-          currentPage={page}
-          totalPages={Math.ceil((list.data?.total ?? 0) / pageSize)}
-          total={list.data?.total ?? 0}
-          pageSize={pageSize}
-          onPageChange={setPage}
-        />
+      {total > 0 ? (
+        <div className="flex flex-col gap-2 @2xl/console:flex-row @2xl/console:items-center @2xl/console:justify-between">
+          <span className="text-xs text-muted-foreground">
+            {t('runtime.endUsers.total', { count: total })}
+          </span>
+          {total > pageSize ? (
+            <Pagination
+              currentPage={page}
+              totalPages={Math.ceil(total / pageSize)}
+              total={total}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
+          ) : null}
+        </div>
       ) : null}
 
       <ConfirmDialog
@@ -326,6 +623,62 @@ export function RuntimeEndUsersTab({
         }}
       />
 
+      <ConfirmDialog
+        open={Boolean(bulkAction)}
+        onOpenChange={open => {
+          if (!open) setBulkAction(null);
+        }}
+        title={
+          bulkAction ? t(`runtime.endUsers.bulk.${bulkAction}Title`, { count: checked.size }) : ''
+        }
+        description={
+          bulkAction === 'suspend'
+            ? t('runtime.endUsers.suspendDescription')
+            : bulkAction === 'resume'
+              ? t('runtime.endUsers.resumeDescription')
+              : t('runtime.endUsers.bulk.resetDescription')
+        }
+        confirmText={bulkAction ? t(`runtime.endUsers.bulk.${bulkAction}`) : ''}
+        cancelText={tCommon('cancel')}
+        variant={bulkAction === 'suspend' ? 'warning' : 'default'}
+        loading={batchUpdate.isPending}
+        closeOnConfirm={false}
+        onConfirm={() => {
+          if (bulkAction === 'suspend') void applyBulk({ status: 'suspended' });
+          if (bulkAction === 'resume') void applyBulk({ status: 'active' });
+          if (bulkAction === 'reset') void applyBulk({ quota: null });
+        }}
+      />
+
+      <Dialog open={bulkQuotaOpen} onOpenChange={setBulkQuotaOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {t('runtime.endUsers.bulk.quotaTitle', { count: checked.size })}
+            </DialogTitle>
+            <DialogDescription>{t('runtime.endUsers.ownQuotaDescription')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <QuotaOverrideEditor value={bulkQuota} onChange={setBulkQuota} />
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBulkQuotaOpen(false)}>
+              {tCommon('cancel')}
+            </Button>
+            <Button
+              type="button"
+              disabled={batchUpdate.isPending || bulkQuotaValue === undefined}
+              onClick={() => {
+                if (bulkQuotaValue !== undefined) void applyBulk({ quota: bulkQuotaValue });
+              }}
+            >
+              {batchUpdate.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+              {t('runtime.endUsers.saveQuota')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <EndUserSheet
         runtimeWorkspaceId={runtimeWorkspaceId}
         user={selected}
@@ -335,7 +688,9 @@ export function RuntimeEndUsersTab({
         onSaveQuota={async quota => {
           if (!selected) return;
           await update.mutateAsync({ subjectId: selected.subject_id, patch: { quota } });
+          toast.success(t('runtime.endUsers.quotaSaved'));
         }}
+        onToggleStatus={() => setStatusTarget(selected)}
         exporting={exportData.isPending}
         onExport={() => {
           if (selected) void downloadExport(selected);
@@ -370,6 +725,7 @@ function EndUserSheet({
   saving,
   onClose,
   onSaveQuota,
+  onToggleStatus,
   exporting,
   onExport,
   onErase,
@@ -380,167 +736,55 @@ function EndUserSheet({
   saving: boolean;
   onClose: () => void;
   onSaveQuota: (quota: RuntimeEndUser['quota'] | null) => Promise<void>;
+  onToggleStatus: () => void;
   exporting: boolean;
   onExport: () => void;
   onErase: () => void;
 }) {
   const t = useT('workspace');
-  const events = useRuntimeEndUserEvents(runtimeWorkspaceId, user?.subject_id ?? null);
-  const [mode, setMode] = React.useState<QuotaMode>('default');
-  const [limits, setLimits] = React.useState<Partial<Record<RuntimeQuotaWindow, string>>>({});
+  const subjectId = user?.subject_id ?? null;
+  const events = useRuntimeEndUserEvents(runtimeWorkspaceId, subjectId);
+  const series = useRuntimeEndUserUsageSeries(runtimeWorkspaceId, subjectId, 30, Boolean(user));
+  const [draft, setDraft] = React.useState<QuotaOverrideDraft>(quotaDraftOf(null));
 
   React.useEffect(() => {
-    if (!user) return;
-    setMode(user.quota_source);
-    const next: Partial<Record<RuntimeQuotaWindow, string>> = {};
-    for (const limit of user.quota.limits ?? []) next[limit.window] = String(limit.points);
-    setLimits(next);
+    if (user) setDraft(quotaDraftOf(user));
   }, [user]);
 
-  const customLimits = windows.flatMap(window => {
-    const value = Math.round(Number.parseFloat(limits[window] ?? '') * 1000) / 1000;
-    return Number.isFinite(value) && value > 0 ? [{ window, points: value }] : [];
-  });
-  const canSave = mode !== 'custom' || customLimits.length > 0;
+  const quota = quotaOfDraft(draft);
+  const dirty = JSON.stringify(quota) !== JSON.stringify(quotaOfDraft(quotaDraftOf(user)));
+  const erased = user?.status === 'erased';
 
   return (
     <Sheet open={Boolean(user)} onOpenChange={open => (!open ? onClose() : undefined)}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+      <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
         {user ? (
           <>
             <SheetHeader>
               <SheetTitle className="break-all pr-6">
                 {displayName(user, t('runtime.endUsers.unnamed'))}
               </SheetTitle>
-              <SheetDescription className="flex flex-wrap items-center gap-2">
+              <SheetDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <StatusBadge status={user.status} />
                 <span>
                   {t('runtime.endUsers.firstSeen')} {formatTime(user.first_seen_at)}
                 </span>
+                <span>
+                  {t('runtime.endUsers.columns.lastSeen')} {formatTime(user.last_seen_at)}
+                </span>
               </SheetDescription>
-            </SheetHeader>
-
-            <div className="mt-6 space-y-6">
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">{t('runtime.endUsers.usage')}</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {windows.map(window => {
-                    const usage = user.usage.find(item => item.window === window);
-                    return (
-                      <div key={window} className="rounded-lg border p-3">
-                        <div className="text-xs text-muted-foreground">
-                          {t(`runtime.quota.windows.${window}`)}
-                        </div>
-                        <div className="mt-1 text-base font-semibold tabular-nums">
-                          <UsageCell usage={usage} />
-                        </div>
-                        {usage?.remaining !== undefined ? (
-                          <div className="mt-0.5 text-xs text-muted-foreground">
-                            {t('runtime.endUsers.remaining', {
-                              points: pointsFormat.format(usage.remaining),
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section className="space-y-2">
-                <h3 className="text-sm font-medium">{t('runtime.endUsers.byApp')}</h3>
-                {user.apps.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t('runtime.endUsers.noUsage')}</p>
-                ) : (
-                  <div className="divide-y rounded-lg border">
-                    {user.apps.map(app => (
-                      <div key={app.app_id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                        <span className="min-w-0 flex-1 truncate">
-                          {appNames.get(app.app_id) ?? app.app_key ?? app.app_id}
-                        </span>
-                        {windows.map(window => (
-                          <span key={window} className="w-20 text-right tabular-nums">
-                            <UsageCell usage={app.usage.find(item => item.window === window)} />
-                          </span>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              <section className="space-y-3">
-                <div>
-                  <h3 className="text-sm font-medium">{t('runtime.endUsers.ownQuota')}</h3>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {t('runtime.endUsers.ownQuotaDescription')}
-                  </p>
-                </div>
-                <ToggleGroup
-                  type="single"
-                  variant="outline"
-                  value={mode}
-                  onValueChange={value => {
-                    if (value) setMode(value as QuotaMode);
-                  }}
-                  className="justify-start"
-                >
-                  {(['default', 'custom', 'unlimited'] as const).map(item => (
-                    <ToggleGroupItem key={item} value={item} className="px-3 text-xs">
-                      {t(`runtime.endUsers.quotaMode.${item}`)}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-                {mode === 'custom' ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {windows.map(window => (
-                      <label key={window} className="space-y-1">
-                        <span className="text-xs text-muted-foreground">
-                          {t(`runtime.quota.windows.${window}`)}
-                        </span>
-                        <Input
-                          type="number"
-                          min={0.001}
-                          step="any"
-                          inputMode="decimal"
-                          placeholder={t('runtime.quota.unlimited')}
-                          value={limits[window] ?? ''}
-                          onChange={event => setLimits({ ...limits, [window]: event.target.value })}
-                          className="h-9"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={saving || !canSave}
-                    onClick={() =>
-                      void onSaveQuota(
-                        mode === 'default'
-                          ? null
-                          : mode === 'unlimited'
-                            ? { unlimited: true }
-                            : { limits: customLimits }
-                      )
-                    }
-                  >
-                    {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-                    {t('runtime.endUsers.saveQuota')}
+              {!erased ? (
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button type="button" size="sm" variant="outline" onClick={onToggleStatus}>
+                    {user.status === 'suspended' ? (
+                      <PlayCircle className="size-4" />
+                    ) : (
+                      <Ban className="size-4" />
+                    )}
+                    {user.status === 'suspended'
+                      ? t('runtime.endUsers.resume')
+                      : t('runtime.endUsers.suspend')}
                   </Button>
-                </div>
-              </section>
-
-              <section className="space-y-3">
-                <div>
-                  <h3 className="text-sm font-medium">{t('runtime.endUsers.data')}</h3>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {t('runtime.endUsers.dataDescription')}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     size="sm"
@@ -566,29 +810,132 @@ function EndUserSheet({
                     {t('runtime.endUsers.erase')}
                   </Button>
                 </div>
+              ) : null}
+            </SheetHeader>
+
+            <div className="mt-6 space-y-6">
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium">{t('runtime.endUsers.usage')}</h3>
+                <div className="grid grid-cols-3 gap-2">
+                  {quotaWindows.map(window => {
+                    const usage = user.usage.find(item => item.window === window);
+                    return (
+                      <div key={window} className="space-y-1.5 rounded-lg border p-3">
+                        <div className="text-xs text-muted-foreground">
+                          {t(`runtime.quota.windows.${window}`)}
+                        </div>
+                        <UsageMeter
+                          usage={usage}
+                          align="left"
+                          className="text-base font-semibold"
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          {usage?.remaining !== undefined
+                            ? t('runtime.endUsers.remaining', {
+                                points: pointsFormat.format(usage.remaining),
+                              })
+                            : t('runtime.quota.unlimited')}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </section>
+
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium">{t('runtime.endUsers.trend')}</h3>
+                {series.isLoading ? (
+                  <Skeleton className="h-44 w-full" />
+                ) : (
+                  <UsageTrendChart series={series.data} appNames={appNames} height={176} />
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium">{t('runtime.endUsers.byApp')}</h3>
+                {user.apps.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">{t('runtime.endUsers.noUsage')}</p>
+                ) : (
+                  <div className="divide-y rounded-lg border">
+                    {user.apps.map(app => (
+                      <div key={app.app_id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                        <span className="min-w-0 flex-1 truncate">
+                          {appNames.get(app.app_id) ?? app.app_key ?? app.app_id}
+                        </span>
+                        {quotaWindows.map(window => (
+                          <UsageMeter
+                            key={window}
+                            className="w-24"
+                            usage={app.usage.find(item => item.window === window)}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {!erased ? (
+                <section className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-medium">{t('runtime.endUsers.ownQuota')}</h3>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {t('runtime.endUsers.ownQuotaDescription')}
+                    </p>
+                  </div>
+                  <QuotaOverrideEditor value={draft} onChange={setDraft} />
+                  <div className="flex items-center justify-end gap-2">
+                    {dirty ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="mr-auto"
+                        onClick={() => setDraft(quotaDraftOf(user))}
+                      >
+                        <RotateCcw className="size-4" />
+                        {t('runtime.quota.discard')}
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={saving || !dirty || quota === undefined}
+                      onClick={() => {
+                        if (quota !== undefined) void onSaveQuota(quota);
+                      }}
+                    >
+                      {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+                      {t('runtime.endUsers.saveQuota')}
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
 
               <section className="space-y-2">
                 <h3 className="text-sm font-medium">{t('runtime.endUsers.history')}</h3>
                 {(events.data ?? []).length === 0 ? (
                   <p className="text-xs text-muted-foreground">{t('runtime.endUsers.noHistory')}</p>
                 ) : (
-                  <ul className="space-y-2">
+                  <ol className="relative space-y-3 border-l pl-4">
                     {(events.data ?? []).map(event => (
-                      <li key={event.id} className="flex items-start justify-between gap-3 text-sm">
-                        <span>
-                          {t(`runtime.endUsers.events.${event.action}`)}
-                          <span className="text-muted-foreground">
-                            {' · '}
-                            {t(`runtime.endUsers.actors.${event.actor_kind}`)}
+                      <li key={event.id} className="relative text-sm">
+                        <span className="absolute -left-[21px] top-1.5 size-2 rounded-full bg-border" />
+                        <div className="flex items-start justify-between gap-3">
+                          <span>
+                            {t(`runtime.endUsers.events.${event.action}`)}
+                            <span className="text-muted-foreground">
+                              {' · '}
+                              {t(`runtime.endUsers.actors.${event.actor_kind}`)}
+                            </span>
                           </span>
-                        </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatTime(event.created_at)}
-                        </span>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {formatTime(event.created_at)}
+                          </span>
+                        </div>
                       </li>
                     ))}
-                  </ul>
+                  </ol>
                 )}
               </section>
             </div>

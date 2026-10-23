@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Gauge, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Gauge, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -60,7 +61,7 @@ function toLimits(points: WindowPoints): QuotaLimit[] {
  * @description Edits the points quotas of a Runtime Workspace's end users
  * (ADR 0010): a limit per rolling window for every end user, and optional caps
  * per app. Points may be fractional down to 0.001; empty fields mean no limit.
- * @usage Rendered in the Runtime Workspace overview.
+ * @usage Rendered on the Runtime Workspace quota page.
  * @example
  * <EndUserQuotaCard policyJson={policy} apps={apps} onSave={save} saving={false} />
  */
@@ -94,6 +95,22 @@ export function EndUserQuotaCard({
   }, [initial]);
 
   const usedKeys = new Set(appCaps.map(cap => cap.appKey));
+  const quotaOf = (
+    defaults: WindowPoints,
+    caps: Array<{ appKey: string; limits: WindowPoints }>
+  ): EndUserQuota => {
+    const quota: EndUserQuota = {};
+    const defaultLimits = toLimits(defaults);
+    if (defaultLimits.length > 0) quota.limits = defaultLimits;
+    const appQuotas = caps
+      .map(cap => ({ app_key: cap.appKey, limits: toLimits(cap.limits) }))
+      .filter(cap => cap.app_key && cap.limits.length > 0);
+    if (appQuotas.length > 0) quota.apps = appQuotas;
+    return quota;
+  };
+  const dirty =
+    JSON.stringify(quotaOf(limits, appCaps)) !==
+    JSON.stringify(quotaOf(initial.limits, initial.apps));
   const save = async () => {
     const quota: EndUserQuota = {};
     const defaultLimits = toLimits(limits);
@@ -214,8 +231,27 @@ export function EndUserQuotaCard({
           )}
         </section>
 
-        <div className="flex justify-end">
-          <Button type="button" onClick={() => void save()} disabled={saving}>
+        <div className="flex items-center justify-end gap-2">
+          {dirty ? (
+            <>
+              <Badge variant="outline" className="mr-auto border-warning/40 text-warning">
+                {t('runtime.quota.unsaved')}
+              </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setLimits(initial.limits);
+                  setAppCaps(initial.apps);
+                }}
+                disabled={saving}
+              >
+                <RotateCcw className="size-4" />
+                {t('runtime.quota.discard')}
+              </Button>
+            </>
+          ) : null}
+          <Button type="button" onClick={() => void save()} disabled={saving || !dirty}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : null}
             {t('runtime.quota.save')}
           </Button>

@@ -230,7 +230,8 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			return
 		}
 		list, err := service.ListEndUsers(c.Request.Context(), workspaceID, runtimeworkspace.EndUserListQuery{
-			Search: c.Query("search"), Status: c.Query("status"),
+			Search: c.Query("search"), Status: c.Query("status"), QuotaState: c.Query("quota_state"),
+			Sort: c.Query("sort"), Ascending: c.Query("order") == "asc",
 			Page:  managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
 			Limit: managementPositiveQueryInt(c.Query("limit"), 50, 200),
 		})
@@ -239,6 +240,61 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			return
 		}
 		response.Success(c, list)
+	})
+	scoped.GET("/end-users/summary", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		summary, err := service.SummarizeEndUsers(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, summary)
+	})
+	scoped.GET("/end-users/usage-series", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		series, err := service.EndUserUsageSeries(c.Request.Context(), workspaceID, nil,
+			managementPositiveQueryInt(c.Query("days"), 30, 90), c.Query("tz"))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, series)
+	})
+	scoped.POST("/end-users/batch", func(c *gin.Context) {
+		workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		var req struct {
+			SubjectIDs []uuid.UUID `json:"subject_ids"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		patch, err := runtimeworkspace.ParseEndUserPatch(body)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		result, err := service.UpdateEndUsers(c.Request.Context(), workspaceID, req.SubjectIDs,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}, patch)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, result)
 	})
 	endUser := func(handle func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID)) gin.HandlerFunc {
 		return func(c *gin.Context) {
@@ -298,6 +354,15 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			return
 		}
 		response.Success(c, gin.H{"result": "success"})
+	}))
+	scoped.GET("/end-users/:subject_id/usage-series", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		series, err := service.EndUserUsageSeries(c.Request.Context(), workspaceID, &subjectID,
+			managementPositiveQueryInt(c.Query("days"), 30, 90), c.Query("tz"))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, series)
 	}))
 	scoped.GET("/end-users/:subject_id/events", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
 		events, err := service.ListEndUserEvents(c.Request.Context(), workspaceID, subjectID)

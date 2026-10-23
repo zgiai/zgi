@@ -189,6 +189,52 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 	if _, err := service.GetEndUser(t.Context(), workspaceID, uuid.New()); !errors.Is(err, ErrEndUserNotFound) {
 		t.Fatalf("an unknown end user = %v", err)
 	}
+
+	// The admin views: usage order, quota states, the summary, and the series.
+	if ranked, err := service.ListEndUsers(t.Context(), workspaceID, EndUserListQuery{Sort: "usage_30d"}); err != nil || ranked.Items[0].SubjectID != alice.String() {
+		t.Fatalf("by 30-day usage = %+v %v", ranked, err)
+	}
+	if ranked, err := service.ListEndUsers(t.Context(), workspaceID, EndUserListQuery{Sort: "usage_30d", Ascending: true}); err != nil || ranked.Items[0].SubjectID != bob.String() {
+		t.Fatalf("by 30-day usage, ascending = %+v %v", ranked, err)
+	}
+	eighteen := QuotaLimit{Window: "24h", Points: decimal.NewFromInt(18)}
+	unknown := uuid.New()
+	batch, err := service.UpdateEndUsers(t.Context(), workspaceID, []uuid.UUID{alice, bob, alice, unknown}, actor, EndUserPatch{Quota: &EndUserQuotaOverride{Limits: []QuotaLimit{eighteen}}})
+	if err != nil || batch.Updated != 2 || len(batch.Failed) != 1 || batch.Failed[0] != unknown.String() {
+		t.Fatalf("batch = %+v %v", batch, err)
+	}
+	if _, err := service.UpdateEndUsers(t.Context(), workspaceID, []uuid.UUID{alice}, actor, EndUserPatch{Status: &bad}); !errors.Is(err, ErrInvalidWorkspace) {
+		t.Fatalf("an invalid batch = %v", err)
+	}
+	states := func(state string) int64 {
+		t.Helper()
+		list, err := service.ListEndUsers(t.Context(), workspaceID, EndUserListQuery{QuotaState: state})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list.Total
+	}
+	if near, over, custom := states(QuotaStateNear), states(QuotaStateOver), states(QuotaStateCustom); near != 1 || over != 0 || custom != 2 {
+		t.Fatalf("quota states near=%d over=%d custom=%d", near, over, custom)
+	}
+	summary, err := service.SummarizeEndUsers(t.Context(), workspaceID)
+	if err != nil || summary.Usage[0].Points != 15.5 || summary.Usage[0].EndUsers != 1 || summary.Usage[2].Points != 45.5 ||
+		summary.EndUsers.Total != 2 || summary.EndUsers.NearQuota != 1 || summary.EndUsers.CustomQuota != 2 || summary.EndUsers.Active7d != 2 ||
+		len(summary.Top) != 2 || summary.Top[0].SubjectID != alice.String() {
+		t.Fatalf("summary = %+v %v", summary, err)
+	}
+	bill(alice, &appID, 3_000, now.Add(-time.Minute))
+	if near, over := states(QuotaStateNear), states(QuotaStateOver); near != 0 || over != 1 {
+		t.Fatalf("over the limit near=%d over=%d", near, over)
+	}
+	series, err := service.EndUserUsageSeries(t.Context(), workspaceID, nil, 30, "Asia/Shanghai")
+	if err != nil || len(series.Days) != 30 || series.Days[29].Date != "2026-10-23" || series.Days[29].Points != 18.5 ||
+		series.Days[19].Points != 30 || series.Days[29].Apps[appID.String()] != 17 || len(series.Apps) != 1 || series.Apps[0].AppKey != "app_one" {
+		t.Fatalf("series = %+v %v", series, err)
+	}
+	if own, err := service.EndUserUsageSeries(t.Context(), workspaceID, &bob, 7, ""); err != nil || len(own.Days) != 7 || own.Days[6].Points != 0 {
+		t.Fatalf("bob's series = %+v %v", own, err)
+	}
 }
 
 func TestParseEndUserPatch(t *testing.T) {

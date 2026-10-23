@@ -155,12 +155,17 @@ type EndUserList struct {
 	HasMore bool          `json:"has_more"`
 }
 
-// EndUserListQuery filters the end-user list.
+// EndUserListQuery filters and orders the end-user list. Sort is one of
+// last_seen (the default), usage_24h, usage_7d, usage_30d, or quota;
+// QuotaState is over, near, or custom.
 type EndUserListQuery struct {
-	Search string
-	Status string
-	Page   int
-	Limit  int
+	Search     string
+	Status     string
+	QuotaState string
+	Sort       string
+	Ascending  bool
+	Page       int
+	Limit      int
 }
 
 // EndUserPatch changes an end user. A nil field is left as it is; ResetQuota
@@ -199,7 +204,8 @@ func EndUserSubject(runtimeWorkspaceID uuid.UUID, externalUserID string) (uuid.U
 	return subject.ID, nil
 }
 
-// ListEndUsers lists a Runtime Workspace's end users, most recent first.
+// ListEndUsers lists a Runtime Workspace's end users, most recent first
+// unless the query orders them by usage.
 func (s *Service) ListEndUsers(ctx context.Context, workspaceID uuid.UUID, query EndUserListQuery) (*EndUserList, error) {
 	runtimeWorkspace, err := s.loadRuntimeWorkspace(ctx, workspaceID)
 	if err != nil {
@@ -209,24 +215,9 @@ func (s *Service) ListEndUsers(ctx context.Context, workspaceID uuid.UUID, query
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
-	db := s.db.WithContext(ctx).Model(&EndUser{}).Where("runtime_workspace_id = ?", runtimeWorkspace.LogicalID())
-	if status := strings.TrimSpace(query.Status); status != "" {
-		db = db.Where("status = ?", status)
-	}
-	if search := strings.TrimSpace(query.Search); search != "" {
-		if subjectID, err := uuid.Parse(search); err == nil {
-			db = db.Where("subject_id = ?", subjectID)
-		} else {
-			db = db.Where("external_user_id ILIKE ?", escapeLike(search)+"%")
-		}
-	}
-	var total int64
-	if err := db.Count(&total).Error; err != nil {
-		return nil, fmt.Errorf("count end users: %w", err)
-	}
-	var users []EndUser
-	if err := db.Order("last_seen_at DESC").Order("subject_id").Limit(limit).Offset((page - 1) * limit).Find(&users).Error; err != nil {
-		return nil, fmt.Errorf("list end users: %w", err)
+	users, total, err := s.listEndUsersRanked(ctx, runtimeWorkspace, query, page, limit)
+	if err != nil {
+		return nil, err
 	}
 	items, err := s.endUserViews(ctx, runtimeWorkspace, users)
 	if err != nil {

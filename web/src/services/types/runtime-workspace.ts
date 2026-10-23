@@ -165,11 +165,47 @@ export interface RuntimeEndUserList {
   has_more: boolean;
 }
 
+export type RuntimeEndUserQuotaState = 'over' | 'near' | 'custom';
+export type RuntimeEndUserSort = 'last_seen' | 'usage_24h' | 'usage_7d' | 'usage_30d' | 'quota';
+
 export interface RuntimeEndUserListParams {
   search?: string;
   status?: RuntimeEndUserStatus | '';
+  quota_state?: RuntimeEndUserQuotaState | '';
+  sort?: RuntimeEndUserSort;
+  order?: 'asc' | 'desc';
   page?: number;
   limit?: number;
+}
+
+export interface RuntimeEndUserSummary {
+  usage: Array<{ window: RuntimeQuotaWindow; points: number; end_users: number }>;
+  end_users: {
+    total: number;
+    active_7d: number;
+    suspended: number;
+    erased: number;
+    custom_quota: number;
+    over_quota: number;
+    near_quota: number;
+  };
+  top: RuntimeEndUser[];
+}
+
+export interface RuntimeUsageDay {
+  date: string;
+  points: number;
+  apps: Record<string, number>;
+}
+
+export interface RuntimeUsageSeries {
+  days: RuntimeUsageDay[];
+  apps: Array<{ app_id: string; app_type?: string; app_key?: string }>;
+}
+
+export interface RuntimeEndUserBatchResult {
+  updated: number;
+  failed: string[];
 }
 
 /** A null quota returns the end user to the workspace limits. */

@@ -47,6 +47,18 @@ export function useRuntimeEndUsers(
       toast.error(getErrorMessage(error));
     },
   });
+  const batchUpdate = useMutation({
+    mutationFn: ({ subjectIds, patch }: { subjectIds: string[]; patch: RuntimeEndUserPatch }) =>
+      runtimeWorkspaceService.batchUpdateEndUsers(runtimeWorkspaceId as string, subjectIds, patch),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: RUNTIME_WORKSPACE_KEYS.endUsers(runtimeWorkspaceId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error));
+    },
+  });
   const erase = useMutation({
     mutationFn: (subjectId: string) =>
       runtimeWorkspaceService.eraseEndUser(runtimeWorkspaceId as string, subjectId),
@@ -59,7 +71,38 @@ export function useRuntimeEndUsers(
       toast.error(getErrorMessage(error));
     },
   });
-  return { list, update, exportData, erase };
+  return { list, update, batchUpdate, exportData, erase };
+}
+
+/** Totals, counts, and top consumers of a Runtime Workspace's end users. */
+export function useRuntimeEndUserSummary(runtimeWorkspaceId: string | null) {
+  return useQuery({
+    queryKey: RUNTIME_WORKSPACE_KEYS.endUserSummary(runtimeWorkspaceId),
+    queryFn: () => runtimeWorkspaceService.getEndUserSummary(runtimeWorkspaceId as string),
+    enabled: Boolean(runtimeWorkspaceId),
+    retry: false,
+  });
+}
+
+/** Daily usage of a Runtime Workspace's end users, or of one of them. */
+export function useRuntimeEndUserUsageSeries(
+  runtimeWorkspaceId: string | null,
+  subjectId: string | null,
+  days: number,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: RUNTIME_WORKSPACE_KEYS.endUserUsageSeries(runtimeWorkspaceId, subjectId, days),
+    queryFn: () =>
+      runtimeWorkspaceService.getEndUserUsageSeries(runtimeWorkspaceId as string, {
+        subjectId: subjectId ?? undefined,
+        days,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }),
+    enabled: Boolean(runtimeWorkspaceId) && enabled,
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
 }
 
 /** The recorded changes to one end user. */

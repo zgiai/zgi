@@ -31,7 +31,7 @@ import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useRuntimeWorkspace } from '@/hooks/runtime-workspace/use-runtime-workspace';
-import { EndUserQuotaCard } from '@/features/runtime-workspaces/end-user-quota-card';
+import { RuntimeQuotaUsageTab } from '@/features/runtime-workspaces/quota-usage-tab';
 import { RuntimeEndUsersTab } from '@/features/runtime-workspaces/end-users-tab';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { cn } from '@/lib/utils';
@@ -1336,7 +1336,7 @@ function CredentialsTab({
   );
 }
 
-export type RuntimeWorkspaceSection = 'overview' | 'agents' | 'end-users';
+export type RuntimeWorkspaceSection = 'overview' | 'agents' | 'quota' | 'end-users';
 type RuntimeWorkspaceTarget = RuntimeWorkspaceSection | 'keys' | 'docs';
 
 export default function RuntimeWorkspacePage({
@@ -1362,6 +1362,8 @@ export default function RuntimeWorkspacePage({
             ? '/agents'
             : target === 'end-users'
               ? '/end-users'
+              : target === 'quota'
+                ? '/quota'
               : target === 'keys'
                 ? '#runtime-keys'
                 : '/docs';
@@ -1602,14 +1604,6 @@ export default function RuntimeWorkspacePage({
               onEnable={() => runtime.update.mutate({ status: 'active' })}
               onOpenSection={openSection}
             />
-            <EndUserQuotaCard
-              policyJson={runtime.current.data?.policy_json}
-              apps={appCollection.items.filter(app => app.status === 'active')}
-              saving={runtime.update.isPending}
-              onSave={async policy => {
-                await runtime.update.mutateAsync({ policy_json: policy });
-              }}
-            />
             <div id="runtime-keys" className="scroll-mt-4">
               <CredentialsTab
                 credentials={runtime.credentials.data ?? []}
@@ -1626,6 +1620,18 @@ export default function RuntimeWorkspacePage({
               />
             </div>
           </div>
+        ) : null}
+        {section === 'quota' && runtime.current.data ? (
+          <RuntimeQuotaUsageTab
+            runtimeWorkspaceId={runtime.current.data.workspace_id}
+            apps={apps}
+            policyJson={runtime.current.data.policy_json}
+            saving={runtime.update.isPending}
+            onSavePolicy={async policy => {
+              await runtime.update.mutateAsync({ policy_json: policy });
+              toast.success(t('runtime.quota.saved'));
+            }}
+          />
         ) : null}
         {section === 'end-users' && runtime.current.data ? (
           <RuntimeEndUsersTab runtimeWorkspaceId={runtime.current.data.workspace_id} apps={apps} />

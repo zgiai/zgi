@@ -92,6 +92,16 @@ export const RUNTIME_WORKSPACE_KEYS = {
     'events',
     subjectId,
   ],
+  endUserSummary: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'summary',
+  ],
+  endUserUsageSeries: (workspaceId: string | null, subjectId: string | null, days: number) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'usage-series',
+    subjectId,
+    days,
+  ],
 } as const;
 
 // 3. Agent Related
