@@ -208,4 +208,9 @@ func TestEndUserCreditsPayBeyondLimitsPostgres(t *testing.T) {
 		+ (SELECT count(*) FROM runtime_workspace_end_user_credit_bills WHERE subject_id = ?)`, alice, alice, alice).Scan(&left).Error; err != nil || left != 0 {
 		t.Fatalf("erased alice keeps %d credit rows: %v", left, err)
 	}
+	for status, want := range map[string]int64{"": 2, "erased": 1, "all": 3} {
+		if list, err := service.ListEndUsers(t.Context(), workspaceID, EndUserListQuery{Status: status}); err != nil || list.Total != want {
+			t.Fatalf("end users with status %q = %+v %v", status, list, err)
+		}
+	}
 }

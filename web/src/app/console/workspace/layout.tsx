@@ -102,8 +102,9 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       children: [
         { id: 'runtime-overview', label: t('workspace.runtime.tabs.overview'), href: '/console/workspace/runtime-workspaces' },
         { id: 'runtime-agents', label: t('workspace.runtime.tabs.apps'), href: '/console/workspace/runtime-workspaces/agents' },
-        { id: 'runtime-quota', label: t('workspace.runtime.tabs.quota'), href: '/console/workspace/runtime-workspaces/quota' },
         { id: 'runtime-end-users', label: t('workspace.runtime.tabs.endUsers'), href: '/console/workspace/runtime-workspaces/end-users' },
+        { id: 'runtime-quota', label: t('workspace.runtime.tabs.quota'), href: '/console/workspace/runtime-workspaces/quota' },
+        { id: 'runtime-integration', label: t('workspace.runtime.tabs.integration'), href: '/console/workspace/runtime-workspaces/integration' },
         { id: 'runtime-docs', label: t('workspace.runtime.tabs.docs'), href: '/console/workspace/runtime-workspaces/docs' },
       ],
     },

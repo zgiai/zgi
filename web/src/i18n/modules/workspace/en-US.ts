@@ -159,7 +159,8 @@ const messages = {
       credentials: 'Access keys',
       docs: 'API Docs',
       endUsers: 'End users',
-      quota: 'Quotas & usage',
+      quota: 'Quotas & plans',
+      integration: 'Integration',
     },
     endUsers: {
       title: 'End users',
@@ -249,6 +250,7 @@ const messages = {
       unsaved: 'Unsaved changes',
       discard: 'Discard',
       saved: 'Quotas saved',
+      pageDescription: 'Set the default limits for end users, caps for single apps, and plans. See usage and who is near a limit on the overview.',
       zeroHint: 'Enter 0 to include nothing: all usage is paid with the end user\'s credits (pay as you go).',
     },
     webhook: {
@@ -342,8 +344,12 @@ const messages = {
       saved: 'Plan saved',
       inactive: 'The plan expired or was removed; the default limits apply.',
     },
+    integrationPage: {
+      description: 'Access keys your business systems call the API with, and webhooks for quota, credit, and plan events.',
+    },
     usage: {
-      title: 'Quotas & usage',
+      viewEndUsers: 'Manage end users',
+      title: 'End-user usage',
       description: 'How many points end users spend, who is close to their limit, and the limits that apply to them.',
       pointsIn: 'Points, {window}',
       usersWithUsage: '{count} end users with usage',
@@ -442,6 +448,8 @@ const messages = {
       actions: 'Actions',
       active: 'Available',
       revoked: 'Revoked',
+      showRevoked: 'Show revoked keys ({count})',
+      hideRevoked: 'Hide revoked keys',
       never: 'Never',
       noExpiry: 'Never',
       createTitle: 'Create access key',

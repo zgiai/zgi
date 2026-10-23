@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import type { RuntimeApp } from '@/services/types/runtime-workspace';
 
 const windows = ['24h', '7d', '30d'] as const;
@@ -405,7 +406,13 @@ export function EndUserQuotaCard({
           ) : null}
         </section>
 
-        <div className="flex items-center justify-end gap-2">
+        <div
+          className={cn(
+            'flex items-center justify-end gap-2',
+            dirty &&
+              'sticky bottom-0 z-10 -mx-5 -mb-5 rounded-b-xl border-t bg-card/95 px-5 py-3 backdrop-blur supports-[backdrop-filter]:bg-card/80'
+          )}
+        >
           {dirty ? (
             <>
               <Badge variant="outline" className="mr-auto border-warning/40 text-warning">

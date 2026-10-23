@@ -163,6 +163,8 @@ type EndUserList struct {
 // EndUserListQuery filters and orders the end-user list. Sort is one of
 // last_seen (the default), usage_24h, usage_7d, usage_30d, or quota;
 // QuotaState is over, near, or custom; Plan is a plan key, or "none".
+// Status is active, suspended, erased, or all; empty leaves out erased end
+// users.
 type EndUserListQuery struct {
 	Search     string
 	Status     string

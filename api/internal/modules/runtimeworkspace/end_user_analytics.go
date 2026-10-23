@@ -116,7 +116,12 @@ func defaultLimitArg(window string) string {
 
 func endUserListFilters(query EndUserListQuery, args map[string]any) (string, string) {
 	var filters, quota []string
-	if status := strings.TrimSpace(query.Status); status != "" {
+	// Erased end users are tombstones: listed only when asked for.
+	switch status := strings.TrimSpace(query.Status); status {
+	case "":
+		filters = append(filters, "e.status <> 'erased'")
+	case "all":
+	default:
 		filters, args["status"] = append(filters, "e.status = @status"), status
 	}
 	if search := strings.TrimSpace(query.Search); search != "" {

@@ -153,7 +153,8 @@ const messages: WorkspaceMessages = {
       credentials: '访问密钥',
       docs: 'API 文档',
       endUsers: '终端用户',
-      quota: '额度与用量',
+      quota: '额度与套餐',
+      integration: '集成',
     },
     endUsers: {
       title: '终端用户',
@@ -243,6 +244,7 @@ const messages: WorkspaceMessages = {
       unsaved: '有未保存的更改',
       discard: '撤销更改',
       saved: '额度已保存',
+      pageDescription: '设置终端用户的默认限额、单个应用的上限和套餐。用量和接近上限的用户在概览中查看。',
       zeroHint: '填 0 表示不含额度：所有用量都从终端用户的积分中扣除（按量付费）。',
     },
     webhook: {
@@ -336,8 +338,12 @@ const messages: WorkspaceMessages = {
       saved: '套餐已保存',
       inactive: '套餐已过期或已被删除，当前按默认限额计算。',
     },
+    integrationPage: {
+      description: '业务系统调用 API 用的访问密钥，以及额度、积分和套餐事件的 Webhook 通知。',
+    },
     usage: {
-      title: '额度与用量',
+      viewEndUsers: '管理终端用户',
+      title: '终端用户用量',
       description: '查看终端用户消耗了多少积分、谁接近上限，并统一设置适用于他们的限额。',
       pointsIn: '积分 · {window}',
       usersWithUsage: '{count} 位终端用户产生用量',
@@ -433,6 +439,8 @@ const messages: WorkspaceMessages = {
       actions: '操作',
       active: '可用',
       revoked: '已撤销',
+      showRevoked: '显示已撤销的密钥（{count}）',
+      hideRevoked: '隐藏已撤销的密钥',
       never: '从未使用',
       noExpiry: '不过期',
       createTitle: '创建访问密钥',

@@ -31,7 +31,12 @@ import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useRuntimeWorkspace } from '@/hooks/runtime-workspace/use-runtime-workspace';
-import { RuntimeQuotaUsageTab } from '@/features/runtime-workspaces/quota-usage-tab';
+import {
+  RuntimeQuotaTab,
+  RuntimeUsageOverview,
+} from '@/features/runtime-workspaces/quota-usage-tab';
+import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
+import { RuntimeWebhookCard } from '@/features/runtime-workspaces/webhook-card';
 import { RuntimeEndUsersTab } from '@/features/runtime-workspaces/end-users-tab';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { cn } from '@/lib/utils';
@@ -243,45 +248,47 @@ function OverviewTab({
 
   return (
     <div className="space-y-5">
-      <Card
-        className={cn(
-          'overflow-hidden border-border/80 shadow-sm',
-          ready
-            ? 'border-primary/25 bg-primary/[0.04]'
-            : !isActive
-              ? 'border-warning/40 bg-warning/5'
-              : 'border-primary/30 bg-primary/5'
-        )}
-      >
-        <CardContent className="flex flex-col gap-4 p-5 @3xl/console:flex-row @3xl/console:items-center @3xl/console:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-              {ready ? <CheckCircle2 className="size-5" /> : <ShieldCheck className="size-5" />}
+      {!ready ? (
+        <Card
+          className={cn(
+            'overflow-hidden border-border/80 shadow-sm',
+            ready
+              ? 'border-primary/25 bg-primary/[0.04]'
+              : !isActive
+                ? 'border-warning/40 bg-warning/5'
+                : 'border-primary/30 bg-primary/5'
+          )}
+        >
+          <CardContent className="flex flex-col gap-4 p-5 @3xl/console:flex-row @3xl/console:items-center @3xl/console:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                {ready ? <CheckCircle2 className="size-5" /> : <ShieldCheck className="size-5" />}
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold">{readiness.title}</h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  {readiness.description}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold">{readiness.title}</h2>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                {readiness.description}
-              </p>
-            </div>
-          </div>
-          {!ready ? (
-            <Button
-              type="button"
-              className="shrink-0 self-start @3xl/console:self-center"
-              onClick={() => (readiness.tab ? onOpenSection(readiness.tab) : onEnable())}
-              disabled={isUpdating}
-            >
-              {isUpdating && !isActive ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <ArrowRight className="size-4" />
-              )}
-              {readiness.action}
-            </Button>
-          ) : null}
-        </CardContent>
-      </Card>
+            {!ready ? (
+              <Button
+                type="button"
+                className="shrink-0 self-start @3xl/console:self-center"
+                onClick={() => (readiness.tab ? onOpenSection(readiness.tab) : onEnable())}
+                disabled={isUpdating}
+              >
+                {isUpdating && !isActive ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <ArrowRight className="size-4" />
+                )}
+                {readiness.action}
+              </Button>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 @3xl/console:grid-cols-2">
         <button type="button" className="text-left" onClick={() => onOpenSection('agents')}>
@@ -320,39 +327,41 @@ function OverviewTab({
         </Card>
       </div>
 
-      <Card className="border-border/80 shadow-sm">
-        <CardHeader>
-          <SectionHeader
-            title={t('runtime.overview.steps.title')}
-            description={t('runtime.overview.steps.description')}
-          />
-        </CardHeader>
-        <CardContent className="grid gap-3 @3xl/console:grid-cols-3">
-          {steps.map((step, index) => (
-            <div
-              key={step.label}
-              className="flex items-center gap-3 rounded-lg border border-border/70 px-3 py-2.5"
-            >
+      {!ready ? (
+        <Card className="border-border/80 shadow-sm">
+          <CardHeader>
+            <SectionHeader
+              title={t('runtime.overview.steps.title')}
+              description={t('runtime.overview.steps.description')}
+            />
+          </CardHeader>
+          <CardContent className="grid gap-3 @3xl/console:grid-cols-3">
+            {steps.map((step, index) => (
               <div
-                className={cn(
-                  'flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-                  step.complete ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-                )}
+                key={step.label}
+                className="flex items-center gap-3 rounded-lg border border-border/70 px-3 py-2.5"
               >
-                {step.complete ? <Check className="size-3.5" /> : index + 1}
+                <div
+                  className={cn(
+                    'flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                    step.complete ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  {step.complete ? <Check className="size-3.5" /> : index + 1}
+                </div>
+                <span
+                  className={cn(
+                    'text-sm',
+                    step.complete ? 'text-foreground' : 'text-muted-foreground'
+                  )}
+                >
+                  {step.label}
+                </span>
               </div>
-              <span
-                className={cn(
-                  'text-sm',
-                  step.complete ? 'text-foreground' : 'text-muted-foreground'
-                )}
-              >
-                {step.label}
-              </span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -598,10 +607,10 @@ function AppsTab({
 
   return (
     <section className="space-y-4">
-      <SectionHeader
+      <RuntimePageHeader
         title={t('runtime.apps.titleWithCount', { count: activeApps.length })}
         description={t('runtime.apps.description')}
-        action={
+        actions={
           <div className="flex flex-wrap items-center gap-2">
             {activeApps.length > 0 ? (
               <Button
@@ -1127,6 +1136,11 @@ function CredentialsTab({
   const [secret, setSecret] = React.useState<string | null>(null);
   const [revokeId, setRevokeId] = React.useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = React.useState<string | null>(null);
+  const [showRevoked, setShowRevoked] = React.useState(false);
+  const revokedCount = credentials.filter(credential => credential.status !== 'active').length;
+  const shown = showRevoked
+    ? credentials
+    : credentials.filter(credential => credential.status === 'active');
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1219,7 +1233,7 @@ function CredentialsTab({
         />
       </CardHeader>
       <CardContent>
-        {credentials.length === 0 ? (
+        {shown.length === 0 ? (
           <EmptyState
             icon={KeyRound}
             title={t('runtime.credentials.empty')}
@@ -1239,7 +1253,7 @@ function CredentialsTab({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {credentials.map(credential => (
+              {shown.map(credential => (
                 <TableRow key={credential.id}>
                   <TableCell className="font-medium">{credential.name || 'Runtime Key'}</TableCell>
                   <TableCell>
@@ -1285,6 +1299,19 @@ function CredentialsTab({
             </TableBody>
           </Table>
         )}
+        {revokedCount > 0 ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-2 text-muted-foreground"
+            onClick={() => setShowRevoked(value => !value)}
+          >
+            {showRevoked
+              ? t('runtime.credentials.hideRevoked')
+              : t('runtime.credentials.showRevoked', { count: revokedCount })}
+          </Button>
+        ) : null}
       </CardContent>
       <Dialog
         open={Boolean(secret)}
@@ -1336,7 +1363,7 @@ function CredentialsTab({
   );
 }
 
-export type RuntimeWorkspaceSection = 'overview' | 'agents' | 'quota' | 'end-users';
+export type RuntimeWorkspaceSection = 'overview' | 'agents' | 'end-users' | 'quota' | 'integration';
 type RuntimeWorkspaceTarget = RuntimeWorkspaceSection | 'keys' | 'docs';
 
 export default function RuntimeWorkspacePage({
@@ -1355,18 +1382,15 @@ export default function RuntimeWorkspacePage({
   const [disableDialogOpen, setDisableDialogOpen] = React.useState(false);
   const openSection = React.useCallback(
     (target: RuntimeWorkspaceTarget) => {
-      const suffix =
-        target === 'overview'
-          ? ''
-          : target === 'agents'
-            ? '/agents'
-            : target === 'end-users'
-              ? '/end-users'
-              : target === 'quota'
-                ? '/quota'
-              : target === 'keys'
-                ? '#runtime-keys'
-                : '/docs';
+      const suffix = {
+        overview: '',
+        agents: '/agents',
+        'end-users': '/end-users',
+        quota: '/quota',
+        integration: '/integration',
+        keys: '/integration',
+        docs: '/docs',
+      }[target];
       router.push(`/console/workspace/runtime-workspaces${suffix}`);
     },
     [router]
@@ -1467,14 +1491,6 @@ export default function RuntimeWorkspacePage({
   }
 
   const isActive = runtime.current.data.status === 'active';
-  const primarySection: RuntimeWorkspaceTarget =
-    callableAppCount === 0 ? 'agents' : usableCredentialCount === 0 ? 'keys' : 'docs';
-  const primaryAction =
-    callableAppCount === 0
-      ? t('runtime.apps.bind')
-      : usableCredentialCount === 0
-        ? t('runtime.credentials.create')
-        : t('runtime.overview.readiness.readyAction');
   const refreshAll = () => {
     void runtime.current.refetch();
     void runtime.apps.refetch();
@@ -1491,63 +1507,56 @@ export default function RuntimeWorkspacePage({
     <div className="mx-auto flex h-full max-w-7xl flex-col px-4 py-5 @md/console:px-6 @md/console:py-6">
       {section === 'overview' ? (
         <>
-          <header className="mb-5 flex flex-col gap-4 border-b border-border/70 pb-5 @4xl/console:flex-row @4xl/console:items-start @4xl/console:justify-between">
-            <div className="min-w-0">
-              <div className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                {t('runtime.eyebrow')}
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl font-semibold tracking-tight">{t('runtime.pageTitle')}</h1>
-                {statusBadge(
-                  runtime.current.data.status,
-                  t('runtime.status.active'),
-                  t('runtime.status.disabled')
-                )}
-              </div>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                {t('runtime.pageDescription')}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {isActive && section === 'overview' ? (
-                <Button type="button" onClick={() => openSection(primarySection)}>
-                  <ArrowRight className="size-4" />
-                  {primaryAction}
-                </Button>
-              ) : !isActive ? (
-                <Button
-                  type="button"
-                  onClick={() => runtime.update.mutate({ status: 'active' })}
-                  disabled={runtime.update.isPending}
-                >
-                  {runtime.update.isPending ? (
-                    <Loader2 className="size-4 animate-spin" />
+          <div className="mb-5">
+            <RuntimePageHeader
+              title={t('runtime.pageTitle')}
+              badge={statusBadge(
+                runtime.current.data.status,
+                t('runtime.status.active'),
+                t('runtime.status.disabled')
+              )}
+              description={t('runtime.pageDescription')}
+              actions={
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="size-9 px-0"
+                    onClick={refreshAll}
+                    disabled={isRefreshing}
+                    aria-label={tCommon('refresh')}
+                    title={tCommon('refresh')}
+                  >
+                    <RefreshCw className={cn('size-4', isRefreshing && 'animate-spin')} />
+                  </Button>
+                  {isActive ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setDisableDialogOpen(true)}
+                    >
+                      <Unplug className="size-4" />
+                      {t('runtime.status.disableAction')}
+                    </Button>
                   ) : (
-                    <Power className="size-4" />
+                    <Button
+                      type="button"
+                      onClick={() => runtime.update.mutate({ status: 'active' })}
+                      disabled={runtime.update.isPending}
+                    >
+                      {runtime.update.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Power className="size-4" />
+                      )}
+                      {t('runtime.status.enableAction')}
+                    </Button>
                   )}
-                  {t('runtime.status.enableAction')}
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="size-9 px-0"
-                onClick={refreshAll}
-                disabled={isRefreshing}
-                aria-label={tCommon('refresh')}
-                title={tCommon('refresh')}
-              >
-                <RefreshCw className={cn('size-4', isRefreshing && 'animate-spin')} />
-              </Button>
-              {isActive ? (
-                <Button type="button" variant="outline" onClick={() => setDisableDialogOpen(true)}>
-                  <Unplug className="size-4" />
-                  {t('runtime.status.disableAction')}
-                </Button>
-              ) : null}
-            </div>
-          </header>
+                </>
+              }
+            />
+          </div>
 
           <ConfirmDialog
             open={disableDialogOpen}
@@ -1604,6 +1613,20 @@ export default function RuntimeWorkspacePage({
               onEnable={() => runtime.update.mutate({ status: 'active' })}
               onOpenSection={openSection}
             />
+            {runtime.current.data ? (
+              <RuntimeUsageOverview
+                runtimeWorkspaceId={runtime.current.data.workspace_id}
+                apps={apps}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {section === 'integration' ? (
+          <div className="space-y-5">
+            <RuntimePageHeader
+              title={t('runtime.tabs.integration')}
+              description={t('runtime.integrationPage.description')}
+            />
             <div id="runtime-keys" className="scroll-mt-4">
               <CredentialsTab
                 credentials={runtime.credentials.data ?? []}
@@ -1619,10 +1642,13 @@ export default function RuntimeWorkspacePage({
                 isRevoking={runtime.revokeCredential.isPending}
               />
             </div>
+            {runtime.current.data ? (
+              <RuntimeWebhookCard runtimeWorkspaceId={runtime.current.data.workspace_id} />
+            ) : null}
           </div>
         ) : null}
         {section === 'quota' && runtime.current.data ? (
-          <RuntimeQuotaUsageTab
+          <RuntimeQuotaTab
             runtimeWorkspaceId={runtime.current.data.workspace_id}
             apps={apps}
             policyJson={runtime.current.data.policy_json}

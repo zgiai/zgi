@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { EndUserQuotaCard } from '@/features/runtime-workspaces/end-user-quota-card';
-import { RuntimeWebhookCard } from '@/features/runtime-workspaces/webhook-card';
+import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
 import {
   endUserRatio,
   pointsFormat,
@@ -86,29 +86,23 @@ function StatTile({
 }
 
 /**
- * @component RuntimeQuotaUsageTab
+ * @component RuntimeUsageOverview
  * @category Feature
  * @status Beta
- * @description The quota and usage console of a Runtime Workspace (ADR
- * 0010): points spent by end users per window, how many are near or over
- * their limits, daily usage by app, the quota policy, and the end users who
- * spend the most.
- * @usage Rendered as the Quotas & usage section of the Runtime Workspace console.
+ * @description How a Runtime Workspace's end users spend (ADR 0010): points
+ * per window, how many are near or over their limits, daily usage by app,
+ * and the end users who spend the most. Each count links to the filtered
+ * end-user list.
+ * @usage Rendered on the Runtime Workspace overview.
  * @example
- * <RuntimeQuotaUsageTab runtimeWorkspaceId={id} apps={apps} policyJson={policy} onSavePolicy={save} saving={false} />
+ * <RuntimeUsageOverview runtimeWorkspaceId={id} apps={apps} />
  */
-export function RuntimeQuotaUsageTab({
+export function RuntimeUsageOverview({
   runtimeWorkspaceId,
   apps,
-  policyJson,
-  onSavePolicy,
-  saving,
 }: {
   runtimeWorkspaceId: string;
   apps: RuntimeApp[];
-  policyJson?: string;
-  onSavePolicy: (policy: Record<string, unknown>) => Promise<void>;
-  saving: boolean;
 }) {
   const t = useT('workspace');
   const [days, setDays] = React.useState<(typeof trendRanges)[number]>(30);
@@ -120,12 +114,21 @@ export function RuntimeQuotaUsageTab({
   const topMax = Math.max(...top.map(user => user.usage[2]?.points ?? 0), 0);
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold">{t('runtime.usage.title')}</h2>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          {t('runtime.usage.description')}
-        </p>
+    <section className="space-y-4">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">{t('runtime.usage.title')}</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+            {t('runtime.usage.description')}
+          </p>
+        </div>
+        <Link
+          href={endUsersPath}
+          className="flex shrink-0 items-center gap-1 text-sm text-primary hover:underline"
+        >
+          {t('runtime.usage.viewEndUsers')}
+          <ArrowRight className="size-3.5" />
+        </Link>
       </div>
 
       {summary.isLoading ? (
@@ -190,48 +193,39 @@ export function RuntimeQuotaUsageTab({
         </div>
       )}
 
-      <Card className="border-border/80">
-        <CardContent className="space-y-4 p-5">
-          <div className="flex flex-col gap-3 @2xl/console:flex-row @2xl/console:items-start @2xl/console:justify-between">
-            <div>
-              <h3 className="text-base font-semibold">{t('runtime.usage.trend')}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t('runtime.usage.trendDescription')}
-              </p>
+      <div className="grid gap-5 @5xl/console:grid-cols-[minmax(0,5fr)_minmax(0,3fr)]">
+        <Card className="border-border/80">
+          <CardContent className="space-y-4 p-5">
+            <div className="flex flex-col gap-3 @2xl/console:flex-row @2xl/console:items-start @2xl/console:justify-between">
+              <div>
+                <h3 className="text-base font-semibold">{t('runtime.usage.trend')}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t('runtime.usage.trendDescription')}
+                </p>
+              </div>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                value={String(days)}
+                onValueChange={value => {
+                  if (value) setDays(Number(value) as (typeof trendRanges)[number]);
+                }}
+              >
+                {trendRanges.map(range => (
+                  <ToggleGroupItem key={range} value={String(range)} className="px-3 text-xs">
+                    {t('runtime.usage.lastDays', { count: range })}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
             </div>
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              value={String(days)}
-              onValueChange={value => {
-                if (value) setDays(Number(value) as (typeof trendRanges)[number]);
-              }}
-            >
-              {trendRanges.map(range => (
-                <ToggleGroupItem key={range} value={String(range)} className="px-3 text-xs">
-                  {t('runtime.usage.lastDays', { count: range })}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </div>
-          {series.isLoading ? (
-            <Skeleton className="h-60 w-full" />
-          ) : (
-            <UsageTrendChart series={series.data} appNames={appNames} />
-          )}
-        </CardContent>
-      </Card>
+            {series.isLoading ? (
+              <Skeleton className="h-60 w-full" />
+            ) : (
+              <UsageTrendChart series={series.data} appNames={appNames} />
+            )}
+          </CardContent>
+        </Card>
 
-      <div className="grid gap-5 @5xl/console:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <EndUserQuotaCard
-          policyJson={policyJson}
-          apps={apps.filter(app => app.status === 'active')}
-          planCounts={Object.fromEntries(
-            (summary.data?.plans ?? []).map(plan => [plan.key, plan.end_users])
-          )}
-          saving={saving}
-          onSave={onSavePolicy}
-        />
         <Card className="border-border/80">
           <CardContent className="space-y-4 p-5">
             <div className="flex items-start justify-between gap-3">
@@ -305,7 +299,53 @@ export function RuntimeQuotaUsageTab({
           </CardContent>
         </Card>
       </div>
-      <RuntimeWebhookCard runtimeWorkspaceId={runtimeWorkspaceId} />
+    </section>
+  );
+}
+
+/**
+ * @component RuntimeQuotaTab
+ * @category Feature
+ * @status Beta
+ * @description The rules end users are held to (ADR 0010, ADR 0011): the
+ * default limits, per-app caps, and plans, with how many end users hold
+ * each plan.
+ * @usage Rendered as the Quotas & plans section of the Runtime Workspace console.
+ * @example
+ * <RuntimeQuotaTab runtimeWorkspaceId={id} apps={apps} policyJson={policy} onSavePolicy={save} saving={false} />
+ */
+export function RuntimeQuotaTab({
+  runtimeWorkspaceId,
+  apps,
+  policyJson,
+  onSavePolicy,
+  saving,
+}: {
+  runtimeWorkspaceId: string;
+  apps: RuntimeApp[];
+  policyJson?: string;
+  onSavePolicy: (policy: Record<string, unknown>) => Promise<void>;
+  saving: boolean;
+}) {
+  const t = useT('workspace');
+  const summary = useRuntimeEndUserSummary(runtimeWorkspaceId);
+  return (
+    <section className="space-y-5">
+      <RuntimePageHeader
+        title={t('runtime.tabs.quota')}
+        description={t('runtime.quota.pageDescription')}
+      />
+      <div className="max-w-4xl">
+        <EndUserQuotaCard
+          policyJson={policyJson}
+          apps={apps.filter(app => app.status === 'active')}
+          planCounts={Object.fromEntries(
+            (summary.data?.plans ?? []).map(plan => [plan.key, plan.end_users])
+          )}
+          saving={saving}
+          onSave={onSavePolicy}
+        />
+      </div>
     </section>
   );
 }

@@ -66,6 +66,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { EndUserCreditsSection } from '@/features/runtime-workspaces/end-user-credits';
+import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
 import {
   parsePlans,
   PlanAssignmentEditor,
@@ -226,7 +227,9 @@ export function RuntimeEndUsersTab({
     const linkedState = params.get('quota_state') as RuntimeEndUserQuotaState | null;
     if (linkedState && quotaStates.includes(linkedState)) setQuotaState(linkedState);
     const linkedStatus = params.get('status');
-    if (linkedStatus === 'active' || linkedStatus === 'suspended') setStatus(linkedStatus);
+    if (linkedStatus === 'active' || linkedStatus === 'suspended' || linkedStatus === 'erased') {
+      setStatus(linkedStatus);
+    }
     const linkedSort = params.get('sort') as RuntimeEndUserSort | null;
     if (linkedSort && sorts.includes(linkedSort)) setSort(linkedSort);
     const linkedPlan = params.get('plan');
@@ -337,12 +340,10 @@ export function RuntimeEndUsersTab({
 
   return (
     <section className="space-y-4">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold">{t('runtime.endUsers.title')}</h2>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          {t('runtime.endUsers.description')}
-        </p>
-      </div>
+      <RuntimePageHeader
+        title={t('runtime.endUsers.title')}
+        description={t('runtime.endUsers.description')}
+      />
 
       <div className="flex flex-col gap-2 @3xl/console:flex-row @3xl/console:items-center">
         <div className="relative min-w-0 flex-1">
@@ -368,6 +369,7 @@ export function RuntimeEndUsersTab({
             <SelectItem value="all">{t('runtime.endUsers.allStatuses')}</SelectItem>
             <SelectItem value="active">{t('runtime.endUsers.status.active')}</SelectItem>
             <SelectItem value="suspended">{t('runtime.endUsers.status.suspended')}</SelectItem>
+            <SelectItem value="erased">{t('runtime.endUsers.status.erased')}</SelectItem>
           </SelectContent>
         </Select>
         <Select
