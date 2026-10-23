@@ -1689,10 +1689,20 @@ func runScope(run *Run) Scope {
 	}
 }
 
+// applyScheduledConnectorPolicy keeps a scheduled task of an API end user to
+// the Connections the end user supplied for per-user slots (ADR 0007). A task
+// conversation carries no host audience of the API, so bindings delegated to
+// the DigitalHuman are not offered; the run is non-interactive, so only
+// operations that need no confirmation, such as reads, can run.
 func applyScheduledConnectorPolicy(config *chatruntime.RunConfig, run *Run, event invocation.Event) {
-	if config != nil && run != nil && run.Surface == SurfaceTask && event.Origin.Kind == invocation.OriginSchedule && run.UserSubjectKind == string(usersubject.APIEndUser) {
-		config.ConnectorToolsDisabled = true
+	if config == nil || run == nil || run.Surface != SurfaceTask || event.Origin.Kind != invocation.OriginSchedule || run.UserSubjectKind != string(usersubject.APIEndUser) {
+		return
 	}
+	if PerUserConnectorsEnabled() {
+		config.ConnectorDelegationDisabled = true
+		return
+	}
+	config.ConnectorToolsDisabled = true
 }
 
 func persistedRunActorID(scope Scope, principalType, surface string) *uuid.UUID {

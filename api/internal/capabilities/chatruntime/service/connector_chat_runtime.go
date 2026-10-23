@@ -33,6 +33,7 @@ func (s *service) resolveConnectorCapabilities(
 	caller Caller,
 	targetID string,
 	targetScope core.TargetScope, versionID string,
+	allowDelegation bool,
 ) (connectorruntimeauth.ChatCapabilitySnapshot, error) {
 	if s == nil {
 		return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
@@ -68,7 +69,7 @@ func (s *service) resolveConnectorCapabilities(
 			VersionID:      versionID,
 		}
 		snapshot, err := s.connectorDigitalHumanRuntime.ResolveDigitalHumanCapabilities(ctx, request)
-		if targetScope != core.ScopePublished {
+		if targetScope != core.ScopePublished || !allowDelegation {
 			return snapshot, err
 		}
 		delegated, ok := s.connectorDigitalHumanRuntime.(connectorruntimeauth.DelegatedDigitalHumanRuntimeResolver)
@@ -196,7 +197,7 @@ func (s *service) applyConnectorSkillConfig(
 	if !ok {
 		return nil
 	}
-	snapshot, err := s.resolveConnectorCapabilities(ctx, scope, caller, targetID, core.TargetScope(parts.ConnectorTargetScope), parts.ConnectorTargetVersionID)
+	snapshot, err := s.resolveConnectorCapabilities(ctx, scope, caller, targetID, core.TargetScope(parts.ConnectorTargetScope), parts.ConnectorTargetVersionID, !parts.ConnectorDelegationDisabled)
 	if err != nil {
 		return err
 	}
@@ -327,6 +328,7 @@ func (s *service) resolvePreparedConnectorSkills(
 		prepared.Scope,
 		prepared.Caller,
 		targetID, core.TargetScope(parts.ConnectorTargetScope), parts.ConnectorTargetVersionID,
+		!parts.ConnectorDelegationDisabled,
 	)
 	if err != nil {
 		return nil, err

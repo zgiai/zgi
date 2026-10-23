@@ -46,6 +46,20 @@ func TestTeardownAttachedWorkspacePurgesSubjectsAndDefersFileObjects(t *testing.
 		mock.ExpectExec(`DELETE FROM ` + table + ` WHERE relationship_id IN \(\$1\)`).WithArgs(relationshipID).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
 	mock.ExpectExec(`DELETE FROM user_memory_relationships WHERE id IN \(\$1\)`).WithArgs(relationshipID).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`(?s)SELECT id::text AS id, file_key FROM tool_files.*user_id IN \(\$1\).*account_id IN \(\$2\)`).
+		WithArgs(subjectID, subjectID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "file_key"}).AddRow(uuid.NewString(), "tools/runtime/chart.png"))
+	mock.ExpectExec(`(?s)INSERT INTO file_object_deletions`).
+		WithArgs(sqlmock.AnyArg(), "tools/runtime/chart.png", now.Add(RuntimeFileObjectRetention), now, now).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`DELETE FROM tool_files WHERE id IN \(\$1\)`).WillReturnResult(sqlmock.NewResult(0, 1))
+	for _, table := range []string{"agent_memory_values", "agent_memory_undo_records", "agent_memory_events", "agent_memory_extraction_jobs", "agent_memory_subject_states"} {
+		mock.ExpectExec(`DELETE FROM ` + table + ` WHERE user_scope = 'end_user' AND user_id IN \(\$1\)`).WithArgs(subjectID).WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+	mock.ExpectQuery(`(?s)SELECT files\.id::text AS id, files\.key FROM upload_files AS files.*agent_execution_uploads.*subject_id IN \(\$1\)`).
+		WithArgs(subjectID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "key"}))
+	mock.ExpectExec(`DELETE FROM agent_execution_uploads WHERE subject_id IN \(\$1\)`).WithArgs(subjectID).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "chat_runtime_conversations" WHERE account_id IN ($1)`)).
 		WithArgs(subjectID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(conversationID))

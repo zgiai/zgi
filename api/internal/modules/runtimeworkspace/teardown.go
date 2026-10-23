@@ -110,6 +110,10 @@ func TeardownAttachedWorkspace(ctx context.Context, tx *gorm.DB, workspaceID uui
 			}
 		}
 
+		if err := purgeRuntimeRunLeftovers(ctx, tx, subjectIDs, now); err != nil {
+			return nil, err
+		}
+
 		var conversationIDs []uuid.UUID
 		if err := tx.WithContext(ctx).Table("chat_runtime_conversations").Where("account_id IN ?", subjectIDs).Pluck("id", &conversationIDs).Error; err != nil {
 			return nil, fmt.Errorf("list Runtime conversations: %w", err)
@@ -137,4 +141,65 @@ func TeardownAttachedWorkspace(ctx context.Context, tx *gorm.DB, workspaceID uui
 		return nil, fmt.Errorf("delete Runtime Workspace: %w", err)
 	}
 	return result, nil
+}
+
+// purgeRuntimeRunLeftovers removes what the end users' runs left beside
+// their conversations: files tools produced, legacy Agent memory, and
+// execution uploads, queuing the storage objects for deletion.
+func purgeRuntimeRunLeftovers(ctx context.Context, tx *gorm.DB, subjectIDs []uuid.UUID, now time.Time) error {
+	db := tx.WithContext(ctx)
+	var toolFiles []struct {
+		ID      string
+		FileKey string
+	}
+	if err := db.Raw(`
+		SELECT id::text AS id, file_key FROM tool_files
+		WHERE user_id IN ? OR conversation_id IN (SELECT id FROM chat_runtime_conversations WHERE account_id IN ?)
+	`, subjectIDs, subjectIDs).Scan(&toolFiles).Error; err != nil {
+		return fmt.Errorf("list Runtime tool files: %w", err)
+	}
+	if len(toolFiles) > 0 {
+		ids, keys := make([]string, 0, len(toolFiles)), make([]string, 0, len(toolFiles))
+		for _, file := range toolFiles {
+			ids, keys = append(ids, file.ID), append(keys, file.FileKey)
+		}
+		if err := scheduleObjectDeletions(ctx, tx, keys, now); err != nil {
+			return err
+		}
+		if err := db.Exec("DELETE FROM tool_files WHERE id IN ?", ids).Error; err != nil {
+			return fmt.Errorf("delete Runtime tool files: %w", err)
+		}
+	}
+	for _, table := range []string{"agent_memory_values", "agent_memory_undo_records", "agent_memory_events", "agent_memory_extraction_jobs", "agent_memory_subject_states"} {
+		if err := db.Exec("DELETE FROM "+table+" WHERE user_scope = 'end_user' AND user_id IN ?", subjectIDs).Error; err != nil {
+			return fmt.Errorf("delete Runtime Agent memory from %s: %w", table, err)
+		}
+	}
+	var uploads []struct {
+		ID  string
+		Key string
+	}
+	if err := db.Raw(`
+		SELECT files.id::text AS id, files.key FROM upload_files AS files
+		JOIN agent_execution_uploads AS uploads ON uploads.file_id = files.id
+		WHERE uploads.subject_id IN ?
+	`, subjectIDs).Scan(&uploads).Error; err != nil {
+		return fmt.Errorf("list Runtime execution uploads: %w", err)
+	}
+	if err := db.Exec("DELETE FROM agent_execution_uploads WHERE subject_id IN ?", subjectIDs).Error; err != nil {
+		return fmt.Errorf("delete Runtime execution uploads: %w", err)
+	}
+	if len(uploads) > 0 {
+		ids, keys := make([]string, 0, len(uploads)), make([]string, 0, len(uploads))
+		for _, upload := range uploads {
+			ids, keys = append(ids, upload.ID), append(keys, upload.Key)
+		}
+		if err := scheduleObjectDeletions(ctx, tx, keys, now); err != nil {
+			return err
+		}
+		if err := db.Exec("DELETE FROM upload_files WHERE id IN ?", ids).Error; err != nil {
+			return fmt.Errorf("delete Runtime execution upload files: %w", err)
+		}
+	}
+	return nil
 }

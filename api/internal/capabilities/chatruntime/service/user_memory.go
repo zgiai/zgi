@@ -136,6 +136,7 @@ func cloneChatRequestPartsForUserMemoryPreflight(parts *chatRequestParts) *chatR
 	clone.ConnectorTargetScope = parts.ConnectorTargetScope
 	clone.ConnectorTargetVersionID = parts.ConnectorTargetVersionID
 	clone.ConnectorToolsDisabled = parts.ConnectorToolsDisabled
+	clone.ConnectorDelegationDisabled = parts.ConnectorDelegationDisabled
 	clone.ConnectorTargetType = parts.ConnectorTargetType
 	clone.ConnectorRunID = parts.ConnectorRunID
 	clone.ConnectorInteractive = parts.ConnectorInteractive

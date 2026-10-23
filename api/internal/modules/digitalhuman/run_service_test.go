@@ -49,6 +49,28 @@ func TestScheduledAPIEndUserTaskDoesNotBorrowPersonalConnectors(t *testing.T) {
 	}
 }
 
+func TestScheduledAPIEndUserTaskKeepsOnlyItsOwnConnectors(t *testing.T) {
+	t.Setenv("ZGI_DIGITAL_HUMAN_PER_USER_CONNECTORS_ENABLED", "true")
+	event := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginSchedule}}
+	config := chatruntime.RunConfig{}
+	applyScheduledConnectorPolicy(&config, &Run{Surface: SurfaceTask, UserSubjectKind: string(usersubject.APIEndUser)}, event)
+	if config.ConnectorToolsDisabled || !config.ConnectorDelegationDisabled {
+		t.Fatalf("scheduled end-user task = tools disabled %v, delegation disabled %v", config.ConnectorToolsDisabled, config.ConnectorDelegationDisabled)
+	}
+	subject := uuid.New()
+	for name, run := range map[string]*Run{
+		"end user task": {Surface: SurfaceTask, UserSubjectKind: string(usersubject.APIEndUser), UserSubjectID: &subject},
+		"member task":   {Surface: SurfaceTask, UserSubjectKind: string(usersubject.Account), UserSubjectID: &subject},
+	} {
+		if requester, _, ok := perUserRequester(run); !ok || requester != subject {
+			t.Fatalf("%s acts as %v, %v", name, requester, ok)
+		}
+	}
+	if _, _, ok := perUserRequester(&Run{Surface: SurfaceTask}); ok {
+		t.Fatal("a task without a requester resolved a per-user slot")
+	}
+}
+
 func TestScheduledAPIEndUserTaskPreparesChatWithoutPersonalConnectors(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)

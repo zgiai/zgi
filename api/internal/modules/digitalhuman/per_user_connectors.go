@@ -133,8 +133,8 @@ func perUserSlotRows(ctx context.Context, db *gorm.DB, organizationID, digitalHu
 }
 
 // perUserRequester is who a run's per-user slots act as: the end user of an
-// API run, or the member of a console run. Channel, task, and other runs
-// have no requester for them.
+// API run or of their task, or the member of a console run or of their task.
+// Channel and other runs have no requester for them.
 func perUserRequester(run *Run) (uuid.UUID, string, bool) {
 	if run == nil {
 		return uuid.Nil, "", false
@@ -147,6 +147,16 @@ func perUserRequester(run *Run) (uuid.UUID, string, bool) {
 	case SurfaceConsole:
 		if run.ActorID != nil && *run.ActorID != uuid.Nil {
 			return *run.ActorID, connectorOwnerAccount, true
+		}
+	case SurfaceTask:
+		// A task runs with the Connection of the requester who owns it.
+		if run.UserSubjectID != nil && *run.UserSubjectID != uuid.Nil {
+			switch run.UserSubjectKind {
+			case string(usersubject.APIEndUser):
+				return *run.UserSubjectID, connectorOwnerEndUser, true
+			case string(usersubject.Account):
+				return *run.UserSubjectID, connectorOwnerAccount, true
+			}
 		}
 	}
 	return uuid.Nil, "", false

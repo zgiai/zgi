@@ -97,7 +97,7 @@ func TestPublishedAgentFallsBackToDelegatedHostCapabilities(t *testing.T) {
 		context.Background(),
 		Scope{OrganizationID: organizationID, AccountID: requesterID},
 		Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, RunID: &runID, Source: runtimemodel.ConversationSourceExternalAPI},
-		agentID.String(), core.ScopePublished, uuid.NewString(),
+		agentID.String(), core.ScopePublished, uuid.NewString(), true,
 	)
 	if err != nil || !snapshot.HasOperations() {
 		t.Fatalf("delegated capabilities = %#v, error = %v", snapshot, err)
