@@ -29,7 +29,7 @@ External access (Runtime Workspaces) was built for a few exposed apps. Integrato
 - App lists and candidates are paged and searched on the server.
 - The Apps page is a table with type, status, and usage, and each app opens a detail with its own settings, including its per-app quota cap. Per-app caps stay in the policy, next to the plans that override them, so there is one place for quota rules and no data migration; they are edited from the app and count in quota states.
 - Bound apps are managed with add and remove changes, so the console never sends the whole selection; candidates are matched and ordered by name on the server and authorized a chunk at a time until a page is full.
-- The bound-app limit stays, but is configurable (`ZGI_RUNTIME_WORKSPACE_MAX_APPS`, default 100), refused with its own error, shown in the console, and documented.
+- The bound-app limit stays, but is configurable (`ZGI_RUNTIME_WORKSPACE_MAX_APPS`, default 500), refused with its own error, shown in the console, and documented.
 
 ### Limits and leftovers
 
