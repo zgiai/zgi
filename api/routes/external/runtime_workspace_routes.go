@@ -67,7 +67,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		dhRoute = func(string) gin.HandlerFunc { return nil }
 	}
 	group := router.Group("/connect/v1")
-	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceRequestLease(service), runtimeWorkspaceAudit(service), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service))
+	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceRequestLease(service), runtimeWorkspaceAudit(service), runtimeWorkspaceCredentialScope(), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service), runtimeWorkspaceEndUserRateLimit())
 	group.GET("/apps", func(c *gin.Context) {
 		principal, ok := runtimePrincipal(c)
 		if !ok {
@@ -77,7 +77,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		if c.Query("page") != "" || c.Query("limit") != "" {
 			page, _ := strconv.Atoi(c.Query("page"))
 			limit, _ := strconv.Atoi(c.Query("limit"))
-			apps, err := service.ListAppsPage(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), page, limit)
+			apps, err := service.ListAppsPage(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), page, limit, principal.Credential)
 			if err != nil {
 				runtimeFail(c, err)
 				return
@@ -90,7 +90,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 			runtimeFail(c, err)
 			return
 		}
-		response.Success(c, gin.H{"items": apps})
+		response.Success(c, gin.H{"items": principal.Credential.AppsAllowed(apps)})
 	})
 
 	group.GET("/plans", func(c *gin.Context) {
@@ -195,15 +195,49 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		}
 		response.Success(c, result)
 	}))
+	// Exports run as jobs (ADR 0012): the request queues one and returns
+	// it with 202; poll it, then download the JSON once it has succeeded.
 	group.POST("/end-users/:user/export", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
-		export, err := service.ExportEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+		export, err := service.RequestEndUserExport(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
 			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID})
 		if err != nil {
 			runtimeFail(c, err)
 			return
 		}
-		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusAccepted, response.Response{Code: "0", Message: "success", Data: export})
+	}))
+	exportID := func(c *gin.Context) (uuid.UUID, bool) {
+		id, err := uuid.Parse(c.Param("export_id"))
+		if err != nil {
+			runtimeFail(c, runtimeworkspace.ErrExportNotFound)
+			return uuid.Nil, false
+		}
+		return id, true
+	}
+	group.GET("/end-users/:user/exports/:export_id", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		id, ok := exportID(c)
+		if !ok {
+			return
+		}
+		export, err := service.GetEndUserExport(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, id)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
 		response.Success(c, export)
+	}))
+	group.GET("/end-users/:user/exports/:export_id/download", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		id, ok := exportID(c)
+		if !ok {
+			return
+		}
+		content, err := service.OpenEndUserExport(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, id)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		defer content.Close()
+		writeEndUserExportDownload(c, id, content)
 	}))
 	group.DELETE("/end-users/:user", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
 		if err := service.EraseEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
@@ -618,6 +652,98 @@ func runtimeWorkspaceRateLimit() gin.HandlerFunc {
 	}
 }
 
+// runtimeWorkspaceEndUserRateLimit limits each end user on top of the
+// workspace limit (ADR 0012). Requests without an end user, such as the
+// integrating server managing end users, are not counted. Like the workspace
+// limit it fails open when Redis is unavailable.
+func runtimeWorkspaceEndUserRateLimit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok || principal.SubjectID == uuid.Nil {
+			c.Next()
+			return
+		}
+		limit := runtimeworkspace.RuntimeEndUserRequestsPerMinute(principal.RuntimeWorkspace.PolicyJSON)
+		if limit <= 0 {
+			c.Next()
+			return
+		}
+		key := principal.RuntimeWorkspace.LogicalID().String() + ":user:" + principal.SubjectID.String()
+		decision, err := runtimeworkspace.AllowRateLimitedRequest(c.Request.Context(), redisPkg.GetClient(), key, limit, time.Now())
+		c.Header("X-RateLimit-End-User-Limit", strconv.Itoa(decision.Limit))
+		c.Header("X-RateLimit-End-User-Remaining", strconv.Itoa(decision.Remaining))
+		if errors.Is(err, runtimeworkspace.ErrRateLimited) {
+			retryAfter := int(decision.RetryAfter / time.Second)
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+			runtimeFail(c, runtimeworkspace.ErrEndUserRateLimited)
+			c.Abort()
+			return
+		}
+		if err != nil {
+			logger.Warn("runtime workspace end-user rate limit unavailable", "error", err)
+		}
+		c.Next()
+	}
+}
+
+// writeEndUserExportDownload streams an export's JSON as an attachment.
+func writeEndUserExportDownload(c *gin.Context, exportID uuid.UUID, content io.Reader) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Disposition", `attachment; filename="end-user-export-`+exportID.String()+`.json"`)
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Status(http.StatusOK)
+	if _, err := io.Copy(c.Writer, content); err != nil {
+		logger.Warn("runtime workspace end-user export download failed", "error", err)
+	}
+}
+
+// runtimeCredentialScope is the scope a /connect/v1 route needs (ADR 0012):
+// end-user management reads and changes, or calls as end users. "" lets any
+// scope through.
+func runtimeCredentialScope(method, fullPath string) string {
+	path := fullPath
+	if index := strings.Index(fullPath, "/connect/v1"); index >= 0 {
+		path = fullPath[index+len("/connect/v1"):]
+	}
+	switch {
+	case path == "/plans":
+		return ""
+	case strings.HasPrefix(path, "/end-users/"):
+		if method == http.MethodGet && !strings.Contains(path, "/exports/") {
+			return runtimeworkspace.CredentialScopeEndUsersRead
+		}
+		return runtimeworkspace.CredentialScopeEndUsersManage
+	default:
+		return runtimeworkspace.CredentialScopeRuntime
+	}
+}
+
+// runtimeWorkspaceCredentialScope refuses calls outside the key's scopes, and
+// apps outside its apps as not found, so they cannot be discovered.
+func runtimeWorkspaceCredentialScope() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok {
+			c.Abort()
+			return
+		}
+		if scope := runtimeCredentialScope(c.Request.Method, c.FullPath()); scope != "" && !principal.Credential.Allows(scope) {
+			runtimeFail(c, runtimeworkspace.ErrCredentialScopeDenied)
+			c.Abort()
+			return
+		}
+		if appKey := strings.TrimSpace(c.Param("app_key")); appKey != "" && !principal.Credential.AllowsApp(appKey) {
+			runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func runtimeWorkspaceRateLimitKey(principal *runtimeworkspace.Principal) string {
 	if principal == nil || principal.RuntimeWorkspace == nil {
 		return ""
@@ -631,6 +757,14 @@ func runtimeFail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, runtimeworkspace.ErrRateLimited):
 		response.Fail(c, response.ErrRateLimitExceeded)
+	case errors.Is(err, runtimeworkspace.ErrEndUserRateLimited):
+		c.JSON(http.StatusTooManyRequests, response.Response{Code: "runtime_end_user_rate_limited", Message: "This end user sent too many requests; retry after the Retry-After seconds"})
+	case errors.Is(err, runtimeworkspace.ErrCredentialScopeDenied):
+		c.JSON(http.StatusForbidden, response.Response{Code: "runtime_credential_scope_denied", Message: "This access key is not allowed to call this endpoint"})
+	case errors.Is(err, runtimeworkspace.ErrExportNotFound):
+		response.Fail(c, response.ErrNotFound)
+	case errors.Is(err, runtimeworkspace.ErrExportNotReady):
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_export_not_ready", Message: "The export has not finished"})
 	case errors.Is(err, runtimeworkspace.ErrUnauthorized), errors.Is(err, runtimeworkspace.ErrSubjectRequired):
 		response.Fail(c, response.ErrUnauthorized)
 	case errors.Is(err, runtimeworkspace.ErrAppNotFound), errors.Is(err, runtimeworkspace.ErrFileNotFound), errors.Is(err, runtimeworkspace.ErrEndUserNotFound):

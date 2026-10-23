@@ -357,11 +357,12 @@ type AppPage struct {
 }
 
 // ListAppsPage pages the callable apps of a Runtime Workspace.
-func (s *Service) ListAppsPage(ctx context.Context, runtimeWorkspaceID uuid.UUID, page, limit int) (*AppPage, error) {
+func (s *Service) ListAppsPage(ctx context.Context, runtimeWorkspaceID uuid.UUID, page, limit int, credential *Credential) (*AppPage, error) {
 	apps, err := s.ListApps(ctx, runtimeWorkspaceID)
 	if err != nil {
 		return nil, err
 	}
+	apps = credential.AppsAllowed(apps)
 	page, limit, start, end := pageBounds(page, limit, len(apps))
 	return &AppPage{Items: apps[start:end], Page: page, Limit: limit, Total: len(apps), HasMore: end < len(apps)}, nil
 }

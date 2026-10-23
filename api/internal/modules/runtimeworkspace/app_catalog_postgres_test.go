@@ -163,7 +163,7 @@ func TestRuntimeWorkspaceAppCatalogPagesAndCapsPostgres(t *testing.T) {
 	if callable, _ := service.ListBindingsPage(t.Context(), workspaceID, AppListQuery{State: AppStateUnavailable}); callable.Total != 0 {
 		t.Fatalf("unavailable apps = %+v", callable)
 	}
-	appsPage, err := service.ListAppsPage(t.Context(), runtimeID, 2, 1)
+	appsPage, err := service.ListAppsPage(t.Context(), runtimeID, 2, 1, nil)
 	if err != nil || len(appsPage.Items) != 1 || appsPage.Total != 2 || appsPage.HasMore {
 		t.Fatalf("external apps page = %+v %v", appsPage, err)
 	}

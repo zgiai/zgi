@@ -16,6 +16,7 @@ import type {
 } from '@/services/types/runtime-workspace';
 import { RUNTIME_WORKSPACE_KEYS } from '@/hooks/query-keys';
 import { getErrorMessage } from '@/utils/error-notifications';
+import { useT } from '@/i18n';
 
 /** End users of a Runtime Workspace, with their usage and quotas. */
 export function useRuntimeEndUsers(
@@ -23,6 +24,7 @@ export function useRuntimeEndUsers(
   params: RuntimeEndUserListParams
 ) {
   const queryClient = useQueryClient();
+  const t = useT('workspace');
   const list = useQuery({
     queryKey: RUNTIME_WORKSPACE_KEYS.endUserList(runtimeWorkspaceId, params),
     queryFn: () => runtimeWorkspaceService.listEndUsers(runtimeWorkspaceId as string, params),
@@ -42,9 +44,22 @@ export function useRuntimeEndUsers(
       toast.error(getErrorMessage(error));
     },
   });
+  // Exports run as jobs: queue one, wait for it, then download its JSON.
   const exportData = useMutation({
-    mutationFn: (subjectId: string) =>
-      runtimeWorkspaceService.exportEndUser(runtimeWorkspaceId as string, subjectId),
+    mutationFn: async (subjectId: string) => {
+      const workspaceId = runtimeWorkspaceId as string;
+      let job = await runtimeWorkspaceService.requestEndUserExport(workspaceId, subjectId);
+      const deadline = Date.now() + 10 * 60_000;
+      while (job.status === 'pending' || job.status === 'running') {
+        if (Date.now() > deadline) throw new Error(t('runtime.endUsers.exportTimeout'));
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        job = await runtimeWorkspaceService.getEndUserExport(workspaceId, subjectId, job.id);
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error || t('runtime.endUsers.exportFailed'));
+      }
+      return runtimeWorkspaceService.downloadEndUserExport(workspaceId, subjectId, job.id);
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: RUNTIME_WORKSPACE_KEYS.endUsers(runtimeWorkspaceId),

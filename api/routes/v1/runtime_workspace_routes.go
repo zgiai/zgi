@@ -18,6 +18,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
@@ -116,12 +117,16 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		var req struct {
 			Name      string     `json:"name"`
 			ExpiresAt *time.Time `json:"expires_at,omitempty"`
+			// Scopes and AppKeys limit the key (ADR 0012); empty is no limit.
+			Scopes  []string `json:"scopes,omitempty"`
+			AppKeys []string `json:"app_keys,omitempty"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
-		created, err := service.CreateCredential(c.Request.Context(), workspaceID, accountID, req.Name, req.ExpiresAt, c.GetHeader("Idempotency-Key"))
+		created, err := service.CreateScopedCredential(c.Request.Context(), workspaceID, accountID, runtimeworkspace.CredentialInput{
+			Name: req.Name, ExpiresAt: req.ExpiresAt, Scopes: req.Scopes, AppKeys: req.AppKeys}, c.GetHeader("Idempotency-Key"))
 		if err != nil {
 			managementFail(c, err)
 			return
@@ -510,15 +515,48 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		}
 		response.Success(c, view)
 	}))
+	// Exports run as jobs (ADR 0012): queue one, poll it, then download it.
 	scoped.POST("/end-users/:subject_id/export", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
-		export, err := service.ExportEndUser(c.Request.Context(), workspaceID, subjectID,
+		export, err := service.RequestEndUserExport(c.Request.Context(), workspaceID, subjectID,
 			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID})
 		if err != nil {
 			managementFail(c, err)
 			return
 		}
-		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusAccepted, response.Response{Code: "0", Message: "success", Data: export})
+	}))
+	scoped.GET("/end-users/:subject_id/exports/:export_id", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		exportID, err := uuid.Parse(c.Param("export_id"))
+		if err != nil {
+			managementFail(c, runtimeworkspace.ErrExportNotFound)
+			return
+		}
+		export, err := service.GetEndUserExport(c.Request.Context(), workspaceID, subjectID, exportID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
 		response.Success(c, export)
+	}))
+	scoped.GET("/end-users/:subject_id/exports/:export_id/download", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		exportID, err := uuid.Parse(c.Param("export_id"))
+		if err != nil {
+			managementFail(c, runtimeworkspace.ErrExportNotFound)
+			return
+		}
+		content, err := service.OpenEndUserExport(c.Request.Context(), workspaceID, subjectID, exportID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		defer content.Close()
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Disposition", `attachment; filename="end-user-export-`+exportID.String()+`.json"`)
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Status(http.StatusOK)
+		if _, err := io.Copy(c.Writer, content); err != nil {
+			logger.Warn("runtime workspace end-user export download failed", "error", err)
+		}
 	}))
 	scoped.DELETE("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
 		if err := service.EraseEndUser(c.Request.Context(), workspaceID, subjectID,
@@ -762,7 +800,11 @@ func managementFail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, response.Response{Code: "213003", Message: response.ErrAPIKeyAlreadyExists.Message})
 		return
 	}
-	if errors.Is(err, runtimeworkspace.ErrAppNotFound) || errors.Is(err, runtimeworkspace.ErrEndUserNotFound) {
+	if errors.Is(err, runtimeworkspace.ErrExportNotReady) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_export_not_ready", Message: "The export has not finished"})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrAppNotFound) || errors.Is(err, runtimeworkspace.ErrEndUserNotFound) || errors.Is(err, runtimeworkspace.ErrExportNotFound) {
 		response.Fail(c, response.ErrNotFound)
 		return
 	}

@@ -30,8 +30,25 @@ export interface RuntimeCredential {
   last_used_at?: string | null;
   revoked_at?: string | null;
   created_by_account_id: string;
+  /** What the key may call; absent means everything. */
+  scopes?: RuntimeCredentialScope[];
+  /** The apps the key may call; absent means every app. */
+  app_keys?: string[];
   created_at: string;
   updated_at: string;
+}
+
+export type RuntimeCredentialScope = 'runtime' | 'end_users.read' | 'end_users.manage';
+
+/** An end-user export job; the JSON is downloaded once it has succeeded. */
+export interface RuntimeEndUserExportJob {
+  id: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  size_bytes: number;
+  error?: string;
+  created_at: string;
+  finished_at?: string | null;
+  expires_at: string;
 }
 
 /** What a Runtime Workspace app is: an Agent or a DigitalHuman. */
@@ -106,6 +123,8 @@ export interface RuntimeCredentialCreation {
 export interface RuntimeWorkspaceCredentialInput {
   name?: string;
   expires_at?: string;
+  scopes?: RuntimeCredentialScope[];
+  app_keys?: string[];
   idempotency_key?: string;
 }
 

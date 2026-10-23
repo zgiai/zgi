@@ -85,8 +85,12 @@ type Credential struct {
 	LastUsedAt         *time.Time `json:"last_used_at,omitempty"`
 	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
 	CreatedByAccountID uuid.UUID  `gorm:"type:uuid;not null" json:"created_by_account_id"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	// Scopes and AppKeys limit what the key may call (ADR 0012); empty
+	// means no limit.
+	Scopes    []string  `gorm:"type:jsonb;serializer:json" json:"scopes,omitempty"`
+	AppKeys   []string  `gorm:"type:jsonb;serializer:json" json:"app_keys,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (Credential) TableName() string { return "runtime_workspace_credentials" }

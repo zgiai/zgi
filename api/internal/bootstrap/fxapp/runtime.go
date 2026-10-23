@@ -159,6 +159,7 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 			runtimeworkspace.NewWebhookWorker(params.ServiceContainer.GetDB(), params.ServiceContainer.GetDigitalHumanCredentialCipher()),
 			params.Logger,
 		)
+		RegisterRuntimeWorkspaceMaintenanceLifecycle(lc, runtimeworkspace.NewMaintenanceWorker(params.ServiceContainer.GetDB()), params.Logger)
 	}
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
@@ -225,6 +226,27 @@ func RegisterRuntimeWorkspaceWebhookLifecycle(
 	runner runtimeWorkspaceFileObjectDeletionRunner,
 	log *zap.Logger,
 ) {
+	registerRuntimeWorkspaceTicker(lc, runner, 10*time.Second, "Runtime Workspace webhook delivery failed", log)
+}
+
+// RegisterRuntimeWorkspaceMaintenanceLifecycle runs queued end-user exports
+// every few seconds and purges expired exports and access events (ADR 0012);
+// exports are leased, so every instance may run it.
+func RegisterRuntimeWorkspaceMaintenanceLifecycle(
+	lc fx.Lifecycle,
+	runner runtimeWorkspaceFileObjectDeletionRunner,
+	log *zap.Logger,
+) {
+	registerRuntimeWorkspaceTicker(lc, runner, 5*time.Second, "Runtime Workspace maintenance failed", log)
+}
+
+func registerRuntimeWorkspaceTicker(
+	lc fx.Lifecycle,
+	runner runtimeWorkspaceFileObjectDeletionRunner,
+	interval time.Duration,
+	failure string,
+	log *zap.Logger,
+) {
 	if runner == nil {
 		return
 	}
@@ -240,7 +262,7 @@ func RegisterRuntimeWorkspaceWebhookLifecycle(
 			done = make(chan struct{})
 			go func() {
 				defer close(done)
-				ticker := time.NewTicker(10 * time.Second)
+				ticker := time.NewTicker(interval)
 				defer ticker.Stop()
 				for {
 					select {
@@ -248,7 +270,7 @@ func RegisterRuntimeWorkspaceWebhookLifecycle(
 						return
 					case <-ticker.C:
 						if err := runner.RunOnce(workerContext); err != nil {
-							log.Warn("Runtime Workspace webhook delivery failed", zap.Error(err))
+							log.Warn(failure, zap.Error(err))
 						}
 					}
 				}

@@ -1,6 +1,7 @@
 import { BaseService } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
 import type {
+  RuntimeEndUserExportJob,
   RuntimeAgentCandidateSet,
   RuntimeAppCollection,
   RuntimeCredentialCreation,
@@ -406,14 +407,45 @@ class RuntimeWorkspaceService extends BaseService {
     return response.data ?? { days: [], apps: [] };
   }
 
-  async exportEndUser(workspaceId: string, subjectId: string): Promise<Record<string, unknown>> {
-    const response = await this.request<ApiResponseData<Record<string, unknown>>>(
+  /** Queues an export, or returns the one already queued or running. */
+  async requestEndUserExport(
+    workspaceId: string,
+    subjectId: string
+  ): Promise<RuntimeEndUserExportJob> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserExportJob>>(
       'post',
       `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/export`,
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data;
+  }
+
+  async getEndUserExport(
+    workspaceId: string,
+    subjectId: string,
+    exportId: string
+  ): Promise<RuntimeEndUserExportJob> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserExportJob>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/exports/${encodeURIComponent(exportId)}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async downloadEndUserExport(
+    workspaceId: string,
+    subjectId: string,
+    exportId: string
+  ): Promise<Blob> {
+    return this.request<Blob>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/exports/${encodeURIComponent(exportId)}/download`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId), responseType: 'blob' }
+    );
   }
 
   async eraseEndUser(workspaceId: string, subjectId: string): Promise<void> {

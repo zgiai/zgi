@@ -16,6 +16,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { EndUserQuotaCard } from '@/features/runtime-workspaces/end-user-quota-card';
+import { RuntimeRateLimitCard } from '@/features/runtime-workspaces/rate-limit-card';
 import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
 import {
   endUserRatio,
@@ -421,7 +422,7 @@ export function RuntimeQuotaTab({
         title={t('runtime.tabs.quota')}
         description={t('runtime.quota.pageDescription')}
       />
-      <div className="max-w-4xl">
+      <div className="max-w-4xl space-y-5">
         <EndUserQuotaCard
           policyJson={policyJson}
           apps={apps.filter(app => app.status === 'active')}
@@ -431,6 +432,7 @@ export function RuntimeQuotaTab({
           saving={saving}
           onSave={onSavePolicy}
         />
+        <RuntimeRateLimitCard policyJson={policyJson} saving={saving} onSave={onSavePolicy} />
       </div>
     </section>
   );

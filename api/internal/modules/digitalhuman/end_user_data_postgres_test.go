@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -125,7 +126,11 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dh, _ := export.Apps["digital_humans"].(*EndUserDataExport)
+	// The export is a JSON document, so the DigitalHuman part comes back decoded.
+	var dh *EndUserDataExport
+	if encoded, err := json.Marshal(export.Apps["digital_humans"]); err == nil {
+		_ = json.Unmarshal(encoded, &dh)
+	}
 	if len(export.Conversations) != 1 || len(export.Conversations[0].Messages) != 1 || export.Conversations[0].Messages[0].Answer != "Four." ||
 		dh == nil || len(dh.Instances) != 1 || len(dh.Memory) != 1 || len(dh.Runs) != 1 || len(dh.Tasks) != 1 || len(dh.Notifications) != 1 {
 		t.Fatalf("alice export = %+v / %+v", export, dh)

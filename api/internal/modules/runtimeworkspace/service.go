@@ -821,10 +821,20 @@ type CreatedCredential struct {
 }
 
 func (s *Service) CreateCredential(ctx context.Context, runtimeWorkspaceID, accountID uuid.UUID, name string, expiresAt *time.Time, idempotencyKey string) (*CreatedCredential, error) {
-	name = strings.TrimSpace(name)
+	return s.CreateScopedCredential(ctx, runtimeWorkspaceID, accountID, CredentialInput{Name: name, ExpiresAt: expiresAt}, idempotencyKey)
+}
+
+// CreateScopedCredential creates an access key, optionally limited to scopes
+// and apps (ADR 0012).
+func (s *Service) CreateScopedCredential(ctx context.Context, runtimeWorkspaceID, accountID uuid.UUID, input CredentialInput, idempotencyKey string) (*CreatedCredential, error) {
+	name, expiresAt := strings.TrimSpace(input.Name), input.ExpiresAt
 	now := s.now().UTC()
 	if runtimeWorkspaceID == uuid.Nil || accountID == uuid.Nil || utf8.RuneCountInString(name) > 255 || expiresAt != nil && !expiresAt.After(now) {
 		return nil, ErrInvalidCredential
+	}
+	scopes, appKeys, err := normalizeCredentialLimits(input.Scopes, input.AppKeys)
+	if err != nil {
+		return nil, err
 	}
 	if s.replayProtector == nil {
 		return nil, ErrCredentialReplayUnavailable
@@ -838,7 +848,7 @@ func (s *Service) CreateCredential(ctx context.Context, runtimeWorkspaceID, acco
 	if err != nil {
 		return nil, err
 	}
-	fingerprint := s.replayProtector.RequestFingerprint(runtimeWorkspaceID, accountID, name, expiresAt)
+	fingerprint := s.replayProtector.RequestFingerprint(runtimeWorkspaceID, accountID, name, expiresAt, credentialLimitParts(scopes, appKeys)...)
 	_ = s.CleanupExpiredCredentialOperations(ctx)
 
 	var created *CreatedCredential
@@ -905,12 +915,15 @@ func (s *Service) CreateCredential(ctx context.Context, runtimeWorkspaceID, acco
 			// The claimed operation goes with the rolled-back transaction.
 			return ErrCredentialLimitExceeded
 		}
+		if err := requireBoundAppKeys(tx, runtimeWorkspaceID, appKeys); err != nil {
+			return err
+		}
 
 		secret, prefix, hash, err := externalapikey.Generate()
 		if err != nil {
 			return fmt.Errorf("generate runtime workspace credential: %w", err)
 		}
-		credential := &Credential{ID: uuid.New(), RuntimeWorkspaceID: runtimeWorkspaceID, KeyPrefix: prefix, KeyHash: hash, Name: name, Status: CredentialActive, ExpiresAt: expiresAt, CreatedByAccountID: accountID, CreatedAt: now, UpdatedAt: now}
+		credential := &Credential{ID: uuid.New(), RuntimeWorkspaceID: runtimeWorkspaceID, KeyPrefix: prefix, KeyHash: hash, Name: name, Status: CredentialActive, ExpiresAt: expiresAt, CreatedByAccountID: accountID, Scopes: scopes, AppKeys: appKeys, CreatedAt: now, UpdatedAt: now}
 		envelope, err := s.replayProtector.Seal(secret, credentialReplayAAD(workspace.OrganizationID, operation, credential.ID))
 		if err != nil {
 			return fmt.Errorf("seal runtime workspace credential replay: %w", err)

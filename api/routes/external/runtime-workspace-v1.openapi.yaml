@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: ZGI Runtime Workspace API
   version: 1.0.0
-  description: Server-side API for published Agents, conversations, files, and user memory exposed by one Runtime Workspace. A Runtime Workspace may configure a fixed-window requests_per_minute policy; limited responses return HTTP 429 with Retry-After and X-RateLimit-Limit/X-RateLimit-Remaining headers.
+  description: Server-side API for published Agents, conversations, files, and user memory exposed by one Runtime Workspace. A Runtime Workspace may limit requests per minute overall and per end user (fixed windows, failing open when the limiter is unavailable); limited responses return HTTP 429 with Retry-After and X-RateLimit-Limit/X-RateLimit-Remaining, or runtime_end_user_rate_limited with X-RateLimit-End-User-Limit/X-RateLimit-End-User-Remaining. Keys may be limited to scopes (runtime, end_users.read, end_users.manage) and to some apps; other calls return 403 runtime_credential_scope_denied, and other apps 404.
 x-zgi-sse-event-data-schemas:
   message_start: '#/components/schemas/MessageStartEventData'
   message: '#/components/schemas/MessageEventData'

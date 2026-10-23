@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -16,12 +15,6 @@ import (
 const (
 	EndUserEventErased   = "erased"
 	EndUserEventExported = "exported"
-)
-
-// Export caps keep one export a bounded response.
-const (
-	endUserExportConversationLimit = 500
-	endUserExportMessageLimit      = 2000
 )
 
 // EndUserErasure is what an application domain leaves for after the erase
@@ -93,7 +86,7 @@ func (s *Service) EraseEndUser(ctx context.Context, workspaceID, subjectID uuid.
 			}
 		}
 		for _, table := range []string{"runtime_workspace_end_user_credit_entries", "runtime_workspace_end_user_credit_lots", "runtime_workspace_end_user_credit_bills",
-			"runtime_workspace_end_user_notices", "runtime_workspace_webhook_deliveries"} {
+			"runtime_workspace_end_user_notices", "runtime_workspace_webhook_deliveries", "runtime_workspace_end_user_exports"} {
 			if err := tx.Exec("DELETE FROM "+table+" WHERE subject_id = ?", subjectID).Error; err != nil {
 				return fmt.Errorf("delete end-user credits from %s: %w", table, err)
 			}
@@ -256,7 +249,6 @@ type EndUserExport struct {
 	Memory        []any                  `json:"memory"`
 	Files         []ExportedFile         `json:"files"`
 	Apps          map[string]any         `json:"apps,omitempty"`
-	Truncated     bool                   `json:"truncated,omitempty"`
 	History       []EndUserEvent         `json:"history"`
 }
 
@@ -286,108 +278,4 @@ type ExportedFile struct {
 	Size      int64     `json:"size"`
 	MimeType  string    `json:"mime_type"`
 	CreatedAt time.Time `json:"created_at"`
-}
-
-// ExportEndUser collects an end user's data in every bound app and records
-// the export.
-func (s *Service) ExportEndUser(ctx context.Context, workspaceID, subjectID uuid.UUID, actor EndUserActor) (*EndUserExport, error) {
-	view, err := s.GetEndUser(ctx, workspaceID, subjectID)
-	if err != nil {
-		return nil, err
-	}
-	if view.Status == EndUserErased {
-		return nil, ErrEndUserNotFound
-	}
-	runtimeWorkspace, _, err := s.loadEndUser(ctx, s.db, workspaceID, subjectID, false)
-	if err != nil {
-		return nil, err
-	}
-	db := s.db.WithContext(ctx)
-	export := &EndUserExport{ExportedAt: s.now(), EndUser: *view, Conversations: []ExportedConversation{}, Memory: []any{}, Files: []ExportedFile{}}
-
-	var conversations []struct {
-		ID         uuid.UUID
-		CallerType string
-		CallerID   *uuid.UUID
-		Title      string
-		CreatedAt  time.Time
-	}
-	if err := db.Table("chat_runtime_conversations").Select("id, caller_type, caller_id, title, created_at").
-		Where("account_id = ? AND deleted_at IS NULL", subjectID).Order("created_at").Limit(endUserExportConversationLimit + 1).Scan(&conversations).Error; err != nil {
-		return nil, fmt.Errorf("export end-user conversations: %w", err)
-	}
-	if len(conversations) > endUserExportConversationLimit {
-		conversations, export.Truncated = conversations[:endUserExportConversationLimit], true
-	}
-	index := make(map[uuid.UUID]int, len(conversations))
-	ids := make([]uuid.UUID, 0, len(conversations))
-	for _, conversation := range conversations {
-		index[conversation.ID] = len(export.Conversations)
-		ids = append(ids, conversation.ID)
-		export.Conversations = append(export.Conversations, ExportedConversation{ID: conversation.ID, CallerType: conversation.CallerType,
-			CallerID: conversation.CallerID, Title: conversation.Title, CreatedAt: conversation.CreatedAt, Messages: []ExportedMessage{}})
-	}
-	if len(ids) > 0 {
-		var messages []struct {
-			ExportedMessage
-			ConversationID uuid.UUID
-		}
-		if err := db.Table("chat_runtime_messages").Select("id, conversation_id, query, answer, status, created_at").
-			Where("conversation_id IN ? AND deleted_at IS NULL", ids).Order("created_at").Limit(endUserExportMessageLimit + 1).Scan(&messages).Error; err != nil {
-			return nil, fmt.Errorf("export end-user messages: %w", err)
-		}
-		if len(messages) > endUserExportMessageLimit {
-			messages, export.Truncated = messages[:endUserExportMessageLimit], true
-		}
-		for _, message := range messages {
-			position := index[message.ConversationID]
-			export.Conversations[position].Messages = append(export.Conversations[position].Messages, message.ExportedMessage)
-		}
-	}
-
-	var relationshipIDs []uuid.UUID
-	if err := db.Table("user_memory_relationships").Where("subject_id = ?", subjectID).Pluck("id", &relationshipIDs).Error; err != nil {
-		return nil, fmt.Errorf("export end-user memory: %w", err)
-	}
-	memory := relationshipmemory.NewService(s.db)
-	for _, relationshipID := range relationshipIDs {
-		exported, err := memory.Export(ctx, relationshipID)
-		if err != nil {
-			return nil, fmt.Errorf("export end-user memory: %w", err)
-		}
-		export.Memory = append(export.Memory, exported)
-	}
-
-	if err := db.Table("upload_files AS files").Select("files.id, files.name, files.size, files.mime_type, files.created_at").
-		Joins("JOIN runtime_external_files AS bindings ON bindings.file_id = files.id").
-		Where("bindings.subject_id = ?", subjectID).Order("files.created_at").Scan(&export.Files).Error; err != nil {
-		return nil, fmt.Errorf("export end-user files: %w", err)
-	}
-	for _, owner := range registeredEndUserDataOwners() {
-		key, data, err := owner.ExportEndUser(ctx, s.db, subjectID)
-		if err != nil {
-			return nil, err
-		}
-		if key != "" && data != nil {
-			if export.Apps == nil {
-				export.Apps = map[string]any{}
-			}
-			export.Apps[key] = data
-		}
-	}
-	if err := recordEndUserEvent(s.db.WithContext(ctx), runtimeWorkspace.LogicalID(), subjectID, EndUserEventExported, actor, s.now()); err != nil {
-		return nil, err
-	}
-	export.History = []EndUserEvent{}
-	for page := 1; ; page++ {
-		events, err := s.ListEndUserEvents(ctx, workspaceID, subjectID, page, 200)
-		if err != nil {
-			return nil, err
-		}
-		export.History = append(export.History, events.Items...)
-		if !events.HasMore {
-			break
-		}
-	}
-	return export, nil
 }

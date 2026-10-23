@@ -386,10 +386,7 @@ export function RuntimeEndUsersTab({
   };
 
   const downloadExport = async (user: RuntimeEndUser) => {
-    const data = await exportData.mutateAsync(user.subject_id);
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    );
+    const url = URL.createObjectURL(await exportData.mutateAsync(user.subject_id));
     const link = document.createElement('a');
     link.href = url;
     link.download = `end-user-${user.subject_id.slice(0, 8)}.json`;

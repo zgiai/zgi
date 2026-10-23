@@ -32,11 +32,22 @@ import {
 } from '@/features/runtime-workspaces/quota-usage-tab';
 import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
 import { RuntimeAppsTab } from '@/features/runtime-workspaces/apps-tab';
+import {
+  CredentialScopeBadges,
+  CredentialScopeFields,
+  credentialLimitsInput,
+  fullCredentialLimits,
+  type CredentialLimits,
+} from '@/features/runtime-workspaces/credential-scope-fields';
 import { RuntimeWebhookCard } from '@/features/runtime-workspaces/webhook-card';
 import { RuntimeEndUsersTab } from '@/features/runtime-workspaces/end-users-tab';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { cn } from '@/lib/utils';
-import type { RuntimeCredential } from '@/services/types/runtime-workspace';
+import type {
+  RuntimeApp,
+  RuntimeCredential,
+  RuntimeWorkspaceCredentialInput,
+} from '@/services/types/runtime-workspace';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -330,6 +341,7 @@ function OverviewTab({
 
 function CredentialsTab({
   runtimeWorkspaceId,
+  apps,
   credentials,
   inactiveCount,
   limit,
@@ -339,14 +351,13 @@ function CredentialsTab({
   isRevoking,
 }: {
   runtimeWorkspaceId: string;
+  apps: RuntimeApp[];
   credentials: RuntimeCredential[];
   inactiveCount: number;
   limit: number;
-  onCreate: (input: {
-    name?: string;
-    expires_at?: string;
-    idempotency_key: string;
-  }) => Promise<string>;
+  onCreate: (
+    input: RuntimeWorkspaceCredentialInput & { idempotency_key: string }
+  ) => Promise<string>;
   onRevoke: (credentialId: string) => Promise<void>;
   isCreating: boolean;
   isRevoking: boolean;
@@ -356,6 +367,8 @@ function CredentialsTab({
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState('');
   const [expiresAt, setExpiresAt] = React.useState('');
+  const [limits, setLimits] = React.useState<CredentialLimits>(fullCredentialLimits);
+  const limitsInput = credentialLimitsInput(limits);
   const [secret, setSecret] = React.useState<string | null>(null);
   const [revokeId, setRevokeId] = React.useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = React.useState<string | null>(null);
@@ -370,15 +383,18 @@ function CredentialsTab({
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!limitsInput) return;
     const operationKey = idempotencyKey ?? crypto.randomUUID();
     setIdempotencyKey(operationKey);
     const generatedSecret = await onCreate({
       ...(name.trim() ? { name: name.trim() } : {}),
       ...(expiresAt ? { expires_at: new Date(expiresAt).toISOString() } : {}),
+      ...limitsInput,
       idempotency_key: operationKey,
     });
     setName('');
     setExpiresAt('');
+    setLimits(fullCredentialLimits);
     setIdempotencyKey(null);
     setOpen(false);
     setSecret(generatedSecret);
@@ -448,12 +464,20 @@ function CredentialsTab({
                         aria-label={t('runtime.credentials.expiresAtPlaceholder')}
                       />
                     </div>
+                    <CredentialScopeFields
+                      apps={apps}
+                      value={limits}
+                      onChange={next => {
+                        setLimits(next);
+                        setIdempotencyKey(null);
+                      }}
+                    />
                   </DialogBody>
                   <DialogFooter>
                     <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
                       {tCommon('cancel')}
                     </Button>
-                    <Button type="submit" disabled={isCreating}>
+                    <Button type="submit" disabled={isCreating || !limitsInput}>
                       {isCreating ? (
                         <Loader2 className="size-4 animate-spin" />
                       ) : (
@@ -482,6 +506,7 @@ function CredentialsTab({
                 <TableHead>{t('runtime.credentials.name')}</TableHead>
                 <TableHead>{t('runtime.credentials.prefix')}</TableHead>
                 <TableHead>{t('runtime.credentials.status')}</TableHead>
+                <TableHead>{t('runtime.credentials.access.column')}</TableHead>
                 <TableHead>{t('runtime.credentials.createdAt')}</TableHead>
                 <TableHead>{t('runtime.credentials.lastUsed')}</TableHead>
                 <TableHead>{t('runtime.credentials.expiresAt')}</TableHead>
@@ -503,6 +528,9 @@ function CredentialsTab({
                       t('runtime.credentials.active'),
                       t('runtime.credentials.revoked')
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <CredentialScopeBadges credential={credential} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-muted-foreground">
                     {formatDate(credential.created_at)}
@@ -849,6 +877,7 @@ export default function RuntimeWorkspacePage({
             <div id="runtime-keys" className="scroll-mt-4">
               <CredentialsTab
                 runtimeWorkspaceId={runtime.current.data?.workspace_id ?? ''}
+                apps={runtime.apps.data?.items ?? []}
                 credentials={runtime.credentials.data?.items ?? []}
                 inactiveCount={runtime.credentials.data?.inactive ?? 0}
                 limit={runtime.credentials.data?.limit ?? 50}
