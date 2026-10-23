@@ -48,7 +48,12 @@ ZGI provides entitlement primitives. The integrating server calls them after its
 - `GET /api/connect/v1/end-users/{user}/entitlement` returns the plan and its expiry, each window's usage, limit, remaining points, and when its oldest usage leaves the window, the credit balance with its unexpired lots, and whether a new run would be admitted (per-application caps aside).
 - `GET` and `POST /api/connect/v1/end-users/{user}/credits` list the ledger and grant credits. A grant also registers an end user who has not made a request yet.
 - A refused run still returns the catalog's `quota.exceeded` without details: application errors expose no parameters to clients. The integrator reads the entitlement to offer an upgrade or a top-up.
-- Webhooks report `quota.near` (80% of a limit), `quota.exceeded`, `credits.low`, and `plan.expired`, signed with a secret of the Runtime Workspace.
+- Webhooks report `quota.near` (80% of a limit), `quota.exceeded`, `credits.low`, and `plan.expired`:
+  - one endpoint per Runtime Workspace, subscribed to some of the events, with its signing secret encrypted at rest and shown once when created or rotated;
+  - requests carry `X-ZGI-Event`, `X-ZGI-Delivery`, `X-ZGI-Timestamp`, and `X-ZGI-Signature: sha256=<HMAC-SHA256 of "<timestamp>.<body>">`, the scheme of inbox notification webhooks, and reach only public addresses;
+  - events are written to an outbox in the transaction that detects them, and a worker on every instance delivers them, leasing rows with SKIP LOCKED and retrying with exponential backoff from 30 seconds, up to 8 attempts;
+  - quota events are detected at admission and sent at most once per end user, limit, and window length; `credits.low` when a settlement or take-back brings the balance to the endpoint's threshold or below; `plan.expired` by the worker, once per plan and expiry;
+  - erasure deletes an end user's notices and deliveries.
 
 ### Console
 
