@@ -220,13 +220,15 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 		}
 		return list.Total
 	}
-	if near, over, custom := states(QuotaStateNear), states(QuotaStateOver), states(QuotaStateCustom); near != 1 || over != 0 || custom != 2 {
+	// alice is near her own 18 points, but has spent app_one's 30-day cap
+	// (47 of 40), which counts too.
+	if near, over, custom := states(QuotaStateNear), states(QuotaStateOver), states(QuotaStateCustom); near != 0 || over != 1 || custom != 2 {
 		t.Fatalf("quota states near=%d over=%d custom=%d", near, over, custom)
 	}
 	summary, err := service.SummarizeEndUsers(t.Context(), workspaceID)
 	if err != nil || summary.Usage[0].Points != 15.5 || summary.Usage[0].EndUsers != 1 || summary.Usage[2].Points != 45.5 ||
 		summary.Usage[1].PreviousPoints != 30 || summary.Usage[0].PreviousPoints != 0 ||
-		summary.EndUsers.Total != 2 || summary.EndUsers.NearQuota != 1 || summary.EndUsers.CustomQuota != 2 || summary.EndUsers.Active7d != 2 ||
+		summary.EndUsers.Total != 2 || summary.EndUsers.NearQuota != 0 || summary.EndUsers.OverQuota != 1 || summary.EndUsers.CustomQuota != 2 || summary.EndUsers.Active7d != 2 ||
 		len(summary.Top) != 2 || summary.Top[0].SubjectID != alice.String() {
 		t.Fatalf("summary = %+v %v", summary, err)
 	}

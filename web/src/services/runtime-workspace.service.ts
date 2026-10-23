@@ -7,8 +7,11 @@ import type {
   RuntimeEndUser,
   RuntimeCreditGrant,
   RuntimeCreditGrantResult,
+  RuntimeAppListParams,
+  RuntimeCandidateParams,
   RuntimeCreditLedger,
   RuntimeCredentialList,
+  RuntimeManagedAppPage,
   RuntimePage,
   RuntimeEndUserBatchResult,
   RuntimeEndUserEvent,
@@ -71,6 +74,67 @@ class RuntimeWorkspaceService extends BaseService {
       'patch',
       `/runtime-workspaces/${encodeURIComponent(workspaceId)}`,
       data,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  /** A page of the bound apps, with usage and caps. */
+  async listManagedApps(
+    workspaceId: string,
+    query: RuntimeAppListParams = {}
+  ): Promise<RuntimeManagedAppPage> {
+    const params = new URLSearchParams();
+    if (query.search) params.set('search', query.search);
+    if (query.type) params.set('type', query.type);
+    if (query.state) params.set('state', query.state);
+    params.set('page', String(query.page ?? 1));
+    params.set('limit', String(query.limit ?? 20));
+    const response = await this.request<ApiResponseData<RuntimeManagedAppPage>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/apps?${params.toString()}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  /** A page of the apps that may be added, matched on the server. */
+  async listAppCandidatesPage(
+    workspaceId: string,
+    query: RuntimeCandidateParams,
+    page: number
+  ): Promise<RuntimeAgentCandidateSet> {
+    const params = new URLSearchParams({
+      scope: query.scope,
+      page: String(page),
+      limit: '30',
+      exclude_bound: 'true',
+    });
+    if (query.sourceWorkspaceId) params.set('source_workspace_id', query.sourceWorkspaceId);
+    if (query.search) params.set('search', query.search);
+    if (query.type) params.set('type', query.type);
+    const response = await this.request<ApiResponseData<RuntimeAgentCandidateSet>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/agent-candidates?${params.toString()}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  /** Adds apps to, or removes them from, the current selection. */
+  async changeApps(
+    workspaceId: string,
+    change:
+      | { expected_revision: number; apps: Array<{ type: string; id: string }> }
+      | { expected_revision: number; app_ids: string[] }
+  ): Promise<RuntimeAppCollection> {
+    const action = 'apps' in change ? 'add' : 'remove';
+    const response = await this.request<ApiResponseData<RuntimeAppCollection>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/apps/${action}`,
+      change,
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data;

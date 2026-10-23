@@ -73,6 +73,18 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		if !ok {
 			return
 		}
+		// page and limit page the apps; without them every app is listed.
+		if c.Query("page") != "" || c.Query("limit") != "" {
+			page, _ := strconv.Atoi(c.Query("page"))
+			limit, _ := strconv.Atoi(c.Query("limit"))
+			apps, err := service.ListAppsPage(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), page, limit)
+			if err != nil {
+				runtimeFail(c, err)
+				return
+			}
+			response.Success(c, apps)
+			return
+		}
 		apps, err := service.ListApps(c.Request.Context(), principal.RuntimeWorkspace.LogicalID())
 		if err != nil {
 			runtimeFail(c, err)

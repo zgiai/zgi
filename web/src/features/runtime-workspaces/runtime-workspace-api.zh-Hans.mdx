@@ -98,7 +98,7 @@ curl -N -X POST '{apibase}/apps/app_34ab5c8d91ef/chat' \
 
 ## Apps
 
-每个外部接入最多开放 100 个 App（智能体和数字人合计，部署方可调整）。
+每个外部接入最多开放 100 个 App（智能体和数字人合计，部署方可调整）。获取 App 列表时可传 `page` 和 `limit`（最大 200）分页，响应会带上 `total` 和 `has_more`；不传则返回全部。
 
 <Heading url="/apps" method="GET" title="获取 App 列表" name="#List-Apps" />
 

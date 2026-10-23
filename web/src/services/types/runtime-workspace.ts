@@ -73,6 +73,9 @@ export interface RuntimeAgentCandidateSet {
   cross_workspace_enabled: boolean;
   source_workspaces: RuntimeSourceWorkspace[];
   items: RuntimeAgentCandidate[];
+  /** Set when candidates are paged. */
+  page?: number;
+  has_more?: boolean;
 }
 
 export interface RuntimeAgentCandidate {
@@ -111,6 +114,38 @@ export interface RuntimeAppCollection {
   /** How many apps the external access may expose. */
   limit?: number;
   items: RuntimeApp[];
+}
+
+/** A bound app with its usage over the last 30 days and its per-app caps. */
+export interface RuntimeManagedApp extends RuntimeApp {
+  usage_30d: { points: number; calls: number; end_users: number };
+  quota_caps: RuntimeQuotaLimit[];
+}
+
+export interface RuntimeManagedAppPage {
+  revision: number;
+  limit: number;
+  counts: { all: number; agents: number; digital_humans: number; unavailable: number };
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+  items: RuntimeManagedApp[];
+}
+
+export interface RuntimeAppListParams {
+  search?: string;
+  type?: RuntimeAppType | '';
+  state?: 'callable' | 'unavailable' | '';
+  page?: number;
+  limit?: number;
+}
+
+export interface RuntimeCandidateParams {
+  scope: 'current' | 'authorized';
+  sourceWorkspaceId?: string;
+  search?: string;
+  type?: RuntimeAppType | '';
 }
 
 /** Active keys, with how many are revoked or expired and the active-key limit. */

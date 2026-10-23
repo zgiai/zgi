@@ -192,13 +192,76 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			}
 			sourceWorkspaceID = &parsed
 		}
-		candidates, err := service.ListAgentCandidates(c.Request.Context(), workspaceID, accountID, scope, sourceWorkspaceID)
+		// Without limit, every candidate is listed, as older consoles expect.
+		query := runtimeworkspace.CandidateQuery{
+			Search: c.Query("search"), Type: c.Query("type"), ExcludeBound: c.Query("exclude_bound") == "true",
+			Page: managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
+		}
+		if c.Query("limit") != "" {
+			query.Limit = managementPositiveQueryInt(c.Query("limit"), 30, 200)
+		}
+		candidates, err := service.ListAppCandidates(c.Request.Context(), workspaceID, accountID, scope, sourceWorkspaceID, query)
 		if err != nil {
 			managementFail(c, err)
 			return
 		}
 		response.Success(c, candidates)
 	})
+	// /apps pages the bound apps with their usage and caps; /agents keeps
+	// returning the whole selection.
+	scoped.GET("/apps", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		page, err := service.ListBindingsPage(c.Request.Context(), workspaceID, runtimeworkspace.AppListQuery{
+			Search: c.Query("search"), Type: c.Query("type"), State: c.Query("state"),
+			Page:  managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
+			Limit: managementPositiveQueryInt(c.Query("limit"), 20, 200),
+		})
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, page)
+	})
+	changeApps := func(adding bool) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
+			if !ok {
+				return
+			}
+			var req struct {
+				ExpectedRevision *int64 `json:"expected_revision" binding:"required"`
+				Apps             []struct {
+					Type string    `json:"type"`
+					ID   uuid.UUID `json:"id"`
+				} `json:"apps" binding:"max=200"`
+				AppIDs []uuid.UUID `json:"app_ids" binding:"max=1000"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedRevision == nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
+			var add []runtimeworkspace.AppRef
+			var remove []uuid.UUID
+			if adding {
+				for _, app := range req.Apps {
+					add = append(add, runtimeworkspace.AppRef{Type: app.Type, ID: app.ID})
+				}
+			} else {
+				remove = req.AppIDs
+			}
+			apps, err := service.ChangeAppBindings(c.Request.Context(), workspaceID, accountID, *req.ExpectedRevision, add, remove)
+			if err != nil {
+				managementFail(c, err)
+				return
+			}
+			response.Success(c, apps)
+		}
+	}
+	scoped.POST("/apps/add", changeApps(true))
+	scoped.POST("/apps/remove", changeApps(false))
 	scoped.GET("/agents", func(c *gin.Context) {
 		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
 		if !ok {

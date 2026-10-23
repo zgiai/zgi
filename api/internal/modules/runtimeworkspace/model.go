@@ -256,6 +256,9 @@ type AgentCandidateSet struct {
 	CrossWorkspaceEnabled bool              `json:"cross_workspace_enabled"`
 	SourceWorkspaces      []SourceWorkspace `json:"source_workspaces"`
 	Items                 []AgentCandidate  `json:"items"`
+	// Page and HasMore are set when candidates are paged.
+	Page    int  `json:"page,omitempty"`
+	HasMore bool `json:"has_more"`
 }
 
 type AgentCandidate struct {

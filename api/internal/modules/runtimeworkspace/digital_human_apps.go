@@ -69,20 +69,6 @@ func (s *Service) loadBoundDigitalHumans(ctx context.Context, runtimeWorkspace *
 	return records, authorized, nil
 }
 
-// digitalHumanCandidateIDs lists the DigitalHumans of workspaces, by name.
-func (s *Service) digitalHumanCandidateIDs(ctx context.Context, workspaceIDs []uuid.UUID) ([]uuid.UUID, error) {
-	var ids []uuid.UUID
-	if len(workspaceIDs) == 0 {
-		return ids, nil
-	}
-	if err := s.db.WithContext(ctx).Table("digital_humans").
-		Where("workspace_id IN ? AND deleted_at IS NULL", workspaceIDs).
-		Order("name ASC").Pluck("id", &ids).Error; err != nil {
-		return nil, fmt.Errorf("list runtime workspace digital human candidate ids: %w", err)
-	}
-	return ids, nil
-}
-
 // CallerActive reports whether a Runtime Workspace credential may call a
 // bound DigitalHuman now: the credential and its Runtime Workspace are
 // active and the DigitalHuman is bound and callable.

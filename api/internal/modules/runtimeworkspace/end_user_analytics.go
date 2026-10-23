@@ -35,9 +35,10 @@ const planAppliesSQL = `(e.plan_key <> '' AND (e.plan_expires_at IS NULL OR e.pl
 
 // endUserUsageSQL ranks a Runtime Workspace's end users by usage against
 // the limits that apply to each: their own when set, else their plan's,
-// else the workspace's. ratio is the largest share of any limit they have
-// spent. Plans are the policy's, in order, as endUserUsageArgs binds them.
-func endUserUsageSQL(plans int, filters string) string {
+// else the workspace's, and the per-app caps of their plan or of the
+// workspace. ratio is the largest share of any limit or cap they have
+// spent. Plans and caps are the ones endUserUsageArgs binds, in order.
+func endUserUsageSQL(plans, appCaps int, filters string) string {
 	limit := func(window string) string {
 		var plan strings.Builder
 		for index := 0; index < plans; index++ {
@@ -71,13 +72,64 @@ func endUserUsageSQL(plans int, filters string) string {
 			FROM runtime_workspace_end_users e
 			LEFT JOIN usage u ON u.subject_id = e.subject_id
 			WHERE e.runtime_workspace_id = @runtime` + filters + `
-		), ranked AS (
-			SELECT *, GREATEST(u24 / NULLIF(l24, 0), u7 / NULLIF(l7, 0), u30 / NULLIF(l30, 0)) AS ratio
-			FROM limited
+		)` + appCapsSQL(appCaps) + `, ranked AS (
+			SELECT limited.*, GREATEST(limited.u24 / NULLIF(limited.l24, 0), limited.u7 / NULLIF(limited.l7, 0),
+				limited.u30 / NULLIF(limited.l30, 0)` + appRatio(appCaps) + `) AS ratio
+			FROM limited` + appRatioJoin(appCaps) + `
 		)`
 }
 
-func (s *Service) endUserUsageArgs(runtimeWorkspace *RuntimeWorkspace) map[string]any {
+// appCapsSQL ranks end users against per-app caps: each cap is a row of the
+// source it comes from (a plan key, or empty for the workspace), and an end
+// user is held to the caps of their applying plan when that plan has its
+// own, else to the workspace's.
+func appCapsSQL(appCaps int) string {
+	if appCaps == 0 {
+		return ""
+	}
+	rows := make([]string, 0, appCaps)
+	for index := 0; index < appCaps; index++ {
+		rows = append(rows, fmt.Sprintf("(CAST(@cap_source_%d AS text), CAST(@cap_app_%d AS uuid), CAST(@cap_window_%d AS text), CAST(@cap_points_%d AS numeric))", index, index, index, index))
+	}
+	return `, caps (source, app_id, win, cap) AS (VALUES ` + strings.Join(rows, ", ") + `
+		), app_usage AS (
+			SELECT b.end_user_subject_id AS subject_id, b.app_id,
+				COALESCE(SUM(b.total_points) FILTER (WHERE b.request_created_at >= @since_24h), 0) AS u24,
+				COALESCE(SUM(b.total_points) FILTER (WHERE b.request_created_at >= @since_7d), 0) AS u7,
+				COALESCE(SUM(b.total_points), 0) AS u30
+			FROM llm_usage_bills b
+			JOIN runtime_workspace_end_users owner ON owner.subject_id = b.end_user_subject_id
+			WHERE owner.runtime_workspace_id = @runtime AND b.request_created_at >= @since_30d
+				AND b.app_id IN (SELECT app_id FROM caps)
+			GROUP BY b.end_user_subject_id, b.app_id
+		), app_ratio AS (
+			SELECT au.subject_id,
+				MAX(CASE c.win WHEN '24h' THEN au.u24 WHEN '7d' THEN au.u7 ELSE au.u30 END / NULLIF(c.cap, 0)) AS ratio
+			FROM app_usage au
+			JOIN runtime_workspace_end_users e ON e.subject_id = au.subject_id
+			JOIN caps c ON c.app_id = au.app_id
+				AND c.source = CASE WHEN ` + planAppliesSQL + ` AND e.plan_key IN @cap_plans THEN e.plan_key ELSE '' END
+			GROUP BY au.subject_id
+		)`
+}
+
+func appRatio(appCaps int) string {
+	if appCaps == 0 {
+		return ""
+	}
+	return ", app_ratio.ratio"
+}
+
+func appRatioJoin(appCaps int) string {
+	if appCaps == 0 {
+		return ""
+	}
+	return " LEFT JOIN app_ratio ON app_ratio.subject_id = limited.subject_id"
+}
+
+// endUserUsageArgs binds the windows, limits, plans, and per-app caps of a
+// Runtime Workspace for endUserUsageSQL, and returns how many caps it bound.
+func (s *Service) endUserUsageArgs(ctx context.Context, runtimeWorkspace *RuntimeWorkspace) (map[string]any, int, error) {
 	now := s.now()
 	args := map[string]any{
 		"runtime":   runtimeWorkspace.LogicalID(),
@@ -102,7 +154,50 @@ func (s *Service) endUserUsageArgs(runtimeWorkspace *RuntimeWorkspace) map[strin
 			args[fmt.Sprintf("plan_%d_%s", index, strings.TrimRight(limit.Window, "hd"))] = limit.MilliPoints().Int64()
 		}
 	}
-	return args
+
+	// Per-app caps name apps by key; the bills name them by ID.
+	capPlans := []string{""}
+	sources := []struct {
+		key  string
+		apps []AppQuota
+	}{{"", policy.Apps}}
+	for _, plan := range policy.Plans {
+		if plan.Apps != nil {
+			capPlans = append(capPlans, plan.Key)
+			sources = append(sources, struct {
+				key  string
+				apps []AppQuota
+			}{plan.Key, *plan.Apps})
+		}
+	}
+	caps := 0
+	if len(policy.Apps) > 0 || len(capPlans) > 1 {
+		var bindings []AgentBinding
+		if err := s.db.WithContext(ctx).Where("runtime_workspace_id = ? AND status = ?", runtimeWorkspace.LogicalID(), AgentBindingActive).Find(&bindings).Error; err != nil {
+			return nil, 0, fmt.Errorf("load runtime workspace apps for caps: %w", err)
+		}
+		appByKey := make(map[string]uuid.UUID, len(bindings))
+		for _, binding := range bindings {
+			appByKey[binding.PublicAppKey] = binding.AgentID
+		}
+		for _, source := range sources {
+			for _, app := range source.apps {
+				appID, ok := appByKey[strings.TrimSpace(app.AppKey)]
+				if !ok {
+					continue
+				}
+				for _, limit := range app.Limits {
+					args[fmt.Sprintf("cap_source_%d", caps)] = source.key
+					args[fmt.Sprintf("cap_app_%d", caps)] = appID
+					args[fmt.Sprintf("cap_window_%d", caps)] = limit.Window
+					args[fmt.Sprintf("cap_points_%d", caps)] = limit.MilliPoints().Int64()
+					caps++
+				}
+			}
+		}
+	}
+	args["cap_plans"] = capPlans
+	return args, caps, nil
 }
 
 func planCount(runtimeWorkspace *RuntimeWorkspace) int {
@@ -158,9 +253,12 @@ func endUserListFilters(query EndUserListQuery, args map[string]any) (string, st
 
 // listEndUsersRanked lists end users filtered and ordered by their usage.
 func (s *Service) listEndUsersRanked(ctx context.Context, runtimeWorkspace *RuntimeWorkspace, query EndUserListQuery, page, limit int) ([]EndUser, int64, error) {
-	args := s.endUserUsageArgs(runtimeWorkspace)
+	args, caps, err := s.endUserUsageArgs(ctx, runtimeWorkspace)
+	if err != nil {
+		return nil, 0, err
+	}
 	where, rankedWhere := endUserListFilters(query, args)
-	base := endUserUsageSQL(planCount(runtimeWorkspace), where)
+	base := endUserUsageSQL(planCount(runtimeWorkspace), caps, where)
 	var total int64
 	if err := s.db.WithContext(ctx).Raw(base+` SELECT count(*) FROM ranked`+rankedWhere, args).Scan(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("count end users: %w", err)
@@ -237,14 +335,17 @@ func (s *Service) SummarizeEndUsers(ctx context.Context, workspaceID uuid.UUID) 
 	if err != nil {
 		return nil, s.endUserLoadError(err)
 	}
-	args := s.endUserUsageArgs(runtimeWorkspace)
+	args, caps, err := s.endUserUsageArgs(ctx, runtimeWorkspace)
+	if err != nil {
+		return nil, err
+	}
 	args["active_since"] = s.now().Add(-QuotaWindows["7d"])
 	var row struct {
 		Total, Active7d, Suspended, Erased, CustomQuota, OverQuota, NearQuota int64
 		U24, U7, U30                                                          int64
 		Users24, Users7, Users30                                              int64
 	}
-	if err := s.db.WithContext(ctx).Raw(endUserUsageSQL(planCount(runtimeWorkspace), "")+fmt.Sprintf(`
+	if err := s.db.WithContext(ctx).Raw(endUserUsageSQL(planCount(runtimeWorkspace), caps, "")+fmt.Sprintf(`
 		SELECT count(*) AS total,
 			count(*) FILTER (WHERE last_seen_at >= @active_since AND status <> 'erased') AS active7d,
 			count(*) FILTER (WHERE status = 'suspended') AS suspended,

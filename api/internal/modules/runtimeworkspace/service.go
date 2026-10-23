@@ -681,29 +681,29 @@ func (s *Service) ListBindings(ctx context.Context, runtimeWorkspaceID uuid.UUID
 	return &ManagementAppSet{Revision: runtimeWorkspace.BindingsRevision, Limit: MaxRuntimeWorkspaceApps(), Items: apps}, nil
 }
 
+// ListAgentCandidates lists every app of the scope's workspaces that the
+// Runtime Workspace may bind.
 func (s *Service) ListAgentCandidates(ctx context.Context, runtimeWorkspaceID, accountID uuid.UUID, scope string, sourceWorkspaceID *uuid.UUID) (*AgentCandidateSet, error) {
-	runtimeWorkspace, err := s.loadRuntimeWorkspace(ctx, runtimeWorkspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("load runtime workspace agent candidates scope: %w", err)
-	}
-	runtimeID := runtimeWorkspace.LogicalID()
+	return s.ListAppCandidates(ctx, runtimeWorkspaceID, accountID, scope, sourceWorkspaceID, CandidateQuery{})
+}
+
+// candidateWorkspaces are the workspaces a candidate scope covers: the
+// Runtime Workspace's own, or the source workspaces the account may
+// reference.
+func candidateWorkspaces(runtimeWorkspace *RuntimeWorkspace, access *sourceWorkspaceAccess, scope string, sourceWorkspaceID *uuid.UUID) ([]uuid.UUID, string, error) {
 	resourceWorkspaceID := runtimeWorkspace.ResourceWorkspaceID()
-	access, err := s.sourceWorkspaceAccess(ctx, runtimeWorkspace, accountID)
-	if err != nil {
-		return nil, err
-	}
 	if scope == "" {
 		scope = "current"
 	}
 	workspaceIDs := []uuid.UUID{resourceWorkspaceID}
 	if scope == "authorized" {
 		if !access.CrossEnabled {
-			return nil, ErrSourceWorkspacePermission
+			return nil, scope, ErrSourceWorkspacePermission
 		}
 		workspaceIDs = workspaceIDs[:0]
 		if sourceWorkspaceID != nil {
 			if *sourceWorkspaceID == resourceWorkspaceID || !access.canReference(resourceWorkspaceID, *sourceWorkspaceID) {
-				return nil, ErrSourceWorkspacePermission
+				return nil, scope, ErrSourceWorkspacePermission
 			}
 			workspaceIDs = append(workspaceIDs, *sourceWorkspaceID)
 		} else {
@@ -714,61 +714,9 @@ func (s *Service) ListAgentCandidates(ctx context.Context, runtimeWorkspaceID, a
 			}
 		}
 	} else if scope != "current" {
-		return nil, ErrInvalidBinding
+		return nil, scope, ErrInvalidBinding
 	}
-	var agentIDs []uuid.UUID
-	if len(workspaceIDs) > 0 {
-		if err := s.db.WithContext(ctx).Table("agents AS agents").
-			Where("agents.tenant_id IN ? AND agents.deleted_at IS NULL", workspaceIDs).
-			Order("agents.name ASC").Pluck("agents.id", &agentIDs).Error; err != nil {
-			return nil, fmt.Errorf("list runtime workspace agent candidate ids: %w", err)
-		}
-	}
-	digitalHumanIDs, err := s.digitalHumanCandidateIDs(ctx, workspaceIDs)
-	if err != nil {
-		return nil, err
-	}
-	bindings := make([]AgentBinding, 0, len(agentIDs)+len(digitalHumanIDs))
-	for _, agentID := range agentIDs {
-		bindings = append(bindings, AgentBinding{RuntimeWorkspaceID: runtimeID, AgentID: agentID, AppType: AppTypeAgent})
-	}
-	for _, id := range digitalHumanIDs {
-		bindings = append(bindings, AgentBinding{RuntimeWorkspaceID: runtimeID, AgentID: id, AppType: AppTypeDigitalHuman})
-	}
-	agentIDs = append(agentIDs, digitalHumanIDs...)
-	agentsByID, authorized, err := s.loadBoundAgents(ctx, runtimeWorkspace, bindings)
-	if err != nil {
-		return nil, err
-	}
-	tagsByAgent, err := s.catalogTagsByAgentIDs(ctx, agentIDs)
-	if err != nil {
-		return nil, err
-	}
-	candidates := make([]AgentCandidate, 0, len(authorized))
-	for _, agentID := range agentIDs {
-		if _, allowed := authorized[agentID]; !allowed {
-			continue
-		}
-		agent := agentsByID[agentID]
-		presentation := runtimeAgentPresentation(agent)
-		candidates = append(candidates, AgentCandidate{
-			AgentID: agentID.String(), AppType: runtimeAppType(agent), WorkspaceID: agent.TenantID.String(), WorkspaceName: agent.WorkspaceName,
-			Name: agent.Name, Description: agent.Description, Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent),
-			Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
-			FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAppCapabilities(agent, presentation),
-			Tags: tagsByAgent[agentID],
-		})
-	}
-	sources := make([]SourceWorkspace, 0, len(access.Workspaces))
-	if access.CrossEnabled {
-		for _, workspace := range access.Workspaces {
-			if !workspace.IsCurrent {
-				sources = append(sources, workspace)
-			}
-		}
-	}
-	return &AgentCandidateSet{Scope: scope, CrossWorkspaceEnabled: access.CrossEnabled, SourceWorkspaces: sources, Items: candidates}, nil
+	return workspaceIDs, scope, nil
 }
 
 func (s *Service) listBindingState(ctx context.Context, runtimeWorkspaceID uuid.UUID, activeOnly bool) (*RuntimeWorkspace, []AgentBinding, map[uuid.UUID]runtimeAgentRecord, map[uuid.UUID]struct{}, error) {

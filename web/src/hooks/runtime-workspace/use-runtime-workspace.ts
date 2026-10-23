@@ -42,27 +42,6 @@ export function useRuntimeWorkspace(workspaceId: string | null) {
     retry: false,
   });
 
-  const candidates = useQuery({
-    queryKey: RUNTIME_WORKSPACE_KEYS.candidates(current.data?.workspace_id ?? null, 'current'),
-    queryFn: () =>
-      runtimeWorkspaceService.listAgentCandidates(current.data?.workspace_id as string, 'current'),
-    enabled: Boolean(current.data?.workspace_id),
-    retry: false,
-    staleTime: 60_000,
-  });
-
-  const crossWorkspaceCandidates = useQuery({
-    queryKey: RUNTIME_WORKSPACE_KEYS.candidates(current.data?.workspace_id ?? null, 'authorized'),
-    queryFn: () =>
-      runtimeWorkspaceService.listAgentCandidates(
-        current.data?.workspace_id as string,
-        'authorized'
-      ),
-    enabled: Boolean(current.data?.workspace_id && candidates.data?.cross_workspace_enabled),
-    retry: false,
-    staleTime: 60_000,
-  });
-
   const credentials = useQuery({
     queryKey: RUNTIME_WORKSPACE_KEYS.credentials(current.data?.workspace_id ?? null),
     queryFn: () =>
@@ -154,8 +133,6 @@ export function useRuntimeWorkspace(workspaceId: string | null) {
   return {
     current,
     apps,
-    candidates,
-    crossWorkspaceCandidates,
     credentials,
     create,
     update,

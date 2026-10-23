@@ -77,6 +77,18 @@ export const RUNTIME_WORKSPACE_KEYS = {
     'credentials',
     workspaceId,
   ],
+  managedApps: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'managed-apps',
+    workspaceId,
+    params,
+  ],
+  appCandidatesPage: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'app-candidates-page',
+    workspaceId,
+    params,
+  ],
   endUsers: (workspaceId: string | null) => [
     ...RUNTIME_WORKSPACE_KEYS.all,
     'end-users',
