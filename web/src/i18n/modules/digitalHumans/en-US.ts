@@ -1,4 +1,14 @@
 const messages = {
+  memberConnections: {
+    button: 'My connections',
+    title: 'My connections',
+    description: 'These connectors act as you. Choose one of your own connections; the digital human never uses anyone else\'s.',
+    none: 'None',
+    noOptions: 'You have no usable connection yet. Create one first.',
+    create: 'Create a connection',
+    saved: 'Connection updated',
+    states: { connected: 'Connected', needs_connection: 'Not connected', reconnect_required: 'Reconnect needed' },
+  },
   title: 'Digital Humans',
   subtitle: 'Persistent team identities with their own persona, tools, and execution history.',
   loading: 'Loading digital humans',

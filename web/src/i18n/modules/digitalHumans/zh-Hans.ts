@@ -1,6 +1,16 @@
 import type { DigitalHumansMessages } from './en-US';
 
 const messages: DigitalHumansMessages = {
+  memberConnections: {
+    button: '我的连接',
+    title: '我的连接',
+    description: '这些连接器以你本人的身份执行，请选择你自己的连接。数字人不会改用其他人的连接。',
+    none: '不使用',
+    noOptions: '你还没有可用的连接，请先创建一个。',
+    create: '创建连接',
+    saved: '已更新连接',
+    states: { connected: '已连接', needs_connection: '待连接', reconnect_required: '需重新连接' },
+  },
   title: '数字人',
   subtitle: '拥有独立身份、人设、工具与运行历史的长期团队成员。',
   loading: '正在加载数字人',

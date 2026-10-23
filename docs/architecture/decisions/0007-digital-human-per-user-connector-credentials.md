@@ -81,7 +81,7 @@ These notes record where the first implementation refines the decision above.
 - **Shared slots act for every requester.** A shared binding delegated to a host audience now resolves at dispatch with its owner's credential, for any requester the run authorizes.
 - **The requester confirms.** A confirmation is decided by the run's requester, in both modes: the console member, the API end user (through a connector-confirmation endpoint), or the channel sender.
 - **Reads need no confirmation.** Trusted-low operations, such as reads, run without confirmation on DigitalHumans, as on Chat and Agents. Operations with an external effect still need a fresh confirmation each time.
-- **Setup.** `GET`, `POST`, and `DELETE` on `/api/connect/v1/end-users/{user}/connections` list, connect, and disconnect an end user's per-user slots. Keys are verified with the same key setup as members, and never returned. WebApp setup is not built yet, since the WebApp is unchanged for now (ADR 0010). Console members choosing their own Connection for a slot is a follow-up.
+- **Setup.** `GET`, `POST`, and `DELETE` on `/api/connect/v1/end-users/{user}/connections` list, connect, and disconnect an end user's per-user slots. Keys are verified with the same key setup as members, and never returned. Console members choose one of their own Personal Connections for each slot from the DigitalHuman chat header. WebApp setup is not built yet, since the WebApp is unchanged for now (ADR 0010).
 
 ## Consequences
 

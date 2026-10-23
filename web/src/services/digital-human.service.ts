@@ -64,9 +64,36 @@ import type {
   DigitalHumanAPIKeyList,
 } from './types/digital-human';
 
+/** A per-user Connector slot as the signed-in member sees it (ADR 0007). */
+export interface DigitalHumanMemberConnectorSlot {
+  slot_key: string;
+  connector_id: string;
+  name: string;
+  operation_ids: string[];
+  state: 'connected' | 'needs_connection' | 'reconnect_required';
+  connection_id?: string;
+  options: Array<{ connection_id: string; name: string; account?: string }>;
+}
+
 class DigitalHumanService extends BaseService {
   constructor() {
     super({ basePath: '/console/api', endpoint: 'main' });
+  }
+
+  listMemberConnectorSlots(
+    id: string
+  ): Promise<ApiResponseData<{ items: DigitalHumanMemberConnectorSlot[] }>> {
+    return this.request('get', `/digital-humans/${id}/runtime/connector-slots`);
+  }
+
+  selectMemberConnectorSlot(id: string, slotKey: string, connectionId: string) {
+    return this.request('patch', `/digital-humans/${id}/runtime/connector-slots/${encodeURIComponent(slotKey)}`, {
+      connection_id: connectionId,
+    });
+  }
+
+  clearMemberConnectorSlot(id: string, slotKey: string) {
+    return this.request('delete', `/digital-humans/${id}/runtime/connector-slots/${encodeURIComponent(slotKey)}`);
   }
 
   downloadBackgroundFile(id: string, runId: string, fileId: string, signal?: AbortSignal) {
