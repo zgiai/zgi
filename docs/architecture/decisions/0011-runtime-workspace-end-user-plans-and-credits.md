@@ -35,15 +35,19 @@ ZGI provides entitlement primitives. The integrating server calls them after its
 
 ### Credits
 
-- An end user has a credit balance in points, kept as an append-only ledger. The integrating server grants credits with an idempotency key, its order ID; a negative grant takes credits back. A grant may expire.
-- A run is admitted while the end user is within the limits that apply, or has credits left. Usage beyond the limits of a window is drawn from credits when the bill settles, so credits pay only for what the plan does not cover. An end user with no limits spends credits from the first point, which models pay-as-you-go.
-- As with quotas, bills settle after each model call, so a balance can go below zero by at most the calls in progress; the next run is refused.
+- An end user has a credit balance in points. The integrating server grants credits with an external ID, such as its order ID, which makes the grant idempotent; reusing it for another amount is a conflict (409). A negative grant takes credits back. A positive grant may expire.
+- Each grant is a lot. Usage is drawn from unexpired lots, soonest expiry first; what no lot covers is debt, and the next grant pays debt before it adds a lot. Every grant and draw is a ledger entry with the balance after it.
+- A run is admitted while the end user is within the per-end-user limits that apply, or has a positive balance. Usage beyond those limits is drawn from credits: a bill is charged the part of it beyond the limit of the window it exceeds most. Credits never pay for per-application caps, and an end user without per-end-user limits (no limits, or an own quota of no limit) never spends them. A limit of 0 points includes nothing, so every point is paid with credits: pay-as-you-go is a plan, or default, with 0-point limits.
+- Credits run from the first grant: earlier usage is never charged.
+- Bills land after each model call, so settlement is lazy. Before admitting a run over its limits, and whenever credits are read, the end user's unsettled bills are settled in order under a lock on the end user; each settled bill is marked once, so settling again changes nothing. A balance can go below zero by at most the calls in progress; the next run is refused.
+- Erasing an end user deletes their lots, ledger, and settlement marks.
 - Credits are not money. The organization still pays for all usage; credits only allot part of it to an end user.
 
 ### Telling the integrator
 
-- `GET /api/connect/v1/end-users/{user}/entitlement` returns the plan and its expiry, each window's usage, limit, remaining points and reset time, and the credit balance.
-- A refused run's `quota.exceeded` carries the window, its limit, when it resets, and the balance, so the integrator can offer an upgrade or a top-up.
+- `GET /api/connect/v1/end-users/{user}/entitlement` returns the plan and its expiry, each window's usage, limit, remaining points, and when its oldest usage leaves the window, the credit balance with its unexpired lots, and whether a new run would be admitted (per-application caps aside).
+- `GET` and `POST /api/connect/v1/end-users/{user}/credits` list the ledger and grant credits. A grant also registers an end user who has not made a request yet.
+- A refused run still returns the catalog's `quota.exceeded` without details: application errors expose no parameters to clients. The integrator reads the entitlement to offer an upgrade or a top-up.
 - Webhooks report `quota.near` (80% of a limit), `quota.exceeded`, `credits.low`, and `plan.expired`, signed with a secret of the Runtime Workspace.
 
 ### Console
