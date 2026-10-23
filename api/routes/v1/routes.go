@@ -397,6 +397,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		},
 		AccountService: accountService,
 	})
+	// End users connect their own keys for per-user DigitalHuman Connector
+	// slots through the same verified key setup as members (ADR 0007).
+	if connectionService := serviceContainer.GetConnectorConnectionService(); connectionService != nil {
+		digitalhuman.UseEndUserKeySetup(connectionService)
+	}
 	// Channel replies decide connector confirmations through the same path.
 	if digitalHumanRuntime != nil && digitalHumanRuntime.Runtime != nil {
 		digitalHumanRuntime.Runtime.SetChannelConnectorConfirmer(digitalHumanChannelConnectorConfirmer{

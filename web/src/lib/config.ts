@@ -365,4 +365,9 @@ export const ENABLE_AGENT_RUNTIME_LOGS_PAGE: boolean =
 export const ENABLE_RUNTIME_WORKSPACE: boolean =
   readPublicEnvRaw('NEXT_PUBLIC_ENABLE_RUNTIME_WORKSPACE') === 'true';
 
+// Per-user DigitalHuman Connector slots (ADR 0007); the API flag is
+// ZGI_DIGITAL_HUMAN_PER_USER_CONNECTORS_ENABLED.
+export const ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS') === 'true';
+
 // Add more env variables here as needed, always use this file for env access

@@ -386,6 +386,9 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 	}
 	repository := digitalhuman.NewRepository(deps.DB)
 	repository.SetConnectorCatalog(deps.ConnectorCatalog)
+	if deps.ConnectorCatalog != nil {
+		digitalhuman.UseEndUserConnections(digitalhuman.NewEndUserConnections(deps.DB, deps.ConnectorCatalog))
+	}
 	channelAdapters, err := channelruntime.NewRegistry()
 	if err != nil {
 		panic("initialize DigitalHuman channel registry: " + err.Error())

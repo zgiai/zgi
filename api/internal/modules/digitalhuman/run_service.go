@@ -1039,6 +1039,15 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	config.ConnectorRunID = run.ID.String()
 	applyRunEndUserBilling(&config, run)
+	if repository, ok := s.store.(*GormRepository); ok {
+		missing, perUserErr := preparePerUserConnectors(ctx, repository.db, repository.connectorCatalog, run)
+		if perUserErr != nil {
+			logger.WarnContext(ctx, "DigitalHuman per-user connector preparation failed", "run_id", run.ID.String(), perUserErr)
+		}
+		if note := perUserConnectorNote(missing); note != "" {
+			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
+		}
+	}
 	// A channel member who asked can confirm by reply; a run without a known
 	// requester stays non-interactive and cannot ask.
 	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual ||

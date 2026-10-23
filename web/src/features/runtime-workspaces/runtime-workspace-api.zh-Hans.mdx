@@ -335,6 +335,28 @@ curl -X PATCH '{apibase}/end-users/customer-42' \
 - 导出内容包括对话及消息、记忆、上传文件信息，以及数字人实例、实例记忆、运行、任务、报告、通知和产物。历史过长时会截断，并标记 `truncated`。
 - 删除会在所有 App 中删除上述数据，之后 `GET` 返回状态为 `erased`、不含 External User ID 的记录。用量和审计记录仅保留标识。之后使用相同 External User ID 的请求会作为一个新的空白终端用户。
 
+### 终端用户连接
+
+数字人可以配置**按用户**的连接器：这类操作以终端用户本人的身份、用其本人的 key 执行，而不是以数字人的身份。由你的业务后端为终端用户提交 key。key 只写入、不可读取，任何响应都不会返回或回显。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/end-users/{user}/connections` | 查看各数字人 App 按用户连接的状态：`connected`、`needs_connection` 或 `reconnect_required` |
+| POST | `/end-users/{user}/connections` | 校验并连接一个连接项：`{"app_key", "slot_key", "values": {...}}`，需携带 `Idempotency-Key` 请求头 |
+| DELETE | `/end-users/{user}/connections/{app_key}/{slot_key}` | 断开该连接项，并销毁已保存的 key |
+
+- key 校验失败返回 400，并给出连接器错误码，例如 `connector_key_invalid`。
+- 连接之前，数字人会提示终端用户先连接自己的账号，不会改用其他账号代替。
+- 删除终端用户时，其连接也会一并销毁。
+
+### 连接器操作确认
+
+会改动外部系统的操作需要确认，只读操作直接执行。需要确认时运行会暂停，消息处于待审批状态，由发起这次运行的终端用户决定：
+
+`POST /apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/connector-confirmation`，请求体为 `{"decision": "confirmed" | "cancelled"}`
+
+响应中的 `state` 为执行结果：`completed`、`cancelled`、`failed` 或 `unknown`。
+
 ---
 
 ## Key 轮换

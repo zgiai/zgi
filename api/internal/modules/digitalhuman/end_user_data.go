@@ -140,6 +140,9 @@ func (*EndUserData) EraseEndUser(ctx context.Context, tx *gorm.DB, subjectID uui
 			return erasure, fmt.Errorf("erase end-user DigitalHuman data: %w", err)
 		}
 	}
+	if err := eraseEndUserConnections(db, subjectID, time.Now().UTC()); err != nil {
+		return erasure, err
+	}
 	if purge {
 		err := db.Exec("DELETE FROM digital_human_end_user_instances WHERE subject_id = ?", subjectID).Error
 		if err != nil {

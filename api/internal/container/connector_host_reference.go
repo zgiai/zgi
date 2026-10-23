@@ -6,6 +6,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 )
 
 // Recheck the persisted host selection at the final submission boundary. A
@@ -30,13 +31,23 @@ func (authority *connectorTargetAuthority) verifyHostReference(ctx context.Conte
 		} else {
 			query = query.Where("v.state = ?", "draft")
 		}
-		if query.Take(&row).Error != nil || row.ResourceID != b.ConnectionID.String() || row.ParentResourceID != b.ConnectorID.String() || row.AuthorizedBy != b.OwnerAccountID.String() {
+		if query.Take(&row).Error != nil || row.ParentResourceID != b.ConnectorID.String() {
 			return targetDenied()
 		}
 		var metadata struct {
 			Operations []string `json:"allowed_operation_ids"`
+			Mode       string   `json:"credential_mode"`
 		}
 		if json.Unmarshal(row.Metadata, &metadata) != nil {
+			return targetDenied()
+		}
+		// A shared slot names its editor's Connection. A per-user slot names
+		// none: the binding and Connection already belong to the requester.
+		if metadata.Mode == "per_user" {
+			if !digitalhuman.PerUserConnectorsEnabled() {
+				return targetDenied()
+			}
+		} else if row.ResourceID != b.ConnectionID.String() || row.AuthorizedBy != b.OwnerAccountID.String() {
 			return targetDenied()
 		}
 		for _, op := range metadata.Operations {

@@ -143,6 +143,7 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		response.Success(c, gin.H{"result": "success"})
 	}))
 
+	registerRuntimeEndUserConnections(group, service, deps.DB)
 	appGroup := group.Group("/apps/:app_key")
 	appGroup.GET("", func(c *gin.Context) {
 		principal, ok := runtimePrincipal(c)

@@ -59,7 +59,7 @@ func (r *GormRepository) syncConnectorBindings(ctx context.Context, scope Scope,
 	}
 	desired := map[uuid.UUID]*ResourceBinding{}
 	for _, row := range rows {
-		if row.BindingType == resourcebindings.BindingTypeConnector {
+		if row.BindingType == resourcebindings.BindingTypeConnector && connectorCredentialMode(row) == ConnectorCredentialShared {
 			desired[row.ID] = row
 		}
 	}
@@ -119,6 +119,14 @@ func (r *GormRepository) syncConnectorBindings(ctx context.Context, scope Scope,
 		if keepOnly[row.ID] {
 			// Preserve even a missing/disabled reference without granting authority.
 			// Only a changed selection passes through admission and lifecycle writes.
+			continue
+		}
+		if connectorCredentialMode(row) == ConnectorCredentialPerUser {
+			// A per-user slot names no Connection of its editor. Each requester
+			// binds their own when they run the published version.
+			if err := r.validatePerUserConnectorSlot(row); err != nil {
+				return err
+			}
 			continue
 		}
 		if row.AuthorizedBy == nil || *row.AuthorizedBy == uuid.Nil || row.CredentialRef != "" {

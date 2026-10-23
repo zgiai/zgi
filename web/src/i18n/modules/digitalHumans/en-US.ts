@@ -838,6 +838,12 @@ const messages = {
         'This operation is currently unavailable. Existing access will not expand automatically.',
       operationRequired: 'Select at least one available operation.',
       replace: 'Replace connection',
+      perUserBadge: 'Each user connects',
+      perUserDescription: 'Each person connects their own account, and the digital human acts as them.',
+      modeLabel: 'Who {name} acts as',
+      modeShared: 'Digital human (mine)',
+      modePerUser: 'Each user',
+      modeSaved: 'Updated. It takes effect when you publish.',
       target: 'this digital human',
       setupHint:
         'Create a personal connection and add it to this selection. The digital human receives access when you save.',

@@ -331,6 +331,28 @@ curl -X PATCH '{apibase}/end-users/customer-42' \
 - Export returns conversations with their messages, memory, uploaded file details, and DigitalHuman instances, instance memory, runs, tasks, reports, notifications, and artifacts. Large histories are capped and marked `truncated`.
 - Erasure deletes all of that in every App, and `GET` then returns the end user with status `erased` and no External User ID. Usage and audit records keep identifiers only. A later request with the same External User ID starts a new, empty end user.
 
+### End-user connections
+
+A DigitalHuman may have **per-user** Connector slots: an operation that acts as the end user, with the end user's own key, instead of as the DigitalHuman. Your backend supplies that key. Keys are write-only, and no response ever returns or repeats one.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/end-users/{user}/connections` | Per-user slots of each DigitalHuman App and their state: `connected`, `needs_connection`, or `reconnect_required` |
+| POST | `/end-users/{user}/connections` | Verify a key for one slot and connect it: `{"app_key", "slot_key", "values": {...}}`, with an `Idempotency-Key` header |
+| DELETE | `/end-users/{user}/connections/{app_key}/{slot_key}` | Disconnect the slot and destroy the stored key |
+
+- A key that fails verification returns 400 with a connector error code such as `connector_key_invalid`.
+- Until a slot is connected, the DigitalHuman tells the end user to connect their own account and never uses another one in its place.
+- Erasing the end user also destroys their connections.
+
+### Connector confirmations
+
+An operation that changes something in a connected system waits for confirmation. Read operations run without one. The run then stops, and the message is waiting for approval. The end user who started the run decides:
+
+`POST /apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/connector-confirmation` with `{"decision": "confirmed" | "cancelled"}`
+
+The response carries the resulting `state`: `completed`, `cancelled`, `failed`, or `unknown`.
+
 ---
 
 ## Runtime Key rotation
