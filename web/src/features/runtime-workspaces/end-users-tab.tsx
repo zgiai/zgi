@@ -7,6 +7,7 @@ import {
   ArrowUpDown,
   Ban,
   ChevronDown,
+  Crown,
   Download,
   Loader2,
   PlayCircle,
@@ -65,6 +66,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
+  parsePlans,
+  PlanAssignmentEditor,
+  PlanBadge,
+  planDraftOf,
+  planLabel,
+  planOfDraft,
   pointsFormat,
   QuotaOverrideEditor,
   quotaDraftOf,
@@ -72,6 +79,7 @@ import {
   quotaWindows,
   UsageMeter,
   UsageTrendChart,
+  type PlanDraft,
   type QuotaOverrideDraft,
 } from '@/features/runtime-workspaces/end-user-usage';
 import {
@@ -85,6 +93,7 @@ import type {
   RuntimeApp,
   RuntimeEndUser,
   RuntimeEndUserPatch,
+  RuntimeEndUserPlan,
   RuntimeEndUserQuotaState,
   RuntimeEndUserSort,
   RuntimeEndUserStatus,
@@ -175,14 +184,16 @@ function SortHeader({
  * set its own quota, and to suspend, export, or erase it.
  * @usage Rendered as the End users section of the Runtime Workspace console.
  * @example
- * <RuntimeEndUsersTab runtimeWorkspaceId={id} apps={apps} />
+ * <RuntimeEndUsersTab runtimeWorkspaceId={id} apps={apps} policyJson={policy} />
  */
 export function RuntimeEndUsersTab({
   runtimeWorkspaceId,
   apps,
+  policyJson,
 }: {
   runtimeWorkspaceId: string;
   apps: RuntimeApp[];
+  policyJson?: string;
 }) {
   const t = useT('workspace');
   const tCommon = useT('common');
@@ -190,6 +201,10 @@ export function RuntimeEndUsersTab({
   const [search, setSearch] = React.useState('');
   const [status, setStatus] = React.useState<RuntimeEndUserStatus | ''>('');
   const [quotaState, setQuotaState] = React.useState<RuntimeEndUserQuotaState | ''>('');
+  const [planFilter, setPlanFilter] = React.useState('');
+  const [bulkPlanOpen, setBulkPlanOpen] = React.useState(false);
+  const [bulkPlan, setBulkPlan] = React.useState<PlanDraft>({ key: '', until: '' });
+  const plans = React.useMemo(() => parsePlans(policyJson), [policyJson]);
   const [sort, setSort] = React.useState<RuntimeEndUserSort>('last_seen');
   const [ascending, setAscending] = React.useState(false);
   const [page, setPage] = React.useState(1);
@@ -213,6 +228,8 @@ export function RuntimeEndUsersTab({
     if (linkedStatus === 'active' || linkedStatus === 'suspended') setStatus(linkedStatus);
     const linkedSort = params.get('sort') as RuntimeEndUserSort | null;
     if (linkedSort && sorts.includes(linkedSort)) setSort(linkedSort);
+    const linkedPlan = params.get('plan');
+    if (linkedPlan) setPlanFilter(linkedPlan);
     const linkedUser = params.get('user');
     if (linkedUser) {
       setSearchInput(linkedUser);
@@ -231,12 +248,13 @@ export function RuntimeEndUsersTab({
   React.useEffect(() => {
     setChecked(new Set());
     setPage(1);
-  }, [search, status, quotaState]);
+  }, [search, status, quotaState, planFilter]);
 
   const { list, update, batchUpdate, exportData, erase } = useRuntimeEndUsers(runtimeWorkspaceId, {
     search,
     status,
     quota_state: quotaState,
+    plan: planFilter,
     sort,
     order: ascending ? 'asc' : 'desc',
     page,
@@ -248,7 +266,7 @@ export function RuntimeEndUsersTab({
   const appNames = React.useMemo(() => new Map(apps.map(app => [app.agent_id, app.name])), [apps]);
   const selectable = users.filter(user => user.status !== 'erased');
   const pageChecked = selectable.filter(user => checked.has(user.subject_id)).length;
-  const filtered = Boolean(search || status || quotaState);
+  const filtered = Boolean(search || status || quotaState || planFilter);
 
   const changeSort = (next: RuntimeEndUserSort) => {
     if (next === sort) setAscending(!ascending);
@@ -311,6 +329,7 @@ export function RuntimeEndUsersTab({
     }
     setBulkAction(null);
     setBulkQuotaOpen(false);
+    setBulkPlanOpen(false);
   };
 
   const bulkQuotaValue = quotaOfDraft(bulkQuota);
@@ -369,6 +388,28 @@ export function RuntimeEndUsersTab({
             ))}
           </SelectContent>
         </Select>
+        {plans.length > 0 || planFilter ? (
+          <Select
+            value={planFilter || 'all'}
+            onValueChange={value => {
+              setPlanFilter(value === 'all' ? '' : value);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-9 w-full @3xl/console:w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('runtime.plans.allPlans')}</SelectItem>
+              <SelectItem value="none">{t('runtime.plans.none')}</SelectItem>
+              {plans.map(plan => (
+                <SelectItem key={plan.key} value={plan.key}>
+                  {planLabel(plan)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
         {filtered ? (
           <Button
             type="button"
@@ -380,6 +421,7 @@ export function RuntimeEndUsersTab({
               setSearch('');
               setStatus('');
               setQuotaState('');
+              setPlanFilter('');
               setPage(1);
             }}
           >
@@ -398,6 +440,20 @@ export function RuntimeEndUsersTab({
             {t('runtime.endUsers.bulk.clear')}
           </Button>
           <div className="ml-auto flex flex-wrap gap-2">
+            {plans.length > 0 ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setBulkPlan({ key: plans[0]?.key ?? '', until: '' });
+                  setBulkPlanOpen(true);
+                }}
+              >
+                <Crown className="size-4" />
+                {t('runtime.plans.setPlan')}
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="sm"
@@ -518,13 +574,19 @@ export function RuntimeEndUsersTab({
                         <div className="truncate font-medium">
                           {displayName(user, t('runtime.endUsers.unnamed'))}
                         </div>
-                        {user.quota_source !== 'default' ? (
-                          <Badge
-                            variant="outline"
-                            className="mt-1 h-5 px-1.5 text-[11px] font-normal"
-                          >
-                            {t(`runtime.endUsers.quotaSource.${user.quota_source}`)}
-                          </Badge>
+                        {user.plan ||
+                        (user.quota_source !== 'default' && user.quota_source !== 'plan') ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <PlanBadge plan={user.plan} />
+                            {user.quota_source === 'custom' || user.quota_source === 'unlimited' ? (
+                              <Badge
+                                variant="outline"
+                                className="h-5 px-1.5 text-[11px] font-normal"
+                              >
+                                {t(`runtime.endUsers.quotaSource.${user.quota_source}`)}
+                              </Badge>
+                            ) : null}
+                          </div>
                         ) : null}
                       </TableCell>
                       <TableCell>
@@ -650,6 +712,31 @@ export function RuntimeEndUsersTab({
         }}
       />
 
+      <Dialog open={bulkPlanOpen} onOpenChange={setBulkPlanOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('runtime.plans.bulkTitle', { count: checked.size })}</DialogTitle>
+            <DialogDescription>{t('runtime.plans.assignDescription')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <PlanAssignmentEditor plans={plans} value={bulkPlan} onChange={setBulkPlan} />
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBulkPlanOpen(false)}>
+              {tCommon('cancel')}
+            </Button>
+            <Button
+              type="button"
+              disabled={batchUpdate.isPending}
+              onClick={() => void applyBulk({ plan: planOfDraft(bulkPlan) })}
+            >
+              {batchUpdate.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+              {t('runtime.plans.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={bulkQuotaOpen} onOpenChange={setBulkQuotaOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -683,7 +770,13 @@ export function RuntimeEndUsersTab({
         runtimeWorkspaceId={runtimeWorkspaceId}
         user={selected}
         appNames={appNames}
+        plans={plans}
         saving={update.isPending}
+        onSavePlan={async plan => {
+          if (!selected) return;
+          await update.mutateAsync({ subjectId: selected.subject_id, patch: { plan } });
+          toast.success(t('runtime.plans.saved'));
+        }}
         onClose={() => setSelectedId(null)}
         onSaveQuota={async quota => {
           if (!selected) return;
@@ -722,8 +815,10 @@ function EndUserSheet({
   runtimeWorkspaceId,
   user,
   appNames,
+  plans,
   saving,
   onClose,
+  onSavePlan,
   onSaveQuota,
   onToggleStatus,
   exporting,
@@ -733,8 +828,10 @@ function EndUserSheet({
   runtimeWorkspaceId: string;
   user: RuntimeEndUser | null;
   appNames: Map<string, string>;
+  plans: RuntimeEndUserPlan[];
   saving: boolean;
   onClose: () => void;
+  onSavePlan: (plan: RuntimeEndUserPatch['plan']) => Promise<void>;
   onSaveQuota: (quota: RuntimeEndUser['quota'] | null) => Promise<void>;
   onToggleStatus: () => void;
   exporting: boolean;
@@ -746,10 +843,15 @@ function EndUserSheet({
   const events = useRuntimeEndUserEvents(runtimeWorkspaceId, subjectId);
   const series = useRuntimeEndUserUsageSeries(runtimeWorkspaceId, subjectId, 30, Boolean(user));
   const [draft, setDraft] = React.useState<QuotaOverrideDraft>(quotaDraftOf(null));
+  const [planDraft, setPlanDraft] = React.useState<PlanDraft>(planDraftOf(null));
 
   React.useEffect(() => {
-    if (user) setDraft(quotaDraftOf(user));
+    if (user) {
+      setDraft(quotaDraftOf(user));
+      setPlanDraft(planDraftOf(user));
+    }
   }, [user]);
+  const planDirty = JSON.stringify(planDraft) !== JSON.stringify(planDraftOf(user));
 
   const quota = quotaOfDraft(draft);
   const dirty = JSON.stringify(quota) !== JSON.stringify(quotaOfDraft(quotaDraftOf(user)));
@@ -874,6 +976,35 @@ function EndUserSheet({
                   </div>
                 )}
               </section>
+
+              {!erased && (plans.length > 0 || user.plan) ? (
+                <section className="space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-medium">{t('runtime.plans.plan')}</h3>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {t('runtime.plans.assignDescription')}
+                      </p>
+                    </div>
+                    <PlanBadge plan={user.plan} />
+                  </div>
+                  {user.plan && !user.plan.active ? (
+                    <p className="text-xs text-warning">{t('runtime.plans.inactive')}</p>
+                  ) : null}
+                  <PlanAssignmentEditor plans={plans} value={planDraft} onChange={setPlanDraft} />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={saving || !planDirty}
+                      onClick={() => void onSavePlan(planOfDraft(planDraft))}
+                    >
+                      {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+                      {t('runtime.plans.save')}
+                    </Button>
+                  </div>
+                </section>
+              ) : null}
 
               {!erased ? (
                 <section className="space-y-3">

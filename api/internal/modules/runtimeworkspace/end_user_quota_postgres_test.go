@@ -122,6 +122,12 @@ func TestEndUserQuotaPolicyValidation(t *testing.T) {
 		"app without key":  {`{"end_user_quota": {"apps": [{"limits": [{"window": "7d", "points": 5}]}]}}`, false},
 		"repeated app":     {`{"end_user_quota": {"apps": [{"app_key": "a", "limits": [{"window": "7d", "points": 5}]}, {"app_key": "a", "limits": [{"window": "24h", "points": 5}]}]}}`, false},
 		"app without caps": {`{"end_user_quota": {"apps": [{"app_key": "a", "limits": []}]}}`, false},
+		"plan":             {`{"end_user_quota": {"plans": [{"key": "pro", "name": "Pro", "limits": [{"window": "24h", "points": 50}], "apps": []}]}}`, true},
+		"unlimited plan":   {`{"end_user_quota": {"plans": [{"key": "vip", "limits": []}]}}`, true},
+		"bad plan key":     {`{"end_user_quota": {"plans": [{"key": "Pro", "limits": []}]}}`, false},
+		"repeated plan":    {`{"end_user_quota": {"plans": [{"key": "pro", "limits": []}, {"key": "pro", "limits": []}]}}`, false},
+		"bad plan limit":   {`{"end_user_quota": {"plans": [{"key": "pro", "limits": [{"window": "1h", "points": 1}]}]}}`, false},
+		"bad plan app cap": {`{"end_user_quota": {"plans": [{"key": "pro", "limits": [], "apps": [{"app_key": "a", "limits": []}]}]}}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := ValidateEndUserQuota([]byte(tc.policy))

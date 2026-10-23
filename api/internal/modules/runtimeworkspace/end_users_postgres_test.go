@@ -235,7 +235,108 @@ func TestEndUserRegistryListsCapsAndSuspendsPostgres(t *testing.T) {
 	if own, err := service.EndUserUsageSeries(t.Context(), workspaceID, &bob, 7, ""); err != nil || len(own.Days) != 7 || own.Days[6].Points != 0 {
 		t.Fatalf("bob's series = %+v %v", own, err)
 	}
+
+	// Plans (ADR 0011): a plan replaces the defaults until it expires, and an
+	// end user's own quota still wins.
+	exec("UPDATE runtime_workspaces SET policy_json = ? WHERE workspace_id = ?",
+		`{"end_user_quota": {"limits": [{"window": "24h", "points": 10}], "apps": [{"app_key": "app_one", "limits": [{"window": "30d", "points": 40}]}],
+		  "plans": [{"key": "pro", "name": "Pro", "limits": [{"window": "24h", "points": 18}], "apps": []}]}}`, workspaceID)
+	if _, err := service.UpdateEndUsers(t.Context(), workspaceID, []uuid.UUID{alice, bob}, actor, EndUserPatch{ResetQuota: true}); err != nil {
+		t.Fatal(err)
+	}
+	for name, plan := range map[string]EndUserPlanAssignment{
+		"an unknown plan": {Key: "gold"},
+		"a past expiry":   {Key: "pro", ExpiresAt: ptrTime(now.Add(-time.Hour))},
+	} {
+		if _, err := service.UpdateEndUser(t.Context(), workspaceID, bob, actor, EndUserPatch{Plan: &plan}); !errors.Is(err, ErrInvalidWorkspace) {
+			t.Fatalf("%s = %v", name, err)
+		}
+	}
+	guard.now = func() time.Time { return clock }
+	if err := check(alice); !apperror.IsCode(err, catalog.CodeQuotaExceeded) {
+		t.Fatalf("alice on the defaults was admitted: %v", err)
+	}
+	expiry := now.Add(time.Hour)
+	held, err := service.UpdateEndUser(t.Context(), workspaceID, alice, actor, EndUserPatch{Plan: &EndUserPlanAssignment{Key: "pro", ExpiresAt: &expiry}})
+	if err != nil || held.QuotaSource != QuotaSourcePlan || held.Plan == nil || !held.Plan.Active || held.Plan.Name != "Pro" || *held.Usage[0].Limit != 18 || len(held.Apps) != 1 || held.Apps[0].Usage[2].Limit != nil {
+		t.Fatalf("alice on pro = %+v %v", held, err)
+	}
+	if _, err := service.UpdateEndUser(t.Context(), workspaceID, bob, actor, EndUserPatch{Plan: &EndUserPlanAssignment{Key: "pro"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(alice); !apperror.IsCode(err, catalog.CodeQuotaExceeded) {
+		t.Fatalf("alice spent 18.5 of pro's 18 points and was admitted: %v", err)
+	}
+	if err := check(bob); err != nil {
+		t.Fatalf("bob on pro was refused: %v", err)
+	}
+	if over := states(QuotaStateOver); over != 1 {
+		t.Fatalf("over a plan limit = %d", over)
+	}
+	plans := func(plan string) int64 {
+		t.Helper()
+		list, err := service.ListEndUsers(t.Context(), workspaceID, EndUserListQuery{Plan: plan})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list.Total
+	}
+	if pro, none := plans("pro"), plans("none"); pro != 2 || none != 0 {
+		t.Fatalf("plan filter pro=%d none=%d", pro, none)
+	}
+	if summary, err := service.SummarizeEndUsers(t.Context(), workspaceID); err != nil || len(summary.Plans) != 1 || summary.Plans[0].EndUsers != 2 {
+		t.Fatalf("summary plans = %+v %v", summary, err)
+	}
+	unlimited, err := service.UpdateEndUser(t.Context(), workspaceID, alice, actor, EndUserPatch{Quota: &EndUserQuotaOverride{Unlimited: true}})
+	if err != nil || unlimited.QuotaSource != QuotaSourceUnlimited || unlimited.Plan == nil || !unlimited.Plan.Active {
+		t.Fatalf("alice's own quota over pro = %+v %v", unlimited, err)
+	}
+	if _, err := service.UpdateEndUser(t.Context(), workspaceID, alice, actor, EndUserPatch{ResetQuota: true}); err != nil {
+		t.Fatal(err)
+	}
+	clock = now.Add(2 * time.Hour)
+	if err := check(alice); !apperror.IsCode(err, catalog.CodeQuotaExceeded) {
+		t.Fatalf("alice's expired plan still applied: %v", err)
+	}
+	if expired, err := service.GetEndUser(t.Context(), workspaceID, alice); err != nil || expired.QuotaSource != QuotaSourceDefault || expired.Plan == nil || expired.Plan.Active {
+		t.Fatalf("alice after expiry = %+v %v", expired, err)
+	}
+	if pro, none := plans("pro"), plans("none"); pro != 1 || none != 1 {
+		t.Fatalf("plan filter after expiry pro=%d none=%d", pro, none)
+	}
+	clock = now
+	if cleared, err := service.UpdateEndUser(t.Context(), workspaceID, bob, actor, EndUserPatch{ClearPlan: true}); err != nil || cleared.Plan != nil {
+		t.Fatalf("bob without a plan = %+v %v", cleared, err)
+	}
+	bobEvents, _ := service.ListEndUserEvents(t.Context(), workspaceID, bob)
+	planActions := map[string]bool{}
+	for _, event := range bobEvents {
+		planActions[event.Action] = true
+	}
+	if !planActions[EndUserEventPlanCleared] || !planActions[EndUserEventPlanSet] {
+		t.Fatalf("bob plan events = %+v", bobEvents)
+	}
+
+	// The integrating server can give a plan before the first request.
+	carol, err := EndUserSubject(runtime.LogicalID(), "carol@example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnsureEndUser(t.Context(), runtime.LogicalID(), carol, "carol@example"); err != nil {
+		t.Fatal(err)
+	}
+	if view, err := service.UpdateEndUser(t.Context(), workspaceID, carol, actor, EndUserPatch{Plan: &EndUserPlanAssignment{Key: "pro"}}); err != nil || view.ExternalUserID != "carol@example" || view.QuotaSource != QuotaSourcePlan {
+		t.Fatalf("carol before her first request = %+v %v", view, err)
+	}
+	if err := service.EnsureEndUser(t.Context(), runtime.LogicalID(), carol, "carol@example"); err != nil {
+		t.Fatal(err)
+	}
+	if view, _ := service.GetEndUser(t.Context(), workspaceID, carol); view.Plan == nil || view.Plan.Key != "pro" {
+		t.Fatalf("ensuring carol again changed her = %+v", view)
+	}
 }
+
+func ptrTime(value time.Time) *time.Time { return &value }
 
 func TestParseEndUserPatch(t *testing.T) {
 	patch, err := ParseEndUserPatch([]byte(`{"status": "suspended", "quota": null}`))
@@ -254,5 +355,17 @@ func TestParseEndUserPatch(t *testing.T) {
 	}
 	if _, err := ParseEndUserPatch([]byte(`[`)); !errors.Is(err, ErrInvalidWorkspace) {
 		t.Fatalf("broken patch = %v", err)
+	}
+	patch, err = ParseEndUserPatch([]byte(`{"plan": {"key": "pro", "expires_at": "2026-12-01T00:00:00Z"}}`))
+	if err != nil || patch.Plan == nil || patch.Plan.Key != "pro" || patch.Plan.ExpiresAt == nil || patch.ClearPlan {
+		t.Fatalf("plan patch = %+v %v", patch, err)
+	}
+	if patch, err := ParseEndUserPatch([]byte(`{"plan": null}`)); err != nil || !patch.ClearPlan || patch.Plan != nil {
+		t.Fatalf("plan removal = %+v %v", patch, err)
+	}
+	for _, body := range []string{`{"plan": {"key": "Pro"}}`, `{"plan": {"key": ""}}`, `{"plan": "pro"}`} {
+		if _, err := ParseEndUserPatch([]byte(body)); !errors.Is(err, ErrInvalidWorkspace) {
+			t.Fatalf("%s = %v", body, err)
+		}
 	}
 }

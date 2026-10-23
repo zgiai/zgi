@@ -305,14 +305,15 @@ The operation must belong to the current External User ID and App and remain ins
 
 ## End users
 
-An end user is an External User ID that has made at least one request. Manage them with the Runtime Key, addressing each by the External User ID your backend sends; these calls need no `X-ZGI-External-User-ID` header.
+An end user is an External User ID that has made at least one request, or that your backend has changed with `PATCH`. Manage them with the Runtime Key, addressing each by the External User ID your backend sends; these calls need no `X-ZGI-External-User-ID` header.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/end-users/{user}` | Status, quota, and points used over the last 24 hours, 7 days, and 30 days, in total and per App |
-| PATCH | `/end-users/{user}` | Suspend or resume the end user, or set their own quota |
+| PATCH | `/end-users/{user}` | Suspend or resume the end user, set their plan, or set their own quota |
 | POST | `/end-users/{user}/export` | Export everything kept for the end user as one JSON document |
 | DELETE | `/end-users/{user}` | Erase the end user from every App |
+| GET | `/plans` | The plans defined in the console, with their limits |
 
 <CodeGroup title="Give an end user their own quota">
 
@@ -325,8 +326,17 @@ curl -X PATCH '{apibase}/end-users/customer-42' \
 
 </CodeGroup>
 
+<CodeGroup title="Set a plan after a purchase">
+
+```bash
+curl -X PATCH '{apibase}/end-users/customer-42'   --header 'Authorization: Bearer <runtime-key>'   --header 'Content-Type: application/json'   --data '{"plan":{"key":"pro","expires_at":"2026-12-31T23:59:59Z"}}'
+```
+
+</CodeGroup>
+
+- `plan` gives the end user a plan defined in the console: `{"key": "...", "expires_at": "..."}`; leave out `expires_at` for no expiry. The plan's limits replace the default limits, and the defaults apply again once it expires, with no further call. `"plan": null` removes it. You can set a plan before the end user's first request.
 - `status` is `active` or `suspended`. A suspended end user can still read conversations, files, and memory, but new chats and runs return 403 `end_user.suspended`.
-- `quota` replaces the console's per-end-user limits for this end user: `{"limits": [...]}` with windows `24h`, `7d`, or `30d` and points down to 0.001, or `{"unlimited": true}`. Caps set for single Apps still apply. `"quota": null` returns the end user to the console's limits.
+- `quota` replaces the console's per-end-user limits for this end user: `{"limits": [...]}` with windows `24h`, `7d`, or `30d` and points down to 0.001, or `{"unlimited": true}`. Caps set for single Apps still apply. An own quota takes precedence over a plan. `"quota": null` returns the end user to their plan or the console's limits.
 - An end user over a quota gets 429 `quota.exceeded` when starting a chat or run, until usage in the window falls below the limit.
 - Export returns conversations with their messages, memory, uploaded file details, and DigitalHuman instances, instance memory, runs, tasks, reports, notifications, and artifacts. Large histories are capped and marked `truncated`.
 - Erasure deletes all of that in every App, and `GET` then returns the end user with status `erased` and no External User ID. Usage and audit records keep identifiers only. A later request with the same External User ID starts a new, empty end user.

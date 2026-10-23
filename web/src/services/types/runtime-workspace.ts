@@ -151,8 +151,10 @@ export interface RuntimeEndUser {
   first_seen_at: string;
   last_seen_at: string;
   suspended_at?: string;
-  quota_source: 'default' | 'custom' | 'unlimited';
+  quota_source: 'default' | 'plan' | 'custom' | 'unlimited';
   quota: RuntimeEndUserQuota;
+  /** The plan held; active is false once it expired or was removed. */
+  plan?: { key: string; name?: string; expires_at?: string; active: boolean };
   usage: RuntimeWindowUsage[];
   apps: RuntimeEndUserAppUsage[];
 }
@@ -172,6 +174,8 @@ export interface RuntimeEndUserListParams {
   search?: string;
   status?: RuntimeEndUserStatus | '';
   quota_state?: RuntimeEndUserQuotaState | '';
+  /** A plan key, or 'none' for end users without an applying plan. */
+  plan?: string;
   sort?: RuntimeEndUserSort;
   order?: 'asc' | 'desc';
   page?: number;
@@ -189,7 +193,17 @@ export interface RuntimeEndUserSummary {
     over_quota: number;
     near_quota: number;
   };
+  plans: Array<{ key: string; name?: string; end_users: number }>;
   top: RuntimeEndUser[];
+}
+
+/** A plan of the workspace quota policy (ADR 0011). */
+export interface RuntimeEndUserPlan {
+  key: string;
+  name?: string;
+  limits: RuntimeQuotaLimit[];
+  /** Replaces the per-app caps when present; empty lifts them. */
+  apps?: Array<{ app_key: string; limits: RuntimeQuotaLimit[] }>;
 }
 
 export interface RuntimeUsageDay {
@@ -208,16 +222,25 @@ export interface RuntimeEndUserBatchResult {
   failed: string[];
 }
 
-/** A null quota returns the end user to the workspace limits. */
+/** A null quota returns the end user to the workspace limits; a null plan removes it. */
 export interface RuntimeEndUserPatch {
   status?: 'active' | 'suspended';
   quota?: RuntimeEndUserQuota | null;
+  plan?: { key: string; expires_at?: string } | null;
 }
 
 export interface RuntimeEndUserEvent {
   id: string;
   subject_id: string;
-  action: 'suspended' | 'resumed' | 'quota_set' | 'quota_reset' | 'exported' | 'erased';
+  action:
+    | 'suspended'
+    | 'resumed'
+    | 'quota_set'
+    | 'quota_reset'
+    | 'plan_set'
+    | 'plan_cleared'
+    | 'exported'
+    | 'erased';
   actor_kind: 'account' | 'credential';
   actor_id?: string;
   details: Record<string, unknown>;

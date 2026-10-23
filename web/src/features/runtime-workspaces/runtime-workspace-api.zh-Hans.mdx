@@ -309,14 +309,15 @@ GET 返回当前记忆开关、自动捕获开关、可写槽位和配置 revisi
 
 ## 终端用户
 
-携带过某个 External User ID 的请求之后，该 ID 就是一个终端用户。用 Runtime Key 按业务后端发送的 External User ID 管理终端用户；这些接口不需要 `X-ZGI-External-User-ID` 请求头。
+携带过某个 External User ID 的请求之后，或业务后端用 `PATCH` 修改过它之后，该 ID 就是一个终端用户。用 Runtime Key 按业务后端发送的 External User ID 管理终端用户；这些接口不需要 `X-ZGI-External-User-ID` 请求头。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/end-users/{user}` | 查看状态、额度，以及最近 24 小时、7 天、30 天的积分用量（总计和按 App） |
-| PATCH | `/end-users/{user}` | 停用或恢复该终端用户，或为其单独设置额度 |
+| PATCH | `/end-users/{user}` | 停用或恢复该终端用户，设置套餐，或为其单独设置额度 |
 | POST | `/end-users/{user}/export` | 将该终端用户的全部数据导出为一个 JSON 文档 |
 | DELETE | `/end-users/{user}` | 在所有 App 中删除该终端用户 |
+| GET | `/plans` | 列出控制台定义的套餐及其限额 |
 
 <CodeGroup title="为终端用户单独设置额度">
 
@@ -329,8 +330,17 @@ curl -X PATCH '{apibase}/end-users/customer-42' \
 
 </CodeGroup>
 
+<CodeGroup title="用户付费后设置套餐">
+
+```bash
+curl -X PATCH '{apibase}/end-users/customer-42'   --header 'Authorization: Bearer <runtime-key>'   --header 'Content-Type: application/json'   --data '{"plan":{"key":"pro","expires_at":"2026-12-31T23:59:59Z"}}'
+```
+
+</CodeGroup>
+
+- `plan` 为终端用户设置控制台定义的套餐：`{"key": "...", "expires_at": "..."}`，`expires_at` 可省略，表示长期有效。套餐的限额替代默认限额，到期后自动恢复默认限额，无需再次调用。`"plan": null` 表示移除套餐。可以在终端用户首次发起请求之前设置。
 - `status` 取值为 `active` 或 `suspended`。停用后仍可读取对话、文件和记忆，但发起新的对话或运行会返回 403 `end_user.suspended`。
-- `quota` 替代控制台为每个终端用户设置的限额：`{"limits": [...]}`，窗口为 `24h`、`7d` 或 `30d`，积分最小 0.001；或 `{"unlimited": true}`。单个 App 的额外上限仍然生效。`"quota": null` 表示恢复使用控制台限额。
+- `quota` 替代控制台为每个终端用户设置的限额：`{"limits": [...]}`，窗口为 `24h`、`7d` 或 `30d`，积分最小 0.001；或 `{"unlimited": true}`。单个 App 的额外上限仍然生效。单独额度优先于套餐。`"quota": null` 表示恢复使用套餐或控制台限额。
 - 终端用户超出额度后，发起对话或运行会返回 429 `quota.exceeded`，直到窗口内用量回落到限额以下。
 - 导出内容包括对话及消息、记忆、上传文件信息，以及数字人实例、实例记忆、运行、任务、报告、通知和产物。历史过长时会截断，并标记 `truncated`。
 - 删除会在所有 App 中删除上述数据，之后 `GET` 返回状态为 `erased`、不含 External User ID 的记录。用量和审计记录仅保留标识。之后使用相同 External User ID 的请求会作为一个新的空白终端用户。

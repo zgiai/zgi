@@ -225,6 +225,9 @@ export function RuntimeQuotaUsageTab({
         <EndUserQuotaCard
           policyJson={policyJson}
           apps={apps.filter(app => app.status === 'active')}
+          planCounts={Object.fromEntries(
+            (summary.data?.plans ?? []).map(plan => [plan.key, plan.end_users])
+          )}
           saving={saving}
           onSave={onSavePolicy}
         />

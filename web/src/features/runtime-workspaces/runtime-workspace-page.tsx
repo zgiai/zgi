@@ -1634,7 +1634,11 @@ export default function RuntimeWorkspacePage({
           />
         ) : null}
         {section === 'end-users' && runtime.current.data ? (
-          <RuntimeEndUsersTab runtimeWorkspaceId={runtime.current.data.workspace_id} apps={apps} />
+          <RuntimeEndUsersTab
+            runtimeWorkspaceId={runtime.current.data.workspace_id}
+            apps={apps}
+            policyJson={runtime.current.data.policy_json}
+          />
         ) : null}
         {section === 'agents' ? (
           <AppsTab

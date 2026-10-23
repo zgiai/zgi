@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,7 +26,10 @@ import (
 //	   "apps":   [{"app_key": "app_x", "limits": [{"window": "30d", "points": 1000}]}]}}
 //
 // limits apply to each end user across the Runtime Workspace's apps; apps
-// add caps for one app. An unset policy means no quota.
+// add caps for one app. An unset policy means no quota. plans (ADR 0011)
+// are alternative limits an end user may hold:
+//
+//	"plans": [{"key": "pro", "name": "Pro", "limits": [...], "apps": [...]}]
 
 // QuotaWindows are the rolling windows a limit may use.
 var QuotaWindows = map[string]time.Duration{"24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
@@ -60,10 +64,82 @@ type AppQuota struct {
 	Limits []QuotaLimit `json:"limits"`
 }
 
+// EndUserPlan is a set of limits an end user may hold instead of the
+// workspace defaults. Its limits replace the per-end-user limits; its apps,
+// when present, replace the per-app caps.
+type EndUserPlan struct {
+	Key    string       `json:"key"`
+	Name   string       `json:"name,omitempty"`
+	Limits []QuotaLimit `json:"limits"`
+	Apps   *[]AppQuota  `json:"apps,omitempty"`
+}
+
 // EndUserQuotaPolicy is the quota part of a Runtime Workspace policy.
 type EndUserQuotaPolicy struct {
-	Limits []QuotaLimit `json:"limits,omitempty"`
-	Apps   []AppQuota   `json:"apps,omitempty"`
+	Limits []QuotaLimit  `json:"limits,omitempty"`
+	Apps   []AppQuota    `json:"apps,omitempty"`
+	Plans  []EndUserPlan `json:"plans,omitempty"`
+}
+
+// Plan returns the plan of a key, or nil.
+func (p EndUserQuotaPolicy) Plan(key string) *EndUserPlan {
+	for index := range p.Plans {
+		if key != "" && p.Plans[index].Key == key {
+			return &p.Plans[index]
+		}
+	}
+	return nil
+}
+
+var planKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// ValidPlanKey reports whether a plan key is well formed.
+func ValidPlanKey(key string) bool { return planKeyPattern.MatchString(key) }
+
+// Quota sources: what the limits that apply to an end user come from.
+const (
+	QuotaSourceDefault   = "default"
+	QuotaSourcePlan      = "plan"
+	QuotaSourceCustom    = "custom"
+	QuotaSourceUnlimited = "unlimited"
+)
+
+// AppliedQuota is what limits an end user: per-end-user limits, per-app
+// caps, where they come from, and the plan that applies, if any.
+type AppliedQuota struct {
+	Limits []QuotaLimit
+	Apps   []AppQuota
+	Source string
+	Plan   *EndUserPlan
+}
+
+// planApplies reports whether an end user's plan is defined and unexpired.
+func planApplies(policy EndUserQuotaPolicy, user *EndUser, now time.Time) *EndUserPlan {
+	if user == nil || user.PlanKey == "" || user.PlanExpiresAt != nil && !user.PlanExpiresAt.After(now) {
+		return nil
+	}
+	return policy.Plan(user.PlanKey)
+}
+
+// appliedQuota resolves an end user's limits: their own quota, else an
+// applying plan, else the workspace defaults. A nil user has the defaults.
+func appliedQuota(policy EndUserQuotaPolicy, user *EndUser, now time.Time) AppliedQuota {
+	applied := AppliedQuota{Limits: policy.Limits, Apps: policy.Apps, Source: QuotaSourceDefault}
+	if plan := planApplies(policy, user, now); plan != nil {
+		applied.Limits, applied.Source, applied.Plan = plan.Limits, QuotaSourcePlan, plan
+		if plan.Apps != nil {
+			applied.Apps = *plan.Apps
+		}
+	}
+	if user != nil {
+		switch override := endUserQuotaOverride(user.QuotaJSON); {
+		case override.Unlimited:
+			applied.Limits, applied.Source = nil, QuotaSourceUnlimited
+		case len(override.Limits) > 0:
+			applied.Limits, applied.Source = override.Limits, QuotaSourceCustom
+		}
+	}
+	return applied
 }
 
 // ErrInvalidQuotaPolicy reports a malformed quota.
@@ -94,18 +170,32 @@ func ValidateEndUserQuota(policyJSON []byte) error {
 	if policy.EndUserQuota == nil {
 		return nil
 	}
-	if !validQuotaLimits(policy.EndUserQuota.Limits) {
+	if !validQuotaLimits(policy.EndUserQuota.Limits) || !validAppQuotas(policy.EndUserQuota.Apps) {
 		return ErrInvalidQuotaPolicy
 	}
+	plans := map[string]bool{}
+	for _, plan := range policy.EndUserQuota.Plans {
+		if !ValidPlanKey(plan.Key) || plans[plan.Key] || len([]rune(plan.Name)) > 64 || !validQuotaLimits(plan.Limits) {
+			return ErrInvalidQuotaPolicy
+		}
+		if plan.Apps != nil && !validAppQuotas(*plan.Apps) {
+			return ErrInvalidQuotaPolicy
+		}
+		plans[plan.Key] = true
+	}
+	return nil
+}
+
+func validAppQuotas(quotas []AppQuota) bool {
 	apps := map[string]bool{}
-	for _, app := range policy.EndUserQuota.Apps {
+	for _, app := range quotas {
 		key := strings.TrimSpace(app.AppKey)
 		if key == "" || apps[key] || len(app.Limits) == 0 || !validQuotaLimits(app.Limits) {
-			return ErrInvalidQuotaPolicy
+			return false
 		}
 		apps[key] = true
 	}
-	return nil
+	return true
 }
 
 // validQuotaLimits reports whether limits use known windows, each once,
@@ -147,7 +237,7 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 		return nil
 	}
 	runtimeWorkspaceID := ref.RuntimeWorkspaceID
-	var override EndUserQuotaOverride
+	var user *EndUser
 	var users []EndUser
 	if err := g.db.WithContext(ctx).Where("subject_id = ?", ref.SubjectID).Limit(1).Find(&users).Error; err != nil {
 		return fmt.Errorf("load end user: %w", err)
@@ -156,8 +246,8 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 		if users[0].Status != EndUserActive {
 			return apperror.New(chatruntime.CodeEndUserSuspended, apperror.WithOperation("runtime_workspace.end_user_status"))
 		}
-		override = endUserQuotaOverride(users[0].QuotaJSON)
-		runtimeWorkspaceID = users[0].RuntimeWorkspaceID
+		user = &users[0]
+		runtimeWorkspaceID = user.RuntimeWorkspaceID
 	}
 	if runtimeWorkspaceID == uuid.Nil {
 		var issuers []uuid.UUID
@@ -178,8 +268,8 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 		}
 		return fmt.Errorf("load runtime workspace quota: %w", err)
 	}
-	quota := EndUserQuota(workspace.PolicyJSON)
-	if err := g.checkLimits(ctx, ref.SubjectID, "", effectiveLimits(quota, override)); err != nil {
+	quota := appliedQuota(EndUserQuota(workspace.PolicyJSON), user, g.now())
+	if err := g.checkLimits(ctx, ref.SubjectID, "", quota.Limits); err != nil {
 		return err
 	}
 	if len(quota.Apps) == 0 || strings.TrimSpace(ref.AppID) == "" {

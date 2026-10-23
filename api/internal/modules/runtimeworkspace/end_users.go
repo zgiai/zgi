@@ -33,10 +33,12 @@ const (
 
 // End-user event actions.
 const (
-	EndUserEventSuspended  = "suspended"
-	EndUserEventResumed    = "resumed"
-	EndUserEventQuotaSet   = "quota_set"
-	EndUserEventQuotaReset = "quota_reset"
+	EndUserEventSuspended   = "suspended"
+	EndUserEventResumed     = "resumed"
+	EndUserEventQuotaSet    = "quota_set"
+	EndUserEventQuotaReset  = "quota_reset"
+	EndUserEventPlanSet     = "plan_set"
+	EndUserEventPlanCleared = "plan_cleared"
 )
 
 // endUserTouchInterval bounds how often a request rewrites last_seen_at.
@@ -55,6 +57,8 @@ type EndUser struct {
 	ExternalUserID     string         `gorm:"type:varchar(255);not null;default:''" json:"external_user_id"`
 	Status             string         `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
 	QuotaJSON          datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'" json:"-"`
+	PlanKey            string         `gorm:"type:varchar(64);not null;default:''" json:"plan_key"`
+	PlanExpiresAt      *time.Time     `json:"plan_expires_at,omitempty"`
 	FirstSeenAt        time.Time      `json:"first_seen_at"`
 	LastSeenAt         time.Time      `json:"last_seen_at"`
 	SuspendedAt        *time.Time     `json:"suspended_at,omitempty"`
@@ -97,18 +101,6 @@ func endUserQuotaOverride(raw datatypes.JSON) EndUserQuotaOverride {
 	return override
 }
 
-// effectiveLimits are the per-end-user limits that apply to an end user.
-func effectiveLimits(policy EndUserQuotaPolicy, override EndUserQuotaOverride) []QuotaLimit {
-	switch {
-	case override.Unlimited:
-		return nil
-	case len(override.Limits) > 0:
-		return override.Limits
-	default:
-		return policy.Limits
-	}
-}
-
 // Actor identifies who changes an end user.
 type EndUserActor struct {
 	Kind string
@@ -132,6 +124,15 @@ type AppUsage struct {
 	Usage   []WindowUsage `json:"usage"`
 }
 
+// EndUserPlanView is the plan an end user holds. Active is false once it
+// expired or the policy no longer defines it.
+type EndUserPlanView struct {
+	Key       string     `json:"key"`
+	Name      string     `json:"name,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Active    bool       `json:"active"`
+}
+
 // EndUserView is an end user as the console and the external API show it.
 type EndUserView struct {
 	SubjectID      string               `json:"subject_id"`
@@ -142,6 +143,7 @@ type EndUserView struct {
 	SuspendedAt    *time.Time           `json:"suspended_at,omitempty"`
 	QuotaSource    string               `json:"quota_source"`
 	Quota          EndUserQuotaOverride `json:"quota"`
+	Plan           *EndUserPlanView     `json:"plan,omitempty"`
 	Usage          []WindowUsage        `json:"usage"`
 	Apps           []AppUsage           `json:"apps"`
 }
@@ -157,23 +159,33 @@ type EndUserList struct {
 
 // EndUserListQuery filters and orders the end-user list. Sort is one of
 // last_seen (the default), usage_24h, usage_7d, usage_30d, or quota;
-// QuotaState is over, near, or custom.
+// QuotaState is over, near, or custom; Plan is a plan key, or "none".
 type EndUserListQuery struct {
 	Search     string
 	Status     string
 	QuotaState string
+	Plan       string
 	Sort       string
 	Ascending  bool
 	Page       int
 	Limit      int
 }
 
+// EndUserPlanAssignment gives an end user a plan until an optional expiry.
+type EndUserPlanAssignment struct {
+	Key       string     `json:"key"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
 // EndUserPatch changes an end user. A nil field is left as it is; ResetQuota
-// returns the end user to the Runtime Workspace's limits.
+// returns the end user to the Runtime Workspace's limits, and ClearPlan
+// removes their plan.
 type EndUserPatch struct {
 	Status     *string
 	Quota      *EndUserQuotaOverride
 	ResetQuota bool
+	Plan       *EndUserPlanAssignment
+	ClearPlan  bool
 }
 
 // touchEndUser records that an end user made a request. It writes at most
@@ -193,6 +205,23 @@ func (s *Service) touchEndUser(ctx context.Context, runtimeWorkspaceID, subjectI
 			OR runtime_workspace_end_users.external_user_id <> EXCLUDED.external_user_id
 			OR runtime_workspace_end_users.status = 'erased'
 	`, subjectID, runtimeWorkspaceID, externalUserID, now, now, now, now, now.Add(-endUserTouchInterval)).Error
+}
+
+// EnsureEndUser registers an end user the integrating server manages before
+// their first request, and brings an erased one back. A registered end user
+// is left as it is.
+func (s *Service) EnsureEndUser(ctx context.Context, runtimeWorkspaceID, subjectID uuid.UUID, externalUserID string) error {
+	now := s.now()
+	return s.db.WithContext(ctx).Exec(`
+		INSERT INTO runtime_workspace_end_users (subject_id, runtime_workspace_id, external_user_id, status, first_seen_at, last_seen_at, created_at, updated_at)
+		VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
+		ON CONFLICT (subject_id) DO UPDATE SET
+			external_user_id = EXCLUDED.external_user_id,
+			status = 'active',
+			erased_at = NULL,
+			updated_at = EXCLUDED.updated_at
+		WHERE runtime_workspace_end_users.status = 'erased'
+	`, subjectID, runtimeWorkspaceID, strings.TrimSpace(externalUserID), now, now, now, now).Error
 }
 
 // EndUserSubject is the subject of an external user in a Runtime Workspace.
@@ -245,7 +274,7 @@ func (s *Service) UpdateEndUser(ctx context.Context, workspaceID, subjectID uuid
 	if patch.Status != nil && *patch.Status != EndUserActive && *patch.Status != EndUserSuspended {
 		return nil, ErrInvalidEndUser
 	}
-	if patch.Quota != nil && patch.ResetQuota {
+	if patch.Quota != nil && patch.ResetQuota || patch.Plan != nil && (patch.ClearPlan || !ValidPlanKey(patch.Plan.Key)) {
 		return nil, ErrInvalidEndUser
 	}
 	if patch.Quota != nil {
@@ -296,6 +325,26 @@ func (s *Service) UpdateEndUser(ctx context.Context, workspaceID, subjectID uuid
 		case patch.ResetQuota && endUserQuotaOverride(user.QuotaJSON).set():
 			updates["quota_json"] = datatypes.JSON("{}")
 			event(EndUserEventQuotaReset, map[string]any{})
+		}
+		switch {
+		case patch.Plan != nil:
+			if EndUserQuota(runtimeWorkspace.PolicyJSON).Plan(patch.Plan.Key) == nil ||
+				patch.Plan.ExpiresAt != nil && !patch.Plan.ExpiresAt.After(now) {
+				return ErrInvalidEndUser
+			}
+			sameExpiry := patch.Plan.ExpiresAt == nil && user.PlanExpiresAt == nil ||
+				patch.Plan.ExpiresAt != nil && user.PlanExpiresAt != nil && patch.Plan.ExpiresAt.Equal(*user.PlanExpiresAt)
+			if patch.Plan.Key != user.PlanKey || !sameExpiry {
+				updates["plan_key"], updates["plan_expires_at"] = patch.Plan.Key, patch.Plan.ExpiresAt
+				details := map[string]any{"plan": patch.Plan.Key}
+				if patch.Plan.ExpiresAt != nil {
+					details["expires_at"] = patch.Plan.ExpiresAt.UTC().Format(time.RFC3339)
+				}
+				event(EndUserEventPlanSet, details)
+			}
+		case patch.ClearPlan && user.PlanKey != "":
+			updates["plan_key"], updates["plan_expires_at"] = "", nil
+			event(EndUserEventPlanCleared, map[string]any{"plan": user.PlanKey})
 		}
 		if len(updates) == 0 {
 			return nil
@@ -415,10 +464,6 @@ func (s *Service) endUserViews(ctx context.Context, runtimeWorkspace *RuntimeWor
 		}
 	}
 	policy := EndUserQuota(runtimeWorkspace.PolicyJSON)
-	appLimits := map[string][]QuotaLimit{}
-	for _, app := range policy.Apps {
-		appLimits[strings.TrimSpace(app.AppKey)] = app.Limits
-	}
 	windowUsage := func(used sums, limits []QuotaLimit) []WindowUsage {
 		usage := make([]WindowUsage, 0, len(QuotaWindowOrder))
 		for _, window := range QuotaWindowOrder {
@@ -435,13 +480,17 @@ func (s *Service) endUserViews(ctx context.Context, runtimeWorkspace *RuntimeWor
 		return usage
 	}
 	for _, user := range users {
-		override := endUserQuotaOverride(user.QuotaJSON)
-		source := "default"
-		switch {
-		case override.Unlimited:
-			source = "unlimited"
-		case len(override.Limits) > 0:
-			source = "custom"
+		applied := appliedQuota(policy, &user, now)
+		appLimits := map[string][]QuotaLimit{}
+		for _, app := range applied.Apps {
+			appLimits[strings.TrimSpace(app.AppKey)] = app.Limits
+		}
+		var plan *EndUserPlanView
+		if user.PlanKey != "" {
+			plan = &EndUserPlanView{Key: user.PlanKey, ExpiresAt: user.PlanExpiresAt, Active: planApplies(policy, &user, now) != nil}
+			if defined := policy.Plan(user.PlanKey); defined != nil {
+				plan.Name = defined.Name
+			}
 		}
 		apps := make([]AppUsage, 0, len(perApp[user.SubjectID]))
 		for appID, used := range perApp[user.SubjectID] {
@@ -457,7 +506,7 @@ func (s *Service) endUserViews(ctx context.Context, runtimeWorkspace *RuntimeWor
 		views = append(views, EndUserView{
 			SubjectID: user.SubjectID.String(), ExternalUserID: user.ExternalUserID, Status: user.Status,
 			FirstSeenAt: user.FirstSeenAt, LastSeenAt: user.LastSeenAt, SuspendedAt: user.SuspendedAt,
-			QuotaSource: source, Quota: override, Usage: windowUsage(used, effectiveLimits(policy, override)), Apps: apps,
+			QuotaSource: applied.Source, Quota: endUserQuotaOverride(user.QuotaJSON), Plan: plan, Usage: windowUsage(used, applied.Limits), Apps: apps,
 		})
 	}
 	return views, nil
@@ -472,17 +521,31 @@ func escapeLike(value string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
 }
 
-// ParseEndUserPatch reads {"status": "...", "quota": {...} | null}; a null
-// quota resets the end user to the Runtime Workspace's limits.
+// ParseEndUserPatch reads {"status": "...", "quota": {...} | null,
+// "plan": {"key": "...", "expires_at": "..."} | null}; a null quota resets
+// the end user to the Runtime Workspace's limits, and a null plan removes
+// their plan.
 func ParseEndUserPatch(body []byte) (EndUserPatch, error) {
 	var raw struct {
 		Status *string         `json:"status"`
 		Quota  json.RawMessage `json:"quota"`
+		Plan   json.RawMessage `json:"plan"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return EndUserPatch{}, ErrInvalidEndUser
 	}
 	patch := EndUserPatch{Status: raw.Status}
+	switch plan := strings.TrimSpace(string(raw.Plan)); {
+	case plan == "":
+	case plan == "null":
+		patch.ClearPlan = true
+	default:
+		var assignment EndUserPlanAssignment
+		if err := json.Unmarshal(raw.Plan, &assignment); err != nil || !ValidPlanKey(assignment.Key) {
+			return EndUserPatch{}, ErrInvalidEndUser
+		}
+		patch.Plan = &assignment
+	}
 	switch quota := strings.TrimSpace(string(raw.Quota)); {
 	case quota == "":
 	case quota == "null":

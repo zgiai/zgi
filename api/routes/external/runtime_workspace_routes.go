@@ -81,8 +81,22 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		response.Success(c, gin.H{"items": apps})
 	})
 
+	group.GET("/plans", func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok {
+			return
+		}
+		plans := runtimeworkspace.EndUserQuota(principal.RuntimeWorkspace.PolicyJSON).Plans
+		if plans == nil {
+			plans = []runtimeworkspace.EndUserPlan{}
+		}
+		response.Success(c, gin.H{"items": plans})
+	})
+
 	// The integrating server manages its end users by the IDs it sends
-	// (ADR 0010). An end user exists once they have made a request.
+	// (ADR 0010). An end user exists once they have made a request, or once
+	// the server changes them (ADR 0011), so a plan bought before the first
+	// chat applies to it.
 	endUser := func(handle func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID)) gin.HandlerFunc {
 		return func(c *gin.Context) {
 			principal, ok := runtimePrincipal(c)
@@ -113,6 +127,10 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		}
 		patch, err := runtimeworkspace.ParseEndUserPatch(body)
 		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		if err := service.EnsureEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, c.Param("user")); err != nil {
 			runtimeFail(c, err)
 			return
 		}

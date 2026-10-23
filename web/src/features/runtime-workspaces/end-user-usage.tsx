@@ -2,12 +2,22 @@
 
 import * as React from 'react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
   RuntimeEndUser,
+  RuntimeEndUserPatch,
+  RuntimeEndUserPlan,
   RuntimeEndUserQuota,
   RuntimeQuotaWindow,
   RuntimeUsageSeries,
@@ -177,7 +187,11 @@ export function UsageTrendChart({
               stroke="var(--muted-foreground)"
             />
             <YAxis
-              tickFormatter={value => compactPoints.format(Number(value))}
+              tickFormatter={value =>
+                Number(value) >= 1000
+                  ? compactPoints.format(Number(value))
+                  : pointsFormat.format(Number(value))
+              }
               tickLine={false}
               axisLine={false}
               fontSize={11}
@@ -254,7 +268,8 @@ export interface QuotaOverrideDraft {
 export function quotaDraftOf(user?: RuntimeEndUser | null): QuotaOverrideDraft {
   const limits: QuotaOverrideDraft['limits'] = {};
   for (const limit of user?.quota.limits ?? []) limits[limit.window] = String(limit.points);
-  return { mode: user?.quota_source ?? 'default', limits };
+  const source = user?.quota_source;
+  return { mode: source === 'custom' || source === 'unlimited' ? source : 'default', limits };
 }
 
 /** The quota a draft sets: null returns to the workspace limits. */
@@ -326,6 +341,142 @@ export function QuotaOverrideEditor({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** The plans of a Runtime Workspace policy. */
+export function parsePlans(policyJson?: string): RuntimeEndUserPlan[] {
+  try {
+    const parsed = JSON.parse(policyJson || '{}') as {
+      end_user_quota?: { plans?: RuntimeEndUserPlan[] };
+    };
+    return Array.isArray(parsed?.end_user_quota?.plans) ? parsed.end_user_quota.plans : [];
+  } catch {
+    return [];
+  }
+}
+
+export function planLabel(plan: { key: string; name?: string }) {
+  return plan.name?.trim() || plan.key;
+}
+
+/**
+ * @component PlanBadge
+ * @category Feature
+ * @status Beta
+ * @description Shows the plan an end user holds, muted and struck through
+ * once it expired or was removed from the policy.
+ * @usage Used in the end-user list and detail.
+ * @example
+ * <PlanBadge plan={{ key: 'pro', name: 'Pro', active: true }} />
+ */
+export function PlanBadge({ plan }: { plan?: RuntimeEndUser['plan'] }) {
+  const t = useT('workspace');
+  if (!plan) return null;
+  return (
+    <Badge
+      variant="outline"
+      title={plan.active ? undefined : t('runtime.plans.inactive')}
+      className={cn(
+        'h-5 px-1.5 text-[11px] font-medium',
+        plan.active
+          ? 'border-primary/40 bg-primary/5 text-primary'
+          : 'text-muted-foreground line-through'
+      )}
+    >
+      {planLabel(plan)}
+    </Badge>
+  );
+}
+
+export interface PlanDraft {
+  key: string;
+  /** The last day the plan applies, as yyyy-mm-dd; empty never expires. */
+  until: string;
+}
+
+function dateInputValue(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+export function planDraftOf(user?: RuntimeEndUser | null): PlanDraft {
+  return { key: user?.plan?.key ?? '', until: dateInputValue(user?.plan?.expires_at) };
+}
+
+/** The plan a draft sets; it applies through the end of its last day. */
+export function planOfDraft(draft: PlanDraft): RuntimeEndUserPatch['plan'] {
+  if (!draft.key) return null;
+  if (!draft.until) return { key: draft.key };
+  const end = new Date(`${draft.until}T23:59:59`);
+  return Number.isNaN(end.getTime())
+    ? { key: draft.key }
+    : { key: draft.key, expires_at: end.toISOString() };
+}
+
+/**
+ * @component PlanAssignmentEditor
+ * @category Feature
+ * @status Beta
+ * @description Picks a plan of the workspace for end users, or none, and the
+ * last day it applies.
+ * @usage Used in the end-user detail and the bulk plan dialog.
+ * @example
+ * <PlanAssignmentEditor plans={plans} value={draft} onChange={setDraft} />
+ */
+export function PlanAssignmentEditor({
+  plans,
+  value,
+  onChange,
+}: {
+  plans: RuntimeEndUserPlan[];
+  value: PlanDraft;
+  onChange: (next: PlanDraft) => void;
+}) {
+  const t = useT('workspace');
+  const today = dateInputValue(new Date().toISOString());
+  const known = plans.some(plan => plan.key === value.key);
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <label className="space-y-1">
+        <span className="text-xs text-muted-foreground">{t('runtime.plans.plan')}</span>
+        <Select
+          value={value.key || 'none'}
+          onValueChange={key => onChange({ ...value, key: key === 'none' ? '' : key })}
+        >
+          <SelectTrigger className="h-9">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">{t('runtime.plans.none')}</SelectItem>
+            {plans.map(plan => (
+              <SelectItem key={plan.key} value={plan.key}>
+                {planLabel(plan)}
+              </SelectItem>
+            ))}
+            {value.key && !known ? (
+              <SelectItem value={value.key} disabled>
+                {value.key}
+              </SelectItem>
+            ) : null}
+          </SelectContent>
+        </Select>
+      </label>
+      <label className="space-y-1">
+        <span className="text-xs text-muted-foreground">{t('runtime.plans.until')}</span>
+        <Input
+          type="date"
+          min={today}
+          disabled={!value.key}
+          value={value.until}
+          onChange={event => onChange({ ...value, until: event.target.value })}
+          className="h-9"
+        />
+      </label>
     </div>
   );
 }

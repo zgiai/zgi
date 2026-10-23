@@ -230,7 +230,7 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			return
 		}
 		list, err := service.ListEndUsers(c.Request.Context(), workspaceID, runtimeworkspace.EndUserListQuery{
-			Search: c.Query("search"), Status: c.Query("status"), QuotaState: c.Query("quota_state"),
+			Search: c.Query("search"), Status: c.Query("status"), QuotaState: c.Query("quota_state"), Plan: c.Query("plan"),
 			Sort: c.Query("sort"), Ascending: c.Query("order") == "asc",
 			Page:  managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
 			Limit: managementPositiveQueryInt(c.Query("limit"), 50, 200),

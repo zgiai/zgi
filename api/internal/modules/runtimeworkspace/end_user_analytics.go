@@ -30,16 +30,25 @@ var endUserListOrders = map[string]string{
 	"quota":     "COALESCE(ratio, -1)",
 }
 
+// planAppliesSQL holds for an end user whose plan has not expired.
+const planAppliesSQL = `(e.plan_key <> '' AND (e.plan_expires_at IS NULL OR e.plan_expires_at > @now))`
+
 // endUserUsageSQL ranks a Runtime Workspace's end users by usage against
-// the limits that apply to each: their own when set, the workspace's
-// otherwise. ratio is the largest share of any limit they have spent.
-func endUserUsageSQL(filters string) string {
+// the limits that apply to each: their own when set, else their plan's,
+// else the workspace's. ratio is the largest share of any limit they have
+// spent. Plans are the policy's, in order, as endUserUsageArgs binds them.
+func endUserUsageSQL(plans int, filters string) string {
 	limit := func(window string) string {
+		var plan strings.Builder
+		for index := 0; index < plans; index++ {
+			fmt.Fprintf(&plan, `
+			WHEN %s AND e.plan_key = @plan_%d THEN CAST(@plan_%d_%s AS numeric)`, planAppliesSQL, index, index, strings.TrimRight(window, "hd"))
+		}
 		return `CASE
 			WHEN COALESCE((e.quota_json->>'unlimited')::boolean, false) THEN NULL
 			WHEN jsonb_array_length(COALESCE(e.quota_json->'limits', '[]'::jsonb)) > 0
 				THEN (SELECT (item->>'points')::numeric * 1000 FROM jsonb_array_elements(e.quota_json->'limits') AS item
-					WHERE item->>'window' = '` + window + `' LIMIT 1)
+					WHERE item->>'window' = '` + window + `' LIMIT 1)` + plan.String() + `
 			ELSE CAST(@` + defaultLimitArg(window) + ` AS numeric)
 		END`
 	}
@@ -75,14 +84,29 @@ func (s *Service) endUserUsageArgs(runtimeWorkspace *RuntimeWorkspace) map[strin
 		"since_24h": now.Add(-QuotaWindows["24h"]),
 		"since_7d":  now.Add(-QuotaWindows["7d"]),
 		"since_30d": now.Add(-QuotaWindows["30d"]),
+		"now":       now,
 	}
+	policy := EndUserQuota(runtimeWorkspace.PolicyJSON)
 	for _, window := range QuotaWindowOrder {
 		args[defaultLimitArg(window)] = nil
+		for index := range policy.Plans {
+			args[fmt.Sprintf("plan_%d_%s", index, strings.TrimRight(window, "hd"))] = nil
+		}
 	}
-	for _, limit := range EndUserQuota(runtimeWorkspace.PolicyJSON).Limits {
+	for _, limit := range policy.Limits {
 		args[defaultLimitArg(limit.Window)] = limit.MilliPoints().Int64()
 	}
+	for index, plan := range policy.Plans {
+		args[fmt.Sprintf("plan_%d", index)] = plan.Key
+		for _, limit := range plan.Limits {
+			args[fmt.Sprintf("plan_%d_%s", index, strings.TrimRight(limit.Window, "hd"))] = limit.MilliPoints().Int64()
+		}
+	}
 	return args
+}
+
+func planCount(runtimeWorkspace *RuntimeWorkspace) int {
+	return len(EndUserQuota(runtimeWorkspace.PolicyJSON).Plans)
 }
 
 // defaultLimitArg names the query argument of a window's workspace limit.
@@ -101,6 +125,12 @@ func endUserListFilters(query EndUserListQuery, args map[string]any) (string, st
 		} else {
 			filters, args["search"] = append(filters, `e.external_user_id ILIKE @search`), escapeLike(search)+"%"
 		}
+	}
+	switch plan := strings.TrimSpace(query.Plan); {
+	case plan == "none":
+		filters = append(filters, "NOT "+planAppliesSQL)
+	case plan != "":
+		filters, args["plan_filter"] = append(filters, planAppliesSQL+" AND e.plan_key = @plan_filter"), plan
 	}
 	switch query.QuotaState {
 	case QuotaStateOver:
@@ -125,7 +155,7 @@ func endUserListFilters(query EndUserListQuery, args map[string]any) (string, st
 func (s *Service) listEndUsersRanked(ctx context.Context, runtimeWorkspace *RuntimeWorkspace, query EndUserListQuery, page, limit int) ([]EndUser, int64, error) {
 	args := s.endUserUsageArgs(runtimeWorkspace)
 	where, rankedWhere := endUserListFilters(query, args)
-	base := endUserUsageSQL(where)
+	base := endUserUsageSQL(planCount(runtimeWorkspace), where)
 	var total int64
 	if err := s.db.WithContext(ctx).Raw(base+` SELECT count(*) FROM ranked`+rankedWhere, args).Scan(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("count end users: %w", err)
@@ -179,10 +209,18 @@ type EndUserCounts struct {
 	NearQuota   int64 `json:"near_quota"`
 }
 
+// PlanCount counts the end users a plan applies to.
+type PlanCount struct {
+	Key      string `json:"key"`
+	Name     string `json:"name,omitempty"`
+	EndUsers int64  `json:"end_users"`
+}
+
 // EndUserSummary is the overview of a Runtime Workspace's end users.
 type EndUserSummary struct {
 	Usage    []WindowTotal `json:"usage"`
 	EndUsers EndUserCounts `json:"end_users"`
+	Plans    []PlanCount   `json:"plans"`
 	Top      []EndUserView `json:"top"`
 }
 
@@ -199,7 +237,7 @@ func (s *Service) SummarizeEndUsers(ctx context.Context, workspaceID uuid.UUID) 
 		U24, U7, U30                                                          int64
 		Users24, Users7, Users30                                              int64
 	}
-	if err := s.db.WithContext(ctx).Raw(endUserUsageSQL("")+fmt.Sprintf(`
+	if err := s.db.WithContext(ctx).Raw(endUserUsageSQL(planCount(runtimeWorkspace), "")+fmt.Sprintf(`
 		SELECT count(*) AS total,
 			count(*) FILTER (WHERE last_seen_at >= @active_since AND status <> 'erased') AS active7d,
 			count(*) FILTER (WHERE status = 'suspended') AS suspended,
@@ -220,6 +258,24 @@ func (s *Service) SummarizeEndUsers(ctx context.Context, workspaceID uuid.UUID) 
 		},
 		EndUsers: EndUserCounts{Total: row.Total, Active7d: row.Active7d, Suspended: row.Suspended, Erased: row.Erased,
 			CustomQuota: row.CustomQuota, OverQuota: row.OverQuota, NearQuota: row.NearQuota},
+	}
+	var held []struct {
+		PlanKey string
+		Count   int64
+	}
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT e.plan_key, count(*) AS count FROM runtime_workspace_end_users e
+		WHERE e.runtime_workspace_id = @runtime AND e.status <> 'erased' AND `+planAppliesSQL+`
+		GROUP BY e.plan_key`, args).Scan(&held).Error; err != nil {
+		return nil, fmt.Errorf("count end users per plan: %w", err)
+	}
+	counts := map[string]int64{}
+	for _, row := range held {
+		counts[row.PlanKey] = row.Count
+	}
+	summary.Plans = []PlanCount{}
+	for _, plan := range EndUserQuota(runtimeWorkspace.PolicyJSON).Plans {
+		summary.Plans = append(summary.Plans, PlanCount{Key: plan.Key, Name: plan.Name, EndUsers: counts[plan.Key]})
 	}
 	top, _, err := s.listEndUsersRanked(ctx, runtimeWorkspace, EndUserListQuery{Sort: "usage_30d"}, 1, 10)
 	if err != nil {

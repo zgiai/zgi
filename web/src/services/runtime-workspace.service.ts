@@ -152,6 +152,7 @@ class RuntimeWorkspaceService extends BaseService {
     if (query.search) params.set('search', query.search);
     if (query.status) params.set('status', query.status);
     if (query.quota_state) params.set('quota_state', query.quota_state);
+    if (query.plan) params.set('plan', query.plan);
     if (query.sort) params.set('sort', query.sort);
     if (query.order) params.set('order', query.order);
     if (query.page) params.set('page', String(query.page));

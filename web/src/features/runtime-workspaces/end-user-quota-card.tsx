@@ -1,10 +1,11 @@
 'use client';
 
 import * as React from 'react';
-import { Gauge, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Crown, Gauge, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -19,15 +20,42 @@ import type { RuntimeApp } from '@/services/types/runtime-workspace';
 const windows = ['24h', '7d', '30d'] as const;
 type QuotaWindow = (typeof windows)[number];
 type WindowPoints = Partial<Record<QuotaWindow, string>>;
+const planKeyPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 interface QuotaLimit {
   window: QuotaWindow;
   points: number;
 }
 
+interface AppQuota {
+  app_key: string;
+  limits: QuotaLimit[];
+}
+
+interface PlanQuota {
+  key: string;
+  name?: string;
+  limits: QuotaLimit[];
+  apps?: AppQuota[];
+}
+
 interface EndUserQuota {
   limits?: QuotaLimit[];
-  apps?: Array<{ app_key: string; limits: QuotaLimit[] }>;
+  apps?: AppQuota[];
+  plans?: PlanQuota[];
+}
+
+interface PlanDraft {
+  id: string;
+  key: string;
+  name: string;
+  limits: WindowPoints;
+  /** Saved plans keep their key: end users refer to it. */
+  saved: boolean;
+  /** Lift the per-app caps for this plan, or keep the workspace's. */
+  noAppCaps: boolean;
+  /** Per-app caps of the plan set through the API, kept as they are. */
+  apps?: AppQuota[];
 }
 
 function parsePolicy(policyJson: string | undefined): Record<string, unknown> {
@@ -59,8 +87,10 @@ function toLimits(points: WindowPoints): QuotaLimit[] {
  * @category Feature
  * @status Beta
  * @description Edits the points quotas of a Runtime Workspace's end users
- * (ADR 0010): a limit per rolling window for every end user, and optional caps
- * per app. Points may be fractional down to 0.001; empty fields mean no limit.
+ * (ADR 0010, ADR 0011): a limit per rolling window for every end user,
+ * optional caps per app, and plans that end users may hold instead of the
+ * defaults. Points may be fractional down to 0.001; empty fields mean no
+ * limit.
  * @usage Rendered on the Runtime Workspace quota page.
  * @example
  * <EndUserQuotaCard policyJson={policy} apps={apps} onSave={save} saving={false} />
@@ -68,11 +98,14 @@ function toLimits(points: WindowPoints): QuotaLimit[] {
 export function EndUserQuotaCard({
   policyJson,
   apps,
+  planCounts,
   onSave,
   saving,
 }: {
   policyJson?: string;
   apps: RuntimeApp[];
+  /** End users each plan applies to, by key. */
+  planCounts?: Record<string, number>;
   onSave: (policy: Record<string, unknown>) => Promise<void>;
   saving: boolean;
 }) {
@@ -85,19 +118,34 @@ export function EndUserQuotaCard({
         appKey: app.app_key,
         limits: toWindowPoints(app.limits),
       })),
+      plans: (quota.plans ?? []).map(
+        (plan): PlanDraft => ({
+          id: plan.key,
+          key: plan.key,
+          name: plan.name ?? '',
+          limits: toWindowPoints(plan.limits),
+          saved: true,
+          noAppCaps: Array.isArray(plan.apps) && plan.apps.length === 0,
+          apps: plan.apps && plan.apps.length > 0 ? plan.apps : undefined,
+        })
+      ),
     };
   }, [policyJson]);
   const [limits, setLimits] = React.useState<WindowPoints>(initial.limits);
   const [appCaps, setAppCaps] = React.useState(initial.apps);
-  React.useEffect(() => {
+  const [plans, setPlans] = React.useState<PlanDraft[]>(initial.plans);
+  const reset = React.useCallback(() => {
     setLimits(initial.limits);
     setAppCaps(initial.apps);
+    setPlans(initial.plans);
   }, [initial]);
+  React.useEffect(reset, [reset]);
 
   const usedKeys = new Set(appCaps.map(cap => cap.appKey));
   const quotaOf = (
     defaults: WindowPoints,
-    caps: Array<{ appKey: string; limits: WindowPoints }>
+    caps: Array<{ appKey: string; limits: WindowPoints }>,
+    planDrafts: PlanDraft[]
   ): EndUserQuota => {
     const quota: EndUserQuota = {};
     const defaultLimits = toLimits(defaults);
@@ -106,24 +154,37 @@ export function EndUserQuotaCard({
       .map(cap => ({ app_key: cap.appKey, limits: toLimits(cap.limits) }))
       .filter(cap => cap.app_key && cap.limits.length > 0);
     if (appQuotas.length > 0) quota.apps = appQuotas;
+    if (planDrafts.length > 0) {
+      quota.plans = planDrafts.map(plan => {
+        const next: PlanQuota = { key: plan.key.trim(), limits: toLimits(plan.limits) };
+        if (plan.name.trim()) next.name = plan.name.trim();
+        if (plan.noAppCaps) next.apps = [];
+        else if (plan.apps) next.apps = plan.apps;
+        return next;
+      });
+    }
     return quota;
   };
+  const current = quotaOf(limits, appCaps, plans);
   const dirty =
-    JSON.stringify(quotaOf(limits, appCaps)) !==
-    JSON.stringify(quotaOf(initial.limits, initial.apps));
+    JSON.stringify(current) !==
+    JSON.stringify(quotaOf(initial.limits, initial.apps, initial.plans));
+  const planKeys = plans.map(plan => plan.key.trim());
+  const planError = (plan: PlanDraft, index: number) => {
+    const key = plan.key.trim();
+    if (!planKeyPattern.test(key)) return t('runtime.plans.keyInvalid');
+    if (planKeys.indexOf(key) !== index) return t('runtime.plans.keyTaken');
+    return null;
+  };
+  const valid = plans.every((plan, index) => planError(plan, index) === null);
   const save = async () => {
-    const quota: EndUserQuota = {};
-    const defaultLimits = toLimits(limits);
-    if (defaultLimits.length > 0) quota.limits = defaultLimits;
-    const caps = appCaps
-      .map(cap => ({ app_key: cap.appKey, limits: toLimits(cap.limits) }))
-      .filter(cap => cap.app_key && cap.limits.length > 0);
-    if (caps.length > 0) quota.apps = caps;
     const policy = parsePolicy(policyJson);
-    if (quota.limits || quota.apps) policy.end_user_quota = quota;
+    if (current.limits || current.apps || current.plans) policy.end_user_quota = current;
     else delete policy.end_user_quota;
     await onSave(policy);
   };
+  const updatePlan = (index: number, patch: Partial<PlanDraft>) =>
+    setPlans(plans.map((plan, i) => (i === index ? { ...plan, ...patch } : plan)));
 
   const windowInputs = (value: WindowPoints, onChange: (next: WindowPoints) => void) => (
     <div className="grid grid-cols-3 gap-2">
@@ -231,27 +292,131 @@ export function EndUserQuotaCard({
           )}
         </section>
 
+        <section className="space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-medium">{t('runtime.plans.title')}</h4>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {t('runtime.plans.description')}
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() =>
+                setPlans([
+                  ...plans,
+                  {
+                    id: `new-${Date.now()}`,
+                    key: '',
+                    name: '',
+                    limits: {},
+                    saved: false,
+                    noAppCaps: false,
+                  },
+                ])
+              }
+            >
+              <Plus className="size-4" />
+              {t('runtime.plans.add')}
+            </Button>
+          </div>
+          {plans.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('runtime.plans.empty')}</p>
+          ) : (
+            plans.map((plan, index) => {
+              const error = planError(plan, index);
+              const holders = planCounts?.[plan.key] ?? 0;
+              return (
+                <div key={plan.id} className="space-y-3 rounded-lg border p-3">
+                  <div className="flex items-start gap-2">
+                    <Crown className="mt-2.5 size-4 shrink-0 text-primary" />
+                    <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
+                      <label className="space-y-1">
+                        <span className="text-xs text-muted-foreground">
+                          {t('runtime.plans.name')}
+                        </span>
+                        <Input
+                          value={plan.name}
+                          maxLength={64}
+                          placeholder={t('runtime.plans.namePlaceholder')}
+                          onChange={event => updatePlan(index, { name: event.target.value })}
+                          className="h-9"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="text-xs text-muted-foreground">
+                          {t('runtime.plans.key')}
+                        </span>
+                        <Input
+                          value={plan.key}
+                          maxLength={64}
+                          disabled={plan.saved}
+                          placeholder="pro"
+                          onChange={event =>
+                            updatePlan(index, { key: event.target.value.toLowerCase() })
+                          }
+                          className="h-9 font-mono"
+                        />
+                      </label>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="mt-5"
+                      aria-label={t('runtime.plans.remove')}
+                      onClick={() => setPlans(plans.filter((_, i) => i !== index))}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                  {error && plan.key ? <p className="text-xs text-destructive">{error}</p> : null}
+                  {windowInputs(plan.limits, next => updatePlan(index, { limits: next }))}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Checkbox
+                        checked={plan.noAppCaps}
+                        onCheckedChange={value =>
+                          updatePlan(index, { noAppCaps: value === true, apps: undefined })
+                        }
+                      />
+                      {plan.apps
+                        ? t('runtime.plans.ownAppCaps', { count: plan.apps.length })
+                        : t('runtime.plans.noAppCaps')}
+                    </label>
+                    {plan.saved ? (
+                      <span className="text-xs text-muted-foreground">
+                        {t('runtime.plans.holders', { count: holders })}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })
+          )}
+          {initial.plans.some(
+            plan => !plans.some(next => next.key === plan.key) && (planCounts?.[plan.key] ?? 0) > 0
+          ) ? (
+            <p className="text-xs text-warning">{t('runtime.plans.removeWarning')}</p>
+          ) : null}
+        </section>
+
         <div className="flex items-center justify-end gap-2">
           {dirty ? (
             <>
               <Badge variant="outline" className="mr-auto border-warning/40 text-warning">
                 {t('runtime.quota.unsaved')}
               </Badge>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setLimits(initial.limits);
-                  setAppCaps(initial.apps);
-                }}
-                disabled={saving}
-              >
+              <Button type="button" variant="ghost" onClick={reset} disabled={saving}>
                 <RotateCcw className="size-4" />
                 {t('runtime.quota.discard')}
               </Button>
             </>
           ) : null}
-          <Button type="button" onClick={() => void save()} disabled={saving || !dirty}>
+          <Button type="button" onClick={() => void save()} disabled={saving || !dirty || !valid}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : null}
             {t('runtime.quota.save')}
           </Button>
