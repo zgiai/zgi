@@ -117,6 +117,69 @@ func TestPerUserConnectorSlotPostgres(t *testing.T) {
 		t.Fatalf("alice's binding after reconnecting = %#v, %v", owned, err)
 	}
 	connection = replacement
+
+	// Dropping the selection revokes alice's binding, and execution refuses
+	// a binding that does not follow her current selection; choosing again
+	// restores it.
+	exec("DELETE FROM digital_human_connector_selections WHERE owner_id = ?", alice)
+	if missing, err := preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, run(alice)); err != nil || len(missing) != 1 {
+		t.Fatalf("alice's slot without a selection = %#v, %v", missing, err)
+	}
+	if n := count("SELECT count(*) FROM connector_target_bindings WHERE owner_account_id = ? AND status = 'active'", alice); n != 0 {
+		t.Fatalf("alice kept %d active bindings without a selection", n)
+	}
+	var slotRow ResourceBinding
+	if err := db.Where("digital_human_version_id = ? AND resource_id = ?", versionID, slotKey).Take(&slotRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	slotRowID := slotRow.ID
+	if selected, err := PerUserBindingSelected(t.Context(), db, perUserBindingID(slotRowID, alice), slotRowID, f.detail.Definition.ID, alice, slotKey, connection.ID); err != nil || selected {
+		t.Fatalf("a binding without a selection was accepted for execution: %v %v", selected, err)
+	}
+	if err := db.Create(&ConnectorSelection{ID: uuid.New(), OrganizationID: f.scope.OrganizationID, DigitalHumanID: f.detail.Definition.ID,
+		OwnerKind: connectorOwnerEndUser, OwnerID: alice, SlotKey: slotKey, ConnectorID: f.definition.ID, ConnectionID: connection.ID,
+		CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if missing, err := preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, run(alice)); err != nil || len(missing) != 0 {
+		t.Fatalf("alice's slot after selecting again = %#v, %v", missing, err)
+	}
+	if selected, err := PerUserBindingSelected(t.Context(), db, perUserBindingID(slotRowID, alice), slotRowID, f.detail.Definition.ID, alice, slotKey, connection.ID); err != nil || !selected {
+		t.Fatalf("alice's restored binding was refused: %v %v", selected, err)
+	}
+	if n := count("SELECT count(*) FROM connector_target_bindings WHERE owner_account_id = ? AND status = 'active'", alice); n != 1 {
+		t.Fatalf("alice has %d active bindings after selecting again", n)
+	}
+
+	// A member clearing their selection loses the binding in the same
+	// change, though their Connection stays.
+	member := &RuntimeService{store: f.repo}
+	if err := member.SelectMemberConnectorSlot(t.Context(), f.scope, f.detail.Definition.ID, slotKey, f.connections[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	actor := f.scope.ActorID
+	console := &Run{ID: uuid.New(), OrganizationID: f.scope.OrganizationID, WorkspaceID: f.scope.WorkspaceID, DigitalHumanID: f.detail.Definition.ID,
+		DigitalHumanVersionID: versionID, Surface: SurfaceConsole, ActorID: &actor}
+	if missing, err := preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, console); err != nil || len(missing) != 0 {
+		t.Fatalf("the member's connected slot = %#v, %v", missing, err)
+	}
+	memberBinding := perUserBindingID(slotRowID, actor)
+	if n := count("SELECT count(*) FROM connector_target_bindings WHERE id = ? AND status = 'active'", memberBinding); n != 1 {
+		t.Fatal("the member's slot was not bound")
+	}
+	if err := member.ClearMemberConnectorSlot(t.Context(), f.scope, f.detail.Definition.ID, slotKey); err != nil {
+		t.Fatal(err)
+	}
+	if n := count("SELECT count(*) FROM connector_target_bindings WHERE id = ? AND status = 'active'", memberBinding); n != 0 {
+		t.Fatal("clearing the member's selection kept their binding active")
+	}
+	if n := count("SELECT count(*) FROM connector_connections WHERE id = ? AND deleted_at IS NULL", f.connections[0].ID); n != 1 {
+		t.Fatal("clearing the selection removed the member's Connection")
+	}
+	if missing, err := preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, console); err != nil || len(missing) != 1 {
+		t.Fatalf("the member's cleared slot = %#v, %v", missing, err)
+	}
+
 	missing, err = preparePerUserConnectors(t.Context(), db, f.repo.connectorCatalog, run(bob))
 	if err != nil || len(missing) != 1 || missing[0].SlotKey != slotKey || missing[0].State != PerUserSlotNeedsConnection || missing[0].Name != "Their own search" {
 		t.Fatalf("bob's unconnected slot = %#v, %v", missing, err)

@@ -210,7 +210,8 @@ func ensurePerUserBinding(ctx context.Context, db *gorm.DB, connectorCatalog Con
 	var selection ConnectorSelection
 	err := db.WithContext(ctx).Where("digital_human_id = ? AND owner_id = ? AND slot_key = ?", digitalHumanID, requester, row.ResourceID).Take(&selection).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return slot, false, nil
+		// Without a selection no binding of the requester may stay usable.
+		return slot, false, revokePerUserBindings(ctx, db, organizationID, digitalHumanID, requester, row.ResourceID)
 	}
 	if err != nil {
 		return slot, false, fmt.Errorf("load per-user connector selection: %w", err)
@@ -243,7 +244,7 @@ func ensurePerUserBinding(ctx context.Context, db *gorm.DB, connectorCatalog Con
 		return slot, false, nil
 	}
 	constraint.AllowedOperationIDs = usable
-	bindingID := uuid.NewSHA1(row.ID, []byte("digital-human-per-user:"+requester.String()))
+	bindingID := perUserBindingID(row.ID, requester)
 	var existing struct {
 		Revision     int
 		ConnectionID uuid.UUID
@@ -281,6 +282,65 @@ func ensurePerUserBinding(ctx context.Context, db *gorm.DB, connectorCatalog Con
 	}
 	slot.State = PerUserSlotConnected
 	return slot, true, nil
+}
+
+// perUserBindingID is the requester's own binding to one per-user slot row.
+func perUserBindingID(rowID, requester uuid.UUID) uuid.UUID {
+	return uuid.NewSHA1(rowID, []byte("digital-human-per-user:"+requester.String()))
+}
+
+// revokePerUserBindings disables the requester's bindings to a per-user slot
+// on every version, so a Connection they no longer select cannot be used.
+// The Connection itself stays.
+func revokePerUserBindings(ctx context.Context, db *gorm.DB, organizationID, digitalHumanID, requester uuid.UUID, slotKey string) error {
+	var rowIDs []uuid.UUID
+	if err := db.WithContext(ctx).Model(&ResourceBinding{}).
+		Where("organization_id = ? AND digital_human_id = ? AND binding_type = ? AND resource_id = ? AND metadata->>'credential_mode' = ?",
+			organizationID, digitalHumanID, resourcebindings.BindingTypeConnector, slotKey, ConnectorCredentialPerUser).
+		Pluck("id", &rowIDs).Error; err != nil {
+		return fmt.Errorf("list per-user connector slot versions: %w", err)
+	}
+	if len(rowIDs) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(rowIDs))
+	for _, rowID := range rowIDs {
+		ids = append(ids, perUserBindingID(rowID, requester))
+	}
+	var active []struct {
+		ID       uuid.UUID
+		Revision int
+	}
+	if err := db.WithContext(ctx).Table("connector_target_bindings").Select("id, revision").
+		Where("organization_id = ? AND owner_account_id = ? AND id IN ? AND status = ?", organizationID, requester, ids, core.BindingStatusActive).
+		Scan(&active).Error; err != nil {
+		return fmt.Errorf("load per-user connector bindings: %w", err)
+	}
+	native := bindings.NewGormRepository(db)
+	for _, binding := range active {
+		mutation := bindings.BindingLifecycleMutation{ID: uuid.New(), MutationType: bindings.MutationBindingDetached,
+			CorrelationID: "digital-human-per-user-clear:" + uuid.NewString(), CreatedAt: time.Now().UTC()}
+		if _, err := native.SetBindingStatusWithLifecycle(ctx, organizationID, requester, binding.ID, core.BindingStatusDisabled, binding.Revision, mutation); err != nil {
+			return fmt.Errorf("revoke per-user connector binding: %w", err)
+		}
+	}
+	return nil
+}
+
+// PerUserBindingSelected reports whether a binding to a per-user slot row is
+// the owner's own binding and still uses the Connection they select now.
+// Execution checks it, so a binding left behind cannot outlive a selection.
+func PerUserBindingSelected(ctx context.Context, db *gorm.DB, bindingID, rowID, digitalHumanID, ownerID uuid.UUID, slotKey string, connectionID uuid.UUID) (bool, error) {
+	if db == nil || bindingID != perUserBindingID(rowID, ownerID) {
+		return false, nil
+	}
+	var count int64
+	if err := db.WithContext(ctx).Model(&ConnectorSelection{}).
+		Where("digital_human_id = ? AND owner_id = ? AND slot_key = ? AND connection_id = ?", digitalHumanID, ownerID, slotKey, connectionID).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("check per-user connector selection: %w", err)
+	}
+	return count > 0, nil
 }
 
 // perUserConnectorNote tells the model which per-user slots need the
@@ -475,8 +535,13 @@ func (m *EndUserConnections) Disconnect(ctx context.Context, organizationID, sub
 	if err := m.db.WithContext(ctx).Where("digital_human_id = ? AND owner_id = ? AND slot_key = ?", digitalHumanID, subjectID, slotKey).Take(&selection).Error; err != nil {
 		return ErrConnectorSlotNotFound
 	}
-	if err := m.db.WithContext(ctx).Delete(&ConnectorSelection{}, "id = ?", selection.ID).Error; err != nil {
-		return fmt.Errorf("remove end-user connection selection: %w", err)
+	if err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&ConnectorSelection{}, "id = ?", selection.ID).Error; err != nil {
+			return fmt.Errorf("remove end-user connection selection: %w", err)
+		}
+		return revokePerUserBindings(ctx, tx, organizationID, digitalHumanID, subjectID, slotKey)
+	}); err != nil {
+		return err
 	}
 	return removeOwnerConnection(ctx, m.db, organizationID, subjectID, selection.ConnectionID)
 }

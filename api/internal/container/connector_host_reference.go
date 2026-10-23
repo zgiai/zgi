@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/google/uuid"
+
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
@@ -18,12 +20,13 @@ func (authority *connectorTargetAuthority) verifyHostReference(ctx context.Conte
 	}
 	if b.Target.Type == core.TargetTypeDigitalHuman {
 		var row struct {
+			ID                                         uuid.UUID
 			ResourceID, ParentResourceID, AuthorizedBy string
 			Metadata                                   []byte
 		}
 		query := authority.container.db.WithContext(ctx).
 			Table("digital_human_resource_bindings AS r").
-			Select("r.resource_id, r.parent_resource_id, r.authorized_by, r.metadata").
+			Select("r.id, r.resource_id, r.parent_resource_id, r.authorized_by, r.metadata").
 			Joins("JOIN digital_human_versions AS v ON v.id = r.digital_human_version_id").
 			Where("r.id = ? AND r.organization_id = ? AND r.digital_human_id = ? AND r.binding_type = ? AND r.access_mode = ?", b.Target.BindingInstanceID, b.OrganizationID, b.Target.ID, "connector", "execute")
 		if b.Target.EffectiveScope() == core.ScopePublished {
@@ -42,9 +45,18 @@ func (authority *connectorTargetAuthority) verifyHostReference(ctx context.Conte
 			return targetDenied()
 		}
 		// A shared slot names its editor's Connection. A per-user slot names
-		// none: the binding and Connection already belong to the requester.
+		// none: the binding and Connection belong to the requester, and must
+		// be their own binding to the Connection they select now.
 		if metadata.Mode == "per_user" {
 			if !digitalhuman.PerUserConnectorsEnabled() {
+				return targetDenied()
+			}
+			digitalHumanID, parseErr := uuid.Parse(b.Target.ID)
+			if parseErr != nil {
+				return targetDenied()
+			}
+			selected, err := digitalhuman.PerUserBindingSelected(ctx, authority.container.db, b.ID, row.ID, digitalHumanID, b.OwnerAccountID, row.ResourceID, b.ConnectionID)
+			if err != nil || !selected {
 				return targetDenied()
 			}
 		} else if row.ResourceID != b.ConnectionID.String() || row.AuthorizedBy != b.OwnerAccountID.String() {

@@ -128,11 +128,15 @@ func (s *RuntimeService) ClearMemberConnectorSlot(ctx context.Context, scope Sco
 	if err != nil {
 		return err
 	}
-	if err := repository.db.WithContext(ctx).Where("digital_human_id = ? AND owner_id = ? AND slot_key = ?", digitalHumanID, scope.ActorID, slotKey).
-		Delete(&ConnectorSelection{}).Error; err != nil {
-		return fmt.Errorf("clear member connector selection: %w", err)
-	}
-	return nil
+	// The member's bindings to the slot go with the selection, in the same
+	// transaction, so the Connection they kept cannot still be used here.
+	return repository.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("digital_human_id = ? AND owner_id = ? AND slot_key = ?", digitalHumanID, scope.ActorID, slotKey).
+			Delete(&ConnectorSelection{}).Error; err != nil {
+			return fmt.Errorf("clear member connector selection: %w", err)
+		}
+		return revokePerUserBindings(ctx, tx, scope.OrganizationID, digitalHumanID, scope.ActorID, slotKey)
+	})
 }
 
 type memberConnectorSlotService interface {
