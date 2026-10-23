@@ -61,14 +61,6 @@ func (s *Service) SetConnectorCatalog(connectorCatalog ConnectorCatalog) {
 }
 
 // SetIconResolver enables Agent-compatible image icon URLs without coupling the domain to file storage.
-// SetConnectorCatalog lets draft saves and publication admit Connector
-// bindings; without it every Connector selection is rejected.
-func (s *Service) SetConnectorCatalog(connectorCatalog ConnectorCatalog) {
-	if s != nil && s.repo != nil {
-		s.repo.SetConnectorCatalog(connectorCatalog)
-	}
-}
-
 func (s *Service) SetIconResolver(resolver interface {
 	GetFileURL(context.Context, string) (string, error)
 }) {
