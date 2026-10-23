@@ -3,23 +3,19 @@ package inbox
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"io"
-	"net"
 	"net/http"
-	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/infra/webhookhttp"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -350,70 +346,11 @@ func (d *Dispatcher) sendWebhook(ctx context.Context, channel *Channel, notifica
 // Receivers recompute it with their secret and compare it to
 // X-ZGI-Signature, and reject old timestamps.
 func SignWebhook(secret, timestamp string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp + "."))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-var blockedWebhookPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("2001:db8::/32"),
-}
-
-func publicWebhookAddr(addr netip.Addr) bool {
-	addr = addr.Unmap()
-	if !addr.IsValid() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() ||
-		addr.IsMulticast() || addr.IsUnspecified() {
-		return false
-	}
-	for _, prefix := range blockedWebhookPrefixes {
-		if prefix.Contains(addr) {
-			return false
-		}
-	}
-	return true
+	return webhookhttp.Sign(secret, timestamp, body)
 }
 
 // webhookClient dials only public addresses resolved at connect time, so a
 // webhook cannot reach internal services, and follows no redirects.
 func webhookClient(allowPrivate bool) *http.Client {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	return &http.Client{
-		Timeout:       webhookTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		Transport: &http.Transport{
-			Proxy: nil,
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				host, port, err := net.SplitHostPort(address)
-				if err != nil {
-					return nil, err
-				}
-				addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-				if err != nil {
-					return nil, err
-				}
-				var lastErr error = errors.New("webhook host has no public address")
-				for _, addr := range addrs {
-					if !allowPrivate && !publicWebhookAddr(addr) {
-						continue
-					}
-					conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.Unmap().String(), port))
-					if err == nil {
-						return conn, nil
-					}
-					lastErr = err
-				}
-				return nil, lastErr
-			},
-			TLSHandshakeTimeout:   5 * time.Second,
-			ResponseHeaderTimeout: webhookTimeout,
-			DisableKeepAlives:     true,
-		},
-	}
+	return webhookhttp.Client(allowPrivate)
 }

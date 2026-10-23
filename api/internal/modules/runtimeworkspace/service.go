@@ -52,6 +52,7 @@ const (
 type Service struct {
 	db              *gorm.DB
 	replayProtector CredentialReplayProtector
+	webhookCipher   WebhookCipher
 	now             func() time.Time
 }
 

@@ -359,6 +359,26 @@ curl -X POST '{apibase}/end-users/customer-42/credits' \
 - Export returns conversations with their messages, memory, uploaded file details, and DigitalHuman instances, instance memory, runs, tasks, reports, notifications, and artifacts. Large histories are capped and marked `truncated`.
 - Erasure deletes all of that in every App, and `GET` then returns the end user with status `erased` and no External User ID. Usage and audit records keep identifiers only. A later request with the same External User ID starts a new, empty end user.
 
+### Webhook events
+
+Once an endpoint is set up on the console's Quotas & usage page, these events are `POST`ed to your server as JSON:
+
+| Event | When |
+| --- | --- |
+| `quota.near` | Usage in a window reaches 80% of a limit (at most once per window) |
+| `quota.exceeded` | Usage in a window reaches a limit, per-App caps included (at most once per window) |
+| `credits.low` | The credit balance falls to the threshold you set or below |
+| `plan.expired` | A plan expires |
+
+```json
+{"id": "…", "event": "quota.near", "created_at": "2026-10-24T12:00:00Z", "runtime_workspace_id": "…",
+ "data": {"user": "customer-42", "subject_id": "…", "window": "24h", "points": 8.5, "limit": 10}}
+```
+
+- Headers: `X-ZGI-Event`, `X-ZGI-Delivery` (the same as `id`), `X-ZGI-Timestamp` (Unix seconds), `X-ZGI-Signature: sha256=<hex>`.
+- To verify, compute HMAC-SHA256 of `<timestamp>.<raw body>` with the secret shown when the webhook was created, compare it to the signature in constant time, and reject timestamps older than 5 minutes.
+- Any 2xx counts as delivered; otherwise the event is retried with exponential backoff from 30 seconds, up to 8 times. An event may arrive more than once; deduplicate by `X-ZGI-Delivery`.
+
 ### End-user connections
 
 A DigitalHuman may have **per-user** Connector slots: an operation that acts as the end user, with the end user's own key, instead of as the DigitalHuman. Your backend supplies that key. Keys are write-only, and no response ever returns or repeats one.

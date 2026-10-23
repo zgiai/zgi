@@ -240,6 +240,42 @@ export interface RuntimeCreditGrantResult {
   duplicate: boolean;
 }
 
+export type RuntimeWebhookEvent = 'quota.near' | 'quota.exceeded' | 'credits.low' | 'plan.expired';
+
+export interface RuntimeWebhook {
+  configured: boolean;
+  url?: string;
+  events: RuntimeWebhookEvent[];
+  credits_low_threshold: number;
+  enabled: boolean;
+  updated_at?: string;
+}
+
+export interface RuntimeWebhookInput {
+  url: string;
+  events: RuntimeWebhookEvent[];
+  credits_low_threshold: number;
+  enabled: boolean;
+}
+
+/** secret is present once, when the webhook is created. */
+export interface RuntimeWebhookSaved {
+  webhook: RuntimeWebhook;
+  secret?: string;
+}
+
+export interface RuntimeWebhookDelivery {
+  id: string;
+  event: RuntimeWebhookEvent | 'webhook.test';
+  status: 'pending' | 'delivered' | 'failed';
+  attempts: number;
+  last_status?: number;
+  last_error?: string;
+  next_attempt_at?: string;
+  created_at: string;
+  delivered_at?: string;
+}
+
 /** A plan of the workspace quota policy (ADR 0011). */
 export interface RuntimeEndUserPlan {
   key: string;

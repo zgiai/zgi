@@ -24,7 +24,7 @@ import (
 // RegisterRuntimeWorkspaceManagementRoutes registers the internal console
 // management API. These routes are JWT protected and never share the external
 // Runtime Workspace credential middleware.
-func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, workspaceService interfaces.WorkspaceManagementService) {
+func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, workspaceService interfaces.WorkspaceManagementService, webhookCipher runtimeworkspace.WebhookCipher) {
 	if !runtimeworkspace.RuntimeEnabled() {
 		return
 	}
@@ -35,7 +35,7 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 	if err != nil {
 		panic("runtime workspace credential replay protection is unavailable")
 	}
-	service := runtimeworkspace.NewService(db, runtimeworkspace.WithCredentialReplayProtector(replayProtector))
+	service := runtimeworkspace.NewService(db, runtimeworkspace.WithCredentialReplayProtector(replayProtector), runtimeworkspace.WithWebhookCipher(webhookCipher))
 	// End-user erasure and export reach the DigitalHuman data of end users.
 	runtimeworkspace.UseEndUserDataOwner(digitalhuman.NewEndUserData())
 	group := router.Group("/runtime-workspaces")
@@ -240,6 +240,100 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			return
 		}
 		response.Success(c, list)
+	})
+	scoped.GET("/webhook", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		webhook, err := service.GetWebhook(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, webhook)
+	})
+	scoped.PUT("/webhook", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		var input runtimeworkspace.WebhookInput
+		if err := c.ShouldBindJSON(&input); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		saved, err := service.SaveWebhook(c.Request.Context(), workspaceID, input)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		response.Success(c, saved)
+	})
+	scoped.DELETE("/webhook", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		if err := service.DeleteWebhook(c.Request.Context(), workspaceID); err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
+	})
+	scoped.POST("/webhook/rotate-secret", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		secret, err := service.RotateWebhookSecret(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		response.Success(c, gin.H{"secret": secret})
+	})
+	scoped.POST("/webhook/test", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		delivery, err := service.TestWebhook(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, delivery)
+	})
+	scoped.GET("/webhook/deliveries", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		deliveries, err := service.ListWebhookDeliveries(c.Request.Context(), workspaceID, managementPositiveQueryInt(c.Query("limit"), 50, 200))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"items": deliveries})
+	})
+	scoped.POST("/webhook/deliveries/:delivery_id/retry", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		deliveryID, err := uuid.Parse(c.Param("delivery_id"))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		if err := service.RetryWebhookDelivery(c.Request.Context(), workspaceID, deliveryID); err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
 	})
 	scoped.GET("/end-users/summary", func(c *gin.Context) {
 		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
@@ -536,6 +630,14 @@ func managementScope(c *gin.Context, requested string) (uuid.UUID, uuid.UUID, bo
 }
 
 func managementFail(c *gin.Context, err error) {
+	if errors.Is(err, runtimeworkspace.ErrWebhookNotFound) {
+		c.JSON(http.StatusNotFound, response.Response{Code: "runtime_webhook_not_found", Message: "No webhook is set up for this external access"})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrWebhookUnavailable) {
+		c.JSON(http.StatusServiceUnavailable, response.Response{Code: "runtime_webhook_unavailable", Message: "Webhook secrets cannot be protected on this server"})
+		return
+	}
 	if errors.Is(err, runtimeworkspace.ErrCreditConflict) {
 		c.JSON(http.StatusConflict, response.Response{Code: "runtime_credit_conflict", Message: "This external ID was already used for a grant of another amount"})
 		return

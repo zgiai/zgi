@@ -184,6 +184,10 @@ func (s *Service) GrantCredits(ctx context.Context, workspaceID, subjectID uuid.
 		if err := settleEndUserCredits(ctx, tx, EndUserQuota(runtimeWorkspace.PolicyJSON), user, now); err != nil {
 			return err
 		}
+		_, balanceBefore, err := creditBalance(ctx, tx, user, now, false)
+		if err != nil {
+			return err
+		}
 		debt := user.CreditDebt
 		if amount > 0 {
 			paid := min(debt, amount)
@@ -221,6 +225,9 @@ func (s *Service) GrantCredits(ctx context.Context, workspaceID, subjectID uuid.
 		}
 		if err := tx.Create(&entry).Error; err != nil {
 			return fmt.Errorf("record credit grant: %w", err)
+		}
+		if err := notifyCreditsLow(ctx, tx, user, balanceBefore, balance, now); err != nil {
+			return err
 		}
 		raw, _ := json.Marshal(map[string]any{"points": json.Number(grant.Points.String())})
 		event := EndUserEvent{ID: uuid.New(), RuntimeWorkspaceID: runtimeWorkspace.LogicalID(), SubjectID: subjectID,
@@ -306,6 +313,10 @@ func settleEndUserCredits(ctx context.Context, tx *gorm.DB, policy EndUserQuotaP
 		return nil
 	}
 	limits := appliedQuota(policy, user, now).Limits
+	_, balanceBefore, err := creditBalance(ctx, tx, user, now, false)
+	if err != nil {
+		return err
+	}
 	debt := user.CreditDebt
 	for _, bill := range bills {
 		var charge int64
@@ -354,7 +365,11 @@ func settleEndUserCredits(ctx context.Context, tx *gorm.DB, policy EndUserQuotaP
 	if err := db.Model(&EndUser{}).Where("subject_id = ?", user.SubjectID).Update("credit_debt", debt).Error; err != nil {
 		return fmt.Errorf("update end-user credit debt: %w", err)
 	}
-	return nil
+	_, balanceAfter, err := creditBalance(ctx, tx, user, now, false)
+	if err != nil {
+		return err
+	}
+	return notifyCreditsLow(ctx, tx, user, balanceBefore, balanceAfter, now)
 }
 
 // settledCredits settles an end user's credits under a lock and returns

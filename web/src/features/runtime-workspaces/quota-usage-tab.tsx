@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { EndUserQuotaCard } from '@/features/runtime-workspaces/end-user-quota-card';
+import { RuntimeWebhookCard } from '@/features/runtime-workspaces/webhook-card';
 import {
   endUserRatio,
   pointsFormat,
@@ -304,6 +305,7 @@ export function RuntimeQuotaUsageTab({
           </CardContent>
         </Card>
       </div>
+      <RuntimeWebhookCard runtimeWorkspaceId={runtimeWorkspaceId} />
     </section>
   );
 }

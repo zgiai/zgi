@@ -271,7 +271,7 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 	}
 	policy := EndUserQuota(workspace.PolicyJSON)
 	quota := appliedQuota(policy, user, g.now())
-	if err := g.checkLimits(ctx, ref.SubjectID, "", quota.Limits); err != nil {
+	if err := g.checkLimits(ctx, user, ref.SubjectID, "", "", quota.Limits); err != nil {
 		// Credits pay for usage beyond the per-end-user limits.
 		if user == nil || user.CreditsSince == nil {
 			return err
@@ -297,13 +297,17 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 	}
 	for _, app := range quota.Apps {
 		if strings.TrimSpace(app.AppKey) == binding.PublicAppKey {
-			return g.checkLimits(ctx, ref.SubjectID, appID.String(), app.Limits)
+			return g.checkLimits(ctx, user, ref.SubjectID, binding.PublicAppKey, appID.String(), app.Limits)
 		}
 	}
 	return nil
 }
 
-func (g *QuotaGuard) checkLimits(ctx context.Context, subjectID uuid.UUID, appID string, limits []QuotaLimit) error {
+// checkLimits reports whether any limit is spent. It also tells the
+// integrating server, once per window, that an end user neared or reached a
+// limit (ADR 0011); a 0-point limit includes nothing and is not reported.
+func (g *QuotaGuard) checkLimits(ctx context.Context, user *EndUser, subjectID uuid.UUID, appKey, appID string, limits []QuotaLimit) error {
+	var exhausted error
 	for _, limit := range limits {
 		window, ok := QuotaWindows[limit.Window]
 		if !ok || limit.MilliPoints() < 0 {
@@ -313,11 +317,26 @@ func (g *QuotaGuard) checkLimits(ctx context.Context, subjectID uuid.UUID, appID
 		if err != nil {
 			return err
 		}
-		if used >= limit.MilliPoints() {
-			return errEndUserQuotaExhausted()
+		allowed := limit.MilliPoints()
+		event := ""
+		switch {
+		case used >= allowed:
+			exhausted, event = errEndUserQuotaExhausted(), WebhookQuotaExceeded
+		case float64(used) >= float64(allowed)*nearQuotaRatio:
+			event = WebhookQuotaNear
 		}
+		if event == "" || allowed == 0 {
+			continue
+		}
+		scope := limit.Window
+		data := map[string]any{"window": limit.Window, "points": json.Number(used.DecimalPoints().String()), "limit": json.Number(limit.Points.String())}
+		if appKey != "" {
+			scope, data["app_key"] = appKey+":"+limit.Window, appKey
+		}
+		// Reporting is best effort: it never refuses or admits a run.
+		_ = notifyEndUser(ctx, g.db, user, event, scope, window, data, g.now())
 	}
-	return nil
+	return exhausted
 }
 
 // Usage sums an end user's points since a time, in one app when appID is

@@ -92,7 +92,8 @@ func (s *Service) EraseEndUser(ctx context.Context, workspaceID, subjectID uuid.
 				after = append(after, erasure.After)
 			}
 		}
-		for _, table := range []string{"runtime_workspace_end_user_credit_entries", "runtime_workspace_end_user_credit_lots", "runtime_workspace_end_user_credit_bills"} {
+		for _, table := range []string{"runtime_workspace_end_user_credit_entries", "runtime_workspace_end_user_credit_lots", "runtime_workspace_end_user_credit_bills",
+			"runtime_workspace_end_user_notices", "runtime_workspace_webhook_deliveries"} {
 			if err := tx.Exec("DELETE FROM "+table+" WHERE subject_id = ?", subjectID).Error; err != nil {
 				return fmt.Errorf("delete end-user credits from %s: %w", table, err)
 			}

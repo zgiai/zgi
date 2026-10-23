@@ -16,6 +16,10 @@ import type {
   RuntimeEndUserPatch,
   RuntimeEndUserSummary,
   RuntimeUsageSeries,
+  RuntimeWebhook,
+  RuntimeWebhookDelivery,
+  RuntimeWebhookInput,
+  RuntimeWebhookSaved,
   RuntimeWorkspace,
   RuntimeWorkspaceAgentSelectionInput,
   RuntimeWorkspaceCredentialInput,
@@ -219,6 +223,78 @@ class RuntimeWorkspaceService extends BaseService {
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data;
+  }
+
+  private webhookPath(workspaceId: string, suffix = '') {
+    return `/runtime-workspaces/${encodeURIComponent(workspaceId)}/webhook${suffix}`;
+  }
+
+  async getWebhook(workspaceId: string): Promise<RuntimeWebhook> {
+    const response = await this.request<ApiResponseData<RuntimeWebhook>>(
+      'get',
+      this.webhookPath(workspaceId),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async saveWebhook(workspaceId: string, data: RuntimeWebhookInput): Promise<RuntimeWebhookSaved> {
+    const response = await this.request<ApiResponseData<RuntimeWebhookSaved>>(
+      'put',
+      this.webhookPath(workspaceId),
+      data,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async deleteWebhook(workspaceId: string): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'delete',
+      this.webhookPath(workspaceId),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+  }
+
+  async rotateWebhookSecret(workspaceId: string): Promise<string> {
+    const response = await this.request<ApiResponseData<{ secret: string }>>(
+      'post',
+      this.webhookPath(workspaceId, '/rotate-secret'),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data.secret;
+  }
+
+  async testWebhook(workspaceId: string): Promise<RuntimeWebhookDelivery> {
+    const response = await this.request<ApiResponseData<RuntimeWebhookDelivery>>(
+      'post',
+      this.webhookPath(workspaceId, '/test'),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async listWebhookDeliveries(workspaceId: string): Promise<RuntimeWebhookDelivery[]> {
+    const response = await this.request<ApiResponseData<{ items: RuntimeWebhookDelivery[] }>>(
+      'get',
+      this.webhookPath(workspaceId, '/deliveries?limit=30'),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data?.items ?? [];
+  }
+
+  async retryWebhookDelivery(workspaceId: string, deliveryId: string): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'post',
+      this.webhookPath(workspaceId, `/deliveries/${encodeURIComponent(deliveryId)}/retry`),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
   }
 
   async getEndUserSummary(workspaceId: string): Promise<RuntimeEndUserSummary> {

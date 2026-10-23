@@ -363,6 +363,26 @@ curl -X POST '{apibase}/end-users/customer-42/credits' \
 - 导出内容包括对话及消息、记忆、上传文件信息，以及数字人实例、实例记忆、运行、任务、报告、通知和产物。历史过长时会截断，并标记 `truncated`。
 - 删除会在所有 App 中删除上述数据，之后 `GET` 返回状态为 `erased`、不含 External User ID 的记录。用量和审计记录仅保留标识。之后使用相同 External User ID 的请求会作为一个新的空白终端用户。
 
+### Webhook 事件
+
+在控制台「额度与用量」页配置接收地址后，平台会向业务系统 `POST` 以下事件（JSON）：
+
+| 事件 | 触发时机 |
+| --- | --- |
+| `quota.near` | 任一窗口用量达到限额的 80%（每个窗口周期最多一次） |
+| `quota.exceeded` | 任一窗口用量达到限额，包括单个 App 的上限（每个窗口周期最多一次） |
+| `credits.low` | 积分余额降到设定阈值或以下 |
+| `plan.expired` | 套餐到期 |
+
+```json
+{"id": "…", "event": "quota.near", "created_at": "2026-10-24T12:00:00Z", "runtime_workspace_id": "…",
+ "data": {"user": "customer-42", "subject_id": "…", "window": "24h", "points": 8.5, "limit": 10}}
+```
+
+- 请求头：`X-ZGI-Event`、`X-ZGI-Delivery`（与 `id` 相同）、`X-ZGI-Timestamp`（Unix 秒）、`X-ZGI-Signature: sha256=<hex>`。
+- 校验：用创建时显示的密钥对 `<timestamp>.<原始请求体>` 计算 HMAC-SHA256，与签名常量时间比较，并拒绝超过 5 分钟的时间戳。
+- 返回任意 2xx 视为送达；否则按 30 秒起指数退避重试，最多 8 次。同一事件可能重复送达，请按 `X-ZGI-Delivery` 去重。
+
 ### 终端用户连接
 
 数字人可以配置**按用户**的连接器：这类操作以终端用户本人的身份、用其本人的 key 执行，而不是以数字人的身份。由你的业务后端为终端用户提交 key。key 只写入、不可读取，任何响应都不会返回或回显。

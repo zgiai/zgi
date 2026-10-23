@@ -97,6 +97,11 @@ export const RUNTIME_WORKSPACE_KEYS = {
     'credits',
     subjectId,
   ],
+  webhook: (workspaceId: string | null) => [...RUNTIME_WORKSPACE_KEYS.all, 'webhook', workspaceId],
+  webhookDeliveries: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.webhook(workspaceId),
+    'deliveries',
+  ],
   endUserSummary: (workspaceId: string | null) => [
     ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
     'summary',

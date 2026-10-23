@@ -132,7 +132,9 @@ func TeardownAttachedWorkspace(ctx context.Context, tx *gorm.DB, workspaceID uui
 		}
 	}
 
-	for _, table := range []string{"runtime_workspace_end_user_credit_entries", "runtime_workspace_end_user_credit_lots", "runtime_workspace_end_user_credit_bills", "runtime_workspace_end_user_events", "runtime_workspace_end_users"} {
+	for _, table := range []string{"runtime_workspace_end_user_credit_entries", "runtime_workspace_end_user_credit_lots", "runtime_workspace_end_user_credit_bills",
+		"runtime_workspace_end_user_notices", "runtime_workspace_webhook_deliveries", "runtime_workspace_webhooks",
+		"runtime_workspace_end_user_events", "runtime_workspace_end_users"} {
 		if err := tx.WithContext(ctx).Exec("DELETE FROM "+table+" WHERE runtime_workspace_id = ?", runtimeID).Error; err != nil {
 			return nil, fmt.Errorf("delete Runtime end users from %s: %w", table, err)
 		}
