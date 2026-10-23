@@ -42,6 +42,13 @@ External access (Runtime Workspaces) was built for a few exposed apps. Integrato
 - Rate limiting adds a per-end-user limit; failing open when the limiter is unavailable is documented.
 - Deliberate v1 limits stay and are documented: windows of 24 hours, 7 days, and 30 days; "near" at 80%; one webhook and one Runtime Workspace per workspace; batch changes of up to 200 end users, applied one by one.
 
+### Step 3 details
+
+- **Access-event retention.** Access events are kept for `ZGI_RUNTIME_WORKSPACE_ACCESS_EVENT_RETENTION_DAYS` (default 90) and purged in batches by the existing Runtime Workspace maintenance loop, using an index on `created_at`.
+- **Asynchronous export.** `POST /end-users/{user}/export` (console and `/connect/v1`) queues a job and returns it with `202`; a request while one is queued or running returns that job. A worker leases jobs with `SKIP LOCKED`, pages through every conversation and message (no truncation), and stores the gzip-compressed JSON in the database, up to 64 MB compressed; larger exports fail with a reason. Jobs are read at `GET /end-users/{user}/exports/{id}` and downloaded at `GET /end-users/{user}/exports/{id}/download` for 7 days, then purged. Erasing an end user deletes their exports.
+- **Per-end-user rate limit.** The policy's `rate_limit` gains `per_end_user_requests_per_minute`, applied after the end user is resolved with its own fixed window and its own `429` code `runtime_end_user_rate_limited`; requests without an end user are not counted against it. Both limits are edited on the quota page. When Redis is unavailable the limiter fails open and logs; the documentation says so.
+- **Credential scopes.** A key may be limited when it is created; existing keys and keys created without limits keep full access. `scopes` is a subset of `runtime` (apps, files, and plans, as end users), `end_users.read` (end-user state, entitlement, credits, connections), and `end_users.manage` (changes, credits, exports, erasure, connections; it implies read). `app_keys` optionally limits `runtime` to some apps: other apps are not found and are not listed. Scopes are fixed after creation; a different scope needs a new key. A refused request is `403` with code `runtime_credential_scope_denied` and is recorded as an access event.
+
 ### Delivery
 
 1. Explicit app types, the configurable app limit with its error and console counter, removed-app bindings, paging of cut-off lists, credential limits, bounded policy bodies, and documentation fixes.
