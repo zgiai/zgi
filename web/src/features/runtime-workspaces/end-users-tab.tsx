@@ -65,6 +65,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { EndUserCreditsSection } from '@/features/runtime-workspaces/end-user-credits';
 import {
   parsePlans,
   PlanAssignmentEditor,
@@ -575,9 +576,24 @@ export function RuntimeEndUsersTab({
                           {displayName(user, t('runtime.endUsers.unnamed'))}
                         </div>
                         {user.plan ||
+                        user.credits ||
                         (user.quota_source !== 'default' && user.quota_source !== 'plan') ? (
                           <div className="mt-1 flex flex-wrap gap-1">
                             <PlanBadge plan={user.plan} />
+                            {user.credits ? (
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  'h-5 px-1.5 text-[11px] font-normal tabular-nums',
+                                  user.credits.balance < 0 &&
+                                    'border-destructive/40 text-destructive'
+                                )}
+                              >
+                                {t('runtime.credits.badge', {
+                                  points: pointsFormat.format(user.credits.balance),
+                                })}
+                              </Badge>
+                            ) : null}
                             {user.quota_source === 'custom' || user.quota_source === 'unlimited' ? (
                               <Badge
                                 variant="outline"
@@ -1004,6 +1020,13 @@ function EndUserSheet({
                     </Button>
                   </div>
                 </section>
+              ) : null}
+
+              {!erased ? (
+                <EndUserCreditsSection
+                  runtimeWorkspaceId={runtimeWorkspaceId}
+                  subjectId={user.subject_id}
+                />
               ) : null}
 
               {!erased ? (

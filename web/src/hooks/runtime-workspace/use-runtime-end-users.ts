@@ -4,6 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { toast } from 'sonner';
 import { runtimeWorkspaceService } from '@/services/runtime-workspace.service';
 import type {
+  RuntimeCreditGrant,
   RuntimeEndUserListParams,
   RuntimeEndUserPatch,
 } from '@/services/types/runtime-workspace';
@@ -72,6 +73,38 @@ export function useRuntimeEndUsers(
     },
   });
   return { list, update, batchUpdate, exportData, erase };
+}
+
+/** One end user's credit ledger, and granting or taking back credits. */
+export function useRuntimeEndUserCredits(
+  runtimeWorkspaceId: string | null,
+  subjectId: string | null
+) {
+  const queryClient = useQueryClient();
+  const ledger = useQuery({
+    queryKey: RUNTIME_WORKSPACE_KEYS.endUserCredits(runtimeWorkspaceId, subjectId),
+    queryFn: () =>
+      runtimeWorkspaceService.listEndUserCredits(runtimeWorkspaceId as string, subjectId as string),
+    enabled: Boolean(runtimeWorkspaceId && subjectId),
+    retry: false,
+  });
+  const grant = useMutation({
+    mutationFn: (data: RuntimeCreditGrant) =>
+      runtimeWorkspaceService.grantEndUserCredits(
+        runtimeWorkspaceId as string,
+        subjectId as string,
+        data
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: RUNTIME_WORKSPACE_KEYS.endUsers(runtimeWorkspaceId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error));
+    },
+  });
+  return { ledger, grant };
 }
 
 /** Totals, counts, and top consumers of a Runtime Workspace's end users. */

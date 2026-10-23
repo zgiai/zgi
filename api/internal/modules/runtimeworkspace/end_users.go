@@ -59,6 +59,8 @@ type EndUser struct {
 	QuotaJSON          datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'" json:"-"`
 	PlanKey            string         `gorm:"type:varchar(64);not null;default:''" json:"plan_key"`
 	PlanExpiresAt      *time.Time     `json:"plan_expires_at,omitempty"`
+	CreditsSince       *time.Time     `json:"-"`
+	CreditDebt         int64          `gorm:"not null;default:0" json:"-"`
 	FirstSeenAt        time.Time      `json:"first_seen_at"`
 	LastSeenAt         time.Time      `json:"last_seen_at"`
 	SuspendedAt        *time.Time     `json:"suspended_at,omitempty"`
@@ -144,6 +146,7 @@ type EndUserView struct {
 	QuotaSource    string               `json:"quota_source"`
 	Quota          EndUserQuotaOverride `json:"quota"`
 	Plan           *EndUserPlanView     `json:"plan,omitempty"`
+	Credits        *CreditBalanceView   `json:"credits,omitempty"`
 	Usage          []WindowUsage        `json:"usage"`
 	Apps           []AppUsage           `json:"apps"`
 }
@@ -464,6 +467,28 @@ func (s *Service) endUserViews(ctx context.Context, runtimeWorkspace *RuntimeWor
 		}
 	}
 	policy := EndUserQuota(runtimeWorkspace.PolicyJSON)
+	var credited []uuid.UUID
+	for _, user := range users {
+		if user.CreditsSince != nil {
+			credited = append(credited, user.SubjectID)
+		}
+	}
+	lotTotals := map[uuid.UUID]int64{}
+	if len(credited) > 0 {
+		var totals []struct {
+			SubjectID uuid.UUID
+			Total     int64
+		}
+		if err := s.db.WithContext(ctx).Raw(`
+			SELECT subject_id, COALESCE(SUM(remaining), 0) AS total FROM runtime_workspace_end_user_credit_lots
+			WHERE subject_id IN ? AND remaining > 0 AND (expires_at IS NULL OR expires_at > ?)
+			GROUP BY subject_id`, credited, now).Scan(&totals).Error; err != nil {
+			return nil, fmt.Errorf("sum end-user credits: %w", err)
+		}
+		for _, row := range totals {
+			lotTotals[row.SubjectID] = row.Total
+		}
+	}
 	windowUsage := func(used sums, limits []QuotaLimit) []WindowUsage {
 		usage := make([]WindowUsage, 0, len(QuotaWindowOrder))
 		for _, window := range QuotaWindowOrder {
@@ -508,6 +533,12 @@ func (s *Service) endUserViews(ctx context.Context, runtimeWorkspace *RuntimeWor
 			FirstSeenAt: user.FirstSeenAt, LastSeenAt: user.LastSeenAt, SuspendedAt: user.SuspendedAt,
 			QuotaSource: applied.Source, Quota: endUserQuotaOverride(user.QuotaJSON), Plan: plan, Usage: windowUsage(used, applied.Limits), Apps: apps,
 		})
+		if user.CreditsSince != nil {
+			views[len(views)-1].Credits = &CreditBalanceView{
+				Balance: pointsOf(millipoints.FromInt64(lotTotals[user.SubjectID] - user.CreditDebt)),
+				Debt:    pointsOf(millipoints.FromInt64(user.CreditDebt)),
+			}
+		}
 	}
 	return views, nil
 }

@@ -114,7 +114,7 @@ func TestEndUserQuotaPolicyValidation(t *testing.T) {
 		"limits":           {`{"end_user_quota": {"limits": [{"window": "24h", "points": 10}, {"window": "30d", "points": 100}]}}`, true},
 		"app cap":          {`{"end_user_quota": {"apps": [{"app_key": "app_a", "limits": [{"window": "7d", "points": 5}]}]}}`, true},
 		"unknown window":   {`{"end_user_quota": {"limits": [{"window": "1h", "points": 10}]}}`, false},
-		"zero points":      {`{"end_user_quota": {"limits": [{"window": "24h", "points": 0}]}}`, false},
+		"zero points":      {`{"end_user_quota": {"limits": [{"window": "24h", "points": 0}]}}`, true},
 		"fractional":       {`{"end_user_quota": {"limits": [{"window": "24h", "points": 0.05}]}}`, true},
 		"below a milli":    {`{"end_user_quota": {"limits": [{"window": "24h", "points": 0.0001}]}}`, false},
 		"negative":         {`{"end_user_quota": {"limits": [{"window": "24h", "points": -1}]}}`, false},

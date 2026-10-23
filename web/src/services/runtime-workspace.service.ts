@@ -6,6 +6,9 @@ import type {
   RuntimeCredential,
   RuntimeCredentialCreation,
   RuntimeEndUser,
+  RuntimeCreditGrant,
+  RuntimeCreditGrantResult,
+  RuntimeCreditLedger,
   RuntimeEndUserBatchResult,
   RuntimeEndUserEvent,
   RuntimeEndUserList,
@@ -189,6 +192,30 @@ class RuntimeWorkspaceService extends BaseService {
       'post',
       `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/batch`,
       { ...data, subject_ids: subjectIds },
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async listEndUserCredits(workspaceId: string, subjectId: string): Promise<RuntimeCreditLedger> {
+    const response = await this.request<ApiResponseData<RuntimeCreditLedger>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/credits?limit=50`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async grantEndUserCredits(
+    workspaceId: string,
+    subjectId: string,
+    data: RuntimeCreditGrant
+  ): Promise<RuntimeCreditGrantResult> {
+    const response = await this.request<ApiResponseData<RuntimeCreditGrantResult>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/credits`,
+      data,
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data;

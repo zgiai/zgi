@@ -155,6 +155,8 @@ export interface RuntimeEndUser {
   quota: RuntimeEndUserQuota;
   /** The plan held; active is false once it expired or was removed. */
   plan?: { key: string; name?: string; expires_at?: string; active: boolean };
+  /** Present once the end user has been granted credits (ADR 0011). */
+  credits?: RuntimeCreditBalance;
   usage: RuntimeWindowUsage[];
   apps: RuntimeEndUserAppUsage[];
 }
@@ -195,6 +197,47 @@ export interface RuntimeEndUserSummary {
   };
   plans: Array<{ key: string; name?: string; end_users: number }>;
   top: RuntimeEndUser[];
+}
+
+export interface RuntimeCreditBalance {
+  balance: number;
+  debt?: number;
+  lots?: Array<{ points: number; expires_at?: string }>;
+}
+
+export interface RuntimeCreditEntry {
+  id: string;
+  kind: 'grant' | 'usage';
+  points: number;
+  balance_after: number;
+  external_id?: string;
+  reason?: string;
+  expires_at?: string;
+  actor_kind?: 'account' | 'credential';
+  created_at: string;
+}
+
+export interface RuntimeCreditLedger {
+  credits: RuntimeCreditBalance;
+  items: RuntimeCreditEntry[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+/** A negative amount takes credits back; external_id makes the grant idempotent. */
+export interface RuntimeCreditGrant {
+  points: number;
+  external_id: string;
+  reason?: string;
+  expires_at?: string;
+}
+
+export interface RuntimeCreditGrantResult {
+  entry: RuntimeCreditEntry;
+  credits: RuntimeCreditBalance;
+  duplicate: boolean;
 }
 
 /** A plan of the workspace quota policy (ADR 0011). */
@@ -239,6 +282,7 @@ export interface RuntimeEndUserEvent {
     | 'quota_reset'
     | 'plan_set'
     | 'plan_cleared'
+    | 'credits_adjusted'
     | 'exported'
     | 'erased';
   actor_kind: 'account' | 'credential';

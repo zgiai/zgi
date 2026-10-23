@@ -318,6 +318,9 @@ GET 返回当前记忆开关、自动捕获开关、可写槽位和配置 revisi
 | POST | `/end-users/{user}/export` | 将该终端用户的全部数据导出为一个 JSON 文档 |
 | DELETE | `/end-users/{user}` | 在所有 App 中删除该终端用户 |
 | GET | `/plans` | 列出控制台定义的套餐及其限额 |
+| GET | `/end-users/{user}/entitlement` | 当前权益：套餐、各窗口的用量、限额、剩余和最早用量移出窗口的时间、积分余额，以及能否发起新的运行 |
+| GET | `/end-users/{user}/credits` | 积分余额和流水 |
+| POST | `/end-users/{user}/credits` | 发放或扣回积分 |
 
 <CodeGroup title="为终端用户单独设置额度">
 
@@ -341,7 +344,22 @@ curl -X PATCH '{apibase}/end-users/customer-42'   --header 'Authorization: Beare
 - `plan` 为终端用户设置控制台定义的套餐：`{"key": "...", "expires_at": "..."}`，`expires_at` 可省略，表示长期有效。套餐的限额替代默认限额，到期后自动恢复默认限额，无需再次调用。`"plan": null` 表示移除套餐。可以在终端用户首次发起请求之前设置。
 - `status` 取值为 `active` 或 `suspended`。停用后仍可读取对话、文件和记忆，但发起新的对话或运行会返回 403 `end_user.suspended`。
 - `quota` 替代控制台为每个终端用户设置的限额：`{"limits": [...]}`，窗口为 `24h`、`7d` 或 `30d`，积分最小 0.001；或 `{"unlimited": true}`。单个 App 的额外上限仍然生效。单独额度优先于套餐。`"quota": null` 表示恢复使用套餐或控制台限额。
-- 终端用户超出额度后，发起对话或运行会返回 429 `quota.exceeded`，直到窗口内用量回落到限额以下。
+- 终端用户超出额度后，发起对话或运行会返回 429 `quota.exceeded`，直到窗口内用量回落到限额以下，或其积分余额为正。错误本身不带详情；需要时读取 `entitlement` 向用户展示剩余额度，并引导升级或充值。
+
+<CodeGroup title="用户充值后发放积分">
+
+```bash
+curl -X POST '{apibase}/end-users/customer-42/credits' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'Content-Type: application/json' \
+  --data '{"points":100,"external_id":"order-20261024-001","reason":"top-up","expires_at":"2027-10-24T00:00:00Z"}'
+```
+
+</CodeGroup>
+
+- `external_id` 必填，建议使用业务订单号：同一 `external_id` 重复提交只记录一次，换一个金额则返回 409 `runtime_credit_conflict`。`points` 为负数表示扣回（不能带 `expires_at`）。
+- 超出限额的用量从积分中扣除，先扣最早到期的积分；积分不抵扣单个 App 的上限。没有限额（或单独额度为不限）的终端用户不会消耗积分。把限额设为 0 表示不含额度，所有用量都从积分扣除，即按量付费。
+- 用量在每次模型调用后结算，余额可能因进行中的调用略低于 0；欠额会在下次发放时先抵扣。只统计首次发放积分之后的用量。
 - 导出内容包括对话及消息、记忆、上传文件信息，以及数字人实例、实例记忆、运行、任务、报告、通知和产物。历史过长时会截断，并标记 `truncated`。
 - 删除会在所有 App 中删除上述数据，之后 `GET` 返回状态为 `erased`、不含 External User ID 的记录。用量和审计记录仅保留标识。之后使用相同 External User ID 的请求会作为一个新的空白终端用户。
 

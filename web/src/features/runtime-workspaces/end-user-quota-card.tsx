@@ -78,7 +78,7 @@ function toWindowPoints(limits: QuotaLimit[] | undefined): WindowPoints {
 function toLimits(points: WindowPoints): QuotaLimit[] {
   return windows.flatMap(window => {
     const value = Math.round(Number.parseFloat(points[window] ?? '') * 1000) / 1000;
-    return Number.isFinite(value) && value > 0 ? [{ window, points: value }] : [];
+    return Number.isFinite(value) && value >= 0 ? [{ window, points: value }] : [];
   });
 }
 
@@ -195,7 +195,7 @@ export function EndUserQuotaCard({
           </span>
           <Input
             type="number"
-            min={0.001}
+            min={0}
             step="any"
             inputMode="decimal"
             placeholder={t('runtime.quota.unlimited')}
@@ -226,6 +226,7 @@ export function EndUserQuotaCard({
         <section className="space-y-2">
           <h4 className="text-sm font-medium">{t('runtime.quota.perEndUser')}</h4>
           {windowInputs(limits, setLimits)}
+          <p className="text-xs text-muted-foreground">{t('runtime.quota.zeroHint')}</p>
         </section>
 
         <section className="space-y-3">

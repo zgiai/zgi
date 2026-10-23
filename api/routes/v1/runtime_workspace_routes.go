@@ -355,6 +355,42 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		}
 		response.Success(c, gin.H{"result": "success"})
 	}))
+	scoped.GET("/end-users/:subject_id/credits", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		ledger, err := service.ListCredits(c.Request.Context(), workspaceID, subjectID,
+			managementPositiveQueryInt(c.Query("page"), 1, 1_000_000), managementPositiveQueryInt(c.Query("limit"), 50, 200))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, ledger)
+	}))
+	scoped.POST("/end-users/:subject_id/credits", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 16<<10))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		grant, err := runtimeworkspace.ParseCreditGrant(body)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		result, err := service.GrantCredits(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}, grant)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, result)
+	}))
+	scoped.GET("/end-users/:subject_id/entitlement", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		entitlement, err := service.EndUserEntitlement(c.Request.Context(), workspaceID, subjectID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, entitlement)
+	}))
 	scoped.GET("/end-users/:subject_id/usage-series", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
 		series, err := service.EndUserUsageSeries(c.Request.Context(), workspaceID, &subjectID,
 			managementPositiveQueryInt(c.Query("days"), 30, 90), c.Query("tz"))
@@ -500,6 +536,10 @@ func managementScope(c *gin.Context, requested string) (uuid.UUID, uuid.UUID, bo
 }
 
 func managementFail(c *gin.Context, err error) {
+	if errors.Is(err, runtimeworkspace.ErrCreditConflict) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_credit_conflict", Message: "This external ID was already used for a grant of another amount"})
+		return
+	}
 	if errors.Is(err, runtimeworkspace.ErrBindingRevisionConflict) {
 		c.JSON(http.StatusConflict, response.Response{Code: "runtime_agent_bindings_changed", Message: "The assistant selection was updated by another administrator"})
 		return

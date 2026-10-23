@@ -92,6 +92,11 @@ export const RUNTIME_WORKSPACE_KEYS = {
     'events',
     subjectId,
   ],
+  endUserCredits: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'credits',
+    subjectId,
+  ],
   endUserSummary: (workspaceId: string | null) => [
     ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
     'summary',

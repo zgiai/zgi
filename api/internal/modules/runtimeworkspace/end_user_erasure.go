@@ -92,8 +92,14 @@ func (s *Service) EraseEndUser(ctx context.Context, workspaceID, subjectID uuid.
 				after = append(after, erasure.After)
 			}
 		}
+		for _, table := range []string{"runtime_workspace_end_user_credit_entries", "runtime_workspace_end_user_credit_lots", "runtime_workspace_end_user_credit_bills"} {
+			if err := tx.Exec("DELETE FROM "+table+" WHERE subject_id = ?", subjectID).Error; err != nil {
+				return fmt.Errorf("delete end-user credits from %s: %w", table, err)
+			}
+		}
 		if err := tx.Model(&EndUser{}).Where("subject_id = ?", subjectID).Updates(map[string]any{
 			"status": EndUserErased, "external_user_id": "", "quota_json": datatypes.JSON("{}"),
+			"plan_key": "", "plan_expires_at": nil, "credits_since": nil, "credit_debt": 0,
 			"suspended_at": nil, "erased_at": now, "updated_at": now,
 		}).Error; err != nil {
 			return fmt.Errorf("mark end user erased: %w", err)

@@ -314,6 +314,9 @@ An end user is an External User ID that has made at least one request, or that y
 | POST | `/end-users/{user}/export` | Export everything kept for the end user as one JSON document |
 | DELETE | `/end-users/{user}` | Erase the end user from every App |
 | GET | `/plans` | The plans defined in the console, with their limits |
+| GET | `/end-users/{user}/entitlement` | What the end user may spend now: plan, each window's usage, limit, remaining points and when its oldest usage leaves the window, the credit balance, and whether a new run would be admitted |
+| GET | `/end-users/{user}/credits` | Credit balance and ledger |
+| POST | `/end-users/{user}/credits` | Grant or take back credits |
 
 <CodeGroup title="Give an end user their own quota">
 
@@ -337,7 +340,22 @@ curl -X PATCH '{apibase}/end-users/customer-42'   --header 'Authorization: Beare
 - `plan` gives the end user a plan defined in the console: `{"key": "...", "expires_at": "..."}`; leave out `expires_at` for no expiry. The plan's limits replace the default limits, and the defaults apply again once it expires, with no further call. `"plan": null` removes it. You can set a plan before the end user's first request.
 - `status` is `active` or `suspended`. A suspended end user can still read conversations, files, and memory, but new chats and runs return 403 `end_user.suspended`.
 - `quota` replaces the console's per-end-user limits for this end user: `{"limits": [...]}` with windows `24h`, `7d`, or `30d` and points down to 0.001, or `{"unlimited": true}`. Caps set for single Apps still apply. An own quota takes precedence over a plan. `"quota": null` returns the end user to their plan or the console's limits.
-- An end user over a quota gets 429 `quota.exceeded` when starting a chat or run, until usage in the window falls below the limit.
+- An end user over a quota gets 429 `quota.exceeded` when starting a chat or run, until usage in the window falls below the limit or their credit balance is positive. The error carries no details; read `entitlement` to show what remains and offer an upgrade or a top-up.
+
+<CodeGroup title="Grant credits after a top-up">
+
+```bash
+curl -X POST '{apibase}/end-users/customer-42/credits' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'Content-Type: application/json' \
+  --data '{"points":100,"external_id":"order-20261024-001","reason":"top-up","expires_at":"2027-10-24T00:00:00Z"}'
+```
+
+</CodeGroup>
+
+- `external_id` is required; use your order ID. Sending the same `external_id` again records the grant once; another amount returns 409 `runtime_credit_conflict`. Negative `points` take credits back (without `expires_at`).
+- Usage beyond the limits is paid with credits, soonest expiry first; credits do not lift per-App caps. End users without limits (or with an own quota of no limit) never spend credits. A limit of 0 includes nothing, so all usage is paid with credits: pay as you go.
+- Usage is settled after each model call, so a balance can dip below 0 by the calls in progress; the next grant pays the debt first. Only usage after the first grant is charged.
 - Export returns conversations with their messages, memory, uploaded file details, and DigitalHuman instances, instance memory, runs, tasks, reports, notifications, and artifacts. Large histories are capped and marked `truncated`.
 - Erasure deletes all of that in every App, and `GET` then returns the end user with status `erased` and no External User ID. Usage and audit records keep identifiers only. A later request with the same External User ID starts a new, empty end user.
 

@@ -278,7 +278,7 @@ export function quotaOfDraft(draft: QuotaOverrideDraft): RuntimeEndUserQuota | n
   if (draft.mode === 'unlimited') return { unlimited: true };
   const limits = quotaWindows.flatMap(window => {
     const value = Math.round(Number.parseFloat(draft.limits[window] ?? '') * 1000) / 1000;
-    return Number.isFinite(value) && value > 0 ? [{ window, points: value }] : [];
+    return Number.isFinite(value) && value >= 0 ? [{ window, points: value }] : [];
   });
   return limits.length > 0 ? { limits } : undefined;
 }
@@ -327,7 +327,7 @@ export function QuotaOverrideEditor({
               </span>
               <Input
                 type="number"
-                min={0.001}
+                min={0}
                 step="any"
                 inputMode="decimal"
                 placeholder={t('runtime.quota.unlimited')}

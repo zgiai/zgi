@@ -199,11 +199,12 @@ func validAppQuotas(quotas []AppQuota) bool {
 }
 
 // validQuotaLimits reports whether limits use known windows, each once,
-// with at least a milli-point.
+// with no negative points and none below a milli-point. A zero limit
+// includes nothing: every point is drawn from credits (ADR 0011).
 func validQuotaLimits(limits []QuotaLimit) bool {
 	seen := map[string]bool{}
 	for _, limit := range limits {
-		if _, ok := QuotaWindows[limit.Window]; !ok || limit.MilliPoints() < 1 || seen[limit.Window] {
+		if _, ok := QuotaWindows[limit.Window]; !ok || limit.Points.IsNegative() || limit.Points.IsPositive() && limit.MilliPoints() < 1 || seen[limit.Window] {
 			return false
 		}
 		seen[limit.Window] = true
@@ -268,9 +269,20 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 		}
 		return fmt.Errorf("load runtime workspace quota: %w", err)
 	}
-	quota := appliedQuota(EndUserQuota(workspace.PolicyJSON), user, g.now())
+	policy := EndUserQuota(workspace.PolicyJSON)
+	quota := appliedQuota(policy, user, g.now())
 	if err := g.checkLimits(ctx, ref.SubjectID, "", quota.Limits); err != nil {
-		return err
+		// Credits pay for usage beyond the per-end-user limits.
+		if user == nil || user.CreditsSince == nil {
+			return err
+		}
+		_, credits, settleErr := settledCredits(ctx, g.db, policy, user.SubjectID, g.now(), false)
+		if settleErr != nil {
+			return settleErr
+		}
+		if credits.Balance <= 0 {
+			return err
+		}
 	}
 	if len(quota.Apps) == 0 || strings.TrimSpace(ref.AppID) == "" {
 		return nil
@@ -294,7 +306,7 @@ func (g *QuotaGuard) CheckEndUserQuota(ctx context.Context, ref chatruntime.EndU
 func (g *QuotaGuard) checkLimits(ctx context.Context, subjectID uuid.UUID, appID string, limits []QuotaLimit) error {
 	for _, limit := range limits {
 		window, ok := QuotaWindows[limit.Window]
-		if !ok || limit.MilliPoints() < 1 {
+		if !ok || limit.MilliPoints() < 0 {
 			continue
 		}
 		used, err := g.Usage(ctx, subjectID, appID, g.now().Add(-window))

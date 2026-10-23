@@ -142,6 +142,47 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		}
 		response.Success(c, view)
 	}))
+	group.GET("/end-users/:user/entitlement", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		entitlement, err := service.EndUserEntitlement(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, entitlement)
+	}))
+	group.GET("/end-users/:user/credits", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		page, _ := strconv.Atoi(c.Query("page"))
+		limit, _ := strconv.Atoi(c.Query("limit"))
+		ledger, err := service.ListCredits(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, page, limit)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, ledger)
+	}))
+	group.POST("/end-users/:user/credits", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 16<<10))
+		if err != nil {
+			runtimeFail(c, runtimeworkspace.ErrInvalidEndUser)
+			return
+		}
+		grant, err := runtimeworkspace.ParseCreditGrant(body)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		if err := service.EnsureEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, c.Param("user")); err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		result, err := service.GrantCredits(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID}, grant)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, result)
+	}))
 	group.POST("/end-users/:user/export", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
 		export, err := service.ExportEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
 			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID})
@@ -578,6 +619,8 @@ func runtimeFail(c *gin.Context, err error) {
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeworkspace.ErrInvalidWorkspace):
 		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, runtimeworkspace.ErrCreditConflict):
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_credit_conflict", Message: "This external ID was already used for a grant of another amount"})
 	case errors.Is(err, runtimeworkspace.ErrAppDisabled), errors.Is(err, runtimeworkspace.ErrWorkspaceDisabled):
 		response.Fail(c, response.ErrPermissionDenied)
 	default:
