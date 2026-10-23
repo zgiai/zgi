@@ -150,7 +150,7 @@ func TestRuntimeWorkspaceAppCatalogPagesAndCapsPostgres(t *testing.T) {
 	}
 
 	page, err := service.ListBindingsPage(t.Context(), workspaceID, AppListQuery{Limit: 1})
-	if err != nil || page.Total != 2 || len(page.Items) != 1 || !page.HasMore || page.Counts.All != 2 || page.Counts.DigitalHumans != 2 || page.Limit != 100 {
+	if err != nil || page.Total != 2 || len(page.Items) != 1 || !page.HasMore || page.Counts.All != 2 || page.Counts.DigitalHumans != 2 || page.Limit != MaxRuntimeWorkspaceApps() {
 		t.Fatalf("first app page = %+v %v", page, err)
 	}
 	found, err := service.ListBindingsPage(t.Context(), workspaceID, AppListQuery{Search: "alpha"})
