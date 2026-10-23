@@ -9,13 +9,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -31,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { AppCapsEditor } from '@/features/runtime-workspaces/app-caps-editor';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { RuntimeApp } from '@/services/types/runtime-workspace';
@@ -160,7 +154,6 @@ export function EndUserQuotaCard({
   }, [initial]);
   React.useEffect(reset, [reset]);
 
-  const usedKeys = new Set(appCaps.map(cap => cap.appKey));
   const quotaOf = (
     defaults: WindowPoints,
     caps: Array<{ appKey: string; limits: WindowPoints }>,
@@ -280,69 +273,7 @@ export function EndUserQuotaCard({
           <p className="text-xs text-muted-foreground">{t('runtime.quota.zeroHint')}</p>
         </section>
 
-        <section className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-medium">{t('runtime.quota.perApp')}</h4>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={apps.every(app => usedKeys.has(app.app_key))}
-              onClick={() => {
-                const next = apps.find(app => !usedKeys.has(app.app_key));
-                if (next) setAppCaps([...appCaps, { appKey: next.app_key, limits: {} }]);
-              }}
-            >
-              <Plus className="size-4" />
-              {t('runtime.quota.addApp')}
-            </Button>
-          </div>
-          {appCaps.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t('runtime.quota.noAppCaps')}</p>
-          ) : (
-            appCaps.map((cap, index) => (
-              <div key={`${cap.appKey}-${index}`} className="space-y-2 rounded-lg border p-3">
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={cap.appKey}
-                    onValueChange={appKey =>
-                      setAppCaps(
-                        appCaps.map((item, i) => (i === index ? { ...item, appKey } : item))
-                      )
-                    }
-                  >
-                    <SelectTrigger className="h-9 min-w-0 flex-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {apps
-                        .filter(app => app.app_key === cap.appKey || !usedKeys.has(app.app_key))
-                        .map(app => (
-                          <SelectItem key={app.app_key} value={app.app_key}>
-                            {app.name}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    aria-label={t('runtime.quota.removeApp')}
-                    onClick={() => setAppCaps(appCaps.filter((_, i) => i !== index))}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-                {windowInputs(cap.limits, next =>
-                  setAppCaps(
-                    appCaps.map((item, i) => (i === index ? { ...item, limits: next } : item))
-                  )
-                )}
-              </div>
-            ))
-          )}
-        </section>
+        <AppCapsEditor apps={apps} caps={appCaps} onChange={setAppCaps} />
 
         <section className="space-y-3">
           <div className="flex items-start justify-between gap-2">

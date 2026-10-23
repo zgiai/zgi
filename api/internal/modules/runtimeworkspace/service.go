@@ -49,7 +49,7 @@ var (
 )
 
 // MaxRuntimeWorkspaceApps is how many apps a Runtime Workspace may bind, of
-// all types together: ZGI_RUNTIME_WORKSPACE_MAX_APPS, 100 by default.
+// all types together: ZGI_RUNTIME_WORKSPACE_MAX_APPS, 500 by default.
 func MaxRuntimeWorkspaceApps() int {
 	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("ZGI_RUNTIME_WORKSPACE_MAX_APPS"))); err == nil && value > 0 {
 		return value
@@ -60,7 +60,7 @@ func MaxRuntimeWorkspaceApps() int {
 const (
 	credentialSecretReplayTTL    = 30 * time.Minute
 	credentialOperationRecordTTL = 24 * time.Hour
-	defaultRuntimeWorkspaceApps  = 100
+	defaultRuntimeWorkspaceApps  = 500
 	// MaxActiveCredentials bounds the usable access keys of a Runtime
 	// Workspace; revoked and expired keys do not count.
 	MaxActiveCredentials       = 50
