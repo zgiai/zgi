@@ -249,19 +249,8 @@ func (s *Service) writeEndUserExport(ctx context.Context, w io.Writer, workspace
 	out.raw(`,"files":`)
 	out.value(files)
 
-	apps := map[string]any{}
-	for _, owner := range registeredEndUserDataOwners() {
-		key, data, err := owner.ExportEndUser(ctx, s.db, subjectID)
-		if err != nil {
-			return err
-		}
-		if key != "" && data != nil {
-			apps[key] = data
-		}
-	}
-	if len(apps) > 0 {
-		out.raw(`,"apps":`)
-		out.value(apps)
+	if err := s.writeExportedApps(ctx, out, subjectID); err != nil {
+		return err
 	}
 
 	if err := recordEndUserEvent(db, runtimeWorkspace.LogicalID(), subjectID, EndUserEventExported, actor, s.now()); err != nil {
@@ -291,6 +280,72 @@ type exportedConversationRow struct {
 	CallerID   *uuid.UUID `json:"caller_id,omitempty"`
 	Title      string     `json:"title"`
 	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// writeExportedApps writes each application domain's data under "apps",
+// page by page for owners that can page it.
+func (s *Service) writeExportedApps(ctx context.Context, out *exportWriter, subjectID uuid.UUID) error {
+	first := true
+	open := func(key string) {
+		if first {
+			out.raw(`,"apps":{`)
+			first = false
+		} else {
+			out.raw(",")
+		}
+		out.value(key)
+		out.raw(":")
+	}
+	for _, owner := range registeredEndUserDataOwners() {
+		if pager, ok := owner.(EndUserExportPager); ok {
+			key, sections := pager.EndUserExportSections()
+			if key == "" {
+				continue
+			}
+			open(key)
+			out.raw("{")
+			for index, section := range sections {
+				if index > 0 {
+					out.raw(",")
+				}
+				out.value(section)
+				out.raw(":[")
+				for offset := 0; ; offset += endUserExportPageSize {
+					rows, err := pager.ExportEndUserPage(ctx, s.db, subjectID, section, offset, endUserExportPageSize)
+					if err != nil {
+						return err
+					}
+					for position, row := range rows {
+						if offset > 0 || position > 0 {
+							out.raw(",")
+						}
+						out.value(row)
+					}
+					if out.err != nil {
+						return out.err
+					}
+					if len(rows) < endUserExportPageSize {
+						break
+					}
+				}
+				out.raw("]")
+			}
+			out.raw("}")
+			continue
+		}
+		key, data, err := owner.ExportEndUser(ctx, s.db, subjectID)
+		if err != nil {
+			return err
+		}
+		if key != "" && data != nil {
+			open(key)
+			out.value(data)
+		}
+	}
+	if !first {
+		out.raw("}")
+	}
+	return out.err
 }
 
 type exportCursor struct {

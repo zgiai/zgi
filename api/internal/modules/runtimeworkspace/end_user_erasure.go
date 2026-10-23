@@ -33,6 +33,14 @@ type EndUserDataOwner interface {
 	ExportEndUser(ctx context.Context, db *gorm.DB, subjectID uuid.UUID) (key string, data any, err error)
 }
 
+// EndUserExportPager is an EndUserDataOwner whose export is read page by
+// page, so the export job holds every record of it (ADR 0012). Sections are
+// the keys of the owner's export object, each a list of records.
+type EndUserExportPager interface {
+	EndUserExportSections() (key string, sections []string)
+	ExportEndUserPage(ctx context.Context, db *gorm.DB, subjectID uuid.UUID, section string, offset, limit int) ([]map[string]any, error)
+}
+
 var endUserDataOwners struct {
 	sync.RWMutex
 	items []EndUserDataOwner

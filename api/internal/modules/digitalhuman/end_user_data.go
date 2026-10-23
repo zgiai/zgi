@@ -13,8 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// endUserExportLimit bounds each kind of record in one export.
-const endUserExportLimit = 500
+// endUserExportPage is how many records of a kind one export page reads.
+const endUserExportPage = 500
 
 var endUserMemoryVectors atomic.Pointer[vectordb.VectorDB]
 
@@ -193,32 +193,70 @@ type EndUserDataExport struct {
 	Artifacts     []map[string]any `json:"artifacts"`
 }
 
-// ExportEndUser collects an end user's DigitalHuman data.
-func (*EndUserData) ExportEndUser(ctx context.Context, db *gorm.DB, subjectID uuid.UUID) (string, any, error) {
-	export := &EndUserDataExport{}
-	queries := []struct {
-		target *[]map[string]any
-		sql    string
-	}{
-		{&export.Instances, `SELECT id, digital_human_id, status, first_seen_at, last_active_at FROM digital_human_end_user_instances WHERE subject_id = ? AND status <> 'erased' ORDER BY first_seen_at`},
-		{&export.Memory, `SELECT memory.id, memory.digital_human_id, memory.memory_key, memory.memory_type, memory.content, memory.created_at, memory.updated_at
-			FROM digital_human_memories memory JOIN digital_human_end_user_instances instance ON memory.scope_type = 'instance' AND memory.scope_id = instance.id::text
-			WHERE instance.subject_id = ? AND memory.status = 'active' ORDER BY memory.created_at`},
-		{&export.Runs, `SELECT id, digital_human_id, conversation_id, query, status, result_summary, created_at, completed_at FROM digital_human_runs WHERE user_subject_id = ? ORDER BY created_at`},
-		{&export.Tasks, `SELECT id, subject_id AS digital_human_id, name, goal, status, work_status, schedule_type, schedule_config, created_at FROM automation_tasks WHERE owner_subject_id = ? ORDER BY created_at`},
-		{&export.Reports, `SELECT report.id, report.task_id, report.outcome, report.summary, report.body, report.issues, report.files, report.created_at
-			FROM digital_human_task_reports report JOIN automation_tasks task ON task.id = report.task_id WHERE task.owner_subject_id = ? ORDER BY report.created_at`},
-		{&export.Notifications, `SELECT id, event, title, summary, read_at, created_at FROM inbox_notifications WHERE recipient_kind = 'api_end_user' AND recipient_id = ? ORDER BY created_at`},
-		{&export.Artifacts, `SELECT artifact.id, artifact.application_id AS digital_human_id, artifact.kind, artifact.title, artifact.current_version, version.content, version.file_name, artifact.created_at
-			FROM artifacts artifact LEFT JOIN artifact_versions version ON version.artifact_id = artifact.id AND version.number = artifact.current_version
-			WHERE artifact.owner_kind = 'api_end_user' AND artifact.owner_id = ? AND artifact.deleted_at IS NULL ORDER BY artifact.created_at`},
+// endUserExportSections are the kinds of DigitalHuman records an end user
+// has, each ordered so pages are stable.
+var endUserExportSections = []struct {
+	name string
+	sql  string
+}{
+	{"instances", `SELECT id, digital_human_id, status, first_seen_at, last_active_at FROM digital_human_end_user_instances WHERE subject_id = ? AND status <> 'erased' ORDER BY first_seen_at, id`},
+	{"memory", `SELECT memory.id, memory.digital_human_id, memory.memory_key, memory.memory_type, memory.content, memory.created_at, memory.updated_at
+		FROM digital_human_memories memory JOIN digital_human_end_user_instances instance ON memory.scope_type = 'instance' AND memory.scope_id = instance.id::text
+		WHERE instance.subject_id = ? AND memory.status = 'active' ORDER BY memory.created_at, memory.id`},
+	{"runs", `SELECT id, digital_human_id, conversation_id, query, status, result_summary, created_at, completed_at FROM digital_human_runs WHERE user_subject_id = ? ORDER BY created_at, id`},
+	{"tasks", `SELECT id, subject_id AS digital_human_id, name, goal, status, work_status, schedule_type, schedule_config, created_at FROM automation_tasks WHERE owner_subject_id = ? ORDER BY created_at, id`},
+	{"reports", `SELECT report.id, report.task_id, report.outcome, report.summary, report.body, report.issues, report.files, report.created_at
+		FROM digital_human_task_reports report JOIN automation_tasks task ON task.id = report.task_id WHERE task.owner_subject_id = ? ORDER BY report.created_at, report.id`},
+	{"notifications", `SELECT id, event, title, summary, read_at, created_at FROM inbox_notifications WHERE recipient_kind = 'api_end_user' AND recipient_id = ? ORDER BY created_at, id`},
+	{"artifacts", `SELECT artifact.id, artifact.application_id AS digital_human_id, artifact.kind, artifact.title, artifact.current_version, version.content, version.file_name, artifact.created_at
+		FROM artifacts artifact LEFT JOIN artifact_versions version ON version.artifact_id = artifact.id AND version.number = artifact.current_version
+		WHERE artifact.owner_kind = 'api_end_user' AND artifact.owner_id = ? AND artifact.deleted_at IS NULL ORDER BY artifact.created_at, artifact.id`},
+}
+
+// EndUserExportSections names the DigitalHuman part of an export and its
+// kinds of records.
+func (*EndUserData) EndUserExportSections() (string, []string) {
+	names := make([]string, 0, len(endUserExportSections))
+	for _, section := range endUserExportSections {
+		names = append(names, section.name)
 	}
-	for _, query := range queries {
-		rows := []map[string]any{}
-		if err := db.WithContext(ctx).Raw(query.sql+fmt.Sprintf(" LIMIT %d", endUserExportLimit), subjectID).Scan(&rows).Error; err != nil {
-			return "", nil, fmt.Errorf("export end-user DigitalHuman data: %w", err)
+	return "digital_humans", names
+}
+
+// ExportEndUserPage reads one page of one kind of an end user's
+// DigitalHuman records.
+func (*EndUserData) ExportEndUserPage(ctx context.Context, db *gorm.DB, subjectID uuid.UUID, section string, offset, limit int) ([]map[string]any, error) {
+	for _, candidate := range endUserExportSections {
+		if candidate.name != section {
+			continue
 		}
-		*query.target = rows
+		rows := []map[string]any{}
+		if err := db.WithContext(ctx).Raw(candidate.sql+" LIMIT ? OFFSET ?", subjectID, limit, offset).Scan(&rows).Error; err != nil {
+			return nil, fmt.Errorf("export end-user DigitalHuman %s: %w", section, err)
+		}
+		return rows, nil
+	}
+	return nil, fmt.Errorf("unknown end-user DigitalHuman export section %q", section)
+}
+
+// ExportEndUser collects all of an end user's DigitalHuman data at once.
+func (data *EndUserData) ExportEndUser(ctx context.Context, db *gorm.DB, subjectID uuid.UUID) (string, any, error) {
+	export := &EndUserDataExport{}
+	targets := map[string]*[]map[string]any{"instances": &export.Instances, "memory": &export.Memory, "runs": &export.Runs,
+		"tasks": &export.Tasks, "reports": &export.Reports, "notifications": &export.Notifications, "artifacts": &export.Artifacts}
+	for _, section := range endUserExportSections {
+		all := []map[string]any{}
+		for offset := 0; ; offset += endUserExportPage {
+			rows, err := data.ExportEndUserPage(ctx, db, subjectID, section.name, offset, endUserExportPage)
+			if err != nil {
+				return "", nil, err
+			}
+			all = append(all, rows...)
+			if len(rows) < endUserExportPage {
+				break
+			}
+		}
+		*targets[section.name] = all
 	}
 	return "digital_humans", export, nil
 }

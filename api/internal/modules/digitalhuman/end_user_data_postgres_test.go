@@ -119,6 +119,12 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 	alice, aliceInstance := endUser("alice")
 	bob, _ := endUser("bob")
 
+	// More records of a kind than one page, so the export may not cut any off.
+	const extraNotifications = 501
+	exec(`INSERT INTO inbox_notifications (id, organization_id, workspace_id, recipient_kind, recipient_id, event, source_type, source_id, title, summary, link, context, created_at)
+		SELECT gen_random_uuid(), ?, ?, 'api_end_user', ?, 'task.completed', 'task', gen_random_uuid(), 'Older', '', '', '{}', now() - n * interval '1 minute'
+		FROM generate_series(1, ?) AS n`, organizationID, workspaceID, alice, extraNotifications)
+
 	runtimeworkspace.UseEndUserDataOwner(NewEndUserData())
 	rw := runtimeworkspace.NewService(tx)
 	actor := runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}
@@ -132,7 +138,7 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 		_ = json.Unmarshal(encoded, &dh)
 	}
 	if len(export.Conversations) != 1 || len(export.Conversations[0].Messages) != 1 || export.Conversations[0].Messages[0].Answer != "Four." ||
-		dh == nil || len(dh.Instances) != 1 || len(dh.Memory) != 1 || len(dh.Runs) != 1 || len(dh.Tasks) != 1 || len(dh.Notifications) != 1 {
+		dh == nil || len(dh.Instances) != 1 || len(dh.Memory) != 1 || len(dh.Runs) != 1 || len(dh.Tasks) != 1 || len(dh.Notifications) != 1+extraNotifications {
 		t.Fatalf("alice export = %+v / %+v", export, dh)
 	}
 
