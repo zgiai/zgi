@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/connections"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 )
 
 func TestPerUserConnectorSlotPostgres(t *testing.T) {
@@ -35,6 +36,12 @@ func TestPerUserConnectorSlotPostgres(t *testing.T) {
 	slot := ResourceBindingInput{Type: resourcebindings.BindingTypeConnector, ResourceID: slotKey, ParentResourceID: f.definition.ID,
 		DisplayName: "Their own search", AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "connector:per-user",
 		Metadata: map[string]any{"allowed_operation_ids": []string{operation}, "credential_mode": ConnectorCredentialPerUser}}
+	// Without a connector catalog no Connector selection is admitted, a
+	// per-user slot included.
+	uncataloged := NewService(NewRepository(db))
+	if _, err := uncataloged.ReplaceDraftResourceBindings(t.Context(), f.scope, f.detail.Definition.ID, ReplaceResourceBindingsRequest{ExpectedDraftLockVersion: 1, Items: []ResourceBindingInput{slot}}); !apperror.IsCode(err, AppCodeResourceBindingInvalid) {
+		t.Fatalf("a per-user slot was saved without a catalog: %v", err)
+	}
 	shared := f.input(0, 1)
 	saved, err := f.service.ReplaceDraftResourceBindings(t.Context(), f.scope, f.detail.Definition.ID, ReplaceResourceBindingsRequest{ExpectedDraftLockVersion: 1, Items: []ResourceBindingInput{slot, shared}})
 	if err != nil {

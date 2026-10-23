@@ -314,6 +314,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 	consoleDigitalHumanService := serviceContainer.GetDigitalHumanService()
+	// Draft saves and publication admit Connector bindings against the same
+	// plugin catalog the runtime uses.
+	consoleDigitalHumanService.SetConnectorCatalog(serviceContainer.GetConnectorPluginManager())
 	if digitalHumanRuntime.MemoryProjectionRepairer != nil {
 		consoleDigitalHumanService.SetMemoryProjectionRepairer(digitalHumanRuntime.MemoryProjectionRepairer)
 	}

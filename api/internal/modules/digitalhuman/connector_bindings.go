@@ -64,8 +64,10 @@ func (r *GormRepository) syncConnectorBindings(ctx context.Context, scope Scope,
 		}
 	}
 	if r.connectorCatalog == nil {
-		for rowID := range desired {
-			if !keepOnly[rowID] {
+		// Without a catalog no Connector selection, shared or per-user, can be
+		// admitted; only unchanged rows are kept.
+		for _, row := range rows {
+			if row.BindingType == resourcebindings.BindingTypeConnector && !keepOnly[row.ID] {
 				return ErrResourceBindingInvalid
 			}
 		}
