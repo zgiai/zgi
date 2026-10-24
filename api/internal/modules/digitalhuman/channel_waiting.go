@@ -22,7 +22,7 @@ import (
 // wait sends what it waits for as a message, and the next reply answers it.
 
 const (
-	channelReplyTaskApproval    = "回复「确认」执行，回复「取消」放弃；也可以直接说明需要修改的地方。"
+	channelReplyTaskApproval    = "回复「确认」或「取消」，想改哪里直接说。"
 	channelReplyWorkflow        = "回复「同意」或「拒绝」。"
 	channelReplyConnector       = "回复「确认」执行这个操作，回复「取消」放弃。"
 	channelReplyQuestion        = "直接回复即可，多个问题可以分行依次回答。"

@@ -24,7 +24,7 @@ func TestChannelWaitingPromptSaysHowToAnswer(t *testing.T) {
 	}{
 		{"task approval", runtimemodel.MessageStatusWaitingApproval, "我准备创建任务「喝水提醒」。", nil,
 			map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"kind": "digital_human_task", "task_name": "喝水提醒"}},
-			[]string{"喝水提醒", "回复「确认」执行"}},
+			[]string{"喝水提醒", "回复「确认」或「取消」"}},
 		{"connector", runtimemodel.MessageStatusWaitingApproval, "", &Run{WaitingReceipt: &receipt}, map[string]interface{}{},
 			[]string{"外部操作", "回复「确认」执行这个操作"}},
 		{"question", runtimemodel.MessageStatusWaitingQuestion, "还差两个信息。", nil,

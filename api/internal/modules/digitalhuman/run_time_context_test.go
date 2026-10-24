@@ -12,7 +12,7 @@ import (
 func TestEveryRunKnowsTheTimeInTheUsersTimezone(t *testing.T) {
 	now := time.Date(2026, 10, 24, 7, 40, 0, 0, time.UTC)
 	guidance := currentTimeGuidance(now, loadRunLocation("Asia/Shanghai"))
-	for _, want := range []string{"2026-10-24 15:40", "Saturday", "Asia/Shanghai", "UTC+08:00", "2026-10-24T07:40:00Z", "give them timezone Asia/Shanghai"} {
+	for _, want := range []string{"2026-10-24 15:40", "Saturday", "Asia/Shanghai", "UTC+08:00", "2026-10-24T07:40:00Z", "give task schedules timezone Asia/Shanghai", "no timezone unless it differs"} {
 		if !strings.Contains(guidance, want) {
 			t.Fatalf("guidance %q lacks %q", guidance, want)
 		}

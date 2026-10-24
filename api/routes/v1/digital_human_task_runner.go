@@ -63,13 +63,15 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 	scope := taskRunScope(organizationID, workspaceID, owner, executionAccountID)
 	criteria := ""
 	if len(req.SuccessCriteria) > 0 {
-		criteria = "\nSuccess criteria:\n- " + strings.Join(req.SuccessCriteria, "\n- ")
+		criteria = "\nWhat the requester expects:\n- " + strings.Join(req.SuccessCriteria, "\n- ")
 	}
 	rework := ""
 	if req.ReworkFeedback != "" {
-		rework = "\nThe requester reviewed the previous result and asked for rework. Address this feedback:\n" + req.ReworkFeedback
+		rework = "\nThe requester looked at the last result and asked for this change:\n" + req.ReworkFeedback
 	}
-	query := fmt.Sprintf("Execute the confirmed task %q.\nGoal: %s%s%s\nWhen finished, provide the final result and any generated files.", req.Name, req.Goal, criteria, rework)
+	// The run is the task happening now, not a job to report on: its answer
+	// is what the requester receives.
+	query := fmt.Sprintf("It is time for the task %q. Do it now: %s%s%s", req.Name, req.Goal, criteria, rework)
 	eventContext := scheduledTaskEventContext(req, owner)
 	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: eventContext, ReplyTo: req.ReplyTo}
 	run, _, err := r.runtime.SubmitInvocation(ctx, scope, event, query, nil)

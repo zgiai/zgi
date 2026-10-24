@@ -1002,29 +1002,10 @@ func createRunDelivery(ctx context.Context, tx *gorm.DB, run *Run, summary strin
 	).Delete(&channelruntime.Delivery{}).Error; err != nil {
 		return fmt.Errorf("discard superseded channel progress deliveries: %w", err)
 	}
-	// Scheduled tasks execute outside the originating conversation. Make the
-	// result self-identifying when it is delivered back to that conversation;
-	// the task center still stores the unmodified result summary separately.
-	summary = decorateScheduledTaskResult(run, summary)
 	return createRunChannelDelivery(
 		ctx, tx, run, channelruntime.DeliveryKindFinal, "final", math.MaxInt64,
 		summary, channelDeliveryArtifacts(trace), nil, now,
 	)
-}
-
-func decorateScheduledTaskResult(run *Run, summary string) string {
-	if run == nil || strings.TrimSpace(summary) == "" {
-		return summary
-	}
-	var event invocation.Event
-	if err := json.Unmarshal(run.InvocationEvent, &event); err != nil || event.Origin.Kind != invocation.OriginSchedule {
-		return summary
-	}
-	taskName := contextString(event.Context, "task_name")
-	if taskName != "" && !strings.Contains(summary, taskName) {
-		summary = "任务“" + taskName + "”执行完成\n\n" + summary
-	}
-	return summary
 }
 
 func (r *GormRepository) EnqueueRunChannelDelivery(

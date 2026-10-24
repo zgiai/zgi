@@ -41,9 +41,9 @@ func loadRunLocation(name string) *time.Location {
 // five minutes" and every task schedule.
 func currentTimeGuidance(now time.Time, location *time.Location) string {
 	local := now.In(location)
-	return fmt.Sprintf("Current time: %s (%s, timezone %s, UTC%s); UTC %s. Use it for relative times such as \"in five minutes\" or \"tomorrow morning\". Times the user gives are in %s unless they name another timezone, and so are task schedules: give them timezone %s.",
+	return fmt.Sprintf("Current time: %s, %s (the user's timezone %s, UTC%s; UTC now %s). Use it for relative times such as \"in five minutes\" or \"tomorrow morning\". Read times the user gives in their timezone and give task schedules timezone %s. When you mention a time, say it the way people do, such as \"下午 3:43\", \"明天早上 9 点\" or \"每周五下午 5 点\": no seconds, no year unless it is not this year, and no timezone unless it differs from the user's or they ask.",
 		local.Format("2006-01-02 15:04"), local.Weekday().String(), location.String(), local.Format("-07:00"),
-		now.UTC().Format(time.RFC3339), location.String(), location.String())
+		now.UTC().Format(time.RFC3339), location.String())
 }
 
 func withRunTimezone(ctx context.Context, location *time.Location) context.Context {
