@@ -143,6 +143,15 @@ func (*EndUserData) EraseEndUser(ctx context.Context, tx *gorm.DB, subjectID uui
 	if err := eraseEndUserConnections(db, subjectID, time.Now().UTC()); err != nil {
 		return erasure, err
 	}
+	var erased []EndUserInstance
+	if err := db.Where("subject_id = ? AND status <> ?", subjectID, EndUserInstanceErased).Find(&erased).Error; err != nil {
+		return erasure, fmt.Errorf("load end-user instances: %w", err)
+	}
+	for _, instance := range erased {
+		if err := recordInstanceEvent(ctx, db, instance, instanceAuditErased, accessAuditSourceExternalAccess, nil, map[string]any{"purge": purge}); err != nil {
+			return erasure, err
+		}
+	}
 	if purge {
 		err := db.Exec("DELETE FROM digital_human_end_user_instances WHERE subject_id = ?", subjectID).Error
 		if err != nil {

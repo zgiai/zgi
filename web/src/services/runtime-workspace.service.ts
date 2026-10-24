@@ -1,6 +1,7 @@
 import { BaseService } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
 import type {
+  RuntimeEndUserDigitalHuman,
   RuntimeEndUserExportJob,
   RuntimeAgentCandidateSet,
   RuntimeAppCollection,
@@ -405,6 +406,19 @@ class RuntimeWorkspaceService extends BaseService {
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data ?? { days: [], apps: [] };
+  }
+
+  async listEndUserDigitalHumans(
+    workspaceId: string,
+    subjectId: string
+  ): Promise<RuntimeEndUserDigitalHuman[]> {
+    const response = await this.request<ApiResponseData<{ items: RuntimeEndUserDigitalHuman[] }>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/digital-humans`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data?.items ?? [];
   }
 
   /** Queues an export, or returns the one already queued or running. */

@@ -60,6 +60,7 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { EndUserDigitalHumans } from '@/features/runtime-workspaces/end-user-digital-humans';
 import {
   Table,
   TableBody,
@@ -1109,11 +1110,11 @@ function EndUserSheet({
               <TabsList className="w-full justify-start">
                 {(erased
                   ? ['overview', 'history']
-                  : ['overview', 'quota', 'credits', 'history']
+                  : ['overview', 'quota', 'credits', 'digitalHumans', 'history']
                 ).map(item => (
                   <TabsTrigger key={item} value={item}>
                     {t(
-                      `runtime.endUsers.tabs.${item as 'overview' | 'quota' | 'credits' | 'history'}`
+                      `runtime.endUsers.tabs.${item as 'overview' | 'quota' | 'credits' | 'digitalHumans' | 'history'}`
                     )}
                   </TabsTrigger>
                 ))}
@@ -1252,6 +1253,15 @@ function EndUserSheet({
               {!erased ? (
                 <TabsContent value="credits" className="mt-5 space-y-6">
                   <EndUserCreditsSection
+                    runtimeWorkspaceId={runtimeWorkspaceId}
+                    subjectId={user.subject_id}
+                  />
+                </TabsContent>
+              ) : null}
+
+              {!erased ? (
+                <TabsContent value="digitalHumans" className="mt-5">
+                  <EndUserDigitalHumans
                     runtimeWorkspaceId={runtimeWorkspaceId}
                     subjectId={user.subject_id}
                   />

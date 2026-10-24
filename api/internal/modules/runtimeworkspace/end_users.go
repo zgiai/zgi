@@ -316,6 +316,13 @@ func (s *Service) UpdateEndUser(ctx context.Context, workspaceID, subjectID uuid
 				Action: action, ActorKind: actor.Kind, ActorID: actorID, Details: datatypes.JSON(raw), CreatedAt: now})
 		}
 		if patch.Status != nil && *patch.Status != user.Status {
+			for _, owner := range registeredEndUserDataOwners() {
+				if follower, ok := owner.(EndUserStatusOwner); ok {
+					if err := follower.EndUserStatusChanged(ctx, tx, user.SubjectID, *patch.Status == EndUserSuspended, actor); err != nil {
+						return err
+					}
+				}
+			}
 			updates["status"] = *patch.Status
 			if *patch.Status == EndUserSuspended {
 				updates["suspended_at"] = now
@@ -617,4 +624,30 @@ func ParseEndUserPatch(body []byte) (EndUserPatch, error) {
 		patch.Quota = &override
 	}
 	return patch, nil
+}
+
+// EndUserDigitalHumans is an end user of an external access with the
+// DigitalHumans it serves, for the DigitalHuman panel (ADR 0006).
+type EndUserDigitalHumans struct {
+	OrganizationID uuid.UUID
+	SubjectID      uuid.UUID
+	Bindings       []AgentBinding
+}
+
+// EndUserDigitalHumans resolves an end user and the DigitalHumans bound to
+// their external access.
+func (s *Service) EndUserDigitalHumans(ctx context.Context, workspaceID, subjectID uuid.UUID) (*EndUserDigitalHumans, error) {
+	runtimeWorkspace, user, err := s.loadEndUser(ctx, s.db, workspaceID, subjectID, false)
+	if err != nil {
+		return nil, err
+	}
+	if user.Status == EndUserErased {
+		return nil, ErrEndUserNotFound
+	}
+	var bindings []AgentBinding
+	if err := s.db.WithContext(ctx).Where("runtime_workspace_id = ? AND app_type = ?", runtimeWorkspace.LogicalID(), AppTypeDigitalHuman).
+		Order("created_at").Find(&bindings).Error; err != nil {
+		return nil, fmt.Errorf("list bound DigitalHumans: %w", err)
+	}
+	return &EndUserDigitalHumans{OrganizationID: runtimeWorkspace.OrganizationID, SubjectID: user.SubjectID, Bindings: bindings}, nil
 }

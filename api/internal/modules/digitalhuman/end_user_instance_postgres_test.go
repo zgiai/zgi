@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -116,6 +117,17 @@ func TestEndUserInstanceAdmissionPostgres(t *testing.T) {
 	if _, err := usersubject.NewService(tx).Require(t.Context(), subject); err != nil {
 		t.Fatalf("subject was not registered: %v", err)
 	}
+	events := func(action string) int64 {
+		t.Helper()
+		var n int64
+		if err := tx.Model(&AccessAuditEvent{}).Where("target_type = ? AND target_id = ? AND action = ?", instanceAuditTarget, instance.ID, action).Count(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if events(instanceAuditCreated) != 1 {
+		t.Fatal("creating the instance was not audited")
+	}
 
 	// Later activity reuses the instance and only moves its activity forward.
 	second, err := admit(firstSeen.Add(time.Hour))
@@ -125,6 +137,9 @@ func TestEndUserInstanceAdmissionPostgres(t *testing.T) {
 	instance = load()
 	if *second.EndUserInstanceID != instance.ID || !instance.FirstSeenAt.Equal(firstSeen) || !instance.LastActiveAt.Equal(firstSeen.Add(time.Hour)) {
 		t.Fatalf("second run %v, instance %#v", second.EndUserInstanceID, instance)
+	}
+	if events(instanceAuditCreated) != 1 {
+		t.Fatal("a returning end user was audited as a new instance")
 	}
 	if _, err := admit(firstSeen.Add(30 * time.Minute)); err != nil {
 		t.Fatalf("late admission: %v", err)
@@ -160,5 +175,22 @@ func TestEndUserInstanceAdmissionPostgres(t *testing.T) {
 	instance = load()
 	if *returned.EndUserInstanceID != instance.ID || instance.Status != EndUserInstanceActive || !instance.FirstSeenAt.Equal(firstSeen.Add(3*time.Hour)) {
 		t.Fatalf("returning end user instance = %#v", instance)
+	}
+
+	// Suspending the external access end user suspends the instance, and
+	// resuming them resumes it; both are audited.
+	data := NewEndUserData()
+	actor := runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: uuid.New()}
+	if err := data.EndUserStatusChanged(t.Context(), tx, subject.ID, true, actor); err != nil {
+		t.Fatal(err)
+	}
+	if instance = load(); instance.Status != EndUserInstanceSuspended || events(instanceAuditSuspended) != 1 {
+		t.Fatalf("instance after suspending the end user = %#v", instance)
+	}
+	if err := data.EndUserStatusChanged(t.Context(), tx, subject.ID, false, actor); err != nil {
+		t.Fatal(err)
+	}
+	if instance = load(); instance.Status != EndUserInstanceActive || events(instanceAuditResumed) != 1 {
+		t.Fatalf("instance after resuming the end user = %#v", instance)
 	}
 }

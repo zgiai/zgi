@@ -33,6 +33,12 @@ type EndUserDataOwner interface {
 	ExportEndUser(ctx context.Context, db *gorm.DB, subjectID uuid.UUID) (key string, data any, err error)
 }
 
+// EndUserStatusOwner is an EndUserDataOwner that follows an end user being
+// suspended or resumed, in the same transaction (ADR 0006).
+type EndUserStatusOwner interface {
+	EndUserStatusChanged(ctx context.Context, tx *gorm.DB, subjectID uuid.UUID, suspended bool, actor EndUserActor) error
+}
+
 // EndUserExportPager is an EndUserDataOwner whose export is read page by
 // page, so the export job holds every record of it (ADR 0012). Sections are
 // the keys of the owner's export object, each a list of records.

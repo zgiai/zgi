@@ -142,8 +142,18 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 		t.Fatalf("alice export = %+v / %+v", export, dh)
 	}
 
+	panels, err := NewEndUserData().EndUserPanels(ctx, tx, organizationID, alice, []EndUserApp{{AppKey: "app_dh", DigitalHumanID: digitalHumanID}, {AppKey: "app_unused", DigitalHumanID: uuid.New()}})
+	if err != nil || len(panels) != 1 || panels[0].Instance == nil || panels[0].Instance.ID != aliceInstance ||
+		panels[0].MemoryCount != 1 || panels[0].Memory[0].MemoryKey != "pet-alice" || panels[0].TaskCount != 1 || panels[0].Tasks[0].Name != "Daily" {
+		t.Fatalf("alice's DigitalHuman panel = %+v, %v", panels, err)
+	}
+
 	if err := rw.EraseEndUser(ctx, workspaceID, alice, actor); err != nil {
 		t.Fatal(err)
+	}
+	var erasedEvents int64
+	if err := tx.Model(&AccessAuditEvent{}).Where("target_id = ? AND action = ?", aliceInstance, instanceAuditErased).Count(&erasedEvents).Error; err != nil || erasedEvents != 1 {
+		t.Fatalf("erasing alice's instance was audited %d times: %v", erasedEvents, err)
 	}
 	for name, n := range map[string]int64{
 		"conversations":   count("SELECT count(*) FROM chat_runtime_conversations WHERE account_id = ?", alice),

@@ -496,6 +496,24 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		}
 		response.Success(c, view)
 	}))
+	// What each bound DigitalHuman keeps for the end user (ADR 0006).
+	scoped.GET("/end-users/:subject_id/digital-humans", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		scope, err := service.EndUserDigitalHumans(c.Request.Context(), workspaceID, subjectID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		apps := make([]digitalhuman.EndUserApp, 0, len(scope.Bindings))
+		for _, binding := range scope.Bindings {
+			apps = append(apps, digitalhuman.EndUserApp{AppKey: binding.PublicAppKey, DigitalHumanID: binding.AgentID})
+		}
+		panels, err := digitalhuman.NewEndUserData().EndUserPanels(c.Request.Context(), db, scope.OrganizationID, scope.SubjectID, apps)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"items": panels})
+	}))
 	scoped.PATCH("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
 		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
 		if err != nil {

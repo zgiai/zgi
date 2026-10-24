@@ -38,6 +38,38 @@ export interface RuntimeCredential {
   updated_at: string;
 }
 
+/** What one DigitalHuman keeps for an end user (ADR 0006). */
+export interface RuntimeEndUserDigitalHuman {
+  app_key: string;
+  digital_human_id: string;
+  name: string;
+  instance?: {
+    id: string;
+    status: string;
+    first_seen_at: string;
+    last_active_at: string;
+  };
+  memory_count: number;
+  memory: Array<{
+    id: string;
+    memory_key: string;
+    memory_type: string;
+    content: string;
+    updated_at: string;
+  }>;
+  task_count: number;
+  tasks: Array<{
+    id: string;
+    name: string;
+    status: string;
+    work_status?: string | null;
+    schedule_type: string;
+    created_at: string;
+    last_run_at?: string | null;
+  }>;
+  connections: Array<{ slot_key: string; name: string; state: string }>;
+}
+
 export type RuntimeCredentialScope = 'runtime' | 'end_users.read' | 'end_users.manage';
 
 /** An end-user export job; the JSON is downloaded once it has succeeded. */
