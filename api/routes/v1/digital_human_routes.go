@@ -117,6 +117,12 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	}
 	channelHandler := digitalhuman.NewChannelHandler(deps.Channels, errorProjector)
 	channelHandler.RegisterPublicRoutes(router)
+	if deps.Artifacts != nil {
+		// A shared artifact opens for anyone holding its link, without signing in.
+		shares := router.Group("/artifact-shares")
+		shares.Use(middleware.SetupRequired())
+		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).RegisterShareRoutes(shares)
+	}
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -256,7 +262,8 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView
 		case http.MethodPost:
-			if strings.HasSuffix(path, "/archive") || strings.HasSuffix(path, "/restore") {
+			if strings.HasSuffix(path, "/archive") || strings.HasSuffix(path, "/restore") ||
+				strings.HasSuffix(path, "/shares") || strings.HasSuffix(path, "/revoke") {
 				return workspacemodel.WorkspacePermissionDigitalHumanView
 			}
 			return ""

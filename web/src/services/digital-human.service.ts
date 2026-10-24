@@ -5,6 +5,8 @@ import type {
   DigitalHumanArtifact,
   DigitalHumanArtifactList,
   DigitalHumanArtifactParams,
+  DigitalHumanArtifactShare,
+  DigitalHumanArtifactShareLifetime,
   DigitalHumanArtifactVersion,
   CreateDigitalHumanPersonaTemplateRequest,
   DigitalHumanDetail,
@@ -644,6 +646,22 @@ class DigitalHumanService extends BaseService {
 
   setArtifactArchived(id: string, artifactId: string, archived: boolean): Promise<ApiResponseData<DigitalHumanArtifact>> {
     return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/${archived ? 'archive' : 'restore'}`);
+  }
+
+  listArtifactShares(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactShare[] }>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}/shares`);
+  }
+
+  createArtifactShare(
+    id: string,
+    artifactId: string,
+    request: { version?: number; expires_in?: DigitalHumanArtifactShareLifetime }
+  ): Promise<ApiResponseData<DigitalHumanArtifactShare & { token: string }>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/shares`, request);
+  }
+
+  revokeArtifactShare(id: string, artifactId: string, shareId: string): Promise<ApiResponseData<{ revoked: boolean }>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/shares/${shareId}/revoke`);
   }
 
   listArtifactVersions(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactVersion[] }>> {

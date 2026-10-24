@@ -992,7 +992,26 @@ export interface DigitalHumanArtifact {
   archived_at?: string;
   /** Whether the reader may archive or restore it. */
   can_manage?: boolean;
+  /** Whether the reader may make links to it that open without signing in. */
+  can_share?: boolean;
   latest?: DigitalHumanArtifactVersion;
+}
+
+export type DigitalHumanArtifactShareLifetime = '1d' | '7d' | '30d' | 'never';
+
+/** A link that opens one version of an artifact for anyone holding it. */
+export interface DigitalHumanArtifactShare {
+  id: string;
+  artifact_id: string;
+  version: number;
+  created_by_id: string;
+  expires_at?: string;
+  revoked_at?: string;
+  access_count: number;
+  last_accessed_at?: string;
+  created_at: string;
+  /** Returned only when the link is made. */
+  token?: string;
 }
 
 export interface DigitalHumanArtifactList {

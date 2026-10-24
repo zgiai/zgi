@@ -6,7 +6,8 @@ import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-hu
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Archive, ArchiveRestore, Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Users } from 'lucide-react';
+import { Archive, ArchiveRestore, Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Share2, Users } from 'lucide-react';
+import { ArtifactShareDialog } from '@/components/digital-human/artifact-share-dialog';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { ProtectedGeneratedFileCard } from '@/components/chat/variants/aichat/protected-generated-file-card';
 import { useOpenTaskReport } from '@/components/digital-human/task-report-drawer';
@@ -233,6 +234,7 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
     queryFn: () => digitalHumanService.listArtifactVersions(digitalHumanId, artifactId),
   });
   const [number, setNumber] = useState<number | null>(null);
+  const [sharing, setSharing] = useState(false);
   const queryClient = useQueryClient();
   const archive = useMutation({
     mutationFn: (archived: boolean) => digitalHumanService.setArtifactArchived(digitalHumanId, artifactId, archived),
@@ -263,6 +265,12 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
             {formatTaskTime(version.created_at, locale)}
           </p>
         </div>
+        {data.can_share && !data.archived_at ? (
+          <Button size="sm" variant="outline" className="shrink-0" onClick={() => setSharing(true)}>
+            <Share2 className="size-4" />
+            {t('artifacts.share.action')}
+          </Button>
+        ) : null}
         {data.can_manage ? (
           <Button size="sm" variant="outline" className="shrink-0" disabled={archive.isPending} onClick={() => archive.mutate(!data.archived_at)}>
             {data.archived_at ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
@@ -299,6 +307,7 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
         />
       </dl>
       <ArtifactPreview digitalHumanId={digitalHumanId} artifact={data} version={version} />
+      <ArtifactShareDialog digitalHumanId={digitalHumanId} artifactId={data.id} version={version.number} open={sharing} onOpenChange={setSharing} />
       {items.length > 1 ? (
         <section>
           <h3 className="flex items-center gap-1.5 text-sm font-semibold">

@@ -129,6 +129,8 @@ type Summary struct {
 	Latest *Version `json:"latest,omitempty"`
 	// CanManage says whether the reader may archive or restore it.
 	CanManage bool `json:"can_manage"`
+	// CanShare says whether the reader may make links to it.
+	CanShare bool `json:"can_share"`
 }
 
 // ArchiveFilter selects artifacts by whether they are archived.
@@ -409,7 +411,7 @@ func (s *Service) List(ctx context.Context, reader Reader, query ListQuery) (*Li
 	}
 	items := make([]*Summary, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, &Summary{Artifact: *row, Latest: latest[row.ID], CanManage: canManage(reader, row)})
+		items = append(items, &Summary{Artifact: *row, Latest: latest[row.ID], CanManage: canManage(reader, row), CanShare: canShare(reader, row)})
 	}
 	return &ListResult{Items: items, Total: total, Page: page, PageSize: size}, nil
 }
@@ -424,7 +426,7 @@ func (s *Service) Get(ctx context.Context, reader Reader, id uuid.UUID) (*Summar
 	if err != nil {
 		return nil, err
 	}
-	return &Summary{Artifact: *artifact, Latest: latest[artifact.ID], CanManage: canManage(reader, artifact)}, nil
+	return &Summary{Artifact: *artifact, Latest: latest[artifact.ID], CanManage: canManage(reader, artifact), CanShare: canShare(reader, artifact)}, nil
 }
 
 // Versions lists an artifact's versions, newest first.
