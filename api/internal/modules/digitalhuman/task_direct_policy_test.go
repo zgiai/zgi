@@ -31,7 +31,7 @@ func TestTaskChangesApplyAtOnceOnlyWhenLowRisk(t *testing.T) {
 		"group one-off":         {create(group, "create", once), true},
 		"group daily":           {create(group, "create", daily), false},
 		"api one-off":           {create(api, "create", once), false},
-		"suggested, not asked":  {create(console, "propose", once), false},
+		"propose alias":         {create(console, "propose", once), true},
 		"manual task":           {directTaskCreateAllowed(console, manageTaskArguments{Action: "create"}), true},
 		"edit a daily task":     {change(console, "update", nil, daily), true},
 		"make it hourly":        {change(console, "schedule", &hourly, daily), false},

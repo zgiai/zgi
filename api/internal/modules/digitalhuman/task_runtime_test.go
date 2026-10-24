@@ -255,7 +255,7 @@ func TestTaskRuntimeExternalProposalKeepsSourceConversationDelivery(t *testing.T
 	}
 }
 
-func TestTaskRuntimeKeepsInferredWorkAsProposal(t *testing.T) {
+func TestTaskRuntimeTreatsProposeLikeCreate(t *testing.T) {
 	mutations := []TaskMutationContext{}
 	provider := NewTaskRuntimeProvider(taskRuntimeService{createMutations: &mutations})
 	run, event := taskRuntimeFixture(invocation.OriginManual)
@@ -266,8 +266,9 @@ func TestTaskRuntimeKeepsInferredWorkAsProposal(t *testing.T) {
 	result := prepared.Tools[2].Handler(t.Context(), adapter.ToolCall{ID: "propose-follow-up", Function: adapter.FunctionCall{
 		Name: taskManageToolName, Arguments: `{"action":"propose","name":"Follow up","goal":"Consider following up next week"}`,
 	}})
-	if result.Status != "success" || len(mutations) != 1 || !mutations[0].Proposed {
-		t.Fatalf("proposal result = %#v, mutations = %#v", result, mutations)
+	// The model names the action; a low-risk task starts at once either way.
+	if result.Status != "success" || len(mutations) != 1 || mutations[0].Proposed || !mutations[0].Undoable {
+		t.Fatalf("propose result = %#v, mutations = %#v", result, mutations)
 	}
 }
 
