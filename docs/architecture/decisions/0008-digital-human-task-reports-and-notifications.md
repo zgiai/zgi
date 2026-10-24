@@ -58,7 +58,7 @@ A report is stored once. Notifications deliver it, and failures and pending appr
 | DigitalHuman channel group | The DigitalHuman's channel bindings | Only groups the DigitalHuman already serves |
 | Email | The account | Verified before use, and sent through the existing email sender |
 | Webhook | The DigitalHuman, overridable per API key | Signed and retried. Used by external API integrations |
-| Personal IM | The account, through Connections (ADR 0007) | Later |
+| Personal IM | The account, through Connections (ADR 0007) | A direct message sent with the account's own Feishu or DingTalk Connection; see Stage 4 |
 
 - Team channels are registered at workspace level by managers. Personal channels are bound by their owner.
 - A private task can never notify a team channel.
@@ -80,6 +80,19 @@ A report is stored once. Notifications deliver it, and failures and pending appr
   - Integrations without a webhook poll for unread reports.
 - **WebApp:** signed-in end users see reports, unread counts, and accept or rework in My tasks, and report cards in the conversation. Email for WebApp users is off unless the operator enables it. Anonymous sessions cannot create tasks, so they have no reports.
 - End users never notify team channels. Their rework needs no operator review, because it only reruns their own task.
+
+### Stage 4: personal IM, digests, and quiet hours
+
+Decided 2026-10-23.
+
+- **Personal IM channel.** A member binds a channel of type `im` to one of their own ready Connections of a Connector that can send a direct message, plus their own user ID in that tool: a Feishu `open_id` (`feishu.message.send`) or a DingTalk user ID (`dingtalk.messages.send_direct`). Connectors that can only reply inside a conversation (WeCom, WeChat) are not offered.
+  - Like email, the channel is verified first: a six-digit code is sent through it, and the member enters it.
+  - Sending uses the provider runtime directly with the Connection's credentials, outside model runs and their confirmations, because the member set it up for this purpose. The message carries the outcome line and a link, like other external channels.
+  - Removing or disconnecting the Connection makes deliveries fail, so they stay in the inbox marked as failed.
+- **Digests for recurring tasks.** A scheduled (cron) task's "report to" setting chooses each run, a daily digest, or a weekly digest. A digest only affects external channels (email, personal IM, webhooks, team channels): their report notifications are held and sent together as one message. The in-app inbox still gets every report, and failures and pending approvals are always sent at once.
+  - A daily digest is sent at 09:00 and a weekly digest on Monday at 09:00, in the recipient account's time zone (UTC when unset). A digest for a team channel uses the task requester's time zone.
+  - A digest lists each held report's task, outcome line, and time, with one link to the Reports tab.
+- **Quiet hours.** Each account may set one daily window (start and end, in its time zone), for example 22:00 to 08:00. Deliveries to that account's own email and personal IM channels during the window are delayed to its end. The inbox, webhooks, and team channels are not affected.
 
 ### Delivery
 

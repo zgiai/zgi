@@ -106,5 +106,5 @@ Each step ships behind its flag and keeps existing behavior when the flag is off
 - The DigitalHuman's own identity and memory stay shared, so improvements to it reach every instance immediately.
 - Run admission gains one lookup or insert. Instance creation must be idempotent and safe under concurrent first requests.
 - Existing data needs no backfill to keep working. Instances are created lazily, and the migration creates instances for end users seen in earlier runs so operators can see historical end users.
-- Instance memory ships behind `ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_ENABLED`, and the management surface behind `ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED`. Both default to off.
+- Instance memory ships behind `ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_ENABLED`, and instances behind `ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED`. Both were off by default during rollout; since the decision was accepted (2026-10-23) both are on unless a deployment sets them to `false`.
 - Per-member instances in channels and cross-DigitalHuman identity for the same end user are outside this decision.
