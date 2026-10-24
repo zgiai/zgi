@@ -283,6 +283,23 @@ func TestChannelWebhookStaleGroupMentionIsAuditedWithoutInvocation(t *testing.T)
 	}
 }
 
+func TestChannelInstallationOfTheSameConnectionIsCreatedOnce(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	request := CreateChannelInstallationRequest{Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu"}
+	first, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, request)
+	if err != nil || second.ID != first.ID || len(store.installations) != 1 {
+		t.Fatalf("second CreateInstallation() = %#v, %v; installations %d", second, err, len(store.installations))
+	}
+	request.ConnectionID = uuid.New()
+	if other, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, request); err != nil || other.ID == first.ID {
+		t.Fatalf("another Connection = %#v, %v", other, err)
+	}
+}
+
 func TestChannelWebhookStaleGroupMentionDoesNotCreateAutomaticRoute(t *testing.T) {
 	service, store, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
 	receivedAt := time.Now().UTC().Truncate(time.Second)

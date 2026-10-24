@@ -179,6 +179,18 @@ func (service *ChannelService) CreateInstallation(ctx context.Context, scope Sco
 		}
 		return installation, nil
 	}
+	// Adding a Connection the digital human already has, as when a setup
+	// flow reports ready twice, returns that channel: a second one would
+	// share its bot, and DingTalk gives each app's messages to one of them.
+	existing, err := service.store.ListChannelInstallations(ctx, scope, digitalHumanID)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.channel.installation.create")
+	}
+	for _, item := range existing {
+		if item.ConnectionID == connectionID && item.Provider == request.Provider {
+			return item, nil
+		}
+	}
 	credential, err := service.credentials.ResolveCredential(ctx, installation)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.create")
