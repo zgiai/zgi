@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
@@ -73,14 +74,39 @@ func (s notificationIMSender) Send(ctx context.Context, organizationID, ownerID,
 	if len(logical) > 128 {
 		logical = logical[:128]
 	}
-	_, err = s.container.GetConnectorCandidateVerifier().Invoke(ctx, execution.ProviderInvocation{
+	result, err := s.container.GetConnectorCandidateVerifier().Invoke(ctx, execution.ProviderInvocation{
 		OrganizationID: organizationID, OwnerAccountID: ownerID, ActingPrincipalID: ownerID, ConnectionID: connection.ID,
 		ConnectorID: connection.ConnectorID, ProviderID: connection.ProviderID, DriverID: connection.DriverID, AuthMethodID: connection.AuthMethodID,
 		CredentialVersion: connection.CredentialVersion, Target: core.TargetRef{Type: core.TargetTypeChat, ID: "notification"},
 		OperationID: core.Identifier(message.operation), LogicalOperationID: logical, Credentials: values,
 		Input: message.input(recipient, text),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return imDeliveryOutcome(result.Value)
 }
+
+// imDeliveryOutcome reads a provider's own delivery report: DingTalk answers
+// a batch send that skipped its only recipient with success and lists them as
+// invalid, filtered, or rate limited.
+func imDeliveryOutcome(value any) error {
+	output, _ := value.(map[string]any)
+	if output == nil || output["status"] != "partial" {
+		return nil
+	}
+	if limited, _ := output["rate_limited_user_ids"].([]string); len(limited) > 0 {
+		return errIMRecipientRateLimited
+	}
+	if limited, _ := output["rate_limited_user_ids"].([]any); len(limited) > 0 {
+		return errIMRecipientRateLimited
+	}
+	return errIMRecipientRejected
+}
+
+var (
+	errIMRecipientRateLimited = errors.New("the IM provider rate limited the recipient; the message was not sent")
+	errIMRecipientRejected    = errors.New("the IM provider rejected the recipient; check the user ID and that they can receive the bot's messages")
+)
 
 var _ inbox.IMSender = notificationIMSender{}

@@ -1405,7 +1405,7 @@ const messages: DigitalHumansMessages = {
           credentialsPath: '应用详情 → 凭证与基础信息',
           callbackTitle: '消息接收方式',
           callbackPath: '钉钉机器人固定使用 Stream 模式，无需填写公网地址。',
-          callbackWarning: '在钉钉机器人配置中选择 Stream，然后发布应用。',
+          callbackWarning: '在钉钉机器人配置中选择 Stream，然后发布应用。机器人发布前，钉钉不提供发送人的用户 ID，消息会被忽略。同一个钉钉应用同时只能接到一个数字人。',
           openConsole: '打开钉钉开放平台',
           editTitle: '编辑钉钉应用凭证',
         },

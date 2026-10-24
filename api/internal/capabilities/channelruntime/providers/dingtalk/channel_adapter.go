@@ -16,6 +16,10 @@ import (
 	providertransport "github.com/zgiai/zgi/api/internal/capabilities/channelruntime/providertransport"
 )
 
+// ErrSenderUnpublishedBot is a message without the sender's userId, which
+// DingTalk sends only to a published bot.
+var ErrSenderUnpublishedBot = fmt.Errorf("%w: DingTalk sent no userId; publish the bot first", channelruntime.ErrUnsupportedEvent)
+
 const (
 	maxDingTalkWebhookBodyBytes = 1 << 20
 	maxDingTalkInboundTextRunes = 32_000
@@ -127,9 +131,16 @@ func (*ChannelAdapter) Normalize(_ context.Context, verified *channelruntime.Ver
 		return nil, channelruntime.ErrUnsupportedEvent
 	}
 	messageID := strings.TrimSpace(callback.MessageID)
-	senderID := firstDingTalkWebhookValue(callback.SenderStaffID, callback.SenderID)
-	if messageID == "" || senderID == "" {
+	if messageID == "" {
 		return nil, channelruntime.ErrInvalidWebhook
+	}
+	// The sender is their DingTalk userId, which replies and approvals are
+	// addressed to. DingTalk sends it only once the bot is published; the
+	// encrypted senderId of an unpublished bot cannot be replied to and
+	// would make the same person a second one later.
+	senderID := strings.TrimSpace(callback.SenderStaffID)
+	if senderID == "" {
+		return nil, ErrSenderUnpublishedBot
 	}
 	conversationType, target, err := dingTalkConversationTarget(callback, senderID)
 	if err != nil {
@@ -201,6 +212,14 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 			return nil, err
 		}
 	}
+	// The only recipient of a direct reply was skipped: rate limited ones are
+	// retried by the outbox, the others cannot receive it.
+	if len(response.FlowControlledStaffIDs) > 0 {
+		return nil, dingError(providertransport.ErrorCodeRateLimited, "DingTalk rate limited the recipient", nil)
+	}
+	if len(response.InvalidStaffIDs)+len(response.FilteredStaffIDs) > 0 {
+		return nil, dingError(providertransport.ErrorCodeInvalidInput, "DingTalk cannot deliver to the recipient", nil)
+	}
 	messageID := firstDingTalkWebhookValue(response.ProcessQueryKey, response.MessageID)
 	if messageID == "" {
 		messageID = "delivery:" + request.DeliveryID.String()
@@ -269,6 +288,10 @@ type dingTalkRobotSendResponse struct {
 	ProcessQueryKey string `json:"processQueryKey"`
 	MessageID       string `json:"messageId"`
 	RequestID       string `json:"requestId"`
+	// A direct batch send succeeds while listing recipients it skipped.
+	InvalidStaffIDs        []string `json:"invalidStaffIdList"`
+	FlowControlledStaffIDs []string `json:"flowControlledStaffIdList"`
+	FilteredStaffIDs       []string `json:"filteredStaffIdList"`
 }
 
 func dingTalkConversationTarget(callback dingTalkRobotCallback, senderID string) (channelruntime.ConversationType, string, error) {
@@ -298,11 +321,8 @@ func dingTalkRobotDelivery(
 	if target == "" || robotCode == "" || text == "" {
 		return "", nil, channelruntime.ErrInvalidWebhook
 	}
-	parameter, err := json.Marshal(map[string]string{"content": text})
-	if err != nil {
-		return "", nil, channelruntime.ErrInvalidWebhook
-	}
-	body := map[string]interface{}{"robotCode": robotCode, "msgKey": "sampleText", "msgParam": string(parameter)}
+	body := map[string]interface{}{"robotCode": robotCode}
+	setDingTalkMessage(body, text, text)
 	switch {
 	case strings.HasPrefix(target, dingTalkDirectTargetPrefix):
 		userID := strings.TrimSpace(strings.TrimPrefix(target, dingTalkDirectTargetPrefix))
@@ -322,11 +342,7 @@ func dingTalkRobotDelivery(
 			for _, mentionID := range mentionIDs {
 				prefixes = append(prefixes, "@"+mentionID)
 			}
-			parameter, err = json.Marshal(map[string]string{"content": strings.Join(prefixes, " ") + " " + text})
-			if err != nil {
-				return "", nil, channelruntime.ErrInvalidWebhook
-			}
-			body["msgParam"] = string(parameter)
+			setDingTalkMessage(body, strings.Join(prefixes, " ")+" "+text, text)
 			body["atUserIds"] = mentionIDs
 		}
 		body["openConversationId"] = conversationID
@@ -334,6 +350,57 @@ func dingTalkRobotDelivery(
 	default:
 		return "", nil, channelruntime.ErrInvalidWebhook
 	}
+}
+
+// maxDingTalkMarkdownParamBytes keeps a Markdown message under the 15000
+// bytes DingTalk accepts for msgParam; longer replies go as plain text.
+const maxDingTalkMarkdownParamBytes = 14000
+
+// setDingTalkMessage sends text as DingTalk Markdown (sampleMarkdown), like
+// Feishu's rich text replies, or as plain text when it is too long. The
+// preview title comes from the reply itself, not from mentions before it.
+func setDingTalkMessage(body map[string]interface{}, text, reply string) {
+	markdown, _ := json.Marshal(map[string]string{"title": dingTalkMarkdownTitle(reply), "text": dingTalkMarkdownText(text)})
+	if len(markdown) <= maxDingTalkMarkdownParamBytes {
+		body["msgKey"], body["msgParam"] = "sampleMarkdown", string(markdown)
+		return
+	}
+	plain, _ := json.Marshal(map[string]string{"content": text})
+	body["msgKey"], body["msgParam"] = "sampleText", string(plain)
+}
+
+// dingTalkMarkdownText keeps line breaks: DingTalk joins lines that do not
+// end with two spaces.
+func dingTalkMarkdownText(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	fenced := false
+	for index, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if !fenced && strings.TrimSpace(line) != "" && !strings.HasSuffix(line, "  ") {
+			lines[index] = line + "  "
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// dingTalkMarkdownTitle is the preview line of a Markdown message: its first
+// line without Markdown marks.
+func dingTalkMarkdownTitle(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#>*-+` "))
+		line = strings.NewReplacer("**", "", "__", "", "`", "").Replace(line)
+		if line == "" {
+			continue
+		}
+		if runes := []rune(line); len(runes) > 30 {
+			line = string(runes[:30]) + "…"
+		}
+		return line
+	}
+	return "消息"
 }
 
 func dingTalkMentionUserIDs(mentions []channelruntime.DeliveryMention) []string {

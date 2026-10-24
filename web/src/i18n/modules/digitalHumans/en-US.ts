@@ -1510,7 +1510,7 @@ const messages = {
           credentialsPath: 'App details → Credentials & Basic Information',
           callbackTitle: 'Message reception mode',
           callbackPath: 'DingTalk robots always use Stream mode and require no public URL.',
-          callbackWarning: 'Select Stream in the DingTalk robot settings, then publish the app.',
+          callbackWarning: 'Select Stream in the DingTalk robot settings, then publish the app. Until the robot is published, DingTalk does not send the sender user ID and messages are ignored. One DingTalk app serves one digital human at a time.',
           openConsole: 'Open DingTalk Developer Console',
           editTitle: 'Edit DingTalk app credential',
         },

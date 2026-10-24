@@ -423,7 +423,7 @@ const messages: CommonMessages = {
     imConnector: { feishu: '飞书', dingtalk: '钉钉' },
     imOpenIdLabel: '你的飞书 open_id',
     imUserIdLabel: '你的钉钉用户 ID',
-    imHint: '通知会用这个连接的应用机器人单聊发给你。添加后会先发一条验证码，确认收到后启用。',
+    imHint: '通知会用这个连接的应用机器人单聊发给你。添加后会先发一条验证码，确认收到后启用。钉钉需要你先在钉钉里和这个机器人单聊过。',
     imCodeSent: '验证码已通过单聊发送。',
     enterIMCode: '输入单聊收到的 6 位验证码',
     quietTitle: '免打扰时段',

@@ -436,7 +436,7 @@ const messages = {
     imConnector: { feishu: 'Feishu', dingtalk: 'DingTalk' },
     imOpenIdLabel: 'Your Feishu open_id',
     imUserIdLabel: 'Your DingTalk user ID',
-    imHint: "Notifications are sent to you as a direct message by this Connection's app bot. A code is sent first; the channel turns on once you confirm it.",
+    imHint: "Notifications are sent to you as a direct message by this Connection's app bot. A code is sent first; the channel turns on once you confirm it. On DingTalk, chat with the bot once first.",
     imCodeSent: 'A code was sent to you as a direct message.',
     enterIMCode: 'Enter the 6-digit code from the direct message',
     quietTitle: 'Quiet hours',

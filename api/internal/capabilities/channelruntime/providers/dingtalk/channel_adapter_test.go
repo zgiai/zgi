@@ -3,8 +3,11 @@ package dingtalk
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -149,8 +152,91 @@ func TestDingTalkChannelDeliverUsesRobotAPI(t *testing.T) {
 		t.Fatalf("Deliver() atUserIds = %#v, want user-1", receivedBody["atUserIds"])
 	}
 	var parameters map[string]string
-	if err := json.Unmarshal([]byte(receivedBody["msgParam"].(string)), &parameters); err != nil || parameters["content"] != "@user-1 处理完成" {
+	if err := json.Unmarshal([]byte(receivedBody["msgParam"].(string)), &parameters); err != nil || receivedBody["msgKey"] != "sampleMarkdown" ||
+		parameters["text"] != "@user-1 处理完成  " || parameters["title"] != "处理完成" {
 		t.Fatalf("Deliver() msgParam = %#v, decoded=%#v error=%v", receivedBody["msgParam"], parameters, err)
+	}
+}
+
+func TestDingTalkMarkdownKeepsLinesAndFallsBackToText(t *testing.T) {
+	body := map[string]interface{}{}
+	setDingTalkMessage(body, "## 周报\n- 完成 A\n- 完成 B\n\n```\ncode\n```", "## 周报")
+	var parameters map[string]string
+	_ = json.Unmarshal([]byte(body["msgParam"].(string)), &parameters)
+	if body["msgKey"] != "sampleMarkdown" || parameters["title"] != "周报" ||
+		parameters["text"] != "## 周报  \n- 完成 A  \n- 完成 B  \n\n```\ncode\n```" {
+		t.Fatalf("markdown = %#v", parameters)
+	}
+	long := strings.Repeat("长", maxDingTalkMarkdownParamBytes)
+	setDingTalkMessage(body, long, long)
+	if body["msgKey"] != "sampleText" {
+		t.Fatalf("a reply over the Markdown limit = %v", body["msgKey"])
+	}
+}
+
+func TestDingTalkDirectReplySkippedByDingTalkIsNotDelivered(t *testing.T) {
+	for name, skipped := range map[string]map[string]any{
+		"rate limited": {"processQueryKey": "q", "flowControlledStaffIdList": []string{"user-1"}},
+		"invalid":      {"processQueryKey": "q", "invalidStaffIdList": []string{"user-1"}},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/v1.0/oauth2/accessToken" {
+				_ = json.NewEncoder(writer).Encode(map[string]interface{}{"accessToken": "token-1", "expireIn": 7200})
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(skipped)
+		}))
+		provider, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		connectionID := uuid.New()
+		adapter, _ := NewDirectChannelAdapter(provider, dingTalkChannelConnectionResolverStub{connectionID: connectionID})
+		_, err = adapter.Deliver(t.Context(), channelruntime.DeliveryRequest{
+			OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ActorID: uuid.New(), InstallationID: connectionID, ConnectionID: uuid.New(),
+			RunID: uuid.New(), DeliveryID: uuid.New(), ExternalConversationID: "direct:user-1", Text: "hi",
+		})
+		server.Close()
+		want := providertransport.ErrorCodeInvalidInput
+		if name == "rate limited" {
+			want = providertransport.ErrorCodeRateLimited
+		}
+		if providertransport.ErrorCode(err) != want {
+			t.Fatalf("%s: Deliver() = %v, want %s", name, err, want)
+		}
+	}
+}
+
+func TestDingTalkMessageWithoutUserIDNeedsAPublishedBot(t *testing.T) {
+	adapter := &ChannelAdapter{}
+	body := []byte(`{"conversationId":"cid","conversationType":"1","msgId":"m-1","msgtype":"text","createAt":1787479200000,"senderId":"sender-encrypted","text":{"content":"你好"}}`)
+	if _, err := adapter.Normalize(t.Context(), &channelruntime.VerifiedWebhook{Body: body}, channelruntime.NormalizationContext{}); !errors.Is(err, ErrSenderUnpublishedBot) || !errors.Is(err, channelruntime.ErrUnsupportedEvent) {
+		t.Fatalf("Normalize() without senderStaffId = %v", err)
+	}
+}
+
+func TestDingTalkStreamReceiverAcknowledgesWhatItDoesNotTake(t *testing.T) {
+	receiver := NewStreamReceiver(&ChannelAdapter{})
+	if scope := receiver.LeaseScope(channelruntime.ResolvedChannelCredential{Values: map[string]string{"app_key": " ding-app "}}); scope != "dingtalk:stream:ding-app" {
+		t.Fatalf("lease scope = %q", scope)
+	}
+	called := false
+	handle := func(context.Context, *channelruntime.InboundMessage) error { called = true; return nil }
+	picture := &chatbot.BotCallbackDataModel{ConversationType: "1", MsgId: "m-1", Msgtype: "picture", SenderStaffId: "user-1", CreateAt: 1787479200000}
+	if ack, err := receiver.handleMessage(t.Context(), channelruntime.InstallationIdentity{}, picture, handle); err != nil || string(ack) != "{}" || called {
+		t.Fatalf("an unsupported message = %q, %v, handled %v", ack, err, called)
+	}
+	text := &chatbot.BotCallbackDataModel{ConversationType: "1", MsgId: "m-2", Msgtype: "text", SenderStaffId: "user-1", CreateAt: 1787479200000,
+		Text: chatbot.BotCallbackDataTextModel{Content: "你好"}}
+	failing := func(context.Context, *channelruntime.InboundMessage) error { return errors.New("pq: secret detail") }
+	if _, err := receiver.handleMessage(t.Context(), channelruntime.InstallationIdentity{}, text, failing); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("a failed store leaked %v", err)
+	}
+	if mapped := dingTalkReceiverError(errors.New(`{"code":"invalidClientId"}`)); mapped.Code != "credentials_invalid" || mapped.Retryable {
+		t.Fatalf("bad credentials = %#v", mapped)
+	}
+	if mapped := dingTalkReceiverError(errors.New("dial tcp: i/o timeout")); mapped.Code != "connection_failed" || !mapped.Retryable {
+		t.Fatalf("a network failure = %#v", mapped)
 	}
 }
 
