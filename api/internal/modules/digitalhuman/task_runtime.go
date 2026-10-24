@@ -70,6 +70,8 @@ type taskRuntimeBoundary struct {
 	currentTaskRunID uuid.UUID
 	access           TaskAccessContext
 	writable         bool
+	// timezone is the user's, for schedules the model gives without one.
+	timezone string
 }
 
 func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, event invocation.Event) (*TaskRuntimePreparation, error) {
@@ -98,6 +100,7 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		return nil, err
 	}
 	boundary.access = access
+	boundary.timezone = runTimezone(ctx)
 	tools := []skillloop.RuntimeTool{p.listTool(run, boundary), p.getTool(run, boundary), p.manageTool(run, boundary)}
 	if reporter, ok := p.service.(TaskReportService); ok && boundary.currentTaskID != uuid.Nil && boundary.currentTaskRunID != uuid.Nil {
 		tools = append(tools, p.reportTool(run, boundary, reporter))
@@ -581,6 +584,10 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 		var args manageTaskArguments
 		if decodeStrict(call.Function.Arguments, &args) != nil {
 			return taskToolFailure("invalid_arguments", true)
+		}
+		// A schedule without a timezone is in the user's, not UTC's.
+		if args.Schedule != nil && strings.TrimSpace(args.Schedule.Timezone) == "" && boundary.timezone != "" {
+			args.Schedule.Timezone = boundary.timezone
 		}
 		mutation := TaskMutationContext{ActorType: "digital_human", ActorRef: run.DigitalHumanID.String(), OperationID: taskToolOperationID(run.ID, call), SourceRunID: &run.ID, Source: boundary.source, SourceConversationID: boundary.conversationID, SourceConversationType: boundary.conversationType, ReplyTo: boundary.replyTo}
 		if boundary.currentTaskID != uuid.Nil && !scheduledTaskMutationAllowed(args, boundary.currentTaskID) {

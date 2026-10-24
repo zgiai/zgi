@@ -71,9 +71,12 @@ type ExecutionContext struct {
 	// bridge. It cannot be supplied through Skill arguments or runtime JSON.
 	PlatformInteractiveApproval bool `json:"-"`
 	// ScriptModel is server-owned and never serialized into tool arguments.
-	ScriptModel              *ScriptModelChannel `json:"-"`
-	scriptModelPath          string
-	PresentationLocale       string           `json:"-"`
+	ScriptModel        *ScriptModelChannel `json:"-"`
+	scriptModelPath    string
+	PresentationLocale string `json:"-"`
+	// Timezone is the caller's IANA timezone, which the time Skill uses when
+	// the model names none.
+	Timezone                 string           `json:"-"`
 	ConnectorTargetScope     core.TargetScope `json:"-"`
 	ConnectorTargetVersionID string           `json:"-"`
 	// ConnectorTargetType selects the DigitalHuman host boundary. It is empty
@@ -635,6 +638,9 @@ func (r *Runtime) CallSkillTool(
 		return &ToolInvocationResult{Trace: trace}, enrichErr
 	}
 	executionArguments = enrichedArguments
+	if doc.Metadata.ID == SkillTime {
+		executionArguments = withTimeSkillDefaults(toolDef.Name, executionArguments, execCtx.Timezone)
+	}
 	if err := validateSkillToolArguments(doc.Metadata.ID, toolDef, executionArguments); err != nil {
 		traceArguments := summarizeToolArguments(toolDef, executionArguments)
 		if len(toolDef.InputSchema) > 0 {

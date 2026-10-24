@@ -1070,6 +1070,9 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		config.RuntimeToolFactory = factory
 	}
 	config.ConnectorRunID = run.ID.String()
+	location := s.runLocation(ctx, run)
+	config.UserTimezone = location.String()
+	config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + currentTimeGuidance(s.now(), location)
 	applyRunEndUserBilling(&config, run)
 	if repository, ok := s.store.(*GormRepository); ok {
 		missing, perUserErr := preparePerUserConnectors(ctx, repository.db, repository.connectorCatalog, run)
@@ -1122,7 +1125,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		}
 	}
 	if s.tasks != nil && !previewRun(run) {
-		taskPreparation, taskErr := s.tasks.Prepare(ctx, run, event)
+		taskPreparation, taskErr := s.tasks.Prepare(withRunTimezone(ctx, location), run, event)
 		if taskErr != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.tasks.prepare_failed", "The DigitalHuman could not prepare its task tools.", s.now())
 			return taskErr

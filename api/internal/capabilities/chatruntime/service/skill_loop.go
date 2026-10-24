@@ -2015,6 +2015,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		MessageID:          prepared.Message.ID.String(),
 		InvokeFrom:         invokeFrom,
 		RuntimeParameters:  runtimeParameters,
+		Timezone:           strings.TrimSpace(prepared.RunConfig.UserTimezone),
 	}
 	if s == nil {
 		return executionContext

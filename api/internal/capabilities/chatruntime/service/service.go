@@ -216,9 +216,12 @@ type RunConfig struct {
 	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive are
 	// server-owned DigitalHuman host coordinates. They are never populated from
 	// a user-facing request DTO.
-	ConnectorTargetType       connectorcore.TargetType
-	ConnectorRunID            string
-	ConnectorInteractive      bool
+	ConnectorTargetType  connectorcore.TargetType
+	ConnectorRunID       string
+	ConnectorInteractive bool
+	// UserTimezone is the IANA timezone of the person the run serves; the
+	// time Skill defaults to it. Empty keeps the Skill's UTC default.
+	UserTimezone              string
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
 	BillingAppID              string
