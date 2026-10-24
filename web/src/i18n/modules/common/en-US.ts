@@ -422,11 +422,11 @@ const messages = {
 
   notifications: {
     title: 'Notification settings',
-    description: 'In-app notifications are always on. You can also send task reports and failures to your own email or webhook.',
+    description: 'In-app notifications are always on. You can also send task reports and failures to your own email, Feishu / DingTalk, or webhook.',
     channelsTitle: 'Notification channels',
     add: 'Add channel',
     addTitle: 'Add a notification channel',
-    addDescription: 'An email address is enabled after you enter the code sent to it. A webhook is enabled at once and gets a signing secret.',
+    addDescription: 'Email and Feishu / DingTalk are enabled after you enter the code sent to them. A webhook is enabled at once and gets a signing secret.',
     empty: 'No notification channels yet. You only get in-app notifications.',
     type: { email: 'Email', webhook: 'Webhook', im: 'Feishu / DingTalk' },
     emailLabel: 'Email address',

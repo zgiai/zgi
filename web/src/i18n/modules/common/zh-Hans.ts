@@ -409,11 +409,11 @@ const messages: CommonMessages = {
 
   notifications: {
     title: '通知设置',
-    description: '站内通知始终开启。你还可以把任务汇报和执行失败发到自己的邮箱或 Webhook。',
+    description: '站内通知始终开启。你还可以把任务汇报和执行失败发到自己的邮箱、飞书 / 钉钉或 Webhook。',
     channelsTitle: '通知渠道',
     add: '添加渠道',
     addTitle: '添加通知渠道',
-    addDescription: '邮箱需要输入验证码确认后才会启用；Webhook 会立即启用并生成签名密钥。',
+    addDescription: '邮箱和飞书 / 钉钉需要输入验证码确认后才会启用；Webhook 会立即启用并生成签名密钥。',
     empty: '还没有通知渠道。只会收到站内通知。',
     type: { email: '邮箱', webhook: 'Webhook', im: '飞书 / 钉钉' },
     emailLabel: '邮箱地址',
