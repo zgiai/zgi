@@ -103,6 +103,15 @@ func TestQuietHoursAndDigestTimes(t *testing.T) {
 	if due := nextDigestAt(DigestWeekly, shanghai, at(10, 0)); !due.Equal(time.Date(2026, 10, 26, 9, 0, 0, 0, shanghai).UTC()) {
 		t.Fatalf("weekly digest = %v", due)
 	}
+	// Quiet hours end at wall-clock time, even on the night clocks go back.
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallBack := time.Date(2026, 11, 1, 7, 30, 0, 0, newYork)
+	if until := quietUntil(quiet, newYork, fallBack); !until.Equal(time.Date(2026, 11, 1, 8, 0, 0, 0, newYork).UTC()) {
+		t.Fatalf("quiet at 07:30 on the fall-back day lasts until %v", until.In(newYork))
+	}
 }
 
 func TestIMChannelIsVerifiedThroughTheOwnersConnection(t *testing.T) {

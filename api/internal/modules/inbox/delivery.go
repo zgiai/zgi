@@ -135,6 +135,7 @@ func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error
 	}
 	candidates = append(candidates, extra...)
 	seen := map[uuid.UUID]bool{}
+	var unscheduled []error
 	now := d.now()
 	// A recurring task's report may wait for a digest (ADR 0008 stage 4);
 	// failures and approvals never do. Its time and the account's quiet
@@ -158,6 +159,11 @@ func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error
 		delivery := &Delivery{ID: uuid.New(), NotificationID: notification.ID, ChannelID: channel.ID, Status: DeliveryPending, CreatedAt: now, UpdatedAt: now}
 		if digest != "" {
 			due := nextDigestAt(digest, location, now)
+			// A digest due inside quiet hours waits for them to end. The shift
+			// depends only on the due time, so one digest stays one send.
+			if until := quietUntil(preferences, location, due); personalChannel(channel) && !until.IsZero() {
+				due = until
+			}
 			delivery.Status, delivery.Digest, delivery.DigestDueAt = DeliveryHeld, &digest, &due
 		} else if until := quietUntil(preferences, location, now); personalChannel(channel) && !until.IsZero() {
 			delivery.DeliverAfter = &until
@@ -169,16 +175,35 @@ func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error
 		if result.RowsAffected != 1 {
 			continue
 		}
+		var scheduleErr error
 		switch {
 		case delivery.DigestDueAt != nil:
-			_ = d.scheduler.Digest(ctx, channel.ID, *delivery.DigestDueAt)
+			scheduleErr = d.scheduler.Digest(ctx, channel.ID, *delivery.DigestDueAt)
 		case delivery.DeliverAfter != nil:
-			_ = d.scheduler.DeliverAt(ctx, delivery.ID, *delivery.DeliverAfter)
+			scheduleErr = d.scheduler.DeliverAt(ctx, delivery.ID, *delivery.DeliverAfter)
 		case d.enqueue != nil:
-			_ = d.enqueue(ctx, delivery.ID, "")
+			scheduleErr = d.enqueue(ctx, delivery.ID, "")
+		}
+		if scheduleErr != nil {
+			unscheduled = append(unscheduled, d.failUnscheduled(ctx, delivery.ID, scheduleErr))
 		}
 	}
-	return nil
+	return errors.Join(unscheduled...)
+}
+
+// failUnscheduled fails a delivery no task will pick up, so it shows in the
+// channel's delivery log and can be sent again from there.
+func (d *Dispatcher) failUnscheduled(ctx context.Context, deliveryID uuid.UUID, scheduleErr error) error {
+	message := "schedule delivery: " + scheduleErr.Error()
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	err := fmt.Errorf("schedule notification delivery %s: %w", deliveryID, scheduleErr)
+	if failErr := d.db.WithContext(ctx).Model(&Delivery{}).Where("id = ?", deliveryID).
+		Updates(map[string]any{"status": DeliveryFailed, "last_error": message, "updated_at": d.now()}).Error; failErr != nil {
+		return errors.Join(err, fmt.Errorf("fail unscheduled notification delivery: %w", failErr))
+	}
+	return err
 }
 
 // teamChannels finds the team channels named by a notification's context.

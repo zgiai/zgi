@@ -476,6 +476,9 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 					return digitalhuman.ErrTaskPolicyRejected
 				}
 			}
+			// A new delivery target keeps how the task's reports are reviewed
+			// and digested.
+			cfg = withReportDigest(withReportReview(cfg, taskReportReview(task)), taskReportDigest(task))
 			task.DeliveryConfig, changes["delivery_mode"] = cfg, *req.DeliveryMode
 		}
 		channels := currentChannels

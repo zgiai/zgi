@@ -112,10 +112,11 @@ func quietUntil(preferences Preferences, location *time.Location, now time.Time)
 	if !inside {
 		return time.Time{}
 	}
-	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
-	until := day.Add(time.Duration(end) * time.Minute)
+	// Built as wall-clock time, so a daylight saving change that day does not
+	// move the end.
+	until := time.Date(local.Year(), local.Month(), local.Day(), end/60, end%60, 0, 0, location)
 	if !until.After(local) {
-		until = until.AddDate(0, 0, 1)
+		until = time.Date(local.Year(), local.Month(), local.Day()+1, end/60, end%60, 0, 0, location)
 	}
 	return until.UTC()
 }

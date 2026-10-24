@@ -124,3 +124,22 @@ func TestReportDigestBelongsToScheduledTasks(t *testing.T) {
 		t.Fatal("an unknown digest is valid")
 	}
 }
+
+func TestChangingWhereReportsGoKeepsTheirDigestAndReview(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	service, ctx, access := fixture.service, t.Context(), fixture.memberA
+	mutation := digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"}
+	task, err := service.CreateTask(ctx, access, digitalhuman.CreateTaskRequest{
+		Name: "weekly", Goal: "weekly goal", Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleCron, Cron: "0 9 * * 1", Timezone: "UTC"},
+		ReportDigest: digitalhuman.TaskReportDigestWeekly, ReportReview: digitalhuman.TaskReportReviewRequired,
+	}, mutation)
+	if err != nil || task.ReportDigest != digitalhuman.TaskReportDigestWeekly || task.ReportReview != digitalhuman.TaskReportReviewRequired {
+		t.Fatalf("create = %#v, %v", task, err)
+	}
+	mode := digitalhuman.TaskDeliveryTaskOnly
+	mutation.OperationID = uuid.New()
+	updated, err := service.UpdateTask(ctx, access, task.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: task.Revision, DeliveryMode: &mode}, mutation)
+	if err != nil || updated.ReportDigest != digitalhuman.TaskReportDigestWeekly || updated.ReportReview != digitalhuman.TaskReportReviewRequired {
+		t.Fatalf("after changing delivery: %#v, %v", updated, err)
+	}
+}
