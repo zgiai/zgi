@@ -3794,6 +3794,8 @@ func (s *dataSourceService) ListOperationLogsByDataSourceIDWithFilters(ctx conte
 	// Use time values directly as they are already time.Time
 	repoFilter.CreatedAtGTE = filters.CreatedAtGTE
 	repoFilter.CreatedAtLTE = filters.CreatedAtLTE
+	repoFilter.WorkflowRunID = filters.WorkflowRunID
+	repoFilter.NodeID = filters.NodeID
 
 	// Get logs from repository
 	logs, err := s.sqlOperationRepo.ListByDataSourceIDWithFilters(ctx, dataSourceID, repoFilter, limit, offset)
@@ -4663,6 +4665,8 @@ func (s *dataSourceService) CountOperationLogsByDataSourceIDWithFilters(ctx cont
 	// Use time values directly as they are already time.Time
 	repoFilter.CreatedAtGTE = filters.CreatedAtGTE
 	repoFilter.CreatedAtLTE = filters.CreatedAtLTE
+	repoFilter.WorkflowRunID = filters.WorkflowRunID
+	repoFilter.NodeID = filters.NodeID
 
 	// Get count from repository
 	count, err := s.sqlOperationRepo.CountByDataSourceIDWithFilters(ctx, dataSourceID, repoFilter)

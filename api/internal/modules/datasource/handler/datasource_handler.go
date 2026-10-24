@@ -1905,6 +1905,8 @@ func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
 		Status:        req.Status,
 		CreatedAtGTE:  req.StartTime,
 		CreatedAtLTE:  req.EndTime,
+		WorkflowRunID: req.WorkflowRunID,
+		NodeID:        req.NodeID,
 	}
 
 	// List operation logs with filters
