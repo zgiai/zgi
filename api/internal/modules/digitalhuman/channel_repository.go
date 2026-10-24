@@ -1024,10 +1024,6 @@ func decorateScheduledTaskResult(run *Run, summary string) string {
 	if taskName != "" && !strings.Contains(summary, taskName) {
 		summary = "任务“" + taskName + "”执行完成\n\n" + summary
 	}
-	// A conversation's own task hands back a report it can review by reply.
-	if contextString(event.Context, "task_owner_kind") == string(TaskOwnerConversation) {
-		summary += "\n\n" + channelReportReviewHint
-	}
 	return summary
 }
 

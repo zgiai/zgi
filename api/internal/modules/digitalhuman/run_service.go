@@ -565,12 +565,19 @@ func (s *RuntimeService) GetRun(ctx context.Context, scope Scope, digitalHumanID
 func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDeliveryRequest) error {
 	if s == nil || s.chat == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil ||
 		req.DigitalHumanID == uuid.Nil || req.TaskID == uuid.Nil || req.TaskRunID == uuid.Nil ||
-		req.ConversationID == uuid.Nil || (strings.TrimSpace(req.Answer) == "" && req.Report == nil) {
+		(req.ConversationID == uuid.Nil && req.ReplyTo == nil) || (strings.TrimSpace(req.Answer) == "" && req.Report == nil) {
 		return ErrInvalidRequest
 	}
 	writer, ok := s.chat.(idempotentCompletedMessageWriter)
 	if !ok {
 		return fmt.Errorf("chat runtime does not support idempotent task result delivery")
+	}
+	if req.ConversationID == uuid.Nil {
+		conversationID, ownerID, ok, err := s.channelTaskConversation(ctx, req)
+		if err != nil || !ok {
+			return err
+		}
+		req.ConversationID, req.AccountID, req.UserSubjectKind = conversationID, ownerID, ""
 	}
 	workspaceID := req.WorkspaceID
 	scope := chatruntime.Scope{
@@ -612,6 +619,31 @@ func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDe
 		SourceMessageID: &req.TaskRunID,
 	})
 	return err
+}
+
+// channelTaskConversation finds the local conversation of a channel task's
+// reply address and the account it belongs to, the installation's creator.
+// It reports false when the conversation has none yet.
+func (s *RuntimeService) channelTaskConversation(ctx context.Context, req TaskResultDeliveryRequest) (uuid.UUID, uuid.UUID, bool, error) {
+	routes, ok := s.store.(interface {
+		ResolveChannelRoute(context.Context, uuid.UUID, string) (*ChannelRoute, error)
+	})
+	installationID, err := uuid.Parse(strings.TrimSpace(req.ReplyTo.InstallationID))
+	if !ok || err != nil || installationID == uuid.Nil {
+		return uuid.Nil, uuid.Nil, false, nil
+	}
+	route, err := routes.ResolveChannelRoute(ctx, installationID, req.ReplyTo.ConversationID)
+	if route == nil || route.Installation == nil || route.Mapping == nil || route.Mapping.LocalConversationID == nil ||
+		*route.Mapping.LocalConversationID == uuid.Nil {
+		if errors.Is(err, ErrChannelBindingNotFound) || errors.Is(err, ErrChannelNotReady) {
+			err = nil
+		}
+		return uuid.Nil, uuid.Nil, false, err
+	}
+	if route.Installation.OrganizationID != req.OrganizationID || route.Installation.WorkspaceID != req.WorkspaceID {
+		return uuid.Nil, uuid.Nil, false, ErrInvalidRequest
+	}
+	return *route.Mapping.LocalConversationID, route.Installation.CreatedBy, true, nil
 }
 
 // taskReportMessage renders a final report as the delivered message text. The

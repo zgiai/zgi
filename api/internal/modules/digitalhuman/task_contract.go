@@ -605,9 +605,14 @@ type TaskResultDeliveryRequest struct {
 	TaskID          uuid.UUID
 	TaskRunID       uuid.UUID
 	ConversationID  uuid.UUID
-	Source          string
-	TaskName        string
-	Answer          string
+	// ReplyTo is the channel conversation of a channel task, used when there
+	// is no ConversationID: the report joins that conversation's history so
+	// a follow-up there knows what it is about. The channel itself already
+	// received the result.
+	ReplyTo  *invocation.ReplyAddress
+	Source   string
+	TaskName string
+	Answer   string
 	// Report is the run's final report. When present it is delivered as a
 	// report card instead of the plain answer, including for failed runs.
 	Report *TaskReportDelivery

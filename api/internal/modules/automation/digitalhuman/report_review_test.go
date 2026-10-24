@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 )
 
@@ -126,5 +127,60 @@ func TestANewerReportAndTimeCloseReportsWaitingForReview(t *testing.T) {
 	}
 	if err := service.db.First(&row, "id = ?", task.ID.String()).Error; err != nil || row.DeliveryConfig[reportReviewKey] != nil {
 		t.Fatalf("stored delivery config = %#v, %v", row.DeliveryConfig, err)
+	}
+}
+
+func TestImproveKeepsFeedbackForLaterRuns(t *testing.T) {
+	service, dispatcher, access, _ := newTaskService(t)
+	runAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	task, err := service.CreateTask(t.Context(), access, digitalhuman.CreateTaskRequest{Name: "Morning brief", Goal: "Brief the team", SuccessCriteria: []string{"Covers sales"},
+		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"}, ReportReview: digitalhuman.TaskReportReviewRequired},
+		digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row automationmodel.AutomationTask
+	if err := service.db.First(&row, "id = ?", task.ID.String()).Error; err != nil {
+		t.Fatal(err)
+	}
+	taskRun := &automationmodel.AutomationTaskRun{TaskID: row.ID, TriggerSource: automationmodel.AutomationTriggerSourceManualRun, ScheduledFor: time.Now(),
+		Status: automationmodel.AutomationTaskRunStatusSucceeded, RuntimeContext: map[string]any{"attempt": 1}}
+	if err := service.db.Create(taskRun).Error; err != nil {
+		t.Fatal(err)
+	}
+	report, err := finalizeTaskReport(service.db, &row, taskRun, uuid.NewString(), true, false, "Sales were up.", "", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID}
+	if _, err := service.ReviewTaskReport(t.Context(), access, uuid.MustParse(report.ID), digitalhuman.ReviewTaskReportRequest{Action: digitalhuman.TaskReportImprove}, mutation); err == nil {
+		t.Fatal("improve without feedback was accepted")
+	}
+	improved, err := service.ReviewTaskReport(t.Context(), access, uuid.MustParse(report.ID),
+		digitalhuman.ReviewTaskReportRequest{Action: digitalhuman.TaskReportImprove, Feedback: "Add Beijing's numbers."}, mutation)
+	if err != nil || improved.ReviewState != digitalhuman.TaskReportAccepted || improved.ReviewFeedback != "Add Beijing's numbers." {
+		t.Fatalf("improve = %#v, %v", improved, err)
+	}
+	updated, err := service.GetTask(t.Context(), access, task.ID)
+	if err != nil || len(updated.SuccessCriteria) != 2 || updated.SuccessCriteria[1] != "Add Beijing's numbers." || updated.Revision != task.Revision+1 {
+		t.Fatalf("task after improve = %#v, %v", updated, err)
+	}
+	if len(dispatcher.runIDs) != 0 {
+		t.Fatalf("improve reran the task: %v", dispatcher.runIDs)
+	}
+}
+
+func TestAChannelTaskReportGoesBackToItsChannelConversation(t *testing.T) {
+	db := newReconcilerDB(t)
+	task, taskRun, _ := reportTaskRun(t, db, 1)
+	task.DeliveryConfig = map[string]any{"mode": string(digitalhuman.TaskDeliverySourceConversation),
+		"reply_to": map[string]any{"provider": "dingtalk", "installation_id": uuid.NewString(), "conversation_id": "group:cid-1"}}
+	if err := db.Save(task).Error; err != nil {
+		t.Fatal(err)
+	}
+	deliverer, _, _ := finishRun(t, db, &automationaction.DigitalHumanRunState{Status: "succeeded", Result: "Done."})
+	if len(deliverer.requests) != 1 || deliverer.requests[0].ConversationID != uuid.Nil || deliverer.requests[0].ReplyTo == nil ||
+		deliverer.requests[0].ReplyTo.ConversationID != "group:cid-1" || reportOfRun(t, db, taskRun.ID) == nil {
+		t.Fatalf("deliveries = %#v", deliverer.requests)
 	}
 }

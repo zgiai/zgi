@@ -166,6 +166,9 @@ type TaskReportReviewAction string
 const (
 	TaskReportAccept TaskReportReviewAction = "accept"
 	TaskReportRework TaskReportReviewAction = "rework"
+	// TaskReportImprove keeps the feedback for the task's later runs, as one
+	// more success criterion, and accepts the report.
+	TaskReportImprove TaskReportReviewAction = "improve"
 )
 
 // ReviewTaskReportRequest accepts a report or asks for rework with feedback.

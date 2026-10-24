@@ -113,6 +113,7 @@ function activityLabel(action: string, t: TaskTranslator): string {
     run_finished: t('tasks.activity.run_finished'), proposal_expired: t('tasks.activity.proposal_expired'),
     status_repaired: t('tasks.activity.status_repaired'),
     report_accepted: t('tasks.activity.report_accepted'), rework_requested: t('tasks.activity.rework_requested'),
+    report_improved: t('tasks.activity.report_improved'),
     result_delivered: t('tasks.activity.result_delivered'), result_delivery_failed: t('tasks.activity.result_delivery_failed'),
   };
   return labels[action] || action.replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase());

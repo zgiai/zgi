@@ -22,6 +22,7 @@ const (
 	taskGetToolName            = "get_digital_human_task"
 	taskManageToolName         = "manage_digital_human_task"
 	taskReportToolName         = "submit_digital_human_task_report"
+	taskReworkToolName         = "rework_digital_human_task_report"
 	taskListViewOpen           = "open"
 	taskListViewCompleted      = "completed"
 	taskListViewCanceled       = "canceled"
@@ -99,6 +100,8 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 	tools := []skillloop.RuntimeTool{p.listTool(run, boundary), p.getTool(run, boundary), p.manageTool(run, boundary)}
 	if reporter, ok := p.service.(TaskReportService); ok && boundary.currentTaskID != uuid.Nil && boundary.currentTaskRunID != uuid.Nil {
 		tools = append(tools, p.reportTool(run, boundary, reporter))
+	} else if ok && boundary.currentTaskID == uuid.Nil {
+		tools = append(tools, p.reworkTool(run, boundary, reporter))
 	}
 	return &TaskRuntimePreparation{SystemPromptAddendum: taskRuntimeGuidance(boundary), Tools: tools}, nil
 }
@@ -116,6 +119,7 @@ func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 		"Confirm, update, schedule, run, cancel, pause, resume, retry, archive, or change status only when the current user explicitly requests that operation.",
 		"Use pause and resume for the task's lifecycle. Do not use set_status to resume a paused task: set_status changes only the work status and does not reactivate scheduling.",
 		"A task is operational state, not long-term memory. Do not store task contents merely because a task exists.",
+		"Task reports delivered to this conversation are in its history. When the user asks to fix, redo, or add to a report's result, call rework_digital_human_task_report with the task ID and their request; it reruns the task with it, without a separate approval. When they want every later run to change as well, also propose an update that adds the request to the task's success criteria. Never ask the user to reply with a keyword to review a report.",
 		"Never claim a task was created, scheduled, or changed unless the task tool reports success. A successful proposal is not an approved or active task; tell the user that approval is still required. Use the returned revision for subsequent mutations.",
 	}
 	if boundary.currentTaskID != uuid.Nil {
@@ -452,6 +456,50 @@ func (p *DefaultTaskRuntimeProvider) getTool(run *Run, boundary taskRuntimeBound
 			return taskToolFailure(taskErrorCode(err), false)
 		}
 		return taskToolSuccess(call, result)
+	}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
+}
+
+// reworkTool reruns a task with the user's feedback on its latest report. The
+// requester already approved the task, so rerunning it needs no approval;
+// changing what it does still goes through manage_digital_human_task.
+func (p *DefaultTaskRuntimeProvider) reworkTool(run *Run, boundary taskRuntimeBoundary, reports TaskReportService) skillloop.RuntimeTool {
+	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: taskReworkToolName,
+		Description: "Rerun a visible task with the user's feedback on its latest report, such as data to add or a mistake to fix. The new result is delivered like the first one.",
+		Parameters: map[string]any{"type": "object", "properties": map[string]any{
+			"task_id":  map[string]any{"type": "string", "format": "uuid"},
+			"feedback": map[string]any{"type": "string", "description": "What to change, in the user's words."},
+		}, "required": []string{"task_id", "feedback"}, "additionalProperties": false}}}
+	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+		var args struct {
+			TaskID   uuid.UUID `json:"task_id"`
+			Feedback string    `json:"feedback"`
+		}
+		if decodeStrict(call.Function.Arguments, &args) != nil || args.TaskID == uuid.Nil || strings.TrimSpace(args.Feedback) == "" {
+			return taskToolFailure("invalid_arguments", true)
+		}
+		taskID := args.TaskID
+		list, err := reports.ListTaskReports(ctx, boundary.access, TaskReportListQuery{TaskID: &taskID, Page: 1, PageSize: 5})
+		if err != nil {
+			return taskToolFailure(taskErrorCode(err), false)
+		}
+		var latest *TaskReport
+		for _, item := range list.Items {
+			if item.Final {
+				latest = item
+				break
+			}
+		}
+		if latest == nil {
+			return taskToolFailure("digital_human.task_report.not_found", false)
+		}
+		mutation := TaskMutationContext{ActorType: "digital_human", ActorRef: run.DigitalHumanID.String(), OperationID: taskToolOperationID(run.ID, call), SourceRunID: &run.ID,
+			Source: boundary.source, SourceConversationID: boundary.conversationID, SourceConversationType: boundary.conversationType, ReplyTo: boundary.replyTo}
+		reviewed, err := reports.ReviewTaskReport(ctx, boundary.access, latest.ID, ReviewTaskReportRequest{Action: TaskReportRework, Feedback: args.Feedback}, mutation)
+		if err != nil {
+			return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))
+		}
+		return taskToolSuccess(call, map[string]any{"status": "rerunning", "report_id": reviewed.ID, "task_id": reviewed.TaskID})
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
 }

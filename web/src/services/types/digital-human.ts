@@ -1077,7 +1077,8 @@ export interface DigitalHumanTaskReportParams {
 }
 
 export interface ReviewDigitalHumanTaskReportRequest {
-  action: 'accept' | 'rework';
+  /** rework reruns the task with the feedback; improve keeps it for later runs. */
+  action: 'accept' | 'rework' | 'improve';
   feedback?: string;
 }
 

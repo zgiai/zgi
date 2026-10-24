@@ -229,7 +229,7 @@ func (s *Service) ReviewTaskReport(ctx context.Context, access digitalhuman.Task
 	feedback := strings.TrimSpace(req.Feedback)
 	switch req.Action {
 	case digitalhuman.TaskReportAccept:
-	case digitalhuman.TaskReportRework:
+	case digitalhuman.TaskReportRework, digitalhuman.TaskReportImprove:
 		if feedback == "" || utf8.RuneCountInString(feedback) > maxReworkFeedbackRunes {
 			return nil, digitalhuman.ErrInvalidRequest
 		}
@@ -259,9 +259,31 @@ func (s *Service) ReviewTaskReport(ctx context.Context, access digitalhuman.Task
 			actorType, actorRef = "account", accessActorID(access).String()
 		}
 		updates := map[string]any{"reviewed_by_type": actorType, "reviewed_by_ref": actorRef, "reviewed_at": now, "updated_at": now}
-		if req.Action == digitalhuman.TaskReportAccept {
+		switch req.Action {
+		case digitalhuman.TaskReportAccept:
 			row.ReviewState = string(digitalhuman.TaskReportAccepted)
-		} else {
+		case digitalhuman.TaskReportImprove:
+			row.ReviewState, row.ReviewFeedback = string(digitalhuman.TaskReportAccepted), &feedback
+			updates["review_feedback"] = feedback
+			lockedTask, err := s.lockReviewedTask(ctx, tx, access, task)
+			if err != nil {
+				return err
+			}
+			if len(lockedTask.SuccessCriteria) >= maxReportCriteria {
+				return digitalhuman.ErrInvalidRequest
+			}
+			lockedTask.SuccessCriteria = append(append([]string(nil), lockedTask.SuccessCriteria...), feedback)
+			lockedTask.Revision++
+			lockedTask.UpdatedBy = accessActorID(access).String()
+			values, err := taskUpdateValues(lockedTask, now)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&automationmodel.AutomationTask{}).Where("id = ?", lockedTask.ID).Updates(values).Error; err != nil {
+				return err
+			}
+			task = lockedTask
+		default:
 			row.ReviewState, row.ReviewFeedback = string(digitalhuman.TaskReportReworkRequested), &feedback
 			lockedTask, err := s.lockReviewedTask(ctx, tx, access, task)
 			if err != nil {
@@ -292,11 +314,15 @@ func (s *Service) ReviewTaskReport(ctx context.Context, access digitalhuman.Task
 		if err := tx.Model(&taskReportRow{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {
 			return err
 		}
-		action, summary := "report_accepted", "Task report accepted"
-		if req.Action == digitalhuman.TaskReportRework {
+		action, summary, changes := "report_accepted", "Task report accepted", map[string]any{"report_id": row.ID}
+		switch req.Action {
+		case digitalhuman.TaskReportRework:
 			action, summary = "rework_requested", "Rework requested on a task report"
+		case digitalhuman.TaskReportImprove:
+			action, summary = "report_improved", "Task report feedback kept for later runs"
+			changes["success_criteria"] = task.SuccessCriteria
 		}
-		if err := tx.Create(newActivity(task.ID, mutation, action, summary, map[string]any{"report_id": row.ID})).Error; err != nil {
+		if err := tx.Create(newActivity(task.ID, mutation, action, summary, changes)).Error; err != nil {
 			return err
 		}
 		row.ReviewedAt = &now
@@ -535,7 +561,7 @@ func reviewTransitionAllowed(current digitalhuman.TaskReportReviewState, action 
 	switch action {
 	case digitalhuman.TaskReportAccept:
 		return current == digitalhuman.TaskReportNew
-	case digitalhuman.TaskReportRework:
+	case digitalhuman.TaskReportRework, digitalhuman.TaskReportImprove:
 		return current == digitalhuman.TaskReportNew || current == digitalhuman.TaskReportAccepted || current == digitalhuman.TaskReportClosed
 	}
 	return false
