@@ -95,7 +95,8 @@ func (a *DingTalkAdapter) Advance(ctx context.Context, f Flow, s ProtocolSecret)
 		return ProtocolResult{Step: "poll", Secret: ProtocolSecret{DeviceCode: response.DeviceCode, QRPayload: response.URL, UserCode: response.UserCode}, Interval: time.Duration(interval) * time.Second, TTL: time.Duration(ttl) * time.Second, ExpirySource: "provider_or_local_limit"}, nil
 	case "poll":
 		switch response.Status {
-		case "WAITING":
+		// SCANNED: the user scanned the code and has yet to confirm on the phone.
+		case "WAITING", "SCANNED":
 			return pendingResult(f, s), nil
 		case "EXPIRED":
 			return ProtocolResult{}, registrationError(core.ErrorCodeFlowExpired)
@@ -107,7 +108,10 @@ func (a *DingTalkAdapter) Advance(ctx context.Context, f Flow, s ProtocolSecret)
 			}
 			return ProtocolResult{Values: map[string]string{"client_id": response.ClientID, "client_secret": response.ClientSecret}}, nil
 		default:
-			return ProtocolResult{}, dingTalkRegistrationRefused(f.Step, 0, response.ErrMsg, response.Status)
+			// A status this adapter does not know is not a refusal: keep
+			// waiting, so the flow ends by success, refusal, or expiry.
+			logger.Warn("DingTalk app registration returned an unknown status", "status", boundedDingTalkText(response.Status))
+			return pendingResult(f, s), nil
 		}
 	}
 	return ProtocolResult{}, registrationError(core.ErrorCodeProviderUnavailable)

@@ -68,15 +68,30 @@ func TestDingTalkStepsAndSecretIsolation(t *testing.T) {
 	}
 }
 
+func TestDingTalkRegistrationKeepsWaitingAfterTheScan(t *testing.T) {
+	for _, status := range []string{"WAITING", "SCANNED", "SOMETHING_NEW"} {
+		a, err := NewDingTalkAdapter(&http.Client{Transport: protocolTransport(func(*http.Request) (*http.Response, error) {
+			return protocolResponse(`{"errcode":0,"errmsg":"ok","status":"` + status + `"}`), nil
+		})}, ProtocolSettings{Source: "s", QRHosts: []string{"login.dingtalk.com"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		flow := Flow{Step: "poll"}
+		result, err := a.Advance(context.Background(), flow, ProtocolSecret{DeviceCode: "device"})
+		if err != nil || result.Values != nil || result.Step != "poll" {
+			t.Fatalf("%s: %#v, %v; want to keep waiting", status, result, err)
+		}
+	}
+}
+
 func TestDingTalkRegistrationRefusalsSayWhy(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body string
 		want core.ErrorCode
 	}{
 		"no developer permission": {`{"errcode":40001,"errmsg":"用户没有开发者权限，请联系主管理员开通"}`, core.ErrorCodeAccessDenied},
-		"denied status":           {`{"errcode":0,"status":"PERMISSION_DENIED"}`, core.ErrorCodeAccessDenied},
+		"refused by status":       {`{"errcode":0,"status":"FAIL"}`, core.ErrorCodeAccessDenied},
 		"other refusal":           {`{"errcode":50001,"errmsg":"system busy"}`, core.ErrorCodeProviderUnavailable},
-		"unknown status":          {`{"errcode":0,"status":"SOMETHING"}`, core.ErrorCodeProviderUnavailable},
 	} {
 		a, err := NewDingTalkAdapter(&http.Client{Transport: protocolTransport(func(*http.Request) (*http.Response, error) {
 			return protocolResponse(tc.body), nil
