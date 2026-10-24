@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -190,7 +189,7 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		return nil, err
 	}
 	defer destroy()
-	path, body, err := dingTalkRobotDelivery(request.ExternalConversationID, creds.AppKey, request.Text, request.Mentions)
+	path, body, err := dingTalkRobotDelivery(request.ExternalConversationID, creds.AppKey, request.Text)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +323,6 @@ func dingTalkRobotDelivery(
 	target string,
 	robotCode string,
 	text string,
-	mentions []channelruntime.DeliveryMention,
 ) (string, map[string]interface{}, error) {
 	target = strings.TrimSpace(target)
 	robotCode = strings.TrimSpace(robotCode)
@@ -347,15 +345,8 @@ func dingTalkRobotDelivery(
 		if conversationID == "" {
 			return "", nil, channelruntime.ErrInvalidWebhook
 		}
-		mentionIDs := dingTalkMentionUserIDs(mentions)
-		if len(mentionIDs) > 0 {
-			prefixes := make([]string, 0, len(mentionIDs))
-			for _, mentionID := range mentionIDs {
-				prefixes = append(prefixes, "@"+mentionID)
-			}
-			setDingTalkMessage(body, strings.Join(prefixes, " ")+" "+text, text)
-			body["atUserIds"] = mentionIDs
-		}
+		// A group reply mentions no one: the group send API cannot mention
+		// people, and "@userId" would show as plain text.
 		body["openConversationId"] = conversationID
 		return "/v1.0/robot/groupMessages/send", body, nil
 	default:
@@ -412,38 +403,6 @@ func dingTalkMarkdownTitle(text string) string {
 		return line
 	}
 	return "消息"
-}
-
-func dingTalkMentionUserIDs(mentions []channelruntime.DeliveryMention) []string {
-	if len(mentions) == 0 {
-		return nil
-	}
-	result := make([]string, 0, len(mentions))
-	seen := make(map[string]struct{}, len(mentions))
-	for _, mention := range mentions {
-		externalID := strings.TrimSpace(mention.ExternalID)
-		if !validDingTalkMentionUserID(externalID) {
-			continue
-		}
-		if _, exists := seen[externalID]; exists {
-			continue
-		}
-		seen[externalID] = struct{}{}
-		result = append(result, externalID)
-	}
-	return result
-}
-
-func validDingTalkMentionUserID(value string) bool {
-	if value == "" || utf8.RuneCountInString(value) > 255 {
-		return false
-	}
-	for _, character := range value {
-		if unicode.IsSpace(character) || unicode.IsControl(character) || character == '@' {
-			return false
-		}
-	}
-	return true
 }
 
 func firstDingTalkWebhookValue(values ...string) string {

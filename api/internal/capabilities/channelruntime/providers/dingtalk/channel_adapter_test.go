@@ -147,13 +147,12 @@ func TestDingTalkChannelDeliverUsesRobotAPI(t *testing.T) {
 		receivedBody["openConversationId"] != "cid-9" || receivedBody["robotCode"] != "ding-app" {
 		t.Fatalf("Deliver() receipt=%#v path=%q body=%#v", receipt, receivedPath, receivedBody)
 	}
-	atUserIDs, ok := receivedBody["atUserIds"].([]interface{})
-	if !ok || len(atUserIDs) != 1 || atUserIDs[0] != "user-1" {
-		t.Fatalf("Deliver() atUserIds = %#v, want user-1", receivedBody["atUserIds"])
+	if _, ok := receivedBody["atUserIds"]; ok {
+		t.Fatalf("Deliver() mentioned someone in a group: %#v", receivedBody)
 	}
 	var parameters map[string]string
 	if err := json.Unmarshal([]byte(receivedBody["msgParam"].(string)), &parameters); err != nil || receivedBody["msgKey"] != "sampleMarkdown" ||
-		parameters["text"] != "@user-1 处理完成  " || parameters["title"] != "处理完成" {
+		parameters["text"] != "处理完成  " || parameters["title"] != "处理完成" {
 		t.Fatalf("Deliver() msgParam = %#v, decoded=%#v error=%v", receivedBody["msgParam"], parameters, err)
 	}
 }
@@ -278,6 +277,9 @@ func TestDingTalkStreamReceiverAcknowledgesWhatItDoesNotTake(t *testing.T) {
 	failing := func(context.Context, *channelruntime.InboundMessage) error { return errors.New("pq: secret detail") }
 	if _, err := receiver.handleMessage(t.Context(), channelruntime.InstallationIdentity{}, text, failing); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("a failed store leaked %v", err)
+	}
+	if identity := dingTalkReceiverIdentity(channelruntime.InstallationIdentity{}, "ding-app"); identity.ExternalSelfID != "ding-app" {
+		t.Fatalf("an installation without a bot ID = %#v", identity)
 	}
 	if mapped := dingTalkReceiverError(errors.New(`{"code":"invalidClientId"}`)); mapped.Code != "credentials_invalid" || mapped.Retryable {
 		t.Fatalf("bad credentials = %#v", mapped)

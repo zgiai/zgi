@@ -82,7 +82,7 @@ func (receiver *StreamReceiver) Run(
 		}),
 	)
 	client.RegisterChatBotCallbackRouter(func(callbackCtx context.Context, data *chatbot.BotCallbackDataModel) ([]byte, error) {
-		return receiver.handleMessage(callbackCtx, request.Identity, data, handle)
+		return receiver.handleMessage(callbackCtx, dingTalkReceiverIdentity(request.Identity, appKey), data, handle)
 	})
 	if err := client.Start(ctx); err != nil {
 		if ctx.Err() != nil {
@@ -99,6 +99,16 @@ func (receiver *StreamReceiver) Run(
 	client.AutoReconnect = false
 	client.Close()
 	return ctx.Err()
+}
+
+// dingTalkReceiverIdentity names the bot by its app key when the installation
+// has not recorded it, as one set up by QR registration: the app key is the
+// bot's robotCode, which tells a message mentioning the bot.
+func dingTalkReceiverIdentity(identity channelruntime.InstallationIdentity, appKey string) channelruntime.InstallationIdentity {
+	if strings.TrimSpace(identity.ExternalSelfID) == "" {
+		identity.ExternalSelfID = appKey
+	}
+	return identity
 }
 
 // handleMessage queues one bot message. Messages the channel does not take,
