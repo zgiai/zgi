@@ -154,7 +154,19 @@ func TestFirstMessageOfANewConversationGetsArtifactTools(t *testing.T) {
 	account := uuid.New()
 	run := &Run{ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New(), DigitalHumanID: uuid.New(), UserSubjectKind: "account", UserSubjectID: &account}
 	preparation, err := NewArtifactRuntimeProvider(nil, artifactServiceForTest(t)).Prepare(t.Context(), run, invocation.Event{})
-	if err != nil || preparation == nil || len(preparation.Tools) != 4 {
+	if err != nil || preparation == nil || len(preparation.Tools) != 4 || preparation.BindConversation == nil {
 		t.Fatalf("preparation = %#v, %v", preparation, err)
+	}
+	// Once the run has its conversation, its files can be published.
+	tools := artifactTools{run: run}
+	if tools.conversationID() != nil {
+		t.Fatal("a run without a conversation has one")
+	}
+	conversation := uuid.Nil
+	tools.conversation = &conversation
+	bound := uuid.New()
+	conversation = bound
+	if got := tools.conversationID(); got == nil || *got != bound {
+		t.Fatalf("bound conversation = %v", got)
 	}
 }

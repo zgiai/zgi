@@ -65,7 +65,8 @@ func (p *ArtifactRuntimeProvider) Prepare(ctx context.Context, run *Run, event i
 		return preparation, nil
 	}
 	// The first message of a new conversation is prepared before the
-	// conversation exists; only publishing a run file needs it, and checks it.
+	// conversation exists; publishing a run file needs it, so the tools learn
+	// it once the run has it.
 	owner, visibility, member, ok := runArtifactOwner(run, event.Context)
 	if !ok {
 		return preparation, nil
@@ -73,7 +74,20 @@ func (p *ArtifactRuntimeProvider) Prepare(ctx context.Context, run *Run, event i
 	if preparation == nil {
 		preparation = &TaskRuntimePreparation{}
 	}
-	tools := artifactTools{service: p.artifacts, run: run, owner: owner, visibility: visibility, member: member, taskID: artifactContextUUID(event.Context, "task_id")}
+	conversation := uuid.Nil
+	if run.ConversationID != nil {
+		conversation = *run.ConversationID
+	}
+	tools := artifactTools{service: p.artifacts, run: run, owner: owner, visibility: visibility, member: member, taskID: artifactContextUUID(event.Context, "task_id"), conversation: &conversation}
+	previous := preparation.BindConversation
+	preparation.BindConversation = func(id uuid.UUID) {
+		if previous != nil {
+			previous(id)
+		}
+		if conversation == uuid.Nil {
+			conversation = id
+		}
+	}
 	preparation.Tools = append(preparation.Tools, tools.publish(), tools.list(), tools.read(), tools.archive())
 	guidance := "Keep finished deliverables with " + artifactPublishToolName + " so later conversations can use them: documents as Markdown, files you produced by their file ID. " +
 		"Files you export from the sandbox are kept automatically, and the export result names the artifact; do not publish them again. " +
@@ -116,6 +130,16 @@ type artifactTools struct {
 	visibility artifacts.Visibility
 	member     bool
 	taskID     *uuid.UUID
+	// conversation is the run's conversation, bound once a new one exists.
+	conversation *uuid.UUID
+}
+
+func (a artifactTools) conversationID() *uuid.UUID {
+	if a.conversation != nil && *a.conversation != uuid.Nil {
+		id := *a.conversation
+		return &id
+	}
+	return cloneUUIDPointer(a.run.ConversationID)
 }
 
 func (a artifactTools) scope() artifacts.Scope {
@@ -169,7 +193,7 @@ func (a artifactTools) publish() skillloop.RuntimeTool {
 		}
 		runID := a.run.ID
 		req := artifacts.PublishRequest{Scope: a.scope(), Owner: a.owner, Visibility: visibility, Kind: artifacts.Kind(args.Kind), Title: args.Title, Note: args.Note,
-			ArtifactID: args.ArtifactID, Source: artifacts.SourceRun, SourceTaskID: a.taskID, SourceConversationID: cloneUUIDPointer(a.run.ConversationID), SourceRunID: &runID,
+			ArtifactID: args.ArtifactID, Source: artifacts.SourceRun, SourceTaskID: a.taskID, SourceConversationID: a.conversationID(), SourceRunID: &runID,
 			Actor: artifacts.Actor{Kind: "digital_human_run", ID: a.run.ID.String()}}
 		if req.Kind == artifacts.KindDocument {
 			req.Text = args.Content
@@ -316,14 +340,15 @@ func (a artifactTools) archive() skillloop.RuntimeTool {
 func (a artifactTools) runFile(ctx context.Context, raw string) (*artifacts.Blob, error) {
 	manager := toolfile.GlobalToolFileManager
 	id, err := uuid.Parse(strings.TrimPrefix(strings.TrimSpace(raw), "tool_file:"))
-	if manager == nil || err != nil || a.run.ConversationID == nil {
+	runConversation := a.conversationID()
+	if manager == nil || err != nil || runConversation == nil {
 		return nil, toolfile.ErrExecutionFileAccess
 	}
 	file, err := manager.GetToolFileByID(ctx, id.String())
 	if err != nil || file == nil || file.TenantID != a.run.OrganizationID.String() || file.DeletedAt != nil || file.IsExpired(time.Now()) {
 		return nil, toolfile.ErrExecutionFileAccess
 	}
-	conversation := a.run.ConversationID.String()
+	conversation := runConversation.String()
 	if file.ConversationID == nil || *file.ConversationID != conversation {
 		return nil, toolfile.ErrExecutionFileAccess
 	}
