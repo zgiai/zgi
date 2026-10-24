@@ -148,6 +148,10 @@ type InboundMessage struct {
 	// are removed. It is a wake signal, not an inferred user task.
 	MentionOnly bool
 	OccurredAt  time.Time
+	// ActionWait is set when the message is a tapped DeliveryAction instead
+	// of typed text: the wait it answers. It never reaches the model, and a
+	// tap on a prompt that no longer waits is dropped.
+	ActionWait string
 }
 
 // ContextStatus describes how much provider context could be prepared for one
@@ -412,6 +416,22 @@ type DeliveryRequest struct {
 	Text                   string
 	Mentions               []DeliveryMention
 	Attachments            []DeliveryAttachment
+	// Actions are replies the recipient may send with one tap, for a message
+	// that waits for one. A provider without buttons ignores them: the text
+	// already says what to reply.
+	Actions []DeliveryAction
+}
+
+// DeliveryAction is one tap-to-send reply of a waiting prompt. Reply is the
+// text the tap sends as the recipient's own reply, and Wait identifies the
+// prompt so an older one cannot answer a newer wait. ConversationType is the
+// conversation's, which a tap does not carry back.
+type DeliveryAction struct {
+	Label            string           `json:"label"`
+	Reply            string           `json:"reply"`
+	Wait             string           `json:"wait"`
+	Primary          bool             `json:"primary,omitempty"`
+	ConversationType ConversationType `json:"conversation_type,omitempty"`
 }
 
 // DeliveryAttachment is request-scoped and must not be serialized or retained.

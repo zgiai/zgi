@@ -1008,7 +1008,7 @@ func createRunDelivery(ctx context.Context, tx *gorm.DB, run *Run, summary strin
 	summary = decorateScheduledTaskResult(run, summary)
 	return createRunChannelDelivery(
 		ctx, tx, run, channelruntime.DeliveryKindFinal, "final", math.MaxInt64,
-		summary, channelDeliveryArtifacts(trace), now,
+		summary, channelDeliveryArtifacts(trace), nil, now,
 	)
 }
 
@@ -1052,7 +1052,7 @@ func (r *GormRepository) EnqueueRunChannelDelivery(
 		default:
 			return nil
 		}
-		return createRunChannelDelivery(ctx, tx, &run, kind, deliveryKey, sequence, text, nil, now)
+		return createRunChannelDelivery(ctx, tx, &run, kind, deliveryKey, sequence, text, nil, nil, now)
 	})
 }
 
@@ -1067,6 +1067,19 @@ func (r *GormRepository) EnqueueRunChannelFinalDelivery(
 	text string,
 	now time.Time,
 ) error {
+	return r.EnqueueRunChannelPromptDelivery(ctx, runID, deliveryKey, text, nil, now)
+}
+
+// EnqueueRunChannelPromptDelivery appends a follow-up message that may carry
+// tap-to-send replies, such as the prompt of a run waiting for approval.
+func (r *GormRepository) EnqueueRunChannelPromptDelivery(
+	ctx context.Context,
+	runID uuid.UUID,
+	deliveryKey string,
+	text string,
+	actions []channelruntime.DeliveryAction,
+	now time.Time,
+) error {
 	deliveryKey = strings.TrimSpace(deliveryKey)
 	text = boundedRunes(strings.TrimSpace(text), maxChannelDeliveryRunes)
 	if runID == uuid.Nil || deliveryKey == "" || utf8.RuneCountInString(deliveryKey) > 128 || text == "" {
@@ -1077,7 +1090,7 @@ func (r *GormRepository) EnqueueRunChannelFinalDelivery(
 		if err := tx.Where("id = ?", runID).Take(&run).Error; err != nil {
 			return err
 		}
-		return createRunChannelDelivery(ctx, tx, &run, channelruntime.DeliveryKindFinal, deliveryKey, math.MaxInt64, text, nil, now)
+		return createRunChannelDelivery(ctx, tx, &run, channelruntime.DeliveryKindFinal, deliveryKey, math.MaxInt64, text, nil, actions, now)
 	})
 }
 
@@ -1190,6 +1203,7 @@ func createRunChannelDelivery(
 	sequence int64,
 	text string,
 	artifacts []channelDeliveryArtifact,
+	actions []channelruntime.DeliveryAction,
 	now time.Time,
 ) error {
 	var event invocation.Event
@@ -1259,7 +1273,7 @@ func createRunChannelDelivery(
 		return nil
 	}
 	mentions := channelDeliveryMentions(event, kind)
-	payload, digest, err := channelDeliveryPayloadWithMentions(kind, text, mentions, artifacts...)
+	payload, digest, err := channelDeliveryPayloadWithActions(kind, text, mentions, actions, artifacts...)
 	if err != nil {
 		return err
 	}
@@ -1482,13 +1496,26 @@ func channelDeliveryPayloadWithMentions(
 	mentions []channelruntime.DeliveryMention,
 	artifacts ...channelDeliveryArtifact,
 ) (datatypes.JSON, string, error) {
+	return channelDeliveryPayloadWithActions(kind, text, mentions, nil, artifacts...)
+}
+
+func channelDeliveryPayloadWithActions(
+	kind channelruntime.DeliveryKind,
+	text string,
+	mentions []channelruntime.DeliveryMention,
+	actions []channelruntime.DeliveryAction,
+	artifacts ...channelDeliveryArtifact,
+) (datatypes.JSON, string, error) {
+	if len(actions) > maxChannelDeliveryActions {
+		actions = actions[:maxChannelDeliveryActions]
+	}
 	if len(artifacts) > maxChannelDeliveryArtifacts {
 		artifacts = artifacts[:maxChannelDeliveryArtifacts]
 	}
 	if len(mentions) > maxChannelDeliveryMentions {
 		mentions = mentions[:maxChannelDeliveryMentions]
 	}
-	payload, err := json.Marshal(channelDeliveryPayloadData{Kind: kind, Text: text, Mentions: mentions, Artifacts: artifacts})
+	payload, err := json.Marshal(channelDeliveryPayloadData{Kind: kind, Text: text, Mentions: mentions, Artifacts: artifacts, Actions: actions})
 	if err != nil {
 		return nil, "", fmt.Errorf("encode channel delivery payload: %w", err)
 	}

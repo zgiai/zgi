@@ -1884,3 +1884,18 @@ func cloneInstallation(value *channelruntime.Installation) *channelruntime.Insta
 	cloned.DefaultSubjectID = cloneUUIDPointer(value.DefaultSubjectID)
 	return &cloned
 }
+
+func TestATapOnAPromptThatNoLongerWaitsIsDropped(t *testing.T) {
+	service, _, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-tap", ProviderMessageID: "card_action:event-tap",
+		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
+		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "确认",
+		WakeReason: channelruntime.WakeReasonDirectMessage, OccurredAt: time.Now().UTC(), ActionWait: "wait-old",
+	}
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
+	if err != nil || result == nil || !result.Ignored || runtime.calls != 0 {
+		t.Fatalf("stale tap = %#v, %v; runs %d", result, err, runtime.calls)
+	}
+}

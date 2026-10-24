@@ -1284,7 +1284,7 @@ const messages: DigitalHumansMessages = {
           subscribe: {
             title: '选择长连接并订阅事件',
             description:
-              '在飞书“事件与回调 → 事件配置”选择“使用长连接接收事件”，订阅 im.message.receive_v1；不要填写回调地址。',
+              '在飞书“事件与回调 → 事件配置”选择“使用长连接接收事件”，订阅 im.message.receive_v1；再到“回调配置”选择长连接并订阅“卡片回传交互”（card.action.trigger），确认卡片上的按钮才能用。不要填写回调地址。',
           },
           availability: {
             title: '确认权限与可用范围',

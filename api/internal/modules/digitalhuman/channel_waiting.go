@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
@@ -69,10 +70,80 @@ func (s *RuntimeService) deliverChannelWaitingPrompt(ctx context.Context, run *R
 	}
 	// One prompt per wait: a resumed loop that waits again on the same message
 	// asks anew, while a retry of the same wait stays one delivery.
-	key := "waiting:" + uuid.NewSHA1(uuid.NameSpaceOID, []byte(messageID.String()+"\x00"+status+"\x00"+channelWaitIdentity(run, status, metadata))).String()
-	if err := deliveryStore.EnqueueRunChannelFinalDelivery(context.WithoutCancel(ctx), run.ID, key, text, s.now()); err != nil {
+	wait := channelWaitKey(messageID, status, channelWaitIdentity(run, status, metadata))
+	key := "waiting:" + wait
+	var err error
+	if actions := channelWaitActions(run, status, metadata, wait); len(actions) > 0 {
+		if prompts, ok := s.store.(channelPromptDeliveryStore); ok {
+			err = prompts.EnqueueRunChannelPromptDelivery(context.WithoutCancel(ctx), run.ID, key, text, actions, s.now())
+		} else {
+			err = deliveryStore.EnqueueRunChannelFinalDelivery(context.WithoutCancel(ctx), run.ID, key, text, s.now())
+		}
+	} else {
+		err = deliveryStore.EnqueueRunChannelFinalDelivery(context.WithoutCancel(ctx), run.ID, key, text, s.now())
+	}
+	if err != nil {
 		logger.WarnContext(ctx, "failed to deliver digital human channel waiting prompt", "run_id", run.ID.String(), "status", status, err)
 	}
+}
+
+type channelPromptDeliveryStore interface {
+	EnqueueRunChannelPromptDelivery(context.Context, uuid.UUID, string, string, []channelruntime.DeliveryAction, time.Time) error
+}
+
+// channelWaitKey names one wait of one message.
+func channelWaitKey(messageID uuid.UUID, status, identity string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(messageID.String()+"\x00"+status+"\x00"+identity)).String()
+}
+
+// channelWaitActions are the tap-to-send replies of a prompt waiting for an
+// approval; the words are the ones the prompt says to reply.
+func channelWaitActions(run *Run, status string, metadata map[string]interface{}, wait string) []channelruntime.DeliveryAction {
+	if status != runtimemodel.MessageStatusWaitingApproval || run == nil {
+		return nil
+	}
+	conversationType := channelruntime.ConversationTypeDirect
+	var event invocation.Event
+	if json.Unmarshal(run.InvocationEvent, &event) != nil || event.Origin.Kind != invocation.OriginChannel {
+		return nil
+	}
+	if contextString(event.Context, "conversation_type") == string(channelruntime.ConversationTypeGroup) {
+		conversationType = channelruntime.ConversationTypeGroup
+	}
+	state := workflowContinuationRecord(jsonNormalizedMap(metadata))
+	approve, decline := "确认", "取消"
+	switch {
+	case strings.TrimSpace(stringValue(state["kind"])) == "digital_human_task", run.WaitingReceipt != nil:
+	case strings.TrimSpace(stringValue(state["workflow_run_id"])) != "":
+		if allowed, _ := state["ui_approval_allowed"].(bool); !allowed {
+			return nil
+		}
+		approve, decline = "同意", "拒绝"
+	default:
+		return nil
+	}
+	return []channelruntime.DeliveryAction{
+		{Label: approve, Reply: approve, Wait: wait, Primary: true, ConversationType: conversationType},
+		{Label: decline, Reply: decline, Wait: wait, ConversationType: conversationType},
+	}
+}
+
+// PendingChannelApprovalWait is the wait of the conversation's pending
+// approval, as channelWaitKey names it, or empty when none is pending.
+func (s *RuntimeService) PendingChannelApprovalWait(ctx context.Context, scope Scope, digitalHumanID, conversationID uuid.UUID) (string, error) {
+	pending, _, err := s.pendingChannelApproval(ctx, scope, digitalHumanID, conversationID)
+	if err != nil || pending == nil {
+		return "", err
+	}
+	var run *Run
+	if lookup, ok := s.store.(channelApprovalRunLookup); ok {
+		run, err = lookup.RunByMessageID(ctx, scope.OrganizationID, scope.WorkspaceID, digitalHumanID, pending.ID)
+		if err != nil {
+			return "", err
+		}
+	}
+	status := runtimemodel.MessageStatusWaitingApproval
+	return channelWaitKey(pending.ID, status, channelWaitIdentity(run, status, pending.Metadata)), nil
 }
 
 // channelWaitIdentity names one wait of a message: the question's request,

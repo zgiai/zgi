@@ -1380,7 +1380,7 @@ const messages = {
           subscribe: {
             title: 'Choose WebSocket and events',
             description:
-              'In Feishu Events & Callbacks → Event Configuration, choose persistent connection and subscribe to im.message.receive_v1. Do not enter a callback URL.',
+              'In Feishu Events & Callbacks → Event Configuration, choose persistent connection and subscribe to im.message.receive_v1. Then in Callback Configuration, choose persistent connection and subscribe to card.action.trigger so the buttons on confirmation cards work. Do not enter a callback URL.',
           },
           availability: {
             title: 'Check permissions and access',

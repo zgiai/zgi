@@ -1016,6 +1016,24 @@ func (service *ChannelService) handleInboundMessage(
 	// A pending approval is waiting_approval, not streaming, so it must be
 	// resolved before runtime-input admission or the confirmation would start a
 	// new run instead of resuming the pending message.
+	if strings.TrimSpace(message.ActionWait) != "" {
+		// A tap answers only the wait it was sent for; one on an older or
+		// settled prompt is dropped rather than read as a new message.
+		current := ""
+		if waits, ok := service.runtime.(channelApprovalWaits); ok {
+			current, err = waits.PendingChannelApprovalWait(ctx,
+				Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
+				route.Binding.SubjectID, conversationID)
+			if err != nil {
+				_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventFailed, "channel.task_approval.failed", nil, now)
+				return nil, err
+			}
+		}
+		if current == "" || current != strings.TrimSpace(message.ActionWait) {
+			_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventIgnored, "channel.action.stale", nil, now)
+			return &ChannelWebhookResult{Response: acknowledgement, Duplicate: !created, Ignored: true, EventID: stored.ID}, nil
+		}
+	}
 	if approvalRuntime, ok := service.runtime.(channelTaskApprovalRuntime); ok {
 		handled, approvalErr := service.admitChannelApproval(
 			ctx, approvalRuntime, installation, route, conversationID, stored, message, now,
@@ -1250,6 +1268,12 @@ func channelMessagePreview(message *channelruntime.InboundMessage) string {
 
 // channelTaskApprovalRuntime resolves a pending approval from an inbound
 // channel message before it is admitted as runtime input or a new run.
+// channelApprovalWaits names the wait a conversation's pending approval is,
+// as its prompt's actions carry it.
+type channelApprovalWaits interface {
+	PendingChannelApprovalWait(context.Context, Scope, uuid.UUID, uuid.UUID) (string, error)
+}
+
 type channelTaskApprovalRuntime interface {
 	HasPendingChannelApproval(context.Context, Scope, uuid.UUID, uuid.UUID) (bool, error)
 	ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, ChannelApprovalReply) (bool, error)
@@ -1366,6 +1390,7 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 			RunID: delivery.RunID, DeliveryID: delivery.ID,
 			ExternalConversationID: delivery.ExternalConversationID, ExternalThreadID: delivery.ExternalThreadID,
 			Text: text, Mentions: append([]channelruntime.DeliveryMention(nil), payload.Mentions...), Attachments: attachments,
+			Actions: append([]channelruntime.DeliveryAction(nil), payload.Actions...),
 		})
 		if deliveryErr != nil {
 			combined = errors.Join(combined, service.finishDeliveryFailure(ctx, delivery, deliveryErr))
@@ -1689,7 +1714,7 @@ func decodeDeliveryPayload(delivery *channelruntime.Delivery) (*channelDeliveryP
 	}
 	var payload channelDeliveryPayloadData
 	if json.Unmarshal(delivery.Payload, &payload) != nil || len(payload.Artifacts) > maxChannelDeliveryArtifacts ||
-		len(payload.Mentions) > maxChannelDeliveryMentions ||
+		len(payload.Mentions) > maxChannelDeliveryMentions || len(payload.Actions) > maxChannelDeliveryActions ||
 		(strings.TrimSpace(payload.Text) == "" && len(payload.Artifacts) == 0) ||
 		(payload.Text != "" && !validChannelText(payload.Text, maxChannelDeliveryRunes)) {
 		return nil, fmt.Errorf("decode channel delivery payload")

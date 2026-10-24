@@ -23,6 +23,7 @@ const (
 	maxChannelArtifactNameRunes = 256
 	maxChannelMentionIDRunes    = 255
 	maxChannelMentionNameRunes  = 128
+	maxChannelDeliveryActions   = 4
 )
 
 type channelDeliveryArtifact struct {
@@ -36,6 +37,7 @@ type channelDeliveryPayloadData struct {
 	Text      string                           `json:"text,omitempty"`
 	Mentions  []channelruntime.DeliveryMention `json:"mentions,omitempty"`
 	Artifacts []channelDeliveryArtifact        `json:"artifacts,omitempty"`
+	Actions   []channelruntime.DeliveryAction  `json:"actions,omitempty"`
 }
 
 type channelArtifactLink struct {

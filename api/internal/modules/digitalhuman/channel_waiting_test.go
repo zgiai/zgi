@@ -210,3 +210,23 @@ func TestDingTalkDirectConfirmationsAreOneTap(t *testing.T) {
 		}
 	}
 }
+
+func TestApprovalPromptsCarryTheirReplyButtons(t *testing.T) {
+	encoded, _ := json.Marshal(invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu"},
+		Context: map[string]any{"conversation_type": "group"}})
+	run := &Run{InvocationEvent: datatypes.JSON(encoded)}
+	task := map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"kind": "digital_human_task", "approval_token": "token-1"}}
+	actions := channelWaitActions(run, runtimemodel.MessageStatusWaitingApproval, task, "wait-1")
+	if len(actions) != 2 || actions[0].Reply != "确认" || !actions[0].Primary || actions[1].Reply != "取消" ||
+		actions[0].Wait != "wait-1" || actions[0].ConversationType != channelruntime.ConversationTypeGroup {
+		t.Fatalf("task approval actions = %#v", actions)
+	}
+	if actions := channelWaitActions(run, runtimemodel.MessageStatusWaitingQuestion, task, "wait-1"); actions != nil {
+		t.Fatalf("a question has actions: %#v", actions)
+	}
+	messageID := uuid.New()
+	if channelWaitKey(messageID, "waiting_approval", "token-1") != channelWaitKey(messageID, "waiting_approval", "token-1") ||
+		channelWaitKey(messageID, "waiting_approval", "token-1") == channelWaitKey(messageID, "waiting_approval", "token-2") {
+		t.Fatal("a wait key is not stable per wait")
+	}
+}
