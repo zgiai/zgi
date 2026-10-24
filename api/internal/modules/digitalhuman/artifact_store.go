@@ -2,7 +2,6 @@ package digitalhuman
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,7 +16,7 @@ const artifactApplicationType = "digital_human"
 // It gates the model tools and the capture of report files; reading
 // existing artifacts is always allowed.
 func ArtifactsEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_DIGITAL_HUMAN_ARTIFACTS_ENABLED")), "true")
+	return envFlagDefaultOn("ZGI_DIGITAL_HUMAN_ARTIFACTS_ENABLED")
 }
 
 // ToolFileArtifactBlobs stores artifact file versions as persistent,
