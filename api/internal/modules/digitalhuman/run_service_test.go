@@ -770,48 +770,6 @@ func TestRuntimeServicePublishesSafeChannelProgressBeforeFinalAnswer(t *testing.
 	}
 }
 
-func TestRuntimeServiceDoesNotPublishChannelProgressWhenDisabled(t *testing.T) {
-	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
-	chat := &fakeDigitalHumanChat{events: []chatruntime.StreamEvent{{
-		EventType: channelEventMessageRetract, Payload: map[string]any{
-			"content": "不应发送", "presentation_disposition": "process", "segment_id": "disabled",
-		},
-	}}}
-	now := time.Date(2026, 8, 21, 6, 0, 0, 0, time.UTC)
-	transient := &channelTransientDispatcherStub{}
-	service := NewRuntimeService(
-		store,
-		fakeExecutionResolver{now: now, channelPolicy: &ChannelResponsePolicy{
-			IntermediateMessagesEnabled: false, AcknowledgementEnabled: true,
-		}},
-		fakeBrainAdapter{}, chat, dispatcher, WithChannelTransientDispatcher(transient),
-	)
-	service.now = func() time.Time { return now }
-	scope, digitalHumanID, conversationID := testRunScope(), uuid.New(), uuid.New()
-	installationID := uuid.NewString()
-	event := invocation.Event{
-		ID: "feishu-progress-disabled", Type: invocation.EventTypeChannelMessage,
-		Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu", InstallationID: installationID},
-		Target: runtimeidentity.SubjectRef{
-			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
-			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		},
-		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "ou_sender"},
-		OccurredAt: now,
-		ReplyTo:    &invocation.ReplyAddress{Provider: "feishu", InstallationID: installationID, ConversationID: "oc_disabled"},
-	}
-	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "测试", &conversationID)
-	if err != nil || !created {
-		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
-	}
-	if err := service.Execute(t.Context(), run.ID); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if len(transient.requests) != 0 {
-		t.Fatalf("transient requests = %#v, want none", transient.requests)
-	}
-}
-
 func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	now := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
@@ -1425,8 +1383,7 @@ func (c *fakeDigitalHumanChat) ListSkills(context.Context, chatruntime.Scope) ([
 }
 
 type fakeExecutionResolver struct {
-	now           time.Time
-	channelPolicy *ChannelResponsePolicy
+	now time.Time
 }
 
 func (r fakeExecutionResolver) Resolve(_ context.Context, event invocation.Event, _ *uuid.UUID) (*ResolvedExecution, error) {
@@ -1434,9 +1391,6 @@ func (r fakeExecutionResolver) Resolve(_ context.Context, event invocation.Event
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: uuid.New(),
 		IdentityName: "Atlas", Persona: "Researcher", Rules: []string{"cite evidence"}, Model: "test-model",
 		UseUserMemory: false, UseAgentMemory: false, ResolvedAt: r.now,
-	}
-	if r.channelPolicy != nil {
-		snapshot.ChannelResponsePolicy = channelResponsePolicyPointer(*r.channelPolicy)
 	}
 	var err error
 	snapshot.Revision, err = executionSnapshotRevision(snapshot)

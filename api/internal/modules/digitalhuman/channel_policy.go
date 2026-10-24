@@ -1,12 +1,10 @@
 package digitalhuman
 
-import (
-	"encoding/json"
-)
-
-// ChannelResponsePolicy controls best-effort conversational feedback for
-// external chat channels. Final answers and generated files are intentionally
-// outside this policy because they use the durable delivery outbox.
+// ChannelResponsePolicy is the conversational feedback a channel message
+// gets: an acknowledgement once it is accepted and intermediate progress
+// while it runs. Both are always on now; the policy stays in the execution
+// snapshot so the revisions of persisted runs are unchanged. Final answers
+// and generated files use the durable delivery outbox instead.
 type ChannelResponsePolicy struct {
 	IntermediateMessagesEnabled bool `json:"intermediate_messages_enabled"`
 	AcknowledgementEnabled      bool `json:"acknowledgement_enabled"`
@@ -17,42 +15,6 @@ func defaultChannelResponsePolicy() ChannelResponsePolicy {
 		IntermediateMessagesEnabled: true,
 		AcknowledgementEnabled:      true,
 	}
-}
-
-func channelResponsePolicyFromTriggerPolicy(encoded []byte) ChannelResponsePolicy {
-	policy := defaultChannelResponsePolicy()
-	if len(encoded) == 0 {
-		return policy
-	}
-	var trigger struct {
-		ChannelResponse *struct {
-			IntermediateMessagesEnabled *bool `json:"intermediate_messages_enabled"`
-			AcknowledgementEnabled      *bool `json:"acknowledgement_enabled"`
-		} `json:"channel_response"`
-	}
-	if json.Unmarshal(encoded, &trigger) != nil || trigger.ChannelResponse == nil {
-		return policy
-	}
-	if trigger.ChannelResponse.IntermediateMessagesEnabled != nil {
-		policy.IntermediateMessagesEnabled = *trigger.ChannelResponse.IntermediateMessagesEnabled
-	}
-	if trigger.ChannelResponse.AcknowledgementEnabled != nil {
-		policy.AcknowledgementEnabled = *trigger.ChannelResponse.AcknowledgementEnabled
-	}
-	return policy
-}
-
-func channelResponsePolicyFromRun(run *Run) ChannelResponsePolicy {
-	if run == nil || len(run.ExecutionSnapshot) == 0 {
-		return defaultChannelResponsePolicy()
-	}
-	var snapshot struct {
-		ChannelResponsePolicy *ChannelResponsePolicy `json:"channel_response_policy"`
-	}
-	if json.Unmarshal(run.ExecutionSnapshot, &snapshot) != nil || snapshot.ChannelResponsePolicy == nil {
-		return defaultChannelResponsePolicy()
-	}
-	return *snapshot.ChannelResponsePolicy
 }
 
 func channelResponsePolicyPointer(policy ChannelResponsePolicy) *ChannelResponsePolicy {

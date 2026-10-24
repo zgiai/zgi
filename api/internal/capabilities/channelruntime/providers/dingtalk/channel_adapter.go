@@ -48,7 +48,7 @@ func NewDirectChannelAdapter(provider *Adapter, connections providertransport.Cr
 func (*ChannelAdapter) Provider() string { return IntegrationID }
 
 func (*ChannelAdapter) Capabilities() channelruntime.ProviderCapabilities {
-	return channelruntime.ProviderCapabilities{}
+	return channelruntime.ProviderCapabilities{ProcessingMarker: true}
 }
 
 func (*ChannelAdapter) ConnectionSpec() channelruntime.ConnectionSpec {
@@ -167,6 +167,7 @@ func (*ChannelAdapter) Normalize(_ context.Context, verified *channelruntime.Ver
 	}
 	return &channelruntime.InboundMessage{
 		Provider: IntegrationID, ProviderEventID: messageID, ProviderMessageID: messageID,
+		ProviderConversationID: strings.TrimSpace(callback.ConversationID),
 		ExternalTenantID:       strings.TrimSpace(normalization.Identity.ExternalTenantID),
 		ExternalConversationID: target, ConversationType: conversationType,
 		SenderExternalID: senderID, SenderDisplayName: boundedDingTalkSenderName(callback.SenderNick),
@@ -184,21 +185,11 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		request.ConnectionID == uuid.Nil || request.DeliveryID == uuid.Nil || strings.TrimSpace(request.Text) == "" {
 		return nil, channelruntime.ErrInvalidWebhook
 	}
-	connection, err := adapter.connections.Resolve(ctx, providertransport.CredentialRequest{
-		OrganizationID: request.OrganizationID.String(), ProviderID: IntegrationID, DriverID: DriverID,
-		InstallationID: request.InstallationID.String(), WorkspaceID: request.WorkspaceID.String(),
-	})
+	creds, destroy, err := adapter.channelCredentials(ctx, request.OrganizationID, request.WorkspaceID, request.InstallationID)
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Destroy()
-	if !validDingTalkChannelCredentials(connection.Credentials) {
-		return nil, providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "DingTalk channel credentials are unavailable", nil)
-	}
-	creds := credentials{
-		AppKey: strings.TrimSpace(connection.Credentials["app_key"]), AppSecret: strings.TrimSpace(connection.Credentials["app_secret"]),
-		AgentID: strings.TrimSpace(connection.Credentials["agent_id"]), ConnectionID: connection.ID,
-	}
+	defer destroy()
 	path, body, err := dingTalkRobotDelivery(request.ExternalConversationID, creds.AppKey, request.Text, request.Mentions)
 	if err != nil {
 		return nil, err
@@ -225,6 +216,26 @@ func (adapter *ChannelAdapter) Deliver(ctx context.Context, request channelrunti
 		messageID = "delivery:" + request.DeliveryID.String()
 	}
 	return &channelruntime.DeliveryReceipt{ProviderMessageID: messageID, ProviderRequestID: response.RequestID}, nil
+}
+
+// channelCredentials resolves the installation's DingTalk app; destroy wipes
+// the resolved secret.
+func (adapter *ChannelAdapter) channelCredentials(ctx context.Context, organizationID, workspaceID, installationID uuid.UUID) (credentials, func(), error) {
+	connection, err := adapter.connections.Resolve(ctx, providertransport.CredentialRequest{
+		OrganizationID: organizationID.String(), ProviderID: IntegrationID, DriverID: DriverID,
+		InstallationID: installationID.String(), WorkspaceID: workspaceID.String(),
+	})
+	if err != nil {
+		return credentials{}, nil, err
+	}
+	if !validDingTalkChannelCredentials(connection.Credentials) {
+		connection.Destroy()
+		return credentials{}, nil, providertransport.NewError(providertransport.ErrorCodeConnectionInvalid, "DingTalk channel credentials are unavailable", nil)
+	}
+	return credentials{
+		AppKey: strings.TrimSpace(connection.Credentials["app_key"]), AppSecret: strings.TrimSpace(connection.Credentials["app_secret"]),
+		AgentID: strings.TrimSpace(connection.Credentials["agent_id"]), ConnectionID: connection.ID,
+	}, connection.Destroy, nil
 }
 
 func (adapter *ChannelAdapter) sendRobotMessage(ctx context.Context, creds credentials, path string, body map[string]interface{}) (dingTalkRobotSendResponse, error) {

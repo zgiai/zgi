@@ -150,7 +150,7 @@ func (r *Resolver) resolveVersion(ctx context.Context, event invocation.Event, d
 		// relationship memory is a product capability now; the user's relationship
 		// setting is the only per-user automatic-capture control.
 		UserMemoryAutoCaptureAllowed: userMemoryEnabled,
-		ChannelResponsePolicy:        channelResponsePolicyPointer(channelResponsePolicyFromTriggerPolicy(version.TriggerPolicy)),
+		ChannelResponsePolicy:        channelResponsePolicyPointer(defaultChannelResponsePolicy()),
 		ExecutionRuntime:             cloneExecutionRuntime(version.ExecutionRuntime),
 		ResolvedAt:                   now,
 	}

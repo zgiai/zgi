@@ -122,9 +122,13 @@ type Mention struct {
 // InboundMessage is a bounded, normalized provider event. It contains no
 // verification token, encryption key, access token, cookie, or raw callback.
 type InboundMessage struct {
-	Provider               string
-	ProviderEventID        string
-	ProviderMessageID      string
+	Provider          string
+	ProviderEventID   string
+	ProviderMessageID string
+	// ProviderConversationID is the provider's own ID of the conversation
+	// the message is in, for providers that address a message by it, such
+	// as a DingTalk reaction. ExternalConversationID may be derived instead.
+	ProviderConversationID string
 	ExternalTenantID       string
 	ExternalConversationID string
 	ExternalThreadID       string
@@ -446,6 +450,9 @@ type ProcessingMarkerRequest struct {
 	ConnectionID     uuid.UUID
 	RunID            uuid.UUID
 	InboundMessageID string
+	// InboundConversationID is the provider conversation the message is in,
+	// copied from the same verified callback.
+	InboundConversationID string
 }
 
 // ProcessingMarkerReceipt contains the provider record needed to remove a

@@ -548,12 +548,20 @@ const messages = {
     description:
       'Control channel feedback and other runtime preferences without changing this digital human’s identity.',
     channelResponseTitle: 'Replies in channels',
-    channelResponseDescription:
-      'Choose which temporary messages are sent while this digital human works in Feishu or another chat channel.',
-    intermediateMessages: 'Send progress updates',
-    intermediateMessagesDescription: 'When work takes a while, send progress as separate messages. A progress message may occasionally be lost; the final reply is not affected.',
-    acknowledgement: 'Reply "Got it" first',
-    acknowledgementDescription: 'Answer "Got it, working on it…" as soon as a message arrives, then start working.',
+    channelReply: {
+      received: {
+        title: 'Message received',
+        description: 'A working reaction goes on the message: Typing in Feishu, "🤔 Thinking" in DingTalk. Channels without reactions get "Got it, working on it…" first.',
+      },
+      working: {
+        title: 'Working',
+        description: 'When work takes a while, progress goes out as separate messages. A progress message may occasionally be lost; the final reply is not affected.',
+      },
+      done: {
+        title: 'Done',
+        description: 'The working reaction comes off, and the final reply and any generated files are sent.',
+      },
+    },
     unsaved: 'You have unsaved changes',
     saved: 'All settings are saved',
     pendingPublish: 'Draft saved and waiting to be published',
@@ -644,7 +652,7 @@ const messages = {
   configurationHub: {
     sectionNav: 'Configuration sections',
     conversationTitle: 'Conversation',
-    conversationDescription: 'What files people can upload, and how replies behave in channels.',
+    conversationDescription: 'What files people can upload, and how the digital human replies in channels.',
     title: 'Configuration',
     description:
       'Manage identity, response behavior, and approved resources in one versioned draft.',

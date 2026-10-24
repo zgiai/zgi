@@ -24,14 +24,8 @@ export type DigitalHumanRunWaitingReason =
   | 'waiting_budget'
   | 'waiting_client_action';
 
-export interface DigitalHumanChannelResponsePolicy {
-  intermediate_messages_enabled?: boolean;
-  acknowledgement_enabled?: boolean;
-}
-
 export interface DigitalHumanTriggerPolicy extends Record<string, unknown> {
   manual?: boolean;
-  channel_response?: DigitalHumanChannelResponsePolicy;
 }
 
 export interface DigitalHumanPresentationPolicy {

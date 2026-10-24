@@ -1198,11 +1198,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		return err
 	}
 	var eventCallbacks []func(chatruntime.StreamEvent) error
-	policy := defaultChannelResponsePolicy()
-	if resolved.Snapshot.ChannelResponsePolicy != nil {
-		policy = *resolved.Snapshot.ChannelResponsePolicy
-	}
-	if event.Origin.Kind == invocation.OriginChannel && policy.IntermediateMessagesEnabled && s.transient != nil {
+	if event.Origin.Kind == invocation.OriginChannel && s.transient != nil {
 		progress := newChannelProgressCollector(s.transient, run.ID)
 		eventCallbacks = append(eventCallbacks, func(streamEvent chatruntime.StreamEvent) error {
 			return progress.Handle(ctx, streamEvent)

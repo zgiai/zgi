@@ -1188,22 +1188,23 @@ func (service *ChannelService) submitChannelInvocation(
 	if err := service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventAccepted, "", &run.ID, now); err != nil {
 		return nil, err
 	}
-	policy := channelResponsePolicyFromRun(run)
-	if policy.AcknowledgementEnabled {
-		adapter, resolveErr := service.adapters.Resolve(installation.Provider)
-		_, supportsMarker := adapter.(channelruntime.ProcessingMarkerAdapter)
-		if resolveErr == nil && adapter.Capabilities().ProcessingMarker && supportsMarker && service.markers != nil {
-			service.scheduleProcessingMarker(ctx, installation, route, stored, run.ID, now)
-		} else {
-			// Providers without a native processing marker retain the existing
-			// best-effort acknowledgement message.
-			_ = service.transient.EnqueueTransient(ctx, ChannelTransientDeliveryRequest{
-				RunID: run.ID, Kind: channelruntime.DeliveryKindAcknowledgement,
-				DeliveryKey: "accepted", Text: channelAcknowledgementText,
-			})
-		}
+	adapter, resolveErr := service.adapters.Resolve(installation.Provider)
+	_, supportsMarker := adapter.(channelruntime.ProcessingMarkerAdapter)
+	if resolveErr == nil && adapter.Capabilities().ProcessingMarker && supportsMarker && service.markers != nil {
+		service.scheduleProcessingMarker(ctx, installation, route, stored, message.ProviderConversationID, run.ID, now)
+	} else {
+		// Providers without a native processing marker acknowledge with a
+		// best-effort message.
+		service.enqueueAcknowledgementText(ctx, run.ID)
 	}
 	return &ChannelWebhookResult{Accepted: true, Duplicate: duplicate, EventID: stored.ID, RunID: &run.ID}, nil
+}
+
+func (service *ChannelService) enqueueAcknowledgementText(ctx context.Context, runID uuid.UUID) {
+	_ = service.transient.EnqueueTransient(ctx, ChannelTransientDeliveryRequest{
+		RunID: runID, Kind: channelruntime.DeliveryKindAcknowledgement,
+		DeliveryKey: "accepted", Text: channelAcknowledgementText,
+	})
 }
 
 func (service *ChannelService) scheduleProcessingMarker(
@@ -1211,6 +1212,7 @@ func (service *ChannelService) scheduleProcessingMarker(
 	installation *channelruntime.Installation,
 	route *ChannelRoute,
 	inbound *channelruntime.InboundEvent,
+	conversationID string,
 	runID uuid.UUID,
 	now time.Time,
 ) {
@@ -1222,7 +1224,8 @@ func (service *ChannelService) scheduleProcessingMarker(
 		InstallationID: installation.ID, InboundEventID: inbound.ID, RunID: runID,
 		Provider: strings.ToLower(strings.TrimSpace(installation.Provider)), ConnectionID: installation.ConnectionID,
 		ActorID: installation.CreatedBy, SubjectType: route.Binding.SubjectType, SubjectID: route.Binding.SubjectID,
-		ProviderMessageID: strings.TrimSpace(inbound.ProviderMessageID), Status: channelruntime.ProcessingMarkerPendingAdd,
+		ProviderMessageID: strings.TrimSpace(inbound.ProviderMessageID), ProviderConversationID: strings.TrimSpace(conversationID),
+		Status:      channelruntime.ProcessingMarkerPendingAdd,
 		AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	created, err := service.markers.CreateProcessingMarker(ctx, marker)
@@ -1485,11 +1488,22 @@ func (service *ChannelService) DispatchProcessingMarkers(ctx context.Context, li
 		request := channelruntime.ProcessingMarkerRequest{
 			OrganizationID: marker.OrganizationID, WorkspaceID: marker.WorkspaceID,
 			InstallationID: marker.InstallationID, ConnectionID: marker.ConnectionID,
-			RunID: marker.RunID, InboundMessageID: marker.ProviderMessageID,
+			RunID: marker.RunID, InboundMessageID: marker.ProviderMessageID, InboundConversationID: marker.ProviderConversationID,
 		}
 		switch marker.Status {
 		case channelruntime.ProcessingMarkerAdding:
 			receipt, addErr := provider.AddProcessingMarker(ctx, request)
+			if processingMarkerRefused(addErr) {
+				// The app may not react to messages, as a DingTalk app without
+				// the emotion permission: nothing was added, so acknowledge
+				// with a message instead.
+				logger.WarnContext(ctx, "DigitalHuman processing marker was refused; acknowledging with a message", "run_id", marker.RunID.String(), addErr)
+				service.enqueueAcknowledgementText(ctx, marker.RunID)
+				combined = errors.Join(combined, service.markers.FailProcessingMarker(
+					ctx, marker.ID, channelErrorCode(addErr), safeChannelErrorMessage(addErr), service.now(),
+				))
+				continue
+			}
 			providerMarkerID, providerRequestID := "", ""
 			if receipt != nil {
 				providerMarkerID = strings.TrimSpace(receipt.ProviderMarkerID)
@@ -1634,6 +1648,16 @@ func sameInboundEvent(stored, replay *channelruntime.InboundEvent) bool {
 
 func validChannelText(value string, maxRunes int) bool {
 	return utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxRunes
+}
+
+// processingMarkerRefused reports a provider refusing the marker outright,
+// for missing permission, as opposed to a failure that may have added it.
+func processingMarkerRefused(err error) bool {
+	switch providertransport.ErrorCode(err) {
+	case providertransport.ErrorCodeAccessDenied, providertransport.ErrorCodeInsufficientScope:
+		return true
+	}
+	return false
 }
 
 func channelErrorCode(err error) string {

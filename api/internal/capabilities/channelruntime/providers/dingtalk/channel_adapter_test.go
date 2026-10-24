@@ -158,6 +158,53 @@ func TestDingTalkChannelDeliverUsesRobotAPI(t *testing.T) {
 	}
 }
 
+func TestDingTalkProcessingMarkerIsTheThinkingEmotion(t *testing.T) {
+	paths := []string{}
+	var lastBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/v1.0/oauth2/accessToken" {
+			_ = json.NewEncoder(writer).Encode(map[string]interface{}{"accessToken": "token-1", "expireIn": 7200})
+			return
+		}
+		paths = append(paths, request.URL.Path)
+		lastBody = map[string]any{}
+		_ = json.NewDecoder(request.Body).Decode(&lastBody)
+		_ = json.NewEncoder(writer).Encode(map[string]any{"success": true, "requestId": "req-1"})
+	}))
+	defer server.Close()
+	provider, err := newForBaseURLs(server.Client(), server.URL, server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectionID := uuid.New()
+	adapter, _ := NewDirectChannelAdapter(provider, dingTalkChannelConnectionResolverStub{connectionID: connectionID})
+	if !adapter.Capabilities().ProcessingMarker {
+		t.Fatal("DingTalk channel has no processing marker")
+	}
+	request := channelruntime.ProcessingMarkerRequest{
+		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), InstallationID: connectionID, ConnectionID: uuid.New(), RunID: uuid.New(),
+		InboundMessageID: "msg-1", InboundConversationID: "cid-1",
+	}
+	receipt, err := adapter.AddProcessingMarker(t.Context(), request)
+	if err != nil || receipt.ProviderRequestID != "req-1" {
+		t.Fatalf("AddProcessingMarker() = %#v, %v", receipt, err)
+	}
+	if lastBody["openMsgId"] != "msg-1" || lastBody["openConversationId"] != "cid-1" || lastBody["robotCode"] != "ding-app" ||
+		lastBody["emotionName"] != "🤔思考中" {
+		t.Fatalf("emotion body = %#v", lastBody)
+	}
+	if err := adapter.RemoveProcessingMarker(t.Context(), request, ""); err != nil {
+		t.Fatalf("RemoveProcessingMarker() = %v", err)
+	}
+	if strings.Join(paths, ",") != "/v1.0/robot/emotion/reply,/v1.0/robot/emotion/recall" {
+		t.Fatalf("emotion calls = %v", paths)
+	}
+	request.InboundConversationID = ""
+	if _, err := adapter.AddProcessingMarker(t.Context(), request); !errors.Is(err, channelruntime.ErrInvalidWebhook) {
+		t.Fatalf("a marker without the conversation = %v", err)
+	}
+}
+
 func TestDingTalkMarkdownKeepsLinesAndFallsBackToText(t *testing.T) {
 	body := map[string]interface{}{}
 	setDingTalkMessage(body, "## 周报\n- 完成 A\n- 完成 B\n\n```\ncode\n```", "## 周报")
