@@ -29,6 +29,14 @@ const (
 	OwnerApplication OwnerKind = "application"
 )
 
+func (k OwnerKind) valid() bool {
+	switch k {
+	case OwnerAccount, OwnerAPIEndUser, OwnerWorkspace, OwnerApplication:
+		return true
+	}
+	return false
+}
+
 // Visibility is who besides the owner may read an artifact.
 type Visibility string
 

@@ -982,7 +982,7 @@ export interface DigitalHumanArtifact {
   kind: DigitalHumanArtifactKind;
   title: string;
   visibility: 'owner' | 'team' | 'application';
-  owner_kind: 'account' | 'api_end_user' | 'workspace' | 'application';
+  owner_kind: DigitalHumanArtifactOwnerKind;
   owner_id: string;
   source_task_id?: string;
   current_version: number;
@@ -1025,9 +1025,31 @@ export interface DigitalHumanArtifactList {
   page_size: number;
 }
 
+export type DigitalHumanArtifactOwnerKind = 'account' | 'api_end_user' | 'workspace' | 'application';
+
+/** One owner of artifacts the reader sees, with how many. */
+export interface DigitalHumanArtifactOwner {
+  kind: DigitalHumanArtifactOwnerKind;
+  id: string;
+  count: number;
+  /** A member's name (or email) or an end user's identifier. */
+  name?: string;
+  email?: string;
+}
+
+export interface DigitalHumanArtifactOwnerPage {
+  items: DigitalHumanArtifactOwner[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
 export interface DigitalHumanArtifactParams {
   scope?: 'mine';
   kind?: DigitalHumanArtifactKind;
+  owner_kind?: DigitalHumanArtifactOwnerKind;
+  owner_id?: string;
   q?: string;
   task_id?: string;
   /** Archived artifacts are left out unless asked for. */

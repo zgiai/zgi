@@ -1,24 +1,25 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Archive, ArchiveRestore, Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Share2, UserRound, Users } from 'lucide-react';
+import { ArtifactOwnerPicker, artifactOwnerLabel } from '@/components/digital-human/artifact-owner-picker';
 import { ArtifactShareDialog } from '@/components/digital-human/artifact-share-dialog';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { ProtectedGeneratedFileCard } from '@/components/chat/variants/aichat/protected-generated-file-card';
 import { useOpenTaskReport } from '@/components/digital-human/task-report-drawer';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLocale } from '@/hooks/use-locale';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useT } from '@/i18n';
-import type { ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import { digitalHumanService } from '@/services/digital-human.service';
@@ -26,10 +27,15 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import type {
   DigitalHumanArtifact,
   DigitalHumanArtifactKind,
+  DigitalHumanArtifactOwner,
+  DigitalHumanArtifactOwnerKind,
   DigitalHumanArtifactVersion,
 } from '@/services/types/digital-human';
 
 const kinds: DigitalHumanArtifactKind[] = ['document', 'file', 'image', 'table'];
+const ownerKinds: DigitalHumanArtifactOwnerKind[] = ['account', 'api_end_user', 'workspace', 'application'];
+const archiveFilters = ['archived', 'all'] as const;
+type OwnerFilter = 'all' | 'mine' | DigitalHumanArtifactOwnerKind;
 const kindIcon = { document: FileText, file: Files, image: FileImage, table: FileSpreadsheet } as const;
 const kindTone = {
   document: 'bg-primary/10 text-primary',
@@ -48,20 +54,25 @@ function readsAsText(version: DigitalHumanArtifactVersion, title: string) {
   return version.mime_type?.startsWith('text/') || version.mime_type === 'application/json' || textExtensions.includes(extension);
 }
 
-/** Whom an artifact belongs to, in words: a member, an end user, or the team. */
-export function artifactOwnerLabel(t: ScopedTranslations<'digitalHumans'>, artifact: DigitalHumanArtifact) {
-  switch (artifact.owner_kind) {
-    case 'workspace':
-      return t('artifacts.owner.team');
-    case 'application':
-      return t('artifacts.owner.application');
-    case 'api_end_user':
-      return artifact.owner_name
-        ? t('artifacts.owner.endUserNamed', { name: artifact.owner_name })
-        : t('artifacts.owner.endUser', { id: artifact.owner_id.slice(0, 8) });
-    default:
-      return artifact.owner_name || t('artifacts.owner.member');
-  }
+function ArtifactFilter({
+  value,
+  onChange,
+  label,
+  children,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-9 min-w-0 xl:w-[140px]" aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>{children}</SelectContent>
+    </Select>
+  );
 }
 
 function formatSize(bytes: number) {
@@ -101,30 +112,55 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
   const searchParams = useSearchParams();
   const selected = searchParams.get('selected');
   const wide = useMediaQuery('(min-width: 1024px)');
-  const [search, setSearch] = useState('');
-  const [mine, setMine] = useState(false);
-  const [kind, setKind] = useState<DigitalHumanArtifactKind | null>(null);
-  const [archived, setArchived] = useState(false);
+  const [search, setSearch] = useState(searchParams.get('q') ?? '');
+  const deferredSearch = useDeferredValue(search.trim());
+  // Filters live in the URL, like the task center's, so a filtered view can be
+  // reopened and shared.
+  const rawKind = searchParams.get('kind');
+  const kind = kinds.includes(rawKind as DigitalHumanArtifactKind) ? (rawKind as DigitalHumanArtifactKind) : undefined;
+  const rawArchived = searchParams.get('archived');
+  const archived = archiveFilters.find(item => item === rawArchived);
+  const rawOwner = searchParams.get('owner_kind');
+  const ownerFilter: OwnerFilter =
+    rawOwner === 'mine' || ownerKinds.includes(rawOwner as DigitalHumanArtifactOwnerKind) ? (rawOwner as OwnerFilter) : 'all';
+  const ownerKind = ownerFilter === 'all' || ownerFilter === 'mine' ? undefined : ownerFilter;
+  const ownerID = ownerFilter === 'mine' ? '' : (searchParams.get('owner') ?? '');
   const query = useQuery({
-    queryKey: ['digital-human-artifacts', id, search.trim(), mine, kind, archived],
+    queryKey: ['digital-human-artifacts', id, deferredSearch, kind, archived, ownerFilter, ownerID],
     queryFn: () =>
       digitalHumanService.listArtifacts(id, {
-        q: search.trim() || undefined,
-        scope: mine ? 'mine' : undefined,
-        kind: kind ?? undefined,
-        archived: archived ? 'archived' : undefined,
+        q: deferredSearch || undefined,
+        scope: ownerFilter === 'mine' ? 'mine' : undefined,
+        owner_kind: ownerKind,
+        owner_id: ownerID || undefined,
+        kind,
+        archived,
         page_size: 100,
       }),
   });
   const items = query.data?.data.items ?? [];
+  // Every row belongs to the chosen owner, so any row names them.
+  const chosenOwner = ownerID ? items.find(item => item.owner_id === ownerID) : undefined;
+  const hasFilters = Boolean(search.trim() || kind || archived || ownerFilter !== 'all' || ownerID);
 
-  const select = (artifactId: string | null) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (artifactId) params.set('selected', artifactId);
-    else params.delete('selected');
-    const next = params.toString();
-    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  };
+  const updateParams = useCallback(
+    (updates: Record<string, string | null>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const [key, value] of Object.entries(updates)) {
+        if (value) params.set(key, value);
+        else params.delete(key);
+      }
+      const next = params.toString();
+      router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
+  useEffect(() => {
+    if ((searchParams.get('q') ?? '') === deferredSearch) return;
+    updateParams({ q: deferredSearch || null });
+  }, [deferredSearch, searchParams, updateParams]);
+  const select = (artifactId: string | null) => updateParams({ selected: artifactId });
+  const filterByOwner = (owner: DigitalHumanArtifactOwner | null) => updateParams({ owner: owner?.id ?? null });
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-5 px-4 py-6 md:px-8 md:py-8">
@@ -135,26 +171,68 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
         </div>
         <p className="max-w-3xl text-sm text-muted-foreground">{t('artifacts.description')}</p>
       </div>
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-        <Input value={search} onChange={event => setSearch(event.target.value)} placeholder={t('artifacts.search')} leftIcon={<Search />} className="h-9 xl:max-w-sm" />
-        <div className="flex flex-wrap gap-2">
-          {[false, true].map(value => (
-            <Button key={String(value)} size="sm" variant={mine === value ? 'default' : 'outline'} className="h-8 rounded-full" onClick={() => setMine(value)}>
-              {value ? t('artifacts.scope.mine') : t('artifacts.scope.all')}
-            </Button>
-          ))}
-          <span className="mx-1 w-px self-stretch bg-border" />
-          {kinds.map(item => (
-            <Button key={item} size="sm" variant={kind === item ? 'default' : 'outline'} className="h-8 rounded-full" onClick={() => setKind(kind === item ? null : item)}>
-              {t(`artifacts.kind.${item}`)}
-            </Button>
-          ))}
-          <span className="mx-1 w-px self-stretch bg-border" />
-          <Button size="sm" variant={archived ? 'default' : 'outline'} className="h-8 rounded-full" onClick={() => setArchived(!archived)}>
-            <Archive className="size-3.5" />
-            {t('artifacts.showArchived')}
-          </Button>
+      <div className="flex flex-col gap-3 rounded-xl border bg-background p-4 xl:flex-row xl:items-center">
+        <Input
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+          placeholder={t('artifacts.search')}
+          leftIcon={<Search />}
+          className="h-9"
+          containerClassName="min-w-0 xl:min-w-[200px] xl:flex-1"
+        />
+        <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2 xl:flex xl:flex-none xl:justify-end">
+          <ArtifactFilter value={kind ?? 'all'} onChange={value => updateParams({ kind: value === 'all' ? null : value })} label={t('artifacts.filters.kind')}>
+            <SelectItem value="all">{t('artifacts.filters.allKinds')}</SelectItem>
+            {kinds.map(item => (
+              <SelectItem key={item} value={item}>
+                {t(`artifacts.kind.${item}`)}
+              </SelectItem>
+            ))}
+          </ArtifactFilter>
+          <ArtifactFilter
+            value={archived ?? 'active'}
+            onChange={value => updateParams({ archived: value === 'active' ? null : value })}
+            label={t('artifacts.filters.status')}
+          >
+            <SelectItem value="active">{t('artifacts.filters.active')}</SelectItem>
+            <SelectItem value="archived">{t('artifacts.filters.archived')}</SelectItem>
+            <SelectItem value="all">{t('artifacts.filters.allStatuses')}</SelectItem>
+          </ArtifactFilter>
+          <ArtifactFilter
+            value={ownerFilter}
+            onChange={value => updateParams({ owner_kind: value === 'all' ? null : value, owner: null })}
+            label={t('artifacts.filters.owner')}
+          >
+            <SelectItem value="all">{t('artifacts.filters.allOwners')}</SelectItem>
+            <SelectItem value="mine">{t('artifacts.filters.mine')}</SelectItem>
+            {ownerKinds.map(item => (
+              <SelectItem key={item} value={item}>
+                {t(`artifacts.filters.ownerKinds.${item}`)}
+              </SelectItem>
+            ))}
+          </ArtifactFilter>
+          <ArtifactOwnerPicker
+            digitalHumanId={id}
+            kind={ownerKind}
+            archived={archived}
+            disabled={ownerFilter === 'mine' || ownerFilter === 'workspace' || ownerFilter === 'application'}
+            value={ownerID}
+            valueLabel={chosenOwner ? artifactOwnerLabel(t, chosenOwner) : undefined}
+            onChange={filterByOwner}
+          />
         </div>
+        {hasFilters ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSearch('');
+              updateParams({ q: null, kind: null, archived: null, owner_kind: null, owner: null });
+            }}
+          >
+            {t('artifacts.filters.clear')}
+          </Button>
+        ) : null}
       </div>
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
         {query.isLoading ? (
@@ -165,8 +243,14 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
         ) : items.length === 0 ? (
           <div className="rounded-xl border border-dashed p-8 text-center">
             <Package className="mx-auto size-7 text-muted-foreground/50" />
-            <p className="mt-2 text-sm font-medium">{archived ? t('artifacts.emptyArchived') : t('artifacts.empty')}</p>
-            {archived ? null : <p className="mt-1 text-xs text-muted-foreground">{t('artifacts.emptyDescription')}</p>}
+            <p className="mt-2 text-sm font-medium">
+              {!hasFilters
+                ? t('artifacts.empty')
+                : archived === 'archived' && !search.trim() && !kind && ownerFilter === 'all' && !ownerID
+                  ? t('artifacts.emptyArchived')
+                  : t('artifacts.filters.noMatches')}
+            </p>
+            {hasFilters ? null : <p className="mt-1 text-xs text-muted-foreground">{t('artifacts.emptyDescription')}</p>}
           </div>
         ) : (
           <ul className="divide-y overflow-hidden rounded-xl border bg-background">

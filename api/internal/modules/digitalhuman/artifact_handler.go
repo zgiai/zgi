@@ -42,6 +42,7 @@ func NewArtifactHandler(service *artifacts.Service, projector *apptransport.Proj
 func (h *ArtifactHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group := router.Group("/digital-humans/:id/artifacts")
 	group.GET("", h.list)
+	group.GET("/owners", h.listOwners)
 	group.GET("/:artifact_id", h.get)
 	group.GET("/:artifact_id/versions", h.versions)
 	group.GET("/:artifact_id/versions/:number/content", h.content)
@@ -247,6 +248,15 @@ func (h *ArtifactHandler) list(c *gin.Context) {
 	}
 	query := artifacts.ListQuery{Kind: artifacts.Kind(strings.TrimSpace(c.Query("kind"))), Query: c.Query("q"), Mine: c.Query("scope") == "mine",
 		Archive: artifacts.ArchiveFilter(strings.TrimSpace(c.Query("archived"))), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	query.OwnerKind = artifacts.OwnerKind(strings.TrimSpace(c.Query("owner_kind")))
+	if raw := strings.TrimSpace(c.Query("owner_id")); raw != "" {
+		ownerID, err := uuid.Parse(raw)
+		if err != nil {
+			h.writeError(c, artifacts.ErrInvalidRequest, "digital_human.artifact.list")
+			return
+		}
+		query.OwnerID = &ownerID
+	}
 	if raw := strings.TrimSpace(c.Query("task_id")); raw != "" {
 		taskID, err := uuid.Parse(raw)
 		if err != nil {
@@ -261,6 +271,27 @@ func (h *ArtifactHandler) list(c *gin.Context) {
 		return
 	}
 	h.owners.Fill(c.Request.Context(), result.Items...)
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// listOwners pages the owners of the artifacts the reader sees, searched by
+// name, email or end user identifier, so the console can filter by one.
+func (h *ArtifactHandler) listOwners(c *gin.Context) {
+	reader, ok := h.reader(c)
+	if !ok {
+		return
+	}
+	owners, err := h.artifacts.Owners(c.Request.Context(), reader, artifacts.OwnerKind(strings.TrimSpace(c.Query("kind"))),
+		artifacts.ArchiveFilter(strings.TrimSpace(c.Query("archived"))))
+	if err != nil {
+		h.writeError(c, err, "digital_human.artifact.owners")
+		return
+	}
+	result, err := h.owners.Page(c.Request.Context(), owners, c.Query("query"), intQuery(c, "page"), intQuery(c, "page_size"))
+	if err != nil {
+		h.writeError(c, err, "digital_human.artifact.owners")
+		return
+	}
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 

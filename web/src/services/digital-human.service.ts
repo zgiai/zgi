@@ -4,6 +4,8 @@ import type {
   CreateDigitalHumanRequest,
   DigitalHumanArtifact,
   DigitalHumanArtifactList,
+  DigitalHumanArtifactOwnerKind,
+  DigitalHumanArtifactOwnerPage,
   DigitalHumanArtifactParams,
   DigitalHumanArtifactShare,
   DigitalHumanArtifactShareLifetime,
@@ -638,6 +640,13 @@ class DigitalHumanService extends BaseService {
 
   listArtifacts(id: string, params: DigitalHumanArtifactParams = {}): Promise<ApiResponseData<DigitalHumanArtifactList>> {
     return this.request('get', `/digital-humans/${id}/artifacts`, undefined, { params });
+  }
+
+  listArtifactOwners(
+    id: string,
+    params: { query?: string; kind?: DigitalHumanArtifactOwnerKind; archived?: 'archived' | 'all'; page?: number; page_size?: number } = {}
+  ): Promise<ApiResponseData<DigitalHumanArtifactOwnerPage>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/owners`, undefined, { params });
   }
 
   getArtifact(id: string, artifactId: string): Promise<ApiResponseData<DigitalHumanArtifact>> {
