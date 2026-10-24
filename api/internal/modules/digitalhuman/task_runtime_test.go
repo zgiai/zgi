@@ -164,7 +164,7 @@ func TestScheduledTaskRuntimeMayOnlyMarkCurrentTaskWaitingOrBlocked(t *testing.T
 	}
 }
 
-func TestTaskRuntimeRequiresApprovalForExplicitRequest(t *testing.T) {
+func TestTaskRuntimeAppliesRequestedLowRiskTasksAtOnce(t *testing.T) {
 	created := []CreateTaskRequest{}
 	mutations := []TaskMutationContext{}
 	provider := NewTaskRuntimeProvider(taskRuntimeService{createCalls: &created, createMutations: &mutations})
@@ -181,15 +181,24 @@ func TestTaskRuntimeRequiresApprovalForExplicitRequest(t *testing.T) {
 	if result.Status != "success" || len(created) != 1 || len(mutations) != 1 {
 		t.Fatalf("create result = %#v, requests = %#v, mutations = %#v", result, created, mutations)
 	}
-	if !mutations[0].Proposed {
-		t.Fatal("explicit create was not persisted as a proposal")
+	// A one-off task the user asked for starts at once, even in a group.
+	if mutations[0].Proposed || !mutations[0].Undoable {
+		t.Fatal("a requested one-off task waited for approval")
 	}
 	if mutations[0].SourceConversationType != "group" {
 		t.Fatalf("create source conversation type = %q, want group", mutations[0].SourceConversationType)
 	}
 	data, ok := result.Result["data"].(map[string]any)
-	if !ok || data["status"] != "proposed" || data["approval_required"] != true {
+	if !ok || data["status"] != "created" || data["approval_required"] != false || data["undo_available"] != true {
 		t.Fatalf("create result data = %#v", result.Result)
+	}
+	// A recurring task in a group waits for approval.
+	recurring := manage.Handler(t.Context(), adapter.ToolCall{ID: "create-daily", Function: adapter.FunctionCall{
+		Name:      taskManageToolName,
+		Arguments: `{"action":"create","name":"Daily check-in","goal":"Remind the group to check in","schedule":{"type":"cron","cron":"0 9 * * *","timezone":"Asia/Shanghai"}}`,
+	}})
+	if recurring.Status != "success" || len(mutations) != 2 || !mutations[1].Proposed {
+		t.Fatalf("a recurring task in a group = %#v, %#v", recurring, mutations)
 	}
 }
 

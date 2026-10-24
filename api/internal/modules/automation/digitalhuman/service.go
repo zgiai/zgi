@@ -29,7 +29,8 @@ const (
 	defaultPageSize         = 20
 	maxPageSize             = 100
 	defaultTimeoutSeconds   = 300
-	proposalTTL             = 7 * 24 * time.Hour
+	// A proposal nobody answers is withdrawn after a day instead of waiting.
+	proposalTTL = 24 * time.Hour
 )
 
 // Service owns the DigitalHuman product projection over the Automation scheduler.
@@ -278,7 +279,11 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 		ClientReference: clientReference(req.ClientReference),
 	}
 	action := &automationmodel.AutomationTaskAction{ActionType: automationmodel.AutomationActionTypeRunDigitalHuman, ActionOrder: 1, Enabled: true, Config: map[string]any{}}
-	activity := newActivity(task.ID, mutation, "created", "Task created", map[string]any{"work_status": workStatus})
+	createdChanges := map[string]any{"work_status": workStatus}
+	if mutation.Undoable && !mutation.Proposed {
+		createdChanges[undoKey] = undoCreated
+	}
+	activity := newActivity(task.ID, mutation, "created", "Task created", createdChanges)
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := ensureStoredOwner(ctx, tx, access.Owner); err != nil {
 			return err
@@ -347,6 +352,9 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			return digitalhuman.ErrTaskConflict
 		}
 		changes := map[string]any{}
+		if err := keepUndo(changes, mutation, task); err != nil {
+			return err
+		}
 		currentChannels := taskNotifyChannels(task)
 		if req.Visibility != nil {
 			if !slices.Contains(digitalhuman.TaskVisibilityOptions(digitalhuman.TaskOwnerKind(pointerValue(task.OwnerKind))), *req.Visibility) {
@@ -564,6 +572,10 @@ func (s *Service) ApplyTaskAction(ctx context.Context, access digitalhuman.TaskA
 		if task.Revision != req.ExpectedRevision {
 			return digitalhuman.ErrTaskConflict
 		}
+		actionChanges := map[string]any{}
+		if err := keepUndo(actionChanges, mutation, task); err != nil {
+			return err
+		}
 		if err := applyTransition(task, action, s.now()); err != nil {
 			return err
 		}
@@ -595,7 +607,8 @@ func (s *Service) ApplyTaskAction(ctx context.Context, access digitalhuman.TaskA
 		if update.RowsAffected != 1 {
 			return digitalhuman.ErrTaskConflict
 		}
-		if err := tx.Create(newActivity(task.ID, mutation, string(action), actionSummary(action), map[string]any{"work_status": task.WorkStatus, "status": task.Status})).Error; err != nil {
+		actionChanges["work_status"], actionChanges["status"] = task.WorkStatus, task.Status
+		if err := tx.Create(newActivity(task.ID, mutation, string(action), actionSummary(action), actionChanges)).Error; err != nil {
 			return err
 		}
 		result = task
@@ -664,6 +677,10 @@ func (s *Service) setStatus(ctx context.Context, access digitalhuman.TaskAccessC
 			status == digitalhuman.TaskWorkStatusCompleted {
 			return digitalhuman.ErrTaskPolicyRejected
 		}
+		statusChanges := map[string]any{"work_status": status}
+		if err := keepUndo(statusChanges, mutation, loaded); err != nil {
+			return err
+		}
 		value := automationmodel.AutomationWorkStatus(status)
 		loaded.WorkStatus = &value
 		loaded.Revision++
@@ -681,7 +698,7 @@ func (s *Service) setStatus(ctx context.Context, access digitalhuman.TaskAccessC
 		if update.RowsAffected != 1 {
 			return digitalhuman.ErrTaskConflict
 		}
-		if err := tx.Create(newActivity(loaded.ID, mutation, "status_changed", "Task status changed", map[string]any{"work_status": status})).Error; err != nil {
+		if err := tx.Create(newActivity(loaded.ID, mutation, "status_changed", "Task status changed", statusChanges)).Error; err != nil {
 			return err
 		}
 		task = loaded

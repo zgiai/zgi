@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
@@ -109,8 +110,8 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
 	guidance := []string{
 		"You can manage only the task namespace made visible to this invocation.",
-		"Every conversational task creation requires a separate user approval. When the current user explicitly or implicitly asks for a task, reminder, or schedule, create a proposed task and ask the user to confirm it; never commit a new task in the same turn.",
-		"The create and propose actions both create a proposal. Treat create as a compatibility alias for propose, not as an approval bypass. This approval rule applies to console, API, WebApp, and channel conversations.",
+		"In the console and in channels, a low-risk task change the user asks for applies at once: a one-off task, a task that runs at most once a day, and editing, rescheduling, pausing, resuming, or running one. A recurring task in a group, a task that runs more often than once a day, canceling, archiving, and any change asked through the API or a web app instead become a proposal that waits for the user's approval. The tool result says which: created or committed means it is done, approval_required means it waits.",
+		"When the user asks for a task, reminder, or schedule, call the task tool with action create right away; do not first ask in prose whether to create it. Use action propose for work you suggest that the user did not ask for: it always waits for approval. After a change that applied at once, say what changed and when it runs next, and that the user can say 撤销 to undo it; to undo, call manage_digital_human_task with action undo and the task ID.",
 		"When the user confirms an earlier proposal, list proposed tasks from the current task namespace first; for a channel, prefer the current conversation. Confirm the single matching proposal using its returned ID and revision. If several proposals could match, ask which one instead of guessing.",
 		"When one request changes a paused task's schedule and also asks to restore, activate, or resume it, submit one update action with both schedule and lifecycle_status=active. Do not split that request into separate schedule and resume operations.",
 		"When you change a task's schedule, check its goal and success criteria for times, dates, or frequencies the change makes wrong. Include corrected goal and success_criteria in the same update so the approval shows one consistent task; leave them out only when they do not mention the schedule.",
@@ -572,9 +573,9 @@ type manageTaskArguments struct {
 }
 
 func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBoundary) skillloop.RuntimeTool {
-	description := "Create a task proposal that requires separate user approval, or manage an existing task. The create and propose actions are aliases. Existing-task actions require its ID and current revision. Use pause or resume to change whether a task is scheduled; use set_status only for the work status (waiting or blocked during a scheduled run). When changing when a task runs, check whether its goal or success criteria state a time (such as every day at 9:00). If they do, use update rather than schedule and rewrite that time in the same update, so the task never describes a time it no longer runs at."
+	description := "Create a task or manage an existing task. A low-risk change the user asks for applies at once and can be undone with the undo action; any other becomes a proposal that waits for the user's approval, and the result says which. Use create for a task the user asked for, and propose for one you suggest on your own: a proposal always waits for approval. Existing-task actions require its ID and current revision. Use pause or resume to change whether a task is scheduled; use set_status only for the work status (waiting or blocked during a scheduled run). When changing when a task runs, check whether its goal or success criteria state a time (such as every day at 9:00). If they do, use update rather than schedule and rewrite that time in the same update, so the task never describes a time it no longer runs at."
 	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: taskManageToolName, Description: description, Parameters: map[string]any{"type": "object", "properties": map[string]any{
-		"action": map[string]any{"type": "string", "enum": []string{"create", "propose", "confirm", "decline", "update", "set_status", "schedule", "run_now", "pause", "resume", "retry", "cancel", "archive"}}, "task_id": map[string]any{"type": "string", "format": "uuid"}, "expected_revision": map[string]any{"type": "integer", "minimum": 0}, "name": map[string]any{"type": "string"}, "goal": map[string]any{"type": "string"}, "success_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}}, "status": map[string]any{"type": "string", "enum": taskStatusValues()}, "lifecycle_status": map[string]any{"type": "string", "enum": []string{"paused", "active", "archived"}, "description": "When updating a paused task together with its schedule, set active to resume it in the same approved operation."}, "schedule": map[string]any{"type": "object", "description": "When this changes an existing task's timing and its goal or success criteria state a time, send them in the same update with that time rewritten.", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"manual", "once", "cron"}}, "run_at": map[string]any{"type": "string", "format": "date-time"}, "cron": map[string]any{"type": "string"}, "timezone": map[string]any{"type": "string"}}, "required": []string{"type"}, "additionalProperties": false}, "delivery_mode": map[string]any{"type": "string", "enum": []string{"task_only", "source_conversation"}}, "execution_timeout_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 1800}, "max_attempts": map[string]any{"type": "integer", "minimum": 1, "maximum": 3}, "report_review": map[string]any{"type": "string", "enum": []string{"none", "exceptions", "required"}, "description": "Which reports the requester must review. none: reminders and notices, nothing to check. exceptions (default): only a report that did not fully finish. required: a deliverable the requester asked to check before it counts, such as a document or analysis. Reports that need no review close by themselves."},
+		"action": map[string]any{"type": "string", "enum": []string{"create", "propose", "confirm", "decline", "update", "set_status", "schedule", "run_now", "pause", "resume", "retry", "cancel", "archive", "undo"}}, "task_id": map[string]any{"type": "string", "format": "uuid"}, "expected_revision": map[string]any{"type": "integer", "minimum": 0}, "name": map[string]any{"type": "string"}, "goal": map[string]any{"type": "string"}, "success_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}}, "status": map[string]any{"type": "string", "enum": taskStatusValues()}, "lifecycle_status": map[string]any{"type": "string", "enum": []string{"paused", "active", "archived"}, "description": "When updating a paused task together with its schedule, set active to resume it in the same approved operation."}, "schedule": map[string]any{"type": "object", "description": "When this changes an existing task's timing and its goal or success criteria state a time, send them in the same update with that time rewritten.", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"manual", "once", "cron"}}, "run_at": map[string]any{"type": "string", "format": "date-time"}, "cron": map[string]any{"type": "string"}, "timezone": map[string]any{"type": "string"}}, "required": []string{"type"}, "additionalProperties": false}, "delivery_mode": map[string]any{"type": "string", "enum": []string{"task_only", "source_conversation"}}, "execution_timeout_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 1800}, "max_attempts": map[string]any{"type": "integer", "minimum": 1, "maximum": 3}, "report_review": map[string]any{"type": "string", "enum": []string{"none", "exceptions", "required"}, "description": "Which reports the requester must review. none: reminders and notices, nothing to check. exceptions (default): only a report that did not fully finish. required: a deliverable the requester asked to check before it counts, such as a document or analysis. Reports that need no review close by themselves."},
 	}, "required": []string{"action"}, "additionalProperties": false}}}
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 		var args manageTaskArguments
@@ -586,10 +587,10 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			return taskToolFailure("digital_human.task.policy_rejected", false)
 		}
 		if args.Action == "create" || args.Action == "propose" {
-			// Conversational creation always enters the approval state. Explicit
-			// user intent is not enough to bypass confirmation because the same
-			// model-facing tool is used by channels and external surfaces.
-			mutation.Proposed = true
+			// A low-risk task the user asks for in the console or a channel
+			// starts at once and can be undone; any other waits for approval.
+			direct := directTaskCreateAllowed(boundary, args)
+			mutation.Proposed, mutation.Undoable = !direct, direct
 			if args.DeliveryMode == TaskDeliverySourceConversation &&
 				boundary.replyTo == nil && !validTaskConversationID(boundary.conversationID) {
 				// A source conversation is a durable ChatRuntime conversation for
@@ -602,7 +603,21 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			if err != nil {
 				return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))
 			}
+			if direct {
+				return taskToolSuccess(call, map[string]any{"status": "created", "approval_required": false, "undo_available": true, "task": result})
+			}
 			return taskToolSuccessWithApproval(call, map[string]any{"status": "proposed", "approval_required": true, "task": result}, taskApprovalPayload(run, boundary, result, args, mutation.OperationID, "create"))
+		}
+		if args.Action == "undo" {
+			undoer, ok := p.service.(TaskUndoService)
+			if !ok || args.TaskID == nil || *args.TaskID == uuid.Nil || boundary.currentTaskID != uuid.Nil || !directTaskSurface(boundary) {
+				return taskToolFailure("invalid_arguments", true)
+			}
+			result, err := undoer.UndoTaskChange(ctx, boundary.access, *args.TaskID, mutation)
+			if err != nil {
+				return taskToolFailure(taskErrorCode(err), false)
+			}
+			return taskToolSuccess(call, map[string]any{"status": "undone", "task": result})
 		}
 		if args.TaskID == nil || *args.TaskID == uuid.Nil || args.ExpectedRevision < 1 || (boundary.currentTaskID != uuid.Nil && *args.TaskID != boundary.currentTaskID) {
 			return taskToolFailure("invalid_arguments", true)
@@ -620,11 +635,14 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			if !result.CanChange {
 				return taskToolFailure(taskReadOnlyErrorCode, false)
 			}
-			approvalAction := taskApprovalActionForTask(args, result)
-			return taskToolSuccessWithApproval(call,
-				map[string]any{"status": "approval_required", "approval_required": true, "task": result},
-				taskApprovalPayload(run, boundary, result, args, mutation.OperationID, approvalAction),
-			)
+			if !directTaskChangeAllowed(boundary, args, result) {
+				approvalAction := taskApprovalActionForTask(args, result)
+				return taskToolSuccessWithApproval(call,
+					map[string]any{"status": "approval_required", "approval_required": true, "task": result},
+					taskApprovalPayload(run, boundary, result, args, mutation.OperationID, approvalAction),
+				)
+			}
+			mutation.Undoable = undoableTaskAction(args.Action)
 		}
 		var result *Task
 		var err error
@@ -660,7 +678,7 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 		if err != nil {
 			return taskToolFailure(taskErrorCode(err), false)
 		}
-		return taskToolSuccess(call, map[string]any{"status": "committed", "task": result})
+		return taskToolSuccess(call, map[string]any{"status": "committed", "approval_required": false, "undo_available": mutation.Undoable, "task": result})
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
 }
@@ -723,6 +741,102 @@ func updateRequest(args manageTaskArguments) UpdateTaskRequest {
 	}
 	return req
 }
+
+// directTaskMinInterval is the shortest gap between a recurring task's runs
+// that still applies without approval: more often costs noticeably more.
+const directTaskMinInterval = 24 * time.Hour
+
+// directTaskCreateAllowed reports whether a task the user asked for (create,
+// not a propose of the digital human's own idea) starts at once.
+//
+// directTaskSurface is where a change the user asks for may apply at once:
+// the console and channels. The API and web apps keep their approval.
+func directTaskSurface(boundary taskRuntimeBoundary) bool {
+	return boundary.source == "console" || strings.HasPrefix(boundary.source, "channel:")
+}
+
+func directTaskCreateAllowed(boundary taskRuntimeBoundary, args manageTaskArguments) bool {
+	return args.Action == "create" && boundary.currentTaskID == uuid.Nil && directTaskSurface(boundary) && directTaskSchedule(boundary, valueSchedule(args.Schedule))
+}
+
+// directTaskSchedule reports whether a task on this schedule may run without
+// approval: a one-off task, or one recurring at most daily outside a group.
+func directTaskSchedule(boundary taskRuntimeBoundary, schedule TaskSchedule) bool {
+	if schedule.Type != TaskScheduleCron {
+		return true
+	}
+	if boundary.conversationType == "group" {
+		return false
+	}
+	interval, ok := cronMinInterval(schedule)
+	return ok && interval >= directTaskMinInterval
+}
+
+// directTaskChangeAllowed reports whether a change to an existing task the
+// user asks for applies at once. Canceling and archiving always wait, and so
+// does anything about a recurring task in a group.
+func directTaskChangeAllowed(boundary taskRuntimeBoundary, args manageTaskArguments, task *Task) bool {
+	if task == nil || !directTaskSurface(boundary) {
+		return false
+	}
+	schedule := task.Schedule
+	if args.Schedule != nil {
+		schedule = *args.Schedule
+	}
+	group := boundary.conversationType == "group"
+	if group && (task.Schedule.Type == TaskScheduleCron || schedule.Type == TaskScheduleCron) {
+		return false
+	}
+	switch args.Action {
+	case "pause", "set_status", "run_now", "retry", "decline":
+		return true
+	case "confirm":
+		// In a group, only the member who asked may approve; the approval
+		// prompt checks who answers.
+		return !group && directTaskSchedule(boundary, schedule)
+	case "update", "schedule", "resume":
+		return directTaskSchedule(boundary, schedule)
+	}
+	return false
+}
+
+// undoableTaskAction is a direct change that can be put back.
+func undoableTaskAction(action string) bool {
+	switch action {
+	case "update", "schedule", "pause", "resume", "set_status":
+		return true
+	}
+	return false
+}
+
+// cronMinInterval is the shortest gap between the schedule's next runs.
+func cronMinInterval(schedule TaskSchedule) (time.Duration, bool) {
+	timezone := strings.TrimSpace(schedule.Timezone)
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return 0, false
+	}
+	parsed, err := cron.ParseStandard("CRON_TZ=" + timezone + " " + strings.TrimSpace(schedule.Cron))
+	if err != nil {
+		return 0, false
+	}
+	previous := parsed.Next(time.Now())
+	shortest := time.Duration(0)
+	for index := 0; index < 16 && !previous.IsZero(); index++ {
+		next := parsed.Next(previous)
+		if next.IsZero() {
+			break
+		}
+		if gap := next.Sub(previous); shortest == 0 || gap < shortest {
+			shortest = gap
+		}
+		previous = next
+	}
+	return shortest, shortest > 0
+}
+
 func valueSchedule(value *TaskSchedule) TaskSchedule {
 	if value == nil {
 		return TaskSchedule{Type: TaskScheduleManual, Timezone: "UTC"}

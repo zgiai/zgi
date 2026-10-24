@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -130,7 +132,7 @@ func channelWaitingPromptText(run *Run, status, answer string, metadata map[stri
 					parts = append(parts, "需要你确认任务「"+name+"」。")
 				}
 			}
-			parts = append(parts, channelReplyTaskApproval)
+			parts = append(parts, channelReplyButtons(run, channelReplyTaskApproval, "确认", "取消"))
 		case strings.TrimSpace(stringValue(state["workflow_run_id"])) != "":
 			if allowed, _ := state["ui_approval_allowed"].(bool); allowed {
 				parts = append(parts, channelReplyWorkflow)
@@ -141,7 +143,7 @@ func channelWaitingPromptText(run *Run, status, answer string, metadata map[stri
 			if answer == "" {
 				parts = append(parts, "数字人需要执行一个外部操作，需要你确认。")
 			}
-			parts = append(parts, channelReplyConnector)
+			parts = append(parts, channelReplyButtons(run, channelReplyConnector, "确认", "取消"))
 		default:
 			parts = append(parts, channelUnsupportedWaitNotice)
 		}
@@ -149,6 +151,25 @@ func channelWaitingPromptText(run *Run, status, answer string, metadata map[stri
 		parts = append(parts, channelUnsupportedWaitNotice)
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+// channelReplyButtons turns the reply words of a DingTalk direct chat into
+// links that send them when tapped (DingTalk's dtmd://dingtalkclient/sendMessage),
+// so confirming is one tap. A group message without a mention of the bot
+// does not reach it, so groups keep the words to type.
+func channelReplyButtons(run *Run, text string, words ...string) string {
+	if run == nil || len(run.InvocationEvent) == 0 {
+		return text
+	}
+	var event invocation.Event
+	if json.Unmarshal(run.InvocationEvent, &event) != nil || event.Origin.Kind != invocation.OriginChannel ||
+		!strings.EqualFold(strings.TrimSpace(event.Origin.Provider), "dingtalk") || contextString(event.Context, "conversation_type") != "direct" {
+		return text
+	}
+	for _, word := range words {
+		text = strings.ReplaceAll(text, "「"+word+"」", "[「"+word+"」](dtmd://dingtalkclient/sendMessage?content="+url.QueryEscape(word)+")")
+	}
+	return text
 }
 
 func jsonNormalizedMap(value map[string]interface{}) map[string]interface{} {

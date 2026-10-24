@@ -187,9 +187,10 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 		return nil, err
 	}
 	if action == "revise" {
-		// A revision is not a task mutation. The previous proposal is closed as
-		// ineffective and the feedback is returned to the Agent Loop as the
-		// user's next instruction so the model must produce a fresh proposal.
+		// A reply other than approve or decline is not a task mutation. The
+		// proposal is not applied and the reply goes back to the Agent Loop:
+		// a change to the proposal is proposed again, and anything else is
+		// answered without holding the conversation for the proposal.
 		continuationRequest.Status = "rejected"
 		continuationRequest.Outputs = map[string]interface{}{
 			"status":         "proposal_rejected",
@@ -199,7 +200,7 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 			"result_summary": "用户未批准上一版任务变更，未应用请求的变更。",
 			"user_feedback":  feedback,
 		}
-		continuationRequest.ContinuationInstruction = "The user did not approve the previous digital-human task proposal. Treat that task tool call as completed without applying the requested change. The previous proposal may have been discarded, but you must not claim that the requested change was applied. Use the user's feedback below to revise the task parameters, call the digital-human task tool again, and present the new proposal for approval. Do not apply the new proposal directly and do not answer as if the task change succeeded. User feedback: " + feedback
+		continuationRequest.ContinuationInstruction = "The user replied to the pending digital-human task proposal with something other than approving or declining it, so the requested change was not applied; never claim it was. If the reply changes the proposal, revise the task parameters and call the digital-human task tool again; the tool decides whether the revised change applies at once or waits for approval again. If the reply is about something else, answer it normally and do not call the task tool for the proposal again: a proposed task stays in the task list for a day, and the user can still confirm it later. User reply: " + feedback
 		continuationRequest.AllowToolReinvoke = true
 	} else {
 		continuationRequest.Outputs["result_summary"] = answer

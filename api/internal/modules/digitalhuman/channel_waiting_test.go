@@ -192,3 +192,21 @@ func TestChannelWaitingPromptKeyFollowsEachWait(t *testing.T) {
 		t.Fatalf("prompt keys = %v", store.keys)
 	}
 }
+
+func TestDingTalkDirectConfirmationsAreOneTap(t *testing.T) {
+	metadata := map[string]interface{}{"agent_workflow_continuation": map[string]interface{}{"kind": "digital_human_task", "task_name": "晨报"}}
+	run := func(provider, conversationType string) *Run {
+		encoded, _ := json.Marshal(invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: provider},
+			Context: map[string]any{"conversation_type": conversationType}})
+		return &Run{InvocationEvent: datatypes.JSON(encoded)}
+	}
+	direct := channelWaitingPromptText(run("dingtalk", "direct"), runtimemodel.MessageStatusWaitingApproval, "", metadata)
+	if !strings.Contains(direct, "[「确认」](dtmd://dingtalkclient/sendMessage?content=%E7%A1%AE%E8%AE%A4)") || !strings.Contains(direct, "[「取消」](dtmd://") {
+		t.Fatalf("DingTalk direct prompt = %q", direct)
+	}
+	for _, other := range []*Run{run("dingtalk", "group"), run("feishu", "direct"), nil} {
+		if text := channelWaitingPromptText(other, runtimemodel.MessageStatusWaitingApproval, "", metadata); strings.Contains(text, "dtmd://") {
+			t.Fatalf("prompt outside a DingTalk direct chat = %q", text)
+		}
+	}
+}

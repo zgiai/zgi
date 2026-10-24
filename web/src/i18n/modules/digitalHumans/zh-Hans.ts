@@ -1877,6 +1877,7 @@ const messages: DigitalHumansMessages = {
       report_accepted: '采纳了任务汇报',
       rework_requested: '要求返工，任务重新执行',
       report_improved: '把意见加进成功标准，之后每次执行都照做',
+      undone: '撤销了上一次修改',
       result_delivered: '汇报已送回来源会话',
       result_delivery_failed: '汇报未能送回来源会话',
       actorSelf: '你',

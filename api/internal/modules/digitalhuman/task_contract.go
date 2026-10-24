@@ -587,6 +587,20 @@ type TaskMutationContext struct {
 	SourceConversationType string
 	ReplyTo                *invocation.ReplyAddress
 	Proposed               bool
+	// Undoable marks a change the requester asked for that applied without
+	// an approval: what the task was before is kept so it can be undone
+	// within TaskUndoWindow.
+	Undoable bool
+}
+
+// TaskUndoWindow is how long a change applied without approval can be undone.
+const TaskUndoWindow = 24 * time.Hour
+
+// TaskUndoService undoes the latest change made to a task, when that change
+// applied without approval and is still within TaskUndoWindow. Undoing a
+// task's creation cancels it.
+type TaskUndoService interface {
+	UndoTaskChange(ctx context.Context, access TaskAccessContext, taskID uuid.UUID, mutation TaskMutationContext) (*Task, error)
 }
 
 // TaskResultDeliveryRequest is the durable, user-visible result projection

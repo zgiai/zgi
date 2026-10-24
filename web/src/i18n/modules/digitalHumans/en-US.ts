@@ -2001,6 +2001,7 @@ const messages = {
       report_accepted: 'Report accepted',
       rework_requested: 'Rework requested; the task runs again',
       report_improved: 'Feedback kept as a success criterion for later runs',
+      undone: 'Undid the last change',
       result_delivered: 'Report returned to the source conversation',
       result_delivery_failed: 'Report could not be returned to the source conversation',
       actorSelf: 'You',
