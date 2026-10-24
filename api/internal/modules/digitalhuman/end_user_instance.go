@@ -47,9 +47,9 @@ type EndUserInstance struct {
 func (EndUserInstance) TableName() string { return "digital_human_end_user_instances" }
 
 // EndUserInstancesEnabled switches on end-user instances: runs of external end
-// users are admitted through their instance. It defaults to off.
+// users are admitted through their instance. It is on unless set to false.
 func EndUserInstancesEnabled() bool {
-	return envFlagEnabled("ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED")
+	return envFlagDefaultOn("ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED")
 }
 
 // endUserInstanceStore admits a run together with its end user's instance.

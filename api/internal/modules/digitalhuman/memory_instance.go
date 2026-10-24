@@ -21,9 +21,10 @@ const memoryAdmissionReasonInstanceFull = "instance_memory_full"
 
 var errInstanceMemoryFull = fmt.Errorf("%w: %s", ErrMemoryPolicyRejected, memoryAdmissionReasonInstanceFull)
 
-// InstanceMemoryEnabled switches on instance memory for end users' runs.
+// InstanceMemoryEnabled switches on instance memory for end users' runs. It
+// is on unless set to false.
 func InstanceMemoryEnabled() bool {
-	return envFlagEnabled("ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_ENABLED")
+	return envFlagDefaultOn("ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_ENABLED")
 }
 
 // instanceMemoryMaxEntries bounds the active entries per instance; zero means

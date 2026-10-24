@@ -22,6 +22,7 @@ func instanceRun(t *testing.T) (*Run, uuid.UUID) {
 func TestInstanceMemoryAdmissionWritesOnlyTheOwnInstance(t *testing.T) {
 	api := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginAPI}}
 	run, instanceID := instanceRun(t)
+	t.Setenv("ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_ENABLED", "false")
 	if got := admitMemoryWrite(run, api, memoryWriteExplicit, true); got.Allowed {
 		t.Fatalf("instance memory was admitted while it is off: %+v", got)
 	}
