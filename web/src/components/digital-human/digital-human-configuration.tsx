@@ -19,6 +19,7 @@ import {
   Pencil,
   Plus,
   Search,
+  SmilePlus,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -163,12 +164,6 @@ function ConfigurationEditor({
   const executionRuntimeCapability = detail?.execution_runtime_capability ?? null;
   const canEnableExecution = executionRuntimeCapability?.can_enable ?? true;
   const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(detail?.draft.file_upload_policy ?? null);
-  const [intermediateMessagesEnabled, setIntermediateMessagesEnabled] = useState(
-    detail?.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true
-  );
-  const [acknowledgementEnabled, setAcknowledgementEnabled] = useState(
-    detail?.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true
-  );
   const { ref: bodyRef, width: bodyWidth } = useMeasuredWidth();
   const twoColumns = bodyWidth >= CONFIGURATION_TWO_COLUMN_MIN_WIDTH;
   // The draft preview sits beside the editor on wide screens, in a sheet otherwise.
@@ -218,11 +213,6 @@ function ConfigurationEditor({
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
-        channel_response: {
-          ...(detail?.draft.trigger_policy?.channel_response ?? {}),
-          intermediate_messages_enabled: intermediateMessagesEnabled,
-          acknowledgement_enabled: acknowledgementEnabled,
-        },
       },
     },
   });
@@ -245,11 +235,6 @@ function ConfigurationEditor({
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
-        channel_response: {
-          ...(detail?.draft.trigger_policy?.channel_response ?? {}),
-          intermediate_messages_enabled: intermediateMessagesEnabled,
-          acknowledgement_enabled: acknowledgementEnabled,
-        },
       },
     },
   };
@@ -315,12 +300,6 @@ function ConfigurationEditor({
       : ['']
     : rules;
   const displayedModel = previewVersion?.default_model ?? model;
-  const displayedIntermediateMessagesEnabled = previewVersion
-    ? (previewVersion.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true)
-    : intermediateMessagesEnabled;
-  const displayedAcknowledgementEnabled = previewVersion
-    ? (previewVersion.trigger_policy?.channel_response?.acknowledgement_enabled ?? true)
-    : acknowledgementEnabled;
   const selectedModel = models.find(item => item.model === displayedModel);
   const modelValue: ModelSelectorValue = {
     provider: selectedModel?.provider ?? '',
@@ -575,28 +554,7 @@ function ConfigurationEditor({
                     onChange={setFileUploadPolicy}
                     disabled={!editingEnabled}
                   />
-                  {/* Two switches did not need a page of their own. */}
-                  <div id="configuration-behavior" className="rounded-lg border bg-background px-4">
-                    <p className="pt-3 text-xs font-medium text-muted-foreground">
-                      {t('preferences.channelResponseTitle')}
-                    </p>
-                    <div className="min-w-0 divide-y">
-                      <PreferenceSwitch
-                        title={t('preferences.intermediateMessages')}
-                        description={t('preferences.intermediateMessagesDescription')}
-                        checked={displayedIntermediateMessagesEnabled}
-                        onCheckedChange={setIntermediateMessagesEnabled}
-                        disabled={!editingEnabled}
-                      />
-                      <PreferenceSwitch
-                        title={t('preferences.acknowledgement')}
-                        description={t('preferences.acknowledgementDescription')}
-                        checked={displayedAcknowledgementEnabled}
-                        onCheckedChange={setAcknowledgementEnabled}
-                        disabled={!editingEnabled}
-                      />
-                    </div>
-                  </div>
+                  <ChannelReplyFlow />
                 </div>
               </ConfigurationSection>
 
@@ -808,6 +766,41 @@ function linuxEnvironmentUnavailableKey(reason?: string) {
   return known
     ? (`preferences.linuxEnvironmentUnavailableReasons.${known}` as const)
     : ('preferences.linuxEnvironmentUnavailable' as const);
+}
+
+const CHANNEL_REPLY_STEPS = [
+  { key: 'received', icon: SmilePlus },
+  { key: 'working', icon: MessageSquareText },
+  { key: 'done', icon: CheckCircle2 },
+] as const;
+
+// How a digital human answers in a chat channel. It is not configurable: every
+// channel message is acknowledged and reports progress.
+function ChannelReplyFlow() {
+  const t = useT('digitalHumans');
+  return (
+    <div id="configuration-behavior" className="rounded-lg border bg-background px-4 py-3">
+      <p className="text-xs font-medium text-muted-foreground">{t('preferences.channelResponseTitle')}</p>
+      <ol className="mt-3 space-y-3">
+        {CHANNEL_REPLY_STEPS.map(({ key, icon: Icon }, index) => (
+          <li key={key} className="flex gap-3">
+            <div className="flex flex-col items-center">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <Icon className="size-3.5" aria-hidden="true" />
+              </span>
+              {index < CHANNEL_REPLY_STEPS.length - 1 ? <span className="mt-1 w-px flex-1 bg-border" /> : null}
+            </div>
+            <div className="min-w-0 pb-1">
+              <p className="text-sm font-medium">{t(`preferences.channelReply.${key}.title`)}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {t(`preferences.channelReply.${key}.description`)}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 function PreferenceSwitch({

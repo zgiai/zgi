@@ -274,7 +274,9 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
                     : error === 'connector_weixin_region_unsupported' ||
                         error === 'connector.weixin.region_unsupported'
                       ? 'messaging.regionUnsupported'
-                      : onboarding.flow?.state === 'verification_waiting'
+                      : connector.id === 'dingtalk' && error === 'connector_access_denied'
+                        ? 'messaging.dingtalkPermission'
+                        : onboarding.flow?.state === 'verification_waiting'
                         ? 'messaging.verificationWaiting'
                         : error === 'transport_unconfirmed' ||
                             error === 'connector_operation_outcome_unknown' ||
@@ -377,7 +379,8 @@ function MessagingSetup({ connector, updateConnection, onReady, initialMode = 'q
             </form>
           ) : (
             <div className="space-y-3">
-              {onboarding.flow && (
+              {/* A failed flow already explains itself in the alert above. */}
+              {onboarding.flow && !(error && onboarding.flow.state === 'failed') && (
                 <p role="status" className="text-sm">
                   {t(stateText)}
                 </p>

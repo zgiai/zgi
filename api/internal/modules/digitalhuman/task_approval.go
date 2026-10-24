@@ -151,6 +151,7 @@ func (s *RuntimeService) taskApprovalContinuationConfigForRun(ctx context.Contex
 		return service.RunConfig{}, err
 	}
 	s.attachAttachmentReader(&config, run, resolved, event, nil)
+	applyRunEndUserBilling(&config, run)
 	if s.tasks == nil {
 		return config, nil
 	}
@@ -880,6 +881,9 @@ func taskUpdateRequestFromApprovalInputs(expectedRevision int64, inputs map[stri
 	if attempts := int64Value(inputs["max_attempts"]); attempts > 0 {
 		value := int(attempts)
 		request.MaxAttempts = &value
+	}
+	if review := TaskReportReview(strings.TrimSpace(stringValue(inputs["report_review"]))); review != "" {
+		request.ReportReview = &review
 	}
 	return request
 }

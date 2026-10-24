@@ -36,6 +36,12 @@ func envFlagEnabled(name string) bool {
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
+// envFlagDefaultOn is a flag that is on unless explicitly switched off.
+func envFlagDefaultOn(name string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	return value != "0" && value != "false" && value != "no" && value != "off"
+}
+
 // WithSourceTrustAuthorizer lets console admission recognize workspace members
 // who may promote DigitalHuman memory. Without it every console run is
 // classified as a plain workspace member.

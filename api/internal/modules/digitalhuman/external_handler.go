@@ -78,6 +78,7 @@ func (h *ExternalHandler) RegisterAPIRoutes(router *gin.RouterGroup) {
 	group.POST("/conversations/:conversation_id/messages/:message_id/regenerate", h.RegenerateAPIMessage)
 	group.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", h.ContinueAPIUserInput)
 	group.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueAPIToolGovernance)
+	group.POST("/conversations/:conversation_id/messages/:message_id/connector-confirmation", h.ContinueAPIConnectorConfirmation)
 	group.POST("/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", h.ContinueAPITaskTokenBudget)
 	group.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueAPITaskApproval)
 	group.POST("/files/upload", h.UploadFile)
@@ -633,7 +634,15 @@ func (h *ExternalHandler) apiUserScope(c *gin.Context, key *APIKey, access *Publ
 		h.writeAuthError(c, false)
 		return Scope{}, false
 	}
-	subject, err := usersubject.DigitalHumanAPIEndUserSubject(access.Definition.WorkspaceID, access.Definition.ID, user)
+	if value, found := c.Get(externalRuntimeCallerContext); found {
+		caller, ok := value.(runtimeWorkspaceCaller)
+		if !ok || caller.CredentialID != key.ID || caller.SubjectID == uuid.Nil {
+			h.writeAuthError(c, false)
+			return Scope{}, false
+		}
+		return runtimeWorkspaceScope(caller, access), true
+	}
+	subject, err := usersubject.DigitalHumanAPIEndUserSubject(access.Definition.IdentityWorkspace(), access.Definition.ID, user)
 	if err != nil {
 		h.writeApplicationError(c, ErrInvalidRequest, "digital_human.external.user")
 		return Scope{}, false

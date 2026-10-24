@@ -179,6 +179,18 @@ func (service *ChannelService) CreateInstallation(ctx context.Context, scope Sco
 		}
 		return installation, nil
 	}
+	// Adding a Connection the digital human already has, as when a setup
+	// flow reports ready twice, returns that channel: a second one would
+	// share its bot, and DingTalk gives each app's messages to one of them.
+	existing, err := service.store.ListChannelInstallations(ctx, scope, digitalHumanID)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.channel.installation.create")
+	}
+	for _, item := range existing {
+		if item.ConnectionID == connectionID && item.Provider == request.Provider {
+			return item, nil
+		}
+	}
 	credential, err := service.credentials.ResolveCredential(ctx, installation)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.channel.installation.create")
@@ -1004,6 +1016,24 @@ func (service *ChannelService) handleInboundMessage(
 	// A pending approval is waiting_approval, not streaming, so it must be
 	// resolved before runtime-input admission or the confirmation would start a
 	// new run instead of resuming the pending message.
+	if strings.TrimSpace(message.ActionWait) != "" {
+		// A tap answers only the wait it was sent for; one on an older or
+		// settled prompt is dropped rather than read as a new message.
+		current := ""
+		if waits, ok := service.runtime.(channelApprovalWaits); ok {
+			current, err = waits.PendingChannelApprovalWait(ctx,
+				Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
+				route.Binding.SubjectID, conversationID)
+			if err != nil {
+				_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventFailed, "channel.task_approval.failed", nil, now)
+				return nil, err
+			}
+		}
+		if current == "" || current != strings.TrimSpace(message.ActionWait) {
+			_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventIgnored, "channel.action.stale", nil, now)
+			return &ChannelWebhookResult{Response: acknowledgement, Duplicate: !created, Ignored: true, EventID: stored.ID}, nil
+		}
+	}
 	if approvalRuntime, ok := service.runtime.(channelTaskApprovalRuntime); ok {
 		handled, approvalErr := service.admitChannelApproval(
 			ctx, approvalRuntime, installation, route, conversationID, stored, message, now,
@@ -1014,27 +1044,6 @@ func (service *ChannelService) handleInboundMessage(
 		}
 		if handled {
 			if err := service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventAccepted, channelTaskApprovalReason, nil, now); err != nil {
-				return nil, err
-			}
-			return &ChannelWebhookResult{Response: acknowledgement, Accepted: true, Duplicate: !created, EventID: stored.ID}, nil
-		}
-	}
-	// An accept or rework reply reviews the conversation's latest task report. Its
-	// tasks belong to the stable channel conversation, not the local one.
-	ownerConversationID, ownerErr := ChannelTaskConversationID(installation.OrganizationID, installation.WorkspaceID, route.Binding.SubjectID,
-		installation.Provider, installation.ID.String(), message.ExternalConversationID)
-	if reviewer, ok := service.runtime.(channelReportReviewRuntime); ok && ownerErr == nil {
-		handled, reviewErr := reviewer.ReviewChannelTaskReport(ctx,
-			Scope{OrganizationID: installation.OrganizationID, WorkspaceID: installation.WorkspaceID, ActorID: installation.CreatedBy},
-			route.Binding.SubjectID, ownerConversationID, ChannelApprovalReply{
-				Text: channelInvocationQuery(message), SenderExternalID: strings.TrimSpace(message.SenderExternalID), ConversationType: message.ConversationType,
-			})
-		if reviewErr != nil {
-			_ = service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventFailed, "channel.task_report.review_failed", nil, now)
-			return nil, reviewErr
-		}
-		if handled {
-			if err := service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventAccepted, channelReportReviewedReason, nil, now); err != nil {
 				return nil, err
 			}
 			return &ChannelWebhookResult{Response: acknowledgement, Accepted: true, Duplicate: !created, EventID: stored.ID}, nil
@@ -1188,22 +1197,23 @@ func (service *ChannelService) submitChannelInvocation(
 	if err := service.store.MarkInboundEvent(ctx, stored.ID, channelruntime.InboundEventAccepted, "", &run.ID, now); err != nil {
 		return nil, err
 	}
-	policy := channelResponsePolicyFromRun(run)
-	if policy.AcknowledgementEnabled {
-		adapter, resolveErr := service.adapters.Resolve(installation.Provider)
-		_, supportsMarker := adapter.(channelruntime.ProcessingMarkerAdapter)
-		if resolveErr == nil && adapter.Capabilities().ProcessingMarker && supportsMarker && service.markers != nil {
-			service.scheduleProcessingMarker(ctx, installation, route, stored, run.ID, now)
-		} else {
-			// Providers without a native processing marker retain the existing
-			// best-effort acknowledgement message.
-			_ = service.transient.EnqueueTransient(ctx, ChannelTransientDeliveryRequest{
-				RunID: run.ID, Kind: channelruntime.DeliveryKindAcknowledgement,
-				DeliveryKey: "accepted", Text: channelAcknowledgementText,
-			})
-		}
+	adapter, resolveErr := service.adapters.Resolve(installation.Provider)
+	_, supportsMarker := adapter.(channelruntime.ProcessingMarkerAdapter)
+	if resolveErr == nil && adapter.Capabilities().ProcessingMarker && supportsMarker && service.markers != nil {
+		service.scheduleProcessingMarker(ctx, installation, route, stored, message.ProviderConversationID, run.ID, now)
+	} else {
+		// Providers without a native processing marker acknowledge with a
+		// best-effort message.
+		service.enqueueAcknowledgementText(ctx, run.ID)
 	}
 	return &ChannelWebhookResult{Accepted: true, Duplicate: duplicate, EventID: stored.ID, RunID: &run.ID}, nil
+}
+
+func (service *ChannelService) enqueueAcknowledgementText(ctx context.Context, runID uuid.UUID) {
+	_ = service.transient.EnqueueTransient(ctx, ChannelTransientDeliveryRequest{
+		RunID: runID, Kind: channelruntime.DeliveryKindAcknowledgement,
+		DeliveryKey: "accepted", Text: channelAcknowledgementText,
+	})
 }
 
 func (service *ChannelService) scheduleProcessingMarker(
@@ -1211,6 +1221,7 @@ func (service *ChannelService) scheduleProcessingMarker(
 	installation *channelruntime.Installation,
 	route *ChannelRoute,
 	inbound *channelruntime.InboundEvent,
+	conversationID string,
 	runID uuid.UUID,
 	now time.Time,
 ) {
@@ -1222,7 +1233,8 @@ func (service *ChannelService) scheduleProcessingMarker(
 		InstallationID: installation.ID, InboundEventID: inbound.ID, RunID: runID,
 		Provider: strings.ToLower(strings.TrimSpace(installation.Provider)), ConnectionID: installation.ConnectionID,
 		ActorID: installation.CreatedBy, SubjectType: route.Binding.SubjectType, SubjectID: route.Binding.SubjectID,
-		ProviderMessageID: strings.TrimSpace(inbound.ProviderMessageID), Status: channelruntime.ProcessingMarkerPendingAdd,
+		ProviderMessageID: strings.TrimSpace(inbound.ProviderMessageID), ProviderConversationID: strings.TrimSpace(conversationID),
+		Status:      channelruntime.ProcessingMarkerPendingAdd,
 		AvailableAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	created, err := service.markers.CreateProcessingMarker(ctx, marker)
@@ -1256,6 +1268,12 @@ func channelMessagePreview(message *channelruntime.InboundMessage) string {
 
 // channelTaskApprovalRuntime resolves a pending approval from an inbound
 // channel message before it is admitted as runtime input or a new run.
+// channelApprovalWaits names the wait a conversation's pending approval is,
+// as its prompt's actions carry it.
+type channelApprovalWaits interface {
+	PendingChannelApprovalWait(context.Context, Scope, uuid.UUID, uuid.UUID) (string, error)
+}
+
 type channelTaskApprovalRuntime interface {
 	HasPendingChannelApproval(context.Context, Scope, uuid.UUID, uuid.UUID) (bool, error)
 	ContinueChannelTaskApproval(context.Context, Scope, uuid.UUID, uuid.UUID, ChannelApprovalReply) (bool, error)
@@ -1372,6 +1390,7 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 			RunID: delivery.RunID, DeliveryID: delivery.ID,
 			ExternalConversationID: delivery.ExternalConversationID, ExternalThreadID: delivery.ExternalThreadID,
 			Text: text, Mentions: append([]channelruntime.DeliveryMention(nil), payload.Mentions...), Attachments: attachments,
+			Actions: append([]channelruntime.DeliveryAction(nil), payload.Actions...),
 		})
 		if deliveryErr != nil {
 			combined = errors.Join(combined, service.finishDeliveryFailure(ctx, delivery, deliveryErr))
@@ -1485,11 +1504,22 @@ func (service *ChannelService) DispatchProcessingMarkers(ctx context.Context, li
 		request := channelruntime.ProcessingMarkerRequest{
 			OrganizationID: marker.OrganizationID, WorkspaceID: marker.WorkspaceID,
 			InstallationID: marker.InstallationID, ConnectionID: marker.ConnectionID,
-			RunID: marker.RunID, InboundMessageID: marker.ProviderMessageID,
+			RunID: marker.RunID, InboundMessageID: marker.ProviderMessageID, InboundConversationID: marker.ProviderConversationID,
 		}
 		switch marker.Status {
 		case channelruntime.ProcessingMarkerAdding:
 			receipt, addErr := provider.AddProcessingMarker(ctx, request)
+			if processingMarkerRefused(addErr) {
+				// The app may not react to messages, as a DingTalk app without
+				// the emotion permission: nothing was added, so acknowledge
+				// with a message instead.
+				logger.WarnContext(ctx, "DigitalHuman processing marker was refused; acknowledging with a message", "run_id", marker.RunID.String(), addErr)
+				service.enqueueAcknowledgementText(ctx, marker.RunID)
+				combined = errors.Join(combined, service.markers.FailProcessingMarker(
+					ctx, marker.ID, channelErrorCode(addErr), safeChannelErrorMessage(addErr), service.now(),
+				))
+				continue
+			}
 			providerMarkerID, providerRequestID := "", ""
 			if receipt != nil {
 				providerMarkerID = strings.TrimSpace(receipt.ProviderMarkerID)
@@ -1636,6 +1666,16 @@ func validChannelText(value string, maxRunes int) bool {
 	return utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxRunes
 }
 
+// processingMarkerRefused reports a provider refusing the marker outright,
+// for missing permission, as opposed to a failure that may have added it.
+func processingMarkerRefused(err error) bool {
+	switch providertransport.ErrorCode(err) {
+	case providertransport.ErrorCodeAccessDenied, providertransport.ErrorCodeInsufficientScope:
+		return true
+	}
+	return false
+}
+
 func channelErrorCode(err error) string {
 	if err == nil {
 		return ""
@@ -1674,7 +1714,7 @@ func decodeDeliveryPayload(delivery *channelruntime.Delivery) (*channelDeliveryP
 	}
 	var payload channelDeliveryPayloadData
 	if json.Unmarshal(delivery.Payload, &payload) != nil || len(payload.Artifacts) > maxChannelDeliveryArtifacts ||
-		len(payload.Mentions) > maxChannelDeliveryMentions ||
+		len(payload.Mentions) > maxChannelDeliveryMentions || len(payload.Actions) > maxChannelDeliveryActions ||
 		(strings.TrimSpace(payload.Text) == "" && len(payload.Artifacts) == 0) ||
 		(payload.Text != "" && !validChannelText(payload.Text, maxChannelDeliveryRunes)) {
 		return nil, fmt.Errorf("decode channel delivery payload")

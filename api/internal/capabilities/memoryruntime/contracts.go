@@ -59,6 +59,8 @@ const (
 	MemoryScopeCampaign MemoryScopeType = "campaign"
 	// MemoryScopeChannel isolates memory for one communication channel.
 	MemoryScopeChannel MemoryScopeType = "channel"
+	// MemoryScopeInstance isolates memory for one end-user instance.
+	MemoryScopeInstance MemoryScopeType = "instance"
 )
 
 // MutationAction describes the requested state transition.
@@ -175,7 +177,7 @@ func ValidateMemoryScopeRef(scope MemoryScopeRef) (MemoryScopeRef, error) {
 	scope.Type = MemoryScopeType(strings.ToLower(strings.TrimSpace(string(scope.Type))))
 	scope.ID = strings.TrimSpace(scope.ID)
 	switch scope.Type {
-	case MemoryScopeWorkspace, MemoryScopeProject, MemoryScopeCustomer, MemoryScopeCampaign, MemoryScopeChannel:
+	case MemoryScopeWorkspace, MemoryScopeProject, MemoryScopeCustomer, MemoryScopeCampaign, MemoryScopeChannel, MemoryScopeInstance:
 	default:
 		return MemoryScopeRef{}, fmt.Errorf("%w: unsupported scope.type %q", ErrInvalidContract, scope.Type)
 	}

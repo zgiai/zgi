@@ -1,7 +1,3 @@
-# Runtime Workspace API
-
-通过一组可轮换的 Runtime Key，从业务服务端调用当前 Runtime Workspace 中已添加的多个 Agent。
-
 ## 接入概览
 
 ### Base URL
@@ -18,11 +14,11 @@
 
 | 名称 | 用途 | 处理要求 |
 | --- | --- | --- |
-| Runtime Key | 鉴权当前 Runtime Workspace 的所有请求 | 必须保密 |
-| App ID | 标识要调用的 Agent，出现在接口路径中 | 可公开 |
+| Runtime Key | 鉴权当前外部接入的所有请求 | 必须保密 |
+| App ID | 标识要调用的 App（智能体或数字人），出现在接口路径中 | 可公开 |
 | External User ID | 标识业务系统中的最终用户，隔离文件、会话和记忆 | 使用不透明标识，不包含个人信息 |
 
-App ID 由系统生成并保持稳定。Agent 重新发布或 Runtime Key 轮换不会改变 App ID。
+App ID 由系统生成并保持稳定。App 重新发布或 Runtime Key 轮换不会改变 App ID。
 
 ### 通用请求头
 
@@ -36,7 +32,11 @@ App ID 由系统生成并保持稳定。Agent 重新发布或 Runtime Key 轮换
 
 Runtime Key 只应保存在业务服务端。浏览器或移动端应通过业务 BFF 调用 ZGI。
 
-Runtime Workspace 可以由管理员配置 `requests_per_minute` 限流策略。触发限流时返回 `429`，并携带 `Retry-After`、`X-RateLimit-Limit` 和 `X-RateLimit-Remaining`，客户端应按窗口退避重试。
+管理员可以在控制台「额度与用量」页设置请求频率：整个外部接入每分钟的请求数，以及每个终端用户每分钟的请求数。超过整体限制时返回 `429`，并带上 `X-RateLimit-Limit` 和 `X-RateLimit-Remaining`；超过单个终端用户的限制时返回 `429` `runtime_end_user_rate_limited`，并带上 `X-RateLimit-End-User-Limit` 和 `X-RateLimit-End-User-Remaining`。两者都带 `Retry-After`，客户端应等到窗口重置后再重试。限流按自然分钟计数；不带 `X-ZGI-External-User-ID` 的管理请求不计入单个终端用户的限制；限流服务不可用时请求不受限。
+
+创建 Runtime Key 时可以限定权限范围，创建后不能修改。`runtime` 允许以终端用户身份调用 App、文件和套餐列表；`end_users.read` 允许读取终端用户；`end_users.manage` 允许修改终端用户、发放积分、导出和删除，并包含读取。还可以只允许调用指定的 App：其他 App 不会出现在列表中，调用时返回 404。超出权限范围的请求返回 403 `runtime_credential_scope_denied`。未限定范围的密钥可以调用全部接口。
+
+访问记录保留 90 天（部署方可调整），之后自动清理。
 
 ## 快速开始
 
@@ -52,6 +52,8 @@ curl '{apibase}/apps' \
 </CodeGroup>
 
 响应中的 `app_key` 即 App ID：
+
+<CodeGroup title="响应示例">
 
 ```json
 {
@@ -78,6 +80,8 @@ curl '{apibase}/apps' \
 }
 ```
 
+</CodeGroup>
+
 ### 2. 发送第一条消息
 
 <CodeGroup title="curl">
@@ -98,18 +102,20 @@ curl -N -X POST '{apibase}/apps/app_34ab5c8d91ef/chat' \
 
 ## Apps
 
+每个外部接入最多开放 500 个 App（智能体和数字人合计，部署方可调整）。获取 App 列表时可传 `page` 和 `limit`（最大 200）分页，响应会带上 `total` 和 `has_more`；不传则返回全部。
+
 <Heading url="/apps" method="GET" title="获取 App 列表" name="#List-Apps" />
 
-返回当前 Runtime Workspace 中可调用的 Agent。该接口只需要 Runtime Key。
+返回当前外部接入中可调用的 App（智能体和数字人）。该接口只需要 Runtime Key。
 
 <Heading url="/apps/{app_key}" method="GET" title="获取 App 详情" name="#Get-App" />
 
-只需要 Runtime Key，不需要 External User ID。返回 Agent 最新发布版本的公开展示信息和当前可用能力。
+只需要 Runtime Key，不需要 External User ID。返回 App 最新发布版本的公开展示信息和当前可用能力。
 
 <Properties>
   <Property name='app_key' type='string' propKey='app_key'>稳定的 App ID。</Property>
-  <Property name='name / description' type='string' propKey='name'>Agent 的公开名称与描述。</Property>
-  <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>Agent 图标信息。</Property>
+  <Property name='name / description' type='string' propKey='name'>App 的公开名称与描述。</Property>
+  <Property name='icon / icon_type / icon_url' type='string' propKey='icon_url'>App 图标信息。</Property>
   <Property name='version / version_uuid' type='string' propKey='version'>当前最新发布版本。</Property>
   <Property name='opening_statement' type='string' propKey='opening_statement'>开场白。</Property>
   <Property name='input_placeholder' type='string' propKey='input_placeholder'>输入提示。</Property>
@@ -168,13 +174,13 @@ SSE 的 `id` 是可恢复事件游标。断线后通过 events 接口和最后�
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/stop" method="POST" title="停止生成" name="#Stop-Conversation" />
 
-停止当前 External User ID 在该 Agent 会话中的活动生成。
+停止当前 External User ID 在该 App 会话中的活动生成。
 
 ---
 
 ## Conversations
 
-会话按 Runtime Workspace、External User ID 和 Agent 隔离。
+会话按外部接入、External User ID 和 App 隔离。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -207,7 +213,7 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 <Heading url="/apps/{app_key}/conversations/search" method="GET" title="搜索会话与消息" name="#Search-Conversations" />
 
-使用 `query` 搜索当前 External User ID 和 App 范围内的会话标题、用户输入与 Agent 回答。支持 `limit`，不会返回其他用户或其他 App 的结果。
+使用 `query` 搜索当前 External User ID 和 App 范围内的会话标题、用户输入与 App 回答。支持 `limit`，不会返回其他用户或其他 App 的结果。
 
 <Heading url="/apps/{app_key}/messages/{message_id}/regenerate" method="POST" title="重新生成根消息" name="#Regenerate-Message" />
 
@@ -215,11 +221,11 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue" method="POST" title="继续 Skill 补充输入" name="#Continue-User-Input" />
 
-请求体为 `{"answers":{"question_id":"answer"}}`。服务端校验 Runtime Subject、Agent、会话、消息和请求 ID 的归属后，以 SSE 继续同一轮消息。
+请求体为 `{"answers":{"question_id":"answer"}}`。服务端校验 Runtime Subject、App、会话、消息和请求 ID 的归属后，以 SSE 继续同一轮消息。
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation" method="POST" title="继续工作流交互" name="#Continue-Workflow" />
 
-审批使用 `{"type":"approval","approval_token":"...","action":"approve","inputs":{}}`；工作流问答使用 `{"type":"question_answer","inputs":{"query":"..."}}`。响应均为 SSE，且不能跨 External User ID 或 Agent 继续其他消息。
+审批使用 `{"type":"approval","approval_token":"...","action":"approve","inputs":{}}`；工作流问答使用 `{"type":"question_answer","inputs":{"query":"..."}}`。响应均为 SSE，且不能跨 External User ID 或 App 继续其他消息。
 
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue" method="POST" title="继续任务 Token 预算" name="#Continue-Token-Budget" />
 
@@ -229,7 +235,7 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 
 ## Files
 
-文件按 Runtime Workspace 和 External User ID 隔离，同一用户可以在多个已添加 Agent 中使用同一批文件。删除所属工作空间后，文件会立即停止访问，存储对象保留 30 天后由系统定期清理。
+文件按外部接入和 External User ID 隔离，同一用户可以在多个已添加的 App 中使用同一批文件。删除所属工作空间后，文件会立即停止访问，存储对象保留 30 天后由系统定期清理。
 
 <Heading url="/files" method="POST" title="上传文件" name="#Upload-File" />
 
@@ -266,7 +272,7 @@ curl -X POST '{apibase}/files' \
 
 ## Memory
 
-记忆按 Runtime Workspace、External User ID 和 Agent 隔离。不同 Agent 不共享记忆。
+记忆按外部接入、External User ID 和 App 隔离。不同 App 不共享记忆。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -274,7 +280,7 @@ curl -X POST '{apibase}/files' \
 | GET | `/apps/{app_key}/memory/export` | 导出记忆 JSON |
 | PUT | `/apps/{app_key}/memory/{key}` | 创建或更新一个记忆值 |
 | DELETE | `/apps/{app_key}/memory/{key}` | 删除一个记忆值 |
-| DELETE | `/apps/{app_key}/memory` | 清空该用户在当前 Agent 中的记忆 |
+| DELETE | `/apps/{app_key}/memory` | 清空该用户在当前 App 中的记忆 |
 | GET | `/apps/{app_key}/memory/settings` | 获取记忆设置和配置 revision |
 | PATCH | `/apps/{app_key}/memory/settings` | 更新记忆和自动捕获设置 |
 | POST | `/apps/{app_key}/memory/operations/{operation_id}/undo` | 撤销一次可撤销记忆操作 |
@@ -307,9 +313,115 @@ GET 返回当前记忆开关、自动捕获开关、可写槽位和配置 revisi
 
 ---
 
+## 终端用户
+
+携带过某个 External User ID 的请求之后，或业务后端用 `PATCH` 修改过它之后，该 ID 就是一个终端用户。用 Runtime Key 按业务后端发送的 External User ID 管理终端用户；这些接口不需要 `X-ZGI-External-User-ID` 请求头。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/end-users/{user}` | 查看状态、额度，以及最近 24 小时、7 天、30 天的积分用量（总计和按 App） |
+| PATCH | `/end-users/{user}` | 停用或恢复该终端用户，设置套餐，或为其单独设置额度 |
+| POST | `/end-users/{user}/export` | 为该终端用户的全部数据创建导出任务，返回 `202` 和任务 |
+| GET | `/end-users/{user}/exports/{export_id}` | 查看导出任务状态：`pending`、`running`、`succeeded` 或 `failed` |
+| GET | `/end-users/{user}/exports/{export_id}/download` | 下载已完成的导出（JSON 文件） |
+| DELETE | `/end-users/{user}` | 在所有 App 中删除该终端用户 |
+| GET | `/plans` | 列出控制台定义的套餐及其限额 |
+| GET | `/end-users/{user}/entitlement` | 当前权益：套餐、各窗口的用量、限额、剩余和最早用量移出窗口的时间、积分余额，以及能否发起新的运行 |
+| GET | `/end-users/{user}/credits` | 积分余额和流水 |
+| POST | `/end-users/{user}/credits` | 发放或扣回积分 |
+
+<CodeGroup title="为终端用户单独设置额度">
+
+```bash
+curl -X PATCH '{apibase}/end-users/customer-42' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'Content-Type: application/json' \
+  --data '{"quota":{"limits":[{"window":"24h","points":50}]}}'
+```
+
+</CodeGroup>
+
+<CodeGroup title="用户付费后设置套餐">
+
+```bash
+curl -X PATCH '{apibase}/end-users/customer-42'   --header 'Authorization: Bearer <runtime-key>'   --header 'Content-Type: application/json'   --data '{"plan":{"key":"pro","expires_at":"2026-12-31T23:59:59Z"}}'
+```
+
+</CodeGroup>
+
+- `plan` 为终端用户设置控制台定义的套餐：`{"key": "...", "expires_at": "..."}`，`expires_at` 可省略，表示长期有效。套餐的限额替代默认限额，到期后自动恢复默认限额，无需再次调用。`"plan": null` 表示移除套餐。可以在终端用户首次发起请求之前设置。
+- `status` 取值为 `active` 或 `suspended`。停用后仍可读取对话、文件和记忆，但发起新的对话或运行会返回 403 `end_user.suspended`。
+- `quota` 替代控制台为每个终端用户设置的限额：`{"limits": [...]}`，窗口为 `24h`、`7d` 或 `30d`，积分最小 0.001；或 `{"unlimited": true}`。单个 App 的额外上限仍然生效。单独额度优先于套餐。`"quota": null` 表示恢复使用套餐或控制台限额。
+- 终端用户超出额度后，发起对话或运行会返回 429 `quota.exceeded`，直到窗口内用量回落到限额以下，或其积分余额为正。错误本身不带详情；需要时读取 `entitlement` 向用户展示剩余额度，并引导升级或充值。
+
+<CodeGroup title="用户充值后发放积分">
+
+```bash
+curl -X POST '{apibase}/end-users/customer-42/credits' \
+  --header 'Authorization: Bearer <runtime-key>' \
+  --header 'Content-Type: application/json' \
+  --data '{"points":100,"external_id":"order-20261024-001","reason":"top-up","expires_at":"2027-10-24T00:00:00Z"}'
+```
+
+</CodeGroup>
+
+- `external_id` 必填，建议使用业务订单号：同一 `external_id` 重复提交只记录一次，换一个金额则返回 409 `runtime_credit_conflict`。`points` 为负数表示扣回（不能带 `expires_at`）。
+- 超出限额的用量从积分中扣除，先扣最早到期的积分；积分不抵扣单个 App 的上限。没有限额（或单独额度为不限）的终端用户不会消耗积分。把限额设为 0 表示不含额度，所有用量都从积分扣除，即按量付费。
+- 用量在每次模型调用后结算，余额可能因进行中的调用略低于 0；欠额会在下次发放时先抵扣。只统计首次发放积分之后的用量。
+- 导出在后台执行：`POST` 返回任务，已有进行中的任务时直接返回它；轮询任务直到 `succeeded`，再下载。未完成时下载返回 409 `runtime_export_not_ready`。导出内容包括全部对话及消息、记忆、上传文件信息，以及数字人实例、实例记忆、运行、任务、报告、通知和产物，不会截断。压缩后超过 64 MB 的导出会失败并给出原因。导出保留 7 天；删除终端用户时一并删除。
+- 删除会在所有 App 中删除上述数据，之后 `GET` 返回状态为 `erased`、不含 External User ID 的记录。用量和审计记录仅保留标识。之后使用相同 External User ID 的请求会作为一个新的空白终端用户。
+
+### Webhook 事件
+
+在控制台「额度与用量」页配置接收地址后，平台会向业务系统 `POST` 以下事件（JSON）：
+
+| 事件 | 触发时机 |
+| --- | --- |
+| `quota.near` | 任一窗口用量达到限额的 80%（每个窗口周期最多一次） |
+| `quota.exceeded` | 任一窗口用量达到限额，包括单个 App 的上限（每个窗口周期最多一次） |
+| `credits.low` | 积分余额降到设定阈值或以下 |
+| `plan.expired` | 套餐到期 |
+
+<CodeGroup title="请求体示例">
+
+```json
+{"id": "…", "event": "quota.near", "created_at": "2026-10-24T12:00:00Z", "runtime_workspace_id": "…",
+ "data": {"user": "customer-42", "subject_id": "…", "window": "24h", "points": 8.5, "limit": 10}}
+```
+
+</CodeGroup>
+
+- 请求头：`X-ZGI-Event`、`X-ZGI-Delivery`（与 `id` 相同）、`X-ZGI-Timestamp`（Unix 秒）、`X-ZGI-Signature: sha256=<hex>`。
+- 校验：用创建时显示的密钥对 `<timestamp>.<原始请求体>` 计算 HMAC-SHA256，与签名常量时间比较，并拒绝超过 5 分钟的时间戳。
+- 返回任意 2xx 视为送达；否则按 30 秒起指数退避重试，最多 8 次。同一事件可能重复送达，请按 `X-ZGI-Delivery` 去重。
+
+### 终端用户连接
+
+数字人可以配置**按用户**的连接器：这类操作以终端用户本人的身份、用其本人的 key 执行，而不是以数字人的身份。由你的业务后端为终端用户提交 key。key 只写入、不可读取，任何响应都不会返回或回显。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/end-users/{user}/connections` | 查看各数字人 App 按用户连接的状态：`connected`、`needs_connection` 或 `reconnect_required` |
+| POST | `/end-users/{user}/connections` | 校验并连接一个连接项：`{"app_key", "slot_key", "values": {...}}`，需携带 `Idempotency-Key` 请求头（16–200 个字符，建议使用 UUID） |
+| DELETE | `/end-users/{user}/connections/{app_key}/{slot_key}` | 断开该连接项，并销毁已保存的 key |
+
+- key 校验失败返回 400，并给出连接器错误码，例如 `connector_key_invalid`。
+- 连接之前，数字人会提示终端用户先连接自己的账号，不会改用其他账号代替。
+- 删除终端用户时，其连接也会一并销毁。
+
+### 连接器操作确认
+
+会改动外部系统的操作需要确认，只读操作直接执行。需要确认时运行会暂停，消息处于待审批状态，由发起这次运行的终端用户决定：
+
+`POST /apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/connector-confirmation`，请求体为 `{"decision": "confirmed" | "cancelled"}`
+
+响应中的 `state` 为执行结果：`completed`、`cancelled`、`failed` 或 `unknown`。
+
+---
+
 ## Key 轮换
 
-推荐顺序：
+每个外部接入最多有 50 个可用 Key，已撤销或过期的 Key 不计入。推荐顺序：
 
 1. 在控制台创建新 Runtime Key。
 2. 将新 Key 部署到业务服务端。
@@ -324,6 +436,8 @@ Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、�
 
 错误响应格式：
 
+<CodeGroup title="错误响应示例">
+
 ```json
 {
   "code": "401001",
@@ -331,15 +445,17 @@ Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、�
 }
 ```
 
+</CodeGroup>
+
 | HTTP 状态 | 处理建议 |
 | --- | --- |
 | 400 | 校验请求参数和请求体 |
 | 401 | 检查 Runtime Key 是否缺失、过期或已撤销 |
-| 403 | 检查 Runtime Workspace 或 App 状态 |
+| 403 | 检查外部接入或 App 状态；`end_user.suspended` 表示该终端用户已被停用；`runtime_credential_scope_denied` 表示密钥的权限范围不包含该接口 |
 | 404 | 资源不存在，或不属于当前 External User ID |
 | 409 | 重新读取 revision，或检查幂等请求 |
 | 413 | 根据上传限制缩小文件 |
-| 429 | 按 `Retry-After` 退避重试 |
+| 429 | 按 `Retry-After` 退避重试；`quota.exceeded` 表示该终端用户的额度已用完；`runtime_end_user_rate_limited` 表示该终端用户请求过于频繁 |
 | 500 | 使用相同幂等键重试安全写操作，并记录 request ID |
 
 所有响应都会携带 `X-Request-ID`。向运维人员反馈问题时请提供该值，不要提供完整 Runtime Key。
@@ -350,9 +466,9 @@ Key 轮换不会改变 App ID、External User ID 派生的 Subject、文件、�
 
 | 资源 | 隔离范围 |
 | --- | --- |
-| Runtime Key | Runtime Workspace |
-| App | Runtime Workspace + App ID |
-| External Subject | Runtime Workspace + External User ID |
-| File | Runtime Workspace + External Subject |
-| Conversation | Runtime Workspace + External Subject + Agent |
-| Memory | Runtime Workspace + External Subject + Agent |
+| Runtime Key | 外部接入 |
+| App | 外部接入 + App ID |
+| External Subject | 外部接入 + External User ID |
+| File | 外部接入 + External Subject |
+| Conversation | 外部接入 + External Subject + App |
+| Memory | 外部接入 + External Subject + App |

@@ -146,6 +146,9 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	preparation := &MemoryRuntimePreparation{
 		SystemPromptAddendum: renderDigitalHumanMemoryContext(nil, toolEnabled, state.AutoExtractionEnabled),
 	}
+	if _, ok := runInstanceScopeID(run); ok && toolEnabled {
+		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation belong to this end user's relationship only. They cannot change the DigitalHuman's own self memory or what other users see. If memory is full, update or clear an entry that no longer matters instead of adding one."
+	}
 	if toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
 		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation stay scoped to this conversation. They cannot change the DigitalHuman's own self memory or memory used in other conversations."
 	}
@@ -344,7 +347,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 			OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: memoryClass, Scope: memoryScope, MemoryType: args.MemoryType,
 			Content: args.Content, ExpectedRevision: args.ExpectedRevision, SupersedesID: args.SupersedesID,
 			ExpectedSupersededRevision: args.ExpectedSupersededRevision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-			Visibility: MemoryVisibilityWorkspace, Confidence: args.Confidence, RunID: &run.ID,
+			Visibility: admission.visibility(), Confidence: args.Confidence, RunID: &run.ID,
 			Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
 			SourceContext: MemorySourceContext{
 				PrivateConversation:       event.Origin.Kind == invocation.OriginManual,
@@ -442,6 +445,8 @@ func memoryPublicErrorCode(err error) string {
 	switch {
 	case apperror.IsCode(err, AppCodeMemoryConflict):
 		return AppCodeMemoryConflict.String()
+	case errors.Is(err, errInstanceMemoryFull):
+		return memoryAdmissionReasonInstanceFull
 	case apperror.IsCode(err, AppCodeMemoryPolicyRejected):
 		return AppCodeMemoryPolicyRejected.String()
 	default:

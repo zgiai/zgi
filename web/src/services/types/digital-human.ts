@@ -24,14 +24,8 @@ export type DigitalHumanRunWaitingReason =
   | 'waiting_budget'
   | 'waiting_client_action';
 
-export interface DigitalHumanChannelResponsePolicy {
-  intermediate_messages_enabled?: boolean;
-  acknowledgement_enabled?: boolean;
-}
-
 export interface DigitalHumanTriggerPolicy extends Record<string, unknown> {
   manual?: boolean;
-  channel_response?: DigitalHumanChannelResponsePolicy;
 }
 
 export interface DigitalHumanPresentationPolicy {
@@ -457,7 +451,8 @@ export type DigitalHumanMemoryScopeType =
   | 'project'
   | 'customer'
   | 'campaign'
-  | 'channel';
+  | 'channel'
+  | 'instance';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {
@@ -833,6 +828,10 @@ export interface DigitalHumanTask {
   notify_channel_ids?: string[];
   /** The requester manages the team channels; a task manager may only remove them. */
   notify_channel_access?: 'manage' | 'remove';
+  /** A scheduled task's reports to external channels wait for this digest. */
+  report_digest?: DigitalHumanTaskReportDigest;
+  /** Which of the task's reports wait for someone to review them. */
+  report_review?: DigitalHumanTaskReportReview;
   /** An integrator's own identifier, given when an API task is created. */
   client_reference?: string;
   /** Who asked for the task; only the task center returns it. */
@@ -903,7 +902,19 @@ export interface CreateDigitalHumanTaskRequest {
   execution_timeout_seconds?: number;
   max_attempts?: number;
   notify_channel_ids?: string[];
+  report_digest?: DigitalHumanTaskReportDigest | '';
+  report_review?: DigitalHumanTaskReportReview;
 }
+
+/** How a scheduled task's reports reach external channels (ADR 0008). */
+export type DigitalHumanTaskReportDigest = 'daily' | 'weekly';
+
+/**
+ * Which reports wait for review: none (reminders and notices), exceptions
+ * (the default: only a run that did not fully finish), or required (every
+ * report, closed unreviewed after three days). The others close on arrival.
+ */
+export type DigitalHumanTaskReportReview = 'none' | 'exceptions' | 'required';
 
 export type UpdateDigitalHumanTaskRequest = Partial<CreateDigitalHumanTaskRequest> & {
   expected_revision: number;
@@ -935,7 +946,7 @@ export interface DigitalHumanTaskRun {
 }
 
 export type DigitalHumanTaskReportOutcome = 'done' | 'partial' | 'not_done' | 'failed';
-export type DigitalHumanTaskReportReviewState = 'new' | 'accepted' | 'rework_requested';
+export type DigitalHumanTaskReportReviewState = 'new' | 'accepted' | 'rework_requested' | 'closed';
 export type DigitalHumanTaskCriterionStatus = 'met' | 'not_met' | 'unknown';
 
 export interface DigitalHumanTaskReportSummary {
@@ -971,7 +982,7 @@ export interface DigitalHumanArtifact {
   kind: DigitalHumanArtifactKind;
   title: string;
   visibility: 'owner' | 'team' | 'application';
-  owner_kind: 'account' | 'api_end_user' | 'workspace' | 'application';
+  owner_kind: DigitalHumanArtifactOwnerKind;
   owner_id: string;
   source_task_id?: string;
   current_version: number;
@@ -981,7 +992,30 @@ export interface DigitalHumanArtifact {
   archived_at?: string;
   /** Whether the reader may archive or restore it. */
   can_manage?: boolean;
+  /** Whether the reader may make links to it that open without signing in. */
+  can_share?: boolean;
+  /** The owner as people know them: a member's name or an end user's identifier. */
+  owner_name?: string;
+  /** Set while every link out, share links and channel downloads, is stopped. */
+  sharing_disabled_at?: string;
   latest?: DigitalHumanArtifactVersion;
+}
+
+export type DigitalHumanArtifactShareLifetime = '1d' | '7d' | '30d' | 'never';
+
+/** A link that opens one version of an artifact for anyone holding it. */
+export interface DigitalHumanArtifactShare {
+  id: string;
+  artifact_id: string;
+  version: number;
+  created_by_id: string;
+  expires_at?: string;
+  revoked_at?: string;
+  access_count: number;
+  last_accessed_at?: string;
+  created_at: string;
+  /** Returned only when the link is made. */
+  token?: string;
 }
 
 export interface DigitalHumanArtifactList {
@@ -991,9 +1025,31 @@ export interface DigitalHumanArtifactList {
   page_size: number;
 }
 
+export type DigitalHumanArtifactOwnerKind = 'account' | 'api_end_user' | 'workspace' | 'application';
+
+/** One owner of artifacts the reader sees, with how many. */
+export interface DigitalHumanArtifactOwner {
+  kind: DigitalHumanArtifactOwnerKind;
+  id: string;
+  count: number;
+  /** A member's name (or email) or an end user's identifier. */
+  name?: string;
+  email?: string;
+}
+
+export interface DigitalHumanArtifactOwnerPage {
+  items: DigitalHumanArtifactOwner[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
 export interface DigitalHumanArtifactParams {
   scope?: 'mine';
   kind?: DigitalHumanArtifactKind;
+  owner_kind?: DigitalHumanArtifactOwnerKind;
+  owner_id?: string;
   q?: string;
   task_id?: string;
   /** Archived artifacts are left out unless asked for. */
@@ -1066,7 +1122,8 @@ export interface DigitalHumanTaskReportParams {
 }
 
 export interface ReviewDigitalHumanTaskReportRequest {
-  action: 'accept' | 'rework';
+  /** rework reruns the task with the feedback; improve keeps it for later runs. */
+  action: 'accept' | 'rework' | 'improve';
   feedback?: string;
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
@@ -72,7 +73,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DepartmentService:                serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
 	})
-	RegisterRuntimeWorkspaceManagementRoutes(v1, db, accountService, serviceContainer.GetTenantService())
+	RegisterRuntimeWorkspaceManagementRoutes(v1, db, accountService, serviceContainer.GetTenantService(), serviceContainer.GetDigitalHumanCredentialCipher())
 
 	// ---------- Explore ----------
 	RegisterExploreRoutes(v1, accountService)
@@ -261,6 +262,12 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// ---------- DigitalHuman ----------
 	// Artifacts outlive the runs that produce them (ADR 0009).
 	artifactService := artifacts.NewService(db, digitalhuman.ToolFileArtifactBlobs{})
+	// A channel's download link to a run file stops with the artifact the
+	// file became, when it is archived or its sharing stopped.
+	tool_file.ChannelDeliveryWithdrawn = func(ctx context.Context, fileID string) bool {
+		withdrawn, err := artifactService.SourceFileWithdrawn(ctx, fileID)
+		return err != nil || withdrawn
+	}
 	digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
 		Artifacts:                           artifactService,
 		DB:                                  db,
@@ -291,7 +298,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 	inboxService := inbox.NewService(db)
 	notificationChannels, notificationDispatcher := newNotificationChannels(inboxService, db, serviceContainer.GetDigitalHumanCredentialCipher(),
-		serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetTaskManager())
+		serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetTaskManager(), serviceContainer.GetNotificationIMSender())
 	if automationBundle.DigitalHumanTasks != nil {
 		automationBundle.DigitalHumanTasks.SetNotifyChannels(notificationChannels)
 	}
@@ -323,6 +330,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 		Service: consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
 		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access, Artifacts: artifactService,
+		ArtifactOwners: digitalhuman.NewArtifactOwnerNames(db),
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 		PendingTaskChanges:      digitalhuman.NewRepository(db),
@@ -400,6 +408,11 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		},
 		AccountService: accountService,
 	})
+	// End users connect their own keys for per-user DigitalHuman Connector
+	// slots through the same verified key setup as members (ADR 0007).
+	if connectionService := serviceContainer.GetConnectorConnectionService(); connectionService != nil {
+		digitalhuman.UseEndUserKeySetup(connectionService)
+	}
 	// Channel replies decide connector confirmations through the same path.
 	if digitalHumanRuntime != nil && digitalHumanRuntime.Runtime != nil {
 		digitalHumanRuntime.Runtime.SetChannelConnectorConfirmer(digitalHumanChannelConnectorConfirmer{

@@ -1,5 +1,6 @@
 'use client';
 
+import type * as React from 'react';
 import { useRef } from 'react';
 import { MDXProvider } from '@mdx-js/react';
 import RuntimeWorkspaceApiDocsEn from './runtime-workspace-api.en-US.mdx';
@@ -20,9 +21,26 @@ import MDComponents, {
   Ul,
 } from '@/components/agents/api/ui/md';
 import { Button } from '@/components/ui/button';
+import { RuntimePageHeader } from '@/features/runtime-workspaces/runtime-page-header';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { API_URL } from '@/lib/config';
+
+// The shared docs table is at least 760px wide, wider than the column the
+// table of contents leaves; these tables are narrower, and code in a cell,
+// such as a long path, may wrap.
+function DocsTable(props: React.TableHTMLAttributes<HTMLTableElement>) {
+  return <MDComponents.Table {...props} className="min-w-[520px]" />;
+}
+
+function DocsTableCell(props: React.TdHTMLAttributes<HTMLTableCellElement>) {
+  return (
+    <MDComponents.TableCell
+      {...props}
+      className="[&_[data-slot=badge]]:whitespace-normal [&_[data-slot=badge]]:[overflow-wrap:anywhere]"
+    />
+  );
+}
 
 export function RuntimeWorkspaceAPIDocs() {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -49,31 +67,41 @@ export function RuntimeWorkspaceAPIDocs() {
     ol: Ol,
     li: Li,
     code: InlineCode,
-    table: MDComponents.Table,
+    table: DocsTable,
     thead: MDComponents.TableHead,
     tbody: MDComponents.TableBody,
     tr: MDComponents.TableRow,
     th: MDComponents.TableHeaderCell,
-    td: MDComponents.TableCell,
+    td: DocsTableCell,
   };
 
   return (
-    <div className="@container/api-docs p-4">
+    <div className="@container/api-docs mx-auto w-full max-w-7xl px-4 py-5 @md/console:px-6 @md/console:py-6">
       <ApiDocsProvider apibase={apiBase}>
-        <div className="mx-auto mb-3 flex w-full max-w-[1360px] justify-end">
-          <Button variant="outline" size="sm" asChild>
-            <a href={`${API_URL}/api/runtime-workspace-openapi.yaml`} target="_blank" rel="noreferrer">
-              {t('runtime.integration.openApi')}
-            </a>
-          </Button>
+        <div className="mb-6">
+          <RuntimePageHeader
+            title={t('runtime.tabs.docs')}
+            description={t('runtime.docsPage.description')}
+            actions={
+              <Button variant="outline" size="sm" asChild>
+                <a
+                  href={`${API_URL}/api/runtime-workspace-openapi.yaml`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {t('runtime.integration.openApi')}
+                </a>
+              </Button>
+            }
+          />
         </div>
-        <div className="mx-auto grid w-full max-w-[1360px] items-start gap-8 @5xl/api-docs:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="grid w-full items-start gap-8 @4xl/api-docs:grid-cols-[minmax(0,1fr)_280px]">
           <div ref={contentRef} className="prose min-w-0 max-w-5xl text-[14px] dark:prose-invert">
             <MDXProvider components={components}>
               <Docs components={components} />
             </MDXProvider>
           </div>
-          <div className="hidden self-stretch @5xl/api-docs:block">
+          <div className="hidden self-stretch @4xl/api-docs:block">
             <FloatingToc rootRef={contentRef} />
           </div>
         </div>

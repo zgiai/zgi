@@ -61,6 +61,8 @@ type DigitalHumanRouteDeps struct {
 	PendingTaskChanges digitalhuman.TaskPendingChangeSource
 	// Artifacts serves the DigitalHuman's artifact center (ADR 0009).
 	Artifacts *artifacts.Service
+	// ArtifactOwners names artifact owners in the console.
+	ArtifactOwners *digitalhuman.ArtifactOwnerNames
 }
 
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
@@ -117,6 +119,12 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	}
 	channelHandler := digitalhuman.NewChannelHandler(deps.Channels, errorProjector)
 	channelHandler.RegisterPublicRoutes(router)
+	if deps.Artifacts != nil {
+		// A shared artifact opens for anyone holding its link, without signing in.
+		shares := router.Group("/artifact-shares")
+		shares.Use(middleware.SetupRequired())
+		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).RegisterShareRoutes(shares)
+	}
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -131,7 +139,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	taskHandler.RegisterRoutes(group)
 	taskHandler.RegisterReportRoutes(group)
 	if deps.Artifacts != nil {
-		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).RegisterRoutes(group)
+		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).WithOwnerNames(deps.ArtifactOwners).RegisterRoutes(group)
 	}
 	if deps.NotificationChannels != nil {
 		deps.NotificationChannels.RegisterRoutes(group, "/digital-humans/:id/notification-channels", digitalHumanChannelOwner(deps.Service, errorProjector))
@@ -256,7 +264,8 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView
 		case http.MethodPost:
-			if strings.HasSuffix(path, "/archive") || strings.HasSuffix(path, "/restore") {
+			if strings.HasSuffix(path, "/archive") || strings.HasSuffix(path, "/restore") ||
+				strings.HasSuffix(path, "/shares") || strings.HasSuffix(path, "/revoke") || strings.HasSuffix(path, "/sharing") {
 				return workspacemodel.WorkspacePermissionDigitalHumanView
 			}
 			return ""
@@ -386,6 +395,9 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 	}
 	repository := digitalhuman.NewRepository(deps.DB)
 	repository.SetConnectorCatalog(deps.ConnectorCatalog)
+	if deps.ConnectorCatalog != nil {
+		digitalhuman.UseEndUserConnections(digitalhuman.NewEndUserConnections(deps.DB, deps.ConnectorCatalog))
+	}
 	channelAdapters, err := channelruntime.NewRegistry()
 	if err != nil {
 		panic("initialize DigitalHuman channel registry: " + err.Error())
@@ -430,6 +442,7 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		if err != nil {
 			panic("initialize DigitalHuman memory vector store: " + err.Error())
 		}
+		digitalhuman.UseEndUserMemoryVectors(vectorStore)
 		knowledgeService := deps.KnowledgeRetrievalService
 		if knowledgeService == nil {
 			knowledgeService = datasetservice.NewKnowledgeRetrievalService(deps.DB, config.Current(), deps.LLMClient, deps.DefaultModelService, nil)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -112,7 +113,9 @@ type PublishRequest struct {
 	SourceConversationID *uuid.UUID
 	SourceRunID          *uuid.UUID
 	SourceReportID       *uuid.UUID
-	Actor                Actor
+	// SourceFileID is the run's own file the content came from, if any.
+	SourceFileID string
+	Actor        Actor
 }
 
 // Published is the result of a publish. Created is false when the content
@@ -129,6 +132,10 @@ type Summary struct {
 	Latest *Version `json:"latest,omitempty"`
 	// CanManage says whether the reader may archive or restore it.
 	CanManage bool `json:"can_manage"`
+	// CanShare says whether the reader may make links to it.
+	CanShare bool `json:"can_share"`
+	// OwnerName is the owner as people know it, filled in by the product.
+	OwnerName string `json:"owner_name,omitempty"`
 }
 
 // ArchiveFilter selects artifacts by whether they are archived.
@@ -149,10 +156,23 @@ type ListQuery struct {
 	// Query matches titles.
 	Query string
 	// Mine keeps only the reader's own artifacts.
-	Mine     bool
-	TaskID   *uuid.UUID
-	Page     int
-	PageSize int
+	Mine bool
+	// OwnerKind and OwnerID keep one kind of owner, or one owner.
+	OwnerKind OwnerKind
+	OwnerID   *uuid.UUID
+	TaskID    *uuid.UUID
+	Page      int
+	PageSize  int
+}
+
+// OwnerCount is one owner and how many of their artifacts a reader sees.
+type OwnerCount struct {
+	Kind  OwnerKind `json:"kind"`
+	ID    uuid.UUID `json:"id"`
+	Count int64     `json:"count"`
+	// Name and Email are filled by whoever knows the owner.
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // ListResult is a page of artifacts.
@@ -181,6 +201,20 @@ func NewService(db *gorm.DB, blobs BlobStore) *Service {
 // Publish stores new content as a version. Content equal to the current
 // version is not stored again.
 func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, error) {
+	published, err := s.publish(ctx, req)
+	if err != nil || strings.TrimSpace(req.SourceFileID) == "" {
+		return published, err
+	}
+	// Recorded even when the content was kept already: this file is now one
+	// of the artifact's.
+	source := &SourceFile{ArtifactID: published.Artifact.ID, FileID: strings.TrimSpace(req.SourceFileID), CreatedAt: s.now()}
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(source).Error; err != nil {
+		return nil, fmt.Errorf("record artifact source file: %w", err)
+	}
+	return published, nil
+}
+
+func (s *Service) publish(ctx context.Context, req PublishRequest) (*Published, error) {
 	title := strings.TrimSpace(req.Title)
 	if !req.Scope.valid() || !req.Owner.valid() || title == "" || utf8.RuneCountInString(title) > MaxTitleRunes || !validVisibility(req.Owner, req.Visibility) {
 		return nil, ErrInvalidRequest
@@ -378,16 +412,19 @@ func (s *Service) List(ctx context.Context, reader Reader, query ListQuery) (*Li
 	if query.Mine {
 		base = base.Where("owner_kind = ? AND owner_id = ?", reader.Principal.Kind, reader.Principal.ID)
 	}
+	if query.OwnerKind != "" {
+		if !query.OwnerKind.valid() {
+			return nil, ErrInvalidRequest
+		}
+		base = base.Where("owner_kind = ?", query.OwnerKind)
+	}
+	if query.OwnerID != nil {
+		base = base.Where("owner_id = ?", *query.OwnerID)
+	}
 	if query.TaskID != nil {
 		base = base.Where("source_task_id = ?", *query.TaskID)
 	}
-	switch query.Archive {
-	case ArchiveOnly:
-		base = base.Where("archived_at IS NOT NULL")
-	case ArchiveAll:
-	default:
-		base = base.Where("archived_at IS NULL")
-	}
+	base = archiveScope(base, query.Archive)
 	page, size := query.Page, query.PageSize
 	if page < 1 {
 		page = 1
@@ -409,7 +446,7 @@ func (s *Service) List(ctx context.Context, reader Reader, query ListQuery) (*Li
 	}
 	items := make([]*Summary, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, &Summary{Artifact: *row, Latest: latest[row.ID], CanManage: canManage(reader, row)})
+		items = append(items, &Summary{Artifact: *row, Latest: latest[row.ID], CanManage: canManage(reader, row), CanShare: canShare(reader, row)})
 	}
 	return &ListResult{Items: items, Total: total, Page: page, PageSize: size}, nil
 }
@@ -424,7 +461,7 @@ func (s *Service) Get(ctx context.Context, reader Reader, id uuid.UUID) (*Summar
 	if err != nil {
 		return nil, err
 	}
-	return &Summary{Artifact: *artifact, Latest: latest[artifact.ID], CanManage: canManage(reader, artifact)}, nil
+	return &Summary{Artifact: *artifact, Latest: latest[artifact.ID], CanManage: canManage(reader, artifact), CanShare: canShare(reader, artifact)}, nil
 }
 
 // Versions lists an artifact's versions, newest first.
@@ -476,6 +513,36 @@ func (s *Service) load(ctx context.Context, reader Reader, id uuid.UUID) (*Artif
 		return nil, notFound(err)
 	}
 	return &artifact, nil
+}
+
+// Owners is the owners of the artifacts reader sees, each with a count, as a
+// query for the caller to name, search and page: it selects kind, id,
+// artifact_count and the time their latest artifact changed (last_updated_at).
+func (s *Service) Owners(ctx context.Context, reader Reader, kind OwnerKind, archive ArchiveFilter) (*gorm.DB, error) {
+	if kind != "" && !kind.valid() {
+		return nil, ErrInvalidRequest
+	}
+	base, err := s.visible(ctx, reader)
+	if err != nil {
+		return nil, err
+	}
+	if kind != "" {
+		base = base.Where("owner_kind = ?", kind)
+	}
+	return archiveScope(base, archive).
+		Select("owner_kind AS kind, owner_id AS id, COUNT(*) AS artifact_count, MAX(updated_at) AS last_updated_at").
+		Group("owner_kind, owner_id"), nil
+}
+
+func archiveScope(db *gorm.DB, archive ArchiveFilter) *gorm.DB {
+	switch archive {
+	case ArchiveOnly:
+		return db.Where("archived_at IS NOT NULL")
+	case ArchiveAll:
+		return db
+	default:
+		return db.Where("archived_at IS NULL")
+	}
 }
 
 // visible limits a query to the artifacts reader may read. Every read goes

@@ -111,7 +111,7 @@ export function TaskReportDetail({
   report: DigitalHumanTaskReport;
   mine: boolean;
   // Called once a review is saved, for example to move on to the next report.
-  onReviewed?: (action: 'accept' | 'rework') => void;
+  onReviewed?: (action: 'accept' | 'rework' | 'improve') => void;
   // Shows the run that produced the report in place, for readers of run logs.
   onOpenRun?: (runId: string) => void;
   stickyActions?: boolean;
@@ -168,7 +168,7 @@ export function TaskReportDetailView({
   onOpenRun?: () => void;
   // Reads a file the report carries through the surface's own API.
   readFile?: (fileId: string, signal?: AbortSignal) => Promise<Blob>;
-  onReview: (request: { action: 'accept' } | { action: 'rework'; feedback: string }) => Promise<void>;
+  onReview: (request: { action: 'accept' } | { action: 'rework' | 'improve'; feedback: string }) => Promise<void>;
 }) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
@@ -179,13 +179,15 @@ export function TaskReportDetailView({
   const issues = report.issues?.trim() && report.issues.trim() !== report.summary.trim() ? report.issues : '';
   const metCount = report.criteria.filter(criterion => criterion.status === 'met').length;
 
-  const submit = async (action: 'accept' | 'rework') => {
+  const submit = async (action: 'accept' | 'rework' | 'improve') => {
     try {
       await onReview(action === 'accept' ? { action } : { action, feedback: feedback.trim() });
     } catch {
       return;
     }
-    toast.success(action === 'accept' ? t('tasks.reports.accepted') : t('tasks.reports.reworkRequested'));
+    toast.success(
+      t(action === 'accept' ? 'tasks.reports.accepted' : action === 'improve' ? 'tasks.reports.improved' : 'tasks.reports.reworkRequested')
+    );
     setReworkOpen(false);
     setFeedback('');
   };
@@ -310,6 +312,10 @@ export function TaskReportDetailView({
             <Button variant="ghost" onClick={() => setReworkOpen(false)}>
               {t('common.cancel')}
             </Button>
+            {/* Feedback for the task itself, not this result: later runs follow it. */}
+            <Button variant="outline" disabled={!feedback.trim() || pending} onClick={() => void submit('improve')}>
+              {t('tasks.reports.improveSubmit')}
+            </Button>
             <Button disabled={!feedback.trim() || pending} onClick={() => void submit('rework')}>
               {t('tasks.reports.reworkSubmit')}
             </Button>
@@ -338,7 +344,7 @@ export function TaskReportView({
   stickyActions?: boolean;
   // Shown beside the heading, such as previous and next buttons.
   navigation?: ReactNode;
-  onReviewed?: (action: 'accept' | 'rework') => void;
+  onReviewed?: (action: 'accept' | 'rework' | 'improve') => void;
   // Shows the task name with a link to the task, where nothing else does.
   withHeading?: boolean;
 }) {
@@ -872,7 +878,7 @@ function TaskReportFollowUp({
   report: DigitalHumanTaskReport;
   pending: boolean;
   followUpHref?: (draft: string, conversationId?: string) => string;
-  onReview: (request: { action: 'accept' } | { action: 'rework'; feedback: string }) => Promise<void>;
+  onReview: (request: { action: 'accept' } | { action: 'rework' | 'improve'; feedback: string }) => Promise<void>;
 }) {
   const t = useT('digitalHumans');
   const [supplement, setSupplement] = useState('');

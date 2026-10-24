@@ -23,6 +23,18 @@ const (
 	SubjectIssuerType         = "runtime_workspace_api"
 )
 
+// App types a Runtime Workspace can bind (ADR 0010).
+const (
+	AppTypeAgent        = "agent"
+	AppTypeDigitalHuman = "digital_human"
+)
+
+// AppRef names one application to bind.
+type AppRef struct {
+	Type string
+	ID   uuid.UUID
+}
+
 type RuntimeWorkspace struct {
 	// RuntimeID is the stable logical identity of the exposure group. In the
 	// current attached mode it is initialized to WorkspaceID so existing rows
@@ -73,8 +85,12 @@ type Credential struct {
 	LastUsedAt         *time.Time `json:"last_used_at,omitempty"`
 	RevokedAt          *time.Time `json:"revoked_at,omitempty"`
 	CreatedByAccountID uuid.UUID  `gorm:"type:uuid;not null" json:"created_by_account_id"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	// Scopes and AppKeys limit what the key may call (ADR 0012); empty
+	// means no limit.
+	Scopes    []string  `gorm:"type:jsonb;serializer:json" json:"scopes,omitempty"`
+	AppKeys   []string  `gorm:"type:jsonb;serializer:json" json:"app_keys,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (Credential) TableName() string { return "runtime_workspace_credentials" }
@@ -101,10 +117,12 @@ func (CredentialOperation) TableName() string {
 type AgentBinding struct {
 	RuntimeWorkspaceID uuid.UUID `gorm:"type:uuid;primaryKey;uniqueIndex:idx_runtime_workspace_app_key,priority:1" json:"runtime_workspace_id"`
 	AgentID            uuid.UUID `gorm:"type:uuid;primaryKey" json:"agent_id"`
-	PublicAppKey       string    `gorm:"type:varchar(128);not null;uniqueIndex:idx_runtime_workspace_app_key,priority:2" json:"app_key"`
-	Status             string    `gorm:"type:varchar(20);not null;default:'active';index" json:"status"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	// AppType is agent or digital_human; AgentID holds that application's ID.
+	AppType      string    `gorm:"type:varchar(32);not null;default:'agent'" json:"app_type"`
+	PublicAppKey string    `gorm:"type:varchar(128);not null;uniqueIndex:idx_runtime_workspace_app_key,priority:2" json:"app_key"`
+	Status       string    `gorm:"type:varchar(20);not null;default:'active';index" json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func (AgentBinding) TableName() string { return "runtime_workspace_agents" }
@@ -134,6 +152,7 @@ type AccessEvent struct {
 	CredentialID       *uuid.UUID     `gorm:"type:uuid;index" json:"credential_id,omitempty"`
 	SubjectID          *uuid.UUID     `gorm:"type:uuid;index" json:"subject_id,omitempty"`
 	AgentID            *uuid.UUID     `gorm:"type:uuid;index" json:"agent_id,omitempty"`
+	AppType            *string        `gorm:"type:varchar(32)" json:"app_type,omitempty"`
 	Method             string         `gorm:"type:varchar(16);not null" json:"method"`
 	Route              string         `gorm:"type:varchar(255);not null" json:"route"`
 	StatusCode         int            `gorm:"not null" json:"status_code"`
@@ -169,6 +188,7 @@ type RuntimeContext struct {
 
 type App struct {
 	AppKey               string       `json:"app_key"`
+	AppType              string       `json:"app_type"`
 	Name                 string       `json:"name"`
 	Description          string       `json:"description,omitempty"`
 	Icon                 string       `json:"icon,omitempty"`
@@ -194,6 +214,7 @@ type App struct {
 
 type ManagementApp struct {
 	AgentID            string       `json:"agent_id"`
+	AppType            string       `json:"app_type"`
 	AppKey             string       `json:"app_key"`
 	WorkspaceID        string       `json:"workspace_id"`
 	WorkspaceName      string       `json:"workspace_name"`
@@ -222,8 +243,10 @@ type CatalogTag struct {
 }
 
 type ManagementAppSet struct {
-	Revision int64           `json:"revision"`
-	Items    []ManagementApp `json:"items"`
+	Revision int64 `json:"revision"`
+	// Limit is how many apps the Runtime Workspace may bind.
+	Limit int             `json:"limit"`
+	Items []ManagementApp `json:"items"`
 }
 
 type SourceWorkspace struct {
@@ -237,10 +260,14 @@ type AgentCandidateSet struct {
 	CrossWorkspaceEnabled bool              `json:"cross_workspace_enabled"`
 	SourceWorkspaces      []SourceWorkspace `json:"source_workspaces"`
 	Items                 []AgentCandidate  `json:"items"`
+	// Page and HasMore are set when candidates are paged.
+	Page    int  `json:"page,omitempty"`
+	HasMore bool `json:"has_more"`
 }
 
 type AgentCandidate struct {
 	AgentID            string       `json:"agent_id"`
+	AppType            string       `json:"app_type"`
 	WorkspaceID        string       `json:"workspace_id"`
 	WorkspaceName      string       `json:"workspace_name"`
 	Name               string       `json:"name"`

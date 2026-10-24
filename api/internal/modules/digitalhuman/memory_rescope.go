@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -82,7 +83,7 @@ func (s *Service) RescopeMemory(ctx context.Context, scope Scope, digitalHumanID
 	var evidence []memoryruntime.MemoryEvidence
 	_ = json.Unmarshal(current.Evidence, &evidence)
 	evidence = append(evidence, memoryruntime.MemoryEvidence{Type: memoryruntime.EvidenceTypeManual, ID: "operator-rescope:" + request.OperationID.String()})
-	return s.applyMemoryProposal(ctx, scope, digitalHumanID, MemoryProposalRequest{
+	result, err := s.applyMemoryProposal(ctx, scope, digitalHumanID, MemoryProposalRequest{
 		OperationID: request.OperationID, Key: current.MemoryKey, Action: memoryruntime.MutationActionUpsert,
 		MemoryClass: target.class, MemoryType: current.MemoryType, Scope: target.scope, Content: current.Content,
 		SupersedesID: &current.ID, ExpectedSupersededRevision: current.Revision,
@@ -91,6 +92,22 @@ func (s *Service) RescopeMemory(ctx context.Context, scope Scope, digitalHumanID
 		SourceContext: MemorySourceContext{PromotedByAuthorizedActor: true}, AdminApproved: true,
 		OccurredAt: s.now(), rescope: true,
 	}, false)
+	if err != nil || result == nil || result.Replayed || current.ScopeType != memoryruntime.MemoryScopeInstance {
+		return result, err
+	}
+	// Moving an entry out of an end user's instance is an audited promotion.
+	if instanceID, parseErr := uuid.Parse(current.ScopeID); parseErr == nil {
+		actorID := scope.ActorID
+		instance := EndUserInstance{ID: instanceID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID}
+		details := map[string]any{"memory_id": current.ID.String(), "to_class": string(target.class), "to_scope_type": string(target.scopeType())}
+		if result.Memory != nil {
+			details["promoted_memory_id"] = result.Memory.ID.String()
+		}
+		if auditErr := recordInstanceEvent(ctx, s.repo.db, instance, instanceAuditMemoryPromoted, accessAuditSourceConsole, &actorID, details); auditErr != nil {
+			logger.WarnContext(ctx, "end-user instance memory promotion audit failed", "digital_human_id", digitalHumanID.String(), auditErr)
+		}
+	}
+	return result, nil
 }
 
 type memoryRescopeTarget struct {

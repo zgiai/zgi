@@ -754,6 +754,19 @@ type runtimeConfirmationDigitalHumanGuardSpy struct {
 	requests []DigitalHumanContinuationGuardRequest
 }
 
+func (guard *runtimeConfirmationDigitalHumanGuardSpy) AuthorizeDecider(
+	_ context.Context,
+	request DigitalHumanContinuationGuardRequest,
+) error {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	guard.requests = append(guard.requests, request)
+	if request.RunID != guard.host.runID || request.DeciderID == uuid.Nil {
+		return core.NewError(core.ErrorCodeConflict, false, nil)
+	}
+	return nil
+}
+
 func (guard *runtimeConfirmationDigitalHumanGuardSpy) AuthorizeContinuation(
 	_ context.Context,
 	request DigitalHumanContinuationGuardRequest,

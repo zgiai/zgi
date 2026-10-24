@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Bell, Plus, Webhook, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,7 +15,11 @@ import {
   notificationChannelService,
   TEAM_NOTIFICATION_CHANNELS_PATH,
 } from '@/services/notification-channel.service';
-import type { DigitalHumanTask } from '@/services/types/digital-human';
+import type {
+  DigitalHumanTask,
+  DigitalHumanTaskReportDigest,
+  DigitalHumanTaskReportReview,
+} from '@/services/types/digital-human';
 
 /**
  * Shows where a shared task's reports go: always the requester's inbox and
@@ -105,6 +110,82 @@ export function TaskReportDestinations({
       {access === 'manage' && choices.isSuccess && options.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t('tasks.destinations.none')}</p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * How a scheduled task's reports reach external channels: each run, or held
+ * for a daily or weekly digest. The inbox gets every report, and failures are
+ * always sent at once.
+ */
+export function TaskReportDigest({
+  task,
+  onChange,
+}: {
+  task: DigitalHumanTask;
+  onChange?: (digest: DigitalHumanTaskReportDigest | '') => Promise<void> | void;
+}) {
+  const t = useT('digitalHumans');
+  if (task.schedule?.type !== 'cron' || !onChange) return null;
+  const value = task.report_digest ?? 'each';
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+      <div className="min-w-0">
+        <span className="text-xs font-medium text-muted-foreground">{t('tasks.digest.label')}</span>
+        <p className="text-[11px] text-muted-foreground">{t('tasks.digest.hint')}</p>
+      </div>
+      <Select
+        value={value}
+        onValueChange={next => void onChange(next === 'each' ? '' : (next as DigitalHumanTaskReportDigest))}
+      >
+        <SelectTrigger className="h-8 w-36 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="each">{t('tasks.digest.each')}</SelectItem>
+          <SelectItem value="daily">{t('tasks.digest.daily')}</SelectItem>
+          <SelectItem value="weekly">{t('tasks.digest.weekly')}</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+const REPORT_REVIEWS: DigitalHumanTaskReportReview[] = ['none', 'exceptions', 'required'];
+
+/**
+ * Which of a task's reports wait for review. The rest close when they arrive,
+ * so a reminder or a recurring digest never piles up for review.
+ */
+export function TaskReportReview({
+  task,
+  onChange,
+}: {
+  task: DigitalHumanTask;
+  onChange?: (review: DigitalHumanTaskReportReview) => Promise<void> | void;
+}) {
+  const t = useT('digitalHumans');
+  if (!onChange) return null;
+  const value = task.report_review ?? 'exceptions';
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <span className="text-xs font-medium text-muted-foreground">{t('tasks.reportReview.label')}</span>
+        <p className="text-[11px] text-muted-foreground">{t(`tasks.reportReview.hint.${value}`)}</p>
+      </div>
+      <Select value={value} onValueChange={next => void onChange(next as DigitalHumanTaskReportReview)}>
+        <SelectTrigger className="h-8 w-36 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {REPORT_REVIEWS.map(review => (
+            <SelectItem key={review} value={review}>
+              {t(`tasks.reportReview.option.${review}`)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 package tool_file
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -26,6 +27,11 @@ const maxChannelDeliveryURLTTL = time.Duration(config.MaxChannelDeliveryFileTTLS
 // check the live delivery route and file ownership; protected artifacts also
 // require frozen run ownership. This finite bearer grant does not change file
 // ownership or authorize ordinary signed URLs.
+// ChannelDeliveryWithdrawn, when set, reports whether a channel-delivered
+// file was withdrawn since it was sent, such as by archiving the artifact
+// it became; its download link then stops working.
+var ChannelDeliveryWithdrawn func(ctx context.Context, fileID string) bool
+
 func SignChannelDeliveryFileGlobal(file *ToolFile, deliveryID, extension string) (string, error) {
 	if GlobalFileSignature == nil {
 		return "", fmt.Errorf("file signature not initialized")
@@ -116,6 +122,10 @@ func (h *HTTPHandler) serveChannelDeliveryFile(c *gin.Context, fileID string) {
 	}
 	file, err := h.manager.GetToolFileByID(c.Request.Context(), fileID)
 	if err != nil || !channelDeliveryFile(file) {
+		deny()
+		return
+	}
+	if withdrawn := ChannelDeliveryWithdrawn; withdrawn != nil && withdrawn(c.Request.Context(), fileID) {
 		deny()
 		return
 	}

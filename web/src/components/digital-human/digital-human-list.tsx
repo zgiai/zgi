@@ -3,9 +3,21 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot, Clock3, MoreHorizontal, Pencil, Plus, Power, PowerOff, Search, Trash2 } from 'lucide-react';
+import {
+  Bot,
+  Clock3,
+  MoreHorizontal,
+  MoveRight,
+  Pencil,
+  Plus,
+  Power,
+  PowerOff,
+  Search,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { DigitalHumanBasicInfoDialog } from '@/components/digital-human/digital-human-basic-info-dialog';
+import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -95,9 +107,11 @@ function DigitalHumanCard({
   canUpdate: boolean;
 }) {
   const t = useT('digitalHumans');
+  const tCommon = useT('common');
   const queryClient = useQueryClient();
   const mutations = useDigitalHumanMutations();
   const [editOpen, setEditOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [confirm, setConfirm] = useState<'offline' | 'online' | 'delete' | null>(null);
   const [pending, setPending] = useState(false);
   const textIcon = getAgentTextIconDisplay(item.icon_type, item.icon, item.name);
@@ -240,6 +254,10 @@ function DigitalHumanCard({
                 <Pencil className="size-4" />
                 {t('basicInfo.edit')}
               </DropdownMenuItem>
+              <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
+                <MoveRight className="size-4" />
+                {tCommon('assetMove.title')}
+              </DropdownMenuItem>
               {isPublished ? (
                 <DropdownMenuItem
                   inset
@@ -272,6 +290,14 @@ function DigitalHumanCard({
       ) : null}
 
       <DigitalHumanBasicInfoDialog definition={item} open={editOpen} onOpenChange={setEditOpen} />
+      <WorkspaceAssetMoveDialog
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        assetType="digital_human"
+        assetId={item.id}
+        assetName={item.name}
+        onMoved={() => void refreshList()}
+      />
 
       <ConfirmDialog
         open={confirm !== null}

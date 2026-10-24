@@ -28,6 +28,11 @@ func TestEndUserInstanceForRunCoversOnlyExternalEndUsersWithASubject(t *testing.
 		t.Fatalf("instance with the flag off = %#v", instance)
 	}
 
+	// Accepted (ADR 0006): instances are on unless switched off.
+	t.Setenv("ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED", "")
+	if !EndUserInstancesEnabled() || !InstanceMemoryEnabled() {
+		t.Fatal("instances and instance memory are off by default")
+	}
 	t.Setenv("ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED", "true")
 	api := endUserInstanceForRun(scope, run(SurfaceAPI, SourceTrustExternalEndUser, &subjectID), now)
 	if api == nil || api.SubjectID != subjectID || api.IssuerType != SurfaceAPI || api.IssuerID == nil || *api.IssuerID != keyID ||

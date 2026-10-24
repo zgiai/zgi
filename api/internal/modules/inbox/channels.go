@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/mail"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ const (
 
 	ChannelEmail   = "email"
 	ChannelWebhook = "webhook"
+	// ChannelIM is a direct message sent with the owner's own IM Connection.
+	ChannelIM = "im"
 
 	ChannelPending  = "pending"
 	ChannelActive   = "active"
@@ -69,6 +72,8 @@ type Channel struct {
 	Name           string     `gorm:"type:varchar(128);not null" json:"name"`
 	Target         string     `gorm:"type:text;not null" json:"target"`
 	SecretEnvelope *string    `gorm:"type:text" json:"-"`
+	// ConnectionID is the owner's IM Connection an IM channel sends with.
+	ConnectionID   *uuid.UUID `gorm:"type:uuid" json:"connection_id,omitempty"`
 	Events         []string   `gorm:"type:jsonb;serializer:json;not null" json:"events"`
 	Status         string     `gorm:"type:varchar(16);not null" json:"status"`
 	VerifyCodeHash *string    `gorm:"type:varchar(128)" json:"-"`
@@ -102,6 +107,9 @@ type ChannelInput struct {
 	Name   string   `json:"name"`
 	Target string   `json:"target"`
 	Events []string `json:"events"`
+	// ConnectionID is the IM Connection of an IM channel; Target is then the
+	// owner's own user ID in that tool.
+	ConnectionID *uuid.UUID `json:"connection_id,omitempty"`
 }
 
 // ChannelUpdate changes a channel's name, events, or whether it is enabled.
@@ -120,12 +128,43 @@ type SecretCipher interface {
 // EmailSender sends one HTML email.
 type EmailSender func(ctx context.Context, to, subject, html, idempotencyKey string) error
 
+// IMConnection is an IM Connection of an account that can send it direct
+// messages.
+type IMConnection struct {
+	ID          uuid.UUID `json:"id"`
+	ConnectorID string    `json:"connector_id"`
+	Name        string    `json:"name"`
+	// RecipientKind names the user ID the tool needs, such as open_id.
+	RecipientKind string `json:"recipient_kind"`
+}
+
+// IMSender sends direct messages with an account's own IM Connection.
+type IMSender interface {
+	Connections(ctx context.Context, organizationID, ownerID uuid.UUID) ([]IMConnection, error)
+	Send(ctx context.Context, organizationID, ownerID, connectionID uuid.UUID, recipient, text, idempotencyKey string) error
+}
+
 // Channels manages notification channels.
 type Channels struct {
 	db     *gorm.DB
 	cipher SecretCipher
 	email  EmailSender
+	im     IMSender
 	now    func() time.Time
+}
+
+// UseIMSender enables personal IM channels.
+func (s *Channels) UseIMSender(sender IMSender) { s.im = sender }
+
+// IMConnections lists the account's Connections an IM channel may use.
+func (s *Channels) IMConnections(ctx context.Context, owner ChannelOwner) ([]IMConnection, error) {
+	if !owner.valid() || owner.Kind != OwnerAccount {
+		return nil, ErrInvalidRequest
+	}
+	if s.im == nil {
+		return []IMConnection{}, nil
+	}
+	return s.im.Connections(ctx, owner.OrganizationID, owner.ID)
 }
 
 // NewChannels builds the channel registry. A nil cipher disables webhooks; a
@@ -206,6 +245,23 @@ func (s *Channels) Create(ctx context.Context, owner ChannelOwner, actor uuid.UU
 			return nil, "", ErrDeliveryUnavailable
 		}
 		channel.Status = ChannelPending
+	case ChannelIM:
+		if s.im == nil || input.ConnectionID == nil {
+			return nil, "", ErrDeliveryUnavailable
+		}
+		usable, err := s.im.Connections(ctx, owner.OrganizationID, owner.ID)
+		if err != nil {
+			return nil, "", err
+		}
+		found := false
+		for _, connection := range usable {
+			found = found || connection.ID == *input.ConnectionID
+		}
+		if !found {
+			return nil, "", ErrInvalidRequest
+		}
+		connectionID := *input.ConnectionID
+		channel.ConnectionID, channel.Status = &connectionID, ChannelPending
 	case ChannelWebhook:
 		if s.cipher == nil {
 			return nil, "", ErrDeliveryUnavailable
@@ -223,7 +279,7 @@ func (s *Channels) Create(ctx context.Context, owner ChannelOwner, actor uuid.UU
 		}
 		return nil, "", fmt.Errorf("create notification channel: %w", err)
 	}
-	if channel.Type == ChannelEmail {
+	if channel.Type == ChannelEmail || channel.Type == ChannelIM {
 		if err := s.sendCode(ctx, channel); err != nil {
 			return channel, "", err
 		}
@@ -237,7 +293,7 @@ func (s *Channels) ResendCode(ctx context.Context, owner ChannelOwner, id uuid.U
 	if err != nil {
 		return err
 	}
-	if channel.Type != ChannelEmail || channel.Status != ChannelPending {
+	if channel.Type != ChannelEmail && channel.Type != ChannelIM || channel.Status != ChannelPending {
 		return ErrChannelConflict
 	}
 	return s.sendCode(ctx, channel)
@@ -249,7 +305,7 @@ func (s *Channels) Verify(ctx context.Context, owner ChannelOwner, id uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
-	if channel.Type != ChannelEmail || channel.Status != ChannelPending {
+	if channel.Type != ChannelEmail && channel.Type != ChannelIM || channel.Status != ChannelPending {
 		return nil, ErrChannelConflict
 	}
 	now := s.now()
@@ -362,6 +418,17 @@ func (s *Channels) sendCode(ctx context.Context, channel *Channel) error {
 		return fmt.Errorf("store verification code: %w", err)
 	}
 	channel.VerifySentAt = &now
+	if channel.Type == ChannelIM {
+		if s.im == nil || channel.ConnectionID == nil {
+			return ErrDeliveryUnavailable
+		}
+		text := fmt.Sprintf("你的 ZGI 通知验证码是 %s，15 分钟内有效。\nYour ZGI notification verification code is %s. It expires in 15 minutes.", code, code)
+		if err := s.im.Send(ctx, channel.OrganizationID, channel.OwnerID, *channel.ConnectionID, channel.Target, text,
+			"notification-verify-"+channel.ID.String()+"-"+now.Format(time.RFC3339)); err != nil {
+			return fmt.Errorf("%w: %v", ErrDeliveryUnavailable, err)
+		}
+		return nil
+	}
 	subject := "ZGI notification email verification / 通知邮箱验证"
 	body := fmt.Sprintf(`<p>Your ZGI notification email verification code is <strong>%s</strong>. It expires in 15 minutes.</p>
 <p>你的 ZGI 通知邮箱验证码是 <strong>%s</strong>，15 分钟内有效。</p>
@@ -418,6 +485,12 @@ func normalizeTarget(channelType, target, ownerKind string) (string, error) {
 			return "", ErrInvalidRequest
 		}
 		return strings.ToLower(target), nil
+	case ChannelIM:
+		// An IM user ID reaches a person, so only personal channels use it.
+		if ownerKind != OwnerAccount || !imRecipientPattern.MatchString(target) {
+			return "", ErrInvalidRequest
+		}
+		return target, nil
 	case ChannelWebhook:
 		parsed, err := url.Parse(target)
 		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil || len(target) > 2048 {
@@ -428,6 +501,9 @@ func normalizeTarget(channelType, target, ownerKind string) (string, error) {
 		return "", ErrInvalidRequest
 	}
 }
+
+// imRecipientPattern is a Feishu open_id or a DingTalk user ID.
+var imRecipientPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 func secretAAD(channel *Channel) credentialcrypto.CredentialAAD {
 	return credentialcrypto.CredentialAAD{OrganizationID: channel.OrganizationID, ConnectionID: channel.ID, IntegrationID: "notification_webhook", CredentialVersion: 1}

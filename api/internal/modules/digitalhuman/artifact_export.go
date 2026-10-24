@@ -50,11 +50,12 @@ func (p *exportArtifactPersister) Persist(ctx context.Context, scope execution.S
 	title, _ := truncateArtifactText(name, artifacts.MaxTitleRunes)
 	mimeType, _ := result["mime_type"].(string)
 	runID := p.run.ID
+	sourceFileID, _ := result["file_id"].(string)
 	published, err := p.artifacts.Publish(ctx, artifacts.PublishRequest{
 		Scope: artifactScope(p.run.OrganizationID, p.run.WorkspaceID, p.run.DigitalHumanID), Owner: owner, Visibility: visibility,
 		Kind: artifactKindFor(mimeType, name), Title: title, File: &artifacts.Blob{Name: name, MimeType: mimeType, Data: data},
 		Source: artifacts.SourceRun, SourceTaskID: artifactContextUUID(p.event, "task_id"), SourceConversationID: &conversation, SourceRunID: &runID,
-		Actor: artifacts.Actor{Kind: "digital_human_run", ID: runID.String()},
+		SourceFileID: sourceFileID, Actor: artifacts.Actor{Kind: "digital_human_run", ID: runID.String()},
 	})
 	if err != nil {
 		logger.WarnContext(ctx, "DigitalHuman exported file could not be kept in the artifact center", "run_id", runID.String(), err)

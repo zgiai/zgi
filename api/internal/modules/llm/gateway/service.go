@@ -55,6 +55,10 @@ type AppContext struct {
 	NodeID                    string
 	NodeType                  string
 	SuppressInvocationContent bool
+	// EndUserSubjectID attributes the call to an external end user, and
+	// RuntimeWorkspaceID to their Runtime Workspace when it is known.
+	RuntimeWorkspaceID *uuid.UUID
+	EndUserSubjectID   *uuid.UUID
 }
 
 // LLMGatewayService defines the interface for LLM gateway operations

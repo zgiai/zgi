@@ -158,3 +158,60 @@ func (s *Service) changeNotifyChannels(ctx context.Context, task *automationmode
 		return nil, digitalhuman.ErrTaskVisibilityForbidden
 	}
 }
+
+// reportReviewKey stores which of a task's reports wait for review in its
+// delivery config; the default is not stored.
+const reportReviewKey = "report_review"
+
+// taskReportReview is a task's report review, the default when unset.
+func taskReportReview(row *automationmodel.AutomationTask) digitalhuman.TaskReportReview {
+	if row != nil {
+		switch review := digitalhuman.TaskReportReview(fmt.Sprint(row.DeliveryConfig[reportReviewKey])); review {
+		case digitalhuman.TaskReportReviewNone, digitalhuman.TaskReportReviewRequired:
+			return review
+		}
+	}
+	return digitalhuman.TaskReportReviewExceptions
+}
+
+// withReportReview returns config with review, removed for the default.
+func withReportReview(config map[string]any, review digitalhuman.TaskReportReview) map[string]any {
+	next := make(map[string]any, len(config)+1)
+	for key, value := range config {
+		next[key] = value
+	}
+	delete(next, reportReviewKey)
+	if review == digitalhuman.TaskReportReviewNone || review == digitalhuman.TaskReportReviewRequired {
+		next[reportReviewKey] = string(review)
+	}
+	return next
+}
+
+// reportDigestKey stores a scheduled task's report digest in its delivery
+// config.
+const reportDigestKey = "report_digest"
+
+// taskReportDigest is a task's digest; only a scheduled (cron) task has one.
+func taskReportDigest(row *automationmodel.AutomationTask) digitalhuman.TaskReportDigest {
+	if row == nil || row.ScheduleType != automationmodel.AutomationScheduleTypeCron {
+		return digitalhuman.TaskReportDigestNone
+	}
+	digest := digitalhuman.TaskReportDigest(fmt.Sprint(row.DeliveryConfig[reportDigestKey]))
+	if digest == digitalhuman.TaskReportDigestDaily || digest == digitalhuman.TaskReportDigestWeekly {
+		return digest
+	}
+	return digitalhuman.TaskReportDigestNone
+}
+
+// withReportDigest returns config with digest, removed when empty.
+func withReportDigest(config map[string]any, digest digitalhuman.TaskReportDigest) map[string]any {
+	next := make(map[string]any, len(config)+1)
+	for key, value := range config {
+		next[key] = value
+	}
+	delete(next, reportDigestKey)
+	if digest != digitalhuman.TaskReportDigestNone {
+		next[reportDigestKey] = string(digest)
+	}
+	return next
+}

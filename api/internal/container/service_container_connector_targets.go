@@ -75,6 +75,13 @@ func (authority *connectorTargetAuthority) authorize(ctx context.Context, org, a
 	// rows remain queried under the API-key owner below, so this exception does
 	// not grant access to another principal's Personal Connection.
 	apiKeyPublishedRead := !member && !edit && target.Type == core.TargetTypeAgent && target.EffectiveScope() == core.ScopePublished
+	if !member && !edit && target.Type == core.TargetTypeDigitalHuman && target.EffectiveScope() == core.ScopePublished {
+		// A Runtime Workspace end user acts with their own Connection in a
+		// per-user DigitalHuman slot (ADR 0007). They are not members, so
+		// only a live run of theirs on this exact published version, in an
+		// instance that is not suspended or erased, authorizes the use.
+		return authority.authorizeEndUserRun(ctx, org, actor, id, target.VersionID)
+	}
 	if !member && !apiKeyPublishedRead {
 		return targetDenied()
 	}
@@ -176,6 +183,22 @@ func (authority *connectorTargetAuthority) authorize(ctx context.Context, org, a
 		if apiKeyPublishedRead && authority.isActiveAgentAPIKeyForTarget(ctx, actor, id, workspaceID) {
 			return nil
 		}
+		return targetDenied()
+	}
+	return nil
+}
+
+func (authority *connectorTargetAuthority) authorizeEndUserRun(ctx context.Context, org, subject, digitalHumanID uuid.UUID, versionID string) error {
+	var count int64
+	err := authority.container.db.WithContext(ctx).
+		Table("digital_human_runs AS r").
+		Joins("JOIN user_subjects AS s ON s.id = r.user_subject_id AND s.kind = ? AND s.issuer_type = ?", "api_end_user", "runtime_workspace_api").
+		Joins("LEFT JOIN digital_human_end_user_instances AS i ON i.id = r.end_user_instance_id").
+		Where("r.organization_id = ? AND r.digital_human_id = ? AND r.digital_human_version_id = ? AND r.user_subject_id = ?", org, digitalHumanID, versionID, subject).
+		Where("r.status IN ? AND r.cancel_requested_at IS NULL", []string{"queued", "running", "waiting"}).
+		Where("r.end_user_instance_id IS NULL OR i.status = ?", "active").
+		Count(&count).Error
+	if err != nil || count == 0 {
 		return targetDenied()
 	}
 	return nil

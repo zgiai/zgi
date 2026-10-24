@@ -172,7 +172,7 @@ func (h *TaskHandler) reportListQuery(c *gin.Context) (TaskReportListQuery, bool
 	}
 	for _, value := range c.QueryArray("review_state[]") {
 		switch state := TaskReportReviewState(strings.TrimSpace(value)); state {
-		case TaskReportNew, TaskReportAccepted, TaskReportReworkRequested:
+		case TaskReportNew, TaskReportAccepted, TaskReportReworkRequested, TaskReportClosed:
 			query.ReviewStates = append(query.ReviewStates, state)
 		default:
 			h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task_report.request"))

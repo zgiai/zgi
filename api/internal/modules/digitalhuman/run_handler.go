@@ -95,6 +95,9 @@ func (h *RuntimeHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/runtime/conversations/:conversation_id/events", h.StreamConversationEvents)
 	group.POST("/runtime/conversations/:conversation_id/messages/:message_id/workflow-continuation", h.ContinueTaskApproval)
 	group.POST("/runtime/messages/:message_id/regenerate", h.RegenerateMessage)
+	group.GET("/runtime/connector-slots", h.ListMemberConnectorSlots)
+	group.PATCH("/runtime/connector-slots/:slot_key", h.SelectMemberConnectorSlot)
+	group.DELETE("/runtime/connector-slots/:slot_key", h.ClearMemberConnectorSlot)
 
 	// The configuration preview chats with the draft through the same
 	// handlers; its conversations and runs stay apart from real ones.

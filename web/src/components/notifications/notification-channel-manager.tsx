@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, History, KeyRound, Mail, Plus, RotateCcw, Send, Trash2, Webhook } from 'lucide-react';
+import { Copy, History, KeyRound, Mail, MessageSquare, Plus, RotateCcw, Send, Trash2, Webhook } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { useLocale } from '@/hooks/use-locale';
@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { useT } from '@/i18n';
@@ -134,6 +135,7 @@ export function NotificationChannelManager({
           setAdding(false);
           if (created.secret) setSecret(created.secret);
           else if (created.type === 'email') toast.success(t('notifications.codeSent', { address: created.target }));
+          else if (created.type === 'im') toast.success(t('notifications.imCodeSent'));
           void refresh();
         }}
       />
@@ -204,10 +206,11 @@ function ChannelRow({
   });
   const resend = useMutation({
     mutationFn: () => notificationChannelService.resendCode(basePath, channel.id),
-    onSuccess: () => toast.success(t('notifications.codeSent', { address: channel.target })),
+    onSuccess: () =>
+      toast.success(channel.type === 'im' ? t('notifications.imCodeSent') : t('notifications.codeSent', { address: channel.target })),
     onError: (error: unknown) => toast.error(getErrorMessage(error) || t('notifications.errors.generic')),
   });
-  const Icon = channel.type === 'email' ? Mail : Webhook;
+  const Icon = channel.type === 'email' ? Mail : channel.type === 'im' ? MessageSquare : Webhook;
   const statusVariant = channel.status === 'active' ? 'success' : channel.status === 'pending' ? 'warning' : 'subtle';
   return (
     <li className="rounded-lg border p-4">
@@ -236,7 +239,9 @@ function ChannelRow({
       </div>
       {channel.status === 'pending' && canManage ? (
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md bg-warning/5 p-3">
-          <span className="text-xs text-muted-foreground">{t('notifications.enterCode', { address: channel.target })}</span>
+          <span className="text-xs text-muted-foreground">
+            {channel.type === 'im' ? t('notifications.enterIMCode') : t('notifications.enterCode', { address: channel.target })}
+          </span>
           <Input
             value={code}
             inputMode="numeric"
@@ -325,8 +330,23 @@ function AddChannelDialog({
   const [target, setTarget] = useState('');
   const [name, setName] = useState('');
   const [events, setEvents] = useState<NotificationChannelEvent[]>(['task_failed']);
+  const [connectionId, setConnectionId] = useState('');
+  const imConnections = useQuery({
+    queryKey: ['notification-im-connections', basePath],
+    queryFn: () => notificationChannelService.imConnections(basePath),
+    enabled: open && types.includes('im'),
+  });
+  const connections = imConnections.data?.data.items ?? [];
+  const connection = connections.find(item => item.id === connectionId) ?? connections[0];
   const create = useMutation({
-    mutationFn: () => notificationChannelService.create(basePath, { type, target: target.trim(), name: name.trim() || undefined, events }),
+    mutationFn: () =>
+      notificationChannelService.create(basePath, {
+        type,
+        target: target.trim(),
+        name: name.trim() || undefined,
+        events,
+        ...(type === 'im' && connection ? { connection_id: connection.id } : {}),
+      }),
     onSuccess: response => {
       setTarget('');
       setName('');
@@ -346,20 +366,50 @@ function AddChannelDialog({
             <div className="flex gap-2">
               {types.map(item => (
                 <Button key={item} size="sm" variant={type === item ? 'default' : 'outline'} onClick={() => setType(item)}>
-                  {item === 'email' ? <Mail className="size-4" /> : <Webhook className="size-4" />}
+                  {item === 'email' ? <Mail className="size-4" /> : item === 'im' ? <MessageSquare className="size-4" /> : <Webhook className="size-4" />}
                   {t(`notifications.type.${item}`)}
                 </Button>
               ))}
             </div>
           ) : null}
+          {type === 'im' ? (
+            <div className="space-y-1.5">
+              <Label>{t('notifications.imConnectionLabel')}</Label>
+              {connections.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{t('notifications.imNoConnections')}</p>
+              ) : (
+                <Select value={connection?.id ?? ''} onValueChange={setConnectionId}>
+                  <SelectTrigger className="h-9 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {connections.map(item => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.name || item.connector_id} · {t(`notifications.imConnector.${item.connector_id === 'dingtalk' ? 'dingtalk' : 'feishu'}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          ) : null}
           <div className="space-y-1.5">
-            <Label>{type === 'email' ? t('notifications.emailLabel') : t('notifications.urlLabel')}</Label>
+            <Label>
+              {type === 'email'
+                ? t('notifications.emailLabel')
+                : type === 'im'
+                  ? connection?.recipient_kind === 'user_id'
+                    ? t('notifications.imUserIdLabel')
+                    : t('notifications.imOpenIdLabel')
+                  : t('notifications.urlLabel')}
+            </Label>
             <Input
               value={target}
               onChange={event => setTarget(event.target.value)}
-              placeholder={type === 'email' ? 'name@example.com' : 'https://example.com/zgi/webhook'}
+              placeholder={type === 'email' ? 'name@example.com' : type === 'im' ? 'ou_xxxxxxxx' : 'https://example.com/zgi/webhook'}
             />
             {type === 'webhook' ? <p className="text-xs text-muted-foreground">{t('notifications.webhookHint')}</p> : null}
+            {type === 'im' ? <p className="text-xs text-muted-foreground">{t('notifications.imHint')}</p> : null}
           </div>
           <div className="space-y-1.5">
             <Label>{t('notifications.nameLabel')}</Label>
@@ -386,7 +436,10 @@ function AddChannelDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             {t('notifications.cancel')}
           </Button>
-          <Button disabled={!target.trim() || events.length === 0 || create.isPending} onClick={() => create.mutate()}>
+          <Button
+            disabled={!target.trim() || events.length === 0 || create.isPending || (type === 'im' && !connection)}
+            onClick={() => create.mutate()}
+          >
             {t('notifications.create')}
           </Button>
         </DialogFooter>

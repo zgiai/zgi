@@ -29,6 +29,14 @@ const (
 	OwnerApplication OwnerKind = "application"
 )
 
+func (k OwnerKind) valid() bool {
+	switch k {
+	case OwnerAccount, OwnerAPIEndUser, OwnerWorkspace, OwnerApplication:
+		return true
+	}
+	return false
+}
+
 // Visibility is who besides the owner may read an artifact.
 type Visibility string
 
@@ -76,7 +84,10 @@ type Artifact struct {
 	// ArchivedAt hides an artifact from the default listing. It stays
 	// readable, and publishing to it again restores it.
 	ArchivedAt *time.Time `json:"archived_at,omitempty"`
-	DeletedAt  *time.Time `json:"-"`
+	// SharingDisabledAt stops every link out of the application: share
+	// links and the download links channels were sent.
+	SharingDisabledAt *time.Time `json:"sharing_disabled_at,omitempty"`
+	DeletedAt         *time.Time `json:"-"`
 }
 
 // TableName binds artifacts to their table.
@@ -107,3 +118,14 @@ type Version struct {
 
 // TableName binds versions to their table.
 func (Version) TableName() string { return "artifact_versions" }
+
+// SourceFile records a file a run produced that became an artifact, so a
+// link to that file elsewhere, such as a channel download, can follow the
+// artifact's archiving and sharing.
+type SourceFile struct {
+	ArtifactID uuid.UUID `gorm:"type:uuid;primaryKey"`
+	FileID     string    `gorm:"type:varchar(64);primaryKey"`
+	CreatedAt  time.Time `gorm:"not null"`
+}
+
+func (SourceFile) TableName() string { return "artifact_source_files" }

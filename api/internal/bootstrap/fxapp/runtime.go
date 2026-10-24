@@ -153,6 +153,14 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		runtimeworkspace.NewFileObjectDeletionWorker(params.ServiceContainer.GetDB(), params.ServiceContainer.GetStorage()),
 		params.Logger,
 	)
+	if runtimeworkspace.RuntimeEnabled() {
+		RegisterRuntimeWorkspaceWebhookLifecycle(
+			lc,
+			runtimeworkspace.NewWebhookWorker(params.ServiceContainer.GetDB(), params.ServiceContainer.GetDigitalHumanCredentialCipher()),
+			params.Logger,
+		)
+		RegisterRuntimeWorkspaceMaintenanceLifecycle(lc, runtimeworkspace.NewMaintenanceWorker(params.ServiceContainer.GetDB()), params.Logger)
+	}
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
 	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
@@ -210,6 +218,81 @@ type runtimeWorkspaceFileObjectDeletionRunner interface {
 // object deletion table progressing after Runtime Workspace metadata is
 // removed. It deliberately runs regardless of the feature flag so disabling
 // new workspace creation cannot strand already-scheduled objects.
+// RegisterRuntimeWorkspaceWebhookLifecycle delivers Runtime Workspace
+// webhooks every few seconds; deliveries are leased, so every instance may
+// run it.
+func RegisterRuntimeWorkspaceWebhookLifecycle(
+	lc fx.Lifecycle,
+	runner runtimeWorkspaceFileObjectDeletionRunner,
+	log *zap.Logger,
+) {
+	registerRuntimeWorkspaceTicker(lc, runner, 10*time.Second, "Runtime Workspace webhook delivery failed", log)
+}
+
+// RegisterRuntimeWorkspaceMaintenanceLifecycle runs queued end-user exports
+// every few seconds and purges expired exports and access events (ADR 0012);
+// exports are leased, so every instance may run it.
+func RegisterRuntimeWorkspaceMaintenanceLifecycle(
+	lc fx.Lifecycle,
+	runner runtimeWorkspaceFileObjectDeletionRunner,
+	log *zap.Logger,
+) {
+	registerRuntimeWorkspaceTicker(lc, runner, 5*time.Second, "Runtime Workspace maintenance failed", log)
+}
+
+func registerRuntimeWorkspaceTicker(
+	lc fx.Lifecycle,
+	runner runtimeWorkspaceFileObjectDeletionRunner,
+	interval time.Duration,
+	failure string,
+	log *zap.Logger,
+) {
+	if runner == nil {
+		return
+	}
+	if log == nil {
+		log = zap.NewNop()
+	}
+	var cancel context.CancelFunc
+	var done chan struct{}
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			workerContext, stop := context.WithCancel(context.Background())
+			cancel = stop
+			done = make(chan struct{})
+			go func() {
+				defer close(done)
+				ticker := time.NewTicker(interval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-workerContext.Done():
+						return
+					case <-ticker.C:
+						if err := runner.RunOnce(workerContext); err != nil {
+							log.Warn(failure, zap.Error(err))
+						}
+					}
+				}
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			if done == nil {
+				return nil
+			}
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+			return nil
+		},
+	})
+}
+
 func RegisterRuntimeWorkspaceFileObjectDeletionLifecycle(
 	lc fx.Lifecycle,
 	runner runtimeWorkspaceFileObjectDeletionRunner,

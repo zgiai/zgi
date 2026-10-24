@@ -58,7 +58,7 @@ func (c *ArtifactReportCapture) NotifyTaskReport(ctx context.Context, notice Tas
 			Scope: artifactScope(notice.OrganizationID, notice.WorkspaceID, notice.DigitalHumanID), Owner: owner, Visibility: visibility,
 			Kind: artifactKindFor(file.MimeType, file.Name), Title: file.Name, File: &artifacts.Blob{Name: file.Name, MimeType: file.MimeType, Data: data},
 			Source: artifacts.SourceTaskReport, SourceTaskID: &taskID, SourceReportID: &reportID, SourceRunID: &runID,
-			Actor: artifacts.Actor{Kind: "digital_human_run", ID: runID.String()},
+			SourceFileID: file.ID, Actor: artifacts.Actor{Kind: "digital_human_run", ID: runID.String()},
 		})
 		if err != nil {
 			logger.WarnContext(ctx, "DigitalHuman report file could not be kept in the artifact center", "report_id", notice.ReportID.String(), "file_id", file.ID, err)

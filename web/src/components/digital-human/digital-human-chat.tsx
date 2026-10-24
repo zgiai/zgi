@@ -32,6 +32,7 @@ import { digitalHumanService } from '@/services/digital-human.service';
 import { digitalHumanChatFollowUpHref } from '@/components/digital-human/digital-human-task-reports';
 import { inboxService } from '@/services/inbox.service';
 import type { DigitalHumanTaskPendingChange } from '@/services/types/digital-human';
+import { DigitalHumanMemberConnections } from './digital-human-member-connections';
 
 const conversationParam = 'conversation';
 
@@ -345,6 +346,7 @@ export function DigitalHumanChat({ id }: { id: string }) {
           onStartNewConversation={handleStartNewConversation}
           headerRightAction={
             <div className="flex items-center gap-1">
+              {canRun ? <DigitalHumanMemberConnections id={id} /> : null}
               {canRun ? (
                 // Below xl the task panel is a sheet. A floating button sat
                 // under the composer on phones, so it lives in the header.

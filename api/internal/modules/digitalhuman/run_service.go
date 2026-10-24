@@ -116,7 +116,7 @@ type RuntimeService struct {
 	approvalNotifier TaskApprovalNotifier
 	// channelConnectors decides connector confirmations from channel replies.
 	channelConnectors ChannelConnectorConfirmer
-	now              func() time.Time
+	now               func() time.Time
 }
 
 func NewRuntimeService(store RunStore, resolver ExecutionResolver, brain BrainRuntimeAdapter, chat ChatRuntime, dispatcher RunDispatcher, options ...RuntimeServiceOption) *RuntimeService {
@@ -374,6 +374,14 @@ func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope,
 		(request.MaxTaskTokens > 0 && surface != SurfaceAPI) {
 		return nil, false, ErrInvalidRequest
 	}
+	if surface == SurfaceAPI && scope.RuntimeWorkspaceID != nil && scope.UserSubjectID != nil {
+		// A Runtime Workspace end user over their quota is turned away
+		// before a run is queued (ADR 0010).
+		if err := chatruntime.CheckEndUserQuota(ctx, chatruntime.EndUserQuotaRef{RuntimeWorkspaceID: *scope.RuntimeWorkspaceID, SubjectID: *scope.UserSubjectID,
+			AppType: runtimemodel.ConversationCallerDigitalHuman, AppID: digitalHumanID.String()}); err != nil {
+			return nil, false, err
+		}
+	}
 	eventID := request.RequestID.String()
 	if scope.UserSubjectID != nil && *scope.UserSubjectID != uuid.Nil {
 		eventID = scope.UserSubjectID.String() + ":" + eventID
@@ -396,6 +404,11 @@ func (s *RuntimeService) submitExternalSurface(ctx context.Context, scope Scope,
 	appendInvocationRequestContext(event.Context, request)
 	if request.ConversationID != nil && *request.ConversationID != uuid.Nil {
 		event.Context["conversation_id"] = request.ConversationID.String()
+	}
+	if surface == SurfaceAPI && scope.RuntimeWorkspaceID != nil && *scope.RuntimeWorkspaceID != uuid.Nil {
+		// Execution re-authorizes the Runtime Workspace credential from the
+		// stored run, so the run keeps which Runtime Workspace it came through.
+		event.Context[runtimeWorkspaceEventContextKey] = scope.RuntimeWorkspaceID.String()
 	}
 	scope.Surface = surface
 	return s.SubmitInvocation(ctx, scope, event, query, request.ConversationID)
@@ -552,12 +565,19 @@ func (s *RuntimeService) GetRun(ctx context.Context, scope Scope, digitalHumanID
 func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDeliveryRequest) error {
 	if s == nil || s.chat == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil ||
 		req.DigitalHumanID == uuid.Nil || req.TaskID == uuid.Nil || req.TaskRunID == uuid.Nil ||
-		req.ConversationID == uuid.Nil || (strings.TrimSpace(req.Answer) == "" && req.Report == nil) {
+		(req.ConversationID == uuid.Nil && req.ReplyTo == nil) || (strings.TrimSpace(req.Answer) == "" && req.Report == nil) {
 		return ErrInvalidRequest
 	}
 	writer, ok := s.chat.(idempotentCompletedMessageWriter)
 	if !ok {
 		return fmt.Errorf("chat runtime does not support idempotent task result delivery")
+	}
+	if req.ConversationID == uuid.Nil {
+		conversationID, ownerID, ok, err := s.channelTaskConversation(ctx, req)
+		if err != nil || !ok {
+			return err
+		}
+		req.ConversationID, req.AccountID, req.UserSubjectKind = conversationID, ownerID, ""
 	}
 	workspaceID := req.WorkspaceID
 	scope := chatruntime.Scope{
@@ -583,7 +603,7 @@ func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDe
 		if name := strings.TrimSpace(req.TaskName); name != "" {
 			query = "任务汇报：" + name
 		}
-		answer = taskReportMessage(report)
+		answer = taskReportMessage(report, answer)
 		metadata["digital_human_task_report"] = map[string]interface{}{
 			"report_id": report.ID.String(), "task_id": req.TaskID.String(), "task_name": strings.TrimSpace(req.TaskName),
 			"outcome": string(report.Outcome), "summary": report.Summary,
@@ -601,19 +621,49 @@ func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDe
 	return err
 }
 
-// taskReportMessage renders a final report as the delivered message text. The
-// report card in the client reads the structured metadata; this text keeps the
-// conversation readable everywhere else.
-func taskReportMessage(report *TaskReportDelivery) string {
-	outcome := map[TaskReportOutcome]string{
-		TaskReportDone: "已完成", TaskReportPartial: "部分完成", TaskReportNotDone: "未完成", TaskReportFailed: "执行失败",
-	}[report.Outcome]
-	parts := []string{"**结论：" + outcome + "**", strings.TrimSpace(report.Summary)}
+// channelTaskConversation finds the local conversation of a channel task's
+// reply address and the account it belongs to, the installation's creator.
+// It reports false when the conversation has none yet.
+func (s *RuntimeService) channelTaskConversation(ctx context.Context, req TaskResultDeliveryRequest) (uuid.UUID, uuid.UUID, bool, error) {
+	routes, ok := s.store.(interface {
+		ResolveChannelRoute(context.Context, uuid.UUID, string) (*ChannelRoute, error)
+	})
+	installationID, err := uuid.Parse(strings.TrimSpace(req.ReplyTo.InstallationID))
+	if !ok || err != nil || installationID == uuid.Nil {
+		return uuid.Nil, uuid.Nil, false, nil
+	}
+	route, err := routes.ResolveChannelRoute(ctx, installationID, req.ReplyTo.ConversationID)
+	if route == nil || route.Installation == nil || route.Mapping == nil || route.Mapping.LocalConversationID == nil ||
+		*route.Mapping.LocalConversationID == uuid.Nil {
+		if errors.Is(err, ErrChannelBindingNotFound) || errors.Is(err, ErrChannelNotReady) {
+			err = nil
+		}
+		return uuid.Nil, uuid.Nil, false, err
+	}
+	if route.Installation.OrganizationID != req.OrganizationID || route.Installation.WorkspaceID != req.WorkspaceID {
+		return uuid.Nil, uuid.Nil, false, ErrInvalidRequest
+	}
+	return *route.Mapping.LocalConversationID, route.Installation.CreatedBy, true, nil
+}
+
+// taskReportMessage is what a delivered report says in the conversation: the
+// run's own answer, the message it was asked to deliver. The report itself is
+// one tap away in the client, which reads its outcome from the metadata.
+// Without an answer, as after a failed run, the report's text stands in.
+func taskReportMessage(report *TaskReportDelivery, answer string) string {
+	if answer = strings.TrimSpace(answer); answer != "" {
+		return answer
+	}
+	parts := []string{strings.TrimSpace(report.Summary)}
+	if report.Outcome != TaskReportDone {
+		lead := map[TaskReportOutcome]string{TaskReportPartial: "这次只完成了一部分：", TaskReportNotDone: "这次没能完成：", TaskReportFailed: "这次没有执行成功："}[report.Outcome]
+		parts[0] = lead + parts[0]
+	}
 	if body := strings.TrimSpace(report.Body); body != "" && body != strings.TrimSpace(report.Summary) {
 		parts = append(parts, body)
 	}
 	if issues := strings.TrimSpace(report.Issues); issues != "" {
-		parts = append(parts, "**问题：**\n"+issues)
+		parts = append(parts, issues)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -1025,6 +1075,19 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		config.RuntimeToolFactory = factory
 	}
 	config.ConnectorRunID = run.ID.String()
+	location := s.runLocation(ctx, run)
+	config.UserTimezone = location.String()
+	config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + currentTimeGuidance(s.now(), location)
+	applyRunEndUserBilling(&config, run)
+	if repository, ok := s.store.(*GormRepository); ok {
+		missing, perUserErr := preparePerUserConnectors(ctx, repository.db, repository.connectorCatalog, run)
+		if perUserErr != nil {
+			logger.WarnContext(ctx, "DigitalHuman per-user connector preparation failed", "run_id", run.ID.String(), perUserErr)
+		}
+		if note := perUserConnectorNote(missing); note != "" {
+			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
+		}
+	}
 	// A channel member who asked can confirm by reply; a run without a known
 	// requester stays non-interactive and cannot ask.
 	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual ||
@@ -1066,8 +1129,9 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			config.RuntimeTools = append(config.RuntimeTools, memoryPreparation.Tools...)
 		}
 	}
+	var bindTaskConversation func(uuid.UUID)
 	if s.tasks != nil && !previewRun(run) {
-		taskPreparation, taskErr := s.tasks.Prepare(ctx, run, event)
+		taskPreparation, taskErr := s.tasks.Prepare(withRunTimezone(ctx, location), run, event)
 		if taskErr != nil {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.tasks.prepare_failed", "The DigitalHuman could not prepare its task tools.", s.now())
 			return taskErr
@@ -1077,6 +1141,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
 			}
 			config.RuntimeTools = append(config.RuntimeTools, taskPreparation.Tools...)
+			bindTaskConversation = taskPreparation.BindConversation
 		}
 	}
 	chatRequest := runtimedto.ChatRequest{
@@ -1168,6 +1233,9 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "The execution was canceled before it started.", s.now())
 		return err
 	}
+	if bindTaskConversation != nil && prepared.Conversation != nil {
+		bindTaskConversation(prepared.Conversation.ID)
+	}
 	current, err := s.store.RunByID(ctx, runScope(run), run.DigitalHumanID, run.ID)
 	if err != nil || current.Status == RunStatusCanceling || current.CancelRequestedAt != nil {
 		_, _ = s.chat.StopMessage(ctx, runtimeScope(run), prepared.Message.ID)
@@ -1175,11 +1243,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		return err
 	}
 	var eventCallbacks []func(chatruntime.StreamEvent) error
-	policy := defaultChannelResponsePolicy()
-	if resolved.Snapshot.ChannelResponsePolicy != nil {
-		policy = *resolved.Snapshot.ChannelResponsePolicy
-	}
-	if event.Origin.Kind == invocation.OriginChannel && policy.IntermediateMessagesEnabled && s.transient != nil {
+	if event.Origin.Kind == invocation.OriginChannel && s.transient != nil {
 		progress := newChannelProgressCollector(s.transient, run.ID)
 		eventCallbacks = append(eventCallbacks, func(streamEvent chatruntime.StreamEvent) error {
 			return progress.Handle(ctx, streamEvent)
@@ -1666,10 +1730,20 @@ func runScope(run *Run) Scope {
 	}
 }
 
+// applyScheduledConnectorPolicy keeps a scheduled task of an API end user to
+// the Connections the end user supplied for per-user slots (ADR 0007). A task
+// conversation carries no host audience of the API, so bindings delegated to
+// the DigitalHuman are not offered; the run is non-interactive, so only
+// operations that need no confirmation, such as reads, can run.
 func applyScheduledConnectorPolicy(config *chatruntime.RunConfig, run *Run, event invocation.Event) {
-	if config != nil && run != nil && run.Surface == SurfaceTask && event.Origin.Kind == invocation.OriginSchedule && run.UserSubjectKind == string(usersubject.APIEndUser) {
-		config.ConnectorToolsDisabled = true
+	if config == nil || run == nil || run.Surface != SurfaceTask || event.Origin.Kind != invocation.OriginSchedule || run.UserSubjectKind != string(usersubject.APIEndUser) {
+		return
 	}
+	if PerUserConnectorsEnabled() {
+		config.ConnectorDelegationDisabled = true
+		return
+	}
+	config.ConnectorToolsDisabled = true
 }
 
 func persistedRunActorID(scope Scope, principalType, surface string) *uuid.UUID {

@@ -1,10 +1,31 @@
 import { BaseService } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
 import type {
+  RuntimeEndUserDigitalHuman,
+  RuntimeEndUserExportJob,
   RuntimeAgentCandidateSet,
   RuntimeAppCollection,
-  RuntimeCredential,
   RuntimeCredentialCreation,
+  RuntimeEndUser,
+  RuntimeCreditGrant,
+  RuntimeCreditGrantResult,
+  RuntimeAppListParams,
+  RuntimeCandidateParams,
+  RuntimeCreditLedger,
+  RuntimeCredentialList,
+  RuntimeManagedAppPage,
+  RuntimePage,
+  RuntimeEndUserBatchResult,
+  RuntimeEndUserEvent,
+  RuntimeEndUserList,
+  RuntimeEndUserListParams,
+  RuntimeEndUserPatch,
+  RuntimeEndUserSummary,
+  RuntimeUsageSeries,
+  RuntimeWebhook,
+  RuntimeWebhookDelivery,
+  RuntimeWebhookInput,
+  RuntimeWebhookSaved,
   RuntimeWorkspace,
   RuntimeWorkspaceAgentSelectionInput,
   RuntimeWorkspaceCredentialInput,
@@ -60,16 +81,79 @@ class RuntimeWorkspaceService extends BaseService {
     return response.data;
   }
 
-  async listCredentials(workspaceId: string): Promise<RuntimeCredential[]> {
-    const response = await this.request<
-      ApiResponseData<{ items: RuntimeCredential[] }>
-    >(
+  /** A page of the bound apps, with usage and caps. */
+  async listManagedApps(
+    workspaceId: string,
+    query: RuntimeAppListParams = {}
+  ): Promise<RuntimeManagedAppPage> {
+    const params = new URLSearchParams();
+    if (query.search) params.set('search', query.search);
+    if (query.type) params.set('type', query.type);
+    if (query.state) params.set('state', query.state);
+    params.set('page', String(query.page ?? 1));
+    params.set('limit', String(query.limit ?? 20));
+    const response = await this.request<ApiResponseData<RuntimeManagedAppPage>>(
       'get',
-      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/apps?${params.toString()}`,
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
-    return response.data?.items ?? [];
+    return response.data;
+  }
+
+  /** A page of the apps that may be added, matched on the server. */
+  async listAppCandidatesPage(
+    workspaceId: string,
+    query: RuntimeCandidateParams,
+    page: number
+  ): Promise<RuntimeAgentCandidateSet> {
+    const params = new URLSearchParams({
+      scope: query.scope,
+      page: String(page),
+      limit: '30',
+      exclude_bound: 'true',
+    });
+    if (query.sourceWorkspaceId) params.set('source_workspace_id', query.sourceWorkspaceId);
+    if (query.search) params.set('search', query.search);
+    if (query.type) params.set('type', query.type);
+    const response = await this.request<ApiResponseData<RuntimeAgentCandidateSet>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/agent-candidates?${params.toString()}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  /** Adds apps to, or removes them from, the current selection. */
+  async changeApps(
+    workspaceId: string,
+    change:
+      | { expected_revision: number; apps: Array<{ type: string; id: string }> }
+      | { expected_revision: number; app_ids: string[] }
+  ): Promise<RuntimeAppCollection> {
+    const action = 'apps' in change ? 'add' : 'remove';
+    const response = await this.request<ApiResponseData<RuntimeAppCollection>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/apps/${action}`,
+      change,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  /** Active keys only, or every key with status 'all'. */
+  async listCredentials(
+    workspaceId: string,
+    status: 'active' | 'all' = 'active'
+  ): Promise<RuntimeCredentialList> {
+    const response = await this.request<ApiResponseData<RuntimeCredentialList>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/credentials${status === 'active' ? '?status=active' : ''}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data ?? { items: [], inactive: 0, limit: 50 };
   }
 
   async createCredential(
@@ -123,10 +207,15 @@ class RuntimeWorkspaceService extends BaseService {
       undefined,
       { headers: this.workspaceHeaders(workspaceId) }
     );
-    return response.data ?? { scope, cross_workspace_enabled: false, source_workspaces: [], items: [] };
+    return (
+      response.data ?? { scope, cross_workspace_enabled: false, source_workspaces: [], items: [] }
+    );
   }
 
-  async syncAgents(workspaceId: string, data: RuntimeWorkspaceAgentSelectionInput): Promise<RuntimeAppCollection> {
+  async syncAgents(
+    workspaceId: string,
+    data: RuntimeWorkspaceAgentSelectionInput
+  ): Promise<RuntimeAppCollection> {
     const response = await this.request<ApiResponseData<RuntimeAppCollection>>(
       'put',
       `/runtime-workspaces/${encodeURIComponent(workspaceId)}/agents`,
@@ -134,6 +223,266 @@ class RuntimeWorkspaceService extends BaseService {
       { headers: this.workspaceHeaders(workspaceId) }
     );
     return response.data;
+  }
+
+  async listEndUsers(
+    workspaceId: string,
+    query: RuntimeEndUserListParams = {}
+  ): Promise<RuntimeEndUserList> {
+    const params = new URLSearchParams();
+    if (query.search) params.set('search', query.search);
+    if (query.status) params.set('status', query.status);
+    if (query.quota_state) params.set('quota_state', query.quota_state);
+    if (query.plan) params.set('plan', query.plan);
+    if (query.sort) params.set('sort', query.sort);
+    if (query.order) params.set('order', query.order);
+    if (query.page) params.set('page', String(query.page));
+    if (query.limit) params.set('limit', String(query.limit));
+    const response = await this.request<ApiResponseData<RuntimeEndUserList>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users?${params.toString()}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data ?? { items: [], page: 1, limit: 50, total: 0, has_more: false };
+  }
+
+  async updateEndUser(
+    workspaceId: string,
+    subjectId: string,
+    data: RuntimeEndUserPatch
+  ): Promise<RuntimeEndUser> {
+    const response = await this.request<ApiResponseData<RuntimeEndUser>>(
+      'patch',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}`,
+      data,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async batchUpdateEndUsers(
+    workspaceId: string,
+    subjectIds: string[],
+    data: RuntimeEndUserPatch
+  ): Promise<RuntimeEndUserBatchResult> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserBatchResult>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/batch`,
+      { ...data, subject_ids: subjectIds },
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async listEndUserCredits(
+    workspaceId: string,
+    subjectId: string,
+    page = 1
+  ): Promise<RuntimeCreditLedger> {
+    const response = await this.request<ApiResponseData<RuntimeCreditLedger>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/credits?limit=20&page=${page}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async grantEndUserCredits(
+    workspaceId: string,
+    subjectId: string,
+    data: RuntimeCreditGrant
+  ): Promise<RuntimeCreditGrantResult> {
+    const response = await this.request<ApiResponseData<RuntimeCreditGrantResult>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/credits`,
+      data,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  private webhookPath(workspaceId: string, suffix = '') {
+    return `/runtime-workspaces/${encodeURIComponent(workspaceId)}/webhook${suffix}`;
+  }
+
+  async getWebhook(workspaceId: string): Promise<RuntimeWebhook> {
+    const response = await this.request<ApiResponseData<RuntimeWebhook>>(
+      'get',
+      this.webhookPath(workspaceId),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async saveWebhook(workspaceId: string, data: RuntimeWebhookInput): Promise<RuntimeWebhookSaved> {
+    const response = await this.request<ApiResponseData<RuntimeWebhookSaved>>(
+      'put',
+      this.webhookPath(workspaceId),
+      data,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async deleteWebhook(workspaceId: string): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'delete',
+      this.webhookPath(workspaceId),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+  }
+
+  async rotateWebhookSecret(workspaceId: string): Promise<string> {
+    const response = await this.request<ApiResponseData<{ secret: string }>>(
+      'post',
+      this.webhookPath(workspaceId, '/rotate-secret'),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data.secret;
+  }
+
+  async testWebhook(workspaceId: string): Promise<RuntimeWebhookDelivery> {
+    const response = await this.request<ApiResponseData<RuntimeWebhookDelivery>>(
+      'post',
+      this.webhookPath(workspaceId, '/test'),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async listWebhookDeliveries(
+    workspaceId: string,
+    page = 1
+  ): Promise<RuntimePage<RuntimeWebhookDelivery>> {
+    const response = await this.request<ApiResponseData<RuntimePage<RuntimeWebhookDelivery>>>(
+      'get',
+      this.webhookPath(workspaceId, `/deliveries?limit=20&page=${page}`),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data ?? { items: [], page, limit: 20, has_more: false };
+  }
+
+  async retryWebhookDelivery(workspaceId: string, deliveryId: string): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'post',
+      this.webhookPath(workspaceId, `/deliveries/${encodeURIComponent(deliveryId)}/retry`),
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+  }
+
+  async getEndUserSummary(workspaceId: string): Promise<RuntimeEndUserSummary> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserSummary>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/summary`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  /** Daily end-user usage of the workspace, or of one end user. */
+  async getEndUserUsageSeries(
+    workspaceId: string,
+    options: { subjectId?: string; days?: number; timezone?: string } = {}
+  ): Promise<RuntimeUsageSeries> {
+    const params = new URLSearchParams();
+    if (options.days) params.set('days', String(options.days));
+    if (options.timezone) params.set('tz', options.timezone);
+    const path = options.subjectId
+      ? `/end-users/${encodeURIComponent(options.subjectId)}/usage-series`
+      : '/end-users/usage-series';
+    const response = await this.request<ApiResponseData<RuntimeUsageSeries>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}${path}?${params.toString()}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data ?? { days: [], apps: [] };
+  }
+
+  async listEndUserDigitalHumans(
+    workspaceId: string,
+    subjectId: string
+  ): Promise<RuntimeEndUserDigitalHuman[]> {
+    const response = await this.request<ApiResponseData<{ items: RuntimeEndUserDigitalHuman[] }>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/digital-humans`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data?.items ?? [];
+  }
+
+  /** Queues an export, or returns the one already queued or running. */
+  async requestEndUserExport(
+    workspaceId: string,
+    subjectId: string
+  ): Promise<RuntimeEndUserExportJob> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserExportJob>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/export`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async getEndUserExport(
+    workspaceId: string,
+    subjectId: string,
+    exportId: string
+  ): Promise<RuntimeEndUserExportJob> {
+    const response = await this.request<ApiResponseData<RuntimeEndUserExportJob>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/exports/${encodeURIComponent(exportId)}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data;
+  }
+
+  async downloadEndUserExport(
+    workspaceId: string,
+    subjectId: string,
+    exportId: string
+  ): Promise<Blob> {
+    return this.request<Blob>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/exports/${encodeURIComponent(exportId)}/download`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId), responseType: 'blob' }
+    );
+  }
+
+  async eraseEndUser(workspaceId: string, subjectId: string): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'delete',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+  }
+
+  async listEndUserEvents(
+    workspaceId: string,
+    subjectId: string,
+    page = 1
+  ): Promise<RuntimePage<RuntimeEndUserEvent>> {
+    const response = await this.request<ApiResponseData<RuntimePage<RuntimeEndUserEvent>>>(
+      'get',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/events?limit=30&page=${page}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+    return response.data ?? { items: [], page, limit: 30, has_more: false };
   }
 }
 

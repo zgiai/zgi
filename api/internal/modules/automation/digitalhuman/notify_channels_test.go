@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 )
 
@@ -103,5 +104,42 @@ func TestTaskTeamChannelsFollowTheRequester(t *testing.T) {
 		if _, err := create(access); !errors.Is(err, digitalhuman.ErrInvalidRequest) {
 			t.Fatalf("create with channels as %s: %v", access.Viewer.Mode, err)
 		}
+	}
+}
+
+func TestReportDigestBelongsToScheduledTasks(t *testing.T) {
+	cron := &automationmodel.AutomationTask{ScheduleType: automationmodel.AutomationScheduleTypeCron,
+		DeliveryConfig: withReportDigest(map[string]any{"mode": "task_only"}, digitalhuman.TaskReportDigestWeekly)}
+	if got := taskReportDigest(cron); got != digitalhuman.TaskReportDigestWeekly || cron.DeliveryConfig["mode"] != "task_only" {
+		t.Fatalf("a scheduled task's digest = %q, config %#v", got, cron.DeliveryConfig)
+	}
+	once := &automationmodel.AutomationTask{ScheduleType: automationmodel.AutomationScheduleTypeOnce, DeliveryConfig: cron.DeliveryConfig}
+	if got := taskReportDigest(once); got != digitalhuman.TaskReportDigestNone {
+		t.Fatalf("a one-off task kept a digest: %q", got)
+	}
+	if cleared := withReportDigest(cron.DeliveryConfig, digitalhuman.TaskReportDigestNone); cleared[reportDigestKey] != nil {
+		t.Fatalf("clearing the digest left %#v", cleared)
+	}
+	if digitalhuman.TaskReportDigest("hourly").Valid() {
+		t.Fatal("an unknown digest is valid")
+	}
+}
+
+func TestChangingWhereReportsGoKeepsTheirDigestAndReview(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	service, ctx, access := fixture.service, t.Context(), fixture.memberA
+	mutation := digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"}
+	task, err := service.CreateTask(ctx, access, digitalhuman.CreateTaskRequest{
+		Name: "weekly", Goal: "weekly goal", Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleCron, Cron: "0 9 * * 1", Timezone: "UTC"},
+		ReportDigest: digitalhuman.TaskReportDigestWeekly, ReportReview: digitalhuman.TaskReportReviewRequired,
+	}, mutation)
+	if err != nil || task.ReportDigest != digitalhuman.TaskReportDigestWeekly || task.ReportReview != digitalhuman.TaskReportReviewRequired {
+		t.Fatalf("create = %#v, %v", task, err)
+	}
+	mode := digitalhuman.TaskDeliveryTaskOnly
+	mutation.OperationID = uuid.New()
+	updated, err := service.UpdateTask(ctx, access, task.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: task.Revision, DeliveryMode: &mode}, mutation)
+	if err != nil || updated.ReportDigest != digitalhuman.TaskReportDigestWeekly || updated.ReportReview != digitalhuman.TaskReportReviewRequired {
+		t.Fatalf("after changing delivery: %#v, %v", updated, err)
 	}
 }

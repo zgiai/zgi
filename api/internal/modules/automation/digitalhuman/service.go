@@ -29,7 +29,8 @@ const (
 	defaultPageSize         = 20
 	maxPageSize             = 100
 	defaultTimeoutSeconds   = 300
-	proposalTTL             = 7 * 24 * time.Hour
+	// A proposal nobody answers is withdrawn after a day instead of waiting.
+	proposalTTL = 24 * time.Hour
 )
 
 // Service owns the DigitalHuman product projection over the Automation scheduler.
@@ -257,6 +258,14 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 		}
 		delivery = withNotifyChannels(delivery, ids)
 	}
+	if !req.ReportDigest.Valid() || req.ReportDigest != digitalhuman.TaskReportDigestNone && scheduleType != automationmodel.AutomationScheduleTypeCron {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	delivery = withReportDigest(delivery, req.ReportDigest)
+	if !req.ReportReview.Valid() {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	delivery = withReportReview(delivery, req.ReportReview)
 	task := &automationmodel.AutomationTask{
 		OrganizationID: access.OrganizationID.String(), WorkspaceID: access.WorkspaceID.String(), Name: strings.TrimSpace(req.Name),
 		TaskKind: automationmodel.AutomationTaskKindDigitalHuman, SubjectType: stringPointer(subjectTypeDigitalHuman), SubjectID: &subjectID,
@@ -270,7 +279,11 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 		ClientReference: clientReference(req.ClientReference),
 	}
 	action := &automationmodel.AutomationTaskAction{ActionType: automationmodel.AutomationActionTypeRunDigitalHuman, ActionOrder: 1, Enabled: true, Config: map[string]any{}}
-	activity := newActivity(task.ID, mutation, "created", "Task created", map[string]any{"work_status": workStatus})
+	createdChanges := map[string]any{"work_status": workStatus}
+	if mutation.Undoable && !mutation.Proposed {
+		createdChanges[undoKey] = undoCreated
+	}
+	activity := newActivity(task.ID, mutation, "created", "Task created", createdChanges)
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := ensureStoredOwner(ctx, tx, access.Owner); err != nil {
 			return err
@@ -339,6 +352,9 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			return digitalhuman.ErrTaskConflict
 		}
 		changes := map[string]any{}
+		if err := keepUndo(changes, mutation, task); err != nil {
+			return err
+		}
 		currentChannels := taskNotifyChannels(task)
 		if req.Visibility != nil {
 			if !slices.Contains(digitalhuman.TaskVisibilityOptions(digitalhuman.TaskOwnerKind(pointerValue(task.OwnerKind))), *req.Visibility) {
@@ -460,6 +476,9 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 					return digitalhuman.ErrTaskPolicyRejected
 				}
 			}
+			// A new delivery target keeps how the task's reports are reviewed
+			// and digested.
+			cfg = withReportDigest(withReportReview(cfg, taskReportReview(task)), taskReportDigest(task))
 			task.DeliveryConfig, changes["delivery_mode"] = cfg, *req.DeliveryMode
 		}
 		channels := currentChannels
@@ -476,6 +495,33 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			changes["notify_channel_ids"] = channels
 		}
 		task.DeliveryConfig = withNotifyChannels(task.DeliveryConfig, channels)
+		// Only a scheduled task keeps a digest; it goes when the schedule does.
+		digest := digitalhuman.TaskReportDigest(fmt.Sprint(task.DeliveryConfig[reportDigestKey]))
+		if !digest.Valid() {
+			digest = digitalhuman.TaskReportDigestNone
+		}
+		if req.ReportDigest != nil {
+			if !req.ReportDigest.Valid() || *req.ReportDigest != digitalhuman.TaskReportDigestNone && task.ScheduleType != automationmodel.AutomationScheduleTypeCron {
+				return digitalhuman.ErrInvalidRequest
+			}
+			if *req.ReportDigest != digest {
+				changes["report_digest"] = string(*req.ReportDigest)
+			}
+			digest = *req.ReportDigest
+		}
+		if task.ScheduleType != automationmodel.AutomationScheduleTypeCron {
+			digest = digitalhuman.TaskReportDigestNone
+		}
+		task.DeliveryConfig = withReportDigest(task.DeliveryConfig, digest)
+		if req.ReportReview != nil {
+			if !req.ReportReview.Valid() || *req.ReportReview == "" {
+				return digitalhuman.ErrInvalidRequest
+			}
+			if *req.ReportReview != taskReportReview(task) {
+				changes["report_review"] = string(*req.ReportReview)
+			}
+			task.DeliveryConfig = withReportReview(task.DeliveryConfig, *req.ReportReview)
+		}
 		task.Revision++
 		task.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(task, s.now())
@@ -529,6 +575,10 @@ func (s *Service) ApplyTaskAction(ctx context.Context, access digitalhuman.TaskA
 		if task.Revision != req.ExpectedRevision {
 			return digitalhuman.ErrTaskConflict
 		}
+		actionChanges := map[string]any{}
+		if err := keepUndo(actionChanges, mutation, task); err != nil {
+			return err
+		}
 		if err := applyTransition(task, action, s.now()); err != nil {
 			return err
 		}
@@ -560,7 +610,8 @@ func (s *Service) ApplyTaskAction(ctx context.Context, access digitalhuman.TaskA
 		if update.RowsAffected != 1 {
 			return digitalhuman.ErrTaskConflict
 		}
-		if err := tx.Create(newActivity(task.ID, mutation, string(action), actionSummary(action), map[string]any{"work_status": task.WorkStatus, "status": task.Status})).Error; err != nil {
+		actionChanges["work_status"], actionChanges["status"] = task.WorkStatus, task.Status
+		if err := tx.Create(newActivity(task.ID, mutation, string(action), actionSummary(action), actionChanges)).Error; err != nil {
 			return err
 		}
 		result = task
@@ -629,6 +680,10 @@ func (s *Service) setStatus(ctx context.Context, access digitalhuman.TaskAccessC
 			status == digitalhuman.TaskWorkStatusCompleted {
 			return digitalhuman.ErrTaskPolicyRejected
 		}
+		statusChanges := map[string]any{"work_status": status}
+		if err := keepUndo(statusChanges, mutation, loaded); err != nil {
+			return err
+		}
 		value := automationmodel.AutomationWorkStatus(status)
 		loaded.WorkStatus = &value
 		loaded.Revision++
@@ -646,7 +701,7 @@ func (s *Service) setStatus(ctx context.Context, access digitalhuman.TaskAccessC
 		if update.RowsAffected != 1 {
 			return digitalhuman.ErrTaskConflict
 		}
-		if err := tx.Create(newActivity(loaded.ID, mutation, "status_changed", "Task status changed", map[string]any{"work_status": status})).Error; err != nil {
+		if err := tx.Create(newActivity(loaded.ID, mutation, "status_changed", "Task status changed", statusChanges)).Error; err != nil {
 			return err
 		}
 		task = loaded
@@ -979,7 +1034,7 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 		return nil, fmt.Errorf("invalid stored digital human task owner")
 	}
 	mode := deliveryMode(row.DeliveryConfig)
-	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), ReportDigest: taskReportDigest(row), ReportReview: taskReportReview(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.LastRunStatus != nil {
 		result.LastRunStatus = *row.LastRunStatus
 	}

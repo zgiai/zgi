@@ -48,6 +48,10 @@ const (
 	TaskReportNew             TaskReportReviewState = "new"
 	TaskReportAccepted        TaskReportReviewState = "accepted"
 	TaskReportReworkRequested TaskReportReviewState = "rework_requested"
+	// TaskReportClosed is a report that needs nothing from anyone: its task
+	// does not ask for this report to be reviewed, a newer report of the task
+	// replaced it, or nobody reviewed it in time.
+	TaskReportClosed TaskReportReviewState = "closed"
 )
 
 // TaskReport is what one task run hands back (ADR 0008). Reports are visible
@@ -162,6 +166,9 @@ type TaskReportReviewAction string
 const (
 	TaskReportAccept TaskReportReviewAction = "accept"
 	TaskReportRework TaskReportReviewAction = "rework"
+	// TaskReportImprove keeps the feedback for the task's later runs, as one
+	// more success criterion, and accepts the report.
+	TaskReportImprove TaskReportReviewAction = "improve"
 )
 
 // ReviewTaskReportRequest accepts a report or asks for rework with feedback.

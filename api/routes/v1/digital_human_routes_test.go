@@ -92,6 +92,8 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodPost, "/console/api/digital-humans/:id/artifacts", ""},
 		{http.MethodPost, "/console/api/digital-humans/:id/artifacts/:artifact_id/archive", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodPost, "/console/api/digital-humans/:id/artifacts/:artifact_id/restore", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans/:id/artifacts/:artifact_id/shares", workspacemodel.WorkspacePermissionDigitalHumanView},
+		{http.MethodPost, "/console/api/digital-humans/:id/artifacts/:artifact_id/shares/:share_id/revoke", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodGet, "/console/api/digital-humans/:id/task-reports/:report_id/files/:file_id", workspacemodel.WorkspacePermissionDigitalHumanView},
 		{http.MethodGet, "/console/api/digital-humans/:id/my-task-reports/:report_id/files/:file_id", workspacemodel.WorkspacePermissionDigitalHumanRun},
 		{http.MethodPost, "/console/api/team-notification-channels/options", ""},
@@ -125,7 +127,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 97; got != want {
+	if got, want := len(routes), 100; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -164,6 +166,9 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"GET /console/api/digital-humans/:id/runs/:run_id":                                                                                          false,
 		"GET /console/api/digital-humans/:id/runs/:run_id/runtime-log":                                                                              false,
 		"POST /console/api/digital-humans/:id/runs/:run_id/cancel":                                                                                  false,
+		"GET /console/api/digital-humans/:id/runtime/connector-slots":                                                                               false,
+		"PATCH /console/api/digital-humans/:id/runtime/connector-slots/:slot_key":                                                                   false,
+		"DELETE /console/api/digital-humans/:id/runtime/connector-slots/:slot_key":                                                                  false,
 		"GET /console/api/digital-humans/:id/runtime/conversations":                                                                                 false,
 		"GET /console/api/digital-humans/:id/runtime/search":                                                                                        false,
 		"GET /console/api/digital-humans/:id/runtime/conversations/:conversation_id/messages":                                                       false,

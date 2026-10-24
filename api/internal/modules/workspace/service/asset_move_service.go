@@ -40,6 +40,7 @@ type WorkspaceAssetMoveService struct {
 	db                   *gorm.DB
 	authorizationService interfaces.AuthorizationService
 	agentBindings        *agentbindings.Repository
+	movers               map[string]AssetMover
 }
 
 func NewWorkspaceAssetMoveService(db *gorm.DB, authorizationService interfaces.AuthorizationService, bindingRepositories ...*agentbindings.Repository) *WorkspaceAssetMoveService {
@@ -139,6 +140,9 @@ func (s *WorkspaceAssetMoveService) lockMoveAssets(ctx context.Context, tx *gorm
 		assetType := strings.ToLower(strings.TrimSpace(item.Type))
 		id := strings.TrimSpace(item.ID)
 		table := assetMoveTable(assetType)
+		if s.mover(assetType) != nil {
+			table = "mover:" + assetType
+		}
 		if table == "" || id == "" {
 			continue
 		}
@@ -160,6 +164,12 @@ func (s *WorkspaceAssetMoveService) lockMoveAssets(ctx context.Context, tx *gorm
 	}
 
 	for _, target := range targets {
+		if mover := s.mover(target.assetType); mover != nil {
+			if err := mover.Lock(ctx, tx, organizationID, target.id); err != nil {
+				return fmt.Errorf("lock %s %s for workspace move: %w", target.assetType, target.id, err)
+			}
+			continue
+		}
 		var row struct {
 			ID string
 		}
@@ -275,7 +285,7 @@ func (s *WorkspaceAssetMoveService) previewWithDB(ctx context.Context, db *gorm.
 		}
 		seen[seenKey] = struct{}{}
 
-		permission, supportedPermission := assetMovePermissionForType(requestItem.Type)
+		permission, supportedPermission := s.assetMovePermission(requestItem.Type)
 		var targetPrecheckPermission workspace_model.WorkspacePermissionCode
 		if len(targetBlockers) == 0 && supportedPermission {
 			if requestItem.Type == AssetMoveTypeAgent {
@@ -513,6 +523,9 @@ func (s *WorkspaceAssetMoveService) previewAsset(ctx context.Context, db *gorm.D
 	case AssetMoveTypeDatabase:
 		return s.previewDatabase(ctx, db, organizationID, requestItem.ID, item)
 	default:
+		if mover := s.mover(requestItem.Type); mover != nil {
+			return s.previewWithMover(ctx, db, organizationID, mover, requestItem.ID, item)
+		}
 		item.Blockers = append(item.Blockers, "unsupported asset type")
 		return nil
 	}
@@ -770,6 +783,12 @@ func (s *WorkspaceAssetMoveService) workflowReferenceWarningsForAgent(ctx contex
 
 func (s *WorkspaceAssetMoveService) movePreviewItem(ctx context.Context, tx *gorm.DB, organizationID, accountID string, item dto.WorkspaceAssetMovePreviewItem) error {
 	now := time.Now()
+	if mover := s.mover(item.Type); mover != nil {
+		if err := mover.Move(ctx, tx, organizationID, accountID, item); err != nil {
+			return err
+		}
+		return s.createAuditEvent(ctx, tx, organizationID, accountID, item, now)
+	}
 	switch item.Type {
 	case AssetMoveTypeAgent:
 		agentID := firstNonEmpty(item.ResolvedAgentID, item.ID)

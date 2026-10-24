@@ -4,7 +4,11 @@ import type {
   CreateDigitalHumanRequest,
   DigitalHumanArtifact,
   DigitalHumanArtifactList,
+  DigitalHumanArtifactOwnerKind,
+  DigitalHumanArtifactOwnerPage,
   DigitalHumanArtifactParams,
+  DigitalHumanArtifactShare,
+  DigitalHumanArtifactShareLifetime,
   DigitalHumanArtifactVersion,
   CreateDigitalHumanPersonaTemplateRequest,
   DigitalHumanDetail,
@@ -64,9 +68,36 @@ import type {
   DigitalHumanAPIKeyList,
 } from './types/digital-human';
 
+/** A per-user Connector slot as the signed-in member sees it (ADR 0007). */
+export interface DigitalHumanMemberConnectorSlot {
+  slot_key: string;
+  connector_id: string;
+  name: string;
+  operation_ids: string[];
+  state: 'connected' | 'needs_connection' | 'reconnect_required';
+  connection_id?: string;
+  options: Array<{ connection_id: string; name: string; account?: string }>;
+}
+
 class DigitalHumanService extends BaseService {
   constructor() {
     super({ basePath: '/console/api', endpoint: 'main' });
+  }
+
+  listMemberConnectorSlots(
+    id: string
+  ): Promise<ApiResponseData<{ items: DigitalHumanMemberConnectorSlot[] }>> {
+    return this.request('get', `/digital-humans/${id}/runtime/connector-slots`);
+  }
+
+  selectMemberConnectorSlot(id: string, slotKey: string, connectionId: string) {
+    return this.request('patch', `/digital-humans/${id}/runtime/connector-slots/${encodeURIComponent(slotKey)}`, {
+      connection_id: connectionId,
+    });
+  }
+
+  clearMemberConnectorSlot(id: string, slotKey: string) {
+    return this.request('delete', `/digital-humans/${id}/runtime/connector-slots/${encodeURIComponent(slotKey)}`);
   }
 
   downloadBackgroundFile(id: string, runId: string, fileId: string, signal?: AbortSignal) {
@@ -611,12 +642,39 @@ class DigitalHumanService extends BaseService {
     return this.request('get', `/digital-humans/${id}/artifacts`, undefined, { params });
   }
 
+  listArtifactOwners(
+    id: string,
+    params: { query?: string; kind?: DigitalHumanArtifactOwnerKind; archived?: 'archived' | 'all'; page?: number; page_size?: number } = {}
+  ): Promise<ApiResponseData<DigitalHumanArtifactOwnerPage>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/owners`, undefined, { params });
+  }
+
   getArtifact(id: string, artifactId: string): Promise<ApiResponseData<DigitalHumanArtifact>> {
     return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}`);
   }
 
   setArtifactArchived(id: string, artifactId: string, archived: boolean): Promise<ApiResponseData<DigitalHumanArtifact>> {
     return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/${archived ? 'archive' : 'restore'}`);
+  }
+
+  setArtifactSharing(id: string, artifactId: string, enabled: boolean): Promise<ApiResponseData<DigitalHumanArtifact>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/sharing`, { enabled });
+  }
+
+  listArtifactShares(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactShare[] }>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}/shares`);
+  }
+
+  createArtifactShare(
+    id: string,
+    artifactId: string,
+    request: { version?: number; expires_in?: DigitalHumanArtifactShareLifetime }
+  ): Promise<ApiResponseData<DigitalHumanArtifactShare & { token: string }>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/shares`, request);
+  }
+
+  revokeArtifactShare(id: string, artifactId: string, shareId: string): Promise<ApiResponseData<{ revoked: boolean }>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/shares/${shareId}/revoke`);
   }
 
   listArtifactVersions(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactVersion[] }>> {

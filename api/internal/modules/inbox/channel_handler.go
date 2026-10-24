@@ -37,6 +37,7 @@ func (h *ChannelHandler) RegisterRoutes(router *gin.RouterGroup, path string, re
 	group := router.Group(path)
 	group.GET("", h.handle(resolve, h.list))
 	group.POST("", h.handle(resolve, h.create))
+	group.GET("/im-connections", h.handle(resolve, h.imConnections))
 	group.PATCH("/:channel_id", h.handle(resolve, h.update))
 	group.DELETE("/:channel_id", h.handle(resolve, h.delete))
 	group.POST("/:channel_id/verify", h.handle(resolve, h.verify))
@@ -45,6 +46,48 @@ func (h *ChannelHandler) RegisterRoutes(router *gin.RouterGroup, path string, re
 	group.POST("/:channel_id/test", h.handle(resolve, h.test))
 	group.GET("/:channel_id/deliveries", h.handle(resolve, h.deliveries))
 	group.POST("/:channel_id/deliveries/:delivery_id/retry", h.handle(resolve, h.retryDelivery))
+}
+
+// RegisterPreferenceRoutes reads and sets the account's notification
+// preferences: its quiet hours (ADR 0008 stage 4).
+func (h *ChannelHandler) RegisterPreferenceRoutes(router *gin.RouterGroup, path string, resolve OwnerResolver) {
+	router.GET(path, h.handle(resolve, h.preferences))
+	router.PUT(path, h.handle(resolve, h.setPreferences))
+}
+
+func (h *ChannelHandler) imConnections(c *gin.Context, owner ChannelOwner) {
+	connections, err := h.channels.IMConnections(c.Request.Context(), owner)
+	if err != nil {
+		h.writeError(c, channelError(err, "inbox.channel.im_connections"))
+		return
+	}
+	writeData(c, gin.H{"items": connections})
+}
+
+func (h *ChannelHandler) preferences(c *gin.Context, owner ChannelOwner) {
+	view, err := h.channels.GetPreferences(c.Request.Context(), owner)
+	if err != nil {
+		h.writeError(c, channelError(err, "inbox.preferences.get"))
+		return
+	}
+	writeData(c, view)
+}
+
+func (h *ChannelHandler) setPreferences(c *gin.Context, owner ChannelOwner) {
+	var request struct {
+		QuietStart *int `json:"quiet_start"`
+		QuietEnd   *int `json:"quiet_end"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		h.writeError(c, channelError(ErrInvalidRequest, "inbox.preferences.set"))
+		return
+	}
+	view, err := h.channels.SetQuietHours(c.Request.Context(), owner, request.QuietStart, request.QuietEnd)
+	if err != nil {
+		h.writeError(c, channelError(err, "inbox.preferences.set"))
+		return
+	}
+	writeData(c, view)
 }
 
 // RegisterChoiceRoute lists the active channels of the owner resolve

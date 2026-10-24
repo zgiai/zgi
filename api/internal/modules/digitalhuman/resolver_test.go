@@ -78,7 +78,8 @@ func TestResolverSealsPinnedExecutionWithAccountRelationshipMemory(t *testing.T)
 	if resolved.Snapshot.IdentityName != "Atlas Runtime" || len(resolved.Snapshot.Goals) != 1 || resolved.Snapshot.Goals[0] != "Track research risks" {
 		t.Fatalf("execution snapshot runtime identity = %#v", resolved.Snapshot)
 	}
-	if resolved.Snapshot.ChannelResponsePolicy == nil || resolved.Snapshot.ChannelResponsePolicy.IntermediateMessagesEnabled ||
+	// The stored switches are no longer read: both are always on.
+	if resolved.Snapshot.ChannelResponsePolicy == nil || !resolved.Snapshot.ChannelResponsePolicy.IntermediateMessagesEnabled ||
 		!resolved.Snapshot.ChannelResponsePolicy.AcknowledgementEnabled {
 		t.Fatalf("execution snapshot channel policy = %#v", resolved.Snapshot.ChannelResponsePolicy)
 	}

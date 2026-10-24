@@ -70,6 +70,7 @@ export function DigitalHumanApiCallbackGuide() {
     ['report.created', 'callbackGuide.events.report_created'],
     ['task.failed', 'callbackGuide.events.task_failed'],
     ['task.approval_requested', 'callbackGuide.events.task_approval_requested'],
+    ['task.digest', 'callbackGuide.events.task_digest'],
     ['notification.test', 'callbackGuide.events.notification_test'],
   ] as const;
   return (

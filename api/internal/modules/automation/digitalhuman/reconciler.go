@@ -63,6 +63,9 @@ func (h *ReconcileHandler) Handle(ctx context.Context, _ *asynq.Task) error {
 	if err := h.expireProposals(ctx); err != nil {
 		return err
 	}
+	if err := closeExpiredReports(ctx, h.db, h.now()); err != nil {
+		return err
+	}
 	if h.provider == nil {
 		return nil
 	}
@@ -253,7 +256,9 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 				return err
 			}
 			deliveryAlreadyRecorded = delivered > 0
-			if conversationID, ok := uuidFromTaskDeliveryConfig(task.DeliveryConfig); ok && !deliveryAlreadyRecorded {
+			conversationID, toConversation := uuidFromTaskDeliveryConfig(task.DeliveryConfig)
+			reply := replyAddress(task.DeliveryConfig)
+			if (toConversation || reply != nil) && !deliveryAlreadyRecorded {
 				accountID := uuid.Nil
 				subjectKind := ""
 				if task.OwnerSubjectKind != nil {
@@ -270,6 +275,9 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 					DigitalHumanID: mustUUID(pointerValue(task.SubjectID)), TaskID: mustUUID(task.ID), TaskRunID: mustUUID(taskRunID),
 					ConversationID: conversationID, Source: pointerValue(task.OriginSurface), TaskName: task.Name, Answer: state.Result,
 					Report: reportDelivery(report),
+				}
+				if !toConversation {
+					delivery.ReplyTo = reply
 				}
 			}
 		}

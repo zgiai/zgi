@@ -19,7 +19,7 @@ func TestTaskCenterCreatorReworksFromTheirOwnReports(t *testing.T) {
 	creator := uuid.MustParse(shared.Principal.ID)
 	runAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	task, err := service.CreateTask(t.Context(), shared, digitalhuman.CreateTaskRequest{Name: "Weekly team report", Goal: "Summarize the team's week",
-		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"}},
+		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"}, ReportReview: digitalhuman.TaskReportReviewRequired},
 		digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: creator.String(), OperationID: uuid.New(), Source: "console"})
 	if err != nil {
 		t.Fatal(err)

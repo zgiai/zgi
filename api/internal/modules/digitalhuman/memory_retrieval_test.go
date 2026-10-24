@@ -150,3 +150,37 @@ func TestAuthoritativeMemoryResultFiltersByReadScopeAndTrims(t *testing.T) {
 		t.Fatalf("top score = %v, want the first readable hit", result.TopScore)
 	}
 }
+
+func TestScopedRecallFindsOwnInstanceMemoriesBehindOtherInstances(t *testing.T) {
+	readScope := memoryReadScope{instanceID: "instance-a"}
+	memories := map[uuid.UUID]*DigitalHumanMemory{}
+	response := &datasetservice.KnowledgeRetrieveResponse{}
+	// Other instances fill the whole shared recall.
+	for range memoryScopedRecallTopK {
+		id := uuid.New()
+		memories[id] = &DigitalHumanMemory{ID: id, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-b", Status: MemoryStatusActive, Content: "other"}
+		response.Resources = append(response.Resources, datasetservice.KnowledgeRetrieverResource{SegmentID: id.String(), Score: 0.9})
+	}
+	own, ownWeaker, inactive := uuid.New(), uuid.New(), uuid.New()
+	memories[own] = &DigitalHumanMemory{ID: own, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-a", Status: MemoryStatusActive, Content: "own"}
+	memories[ownWeaker] = &DigitalHumanMemory{ID: ownWeaker, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-a", Status: MemoryStatusActive, Content: "own weaker"}
+	memories[inactive] = &DigitalHumanMemory{ID: inactive, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-a", Status: MemoryStatusArchived, Content: "gone"}
+
+	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories, &readScope, 5)
+	if result.ResultCount != 0 {
+		t.Fatalf("the shared recall returned %d readable memories", result.ResultCount)
+	}
+	rows := []map[string]interface{}{
+		{"memory_id": ownWeaker.String(), "_additional": map[string]interface{}{"distance": 0.4}},
+		{"memory_id": inactive.String(), "_additional": map[string]interface{}{"distance": 0.1}},
+		{"memory_id": own.String(), "_additional": map[string]interface{}{"distance": 0.2}},
+		{"memory_id": own.String(), "_additional": map[string]interface{}{"distance": 0.2}},
+	}
+	mergeScopedRecall(result, rows, memories, &readScope, 5)
+	if result.ResultCount != 2 || result.Items[0].ID != own || result.Items[1].ID != ownWeaker || result.Status != datasetservice.KnowledgeRetrieveStatusSuccess {
+		t.Fatalf("scoped recall = %#v", result.Items)
+	}
+	if result.Context != "[memory 1] own\n\n[memory 2] own weaker" || result.TopScore == nil || *result.TopScore != 0.8 {
+		t.Fatalf("scoped recall context = %q, top score %v", result.Context, result.TopScore)
+	}
+}

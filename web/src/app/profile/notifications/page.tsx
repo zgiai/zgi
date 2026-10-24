@@ -4,6 +4,7 @@ import { ArrowLeft, Bell } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
+import { QuietHoursCard } from '@/components/notifications/quiet-hours-card';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
 
@@ -27,7 +28,11 @@ export default function ProfileNotificationsPage() {
           </div>
           <section className="rounded-xl border bg-background p-5">
             <h2 className="mb-3 text-sm font-semibold">{t('notifications.channelsTitle')}</h2>
-            <NotificationChannelManager basePath="/notification-channels" types={['email', 'webhook']} />
+            <NotificationChannelManager basePath="/notification-channels" types={['email', 'im', 'webhook']} />
+          </section>
+          <section className="mt-4 rounded-xl border bg-background p-5">
+            <h2 className="mb-3 text-sm font-semibold">{t('notifications.quietTitle')}</h2>
+            <QuietHoursCard />
           </section>
         </div>
       </div>

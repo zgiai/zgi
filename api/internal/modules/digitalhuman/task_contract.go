@@ -140,6 +140,45 @@ const (
 	TaskPriorityUrgent TaskPriority = "urgent"
 )
 
+// TaskReportReview says which of a task's reports wait for someone to review
+// them. Reports that do not are closed when they arrive, so a reminder or a
+// recurring digest never piles up for review.
+type TaskReportReview string
+
+const (
+	// TaskReportReviewNone closes every report except a failed run.
+	TaskReportReviewNone TaskReportReview = "none"
+	// TaskReportReviewExceptions, the default, waits only for a report that
+	// did not fully finish.
+	TaskReportReviewExceptions TaskReportReview = "exceptions"
+	// TaskReportReviewRequired waits for every report, until it is reviewed
+	// or TaskReportReviewWindow passes.
+	TaskReportReviewRequired TaskReportReview = "required"
+)
+
+// TaskReportReviewWindow is how long a report that must be reviewed waits
+// before it is closed unreviewed.
+const TaskReportReviewWindow = 72 * time.Hour
+
+// Valid reports whether the review is a known one; empty is the default.
+func (r TaskReportReview) Valid() bool {
+	return r == "" || r == TaskReportReviewNone || r == TaskReportReviewExceptions || r == TaskReportReviewRequired
+}
+
+// TaskReportDigest groups a scheduled task's reports on external channels.
+type TaskReportDigest string
+
+const (
+	TaskReportDigestNone   TaskReportDigest = ""
+	TaskReportDigestDaily  TaskReportDigest = "daily"
+	TaskReportDigestWeekly TaskReportDigest = "weekly"
+)
+
+// Valid reports whether the digest is a known one.
+func (d TaskReportDigest) Valid() bool {
+	return d == TaskReportDigestNone || d == TaskReportDigestDaily || d == TaskReportDigestWeekly
+}
+
 // TaskScheduleType identifies whether and how a task is automatically run.
 type TaskScheduleType string
 
@@ -298,6 +337,11 @@ type Task struct {
 	// NotifyChannelAccess says how this reader may change NotifyChannelIDs:
 	// the requester manages them, a task center manager may only remove.
 	NotifyChannelAccess TaskNotifyChannelAccess `json:"notify_channel_access,omitempty"`
+	// ReportDigest holds a scheduled task's reports to external channels for
+	// a daily or weekly digest; empty sends each one (ADR 0008 stage 4).
+	ReportDigest TaskReportDigest `json:"report_digest,omitempty"`
+	// ReportReview says which reports wait for review.
+	ReportReview TaskReportReview `json:"report_review"`
 	// ClientReference is the integrator's identifier given at creation.
 	ClientReference string `json:"client_reference,omitempty"`
 	// Requester is who asked for the task. Only the console task center
@@ -429,6 +473,10 @@ type CreateTaskRequest struct {
 	MaxAttempts             int              `json:"max_attempts,omitempty"`
 	// NotifyChannelIDs are team channels that also receive the task's reports.
 	NotifyChannelIDs []uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ReportDigest is the digest of a scheduled task's reports, if any.
+	ReportDigest TaskReportDigest `json:"report_digest,omitempty"`
+	// ReportReview says which reports wait for review; empty is the default.
+	ReportReview TaskReportReview `json:"report_review,omitempty"`
 	// ClientReference is the integrator's own identifier for the task, echoed
 	// back in reports, notifications, and webhooks.
 	ClientReference string `json:"client_reference,omitempty"`
@@ -453,6 +501,10 @@ type UpdateTaskRequest struct {
 	Visibility *TaskVisibility `json:"visibility,omitempty"`
 	// NotifyChannelIDs replaces the team channels that receive the reports.
 	NotifyChannelIDs *[]uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ReportDigest replaces the digest; empty sends each report.
+	ReportDigest *TaskReportDigest `json:"report_digest,omitempty"`
+	// ReportReview replaces which reports wait for review.
+	ReportReview *TaskReportReview `json:"report_review,omitempty"`
 	// ClientReference replaces the integrator's identifier; empty clears it.
 	ClientReference *string `json:"client_reference,omitempty"`
 }
@@ -535,6 +587,20 @@ type TaskMutationContext struct {
 	SourceConversationType string
 	ReplyTo                *invocation.ReplyAddress
 	Proposed               bool
+	// Undoable marks a change the requester asked for that applied without
+	// an approval: what the task was before is kept so it can be undone
+	// within TaskUndoWindow.
+	Undoable bool
+}
+
+// TaskUndoWindow is how long a change applied without approval can be undone.
+const TaskUndoWindow = 24 * time.Hour
+
+// TaskUndoService undoes the latest change made to a task, when that change
+// applied without approval and is still within TaskUndoWindow. Undoing a
+// task's creation cancels it.
+type TaskUndoService interface {
+	UndoTaskChange(ctx context.Context, access TaskAccessContext, taskID uuid.UUID, mutation TaskMutationContext) (*Task, error)
 }
 
 // TaskResultDeliveryRequest is the durable, user-visible result projection
@@ -553,9 +619,14 @@ type TaskResultDeliveryRequest struct {
 	TaskID          uuid.UUID
 	TaskRunID       uuid.UUID
 	ConversationID  uuid.UUID
-	Source          string
-	TaskName        string
-	Answer          string
+	// ReplyTo is the channel conversation of a channel task, used when there
+	// is no ConversationID: the report joins that conversation's history so
+	// a follow-up there knows what it is about. The channel itself already
+	// received the result.
+	ReplyTo  *invocation.ReplyAddress
+	Source   string
+	TaskName string
+	Answer   string
 	// Report is the run's final report. When present it is delivered as a
 	// report card instead of the plain answer, including for failed runs.
 	Report *TaskReportDelivery
@@ -588,6 +659,9 @@ type TaskReportNotice struct {
 	RecipientID   uuid.UUID
 	// ChannelIDs are the task's team channels that also receive the report.
 	ChannelIDs []uuid.UUID
+	// Digest holds the report for the requester's digest on external
+	// channels; empty sends it at once.
+	Digest TaskReportDigest
 	// RunID is the run that produced the report, and FileIDs the run files it
 	// chose to carry (empty means all of them).
 	RunID   *uuid.UUID

@@ -367,8 +367,8 @@ func resumeDigitalHumanRun(
 	result := tx.WithContext(ctx).
 		Table("digital_human_runs").
 		Where(
-			"id = ? AND organization_id = ? AND actor_id = ? AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ? AND status = ? AND waiting_receipt = ?",
-			resolution.runID, command.OrganizationID, command.OwnerAccountID,
+			"id = ? AND organization_id = ? AND (actor_id = ? OR user_subject_id = ?) AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ? AND status = ? AND waiting_receipt = ?",
+			resolution.runID, command.OrganizationID, command.OwnerAccountID, command.OwnerAccountID,
 			resolution.digitalHumanID, resolution.digitalHumanVersion,
 			resolution.conversationID, resolution.messageID, "waiting", receiptID,
 		).

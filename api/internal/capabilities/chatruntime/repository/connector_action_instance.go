@@ -26,7 +26,10 @@ func NewConnectorActionResolverFactory(db *gorm.DB) ConnectorActionResolverFacto
 func ConnectorActionResolver(db *gorm.DB, messageID, conversationID, organizationID, accountID uuid.UUID) dispatch.ActionInstanceResolver {
 	return func(ctx context.Context, identity dispatch.Identity, input any) (dispatch.Identity, error) {
 		var result dispatch.Identity
-		if db == nil || messageID == uuid.Nil || identity.OrganizationID != organizationID || identity.OwnerAccountID != accountID {
+		// The turn's account is the binding owner, or the requester of a run
+		// that uses a binding its owner delegated to the host.
+		if db == nil || messageID == uuid.Nil || identity.OrganizationID != organizationID ||
+			(identity.OwnerAccountID != accountID && identity.DelegatedRequesterID != accountID) {
 			return result, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil)
 		}
 		err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -54,7 +57,7 @@ func ConnectorActionResolver(db *gorm.DB, messageID, conversationID, organizatio
 			for _, instance := range ledger.Instances {
 				known = append(known, instance.LogicalOperationID)
 			}
-			query := tx.Table("connector_invocation_claims").Where("organization_id = ? AND owner_account_id = ? AND correlation_id = ?", organizationID, accountID, correlationID)
+			query := tx.Table("connector_invocation_claims").Where("organization_id = ? AND owner_account_id = ? AND correlation_id = ?", organizationID, identity.OwnerAccountID, correlationID)
 			if len(known) > 0 {
 				query = query.Where("logical_operation_id NOT IN ?", known)
 			}

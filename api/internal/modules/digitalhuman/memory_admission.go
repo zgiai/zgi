@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
@@ -44,6 +45,17 @@ type memoryWriteAdmission struct {
 	Trust   SourceTrust
 	Class   memoryruntime.MemoryClass
 	Scope   *memoryruntime.MemoryScopeRef
+	// Restricted keeps the write out of workspace-wide recall, as instance
+	// memory requires.
+	Restricted bool
+}
+
+// visibility is the visibility an admitted write is stored with.
+func (a memoryWriteAdmission) visibility() MemoryVisibility {
+	if a.Restricted {
+		return MemoryVisibilityRestricted
+	}
+	return MemoryVisibilityWorkspace
 }
 
 func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, autoExtraction bool) memoryWriteAdmission {
@@ -66,6 +78,18 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassBusiness,
 			Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeChannel, ID: channelID.String()},
 		}
+	case SourceTrustExternalEndUser:
+		// An end user writes only their own instance's memory: explicitly at
+		// any time, and proactively or in the background when automatic
+		// extraction is on.
+		instanceID, ok := runInstanceScopeID(run)
+		if !ok || (mode != memoryWriteExplicit && !autoExtraction) {
+			return rejected
+		}
+		return memoryWriteAdmission{
+			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassBusiness, Restricted: true,
+			Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: instanceID.String()},
+		}
 	}
 	return rejected
 }
@@ -73,6 +97,9 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 // backgroundExtractionAdmitted reports whether a completed run may be queued
 // for background extraction at all, so rejected sources cost no model call.
 func backgroundExtractionAdmitted(run *Run) bool {
+	if _, ok := runInstanceScopeID(run); ok {
+		return true
+	}
 	return RunSourceTrust(run) == SourceTrustChannelParticipant
 }
 
@@ -85,6 +112,9 @@ func memoryToolAvailable(run *Run, autoExtraction bool) bool {
 		return true
 	case SourceTrustChannelParticipant:
 		return autoExtraction
+	case SourceTrustExternalEndUser:
+		_, ok := runInstanceScopeID(run)
+		return ok
 	default:
 		return false
 	}
@@ -96,6 +126,10 @@ func memoryToolAvailable(run *Run, autoExtraction bool) bool {
 type memoryReadScope struct {
 	workspaceID string
 	channelID   string
+	instanceID  string
+	// instanceSince hides instance memory unwritten since then, when
+	// instance memory expires.
+	instanceSince *time.Time
 }
 
 func memoryReadScopeForRun(run *Run, event invocation.Event) memoryReadScope {
@@ -108,6 +142,13 @@ func memoryReadScopeForRun(run *Run, event invocation.Event) memoryReadScope {
 	}
 	if channelID, ok := runChannelScopeID(run, event); ok {
 		scope.channelID = channelID.String()
+	}
+	if instanceID, ok := runInstanceScopeID(run); ok {
+		scope.instanceID = instanceID.String()
+		if ttl := instanceMemoryTTL(); ttl > 0 {
+			since := time.Now().Add(-ttl)
+			scope.instanceSince = &since
+		}
 	}
 	return scope
 }
@@ -127,6 +168,8 @@ func (s memoryReadScope) allows(memory *DigitalHumanMemory) bool {
 		return memory.Visibility != MemoryVisibilityRestricted || memory.ScopeID == s.workspaceID
 	case memoryruntime.MemoryScopeChannel:
 		return s.channelID != "" && memory.ScopeID == s.channelID
+	case memoryruntime.MemoryScopeInstance:
+		return s.instanceID != "" && memory.ScopeID == s.instanceID && (s.instanceSince == nil || !memory.UpdatedAt.Before(*s.instanceSince))
 	default:
 		// Project, customer, and campaign scopes cannot be resolved for a run yet.
 		return false
@@ -145,6 +188,15 @@ func (s memoryReadScope) sqlPredicate() (string, []any) {
 	if s.channelID != "" {
 		clause += " OR (memory_class = ? AND scope_type = ? AND scope_id = ?)"
 		args = append(args, memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeChannel, s.channelID)
+	}
+	if s.instanceID != "" {
+		clause += " OR (memory_class = ? AND scope_type = ? AND scope_id = ?"
+		args = append(args, memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, s.instanceID)
+		if s.instanceSince != nil {
+			clause += " AND updated_at >= ?"
+			args = append(args, *s.instanceSince)
+		}
+		clause += ")"
 	}
 	return clause + ")", args
 }

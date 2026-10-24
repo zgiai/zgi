@@ -210,16 +210,27 @@ type RunConfig struct {
 	// capabilities when that external surface does not support them. It is
 	// opt-in so existing Chat, Agent API, and DigitalHuman behavior is unchanged.
 	ConnectorToolsDisabled bool
+	// ConnectorDelegationDisabled keeps a run to bindings its requester owns:
+	// bindings their owners delegated to the host are not offered.
+	ConnectorDelegationDisabled bool
 	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive are
 	// server-owned DigitalHuman host coordinates. They are never populated from
 	// a user-facing request DTO.
-	ConnectorTargetType       connectorcore.TargetType
-	ConnectorRunID            string
-	ConnectorInteractive      bool
+	ConnectorTargetType  connectorcore.TargetType
+	ConnectorRunID       string
+	ConnectorInteractive bool
+	// UserTimezone is the IANA timezone of the person the run serves; the
+	// time Skill defaults to it. Empty keeps the Skill's UTC default.
+	UserTimezone              string
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
 	BillingAppID              string
 	BillingAppType            string
+	// BillingRuntimeWorkspaceID and BillingEndUserSubjectID name the Runtime
+	// Workspace end user a run is made for when its scope does not, such as
+	// a DigitalHuman run; model calls are metered and quota-checked for them.
+	BillingRuntimeWorkspaceID string
+	BillingEndUserSubjectID   string
 	BindingReader             resourcebindings.Reader
 	BindingSnapshot           resourcebindings.SnapshotRef
 	// RuntimeTools are caller-scoped first-party capabilities supplied by a
@@ -616,7 +627,7 @@ func NewServiceWithSkillRuntime(
 	}
 	return &service{
 		repos:                          repos,
-		llmClient:                      llmClient,
+		llmClient:                      withEndUserQuotaGuard(llmClient),
 		streams:                        newStreamRegistry(),
 		events:                         newStreamEventStore(redisutil.GetClient()),
 		titleGen:                       titleGen,
@@ -799,6 +810,7 @@ type chatRequestParts struct {
 	ConnectorTargetScope             string
 	ConnectorTargetVersionID         string
 	ConnectorToolsDisabled           bool
+	ConnectorDelegationDisabled      bool
 	// ConnectorTargetType, ConnectorRunID and ConnectorInteractive carry
 	// server-owned DigitalHuman host coordinates from RunConfig into the Skill
 	// execution boundary. A user request DTO cannot set them.

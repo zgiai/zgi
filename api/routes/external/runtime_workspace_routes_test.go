@@ -3,6 +3,7 @@ package external
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"testing"
@@ -237,4 +238,23 @@ func (runtimeWorkspaceRouteFileService) UpdateContentText(context.Context, strin
 }
 func (runtimeWorkspaceRouteFileService) GetFileURL(context.Context, string) (string, error) {
 	return "", nil
+}
+
+func TestRuntimeCredentialScopeOfRoutes(t *testing.T) {
+	for _, tc := range []struct{ method, path, scope string }{
+		{http.MethodGet, "/api/connect/v1/apps", runtimeworkspace.CredentialScopeRuntime},
+		{http.MethodPost, "/api/connect/v1/apps/:app_key/chat", runtimeworkspace.CredentialScopeRuntime},
+		{http.MethodGet, "/api/connect/v1/files/:file_id", runtimeworkspace.CredentialScopeRuntime},
+		{http.MethodGet, "/api/connect/v1/plans", ""},
+		{http.MethodGet, "/api/connect/v1/end-users/:user", runtimeworkspace.CredentialScopeEndUsersRead},
+		{http.MethodGet, "/api/connect/v1/end-users/:user/connections", runtimeworkspace.CredentialScopeEndUsersRead},
+		{http.MethodPatch, "/api/connect/v1/end-users/:user", runtimeworkspace.CredentialScopeEndUsersManage},
+		{http.MethodPost, "/api/connect/v1/end-users/:user/export", runtimeworkspace.CredentialScopeEndUsersManage},
+		{http.MethodGet, "/api/connect/v1/end-users/:user/exports/:export_id/download", runtimeworkspace.CredentialScopeEndUsersManage},
+		{http.MethodGet, "", runtimeworkspace.CredentialScopeRuntime},
+	} {
+		if got := runtimeCredentialScope(tc.method, tc.path); got != tc.scope {
+			t.Errorf("%s %s needs %q, want %q", tc.method, tc.path, got, tc.scope)
+		}
+	}
 }

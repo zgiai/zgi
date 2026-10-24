@@ -3,31 +3,29 @@ package inbox
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"io"
-	"net"
 	"net/http"
-	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/infra/webhookhttp"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 const (
 	DeliveryPending = "pending"
-	DeliverySent    = "sent"
-	DeliveryFailed  = "failed"
+	// DeliveryHeld waits for its channel's digest.
+	DeliveryHeld   = "held"
+	DeliverySent   = "sent"
+	DeliveryFailed = "failed"
 
 	// MaxDeliveryAttempts bounds retries of one delivery.
 	MaxDeliveryAttempts = 5
@@ -43,8 +41,13 @@ type Delivery struct {
 	Attempts       int        `gorm:"not null" json:"attempts"`
 	LastError      *string    `gorm:"type:text" json:"last_error,omitempty"`
 	SentAt         *time.Time `json:"sent_at,omitempty"`
-	CreatedAt      time.Time  `gorm:"not null" json:"created_at"`
-	UpdatedAt      time.Time  `gorm:"not null" json:"updated_at"`
+	// DeliverAfter is set when quiet hours delay the delivery.
+	DeliverAfter *time.Time `json:"deliver_after,omitempty"`
+	// Digest and DigestDueAt are set on a report held for a digest.
+	Digest      *string    `gorm:"type:varchar(16)" json:"digest,omitempty"`
+	DigestDueAt *time.Time `json:"digest_due_at,omitempty"`
+	CreatedAt   time.Time  `gorm:"not null" json:"created_at"`
+	UpdatedAt   time.Time  `gorm:"not null" json:"updated_at"`
 }
 
 // TableName binds deliveries to their table.
@@ -61,6 +64,7 @@ type Dispatcher struct {
 	db         *gorm.DB
 	channels   *Channels
 	enqueue    DeliveryEnqueuer
+	scheduler  *Scheduler
 	consoleURL string
 	client     *http.Client
 	now        func() time.Time
@@ -76,6 +80,10 @@ func NewDispatcher(db *gorm.DB, channels *Channels, enqueue DeliveryEnqueuer, co
 	return &Dispatcher{db: db, channels: channels, enqueue: enqueue, consoleURL: strings.TrimRight(strings.TrimSpace(consoleURL), "/"),
 		client: webhookClient(allowPrivateWebhooks), now: func() time.Time { return time.Now().UTC() }}
 }
+
+// UseScheduler enables quiet hours and digests; without it every delivery is
+// sent at once.
+func (d *Dispatcher) UseScheduler(scheduler Scheduler) { d.scheduler = &scheduler }
 
 // eventKey maps an inbox event to the key channels subscribe to.
 func eventKey(event string) string {
@@ -127,22 +135,75 @@ func (d *Dispatcher) Plan(ctx context.Context, notification *Notification) error
 	}
 	candidates = append(candidates, extra...)
 	seen := map[uuid.UUID]bool{}
+	var unscheduled []error
 	now := d.now()
+	// A recurring task's report may wait for a digest (ADR 0008 stage 4);
+	// failures and approvals never do. Its time and the account's quiet
+	// hours follow the recipient account.
+	digest := ""
+	if kind, _ := meta["digest"].(string); key == EventTaskReport && (kind == DigestDaily || kind == DigestWeekly) && d.scheduler != nil {
+		digest = kind
+	}
+	preferences, location := Preferences{}, time.UTC
+	if notification.RecipientKind == RecipientAccount && d.scheduler != nil {
+		var err error
+		if preferences, location, err = loadPreferences(ctx, d.db, notification.OrganizationID, notification.RecipientID); err != nil {
+			return err
+		}
+	}
 	for _, channel := range candidates {
 		if seen[channel.ID] || !slices.Contains(channel.Events, key) {
 			continue
 		}
 		seen[channel.ID] = true
 		delivery := &Delivery{ID: uuid.New(), NotificationID: notification.ID, ChannelID: channel.ID, Status: DeliveryPending, CreatedAt: now, UpdatedAt: now}
+		if digest != "" {
+			due := nextDigestAt(digest, location, now)
+			// A digest due inside quiet hours waits for them to end. The shift
+			// depends only on the due time, so one digest stays one send.
+			if until := quietUntil(preferences, location, due); personalChannel(channel) && !until.IsZero() {
+				due = until
+			}
+			delivery.Status, delivery.Digest, delivery.DigestDueAt = DeliveryHeld, &digest, &due
+		} else if until := quietUntil(preferences, location, now); personalChannel(channel) && !until.IsZero() {
+			delivery.DeliverAfter = &until
+		}
 		result := d.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(delivery)
 		if result.Error != nil {
 			return fmt.Errorf("create notification delivery: %w", result.Error)
 		}
-		if result.RowsAffected == 1 && d.enqueue != nil {
-			_ = d.enqueue(ctx, delivery.ID, "")
+		if result.RowsAffected != 1 {
+			continue
+		}
+		var scheduleErr error
+		switch {
+		case delivery.DigestDueAt != nil:
+			scheduleErr = d.scheduler.Digest(ctx, channel.ID, *delivery.DigestDueAt)
+		case delivery.DeliverAfter != nil:
+			scheduleErr = d.scheduler.DeliverAt(ctx, delivery.ID, *delivery.DeliverAfter)
+		case d.enqueue != nil:
+			scheduleErr = d.enqueue(ctx, delivery.ID, "")
+		}
+		if scheduleErr != nil {
+			unscheduled = append(unscheduled, d.failUnscheduled(ctx, delivery.ID, scheduleErr))
 		}
 	}
-	return nil
+	return errors.Join(unscheduled...)
+}
+
+// failUnscheduled fails a delivery no task will pick up, so it shows in the
+// channel's delivery log and can be sent again from there.
+func (d *Dispatcher) failUnscheduled(ctx context.Context, deliveryID uuid.UUID, scheduleErr error) error {
+	message := "schedule delivery: " + scheduleErr.Error()
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	err := fmt.Errorf("schedule notification delivery %s: %w", deliveryID, scheduleErr)
+	if failErr := d.db.WithContext(ctx).Model(&Delivery{}).Where("id = ?", deliveryID).
+		Updates(map[string]any{"status": DeliveryFailed, "last_error": message, "updated_at": d.now()}).Error; failErr != nil {
+		return errors.Join(err, fmt.Errorf("fail unscheduled notification delivery: %w", failErr))
+	}
+	return err
 }
 
 // teamChannels finds the team channels named by a notification's context.
@@ -193,6 +254,8 @@ func (d *Dispatcher) Deliver(ctx context.Context, deliveryID uuid.UUID) error {
 		err = d.sendEmail(ctx, &channel, &notification, &delivery)
 	case ChannelWebhook:
 		err = d.sendWebhook(ctx, &channel, &notification, &delivery)
+	case ChannelIM:
+		err = d.sendIM(ctx, &channel, &notification, &delivery)
 	default:
 		err = errors.New("unsupported channel type")
 	}
@@ -211,10 +274,14 @@ func (d *Dispatcher) SendTest(ctx context.Context, owner ChannelOwner, channelID
 	sample := &Notification{ID: uuid.New(), OrganizationID: channel.OrganizationID, Event: "notification.test", SourceType: "notification_channel", SourceID: channel.ID,
 		Title: "ZGI test notification / 测试通知", Summary: "This channel receives ZGI notifications. / 这个渠道可以收到 ZGI 的通知。", Link: "/console", CreatedAt: d.now()}
 	delivery := &Delivery{ID: uuid.New()}
-	if channel.Type == ChannelEmail {
+	switch channel.Type {
+	case ChannelEmail:
 		return d.sendEmail(ctx, channel, sample, delivery)
+	case ChannelIM:
+		return d.sendIM(ctx, channel, sample, delivery)
+	default:
+		return d.sendWebhook(ctx, channel, sample, delivery)
 	}
-	return d.sendWebhook(ctx, channel, sample, delivery)
 }
 
 func (d *Dispatcher) finish(ctx context.Context, delivery *Delivery, sendErr error, final bool) error {
@@ -300,10 +367,6 @@ func webhookEvent(event string) string {
 }
 
 func (d *Dispatcher) sendWebhook(ctx context.Context, channel *Channel, notification *Notification, delivery *Delivery) error {
-	secret, err := d.channels.webhookSecret(channel)
-	if err != nil {
-		return err
-	}
 	data := map[string]any{"notification_id": notification.ID, "title": notification.Title, "summary": notification.Summary}
 	var meta map[string]any
 	if json.Unmarshal(notification.Context, &meta) == nil {
@@ -319,7 +382,16 @@ func (d *Dispatcher) sendWebhook(ctx context.Context, channel *Channel, notifica
 	if link := d.absoluteLink(notification.Link); link != "" && notification.RecipientKind == RecipientAccount {
 		data["link"] = link
 	}
-	body, err := json.Marshal(WebhookPayload{ID: delivery.ID.String(), Event: webhookEvent(notification.Event), CreatedAt: notification.CreatedAt, Data: data})
+	return d.postWebhook(ctx, channel, notification, delivery.ID.String(), data)
+}
+
+// postWebhook signs and posts one webhook event.
+func (d *Dispatcher) postWebhook(ctx context.Context, channel *Channel, notification *Notification, deliveryID string, data map[string]any) error {
+	secret, err := d.channels.webhookSecret(channel)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(WebhookPayload{ID: deliveryID, Event: webhookEvent(notification.Event), CreatedAt: notification.CreatedAt, Data: data})
 	if err != nil {
 		return err
 	}
@@ -331,7 +403,7 @@ func (d *Dispatcher) sendWebhook(ctx context.Context, channel *Channel, notifica
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "ZGI-Notifications/1")
 	request.Header.Set("X-ZGI-Event", webhookEvent(notification.Event))
-	request.Header.Set("X-ZGI-Delivery", delivery.ID.String())
+	request.Header.Set("X-ZGI-Delivery", deliveryID)
 	request.Header.Set("X-ZGI-Timestamp", timestamp)
 	request.Header.Set("X-ZGI-Signature", "sha256="+SignWebhook(secret, timestamp, body))
 	response, err := d.client.Do(request)
@@ -350,70 +422,11 @@ func (d *Dispatcher) sendWebhook(ctx context.Context, channel *Channel, notifica
 // Receivers recompute it with their secret and compare it to
 // X-ZGI-Signature, and reject old timestamps.
 func SignWebhook(secret, timestamp string, body []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp + "."))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-var blockedWebhookPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("2001:db8::/32"),
-}
-
-func publicWebhookAddr(addr netip.Addr) bool {
-	addr = addr.Unmap()
-	if !addr.IsValid() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() ||
-		addr.IsMulticast() || addr.IsUnspecified() {
-		return false
-	}
-	for _, prefix := range blockedWebhookPrefixes {
-		if prefix.Contains(addr) {
-			return false
-		}
-	}
-	return true
+	return webhookhttp.Sign(secret, timestamp, body)
 }
 
 // webhookClient dials only public addresses resolved at connect time, so a
 // webhook cannot reach internal services, and follows no redirects.
 func webhookClient(allowPrivate bool) *http.Client {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	return &http.Client{
-		Timeout:       webhookTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		Transport: &http.Transport{
-			Proxy: nil,
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				host, port, err := net.SplitHostPort(address)
-				if err != nil {
-					return nil, err
-				}
-				addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-				if err != nil {
-					return nil, err
-				}
-				var lastErr error = errors.New("webhook host has no public address")
-				for _, addr := range addrs {
-					if !allowPrivate && !publicWebhookAddr(addr) {
-						continue
-					}
-					conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.Unmap().String(), port))
-					if err == nil {
-						return conn, nil
-					}
-					lastErr = err
-				}
-				return nil, lastErr
-			},
-			TLSHandshakeTimeout:   5 * time.Second,
-			ResponseHeaderTimeout: webhookTimeout,
-			DisableKeepAlives:     true,
-		},
-	}
+	return webhookhttp.Client(allowPrivate)
 }

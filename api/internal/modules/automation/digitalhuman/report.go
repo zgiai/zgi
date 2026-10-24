@@ -229,7 +229,7 @@ func (s *Service) ReviewTaskReport(ctx context.Context, access digitalhuman.Task
 	feedback := strings.TrimSpace(req.Feedback)
 	switch req.Action {
 	case digitalhuman.TaskReportAccept:
-	case digitalhuman.TaskReportRework:
+	case digitalhuman.TaskReportRework, digitalhuman.TaskReportImprove:
 		if feedback == "" || utf8.RuneCountInString(feedback) > maxReworkFeedbackRunes {
 			return nil, digitalhuman.ErrInvalidRequest
 		}
@@ -259,9 +259,31 @@ func (s *Service) ReviewTaskReport(ctx context.Context, access digitalhuman.Task
 			actorType, actorRef = "account", accessActorID(access).String()
 		}
 		updates := map[string]any{"reviewed_by_type": actorType, "reviewed_by_ref": actorRef, "reviewed_at": now, "updated_at": now}
-		if req.Action == digitalhuman.TaskReportAccept {
+		switch req.Action {
+		case digitalhuman.TaskReportAccept:
 			row.ReviewState = string(digitalhuman.TaskReportAccepted)
-		} else {
+		case digitalhuman.TaskReportImprove:
+			row.ReviewState, row.ReviewFeedback = string(digitalhuman.TaskReportAccepted), &feedback
+			updates["review_feedback"] = feedback
+			lockedTask, err := s.lockReviewedTask(ctx, tx, access, task)
+			if err != nil {
+				return err
+			}
+			if len(lockedTask.SuccessCriteria) >= maxReportCriteria {
+				return digitalhuman.ErrInvalidRequest
+			}
+			lockedTask.SuccessCriteria = append(append([]string(nil), lockedTask.SuccessCriteria...), feedback)
+			lockedTask.Revision++
+			lockedTask.UpdatedBy = accessActorID(access).String()
+			values, err := taskUpdateValues(lockedTask, now)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&automationmodel.AutomationTask{}).Where("id = ?", lockedTask.ID).Updates(values).Error; err != nil {
+				return err
+			}
+			task = lockedTask
+		default:
 			row.ReviewState, row.ReviewFeedback = string(digitalhuman.TaskReportReworkRequested), &feedback
 			lockedTask, err := s.lockReviewedTask(ctx, tx, access, task)
 			if err != nil {
@@ -292,11 +314,15 @@ func (s *Service) ReviewTaskReport(ctx context.Context, access digitalhuman.Task
 		if err := tx.Model(&taskReportRow{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {
 			return err
 		}
-		action, summary := "report_accepted", "Task report accepted"
-		if req.Action == digitalhuman.TaskReportRework {
+		action, summary, changes := "report_accepted", "Task report accepted", map[string]any{"report_id": row.ID}
+		switch req.Action {
+		case digitalhuman.TaskReportRework:
 			action, summary = "rework_requested", "Rework requested on a task report"
+		case digitalhuman.TaskReportImprove:
+			action, summary = "report_improved", "Task report feedback kept for later runs"
+			changes["success_criteria"] = task.SuccessCriteria
 		}
-		if err := tx.Create(newActivity(task.ID, mutation, action, summary, map[string]any{"report_id": row.ID})).Error; err != nil {
+		if err := tx.Create(newActivity(task.ID, mutation, action, summary, changes)).Error; err != nil {
 			return err
 		}
 		row.ReviewedAt = &now
@@ -417,10 +443,65 @@ func finalizeTaskReport(tx *gorm.DB, task *automationmodel.AutomationTask, taskR
 		row.Issues = strings.TrimSpace(strings.TrimSpace(row.Issues) + "\n" + message)
 	}
 	row.Final, row.UpdatedAt = true, now
+	if !reportAwaitsReview(taskReportReview(task), digitalhuman.TaskReportOutcome(row.Outcome)) {
+		closeReportRow(&row, reportClosedNotRequired, now)
+	}
 	if err := tx.Save(&row).Error; err != nil {
 		return nil, err
 	}
+	// A newer report replaces what the task's earlier ones said, so they no
+	// longer wait for review.
+	if err := tx.Model(&taskReportRow{}).
+		Where("task_id = ? AND id <> ? AND final AND review_state = ?", task.ID, row.ID, string(digitalhuman.TaskReportNew)).
+		Updates(closedReportUpdates(reportClosedSuperseded, now)).Error; err != nil {
+		return nil, err
+	}
 	return &row, nil
+}
+
+// Why the system closed a report, kept as its reviewer.
+const (
+	reportClosedNotRequired = "not_required"
+	reportClosedSuperseded  = "superseded"
+	reportClosedExpired     = "expired"
+)
+
+// reportAwaitsReview reports whether a final report waits for someone to
+// review it. A failed run always does: it delivered nothing.
+func reportAwaitsReview(review digitalhuman.TaskReportReview, outcome digitalhuman.TaskReportOutcome) bool {
+	if outcome == digitalhuman.TaskReportFailed {
+		return true
+	}
+	switch review {
+	case digitalhuman.TaskReportReviewNone:
+		return false
+	case digitalhuman.TaskReportReviewRequired:
+		return true
+	default:
+		return outcome != digitalhuman.TaskReportDone
+	}
+}
+
+func closeReportRow(row *taskReportRow, reason string, now time.Time) {
+	system, ref := string(automationmodel.AutomationTaskActivityActorSystem), reason
+	row.ReviewState, row.ReviewedByType, row.ReviewedByRef, row.ReviewedAt = string(digitalhuman.TaskReportClosed), &system, &ref, &now
+}
+
+func closedReportUpdates(reason string, now time.Time) map[string]any {
+	return map[string]any{
+		"review_state": string(digitalhuman.TaskReportClosed), "reviewed_by_type": string(automationmodel.AutomationTaskActivityActorSystem),
+		"reviewed_by_ref": reason, "reviewed_at": now, "updated_at": now,
+	}
+}
+
+// closeExpiredReports closes reports that must be reviewed and were not
+// within TaskReportReviewWindow.
+func closeExpiredReports(ctx context.Context, db *gorm.DB, now time.Time) error {
+	return db.WithContext(ctx).Model(&taskReportRow{}).
+		Where("final AND review_state = ? AND created_at <= ?", string(digitalhuman.TaskReportNew), now.Add(-digitalhuman.TaskReportReviewWindow)).
+		Where("task_id IN (?)", db.Model(&automationmodel.AutomationTask{}).Select("id").
+			Where("delivery_config ->> ? = ?", reportReviewKey, string(digitalhuman.TaskReportReviewRequired))).
+		Updates(closedReportUpdates(reportClosedExpired, now)).Error
 }
 
 func publicTaskReport(row *taskReportRow, task *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) *digitalhuman.TaskReport {
@@ -480,8 +561,8 @@ func reviewTransitionAllowed(current digitalhuman.TaskReportReviewState, action 
 	switch action {
 	case digitalhuman.TaskReportAccept:
 		return current == digitalhuman.TaskReportNew
-	case digitalhuman.TaskReportRework:
-		return current == digitalhuman.TaskReportNew || current == digitalhuman.TaskReportAccepted
+	case digitalhuman.TaskReportRework, digitalhuman.TaskReportImprove:
+		return current == digitalhuman.TaskReportNew || current == digitalhuman.TaskReportAccepted || current == digitalhuman.TaskReportClosed
 	}
 	return false
 }
@@ -565,6 +646,7 @@ func reportNotice(row *taskReportRow, task *automationmodel.AutomationTask) (dig
 	notice.TaskName = task.Name
 	notice.ClientReference = pointerValue(task.ClientReference)
 	notice.ChannelIDs = taskNotifyChannels(task)
+	notice.Digest = taskReportDigest(task)
 	notice.Shared = teamReportableTask(task) && storedTaskVisibility(task) == digitalhuman.TaskVisibilityWorkspace
 	if row.DigitalHumanRunID != nil {
 		if id, err := uuid.Parse(*row.DigitalHumanRunID); err == nil {

@@ -90,6 +90,13 @@ func (s *AccessService) authorizeInteractiveAttachmentAccess(ctx context.Context
 		if !access.Settings.APIEnabled {
 			return ErrNotFound
 		}
+		if scope.RuntimeWorkspaceID != nil {
+			runtimeWorkspaces := s.runtimeWorkspaceAccess()
+			if runtimeWorkspaces == nil {
+				return ErrNotFound
+			}
+			return runtimeWorkspaces.CallerActive(ctx, *scope.RuntimeWorkspaceID, scope.PrincipalID, application)
+		}
 		var count int64
 		if err := s.db.WithContext(ctx).Model(&APIKey{}).
 			Where("id = ? AND digital_human_id = ? AND organization_id = ? AND workspace_id = ? AND status = ? AND (expires_at IS NULL OR expires_at > ?)",

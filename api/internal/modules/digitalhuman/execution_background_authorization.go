@@ -132,7 +132,11 @@ func (s *AccessService) authorizeBackgroundTask(ctx context.Context, run *Run, e
 		}
 		var subject usersubject.Subject
 		if err := s.db.WithContext(ctx).Where("id = ? AND kind = ? AND issuer_type = ? AND issuer_id = ?", *run.UserSubjectID, usersubject.APIEndUser, "digital_human_api", run.DigitalHumanID).Take(&subject).Error; err != nil {
-			return ErrNotFound
+			// An end user of a Runtime Workspace that still binds this
+			// DigitalHuman is authorized the same way (ADR 0010).
+			if runtimeWorkspaces := s.runtimeWorkspaceAccess(); runtimeWorkspaces == nil || runtimeWorkspaces.SubjectBound(ctx, *run.UserSubjectID, run.DigitalHumanID) != nil {
+				return ErrNotFound
+			}
 		}
 	case TaskOwnerDigitalHuman:
 		// Scheduler runs intentionally do not persist an interactive ActorID.

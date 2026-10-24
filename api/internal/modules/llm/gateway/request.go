@@ -233,6 +233,7 @@ func (s *llmGatewayServiceImpl) createBillingContext(
 		billingCtx.WorkflowRunID = appCtx.WorkflowRunID
 		billingCtx.NodeID = appCtx.NodeID
 		billingCtx.NodeType = appCtx.NodeType
+		billingCtx.RuntimeWorkspaceID, billingCtx.EndUserSubjectID = appCtx.RuntimeWorkspaceID, appCtx.EndUserSubjectID
 		switch resolveQuotaSubjectType(appCtx) {
 		case quotaSubjectTypeWorkspace:
 			if appCtx.WorkspaceID != nil && *appCtx.WorkspaceID != "" {

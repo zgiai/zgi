@@ -77,6 +77,58 @@ export const RUNTIME_WORKSPACE_KEYS = {
     'credentials',
     workspaceId,
   ],
+  managedApps: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'managed-apps',
+    workspaceId,
+    params,
+  ],
+  appCandidatesPage: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'app-candidates-page',
+    workspaceId,
+    params,
+  ],
+  endUsers: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'end-users',
+    workspaceId,
+  ],
+  endUserList: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'list',
+    params,
+  ],
+  endUserEvents: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'events',
+    subjectId,
+  ],
+  endUserDigitalHumans: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'digital-humans',
+    subjectId,
+  ],
+  endUserCredits: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'credits',
+    subjectId,
+  ],
+  webhook: (workspaceId: string | null) => [...RUNTIME_WORKSPACE_KEYS.all, 'webhook', workspaceId],
+  webhookDeliveries: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.webhook(workspaceId),
+    'deliveries',
+  ],
+  endUserSummary: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'summary',
+  ],
+  endUserUsageSeries: (workspaceId: string | null, subjectId: string | null, days: number) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'usage-series',
+    subjectId,
+    days,
+  ],
 } as const;
 
 // 3. Agent Related

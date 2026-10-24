@@ -23,7 +23,7 @@ func RegisterDigitalHumanExternalRoutes(
 	fileService interfaces.FileService,
 	catalog *appcatalog.Catalog,
 	notifications *inbox.Service,
-) {
+) *digitalhuman.ExternalHandler {
 	projector, err := apptransport.NewProjector(catalog)
 	if err != nil {
 		panic("digital human external routes require application error projector")
@@ -38,6 +38,7 @@ func RegisterDigitalHumanExternalRoutes(
 	}
 	handler.RegisterAPIRoutes(router)
 	handler.RegisterWebAppRoutes(router)
+	return handler
 }
 
 // endUserInbox lets API end users read the inbox entries of their own tasks.

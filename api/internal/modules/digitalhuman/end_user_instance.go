@@ -2,12 +2,16 @@ package digitalhuman
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // EndUserInstanceStatus is the operator-controlled state of one end user's
@@ -47,9 +51,9 @@ type EndUserInstance struct {
 func (EndUserInstance) TableName() string { return "digital_human_end_user_instances" }
 
 // EndUserInstancesEnabled switches on end-user instances: runs of external end
-// users are admitted through their instance. It defaults to off.
+// users are admitted through their instance. It is on unless set to false.
 func EndUserInstancesEnabled() bool {
-	return envFlagEnabled("ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED")
+	return envFlagDefaultOn("ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED")
 }
 
 // endUserInstanceStore admits a run together with its end user's instance.
@@ -74,6 +78,9 @@ func endUserInstanceForRun(scope Scope, run *Run, now time.Time) *EndUserInstanc
 	switch run.Surface {
 	case SurfaceAPI:
 		instance.IssuerID = cloneUUIDPointer(&scope.PrincipalID)
+		if scope.RuntimeWorkspaceID != nil {
+			instance.IssuerType, instance.IssuerID = runtimeWorkspaceInstanceIssuer, cloneUUIDPointer(scope.RuntimeWorkspaceID)
+		}
 	case SurfaceWebApp:
 		instance.IssuerID = cloneUUIDPointer(scope.WebAppID)
 	default:
@@ -100,6 +107,12 @@ func (r *GormRepository) CreateRunWithOutboxForEndUser(ctx context.Context, run 
 		if subject.Subject.Kind == usersubject.APIEndUser {
 			issuerID := instance.DigitalHumanID
 			subject.IssuerType, subject.IssuerID = SurfaceAPI, &issuerID
+			// A Runtime Workspace end user keeps the issuer the Runtime
+			// Workspace registered them with (ADR 0010).
+			if instance.IssuerType == runtimeWorkspaceInstanceIssuer && instance.IssuerID != nil {
+				runtimeWorkspaceID := *instance.IssuerID
+				subject.IssuerType, subject.IssuerID = runtimeWorkspaceSubjectIssuer, &runtimeWorkspaceID
+			}
 		}
 		if _, err := usersubject.NewService(tx.db).Ensure(ctx, subject); err != nil {
 			return fmt.Errorf("admit DigitalHuman end user subject: %w", err)
@@ -129,6 +142,12 @@ func (r *GormRepository) CreateRunWithOutboxForEndUser(ctx context.Context, run 
 		if admitted.Status == EndUserInstanceSuspended {
 			return ErrEndUserSuspended
 		}
+		// The insert kept the new id; a returning end user keeps theirs.
+		if admitted.ID == instance.ID {
+			if err := recordInstanceEvent(ctx, tx.db, admitted, instanceAuditCreated, accessAuditSourceRuntime, nil, map[string]any{"issuer_type": admitted.IssuerType}); err != nil {
+				return err
+			}
+		}
 		run.EndUserInstanceID = &admitted.ID
 		if err := tx.CreateRun(ctx, run); err != nil {
 			return err
@@ -136,3 +155,66 @@ func (r *GormRepository) CreateRunWithOutboxForEndUser(ctx context.Context, run 
 		return tx.CreateRunOutbox(ctx, outbox)
 	})
 }
+
+// Audit actions of end-user instances (ADR 0006). Their details carry
+// identifiers and enum values only.
+const (
+	instanceAuditTarget         = "end_user_instance"
+	instanceAuditCreated        = "end_user_instance.created"
+	instanceAuditSuspended      = "end_user_instance.suspended"
+	instanceAuditResumed        = "end_user_instance.resumed"
+	instanceAuditErased         = "end_user_instance.erased"
+	instanceAuditMemoryPromoted = "end_user_instance.memory_promoted"
+
+	accessAuditSourceRuntime        = "runtime"
+	accessAuditSourceExternalAccess = "external_access"
+)
+
+// recordInstanceEvent appends an audit event about one end-user instance.
+func recordInstanceEvent(ctx context.Context, db *gorm.DB, instance EndUserInstance, action, source string, actorID *uuid.UUID, details map[string]any) error {
+	if details == nil {
+		details = map[string]any{}
+	}
+	payload, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("encode end-user instance audit details: %w", err)
+	}
+	instanceID := instance.ID
+	event := &AccessAuditEvent{ID: uuid.New(), DigitalHumanID: instance.DigitalHumanID, OrganizationID: instance.OrganizationID,
+		WorkspaceID: instance.WorkspaceID, ActorID: actorID, Action: action, TargetType: instanceAuditTarget, TargetID: &instanceID,
+		Source: source, Result: accessAuditResultSuccess, Details: payload, CreatedAt: time.Now().UTC()}
+	if err := db.WithContext(ctx).Create(event).Error; err != nil {
+		return fmt.Errorf("record end-user instance audit event: %w", err)
+	}
+	return nil
+}
+
+// EndUserStatusChanged suspends or resumes the end user's instances with
+// their external access end user (ADR 0006).
+func (*EndUserData) EndUserStatusChanged(ctx context.Context, tx *gorm.DB, subjectID uuid.UUID, suspended bool, actor runtimeworkspace.EndUserActor) error {
+	from, to, action := EndUserInstanceActive, EndUserInstanceSuspended, instanceAuditSuspended
+	if !suspended {
+		from, to, action = EndUserInstanceSuspended, EndUserInstanceActive, instanceAuditResumed
+	}
+	var instances []EndUserInstance
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("subject_id = ? AND status = ?", subjectID, from).Find(&instances).Error; err != nil {
+		return fmt.Errorf("load end-user instances: %w", err)
+	}
+	var actorID *uuid.UUID
+	if actor.Kind == runtimeworkspace.EndUserActorAccount && actor.ID != uuid.Nil {
+		id := actor.ID
+		actorID = &id
+	}
+	for _, instance := range instances {
+		if err := tx.WithContext(ctx).Model(&EndUserInstance{}).Where("id = ?", instance.ID).
+			Updates(map[string]any{"status": to, "updated_at": time.Now().UTC()}).Error; err != nil {
+			return fmt.Errorf("update end-user instance status: %w", err)
+		}
+		if err := recordInstanceEvent(ctx, tx, instance, action, accessAuditSourceExternalAccess, actorID, map[string]any{"actor_kind": actor.Kind}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var _ runtimeworkspace.EndUserStatusOwner = (*EndUserData)(nil)

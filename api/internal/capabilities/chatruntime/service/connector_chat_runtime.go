@@ -33,6 +33,7 @@ func (s *service) resolveConnectorCapabilities(
 	caller Caller,
 	targetID string,
 	targetScope core.TargetScope, versionID string,
+	allowDelegation bool,
 ) (connectorruntimeauth.ChatCapabilitySnapshot, error) {
 	if s == nil {
 		return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
@@ -68,21 +69,28 @@ func (s *service) resolveConnectorCapabilities(
 			VersionID:      versionID,
 		}
 		snapshot, err := s.connectorDigitalHumanRuntime.ResolveDigitalHumanCapabilities(ctx, request)
-		if snapshot.HasOperations() || targetScope != core.ScopePublished {
+		if targetScope != core.ScopePublished || !allowDelegation {
 			return snapshot, err
 		}
 		delegated, ok := s.connectorDigitalHumanRuntime.(connectorruntimeauth.DelegatedDigitalHumanRuntimeResolver)
 		if !ok {
-			return snapshot, nil
+			return snapshot, err
 		}
 		if err != nil && !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
 			return snapshot, err
 		}
 		delegatedSnapshot, delegatedErr := delegated.ResolveDelegatedCapabilities(ctx, delegatedHostRequest(scope, caller, core.TargetTypeDigitalHuman, targetID, targetScope, versionID, hostAudienceForSource(caller.Source)))
-		if delegatedErr != nil {
+		if !snapshot.HasOperations() {
 			return delegatedSnapshot, delegatedErr
 		}
-		return delegatedSnapshot, nil
+		if delegatedErr != nil {
+			// The requester's own bindings, such as per-user slots, stay usable
+			// when no delegation applies to them.
+			return snapshot, nil
+		}
+		// A published DigitalHuman offers the requester's own bindings and
+		// the ones their owners delegated to it, each binding once.
+		return mergeCapabilitySnapshots(snapshot, delegatedSnapshot), nil
 	case runtimemodel.ConversationCallerAgent:
 		if s.connectorAgentRuntime == nil {
 			return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
@@ -111,6 +119,22 @@ func (s *service) resolveConnectorCapabilities(
 	default:
 		return connectorruntimeauth.ChatCapabilitySnapshot{}, nil
 	}
+}
+
+func mergeCapabilitySnapshots(own, delegated connectorruntimeauth.ChatCapabilitySnapshot) connectorruntimeauth.ChatCapabilitySnapshot {
+	seen := make(map[uuid.UUID]bool, len(own.Capabilities))
+	for _, capability := range own.Capabilities {
+		seen[capability.BindingID] = true
+	}
+	merged := own
+	merged.Capabilities = append([]connectorruntimeauth.ChatCapability(nil), own.Capabilities...)
+	for _, capability := range delegated.Capabilities {
+		if !seen[capability.BindingID] {
+			seen[capability.BindingID] = true
+			merged.Capabilities = append(merged.Capabilities, capability)
+		}
+	}
+	return merged
 }
 
 func delegatedHostRequest(scope Scope, caller Caller, targetType core.TargetType, targetID string, targetScope core.TargetScope, versionID string, audience core.HostAudience) connectorruntimeauth.DelegatedHostRequest {
@@ -173,7 +197,7 @@ func (s *service) applyConnectorSkillConfig(
 	if !ok {
 		return nil
 	}
-	snapshot, err := s.resolveConnectorCapabilities(ctx, scope, caller, targetID, core.TargetScope(parts.ConnectorTargetScope), parts.ConnectorTargetVersionID)
+	snapshot, err := s.resolveConnectorCapabilities(ctx, scope, caller, targetID, core.TargetScope(parts.ConnectorTargetScope), parts.ConnectorTargetVersionID, !parts.ConnectorDelegationDisabled)
 	if err != nil {
 		return err
 	}
@@ -304,6 +328,7 @@ func (s *service) resolvePreparedConnectorSkills(
 		prepared.Scope,
 		prepared.Caller,
 		targetID, core.TargetScope(parts.ConnectorTargetScope), parts.ConnectorTargetVersionID,
+		!parts.ConnectorDelegationDisabled,
 	)
 	if err != nil {
 		return nil, err

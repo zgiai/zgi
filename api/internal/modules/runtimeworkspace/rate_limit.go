@@ -11,7 +11,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var ErrRateLimited = errors.New("runtime workspace rate limit exceeded")
+var (
+	ErrRateLimited        = errors.New("runtime workspace rate limit exceeded")
+	ErrEndUserRateLimited = errors.New("runtime workspace end-user rate limit exceeded")
+)
 
 // RuntimeRequestsPerMinute reads the optional per-exposure-group policy. A
 // zero value deliberately disables the limiter so existing Runtime Workspaces
@@ -33,6 +36,20 @@ func RuntimeRequestsPerMinute(policyJSON string) int {
 		return policy.RequestsPerMinute
 	}
 	return 0
+}
+
+// RuntimeEndUserRequestsPerMinute reads the optional limit on each end user
+// (ADR 0012); zero disables it.
+func RuntimeEndUserRequestsPerMinute(policyJSON string) int {
+	var policy struct {
+		RateLimit *struct {
+			PerEndUserRequestsPerMinute int `json:"per_end_user_requests_per_minute"`
+		} `json:"rate_limit"`
+	}
+	if json.Unmarshal([]byte(policyJSON), &policy) != nil || policy.RateLimit == nil || policy.RateLimit.PerEndUserRequestsPerMinute < 0 {
+		return 0
+	}
+	return policy.RateLimit.PerEndUserRequestsPerMinute
 }
 
 type RateLimitDecision struct {

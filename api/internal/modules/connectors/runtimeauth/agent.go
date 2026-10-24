@@ -104,6 +104,9 @@ func (resolver *AgentResolver) ResolveConnectorIdentity(
 		strings.TrimSpace(request.CorrelationID) == "" || !request.Interactive {
 		return connectordispatch.Identity{}, core.NewError(core.ErrorCodeInvalidInput, false, nil)
 	}
+	if request.Delegation != nil {
+		return resolver.base.resolveDelegatedIdentity(ctx, request, resolver.candidates, resolver.authorizer, catalog.SurfaceAgent, "")
+	}
 	snapshot, err := resolver.ResolveAgentCapabilities(ctx, AgentCapabilityRequest{
 		OrganizationID: request.OrganizationID,
 		OwnerAccountID: request.OwnerAccountID,
