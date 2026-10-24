@@ -1,7 +1,7 @@
 import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
 
-export type NotificationChannelType = 'email' | 'webhook';
+export type NotificationChannelType = 'email' | 'webhook' | 'im';
 export type NotificationChannelEvent = 'task_report' | 'task_failed' | 'task_approval';
 export type NotificationChannelStatus = 'pending' | 'active' | 'disabled';
 
@@ -15,6 +15,8 @@ export interface NotificationChannel {
   events: NotificationChannelEvent[];
   status: NotificationChannelStatus;
   verified_at?: string;
+  /** The IM Connection an IM channel sends with. */
+  connection_id?: string;
   created_at: string;
   /** Returned once, when a webhook is created. */
   secret?: string;
@@ -25,7 +27,7 @@ export interface NotificationDelivery {
   id: string;
   event: string;
   title: string;
-  status: 'pending' | 'sent' | 'failed';
+  status: 'pending' | 'held' | 'sent' | 'failed';
   attempts: number;
   last_error?: string;
   sent_at?: string;
@@ -48,6 +50,24 @@ export interface NotificationChannelInput {
   name?: string;
   target: string;
   events: NotificationChannelEvent[];
+  /** For an IM channel: the Connection; target is then the member's own user ID. */
+  connection_id?: string;
+}
+
+/** An IM Connection of the member that can send them direct messages. */
+export interface IMConnection {
+  id: string;
+  connector_id: string;
+  name: string;
+  /** The user ID the tool needs, such as open_id. */
+  recipient_kind: string;
+}
+
+/** The member's quiet hours, in minutes after midnight of their time zone. */
+export interface NotificationPreferences {
+  quiet_start: number | null;
+  quiet_end: number | null;
+  timezone: string;
 }
 
 export interface NotificationChannelUpdate {
@@ -99,6 +119,18 @@ class NotificationChannelService extends BaseService {
 
   rotateSecret(basePath: string, id: string): Promise<ApiResponseData<{ secret: string }>> {
     return this.request('post', `${basePath}/${id}/rotate-secret`, {});
+  }
+
+  imConnections(basePath: string): Promise<ApiResponseData<{ items: IMConnection[] }>> {
+    return this.request('get', `${basePath}/im-connections`);
+  }
+
+  preferences(): Promise<ApiResponseData<NotificationPreferences>> {
+    return this.request('get', '/notification-preferences');
+  }
+
+  setQuietHours(quietStart: number | null, quietEnd: number | null): Promise<ApiResponseData<NotificationPreferences>> {
+    return this.request('put', '/notification-preferences', { quiet_start: quietStart, quiet_end: quietEnd });
   }
 
   teamChoices(): Promise<ApiResponseData<{ items: NotificationChannelChoice[] }>> {

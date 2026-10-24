@@ -834,6 +834,8 @@ export interface DigitalHumanTask {
   notify_channel_ids?: string[];
   /** The requester manages the team channels; a task manager may only remove them. */
   notify_channel_access?: 'manage' | 'remove';
+  /** A scheduled task's reports to external channels wait for this digest. */
+  report_digest?: DigitalHumanTaskReportDigest;
   /** An integrator's own identifier, given when an API task is created. */
   client_reference?: string;
   /** Who asked for the task; only the task center returns it. */
@@ -904,7 +906,11 @@ export interface CreateDigitalHumanTaskRequest {
   execution_timeout_seconds?: number;
   max_attempts?: number;
   notify_channel_ids?: string[];
+  report_digest?: DigitalHumanTaskReportDigest | '';
 }
+
+/** How a scheduled task's reports reach external channels (ADR 0008). */
+export type DigitalHumanTaskReportDigest = 'daily' | 'weekly';
 
 export type UpdateDigitalHumanTaskRequest = Partial<CreateDigitalHumanTaskRequest> & {
   expected_revision: number;

@@ -30,8 +30,11 @@ type InboxRouteDeps struct {
 // Email channels need configured email; webhooks need credential encryption.
 // ZGI_NOTIFICATION_WEBHOOK_ALLOW_PRIVATE lets local development deliver
 // webhooks to private addresses and must stay off in production.
-func newNotificationChannels(inboxService *inbox.Service, db *gorm.DB, cipher inbox.SecretCipher, registry inbox.TaskRegistry, queue inbox.TaskQueue) (*inbox.Channels, *inbox.Dispatcher) {
+func newNotificationChannels(inboxService *inbox.Service, db *gorm.DB, cipher inbox.SecretCipher, registry inbox.TaskRegistry, queue inbox.TaskQueue, im inbox.IMSender) (*inbox.Channels, *inbox.Dispatcher) {
 	channels := inbox.NewChannels(db, cipher, notificationEmailSender())
+	if im != nil {
+		channels.UseIMSender(im)
+	}
 	consoleURL := ""
 	if current := config.Current(); current != nil {
 		consoleURL = current.Email.ConsoleWebURL
@@ -40,6 +43,7 @@ func newNotificationChannels(inboxService *inbox.Service, db *gorm.DB, cipher in
 	var dispatcher *inbox.Dispatcher
 	enqueue := inbox.RegisterDeliveryTasks(registry, queue, func() *inbox.Dispatcher { return dispatcher })
 	dispatcher = inbox.NewDispatcher(db, channels, enqueue, consoleURL, allowPrivate)
+	dispatcher.UseScheduler(inbox.RegisterScheduledTasks(registry, queue, func() *inbox.Dispatcher { return dispatcher }))
 	inboxService.SetDispatcher(dispatcher)
 	return channels, dispatcher
 }
@@ -80,6 +84,7 @@ func RegisterInboxRoutes(v1 *gin.RouterGroup, deps InboxRouteDeps) {
 	inbox.NewHandler(deps.Service, projector).RegisterRoutes(group)
 	if deps.Channels != nil {
 		deps.Channels.RegisterRoutes(group, "/notification-channels", deps.Channels.AccountOwner)
+		deps.Channels.RegisterPreferenceRoutes(group, "/notification-preferences", deps.Channels.AccountOwner)
 	}
 }
 
@@ -104,6 +109,9 @@ func (n digitalHumanReportInbox) NotifyTaskReport(ctx context.Context, notice di
 	}
 	if notice.ClientReference != "" {
 		meta["client_reference"] = notice.ClientReference
+	}
+	if notice.Digest != digitalhuman.TaskReportDigestNone {
+		meta["digest"] = string(notice.Digest)
 	}
 	_, err := n.inbox.Notify(ctx, inbox.NotifyRequest{
 		Recipient:   inbox.Recipient{OrganizationID: notice.OrganizationID, Kind: kind, ID: notice.RecipientID},

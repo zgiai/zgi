@@ -291,7 +291,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	}
 	inboxService := inbox.NewService(db)
 	notificationChannels, notificationDispatcher := newNotificationChannels(inboxService, db, serviceContainer.GetDigitalHumanCredentialCipher(),
-		serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetTaskManager())
+		serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetTaskManager(), serviceContainer.GetNotificationIMSender())
 	if automationBundle.DigitalHumanTasks != nil {
 		automationBundle.DigitalHumanTasks.SetNotifyChannels(notificationChannels)
 	}

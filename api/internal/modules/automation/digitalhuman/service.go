@@ -257,6 +257,10 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 		}
 		delivery = withNotifyChannels(delivery, ids)
 	}
+	if !req.ReportDigest.Valid() || req.ReportDigest != digitalhuman.TaskReportDigestNone && scheduleType != automationmodel.AutomationScheduleTypeCron {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	delivery = withReportDigest(delivery, req.ReportDigest)
 	task := &automationmodel.AutomationTask{
 		OrganizationID: access.OrganizationID.String(), WorkspaceID: access.WorkspaceID.String(), Name: strings.TrimSpace(req.Name),
 		TaskKind: automationmodel.AutomationTaskKindDigitalHuman, SubjectType: stringPointer(subjectTypeDigitalHuman), SubjectID: &subjectID,
@@ -476,6 +480,24 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			changes["notify_channel_ids"] = channels
 		}
 		task.DeliveryConfig = withNotifyChannels(task.DeliveryConfig, channels)
+		// Only a scheduled task keeps a digest; it goes when the schedule does.
+		digest := digitalhuman.TaskReportDigest(fmt.Sprint(task.DeliveryConfig[reportDigestKey]))
+		if !digest.Valid() {
+			digest = digitalhuman.TaskReportDigestNone
+		}
+		if req.ReportDigest != nil {
+			if !req.ReportDigest.Valid() || *req.ReportDigest != digitalhuman.TaskReportDigestNone && task.ScheduleType != automationmodel.AutomationScheduleTypeCron {
+				return digitalhuman.ErrInvalidRequest
+			}
+			if *req.ReportDigest != digest {
+				changes["report_digest"] = string(*req.ReportDigest)
+			}
+			digest = *req.ReportDigest
+		}
+		if task.ScheduleType != automationmodel.AutomationScheduleTypeCron {
+			digest = digitalhuman.TaskReportDigestNone
+		}
+		task.DeliveryConfig = withReportDigest(task.DeliveryConfig, digest)
 		task.Revision++
 		task.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(task, s.now())
@@ -979,7 +1001,7 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 		return nil, fmt.Errorf("invalid stored digital human task owner")
 	}
 	mode := deliveryMode(row.DeliveryConfig)
-	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), ReportDigest: taskReportDigest(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.LastRunStatus != nil {
 		result.LastRunStatus = *row.LastRunStatus
 	}

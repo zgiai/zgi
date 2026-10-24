@@ -612,6 +612,7 @@ const messages = {
       report_created: 'A task handed back a report.',
       task_failed: 'A task still failed after its retries.',
       task_approval_requested: 'The digital human proposed a task change in a conversation and waits for the user.',
+      task_digest: "A scheduled task set to a daily or weekly digest sends that period's reports at once, in data.reports.",
       notification_test: 'Sent when you click Send test below.',
     },
     payloadTitle: 'Payload',
@@ -1729,6 +1730,14 @@ const messages = {
       fullLog: 'Full log',
       waitingApproval: 'This run is waiting for approval. Handle it in the full log.',
       backToReport: 'Back to report',
+    },
+    digest: {
+      label: 'Reports to external channels',
+      hint: 'The inbox gets every report; failures are always sent at once.',
+      each: 'Each run',
+      daily: 'Daily digest (9:00)',
+      weekly: 'Weekly digest (Mon 9:00)',
+      updated: 'Report delivery updated.',
     },
     destinations: {
       label: 'Reports go to',

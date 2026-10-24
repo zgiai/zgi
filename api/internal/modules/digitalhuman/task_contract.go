@@ -140,6 +140,20 @@ const (
 	TaskPriorityUrgent TaskPriority = "urgent"
 )
 
+// TaskReportDigest groups a scheduled task's reports on external channels.
+type TaskReportDigest string
+
+const (
+	TaskReportDigestNone   TaskReportDigest = ""
+	TaskReportDigestDaily  TaskReportDigest = "daily"
+	TaskReportDigestWeekly TaskReportDigest = "weekly"
+)
+
+// Valid reports whether the digest is a known one.
+func (d TaskReportDigest) Valid() bool {
+	return d == TaskReportDigestNone || d == TaskReportDigestDaily || d == TaskReportDigestWeekly
+}
+
 // TaskScheduleType identifies whether and how a task is automatically run.
 type TaskScheduleType string
 
@@ -298,6 +312,9 @@ type Task struct {
 	// NotifyChannelAccess says how this reader may change NotifyChannelIDs:
 	// the requester manages them, a task center manager may only remove.
 	NotifyChannelAccess TaskNotifyChannelAccess `json:"notify_channel_access,omitempty"`
+	// ReportDigest holds a scheduled task's reports to external channels for
+	// a daily or weekly digest; empty sends each one (ADR 0008 stage 4).
+	ReportDigest TaskReportDigest `json:"report_digest,omitempty"`
 	// ClientReference is the integrator's identifier given at creation.
 	ClientReference string `json:"client_reference,omitempty"`
 	// Requester is who asked for the task. Only the console task center
@@ -429,6 +446,8 @@ type CreateTaskRequest struct {
 	MaxAttempts             int              `json:"max_attempts,omitempty"`
 	// NotifyChannelIDs are team channels that also receive the task's reports.
 	NotifyChannelIDs []uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ReportDigest is the digest of a scheduled task's reports, if any.
+	ReportDigest TaskReportDigest `json:"report_digest,omitempty"`
 	// ClientReference is the integrator's own identifier for the task, echoed
 	// back in reports, notifications, and webhooks.
 	ClientReference string `json:"client_reference,omitempty"`
@@ -453,6 +472,8 @@ type UpdateTaskRequest struct {
 	Visibility *TaskVisibility `json:"visibility,omitempty"`
 	// NotifyChannelIDs replaces the team channels that receive the reports.
 	NotifyChannelIDs *[]uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ReportDigest replaces the digest; empty sends each report.
+	ReportDigest *TaskReportDigest `json:"report_digest,omitempty"`
 	// ClientReference replaces the integrator's identifier; empty clears it.
 	ClientReference *string `json:"client_reference,omitempty"`
 }
@@ -588,6 +609,9 @@ type TaskReportNotice struct {
 	RecipientID   uuid.UUID
 	// ChannelIDs are the task's team channels that also receive the report.
 	ChannelIDs []uuid.UUID
+	// Digest holds the report for the requester's digest on external
+	// channels; empty sends it at once.
+	Digest TaskReportDigest
 	// RunID is the run that produced the report, and FileIDs the run files it
 	// chose to carry (empty means all of them).
 	RunID   *uuid.UUID

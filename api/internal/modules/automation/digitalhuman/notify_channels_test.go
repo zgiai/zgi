@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 )
 
@@ -103,5 +104,23 @@ func TestTaskTeamChannelsFollowTheRequester(t *testing.T) {
 		if _, err := create(access); !errors.Is(err, digitalhuman.ErrInvalidRequest) {
 			t.Fatalf("create with channels as %s: %v", access.Viewer.Mode, err)
 		}
+	}
+}
+
+func TestReportDigestBelongsToScheduledTasks(t *testing.T) {
+	cron := &automationmodel.AutomationTask{ScheduleType: automationmodel.AutomationScheduleTypeCron,
+		DeliveryConfig: withReportDigest(map[string]any{"mode": "task_only"}, digitalhuman.TaskReportDigestWeekly)}
+	if got := taskReportDigest(cron); got != digitalhuman.TaskReportDigestWeekly || cron.DeliveryConfig["mode"] != "task_only" {
+		t.Fatalf("a scheduled task's digest = %q, config %#v", got, cron.DeliveryConfig)
+	}
+	once := &automationmodel.AutomationTask{ScheduleType: automationmodel.AutomationScheduleTypeOnce, DeliveryConfig: cron.DeliveryConfig}
+	if got := taskReportDigest(once); got != digitalhuman.TaskReportDigestNone {
+		t.Fatalf("a one-off task kept a digest: %q", got)
+	}
+	if cleared := withReportDigest(cron.DeliveryConfig, digitalhuman.TaskReportDigestNone); cleared[reportDigestKey] != nil {
+		t.Fatalf("clearing the digest left %#v", cleared)
+	}
+	if digitalhuman.TaskReportDigest("hourly").Valid() {
+		t.Fatal("an unknown digest is valid")
 	}
 }

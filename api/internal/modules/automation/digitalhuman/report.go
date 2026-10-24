@@ -565,6 +565,7 @@ func reportNotice(row *taskReportRow, task *automationmodel.AutomationTask) (dig
 	notice.TaskName = task.Name
 	notice.ClientReference = pointerValue(task.ClientReference)
 	notice.ChannelIDs = taskNotifyChannels(task)
+	notice.Digest = taskReportDigest(task)
 	notice.Shared = teamReportableTask(task) && storedTaskVisibility(task) == digitalhuman.TaskVisibilityWorkspace
 	if row.DigitalHumanRunID != nil {
 		if id, err := uuid.Parse(*row.DigitalHumanRunID); err == nil {

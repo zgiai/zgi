@@ -574,6 +574,7 @@ const messages: DigitalHumansMessages = {
       report_created: '任务交回了一份汇报。',
       task_failed: '任务多次重试后仍然失败。',
       task_approval_requested: '数字人在对话里提出任务改动，等待用户确认。',
+      task_digest: '周期任务选了每日或每周汇总时，到点一次推送这段时间的全部汇报（data.reports）。',
       notification_test: '在下方点击“发送测试”时发出。',
     },
     payloadTitle: '推送内容',
@@ -1611,6 +1612,14 @@ const messages: DigitalHumansMessages = {
       fullLog: '查看完整日志',
       waitingApproval: '这次执行在等待审批，可以在完整日志里处理。',
       backToReport: '返回汇报',
+    },
+    digest: {
+      label: '外部渠道收到汇报的方式',
+      hint: '站内通知每次都有；执行失败总是立即发送。',
+      each: '每次运行',
+      daily: '每日汇总（9:00）',
+      weekly: '每周汇总（周一 9:00）',
+      updated: '汇报方式已更新。',
     },
     destinations: {
       label: '汇报发送到',
