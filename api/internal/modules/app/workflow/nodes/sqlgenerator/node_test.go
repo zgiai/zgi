@@ -494,6 +494,7 @@ type stubLLMInvoker struct {
 	response string
 	err      error
 	lastReq  *InvokeRequest
+	usage    *llmadapter.Usage
 }
 
 func (s *stubLLMInvoker) Invoke(ctx context.Context, accountID, appID, appType string, req *InvokeRequest) (*InvokeResult, error) {
@@ -504,5 +505,25 @@ func (s *stubLLMInvoker) Invoke(ctx context.Context, accountID, appID, appType s
 	return &InvokeResult{
 		Text:   s.response,
 		Finish: "stop",
+		Usage:  s.usage,
 	}, nil
+}
+
+func TestWorkflowGeneratorAddsUpTheTokensOfEveryAttempt(t *testing.T) {
+	invoker := &stubLLMInvoker{response: `{"sql":"SELECT 1"}`, usage: &llmadapter.Usage{PromptTokens: 145, CompletionTokens: 351, TotalTokens: 496}}
+	usage := &generationUsage{}
+	generator := workflowGenerator{node: &Node{llmInvoker: invoker}, usage: usage}
+	request := text2sql.GenerationRequest{Question: "question", Schema: "TABLE public.customers", Model: text2sql.Model{Name: "model"}}
+	if _, err := generator.Generate(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	// A repair is a second call; a gateway that leaves out the total still counts.
+	invoker.usage = &llmadapter.Usage{PromptTokens: 100, CompletionTokens: 28}
+	request.Repair = &text2sql.RepairRequest{PreviousResponse: "SELECT", Failure: "invalid"}
+	if _, err := generator.Generate(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got := usage.output(); got["prompt_tokens"] != 245 || got["completion_tokens"] != 379 || got["total_tokens"] != 624 {
+		t.Fatalf("usage = %#v", got)
+	}
 }
