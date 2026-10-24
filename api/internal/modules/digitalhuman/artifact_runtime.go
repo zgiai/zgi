@@ -202,7 +202,7 @@ func (a artifactTools) publish() skillloop.RuntimeTool {
 			if err != nil {
 				return artifactToolFailure("file_unavailable", true)
 			}
-			req.File = blob
+			req.File, req.SourceFileID = blob, strings.TrimPrefix(strings.TrimSpace(args.FileID), "tool_file:")
 		}
 		published, err := a.service.Publish(ctx, req)
 		if err != nil {

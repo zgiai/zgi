@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -79,6 +80,9 @@ func (s *Service) CreateShare(ctx context.Context, reader Reader, id uuid.UUID, 
 	}
 	if !canShare(reader, artifact) || artifact.ArchivedAt != nil {
 		return nil, ErrNotFound
+	}
+	if artifact.SharingDisabledAt != nil {
+		return nil, ErrSharingDisabled
 	}
 	lifetime = strings.TrimSpace(lifetime)
 	if lifetime == "" {
@@ -166,7 +170,7 @@ func (s *Service) OpenShare(ctx context.Context, token string, count bool) (*Sha
 		return nil, ErrNotFound
 	}
 	var artifact Artifact
-	if err := s.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL AND archived_at IS NULL", share.ArtifactID).Take(&artifact).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL AND archived_at IS NULL AND sharing_disabled_at IS NULL", share.ArtifactID).Take(&artifact).Error; err != nil {
 		return nil, notFound(err)
 	}
 	var version Version
@@ -198,6 +202,53 @@ func (s *Service) SharedContent(ctx context.Context, shared *Shared) ([]byte, er
 		return nil, fmt.Errorf("read shared artifact file: %w", err)
 	}
 	return data, nil
+}
+
+// ErrSharingDisabled is a share of an artifact whose sharing is stopped.
+var ErrSharingDisabled = errors.New("artifact sharing is stopped")
+
+// SetSharing stops or allows links out of the application to an artifact.
+// Anyone who may manage or share it may stop it; allowing it again takes
+// someone who may share it.
+func (s *Service) SetSharing(ctx context.Context, reader Reader, id uuid.UUID, enabled bool) (*Artifact, error) {
+	artifact, err := s.load(ctx, reader, id)
+	if err != nil {
+		return nil, err
+	}
+	if !canShare(reader, artifact) && (enabled || !canManage(reader, artifact)) {
+		return nil, ErrNotFound
+	}
+	if (artifact.SharingDisabledAt == nil) == enabled {
+		return artifact, nil
+	}
+	var value *time.Time
+	if !enabled {
+		now := s.now()
+		value = &now
+	}
+	if err := s.db.WithContext(ctx).Model(&Artifact{}).Where("id = ?", artifact.ID).UpdateColumn("sharing_disabled_at", value).Error; err != nil {
+		return nil, fmt.Errorf("set artifact sharing: %w", err)
+	}
+	artifact.SharingDisabledAt = value
+	return artifact, nil
+}
+
+// SourceFileWithdrawn reports whether a run's file became an artifact that
+// was archived or whose sharing was stopped; links to it should not open.
+func (s *Service) SourceFileWithdrawn(ctx context.Context, fileID string) (bool, error) {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return false, nil
+	}
+	var count int64
+	err := s.db.WithContext(ctx).Table("artifact_source_files AS sources").
+		Joins("JOIN artifacts ON artifacts.id = sources.artifact_id").
+		Where("sources.file_id = ? AND (artifacts.archived_at IS NOT NULL OR artifacts.sharing_disabled_at IS NOT NULL OR artifacts.deleted_at IS NOT NULL)", fileID).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("check withdrawn artifact file: %w", err)
+	}
+	return count > 0, nil
 }
 
 func shareTokenHash(token string) string {

@@ -994,6 +994,10 @@ export interface DigitalHumanArtifact {
   can_manage?: boolean;
   /** Whether the reader may make links to it that open without signing in. */
   can_share?: boolean;
+  /** The owner as people know them: a member's name or an end user's identifier. */
+  owner_name?: string;
+  /** Set while every link out, share links and channel downloads, is stopped. */
+  sharing_disabled_at?: string;
   latest?: DigitalHumanArtifactVersion;
 }
 

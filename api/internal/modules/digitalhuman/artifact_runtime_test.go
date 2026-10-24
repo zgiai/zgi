@@ -43,7 +43,7 @@ func TestRunsKeepArtifactsForTheirRequester(t *testing.T) {
 func artifactServiceForTest(t *testing.T) *artifacts.Service {
 	t.Helper()
 	_, repo := newTestService(t)
-	if err := repo.db.AutoMigrate(&artifacts.Artifact{}, &artifacts.Version{}); err != nil {
+	if err := repo.db.AutoMigrate(&artifacts.Artifact{}, &artifacts.Version{}, &artifacts.SourceFile{}, &artifacts.Share{}); err != nil {
 		t.Fatal(err)
 	}
 	return artifacts.NewService(repo.db, ToolFileArtifactBlobs{})

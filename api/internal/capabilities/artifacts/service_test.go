@@ -32,7 +32,7 @@ func newTestService(t *testing.T) (*Service, memoryBlobs) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&Artifact{}, &Version{}, &Share{}); err != nil {
+	if err := db.AutoMigrate(&Artifact{}, &Version{}, &Share{}, &SourceFile{}); err != nil {
 		t.Fatal(err)
 	}
 	blobs := memoryBlobs{}

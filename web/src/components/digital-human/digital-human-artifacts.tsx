@@ -6,7 +6,7 @@ import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-hu
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Archive, ArchiveRestore, Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Share2, Users } from 'lucide-react';
+import { Archive, ArchiveRestore, Download, FileImage, FileSpreadsheet, FileText, Files, History, Package, Search, Share2, UserRound, Users } from 'lucide-react';
 import { ArtifactShareDialog } from '@/components/digital-human/artifact-share-dialog';
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { ProtectedGeneratedFileCard } from '@/components/chat/variants/aichat/protected-generated-file-card';
@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useLocale } from '@/hooks/use-locale';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useT } from '@/i18n';
+import type { ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import { digitalHumanService } from '@/services/digital-human.service';
@@ -45,6 +46,22 @@ function readsAsText(version: DigitalHumanArtifactVersion, title: string) {
   const name = (version.file_name || title).toLowerCase();
   const extension = name.includes('.') ? name.split('.').pop() ?? '' : '';
   return version.mime_type?.startsWith('text/') || version.mime_type === 'application/json' || textExtensions.includes(extension);
+}
+
+/** Whom an artifact belongs to, in words: a member, an end user, or the team. */
+export function artifactOwnerLabel(t: ScopedTranslations<'digitalHumans'>, artifact: DigitalHumanArtifact) {
+  switch (artifact.owner_kind) {
+    case 'workspace':
+      return t('artifacts.owner.team');
+    case 'application':
+      return t('artifacts.owner.application');
+    case 'api_end_user':
+      return artifact.owner_name
+        ? t('artifacts.owner.endUserNamed', { name: artifact.owner_name })
+        : t('artifacts.owner.endUser', { id: artifact.owner_id.slice(0, 8) });
+    default:
+      return artifact.owner_name || t('artifacts.owner.member');
+  }
 }
 
 function formatSize(bytes: number) {
@@ -177,7 +194,12 @@ export function DigitalHumanArtifacts({ id }: { id: string }) {
                       <span>{t(`artifacts.kind.${item.kind}`)}</span>
                       <span>·</span>
                       <span>{t('artifacts.versionCount', { count: item.current_version })}</span>
-                      {item.visibility === 'team' ? (
+                      <span>·</span>
+                      <span className="inline-flex min-w-0 items-center gap-0.5">
+                        {item.owner_kind === 'workspace' ? <Users className="size-3 shrink-0" /> : <UserRound className="size-3 shrink-0" />}
+                        <span className="truncate">{artifactOwnerLabel(t, item)}</span>
+                      </span>
+                      {item.visibility === 'team' && item.owner_kind !== 'workspace' ? (
                         <span className="inline-flex items-center gap-0.5">
                           <Users className="size-3" />
                           {t('artifacts.visibility.team')}
@@ -265,7 +287,7 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
             {formatTaskTime(version.created_at, locale)}
           </p>
         </div>
-        {data.can_share && !data.archived_at ? (
+        {(data.can_share || data.can_manage) && !data.archived_at ? (
           <Button size="sm" variant="outline" className="shrink-0" onClick={() => setSharing(true)}>
             <Share2 className="size-4" />
             {t('artifacts.share.action')}
@@ -279,8 +301,12 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
         ) : null}
       </div>
       {data.archived_at ? <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">{t('artifacts.archivedNotice')}</p> : null}
+      {!data.archived_at && data.sharing_disabled_at ? (
+        <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">{t('artifacts.share.stoppedNotice')}</p>
+      ) : null}
       {version.note ? <p className="rounded-lg border-l-2 border-primary/60 bg-muted/40 px-3 py-2 text-sm">{version.note}</p> : null}
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border px-4 py-3 text-sm sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border px-4 py-3 text-sm sm:grid-cols-3">
+        <ArtifactFact label={t('artifacts.facts.owner')} value={artifactOwnerLabel(t, data)} />
         <ArtifactFact label={t('artifacts.facts.kind')} value={t(`artifacts.kind.${data.kind}`)} />
         <ArtifactFact label={t('artifacts.facts.visibility')} value={t(`artifacts.visibility.${data.visibility}`)} />
         <ArtifactFact label={t('artifacts.facts.size')} value={formatSize(version.size) || '—'} />
@@ -307,7 +333,7 @@ export function ArtifactDetail({ digitalHumanId, artifactId }: { digitalHumanId:
         />
       </dl>
       <ArtifactPreview digitalHumanId={digitalHumanId} artifact={data} version={version} />
-      <ArtifactShareDialog digitalHumanId={digitalHumanId} artifactId={data.id} version={version.number} open={sharing} onOpenChange={setSharing} />
+      <ArtifactShareDialog digitalHumanId={digitalHumanId} artifact={data} version={version.number} open={sharing} onOpenChange={setSharing} />
       {items.length > 1 ? (
         <section>
           <h3 className="flex items-center gap-1.5 text-sm font-semibold">

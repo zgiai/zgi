@@ -90,3 +90,56 @@ func TestAShareOpensOneVersionUntilItExpiresOrIsRevoked(t *testing.T) {
 		t.Fatalf("an expired share opened: %v", err)
 	}
 }
+
+func TestStoppingSharingClosesEveryLinkOut(t *testing.T) {
+	service, _ := newTestService(t)
+	ctx := t.Context()
+	scope := Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), ApplicationType: "digital_human", ApplicationID: uuid.New()}
+	owner := Owner{Kind: OwnerAccount, ID: uuid.New()}
+	published, err := service.Publish(ctx, PublishRequest{Scope: scope, Owner: owner, Visibility: VisibilityTeam, Kind: KindFile, Title: "deck.pptx",
+		File:   &Blob{Name: "deck.pptx", MimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", Data: []byte("pptx")},
+		Source: SourceRun, SourceFileID: "run-file-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := published.Artifact.ID
+	ownerReader := Reader{Scope: scope, Principal: owner, Member: true}
+	member := Reader{Scope: scope, Principal: Owner{Kind: OwnerAccount, ID: uuid.New()}, Member: true}
+	actor := Actor{Kind: string(OwnerAccount), ID: owner.ID.String()}
+	share, err := service.CreateShare(ctx, member, id, 0, "7d", actor)
+	if err != nil {
+		t.Fatalf("a member could not share a team artifact: %v", err)
+	}
+	if withdrawn, err := service.SourceFileWithdrawn(ctx, "run-file-1"); err != nil || withdrawn {
+		t.Fatalf("a shared run file is withdrawn: %v, %v", withdrawn, err)
+	}
+
+	if _, err := service.SetSharing(ctx, member, id, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.OpenShare(ctx, share.Token, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a link opened after sharing stopped: %v", err)
+	}
+	if withdrawn, _ := service.SourceFileWithdrawn(ctx, "run-file-1"); !withdrawn {
+		t.Fatal("a channel link to the run file still works after sharing stopped")
+	}
+	if _, err := service.CreateShare(ctx, ownerReader, id, 0, "7d", actor); !errors.Is(err, ErrSharingDisabled) {
+		t.Fatalf("a link was made while sharing is stopped: %v", err)
+	}
+
+	if _, err := service.SetSharing(ctx, ownerReader, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.OpenShare(ctx, share.Token, false); err != nil {
+		t.Fatalf("a link did not open after sharing was allowed again: %v", err)
+	}
+	if _, err := service.SetArchived(ctx, ownerReader, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if withdrawn, _ := service.SourceFileWithdrawn(ctx, "run-file-1"); !withdrawn {
+		t.Fatal("a channel link to the run file still works after archiving")
+	}
+	if withdrawn, _ := service.SourceFileWithdrawn(ctx, "another-file"); withdrawn {
+		t.Fatal("an unrelated file is withdrawn")
+	}
+}

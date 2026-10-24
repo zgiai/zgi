@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -112,7 +113,9 @@ type PublishRequest struct {
 	SourceConversationID *uuid.UUID
 	SourceRunID          *uuid.UUID
 	SourceReportID       *uuid.UUID
-	Actor                Actor
+	// SourceFileID is the run's own file the content came from, if any.
+	SourceFileID string
+	Actor        Actor
 }
 
 // Published is the result of a publish. Created is false when the content
@@ -131,6 +134,8 @@ type Summary struct {
 	CanManage bool `json:"can_manage"`
 	// CanShare says whether the reader may make links to it.
 	CanShare bool `json:"can_share"`
+	// OwnerName is the owner as people know it, filled in by the product.
+	OwnerName string `json:"owner_name,omitempty"`
 }
 
 // ArchiveFilter selects artifacts by whether they are archived.
@@ -183,6 +188,20 @@ func NewService(db *gorm.DB, blobs BlobStore) *Service {
 // Publish stores new content as a version. Content equal to the current
 // version is not stored again.
 func (s *Service) Publish(ctx context.Context, req PublishRequest) (*Published, error) {
+	published, err := s.publish(ctx, req)
+	if err != nil || strings.TrimSpace(req.SourceFileID) == "" {
+		return published, err
+	}
+	// Recorded even when the content was kept already: this file is now one
+	// of the artifact's.
+	source := &SourceFile{ArtifactID: published.Artifact.ID, FileID: strings.TrimSpace(req.SourceFileID), CreatedAt: s.now()}
+	if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(source).Error; err != nil {
+		return nil, fmt.Errorf("record artifact source file: %w", err)
+	}
+	return published, nil
+}
+
+func (s *Service) publish(ctx context.Context, req PublishRequest) (*Published, error) {
 	title := strings.TrimSpace(req.Title)
 	if !req.Scope.valid() || !req.Owner.valid() || title == "" || utf8.RuneCountInString(title) > MaxTitleRunes || !validVisibility(req.Owner, req.Visibility) {
 		return nil, ErrInvalidRequest

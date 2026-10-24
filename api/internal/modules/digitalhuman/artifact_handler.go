@@ -21,6 +21,13 @@ import (
 type ArtifactHandler struct {
 	artifacts *artifacts.Service
 	base      *Handler
+	owners    *ArtifactOwnerNames
+}
+
+// WithOwnerNames names artifact owners in the console's lists and details.
+func (h *ArtifactHandler) WithOwnerNames(owners *ArtifactOwnerNames) *ArtifactHandler {
+	h.owners = owners
+	return h
 }
 
 // NewArtifactHandler builds the console artifact handler.
@@ -40,6 +47,7 @@ func (h *ArtifactHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/:artifact_id/versions/:number/content", h.content)
 	group.POST("/:artifact_id/archive", h.archive(true))
 	group.POST("/:artifact_id/restore", h.archive(false))
+	group.POST("/:artifact_id/sharing", h.sharing)
 	group.GET("/:artifact_id/shares", h.shares)
 	group.POST("/:artifact_id/shares", h.createShare)
 	group.POST("/:artifact_id/shares/:share_id/revoke", h.revokeShare)
@@ -50,6 +58,36 @@ func (h *ArtifactHandler) RegisterRoutes(router *gin.RouterGroup) {
 func (h *ArtifactHandler) RegisterShareRoutes(router *gin.RouterGroup) {
 	router.GET("/:token", h.openShare)
 	router.GET("/:token/content", h.sharedContent)
+}
+
+// sharing stops or allows links out of the application to an artifact.
+func (h *ArtifactHandler) sharing(c *gin.Context) {
+	reader, ok := h.reader(c)
+	if !ok {
+		return
+	}
+	id, ok := h.artifactID(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.Enabled == nil {
+		h.writeError(c, artifacts.ErrInvalidRequest, "digital_human.artifact.sharing")
+		return
+	}
+	if _, err := h.artifacts.SetSharing(c.Request.Context(), reader, id, *request.Enabled); err != nil {
+		h.writeError(c, err, "digital_human.artifact.sharing")
+		return
+	}
+	result, err := h.artifacts.Get(c.Request.Context(), reader, id)
+	if err != nil {
+		h.writeError(c, err, "digital_human.artifact.sharing")
+		return
+	}
+	h.owners.Fill(c.Request.Context(), result)
+	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
 func (h *ArtifactHandler) shares(c *gin.Context) {
@@ -222,6 +260,7 @@ func (h *ArtifactHandler) list(c *gin.Context) {
 		h.writeError(c, err, "digital_human.artifact.list")
 		return
 	}
+	h.owners.Fill(c.Request.Context(), result.Items...)
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
@@ -239,6 +278,7 @@ func (h *ArtifactHandler) get(c *gin.Context) {
 		h.writeError(c, err, "digital_human.artifact.get")
 		return
 	}
+	h.owners.Fill(c.Request.Context(), result)
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
@@ -280,6 +320,7 @@ func (h *ArtifactHandler) archive(archived bool) gin.HandlerFunc {
 			h.writeError(c, err, "digital_human.artifact.archive")
 			return
 		}
+		h.owners.Fill(c.Request.Context(), result)
 		writeDigitalHumanData(c, http.StatusOK, result)
 	}
 }
@@ -329,7 +370,7 @@ func (h *ArtifactHandler) writeError(c *gin.Context, err error, operation string
 	switch {
 	case errors.Is(err, artifacts.ErrNotFound):
 		err = ErrNotFound
-	case errors.Is(err, artifacts.ErrInvalidRequest):
+	case errors.Is(err, artifacts.ErrInvalidRequest), errors.Is(err, artifacts.ErrSharingDisabled):
 		err = ErrInvalidRequest
 	}
 	h.base.writeError(c, applicationError(err, operation))

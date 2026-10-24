@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
@@ -261,6 +262,12 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// ---------- DigitalHuman ----------
 	// Artifacts outlive the runs that produce them (ADR 0009).
 	artifactService := artifacts.NewService(db, digitalhuman.ToolFileArtifactBlobs{})
+	// A channel's download link to a run file stops with the artifact the
+	// file became, when it is archived or its sharing stopped.
+	tool_file.ChannelDeliveryWithdrawn = func(ctx context.Context, fileID string) bool {
+		withdrawn, err := artifactService.SourceFileWithdrawn(ctx, fileID)
+		return err != nil || withdrawn
+	}
 	digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
 		Artifacts:                           artifactService,
 		DB:                                  db,
@@ -323,6 +330,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
 		Service: consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
 		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access, Artifacts: artifactService,
+		ArtifactOwners: digitalhuman.NewArtifactOwnerNames(db),
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
 		PendingTaskChanges:      digitalhuman.NewRepository(db),

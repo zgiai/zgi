@@ -12,7 +12,7 @@ import { formatTaskTime } from '@/components/digital-human/digital-human-task-pr
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
-import type { DigitalHumanArtifactShare, DigitalHumanArtifactShareLifetime } from '@/services/types/digital-human';
+import type { DigitalHumanArtifact, DigitalHumanArtifactShare, DigitalHumanArtifactShareLifetime } from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 const lifetimes: DigitalHumanArtifactShareLifetime[] = ['1d', '7d', '30d', 'never'];
@@ -29,13 +29,13 @@ export function artifactShareUrl(token: string) {
  */
 export function ArtifactShareDialog({
   digitalHumanId,
-  artifactId,
+  artifact,
   version,
   open,
   onOpenChange,
 }: {
   digitalHumanId: string;
-  artifactId: string;
+  artifact: DigitalHumanArtifact;
   version: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -46,6 +46,8 @@ export function ArtifactShareDialog({
   const [lifetime, setLifetime] = useState<DigitalHumanArtifactShareLifetime>('7d');
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const artifactId = artifact.id;
+  const stopped = Boolean(artifact.sharing_disabled_at);
   const sharesKey = ['digital-human-artifact-shares', digitalHumanId, artifactId];
   const shares = useQuery({
     queryKey: sharesKey,
@@ -66,6 +68,18 @@ export function ArtifactShareDialog({
     onSuccess: () => {
       toast.success(t('artifacts.share.revoked'));
       void queryClient.invalidateQueries({ queryKey: sharesKey });
+    },
+    onError: error => toast.error(getErrorMessage(error) || t('artifacts.share.error')),
+  });
+  // Stopping sharing closes every link out of the console: share links and
+  // the download links channels were sent.
+  const sharing = useMutation({
+    mutationFn: (enabled: boolean) => digitalHumanService.setArtifactSharing(digitalHumanId, artifactId, enabled),
+    onSuccess: (result, enabled) => {
+      queryClient.setQueryData(['digital-human-artifact', digitalHumanId, artifactId], result);
+      void queryClient.invalidateQueries({ queryKey: ['digital-human-artifacts', digitalHumanId] });
+      setLink(null);
+      toast.success(enabled ? t('artifacts.share.resumed') : t('artifacts.share.stopped'));
     },
     onError: error => toast.error(getErrorMessage(error) || t('artifacts.share.error')),
   });
@@ -96,7 +110,10 @@ export function ArtifactShareDialog({
           <DialogDescription>{t('artifacts.share.description', { number: version })}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
-          {link ? (
+          {stopped ? (
+            <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">{t('artifacts.share.stoppedNotice')}</p>
+          ) : null}
+          {stopped || !artifact.can_share ? null : link ? (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">{t('artifacts.share.onlyOnce')}</p>
               <div className="flex gap-2">
@@ -139,7 +156,20 @@ export function ArtifactShareDialog({
             </section>
           ) : null}
         </DialogBody>
-        <DialogFooter>
+        <DialogFooter className="sm:justify-between">
+          {stopped ? (
+            artifact.can_share ? (
+              <Button variant="outline" disabled={sharing.isPending} onClick={() => sharing.mutate(true)}>
+                {t('artifacts.share.resume')}
+              </Button>
+            ) : (
+              <span />
+            )
+          ) : (
+            <Button variant="outline" className="text-destructive" disabled={sharing.isPending} onClick={() => sharing.mutate(false)}>
+              {t('artifacts.share.stop')}
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => close(false)}>
             {t('artifacts.share.done')}
           </Button>

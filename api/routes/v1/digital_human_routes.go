@@ -61,6 +61,8 @@ type DigitalHumanRouteDeps struct {
 	PendingTaskChanges digitalhuman.TaskPendingChangeSource
 	// Artifacts serves the DigitalHuman's artifact center (ADR 0009).
 	Artifacts *artifacts.Service
+	// ArtifactOwners names artifact owners in the console.
+	ArtifactOwners *digitalhuman.ArtifactOwnerNames
 }
 
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
@@ -137,7 +139,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	taskHandler.RegisterRoutes(group)
 	taskHandler.RegisterReportRoutes(group)
 	if deps.Artifacts != nil {
-		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).RegisterRoutes(group)
+		digitalhuman.NewArtifactHandler(deps.Artifacts, errorProjector).WithOwnerNames(deps.ArtifactOwners).RegisterRoutes(group)
 	}
 	if deps.NotificationChannels != nil {
 		deps.NotificationChannels.RegisterRoutes(group, "/digital-humans/:id/notification-channels", digitalHumanChannelOwner(deps.Service, errorProjector))
@@ -263,7 +265,7 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 			return workspacemodel.WorkspacePermissionDigitalHumanView
 		case http.MethodPost:
 			if strings.HasSuffix(path, "/archive") || strings.HasSuffix(path, "/restore") ||
-				strings.HasSuffix(path, "/shares") || strings.HasSuffix(path, "/revoke") {
+				strings.HasSuffix(path, "/shares") || strings.HasSuffix(path, "/revoke") || strings.HasSuffix(path, "/sharing") {
 				return workspacemodel.WorkspacePermissionDigitalHumanView
 			}
 			return ""

@@ -648,6 +648,10 @@ class DigitalHumanService extends BaseService {
     return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/${archived ? 'archive' : 'restore'}`);
   }
 
+  setArtifactSharing(id: string, artifactId: string, enabled: boolean): Promise<ApiResponseData<DigitalHumanArtifact>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/sharing`, { enabled });
+  }
+
   listArtifactShares(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactShare[] }>> {
     return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}/shares`);
   }
