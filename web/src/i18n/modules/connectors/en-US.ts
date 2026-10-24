@@ -206,6 +206,7 @@ const messages = {
     weixin:
       'Retrieve direct messages explicitly and reply using their conversation context. Manual token setup is not available.',
     unavailable: 'This connection service is currently unavailable. Please try again later.',
+    dingtalkPermission: 'DingTalk refused to create the app: the scanning account has no developer permission in the selected organization. Make sure you picked the organization you manage when scanning and that developer access is enabled on open-dev.dingtalk.com, or enter an existing app\'s AppKey and AppSecret instead.',
     qrUnavailable: 'QR connection is currently unavailable. You can enter credentials manually.',
     qr: 'Connect with QR',
     start: 'Start QR connection',

@@ -68,6 +68,29 @@ func TestDingTalkStepsAndSecretIsolation(t *testing.T) {
 	}
 }
 
+func TestDingTalkRegistrationRefusalsSayWhy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		want core.ErrorCode
+	}{
+		"no developer permission": {`{"errcode":40001,"errmsg":"用户没有开发者权限，请联系主管理员开通"}`, core.ErrorCodeAccessDenied},
+		"denied status":           {`{"errcode":0,"status":"PERMISSION_DENIED"}`, core.ErrorCodeAccessDenied},
+		"other refusal":           {`{"errcode":50001,"errmsg":"system busy"}`, core.ErrorCodeProviderUnavailable},
+		"unknown status":          {`{"errcode":0,"status":"SOMETHING"}`, core.ErrorCodeProviderUnavailable},
+	} {
+		a, err := NewDingTalkAdapter(&http.Client{Transport: protocolTransport(func(*http.Request) (*http.Response, error) {
+			return protocolResponse(tc.body), nil
+		})}, ProtocolSettings{Source: "s", QRHosts: []string{"login.dingtalk.com"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = a.Advance(context.Background(), Flow{Step: "poll"}, ProtocolSecret{DeviceCode: "device"})
+		if core.ErrorCodeOf(err) != tc.want {
+			t.Fatalf("%s: %v, want %s", name, err, tc.want)
+		}
+	}
+}
+
 func TestWeixinEightStatesAndOriginFence(t *testing.T) {
 	for _, status := range []string{"wait", "scaned", "need_verifycode", "expired", "verify_code_blocked", "binded_redirect", "confirmed", "scaned_but_redirect", "unknown"} {
 		t.Run(status, func(t *testing.T) {
