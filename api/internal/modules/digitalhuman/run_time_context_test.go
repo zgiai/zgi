@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -36,5 +37,27 @@ func TestATaskScheduleWithoutTimezoneIsInTheUsers(t *testing.T) {
 	}})
 	if result.Status != "success" || len(created) != 1 || created[0].Schedule.Timezone != "Asia/Tokyo" {
 		t.Fatalf("create = %#v, requests %#v", result, created)
+	}
+}
+
+func TestATaskFromANewConversationReportsBackToIt(t *testing.T) {
+	created := []CreateTaskRequest{}
+	mutations := []TaskMutationContext{}
+	provider := NewTaskRuntimeProvider(taskRuntimeService{createCalls: &created, createMutations: &mutations})
+	run, event := taskRuntimeFixture(invocation.OriginManual)
+	delete(event.Context, "conversation_id")
+	event.ReplyTo = nil
+	prepared, err := provider.Prepare(t.Context(), run, event)
+	if err != nil || prepared.BindConversation == nil {
+		t.Fatalf("Prepare() = %#v, %v", prepared, err)
+	}
+	conversationID := uuid.New()
+	prepared.BindConversation(conversationID)
+	result := prepared.Tools[2].Handler(t.Context(), adapter.ToolCall{ID: "here", Function: adapter.FunctionCall{
+		Name: taskManageToolName, Arguments: `{"action":"create","name":"Stretch","goal":"Remind me to stretch","delivery_mode":"source_conversation"}`,
+	}})
+	if result.Status != "success" || len(created) != 1 || created[0].DeliveryMode != TaskDeliverySourceConversation ||
+		mutations[0].SourceConversationID != conversationID.String() {
+		t.Fatalf("create = %#v, requests %#v, mutations %#v", result, created, mutations)
 	}
 }

@@ -66,3 +66,14 @@ func TestChannelTaskReportJoinsItsConversationHistory(t *testing.T) {
 		t.Fatal("an installation of another workspace was accepted")
 	}
 }
+
+func TestADeliveredReportSaysWhatTheRunSaid(t *testing.T) {
+	report := &TaskReportDelivery{Outcome: TaskReportDone, Summary: "已发送喝水提醒。", Body: "预定 16:09，实际 16:09。"}
+	if got := taskReportMessage(report, "喝水时间到啦 💧"); got != "喝水时间到啦 💧" {
+		t.Fatalf("message = %q, want the run's answer", got)
+	}
+	failed := &TaskReportDelivery{Outcome: TaskReportFailed, Summary: "执行超时。", Issues: "需要更长的超时时间。"}
+	if got := taskReportMessage(failed, ""); got != "这次没有执行成功：执行超时。\n\n需要更长的超时时间。" {
+		t.Fatalf("message without an answer = %q", got)
+	}
+}

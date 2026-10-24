@@ -3,6 +3,7 @@
 import { ModelIcon } from 'modelicons';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  CalendarClock,
   AlertCircle,
   Bot,
   CheckCircle2,
@@ -1315,7 +1316,10 @@ export function AIChatMessageBubble({
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
-  const hasUserQuery = Boolean(message.query.trim() || files.length > 0);
+  // A delivered task result is the digital human speaking on its own; its
+  // stored query only labels the turn and was never said by the user.
+  const deliveredTaskResult = Boolean((message.metadata as Record<string, unknown> | undefined)?.digital_human_task_result);
+  const hasUserQuery = !deliveredTaskResult && Boolean(message.query.trim() || files.length > 0);
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
   const visibleGeneratedFiles = generatedFiles;
   const generatedImagePreviewFilesForDisplay = useMemo(
@@ -1865,16 +1869,17 @@ function TaskReportMessageHeader({ report }: { report: TaskReportMessage }) {
   // The console opens the report in its report drawer, where it can be
   // accepted or sent back; the WebApp keeps reports in its task panel.
   const reviewable = Boolean(report.reportId && pathname?.startsWith('/console/digital-humans/'));
+  // The message itself is what the task delivered; this line only says which
+  // task it came from, and how it went when that needs attention.
   return (
-    <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-      <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="font-medium">{t('consoleChat.taskReport.title')}</span>
-      {report.taskName ? <span className="min-w-0 truncate text-muted-foreground">{report.taskName}</span> : null}
-      <Badge variant={taskReportOutcomeVariant[report.outcome]} className="ml-auto">
-        {t(`consoleChat.taskReport.outcome.${report.outcome}`)}
-      </Badge>
+    <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <CalendarClock className="size-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{report.taskName || t('consoleChat.taskReport.title')}</span>
+      {report.outcome !== 'done' ? (
+        <Badge variant={taskReportOutcomeVariant[report.outcome]}>{t(`consoleChat.taskReport.outcome.${report.outcome}`)}</Badge>
+      ) : null}
       {reviewable ? (
-        <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => openReport(report.reportId)}>
+        <Button size="sm" variant="link" className="h-auto p-0 text-xs" onClick={() => openReport(report.reportId)}>
           {t('consoleChat.taskReport.view')}
         </Button>
       ) : null}

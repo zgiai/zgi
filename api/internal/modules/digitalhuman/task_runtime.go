@@ -35,6 +35,10 @@ const (
 type TaskRuntimePreparation struct {
 	SystemPromptAddendum string
 	Tools                []skillloop.RuntimeTool
+	// BindConversation tells the tools the conversation of a run that had
+	// none when they were prepared, the first message of a new one, so a
+	// task can still report back to it.
+	BindConversation func(uuid.UUID)
 }
 type TaskRuntimeProvider interface {
 	Prepare(context.Context, *Run, invocation.Event) (*TaskRuntimePreparation, error)
@@ -72,6 +76,17 @@ type taskRuntimeBoundary struct {
 	writable         bool
 	// timezone is the user's, for schedules the model gives without one.
 	timezone string
+	// conversation is shared with the tools and bound once the run has its
+	// conversation; see TaskRuntimePreparation.BindConversation.
+	conversation *string
+}
+
+// sourceConversationID is the conversation a task created now reports to.
+func (b taskRuntimeBoundary) sourceConversationID() string {
+	if b.conversation != nil && *b.conversation != "" {
+		return *b.conversation
+	}
+	return b.conversationID
 }
 
 func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, event invocation.Event) (*TaskRuntimePreparation, error) {
@@ -101,13 +116,23 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 	}
 	boundary.access = access
 	boundary.timezone = runTimezone(ctx)
+	conversation := boundary.conversationID
+	boundary.conversation = &conversation
 	tools := []skillloop.RuntimeTool{p.listTool(run, boundary), p.getTool(run, boundary), p.manageTool(run, boundary)}
 	if reporter, ok := p.service.(TaskReportService); ok && boundary.currentTaskID != uuid.Nil && boundary.currentTaskRunID != uuid.Nil {
 		tools = append(tools, p.reportTool(run, boundary, reporter))
 	} else if ok && boundary.currentTaskID == uuid.Nil {
 		tools = append(tools, p.reworkTool(run, boundary, reporter))
 	}
-	return &TaskRuntimePreparation{SystemPromptAddendum: taskRuntimeGuidance(boundary), Tools: tools}, nil
+	preparation := &TaskRuntimePreparation{SystemPromptAddendum: taskRuntimeGuidance(boundary), Tools: tools}
+	if boundary.replyTo == nil {
+		preparation.BindConversation = func(id uuid.UUID) {
+			if conversation == "" && id != uuid.Nil {
+				conversation = id.String()
+			}
+		}
+	}
+	return preparation, nil
 }
 
 func taskRuntimeGuidance(boundary taskRuntimeBoundary) string {
@@ -501,7 +526,7 @@ func (p *DefaultTaskRuntimeProvider) reworkTool(run *Run, boundary taskRuntimeBo
 			return taskToolFailure("digital_human.task_report.not_found", false)
 		}
 		mutation := TaskMutationContext{ActorType: "digital_human", ActorRef: run.DigitalHumanID.String(), OperationID: taskToolOperationID(run.ID, call), SourceRunID: &run.ID,
-			Source: boundary.source, SourceConversationID: boundary.conversationID, SourceConversationType: boundary.conversationType, ReplyTo: boundary.replyTo}
+			Source: boundary.source, SourceConversationID: boundary.sourceConversationID(), SourceConversationType: boundary.conversationType, ReplyTo: boundary.replyTo}
 		reviewed, err := reports.ReviewTaskReport(ctx, boundary.access, latest.ID, ReviewTaskReportRequest{Action: TaskReportRework, Feedback: args.Feedback}, mutation)
 		if err != nil {
 			return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))
@@ -592,7 +617,7 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 		if args.Schedule != nil && strings.TrimSpace(args.Schedule.Timezone) == "" && boundary.timezone != "" {
 			args.Schedule.Timezone = boundary.timezone
 		}
-		mutation := TaskMutationContext{ActorType: "digital_human", ActorRef: run.DigitalHumanID.String(), OperationID: taskToolOperationID(run.ID, call), SourceRunID: &run.ID, Source: boundary.source, SourceConversationID: boundary.conversationID, SourceConversationType: boundary.conversationType, ReplyTo: boundary.replyTo}
+		mutation := TaskMutationContext{ActorType: "digital_human", ActorRef: run.DigitalHumanID.String(), OperationID: taskToolOperationID(run.ID, call), SourceRunID: &run.ID, Source: boundary.source, SourceConversationID: boundary.sourceConversationID(), SourceConversationType: boundary.conversationType, ReplyTo: boundary.replyTo}
 		if boundary.currentTaskID != uuid.Nil && !scheduledTaskMutationAllowed(args, boundary.currentTaskID) {
 			return taskToolFailure("digital_human.task.policy_rejected", false)
 		}
@@ -602,7 +627,7 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 			direct := directTaskCreateAllowed(boundary, args)
 			mutation.Proposed, mutation.Undoable = !direct, direct
 			if args.DeliveryMode == TaskDeliverySourceConversation &&
-				boundary.replyTo == nil && !validTaskConversationID(boundary.conversationID) {
+				boundary.replyTo == nil && !validTaskConversationID(boundary.sourceConversationID()) {
 				// A source conversation is a durable ChatRuntime conversation for
 				// console/API/WebApp runs, or a ReplyAddress for channels. If neither
 				// is present, fall back safely to the task center instead of storing an

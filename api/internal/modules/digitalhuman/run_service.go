@@ -603,7 +603,7 @@ func (s *RuntimeService) DeliverTaskResult(ctx context.Context, req TaskResultDe
 		if name := strings.TrimSpace(req.TaskName); name != "" {
 			query = "任务汇报：" + name
 		}
-		answer = taskReportMessage(report)
+		answer = taskReportMessage(report, answer)
 		metadata["digital_human_task_report"] = map[string]interface{}{
 			"report_id": report.ID.String(), "task_id": req.TaskID.String(), "task_name": strings.TrimSpace(req.TaskName),
 			"outcome": string(report.Outcome), "summary": report.Summary,
@@ -646,19 +646,24 @@ func (s *RuntimeService) channelTaskConversation(ctx context.Context, req TaskRe
 	return *route.Mapping.LocalConversationID, route.Installation.CreatedBy, true, nil
 }
 
-// taskReportMessage renders a final report as the delivered message text. The
-// report card in the client reads the structured metadata; this text keeps the
-// conversation readable everywhere else.
-func taskReportMessage(report *TaskReportDelivery) string {
-	outcome := map[TaskReportOutcome]string{
-		TaskReportDone: "已完成", TaskReportPartial: "部分完成", TaskReportNotDone: "未完成", TaskReportFailed: "执行失败",
-	}[report.Outcome]
-	parts := []string{"**结论：" + outcome + "**", strings.TrimSpace(report.Summary)}
+// taskReportMessage is what a delivered report says in the conversation: the
+// run's own answer, the message it was asked to deliver. The report itself is
+// one tap away in the client, which reads its outcome from the metadata.
+// Without an answer, as after a failed run, the report's text stands in.
+func taskReportMessage(report *TaskReportDelivery, answer string) string {
+	if answer = strings.TrimSpace(answer); answer != "" {
+		return answer
+	}
+	parts := []string{strings.TrimSpace(report.Summary)}
+	if report.Outcome != TaskReportDone {
+		lead := map[TaskReportOutcome]string{TaskReportPartial: "这次只完成了一部分：", TaskReportNotDone: "这次没能完成：", TaskReportFailed: "这次没有执行成功："}[report.Outcome]
+		parts[0] = lead + parts[0]
+	}
 	if body := strings.TrimSpace(report.Body); body != "" && body != strings.TrimSpace(report.Summary) {
 		parts = append(parts, body)
 	}
 	if issues := strings.TrimSpace(report.Issues); issues != "" {
-		parts = append(parts, "**问题：**\n"+issues)
+		parts = append(parts, issues)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -1124,6 +1129,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			config.RuntimeTools = append(config.RuntimeTools, memoryPreparation.Tools...)
 		}
 	}
+	var bindTaskConversation func(uuid.UUID)
 	if s.tasks != nil && !previewRun(run) {
 		taskPreparation, taskErr := s.tasks.Prepare(withRunTimezone(ctx, location), run, event)
 		if taskErr != nil {
@@ -1135,6 +1141,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
 			}
 			config.RuntimeTools = append(config.RuntimeTools, taskPreparation.Tools...)
+			bindTaskConversation = taskPreparation.BindConversation
 		}
 	}
 	chatRequest := runtimedto.ChatRequest{
@@ -1225,6 +1232,9 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		_, _ = s.chat.StopMessage(ctx, runtimeScope(run), prepared.Message.ID)
 		_ = s.store.FailRun(ctx, run.ID, AppCodeRunConflict.String(), "The execution was canceled before it started.", s.now())
 		return err
+	}
+	if bindTaskConversation != nil && prepared.Conversation != nil {
+		bindTaskConversation(prepared.Conversation.ID)
 	}
 	current, err := s.store.RunByID(ctx, runScope(run), run.DigitalHumanID, run.ID)
 	if err != nil || current.Status == RunStatusCanceling || current.CancelRequestedAt != nil {
