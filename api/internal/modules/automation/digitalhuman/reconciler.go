@@ -63,6 +63,9 @@ func (h *ReconcileHandler) Handle(ctx context.Context, _ *asynq.Task) error {
 	if err := h.expireProposals(ctx); err != nil {
 		return err
 	}
+	if err := closeExpiredReports(ctx, h.db, h.now()); err != nil {
+		return err
+	}
 	if h.provider == nil {
 		return nil
 	}

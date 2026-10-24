@@ -520,12 +520,13 @@ type manageTaskArguments struct {
 	ExecutionTimeoutSeconds int              `json:"execution_timeout_seconds"`
 	MaxAttempts             int              `json:"max_attempts"`
 	LifecycleStatus         string           `json:"lifecycle_status"`
+	ReportReview            TaskReportReview `json:"report_review"`
 }
 
 func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBoundary) skillloop.RuntimeTool {
 	description := "Create a task proposal that requires separate user approval, or manage an existing task. The create and propose actions are aliases. Existing-task actions require its ID and current revision. Use pause or resume to change whether a task is scheduled; use set_status only for the work status (waiting or blocked during a scheduled run). When changing when a task runs, check whether its goal or success criteria state a time (such as every day at 9:00). If they do, use update rather than schedule and rewrite that time in the same update, so the task never describes a time it no longer runs at."
 	definition := adapter.Tool{Type: "function", Function: adapter.Function{Name: taskManageToolName, Description: description, Parameters: map[string]any{"type": "object", "properties": map[string]any{
-		"action": map[string]any{"type": "string", "enum": []string{"create", "propose", "confirm", "decline", "update", "set_status", "schedule", "run_now", "pause", "resume", "retry", "cancel", "archive"}}, "task_id": map[string]any{"type": "string", "format": "uuid"}, "expected_revision": map[string]any{"type": "integer", "minimum": 0}, "name": map[string]any{"type": "string"}, "goal": map[string]any{"type": "string"}, "success_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}}, "status": map[string]any{"type": "string", "enum": taskStatusValues()}, "lifecycle_status": map[string]any{"type": "string", "enum": []string{"paused", "active", "archived"}, "description": "When updating a paused task together with its schedule, set active to resume it in the same approved operation."}, "schedule": map[string]any{"type": "object", "description": "When this changes an existing task's timing and its goal or success criteria state a time, send them in the same update with that time rewritten.", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"manual", "once", "cron"}}, "run_at": map[string]any{"type": "string", "format": "date-time"}, "cron": map[string]any{"type": "string"}, "timezone": map[string]any{"type": "string"}}, "required": []string{"type"}, "additionalProperties": false}, "delivery_mode": map[string]any{"type": "string", "enum": []string{"task_only", "source_conversation"}}, "execution_timeout_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 1800}, "max_attempts": map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
+		"action": map[string]any{"type": "string", "enum": []string{"create", "propose", "confirm", "decline", "update", "set_status", "schedule", "run_now", "pause", "resume", "retry", "cancel", "archive"}}, "task_id": map[string]any{"type": "string", "format": "uuid"}, "expected_revision": map[string]any{"type": "integer", "minimum": 0}, "name": map[string]any{"type": "string"}, "goal": map[string]any{"type": "string"}, "success_criteria": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "priority": map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}}, "status": map[string]any{"type": "string", "enum": taskStatusValues()}, "lifecycle_status": map[string]any{"type": "string", "enum": []string{"paused", "active", "archived"}, "description": "When updating a paused task together with its schedule, set active to resume it in the same approved operation."}, "schedule": map[string]any{"type": "object", "description": "When this changes an existing task's timing and its goal or success criteria state a time, send them in the same update with that time rewritten.", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"manual", "once", "cron"}}, "run_at": map[string]any{"type": "string", "format": "date-time"}, "cron": map[string]any{"type": "string"}, "timezone": map[string]any{"type": "string"}}, "required": []string{"type"}, "additionalProperties": false}, "delivery_mode": map[string]any{"type": "string", "enum": []string{"task_only", "source_conversation"}}, "execution_timeout_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 1800}, "max_attempts": map[string]any{"type": "integer", "minimum": 1, "maximum": 3}, "report_review": map[string]any{"type": "string", "enum": []string{"none", "exceptions", "required"}, "description": "Which reports the requester must review. none: reminders and notices, nothing to check. exceptions (default): only a report that did not fully finish. required: a deliverable the requester asked to check before it counts, such as a document or analysis. Reports that need no review close by themselves."},
 	}, "required": []string{"action"}, "additionalProperties": false}}}
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 		var args manageTaskArguments
@@ -549,7 +550,7 @@ func (p *DefaultTaskRuntimeProvider) manageTool(run *Run, boundary taskRuntimeBo
 				// undeliverable target.
 				args.DeliveryMode = TaskDeliveryTaskOnly
 			}
-			result, err := p.service.CreateTask(ctx, boundary.access, CreateTaskRequest{Name: args.Name, Goal: args.Goal, SuccessCriteria: args.SuccessCriteria, Priority: args.Priority, Schedule: valueSchedule(args.Schedule), DeliveryMode: args.DeliveryMode, ExecutionTimeoutSeconds: args.ExecutionTimeoutSeconds, MaxAttempts: args.MaxAttempts}, mutation)
+			result, err := p.service.CreateTask(ctx, boundary.access, CreateTaskRequest{Name: args.Name, Goal: args.Goal, SuccessCriteria: args.SuccessCriteria, Priority: args.Priority, Schedule: valueSchedule(args.Schedule), DeliveryMode: args.DeliveryMode, ExecutionTimeoutSeconds: args.ExecutionTimeoutSeconds, MaxAttempts: args.MaxAttempts, ReportReview: args.ReportReview}, mutation)
 			if err != nil {
 				return taskToolFailure(taskErrorCode(err), errors.Is(err, ErrInvalidRequest))
 			}
@@ -665,6 +666,9 @@ func updateRequest(args manageTaskArguments) UpdateTaskRequest {
 	}
 	if args.MaxAttempts > 0 {
 		req.MaxAttempts = &args.MaxAttempts
+	}
+	if args.ReportReview != "" {
+		req.ReportReview = &args.ReportReview
 	}
 	if args.Schedule != nil {
 		req.Schedule = args.Schedule
@@ -875,7 +879,7 @@ func taskApprovalDiff(task *Task, requestedInputs map[string]interface{}, action
 	labels := map[string]string{
 		"name": "任务名称", "goal": "任务目标", "success_criteria": "成功标准",
 		"priority": "优先级", "schedule": "执行计划", "delivery_mode": "结果去向",
-		"execution_timeout_seconds": "超时时间", "max_attempts": "最大尝试次数",
+		"execution_timeout_seconds": "超时时间", "max_attempts": "最大尝试次数", "report_review": "验收方式",
 		"work_status": "工作状态", "lifecycle_status": "运行状态", "next_run_at": "下次执行时间",
 	}
 	for key, label := range labels {
@@ -938,6 +942,9 @@ func taskApprovalRequestedInputs(args manageTaskArguments, action string) map[st
 		}
 		if args.MaxAttempts > 0 {
 			inputs["max_attempts"] = args.MaxAttempts
+		}
+		if args.ReportReview != "" {
+			inputs["report_review"] = args.ReportReview
 		}
 		if strings.TrimSpace(args.LifecycleStatus) != "" {
 			inputs["lifecycle_status"] = strings.TrimSpace(args.LifecycleStatus)

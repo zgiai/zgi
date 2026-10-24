@@ -147,7 +147,7 @@ func TestReportsAreListedReviewedAndReworked(t *testing.T) {
 	service, dispatcher, access, _ := newTaskService(t)
 	runAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	task, err := service.CreateTask(t.Context(), access, digitalhuman.CreateTaskRequest{Name: "Weekly summary", Goal: "Summarize the week",
-		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"}},
+		Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"}, ReportReview: digitalhuman.TaskReportReviewRequired},
 		digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"})
 	if err != nil {
 		t.Fatal(err)

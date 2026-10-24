@@ -48,6 +48,10 @@ const (
 	TaskReportNew             TaskReportReviewState = "new"
 	TaskReportAccepted        TaskReportReviewState = "accepted"
 	TaskReportReworkRequested TaskReportReviewState = "rework_requested"
+	// TaskReportClosed is a report that needs nothing from anyone: its task
+	// does not ask for this report to be reviewed, a newer report of the task
+	// replaced it, or nobody reviewed it in time.
+	TaskReportClosed TaskReportReviewState = "closed"
 )
 
 // TaskReport is what one task run hands back (ADR 0008). Reports are visible

@@ -417,10 +417,65 @@ func finalizeTaskReport(tx *gorm.DB, task *automationmodel.AutomationTask, taskR
 		row.Issues = strings.TrimSpace(strings.TrimSpace(row.Issues) + "\n" + message)
 	}
 	row.Final, row.UpdatedAt = true, now
+	if !reportAwaitsReview(taskReportReview(task), digitalhuman.TaskReportOutcome(row.Outcome)) {
+		closeReportRow(&row, reportClosedNotRequired, now)
+	}
 	if err := tx.Save(&row).Error; err != nil {
 		return nil, err
 	}
+	// A newer report replaces what the task's earlier ones said, so they no
+	// longer wait for review.
+	if err := tx.Model(&taskReportRow{}).
+		Where("task_id = ? AND id <> ? AND final AND review_state = ?", task.ID, row.ID, string(digitalhuman.TaskReportNew)).
+		Updates(closedReportUpdates(reportClosedSuperseded, now)).Error; err != nil {
+		return nil, err
+	}
 	return &row, nil
+}
+
+// Why the system closed a report, kept as its reviewer.
+const (
+	reportClosedNotRequired = "not_required"
+	reportClosedSuperseded  = "superseded"
+	reportClosedExpired     = "expired"
+)
+
+// reportAwaitsReview reports whether a final report waits for someone to
+// review it. A failed run always does: it delivered nothing.
+func reportAwaitsReview(review digitalhuman.TaskReportReview, outcome digitalhuman.TaskReportOutcome) bool {
+	if outcome == digitalhuman.TaskReportFailed {
+		return true
+	}
+	switch review {
+	case digitalhuman.TaskReportReviewNone:
+		return false
+	case digitalhuman.TaskReportReviewRequired:
+		return true
+	default:
+		return outcome != digitalhuman.TaskReportDone
+	}
+}
+
+func closeReportRow(row *taskReportRow, reason string, now time.Time) {
+	system, ref := string(automationmodel.AutomationTaskActivityActorSystem), reason
+	row.ReviewState, row.ReviewedByType, row.ReviewedByRef, row.ReviewedAt = string(digitalhuman.TaskReportClosed), &system, &ref, &now
+}
+
+func closedReportUpdates(reason string, now time.Time) map[string]any {
+	return map[string]any{
+		"review_state": string(digitalhuman.TaskReportClosed), "reviewed_by_type": string(automationmodel.AutomationTaskActivityActorSystem),
+		"reviewed_by_ref": reason, "reviewed_at": now, "updated_at": now,
+	}
+}
+
+// closeExpiredReports closes reports that must be reviewed and were not
+// within TaskReportReviewWindow.
+func closeExpiredReports(ctx context.Context, db *gorm.DB, now time.Time) error {
+	return db.WithContext(ctx).Model(&taskReportRow{}).
+		Where("final AND review_state = ? AND created_at <= ?", string(digitalhuman.TaskReportNew), now.Add(-digitalhuman.TaskReportReviewWindow)).
+		Where("task_id IN (?)", db.Model(&automationmodel.AutomationTask{}).Select("id").
+			Where("delivery_config ->> ? = ?", reportReviewKey, string(digitalhuman.TaskReportReviewRequired))).
+		Updates(closedReportUpdates(reportClosedExpired, now)).Error
 }
 
 func publicTaskReport(row *taskReportRow, task *automationmodel.AutomationTask, access digitalhuman.TaskAccessContext) *digitalhuman.TaskReport {
@@ -481,7 +536,7 @@ func reviewTransitionAllowed(current digitalhuman.TaskReportReviewState, action 
 	case digitalhuman.TaskReportAccept:
 		return current == digitalhuman.TaskReportNew
 	case digitalhuman.TaskReportRework:
-		return current == digitalhuman.TaskReportNew || current == digitalhuman.TaskReportAccepted
+		return current == digitalhuman.TaskReportNew || current == digitalhuman.TaskReportAccepted || current == digitalhuman.TaskReportClosed
 	}
 	return false
 }

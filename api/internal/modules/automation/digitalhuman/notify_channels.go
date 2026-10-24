@@ -159,6 +159,34 @@ func (s *Service) changeNotifyChannels(ctx context.Context, task *automationmode
 	}
 }
 
+// reportReviewKey stores which of a task's reports wait for review in its
+// delivery config; the default is not stored.
+const reportReviewKey = "report_review"
+
+// taskReportReview is a task's report review, the default when unset.
+func taskReportReview(row *automationmodel.AutomationTask) digitalhuman.TaskReportReview {
+	if row != nil {
+		switch review := digitalhuman.TaskReportReview(fmt.Sprint(row.DeliveryConfig[reportReviewKey])); review {
+		case digitalhuman.TaskReportReviewNone, digitalhuman.TaskReportReviewRequired:
+			return review
+		}
+	}
+	return digitalhuman.TaskReportReviewExceptions
+}
+
+// withReportReview returns config with review, removed for the default.
+func withReportReview(config map[string]any, review digitalhuman.TaskReportReview) map[string]any {
+	next := make(map[string]any, len(config)+1)
+	for key, value := range config {
+		next[key] = value
+	}
+	delete(next, reportReviewKey)
+	if review == digitalhuman.TaskReportReviewNone || review == digitalhuman.TaskReportReviewRequired {
+		next[reportReviewKey] = string(review)
+	}
+	return next
+}
+
 // reportDigestKey stores a scheduled task's report digest in its delivery
 // config.
 const reportDigestKey = "report_digest"

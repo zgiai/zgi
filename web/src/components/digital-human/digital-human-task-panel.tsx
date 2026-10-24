@@ -33,10 +33,15 @@ import { getErrorMessage } from '@/utils/error-notifications';
 import { translateTimezone } from '@/utils/timezone';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary, formatTaskTime } from '@/components/digital-human/digital-human-task-presentation';
 import { TaskLatestReport, TaskPanelReportFeed, TaskPanelReports, type TaskReportClient } from '@/components/digital-human/digital-human-task-reports';
-import { TaskReportDestinations, TaskReportDigest } from '@/components/digital-human/digital-human-task-destinations';
+import {
+  TaskReportDestinations,
+  TaskReportDigest,
+  TaskReportReview,
+} from '@/components/digital-human/digital-human-task-destinations';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import type {
   DigitalHumanTaskReportDigest,
+  DigitalHumanTaskReportReview,
   CreateDigitalHumanTaskRequest,
   DigitalHumanTask,
   DigitalHumanTaskPendingChange,
@@ -346,6 +351,18 @@ export function DigitalHumanTaskPanel({
     }
   };
 
+  const changeReview = async (review: DigitalHumanTaskReportReview) => {
+    if (!selected) return;
+    try {
+      await clientRef.current.update(selected.id, { expected_revision: selected.revision, report_review: review });
+      toast.success(t('tasks.reportReview.updated'));
+      await load();
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('tasks.loadError'));
+      await load();
+    }
+  };
+
   const changeDigest = async (digest: DigitalHumanTaskReportDigest | '') => {
     if (!selected) return;
     try {
@@ -520,6 +537,7 @@ export function DigitalHumanTaskPanel({
               onChangeVisibility={changeVisibility}
               onChangeChannels={changeChannels}
               onChangeDigest={changeDigest}
+              onChangeReview={changeReview}
               reportClient={client.reports}
               onReportsChanged={() => void load()}
               allowProposalApproval={false}
@@ -706,6 +724,7 @@ export function DigitalHumanTaskPanel({
               onChangeVisibility={changeVisibility}
               onChangeChannels={changeChannels}
               onChangeDigest={changeDigest}
+              onChangeReview={changeReview}
               reportClient={client.reports}
               onReportsChanged={() => void load()}
               allowProposalApproval
@@ -834,6 +853,7 @@ function TaskDetailContent({
   onChangeVisibility,
   onChangeChannels,
   onChangeDigest,
+  onChangeReview,
   reportClient,
   onReportsChanged,
   allowProposalApproval,
@@ -854,6 +874,7 @@ function TaskDetailContent({
   onChangeVisibility: (visibility: DigitalHumanTaskVisibility) => Promise<void>;
   onChangeChannels: (channelIds: string[]) => Promise<void>;
   onChangeDigest: (digest: DigitalHumanTaskReportDigest | '') => Promise<void>;
+  onChangeReview: (review: DigitalHumanTaskReportReview) => Promise<void>;
   reportClient?: TaskReportClient;
   onReportsChanged?: () => void;
   allowProposalApproval: boolean;
@@ -923,6 +944,7 @@ function TaskDetailContent({
       <TaskShareRow task={selected} onChange={onChangeVisibility} />
       <TaskReportDestinations task={selected} onChange={onChangeChannels} requesterView={title === 'my'} />
       <TaskReportDigest task={selected} onChange={onChangeDigest} />
+      <TaskReportReview task={selected} onChange={selected.can_change === false ? undefined : onChangeReview} />
       <div className="flex flex-wrap gap-2">
         <Badge>{t(`tasks.status.${digitalHumanTaskDisplayStatus(selected)}`)}</Badge>
         {allowDirectMutations && selected.work_status === 'proposed' && allowProposalApproval ? (

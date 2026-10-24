@@ -261,6 +261,10 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 		return nil, digitalhuman.ErrInvalidRequest
 	}
 	delivery = withReportDigest(delivery, req.ReportDigest)
+	if !req.ReportReview.Valid() {
+		return nil, digitalhuman.ErrInvalidRequest
+	}
+	delivery = withReportReview(delivery, req.ReportReview)
 	task := &automationmodel.AutomationTask{
 		OrganizationID: access.OrganizationID.String(), WorkspaceID: access.WorkspaceID.String(), Name: strings.TrimSpace(req.Name),
 		TaskKind: automationmodel.AutomationTaskKindDigitalHuman, SubjectType: stringPointer(subjectTypeDigitalHuman), SubjectID: &subjectID,
@@ -498,6 +502,15 @@ func (s *Service) UpdateTask(ctx context.Context, access digitalhuman.TaskAccess
 			digest = digitalhuman.TaskReportDigestNone
 		}
 		task.DeliveryConfig = withReportDigest(task.DeliveryConfig, digest)
+		if req.ReportReview != nil {
+			if !req.ReportReview.Valid() || *req.ReportReview == "" {
+				return digitalhuman.ErrInvalidRequest
+			}
+			if *req.ReportReview != taskReportReview(task) {
+				changes["report_review"] = string(*req.ReportReview)
+			}
+			task.DeliveryConfig = withReportReview(task.DeliveryConfig, *req.ReportReview)
+		}
 		task.Revision++
 		task.UpdatedBy = accessActorID(access).String()
 		values, err := taskUpdateValues(task, s.now())
@@ -1001,7 +1014,7 @@ func publicTask(row *automationmodel.AutomationTask) (*digitalhuman.Task, error)
 		return nil, fmt.Errorf("invalid stored digital human task owner")
 	}
 	mode := deliveryMode(row.DeliveryConfig)
-	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), ReportDigest: taskReportDigest(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	result := &digitalhuman.Task{ID: id, DigitalHumanID: subjectID, OwnerKind: ownerKind, Visibility: storedTaskVisibility(row), ConfirmedAt: row.ConfirmedAt, Name: row.Name, Goal: pointerValue(row.Goal), SuccessCriteria: append([]string(nil), row.SuccessCriteria...), WorkStatus: digitalhuman.TaskWorkStatus(pointerValue(row.WorkStatus)), LifecycleStatus: string(row.Status), Priority: digitalhuman.TaskPriority(pointerValue(row.Priority)), Schedule: publicSchedule(row), DeliveryMode: mode, DeliveryTarget: deliveryTarget(row.DeliveryConfig), DeliveryFallback: deliveryFallback(row.DeliveryConfig), DeliveryReplyTo: replyAddress(row.DeliveryConfig), ExecutionTimeoutSeconds: row.ExecutionTimeoutSeconds, MaxAttempts: row.MaxAttempts, NextRunAt: row.NextRunAt, LastRunAt: row.LastRunAt, Revision: row.Revision, ProposalExpiresAt: row.ProposalExpiresAt, NotifyChannelIDs: taskNotifyChannels(row), ReportDigest: taskReportDigest(row), ReportReview: taskReportReview(row), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.LastRunStatus != nil {
 		result.LastRunStatus = *row.LastRunStatus
 	}

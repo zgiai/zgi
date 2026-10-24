@@ -882,6 +882,9 @@ func taskUpdateRequestFromApprovalInputs(expectedRevision int64, inputs map[stri
 		value := int(attempts)
 		request.MaxAttempts = &value
 	}
+	if review := TaskReportReview(strings.TrimSpace(stringValue(inputs["report_review"]))); review != "" {
+		request.ReportReview = &review
+	}
 	return request
 }
 

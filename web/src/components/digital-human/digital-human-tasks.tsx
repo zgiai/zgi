@@ -58,7 +58,11 @@ import { digitalHumanChannelProvider } from '@/components/digital-human/digital-
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import { TaskLatestReport, TaskReportFeed, TaskReportView } from '@/components/digital-human/digital-human-task-reports';
-import { TaskReportDestinations, TaskReportDigest } from '@/components/digital-human/digital-human-task-destinations';
+import {
+  TaskReportDestinations,
+  TaskReportDigest,
+  TaskReportReview,
+} from '@/components/digital-human/digital-human-task-destinations';
 import { RequesterOrigin, TaskRequesterLabelButton, TaskRequesterPicker, requesterName } from '@/components/digital-human/digital-human-task-requesters';
 import { DigitalHumanRunTimeline } from '@/components/digital-human/digital-human-run-timeline';
 import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
@@ -75,6 +79,7 @@ import { cn } from '@/lib/utils';
 import { digitalHumanService } from '@/services/digital-human.service';
 import type {
   DigitalHumanTaskReportDigest,
+  DigitalHumanTaskReportReview,
   CreateDigitalHumanTaskRequest,
   DigitalHumanTask,
   DigitalHumanTaskPriority,
@@ -685,6 +690,19 @@ export function TaskDetailSheet({
     }
   };
 
+  const changeReview = async (review: DigitalHumanTaskReportReview) => {
+    if (!open || !task || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    try {
+      await mutations.update.mutateAsync({ taskId, request: { expected_revision: task.revision, report_review: review } });
+      toast.success(t('tasks.reportReview.updated'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
+  };
+
   const changeDigest = async (digest: DigitalHumanTaskReportDigest | '') => {
     if (!open || !task || actionPendingRef.current) return;
     actionPendingRef.current = true;
@@ -803,6 +821,7 @@ export function TaskDetailSheet({
               ) : null}
               <TaskReportDestinations task={task} onChange={changeChannels} />
               <TaskReportDigest task={task} onChange={changeDigest} />
+              <TaskReportReview task={task} onChange={task.can_change === false ? undefined : changeReview} />
               {/* What the task produced comes first; how it runs is folded away. */}
               <Collapsible>
                 <CollapsibleTrigger asChild>

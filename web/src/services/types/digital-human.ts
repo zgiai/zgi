@@ -830,6 +830,8 @@ export interface DigitalHumanTask {
   notify_channel_access?: 'manage' | 'remove';
   /** A scheduled task's reports to external channels wait for this digest. */
   report_digest?: DigitalHumanTaskReportDigest;
+  /** Which of the task's reports wait for someone to review them. */
+  report_review?: DigitalHumanTaskReportReview;
   /** An integrator's own identifier, given when an API task is created. */
   client_reference?: string;
   /** Who asked for the task; only the task center returns it. */
@@ -901,10 +903,18 @@ export interface CreateDigitalHumanTaskRequest {
   max_attempts?: number;
   notify_channel_ids?: string[];
   report_digest?: DigitalHumanTaskReportDigest | '';
+  report_review?: DigitalHumanTaskReportReview;
 }
 
 /** How a scheduled task's reports reach external channels (ADR 0008). */
 export type DigitalHumanTaskReportDigest = 'daily' | 'weekly';
+
+/**
+ * Which reports wait for review: none (reminders and notices), exceptions
+ * (the default: only a run that did not fully finish), or required (every
+ * report, closed unreviewed after three days). The others close on arrival.
+ */
+export type DigitalHumanTaskReportReview = 'none' | 'exceptions' | 'required';
 
 export type UpdateDigitalHumanTaskRequest = Partial<CreateDigitalHumanTaskRequest> & {
   expected_revision: number;
@@ -936,7 +946,7 @@ export interface DigitalHumanTaskRun {
 }
 
 export type DigitalHumanTaskReportOutcome = 'done' | 'partial' | 'not_done' | 'failed';
-export type DigitalHumanTaskReportReviewState = 'new' | 'accepted' | 'rework_requested';
+export type DigitalHumanTaskReportReviewState = 'new' | 'accepted' | 'rework_requested' | 'closed';
 export type DigitalHumanTaskCriterionStatus = 'met' | 'not_met' | 'unknown';
 
 export interface DigitalHumanTaskReportSummary {
