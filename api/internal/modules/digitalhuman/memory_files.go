@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -41,8 +41,7 @@ const (
 // memoryFilesEnabled reports whether DigitalHumans use the file view. It is
 // fail-closed: anything but an explicit true keeps the current tools.
 func memoryFilesEnabled() bool {
-	enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(memoryFilesEnvironment)))
-	return err == nil && enabled
+	return relationshipmemory.DigitalHumanMemoryFilesEnabled()
 }
 
 // memoryFileDirectory is the directory an entry is shown under.

@@ -71,6 +71,9 @@ type DigitalHumanMemory struct {
 	UpdatedAt         time.Time                     `gorm:"not null" json:"updated_at"`
 	UndoableUntil     *time.Time                    `gorm:"-" json:"undoable_until,omitempty"`
 	UndoConsumed      bool                          `gorm:"-" json:"undo_consumed"`
+	// Path is the entry's file path in the model's view (ADR 0014), filled
+	// in for the console.
+	Path string `gorm:"-" json:"path,omitempty"`
 }
 
 func (DigitalHumanMemory) TableName() string { return "digital_human_memories" }

@@ -46,6 +46,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/relationships/:id/history", h.History)
 	group.POST("/relationships/:id/history/:version_id/revert", h.RevertVersion)
 	group.GET("/relationships/:id/archive", h.Archive)
+	group.GET("/relationships/:id/notes", h.Notes)
 	group.PATCH("/relationships/:id/archive/:entry_id", h.UpdateArchiveEntry)
 	group.DELETE("/relationships/:id/archive/:entry_id", h.DeleteArchiveEntry)
 }
@@ -313,6 +314,24 @@ func (h *Handler) RevertVersion(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"version_id": versionID, "item": item})
+}
+
+// Notes lists what a DigitalHuman keeps on the person (ADR 0014
+// /user/notes/), read-only. Other consumers keep no notes.
+func (h *Handler) Notes(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	notes := []InstanceNote{}
+	if detail.ConsumerType == ConsumerDigitalHuman && DigitalHumanMemoryFilesEnabled() {
+		var err error
+		if notes, err = h.service.InstanceNotes(c.Request.Context(), detail.WorkspaceID, detail.ConsumerID, detail.SubjectID); err != nil {
+			writeMemoryError(c, err)
+			return
+		}
+	}
+	response.Success(c, gin.H{"notes": notes})
 }
 
 // Archive lists the relationship's archive (ADR 0014), newest first.

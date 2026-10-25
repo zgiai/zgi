@@ -24,6 +24,7 @@ type EndUserNotificationCounts interface {
 // user, as that user may read it.
 type EndUserMemoryItem struct {
 	Key         string    `json:"key"`
+	Path        string    `json:"path"`
 	DisplayName string    `json:"display_name,omitempty"`
 	Category    string    `json:"category,omitempty"`
 	Content     string    `json:"content"`
@@ -37,6 +38,9 @@ type EndUserMemoryItem struct {
 type EndUserMemory struct {
 	MemoryEnabled bool                `json:"memory_enabled"`
 	Items         []EndUserMemoryItem `json:"items"`
+	// Notes are the DigitalHuman's own notes on the user (ADR 0014
+	// /user/notes/), shown read-only when the file view is on.
+	Notes []relationshipmemory.InstanceNote `json:"notes,omitempty"`
 }
 
 // registerAPIEndUserRoutes lets an API end user see and erase what the
@@ -46,6 +50,8 @@ func (h *ExternalHandler) registerAPIEndUserRoutes(group *gin.RouterGroup) {
 	group.GET("/memory", h.GetAPIEndUserMemory)
 	group.DELETE("/memory/items/:key", h.DeleteAPIEndUserMemoryItem)
 	group.POST("/memory/clear", h.ClearAPIEndUserMemory)
+	group.GET("/memory/archive", h.GetAPIEndUserMemoryArchive)
+	group.DELETE("/memory/archive/:entry_id", h.DeleteAPIEndUserMemoryArchiveEntry)
 	group.POST("/tasks/schedule-preview", h.PreviewAPITaskSchedule)
 	if _, ok := h.notifications.(EndUserNotificationCounts); ok {
 		group.GET("/notifications/unread-count", h.CountAPIUnreadNotifications)
@@ -86,11 +92,19 @@ func (h *ExternalHandler) endUserRelationship(c *gin.Context, user string, opera
 // GetAPIEndUserMemory lists what the DigitalHuman remembers about the user.
 func (h *ExternalHandler) GetAPIEndUserMemory(c *gin.Context) {
 	const operation = "digital_human.external.memory.get"
-	service, relationship, _, ok := h.endUserRelationship(c, userFromQuery(c), operation)
+	service, relationship, access, ok := h.endUserRelationship(c, userFromQuery(c), operation)
 	if !ok {
 		return
 	}
 	result := EndUserMemory{Items: []EndUserMemoryItem{}}
+	if memoryFilesEnabled() {
+		notes, err := service.InstanceNotes(c.Request.Context(), access.WorkspaceID, access.DigitalHumanID, access.Owner.Subject.ID)
+		if err != nil {
+			h.writeApplicationError(c, endUserMemoryError(err), operation)
+			return
+		}
+		result.Notes = notes
+	}
 	if relationship == nil {
 		writeExternalData(c, http.StatusOK, result)
 		return
@@ -102,10 +116,54 @@ func (h *ExternalHandler) GetAPIEndUserMemory(c *gin.Context) {
 	}
 	result.MemoryEnabled = relationship.Status == relationshipmemory.RelationshipActive && relationship.MemoryEnabled
 	for _, item := range export.Items {
-		result.Items = append(result.Items, EndUserMemoryItem{Key: item.MemoryKey, DisplayName: item.DisplayName, Category: item.Category,
+		result.Items = append(result.Items, EndUserMemoryItem{Key: item.MemoryKey, Path: "/user/" + strings.ReplaceAll(item.MemoryKey, "/", "_") + ".md", DisplayName: item.DisplayName, Category: item.Category,
 			Content: item.ContentPayload, Revision: item.Revision, UpdatedAt: item.UpdatedAt})
 	}
 	writeExternalData(c, http.StatusOK, result)
+}
+
+// GetAPIEndUserMemoryArchive lists the user's memory archive (ADR 0014):
+// older memory moved out when their memory was full.
+func (h *ExternalHandler) GetAPIEndUserMemoryArchive(c *gin.Context) {
+	const operation = "digital_human.external.memory.archive"
+	service, relationship, _, ok := h.endUserRelationship(c, userFromQuery(c), operation)
+	if !ok {
+		return
+	}
+	entries := []relationshipmemory.UserMemoryArchiveEntry{}
+	if relationship != nil {
+		var err error
+		if entries, err = service.ArchiveEntries(c.Request.Context(), relationship.ID, 0); err != nil {
+			h.writeApplicationError(c, endUserMemoryError(err), operation)
+			return
+		}
+	}
+	writeExternalData(c, http.StatusOK, gin.H{"entries": entries})
+}
+
+// DeleteAPIEndUserMemoryArchiveEntry removes one archive entry. It is allowed
+// while memory is off, so users can always remove their data.
+func (h *ExternalHandler) DeleteAPIEndUserMemoryArchiveEntry(c *gin.Context) {
+	const operation = "digital_human.external.memory.archive.delete"
+	service, relationship, access, ok := h.endUserRelationship(c, userFromQuery(c), operation)
+	if !ok {
+		return
+	}
+	entryID, err := uuid.Parse(strings.TrimSpace(c.Param("entry_id")))
+	if err != nil {
+		h.writeApplicationError(c, ErrInvalidRequest, operation)
+		return
+	}
+	if relationship == nil {
+		h.writeApplicationError(c, ErrMemoryNotFound, operation)
+		return
+	}
+	subjectID := access.Owner.Subject.ID
+	if err := service.DeleteArchiveEntry(c.Request.Context(), relationship.ID, entryID, relationshipmemory.MutationMetadata{ActorType: "end_user", ActorID: &subjectID, Source: "digital_human_api", SourceKind: relationshipmemory.SourceManager}); err != nil {
+		h.writeApplicationError(c, endUserMemoryError(err), operation)
+		return
+	}
+	writeExternalData(c, http.StatusOK, gin.H{"entry_id": entryID})
 }
 
 // DeleteAPIEndUserMemoryItem forgets one remembered item. The caller passes

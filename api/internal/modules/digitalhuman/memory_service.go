@@ -40,6 +40,9 @@ func (s *Service) ListMemories(ctx context.Context, scope Scope, digitalHumanID 
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.list")
 	}
+	for _, item := range items {
+		item.Path = memoryFilePath(item)
+	}
 	state, err := s.memoryState(ctx, scope, digitalHumanID)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.list")
