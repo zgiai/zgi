@@ -30,6 +30,10 @@ type agentRuntimeContext struct {
 
 const agentWorkflowBindingUnavailableCode = "agent_workflow_binding_unavailable"
 
+// agentConversationWaitingCode marks a new turn refused because the latest
+// message waits for an approval, an answer, a client action, or more budget.
+const agentConversationWaitingCode = "agent_conversation_waiting"
+
 func (h *AgentsHandler) ListAgentRuntimeConversations(c *gin.Context) {
 	runtimeCtx, ok := h.agentRuntimeContext(c)
 	if !ok {
@@ -736,7 +740,11 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
 		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
 		errors.Is(err, runtimeservice.ErrConversationWaitingBudget):
-		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		if externalInvocation {
+			c.JSON(http.StatusConflict, agentConversationWaitingPayload(err))
+		} else {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		}
 	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.Fail(c, response.ErrInvalidParam)
 	case errors.Is(err, agentmemory.ErrConflict):
@@ -973,4 +981,20 @@ func runtimeSearchResultResponse(result *runtimeservice.SearchResult) runtimedto
 		resp.MessageID = stringPtr(result.MessageID.String())
 	}
 	return resp
+}
+
+// agentConversationWaitingPayload tells an external caller which message to
+// continue: answer its question or approval through the matching continuation
+// endpoint instead of starting a new turn.
+func agentConversationWaitingPayload(err error) gin.H {
+	data := gin.H{}
+	var waiting *runtimeservice.ConversationWaitingError
+	if errors.As(err, &waiting) && waiting != nil {
+		data["status"] = waiting.Status
+		data["message_id"] = waiting.MessageID.String()
+		if waiting.RequestID != "" {
+			data["request_id"] = waiting.RequestID
+		}
+	}
+	return gin.H{"code": agentConversationWaitingCode, "message": err.Error(), "data": data}
 }
