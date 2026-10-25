@@ -78,6 +78,21 @@ func archiveConsolidationEdit(edit consolidationEdit, slot agentmemory.RuntimeSl
 	return slot.Key, remaining, &turns[len(turns)-1], ""
 }
 
+// supersededByLaterConversation reports whether another conversation changed
+// the file after the turn an edit is based on. Consolidation runs a minute or
+// more after a conversation, so without this a fact the user corrected or
+// forgot in a newer conversation would come back. Archiving changes no fact
+// and is never superseded.
+func supersededByLaterConversation(value agentmemory.SlotValueResponse, conversationID uuid.UUID, source *completedTurn) bool {
+	if source == nil || source.CompletedAt.IsZero() || value.SourceCompletedAt == 0 || value.SourceConversationID == "" {
+		return false
+	}
+	if value.SourceConversationID == conversationID.String() {
+		return false
+	}
+	return value.SourceCompletedAt > source.CompletedAt.Unix()
+}
+
 // archiveWriter keeps archived text in the user's archive. The relationship
 // store implements it; the legacy store does not, so archive edits are only
 // accepted where it exists.
@@ -244,6 +259,10 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 			continue
 		}
 		key, content, source, reason := applyConsolidationEdit(edit, slots, current, working, turns, turnIDs)
+		archiving := strings.EqualFold(strings.TrimSpace(edit.Command), consolidationArchive)
+		if reason == "" && !archiving && supersededByLaterConversation(current[key], job.ConversationID, source) {
+			reason = "another conversation changed the file after this turn; the newer statement wins"
+		}
 		if reason != "" {
 			logger.InfoContext(ctx, "memory consolidation skipped an edit", "job_id", job.ID.String(), "index", index, "command", edit.Command, "reason", reason)
 			continue

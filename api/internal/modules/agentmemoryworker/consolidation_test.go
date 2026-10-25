@@ -3,6 +3,7 @@ package agentmemoryworker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -117,6 +118,24 @@ func TestConsolidationArchiveMovesTextOutWithoutEvidence(t *testing.T) {
 	} {
 		if _, _, _, reason := applyConsolidationEdit(edit, slots, current, map[string]string{}, turns, map[string]struct{}{}); reason == "" {
 			t.Fatalf("%s archive was accepted", name)
+		}
+	}
+}
+
+func TestConsolidationYieldsToANewerConversation(t *testing.T) {
+	conversationID := uuid.New()
+	turn := &completedTurn{CompletedAt: time.Unix(1_000, 0)}
+	forgotLater := agentmemory.SlotValueResponse{SourceConversationID: uuid.NewString(), SourceCompletedAt: 1_100}
+	if !supersededByLaterConversation(forgotLater, conversationID, turn) {
+		t.Fatal("an edit from an older turn overrode a newer conversation's change")
+	}
+	sameConversation := forgotLater
+	sameConversation.SourceConversationID = conversationID.String()
+	earlier := forgotLater
+	earlier.SourceCompletedAt = 900
+	for name, value := range map[string]agentmemory.SlotValueResponse{"same conversation": sameConversation, "earlier change": earlier, "never written": {}} {
+		if supersededByLaterConversation(value, conversationID, turn) {
+			t.Fatalf("%s: edit was wrongly superseded", name)
 		}
 	}
 }
