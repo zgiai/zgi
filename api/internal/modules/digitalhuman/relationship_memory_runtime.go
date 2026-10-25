@@ -58,9 +58,15 @@ func (p *CompositeMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, 
 		if prepared.archiveSearch != nil {
 			result.archiveSearch = prepared.archiveSearch
 		}
+		if prepared.forgottenLines != nil {
+			result.forgottenLines = prepared.forgottenLines
+		}
 	}
 	if result.archiveSearch != nil {
 		result.Tools = withArchiveResults(result.Tools, result.archiveSearch)
+	}
+	if result.forgottenLines != nil {
+		result.Tools = withoutForgottenTurns(result.Tools, result.forgottenLines)
 	}
 	if len(result.fileEditors) > 0 {
 		result.SystemPromptAddendum += "\n\n" + memoryEditGuidance(result.fileEditors)
@@ -157,6 +163,9 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 		relationshipID := relationship.ID
 		preparation.archiveSearch = func(ctx context.Context, query string, limit int) ([]relationshipmemory.UserMemoryArchiveEntry, error) {
 			return p.service.SearchArchive(ctx, relationshipID, query, limit)
+		}
+		preparation.forgottenLines = func(ctx context.Context) ([]string, error) {
+			return p.service.ForgottenLines(ctx, relationshipID)
 		}
 		return preparation, nil
 	}

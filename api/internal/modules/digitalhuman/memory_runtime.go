@@ -82,6 +82,9 @@ type MemoryRuntimePreparation struct {
 	// archiveSearch finds the user's archive entries; the composite provider
 	// adds them to memory_search results.
 	archiveSearch func(ctx context.Context, query string, limit int) ([]relationshipmemory.UserMemoryArchiveEntry, error)
+	// forgottenLines lists what the person removed from their memory; the
+	// composite provider withholds conversation search turns that repeat it.
+	forgottenLines func(ctx context.Context) ([]string, error)
 }
 
 // MemoryRuntimeProvider keeps DigitalHuman memory out of the generic

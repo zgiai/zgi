@@ -1,12 +1,16 @@
 package digitalhuman
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	runtimerepository "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -81,5 +85,24 @@ func TestConversationSearchWithholdsSecretsAndIdentifiers(t *testing.T) {
 	matches := result["matches"].([]map[string]any)
 	if len(matches) != 1 || matches[0]["user"] != "客户答谢会定在湖滨酒店。" || result["withheld"] != 2 {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestConversationSearchWithholdsWhatThePersonForgot(t *testing.T) {
+	inner := skillloop.RuntimeTool{Definition: adapter.Tool{Function: adapter.Function{Name: conversationSearchToolName}}, Handler: func(context.Context, adapter.ToolCall) skillloop.RuntimeToolResult {
+		return skillloop.RuntimeToolResult{Status: "success", ModelResult: conversationSearchModelResult([]runtimerepository.KeywordMatch{
+			{ConversationID: uuid.New(), Query: "请记住：我住在上海浦东。", Answer: "好的。"},
+			{ConversationID: uuid.New(), Query: "客户答谢会定在湖滨酒店。", Answer: "收到。"},
+		})}
+	}}
+	forgotten := func(context.Context) ([]string, error) { return []string{"住在上海浦东。"}, nil }
+	result := withoutForgottenTurns([]skillloop.RuntimeTool{inner}, forgotten)[0].Handler(context.Background(), adapter.ToolCall{})
+	matches := result.ModelResult["matches"].([]map[string]any)
+	if len(matches) != 1 || matches[0]["user"] != "客户答谢会定在湖滨酒店。" || result.ModelResult["withheld"] != 1 {
+		t.Fatalf("result = %+v", result.ModelResult)
+	}
+	failing := func(context.Context) ([]string, error) { return nil, errors.New("database down") }
+	if result := withoutForgottenTurns([]skillloop.RuntimeTool{inner}, failing)[0].Handler(context.Background(), adapter.ToolCall{}); result.Status == "success" {
+		t.Fatal("search answered without knowing what was forgotten")
 	}
 }

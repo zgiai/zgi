@@ -509,8 +509,15 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 			// intentionally advances the epoch to invalidate other in-flight jobs,
 			// but must not invalidate later operations in this same atomic batch.
 			metadata.ExpectedMemoryEpoch = nil
-			metadata.SourceMessageID = operation.SourceMessageID
-			metadata.SourceCompletedAt = operation.SourceCompletedAt
+			// An operation's own source wins; without one, the batch's source
+			// (the turn that wrote it) is kept, so later passes can tell how
+			// recent the file is.
+			if operation.SourceMessageID != nil {
+				metadata.SourceMessageID = operation.SourceMessageID
+			}
+			if operation.SourceCompletedAt != nil {
+				metadata.SourceCompletedAt = operation.SourceCompletedAt
+			}
 			metadata.EvidenceFromUserInput = metadata.EvidenceFromUserInput || operation.SourceMessageID != nil
 			metadata.Evidence, metadata.Reason = operation.Evidence, operation.Reason
 			if operation.Action == agentmemory.MutationActionClear {
@@ -847,6 +854,19 @@ func (a *AgentAdapter) ArchiveText(ctx context.Context, workspaceID, agentID uui
 		return mapAgentMemoryError(err)
 	}
 	return nil
+}
+
+// ForgottenLines returns what an Agent user removed from their memory. A user
+// without relationship memory has forgotten nothing here.
+func (a *AgentAdapter) ForgottenLines(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]string, error) {
+	if !RuntimeEnabled() {
+		return nil, nil
+	}
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.service.ForgottenLines(ctx, relationship.ID)
 }
 
 // SearchArchive finds an Agent user's archive entries for a query.

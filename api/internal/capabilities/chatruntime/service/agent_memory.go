@@ -396,7 +396,7 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		tools = append(tools, skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillAgentMemory, Handler: handler})
 	}
 	if blocks {
-		if search, ok := s.agentConversationSearchTool(prepared); ok {
+		if search, ok := s.agentConversationSearchTool(prepared, agentID, state.UserScope); ok {
 			tools = append(tools, search)
 		}
 		if archive, ok := s.agentArchiveSearchTool(prepared, agentID, state.UserScope); ok {
