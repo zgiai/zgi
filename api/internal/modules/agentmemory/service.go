@@ -54,6 +54,7 @@ type store interface {
 	CreateSlot(ctx context.Context, slot *AgentMemorySlot) error
 	UpdateSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID, values map[string]interface{}) (*AgentMemorySlot, error)
 	DeleteSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) error
+	SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error
 	ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error)
 	ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error)
 	GetValueScoped(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error)
@@ -236,6 +237,11 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 		slots, err := tx.ListSlots(ctx, workspaceID, agentID, false)
 		if err != nil {
 			return fmt.Errorf("list updated agent memory slots: %w", err)
+		}
+		// Memory block definitions (ADR 0013) mirror the slots in the same
+		// transaction, so they never drift from what builders configured.
+		if err := tx.SyncBlockDefinitions(ctx, agentID, slots); err != nil {
+			return err
 		}
 		response = slotResponses(slots)
 		return nil

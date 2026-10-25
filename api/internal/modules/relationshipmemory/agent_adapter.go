@@ -476,6 +476,8 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 		return nil, err
 	}
 	results := make([]agentmemory.ValueMutationResult, 0, len(req.Operations))
+	// One tool call or extraction pass is one commit in the version history.
+	ctx = WithCommitScope(ctx)
 	err = a.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var locked UserMemoryRelationship
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", relationship.ID).Error; err != nil {
@@ -789,7 +791,12 @@ func (a *AgentAdapter) CleanupExpiredRelationshipMemory(ctx context.Context, now
 		if err := tx.Where("expires_at <= ?", now).Delete(&UserMemoryUndoRecord{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("created_at < ?", now.Add(-auditRetention)).Delete(&UserMemoryEvent{}).Error
+		if err := tx.Where("created_at < ?", now.Add(-auditRetention)).Delete(&UserMemoryEvent{}).Error; err != nil {
+			return err
+		}
+		history := NewService(tx, a.service.codec)
+		history.now = func() time.Time { return now }
+		return history.CleanupExpiredHistory(ctx)
 	})
 }
 

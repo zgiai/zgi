@@ -60,6 +60,7 @@ type UserMemoryItem struct {
 	ID                   uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
 	RelationshipID       uuid.UUID  `gorm:"type:uuid;not null;uniqueIndex:idx_user_memory_item_key,priority:1;index" json:"relationship_id"`
 	MemoryKey            string     `gorm:"type:varchar(64);not null;uniqueIndex:idx_user_memory_item_key,priority:2" json:"key"`
+	DefinitionID         *uuid.UUID `gorm:"type:uuid" json:"definition_id,omitempty"`
 	DisplayName          string     `gorm:"type:varchar(80);not null;default:''" json:"display_name"`
 	Category             string     `gorm:"type:varchar(32);not null;default:''" json:"category,omitempty"`
 	ContentPayload       string     `gorm:"type:text;not null;default:''" json:"content"`

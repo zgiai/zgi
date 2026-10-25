@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/memoryblock"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -21,6 +22,17 @@ func (r *Repository) WithTransaction(ctx context.Context, fn func(store) error) 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return fn(&Repository{db: tx})
 	})
+}
+
+func (r *Repository) SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error {
+	mirrored := make([]memoryblock.AgentSlot, 0, len(slots))
+	for _, slot := range slots {
+		if slot != nil {
+			mirrored = append(mirrored, memoryblock.AgentSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description,
+				MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder})
+		}
+	}
+	return memoryblock.SyncAgentSlots(ctx, r.db, agentID, mirrored)
 }
 
 func (r *Repository) ResolveAgentWorkspace(ctx context.Context, agentID uuid.UUID) (uuid.UUID, error) {

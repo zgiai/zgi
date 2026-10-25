@@ -419,9 +419,13 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 		}
 		nextRevision := currentRevision + 1
 		lastOperationID := operationID
+		definitionID, err := definitionIDFor(ctx, tx, &relationship, req.Key)
+		if err != nil {
+			return err
+		}
 		if exists {
 			result := tx.Model(&UserMemoryItem{}).Where("id = ? AND revision = ?", before.ID, before.Revision).Updates(map[string]any{
-				"display_name": req.DisplayName, "category": req.Category, "content_payload": encoded.Payload,
+				"display_name": req.DisplayName, "category": req.Category, "content_payload": encoded.Payload, "definition_id": definitionID,
 				"content_encoding": encoded.Encoding, "content_key_id": encoded.KeyID, "revision": nextRevision,
 				"source_kind": normalizedSourceKind(req.Metadata.SourceKind), "source_conversation_id": req.Metadata.SourceConversationID,
 				"source_message_id": req.Metadata.SourceMessageID, "source_completed_at": req.Metadata.SourceCompletedAt,
@@ -434,7 +438,7 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 				return ErrRevisionConflict
 			}
 		} else {
-			after = UserMemoryItem{ID: uuid.New(), RelationshipID: relationshipID, MemoryKey: req.Key, DisplayName: req.DisplayName, Category: req.Category, ContentPayload: encoded.Payload, ContentEncoding: encoded.Encoding, ContentKeyID: encoded.KeyID, Revision: nextRevision, SourceKind: normalizedSourceKind(req.Metadata.SourceKind), SourceConversationID: req.Metadata.SourceConversationID, SourceMessageID: req.Metadata.SourceMessageID, SourceCompletedAt: req.Metadata.SourceCompletedAt, ExtractorVersion: req.Metadata.ExtractorVersion, LastOperationID: &lastOperationID}
+			after = UserMemoryItem{ID: uuid.New(), RelationshipID: relationshipID, MemoryKey: req.Key, DefinitionID: definitionID, DisplayName: req.DisplayName, Category: req.Category, ContentPayload: encoded.Payload, ContentEncoding: encoded.Encoding, ContentKeyID: encoded.KeyID, Revision: nextRevision, SourceKind: normalizedSourceKind(req.Metadata.SourceKind), SourceConversationID: req.Metadata.SourceConversationID, SourceMessageID: req.Metadata.SourceMessageID, SourceCompletedAt: req.Metadata.SourceCompletedAt, ExtractorVersion: req.Metadata.ExtractorVersion, LastOperationID: &lastOperationID}
 			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&after)
 			if result.Error != nil {
 				return result.Error
@@ -444,6 +448,13 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 			}
 		}
 		if err := tx.First(&after, "relationship_id = ? AND memory_key = ?", relationshipID, req.Key).Error; err != nil {
+			return err
+		}
+		versionAction, previous := VersionCreate, (*UserMemoryItem)(nil)
+		if exists {
+			versionAction, previous = VersionUpdate, &before
+		}
+		if err := s.recordVersion(ctx, tx, &relationship, req.Metadata, versionAction, req.Key, definitionID, previous, &after); err != nil {
 			return err
 		}
 		undo := UserMemoryUndoRecord{OperationID: operationID, RelationshipID: relationshipID, MemoryKey: req.Key, PreviousExists: exists, PreviousContentEncoding: ContentEncodingPlain, ResultingRevision: after.Revision, ExpiresAt: s.now().Add(undoTTL), CreatedAt: s.now()}
@@ -600,6 +611,9 @@ func (s *Service) DeleteItem(ctx context.Context, relationshipID uuid.UUID, key 
 				}
 				return ErrRevisionConflict
 			}
+			if err := s.recordVersion(ctx, tx, &relationship, metadata, VersionDelete, key, item.DefinitionID, &item, nil); err != nil {
+				return err
+			}
 		}
 		now := s.now()
 		if err := tx.Model(&UserMemoryRelationship{}).Where("id = ?", relationshipID).Updates(map[string]any{"memory_epoch": gorm.Expr("memory_epoch + 1"), "extraction_cutoff_at": now, "updated_at": now}).Error; err != nil {
@@ -660,6 +674,18 @@ func (s *Service) ClearItems(ctx context.Context, relationshipID uuid.UUID, meta
 			return ErrAccessDenied
 		}
 		now := s.now()
+		var cleared []UserMemoryItem
+		if err := tx.Where("relationship_id = ?", relationshipID).Order("memory_key").Find(&cleared).Error; err != nil {
+			return err
+		}
+		for index := range cleared {
+			if err := s.recordVersion(ctx, tx, &relationship, meta, VersionClear, cleared[index].MemoryKey, cleared[index].DefinitionID, &cleared[index], nil); err != nil {
+				return err
+			}
+		}
+		if err := s.purgeVersionContent(tx, relationshipID); err != nil {
+			return err
+		}
 		if err := tx.Where("relationship_id = ?", relationshipID).Delete(&UserMemoryItem{}).Error; err != nil {
 			return err
 		}
@@ -749,12 +775,20 @@ func (s *Service) Undo(ctx context.Context, relationshipID, operationID uuid.UUI
 			return currentErr
 		}
 		beforeRevision := undo.ResultingRevision
+		var undone *UserMemoryItem
+		if currentExists {
+			snapshot := current
+			undone = &snapshot
+		}
 		if !undo.PreviousExists {
 			if !currentExists || current.Revision != undo.ResultingRevision {
 				return ErrRevisionConflict
 			}
 			beforeRevision = current.Revision
 			if err := tx.Delete(&current).Error; err != nil {
+				return err
+			}
+			if err := s.recordVersion(ctx, tx, &relationship, meta, VersionUndo, undo.MemoryKey, current.DefinitionID, undone, nil); err != nil {
 				return err
 			}
 		} else {
@@ -789,6 +823,24 @@ func (s *Service) Undo(ctx context.Context, relationshipID, operationID uuid.UUI
 				}
 			}
 			current.Revision = nextRevision
+			restored := current
+			restored.ContentPayload, restored.ContentEncoding, restored.ContentKeyID = undo.PreviousContentPayload, undo.PreviousContentEncoding, undo.PreviousContentKeyID
+			definitionID := current.DefinitionID
+			if definitionID == nil {
+				resolved, err := definitionIDFor(ctx, tx, &relationship, undo.MemoryKey)
+				if err != nil {
+					return err
+				}
+				if resolved != nil {
+					if err := tx.Model(&UserMemoryItem{}).Where("id = ?", current.ID).Update("definition_id", resolved).Error; err != nil {
+						return err
+					}
+				}
+				definitionID = resolved
+			}
+			if err := s.recordVersion(ctx, tx, &relationship, meta, VersionUndo, undo.MemoryKey, definitionID, undone, &restored); err != nil {
+				return err
+			}
 			decoded, err := s.codec.Decode(ctx, EncodedContent{Payload: undo.PreviousContentPayload, Encoding: undo.PreviousContentEncoding, KeyID: undo.PreviousContentKeyID})
 			if err != nil {
 				return err

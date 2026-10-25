@@ -20,6 +20,8 @@ type fakeStore struct {
 	jobs        map[uuid.UUID]*AgentMemoryExtractionJob
 	subjects    map[string]*AgentMemorySubjectState
 	agents      map[string]*AgentMemoryAgentState
+
+	syncedDefinitions int
 }
 
 func newFakeStore(workspaceID uuid.UUID) *fakeStore {
@@ -87,6 +89,11 @@ func (f *fakeStore) LockAgent(ctx context.Context, agentID uuid.UUID) error {
 	if agentID == uuid.Nil {
 		return gorm.ErrRecordNotFound
 	}
+	return nil
+}
+
+func (f *fakeStore) SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error {
+	f.syncedDefinitions = len(slots)
 	return nil
 }
 
