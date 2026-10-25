@@ -4,6 +4,7 @@
 - Date: 2026-10-20
 - Builds on: ADR 0001, ADR 0002, ADR 0004, ADR 0005
 - Amended by: ADR 0010 (end-user management, quotas, and external access move to the Runtime Workspace)
+- Amended by: ADR 0014 (instance memory is shown to the model as `/user/notes/`)
 
 ## Context
 
@@ -108,3 +109,20 @@ Each step ships behind its flag and keeps existing behavior when the flag is off
 - Existing data needs no backfill to keep working. Instances are created lazily, and the migration creates instances for end users seen in earlier runs so operators can see historical end users.
 - Instance memory ships behind `ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_ENABLED`, and instances behind `ZGI_DIGITAL_HUMAN_INSTANCES_ENABLED`. Both were off by default during rollout; since the decision was accepted (2026-10-23) both are on unless a deployment sets them to `false`.
 - Per-member instances in channels and cross-DigitalHuman identity for the same end user are outside this decision.
+
+## Amendment (2026-10-25, ADR 0014)
+
+With `ZGI_DIGITAL_HUMAN_MEMORY_FILES_ENABLED` on, the model sees instance memory as files under `/user/notes/`: the DigitalHuman's notes on its work with this person, such as commitments, open loops, and business context.
+
+The person's own relationship memory is shown as `/user/`. The person owns it, can view it, and can change it.
+
+The rules in this ADR do not change:
+- **Writes.** An `external_end_user` run writes only its own instance.
+- **Reads.** An instance run reads `self` memory and its own instance, and never `workspace` memory, another instance, or channel scopes.
+- **Management.** Operators manage instance memory and may promote an entry into `self` memory.
+- **Limits.** Capacity, expiry, suspension, and erasure work as described above.
+
+An entry archived by the expiry setting is no longer recalled, as before.
+
+ADR 0014 also lets the person see these notes, read-only, in their own memory view. That view comes with ADR 0014 step 7.
+

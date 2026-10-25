@@ -147,5 +147,5 @@ The archive is memory that is kept and searchable but not listed in the index.
 ## Decisions on the open points
 
 - Channel search spans every group conversation of the DigitalHuman (§4); direct chats are excluded.
-- `/me/team/` stays operator-managed and read-only to the model. Member writes are not opened. Whether workspace memory is kept long term is revisited with production usage data in step 6.
+- `/me/team/` stays operator-managed and read-only to the model. Member writes are not opened. Whether workspace memory is kept long term is revisited with production usage data in step 6. *(Step 6, 2026-10-25: deferred. Production usage data is not available yet, so workspace memory stays as it is.)*
 - Recall starts at 5 files within 6,000 characters and is tuned by the evaluation.

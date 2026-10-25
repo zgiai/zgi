@@ -4,6 +4,7 @@
 - Date: 2026-10-19
 - Accepted: 2026-10-21
 - Amends: ADR 0002
+- Amended by: ADR 0014 (business scopes are workspace, channel, and instance; trust levels group into three tiers)
 
 ## Context
 
@@ -47,7 +48,7 @@ Each run receives a resolved set of readable and writable business scopes. The s
 
 - a channel conversation resolves to its `channel` scope;
 - a scheduled task resolves to the scope recorded on that task;
-- project, customer, and campaign scopes resolve from the DigitalHuman's configured resource bindings and the run's context.
+- project, customer, and campaign scopes resolve from the DigitalHuman's configured resource bindings and the run's context. *(Retired by ADR 0014; see the amendment below.)*
 
 The memory tool exposes only the writable scopes of the current run. Retrieval returns `self` memory plus `business` memory in readable scopes. `restricted` memory is returned only when its exact scope is in the readable set.
 
@@ -55,7 +56,7 @@ In the first implementation:
 
 - every source except `external_end_user` can read `workspace`-scoped business memory;
 - a channel run, and a scheduled run of a channel-originated task, can also read its own `channel` scope;
-- no project, customer, or campaign entity exists yet, so those scopes are never resolved at runtime. They remain visible in the console memory list.
+- no project, customer, or campaign entity exists yet, so those scopes are never resolved at runtime. They remain visible in the console memory list. *(Retired by ADR 0014.)*
 
 Vector recall over-fetches up to the retrieval service's page limit before filtering, so a scoped recall can return fewer results than requested when most nearest matches are out of scope.
 
@@ -71,3 +72,30 @@ The trust level and resolved scopes are stored on the run and on every memory ev
 - Scope resolution becomes a shared server-side concept. ADR 0005 reuses the same trust levels for task visibility.
 - The new admission policy first shipped behind `ZGI_DIGITAL_HUMAN_MEMORY_TRUST_POLICY_ENABLED`. After acceptance the switch was removed (2026-10-22): the policy always applies and the origin-based checks are gone.
 - Per-user instances, an artifact library, and an approval center are outside this decision. Memory references artifacts by identifier and never copies their content, as ADR 0002 already requires.
+
+## Amendment (2026-10-25, ADR 0014)
+
+### Business scopes
+
+Business memory has three scopes: `workspace`, `channel`, and `instance` (ADR 0006).
+
+The `project`, `customer`, and `campaign` scopes are retired. The runtime never resolved them.
+
+- **Moved rows.** Migration `202610251400000000_retire_unused_memory_scopes` moves any existing rows in those scopes to their workspace's `workspace` scope:
+  - each move bumps the revision and records an audit event with reason code `scope_retired_to_workspace`;
+  - a key already used in the workspace scope gets a suffix naming the old scope.
+- **Rows of deleted DigitalHumans.** These rows cannot be updated, so they stay where they are. The narrower check constraint is then added `NOT VALID`, and it still holds every new or changed row.
+- **API and console.** The enums and the operator proposals API no longer accept the retired scopes. The console no longer offers them.
+
+### Trust tiers
+
+ADR 0013 groups the four trust levels into three tiers:
+
+| Tier | Trust levels |
+|---|---|
+| operator | `authorized_operator` |
+| member | `workspace_member`, `channel_participant` |
+| external | `external_end_user` |
+
+The table in this ADR still decides what each level may write. ADR 0014 shows the same rules as directories (`/me/`, `/conversation/`, `/user/notes/`, and the user's own `/user/`), and grants no new write permission.
+
