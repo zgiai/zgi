@@ -134,7 +134,7 @@
     "test:connector-picker-dialog": "node scripts/test-connector-picker-dialog.mjs",
     "test:connector-route-access": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-connector-route-access.mjs",
     "test:connector-i18n": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-connector-i18n.mjs",
-    "test:connector-connection-management": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-connector-connection-management.mjs",
+    "test:connector-connection-management": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-connector-connection-management.mjs && node scripts/test-connector-connection-tools.mjs",
     "test:connector-runtime-confirmation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-connector-runtime-confirmation.mjs",
     "test:workflow-connector-picker": "node scripts/test-workflow-connector-picker.mjs",
     "test:native-model-processing": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-native-model-processing.mjs",
