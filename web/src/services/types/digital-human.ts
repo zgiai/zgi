@@ -446,13 +446,7 @@ export type DigitalHumanMemoryType =
   | 'fact'
   | 'open_loop'
   | 'reflection';
-export type DigitalHumanMemoryScopeType =
-  | 'workspace'
-  | 'project'
-  | 'customer'
-  | 'campaign'
-  | 'channel'
-  | 'instance';
+export type DigitalHumanMemoryScopeType = 'workspace' | 'channel' | 'instance';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {

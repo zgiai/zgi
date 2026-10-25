@@ -16,7 +16,7 @@ func TestRenderDigitalHumanMemoryContextCarriesScopeAndRevision(t *testing.T) {
 	content := renderDigitalHumanMemoryContext([]*DigitalHumanMemory{{
 		ID:        memoryID,
 		MemoryKey: "launch-date", MemoryClass: memoryruntime.MemoryClassBusiness, MemoryType: memoryruntime.MemoryTypeFact,
-		ScopeType: memoryruntime.MemoryScopeProject, ScopeID: "project-7", Revision: 4, Content: "Launch is September 8.",
+		ScopeType: memoryruntime.MemoryScopeType("project"), ScopeID: "project-7", Revision: 4, Content: "Launch is September 8.",
 	}}, true, true)
 	for _, unexpected := range []string{"id=" + memoryID.String(), "key=launch-date", "scope=project:project-7", "revision=4", "Launch is September 8"} {
 		if strings.Contains(content, unexpected) {

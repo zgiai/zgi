@@ -16,7 +16,7 @@ func TestAuthoritativeMemoryResultKeepsActiveMemoriesAndDropsUnknownOrInactiveHi
 	inactiveID := uuid.New()
 	memories := map[uuid.UUID]*DigitalHumanMemory{
 		allowedID:        {ID: allowedID, MemoryKey: "allowed-key", Revision: 3, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "allowed"},
-		legacyBusinessID: {ID: legacyBusinessID, MemoryKey: "legacy-business-key", Revision: 1, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeCustomer, ScopeID: uuid.New().String(), Status: MemoryStatusActive, Content: "legacy business stays visible"},
+		legacyBusinessID: {ID: legacyBusinessID, MemoryKey: "legacy-business-key", Revision: 1, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeType("customer"), ScopeID: uuid.New().String(), Status: MemoryStatusActive, Content: "legacy business stays visible"},
 		inactiveID:       {ID: inactiveID, MemoryKey: "archived-key", Revision: 1, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusArchived, Content: "archived"},
 	}
 	response := &datasetservice.KnowledgeRetrieveResponse{Resources: []datasetservice.KnowledgeRetrieverResource{
@@ -130,7 +130,7 @@ func TestAuthoritativeMemoryResultFiltersByReadScopeAndTrims(t *testing.T) {
 	selfA, selfB, ownChannel, otherChannel, customer := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	memories := map[uuid.UUID]*DigitalHumanMemory{
 		otherChannel: {ID: otherChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-b", Status: MemoryStatusActive, Content: "other"},
-		customer:     {ID: customer, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeCustomer, ScopeID: "c", Status: MemoryStatusActive, Content: "customer"},
+		customer:     {ID: customer, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeType("customer"), ScopeID: "c", Status: MemoryStatusActive, Content: "customer"},
 		ownChannel:   {ID: ownChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-a", Status: MemoryStatusActive, Content: "own"},
 		selfA:        {ID: selfA, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self a"},
 		selfB:        {ID: selfB, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self b"},

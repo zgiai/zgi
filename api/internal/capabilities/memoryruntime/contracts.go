@@ -51,12 +51,6 @@ type MemoryScopeType string
 const (
 	// MemoryScopeWorkspace is the owning workspace's shared business scope.
 	MemoryScopeWorkspace MemoryScopeType = "workspace"
-	// MemoryScopeProject isolates memory for one project.
-	MemoryScopeProject MemoryScopeType = "project"
-	// MemoryScopeCustomer isolates memory for one customer.
-	MemoryScopeCustomer MemoryScopeType = "customer"
-	// MemoryScopeCampaign isolates memory for one campaign.
-	MemoryScopeCampaign MemoryScopeType = "campaign"
 	// MemoryScopeChannel isolates memory for one communication channel.
 	MemoryScopeChannel MemoryScopeType = "channel"
 	// MemoryScopeInstance isolates memory for one end-user instance.
@@ -177,7 +171,7 @@ func ValidateMemoryScopeRef(scope MemoryScopeRef) (MemoryScopeRef, error) {
 	scope.Type = MemoryScopeType(strings.ToLower(strings.TrimSpace(string(scope.Type))))
 	scope.ID = strings.TrimSpace(scope.ID)
 	switch scope.Type {
-	case MemoryScopeWorkspace, MemoryScopeProject, MemoryScopeCustomer, MemoryScopeCampaign, MemoryScopeChannel, MemoryScopeInstance:
+	case MemoryScopeWorkspace, MemoryScopeChannel, MemoryScopeInstance:
 	default:
 		return MemoryScopeRef{}, fmt.Errorf("%w: unsupported scope.type %q", ErrInvalidContract, scope.Type)
 	}

@@ -20,7 +20,7 @@ func TestMemoryFilePathsSayWhoTheMemoryIsAbout(t *testing.T) {
 		"/conversation/launch_plan.md": fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeChannel, memoryruntime.MemoryTypeDecision, "launch_plan", "x"),
 		"/user/notes/quote_due.md":     fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeOpenLoop, "quote_due", "x"),
 		"/me/a_b.md":                   fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "a/b", "x"),
-		"":                             fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeProject, memoryruntime.MemoryTypeFact, "never_resolved", "x"),
+		"":                             fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeType("project"), memoryruntime.MemoryTypeFact, "never_resolved", "x"),
 	} {
 		if got := memoryFilePath(memory); got != want {
 			t.Fatalf("path of %s/%s/%s = %q, want %q", memory.MemoryClass, memory.ScopeType, memory.MemoryKey, got, want)

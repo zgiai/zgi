@@ -2112,9 +2112,6 @@ const messages = {
     scope: {
       self: 'Self',
       workspace: 'Workspace',
-      project: 'Project',
-      customer: 'Customer',
-      campaign: 'Campaign',
       channel: 'Channel',
       instance: 'End user',
     },

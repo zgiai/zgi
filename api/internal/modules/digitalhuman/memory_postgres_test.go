@@ -146,7 +146,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	if rejectedLedger.Status != "rejected" || rejectedLedger.MemoryOperationID == nil || *rejectedLedger.MemoryOperationID != rejectedEvent.OperationID {
 		t.Fatalf("unauthorized runtime ledger = %#v, event operation = %s", rejectedLedger, rejectedEvent.OperationID)
 	}
-	projectScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeProject, ID: "project-7"}
+	projectScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String()}
 	operationID := uuid.New()
 	proposal := MemoryProposalRequest{
 		OperationID: operationID, Key: "launch-date", Action: memoryruntime.MutationActionUpsert,
@@ -164,7 +164,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatalf("created memory = %#v", created.Memory)
 	}
 
-	otherScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeProject, ID: "project-8"}
+	otherScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeChannel, ID: "channel-8"}
 	var items []*DigitalHumanMemory
 	for name, scope := range map[string]Scope{"actor_a": scopeA, "actor_b": scopeB} {
 		retrieved, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)

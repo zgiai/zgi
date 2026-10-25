@@ -134,7 +134,7 @@ func validBusinessMutation() MemoryMutation {
 		Action:           MutationActionUpsert,
 		Class:            MemoryClassBusiness,
 		Type:             MemoryTypeFact,
-		Scope:            &MemoryScopeRef{Type: MemoryScopeProject, ID: "project-42"},
+		Scope:            &MemoryScopeRef{Type: MemoryScopeWorkspace, ID: "33333333-3333-3333-3333-333333333333"},
 		Content:          "The launch date is September 8.",
 		ExpectedRevision: 7,
 		Fence:            MemoryFence{ConfigRevision: "sha256:run-spec", MemoryEpoch: 3},
@@ -152,5 +152,18 @@ func validRuntimeSubject() runtimeidentity.SubjectRef {
 		ID:             uuid.MustParse("11111111-1111-1111-1111-111111111111"),
 		OrganizationID: uuid.MustParse("22222222-2222-2222-2222-222222222222"),
 		WorkspaceID:    uuid.MustParse("33333333-3333-3333-3333-333333333333"),
+	}
+}
+
+func TestValidateMemoryScopeRefRejectsRetiredScopes(t *testing.T) {
+	for _, retired := range []string{"project", "customer", "campaign"} {
+		if _, err := ValidateMemoryScopeRef(MemoryScopeRef{Type: MemoryScopeType(retired), ID: "x"}); !errors.Is(err, ErrInvalidContract) {
+			t.Fatalf("%s scope error = %v", retired, err)
+		}
+	}
+	for _, live := range []MemoryScopeType{MemoryScopeWorkspace, MemoryScopeChannel, MemoryScopeInstance} {
+		if _, err := ValidateMemoryScopeRef(MemoryScopeRef{Type: live, ID: "x"}); err != nil {
+			t.Fatalf("%s scope error = %v", live, err)
+		}
 	}
 }

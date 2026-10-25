@@ -1984,9 +1984,6 @@ const messages: DigitalHumansMessages = {
     scope: {
       self: '数字人自身',
       workspace: '工作空间',
-      project: '项目',
-      customer: '客户',
-      campaign: '活动',
       channel: '渠道',
       instance: '终端用户',
     },

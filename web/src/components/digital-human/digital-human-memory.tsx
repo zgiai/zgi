@@ -66,14 +66,7 @@ const memoryTypes: DigitalHumanMemoryType[] = [
   'open_loop',
   'reflection',
 ];
-const scopeTypes: DigitalHumanMemoryScopeType[] = [
-  'workspace',
-  'project',
-  'customer',
-  'campaign',
-  'channel',
-  'instance',
-];
+const scopeTypes: DigitalHumanMemoryScopeType[] = ['workspace', 'channel', 'instance'];
 
 export function DigitalHumanMemory({ id }: { id: string }) {
   const t = useT('digitalHumans');

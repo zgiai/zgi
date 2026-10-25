@@ -132,7 +132,7 @@ func TestMemoryReadScopeFiltersMemoriesAndQueries(t *testing.T) {
 		"workspace-restricted": {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeWorkspace, ScopeID: "other-workspace-key", Visibility: MemoryVisibilityRestricted},
 		"own-channel":          {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: ownChannel.String()},
 		"other-channel":        {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: otherChannel.String()},
-		"project":              {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeProject, ScopeID: "project-1"},
+		"project":              {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeType("project"), ScopeID: "project-1"},
 	}
 	now := time.Now().UTC()
 	for key, row := range rows {

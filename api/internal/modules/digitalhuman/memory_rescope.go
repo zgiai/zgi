@@ -29,9 +29,9 @@ type MemoryRescopeRequest struct {
 // the memory event history, records the origin in the action ledger, and can
 // be undone like any other proposal.
 //
-// Only self memory and workspace business memory are valid targets. Channel,
-// project, customer, and campaign scopes are resolved by the runtime from
-// verified bindings and are not chosen by hand.
+// Only self memory and workspace business memory are valid targets. Channel
+// and instance scopes are resolved by the runtime from verified bindings and
+// are not chosen by hand.
 func (s *Service) RescopeMemory(ctx context.Context, scope Scope, digitalHumanID, memoryID uuid.UUID, request MemoryRescopeRequest) (*MemoryMutationResult, error) {
 	if request.OperationID == uuid.Nil || memoryID == uuid.Nil || request.ExpectedRevision < 1 {
 		return nil, applicationError(ErrInvalidRequest, "digital_human.memory.rescope")
