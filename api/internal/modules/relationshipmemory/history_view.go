@@ -246,3 +246,22 @@ func truncateHistoryText(value string, limit int) string {
 	}
 	return string([]rune(value)[:limit])
 }
+
+// Item returns one decoded item of a relationship, or nil when the key has
+// none. File-style editors read the current value before changing it.
+func (s *Service) Item(ctx context.Context, relationshipID uuid.UUID, key string) (*UserMemoryItem, error) {
+	var item UserMemoryItem
+	err := s.db.WithContext(ctx).First(&item, "relationship_id = ? AND memory_key = ?", relationshipID, strings.TrimSpace(key)).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read memory item: %w", err)
+	}
+	content, err := s.codec.Decode(ctx, EncodedContent{Payload: item.ContentPayload, Encoding: item.ContentEncoding, KeyID: item.ContentKeyID})
+	if err != nil {
+		return nil, fmt.Errorf("decode memory item: %w", err)
+	}
+	item.ContentPayload = content
+	return &item, nil
+}

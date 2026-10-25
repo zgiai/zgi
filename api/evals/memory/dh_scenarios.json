@@ -310,7 +310,8 @@
       "probe": "Which office did we pick for the pilot last time?",
       "expect": {
         "answer_any": [
-          "Berlin"
+          "Berlin",
+          "柏林"
         ]
       }
     },
@@ -370,11 +371,16 @@
       "probe": "What did you promise to send me, and how should you reach me?",
       "expect": {
         "memory_in": {
-          "user": [
-            "email"
-          ],
           "notes": [
             "SSO"
+          ]
+        },
+        "memory_in_any": {
+          "user": [
+            "email",
+            "e-mail",
+            "邮件",
+            "邮箱"
           ]
         },
         "answer_all": [
@@ -382,7 +388,8 @@
         ],
         "answer_any": [
           "email",
-          "邮件"
+          "邮件",
+          "邮箱"
         ]
       },
       "notes": "Three facts in one message: two about the person, one commitment of the DigitalHuman."

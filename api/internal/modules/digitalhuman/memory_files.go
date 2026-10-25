@@ -181,28 +181,6 @@ func firstLine(content string, limit int) string {
 // memoryFilesGuidance replaces the "not preloaded" retrieval guidance.
 const memoryFilesGuidance = "Your long-term memory is shown as files in <digital_human_memory>: the files most relevant to the current message in full, then an index of other files. When the answer may depend on an indexed file, read it with memory_view; when nothing shown fits, search with memory_search before saying you do not know."
 
-// memoryWriteTargetGuidance tells the model where manage_digital_human_memory
-// writes in this run, by path, so it knows what belongs there.
-func memoryWriteTargetGuidance(admission memoryWriteAdmission) string {
-	if !admission.Allowed {
-		return ""
-	}
-	switch {
-	case admission.Class == memoryruntime.MemoryClassSelf:
-		return "In this conversation manage_digital_human_memory saves files under /me/: your own durable knowledge, experience, and decisions, which every conversation can read."
-	case admission.Scope != nil && admission.Scope.Type == memoryruntime.MemoryScopeChannel:
-		return "In this conversation manage_digital_human_memory saves files under /conversation/: context of this channel conversation only. It cannot change /me/ or other conversations."
-	case admission.Scope != nil && admission.Scope.Type == memoryruntime.MemoryScopeInstance:
-		return strings.Join([]string{
-			"In this conversation manage_digital_human_memory saves files under /user/notes/: your notes on your work with this person.",
-			"Save there what you need to serve them next time: commitments you made, open loops, and their business context, plans, budgets, and decisions.",
-			"Facts about the person themselves, such as preferences, how to address them, or personal constraints, belong to their own memory instead, when a tool for it is offered.",
-			"These notes cannot change /me/ or what other users see. If notes are full, update or clear one that no longer matters.",
-		}, " ")
-	}
-	return ""
-}
-
 // prepareMemoryFiles recalls the files most relevant to the run's message and
 // lists the rest. A failed recall degrades to the index alone; it never fails
 // the run.

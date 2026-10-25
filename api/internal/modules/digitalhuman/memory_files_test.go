@@ -107,20 +107,3 @@ func TestMemoryFilesGuidanceReplacesRetrievalOnlyWhenEnabled(t *testing.T) {
 		t.Fatal("legacy guidance changed")
 	}
 }
-
-func TestMemoryWriteTargetIsNamedByPath(t *testing.T) {
-	instance := memoryWriteAdmission{Allowed: true, Class: memoryruntime.MemoryClassBusiness, Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: uuid.NewString()}}
-	if got := memoryWriteTargetGuidance(instance); !strings.Contains(got, "/user/notes/") || !strings.Contains(got, "commitments") {
-		t.Fatalf("instance target = %q", got)
-	}
-	if got := memoryWriteTargetGuidance(memoryWriteAdmission{Allowed: true, Class: memoryruntime.MemoryClassSelf}); !strings.Contains(got, "/me/") {
-		t.Fatalf("self target = %q", got)
-	}
-	channel := memoryWriteAdmission{Allowed: true, Class: memoryruntime.MemoryClassBusiness, Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeChannel, ID: uuid.NewString()}}
-	if got := memoryWriteTargetGuidance(channel); !strings.Contains(got, "/conversation/") {
-		t.Fatalf("channel target = %q", got)
-	}
-	if memoryWriteTargetGuidance(memoryWriteAdmission{}) != "" {
-		t.Fatal("a rejected admission named a target")
-	}
-}

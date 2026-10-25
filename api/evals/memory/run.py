@@ -212,6 +212,8 @@ def score(scenario, memory, answer, other_memory):
     for key, needles in expect.get("memory_in", {}).items():
         for needle in needles:
             checks.append((f"{key} has {needle}", contains(memory.get(key, ""), needle)))
+    for key, needles in expect.get("memory_in_any", {}).items():
+        checks.append((f"{key} has any of " + "/".join(needles), any(contains(memory.get(key, ""), n) for n in needles)))
     for needle, limit in expect.get("memory_max_occurrences", {}).items():
         count = memory_text.lower().count(needle.lower())
         checks.append((f"memory mentions {needle} at most {limit} times ({count})", count <= limit))

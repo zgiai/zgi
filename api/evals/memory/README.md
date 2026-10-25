@@ -5,7 +5,7 @@ A replayable scenario suite for Agent memory. It drives an Agent through the ext
 ## Files
 
 - `scenarios.json`: the scenarios. Each one has sessions (separate conversations), a probe question asked in a new conversation, and expectations:
-  - `memory_all`, `memory_none`: checks on the saved memory;
+  - `memory_all`, `memory_none`, `memory_in` (per partition or slot), `memory_in_any`: checks on the saved memory;
   - `answer_all`, `answer_any`, `answer_none`, `answer_regex`, `answer_max_cjk`: checks on the probe answer;
   - `other_memory_empty`: checks isolation.
   `requires_auto` marks scenarios that only automatic capture is expected to pass; `observe` marks product decisions that are reported but not scored.
