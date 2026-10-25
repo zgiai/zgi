@@ -500,6 +500,20 @@ func compactUserInputClarificationHistory(responses []map[string]interface{}, li
 	return out
 }
 
+// userInputAnswerValues lists the user's answers recorded on a message, oldest
+// first.
+func userInputAnswerValues(responses []map[string]interface{}) []string {
+	var values []string
+	for _, response := range responses {
+		for _, answer := range mapSliceFromAny(response["answers"]) {
+			if value := strings.TrimSpace(stringFromAny(answer["value"])); value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	return values
+}
+
 func clarificationAnswerCount(clarifications []map[string]interface{}) int {
 	total := 0
 	for _, clarification := range clarifications {
@@ -561,6 +575,7 @@ func (s *service) prepareUserInputContinuationChat(
 		return nil, err
 	}
 	parts.ContextControl = contextResult.Metadata
+	parts.UserInputAnswers = userInputAnswerValues(mapSliceFromAny(message.Metadata["user_input_responses"]))
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
 	s.appendPersistedAgentTranscript(ctx, llmRequest, message)
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {

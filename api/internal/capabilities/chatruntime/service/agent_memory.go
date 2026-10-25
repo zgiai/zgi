@@ -350,7 +350,7 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			MemoryService: s.agentMemoryService, WorkspaceID: workspaceID, AgentID: agentID,
 			UserID: agentMemoryUserID(prepared.Scope), UserScope: parts.AgentMemoryUserScope,
 			Slots: state.EnabledSlots, CurrentValues: state.SavedValues,
-			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: parts.Query,
+			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: currentTurnUserText(parts),
 			ProactiveAllowed: proactiveAllowed, RecentUserMessages: parts.AgentMemoryRecentUserMessages, CallID: call.ID,
 		}
 		var result agentmemoryruntime.MutationResult
@@ -394,6 +394,15 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 // agentMemoryEvidenceWindow is how many recent user messages memory_edit
 // evidence may quote besides the current one.
 const agentMemoryEvidenceWindow = 6
+
+// currentTurnUserText is what the user said in this turn: the query and, after
+// the Agent asked a question, the user's answers.
+func currentTurnUserText(parts *chatRequestParts) string {
+	if len(parts.UserInputAnswers) == 0 {
+		return parts.Query
+	}
+	return strings.Join(append([]string{parts.Query}, parts.UserInputAnswers...), "\n")
+}
 
 func editsRejected(result map[string]interface{}) bool {
 	outcomes, _ := result["edits"].([]agentmemoryruntime.EditOutcome)

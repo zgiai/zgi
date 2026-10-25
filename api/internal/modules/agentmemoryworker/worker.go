@@ -213,6 +213,34 @@ type completedTurn struct {
 	CompletedAt   time.Time
 	ModelProvider string
 	ModelName     string
+	// UserInputResponses holds the user's answers to questions asked in the
+	// turn; withUserInputAnswers folds them into Query.
+	UserInputResponses []byte
+}
+
+// withUserInputAnswers appends the user's answers to the turn's query: they
+// are the user's words for the turn, which extraction reads and evidence may
+// quote.
+func (t completedTurn) withUserInputAnswers() completedTurn {
+	var responses []struct {
+		Answers []struct {
+			Value string `json:"value"`
+		} `json:"answers"`
+	}
+	if len(t.UserInputResponses) == 0 || json.Unmarshal(t.UserInputResponses, &responses) != nil {
+		return t
+	}
+	lines := []string{t.Query}
+	for _, response := range responses {
+		for _, answer := range response.Answers {
+			if value := strings.TrimSpace(answer.Value); value != "" {
+				lines = append(lines, value)
+			}
+		}
+	}
+	t.Query = strings.Join(lines, "\n")
+	t.UserInputResponses = nil
+	return t
 }
 
 type extractionScope struct {
@@ -276,7 +304,7 @@ func (r *Runner) loadCompletedTurns(ctx context.Context, job *agentmemory.AgentM
 		lowerBound = &value
 	}
 	query := r.db.WithContext(ctx).Table("chat_runtime_messages").
-		Select("id, query, COALESCE(answer, '') AS answer, updated_at AS completed_at, COALESCE(model_provider, '') AS model_provider, model_name").
+		Select("id, query, COALESCE(answer, '') AS answer, updated_at AS completed_at, COALESCE(model_provider, '') AS model_provider, model_name, metadata -> 'user_input_responses' AS user_input_responses").
 		Where("conversation_id = ? AND status = ? AND created_at <= ? AND deleted_at IS NULL", job.ConversationID, "completed", watermark.CreatedAt)
 	if lowerBound != nil {
 		query = query.Where("created_at > ?", *lowerBound)
@@ -287,6 +315,9 @@ func (r *Runner) loadCompletedTurns(ctx context.Context, job *agentmemory.AgentM
 	}
 	for i, j := 0, len(turns)-1; i < j; i, j = i+1, j-1 {
 		turns[i], turns[j] = turns[j], turns[i]
+	}
+	for i := range turns {
+		turns[i] = turns[i].withUserInputAnswers()
 	}
 	return turns, scope, nil
 }

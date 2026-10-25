@@ -824,11 +824,15 @@ type chatRequestParts struct {
 	// AgentMemoryRecentUserMessages are the user's earlier messages on this
 	// branch, which memory_edit evidence may quote (ADR 0013).
 	AgentMemoryRecentUserMessages []string
-	AgentMemoryContext            string
-	RuntimeTools                  []skillloop.RuntimeTool
-	SourceMessageID               *uuid.UUID
-	BillingSource                 string
-	ModelTurnIntent               *AIChatModelTurnIntent
-	ModelTurnIntentError          string
-	HistoryPolicy                 *runtimedto.ConversationHistoryPolicy
+	// UserInputAnswers are the user's answers to questions asked in this
+	// turn. They are the user's words for the turn as much as the query, so
+	// memory evidence may quote them.
+	UserInputAnswers     []string
+	AgentMemoryContext   string
+	RuntimeTools         []skillloop.RuntimeTool
+	SourceMessageID      *uuid.UUID
+	BillingSource        string
+	ModelTurnIntent      *AIChatModelTurnIntent
+	ModelTurnIntentError string
+	HistoryPolicy        *runtimedto.ConversationHistoryPolicy
 }
