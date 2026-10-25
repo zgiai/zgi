@@ -44,6 +44,18 @@ type consolidationEdit struct {
 
 func blockPath(key string) string { return "/user/" + key + ".md" }
 
+func appendDistinct(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 // automaticWritesAllowed reports whether background passes may write the
 // block: read-only and manual-only blocks change only on explicit requests.
 func automaticWritesAllowed(slot agentmemory.RuntimeSlot) bool {
@@ -192,6 +204,7 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 	}
 	working := map[string]string{}
 	sources := map[string]completedTurn{}
+	evidence, reasons := map[string][]string{}, map[string][]string{}
 	order := []string{}
 	for index, edit := range edits {
 		key, content, source, reason := applyConsolidationEdit(edit, slots, current, working, turns, turnIDs)
@@ -203,6 +216,8 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 			order = append(order, key)
 		}
 		working[key], sources[key] = content, *source
+		evidence[key] = appendDistinct(evidence[key], strings.TrimSpace(edit.Evidence))
+		reasons[key] = appendDistinct(reasons[key], strings.TrimSpace(edit.Reason))
 	}
 	mutations := make([]agentmemory.ValueMutation, 0, len(order))
 	for _, key := range order {
@@ -216,6 +231,7 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 			Action: agentmemory.MutationActionUpsert, Key: key, Content: content, Mode: agentmemory.MutationModeProactive,
 			ExpectedRevision: current[key].Revision, OperationID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(job.ID.String()+":"+key)),
 			SourceMessageID: &sourceMessageID, SourceCompletedAt: &sourceCompletedAt,
+			Evidence: strings.Join(evidence[key], " / "), Reason: strings.Join(reasons[key], "; "),
 		})
 	}
 	if len(mutations) == 0 {

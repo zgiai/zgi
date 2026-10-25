@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -42,6 +43,8 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.DELETE("/relationships/:id", h.DeleteRelationship)
 	group.GET("/relationships/:id/export", h.Export)
 	group.POST("/relationships/:id/operations/:operation_id/undo", h.Undo)
+	group.GET("/relationships/:id/history", h.History)
+	group.POST("/relationships/:id/history/:version_id/revert", h.RevertVersion)
 }
 
 func (h *Handler) ListRelationships(c *gin.Context) {
@@ -256,6 +259,84 @@ func (h *Handler) Undo(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"operation_id": operationID, "item": result})
+}
+
+// History lists the relationship's memory changes, newest first.
+func (h *Handler) History(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	request, ok := historyRequestFromQuery(c)
+	if !ok {
+		writeMemoryError(c, ErrPolicyRejected)
+		return
+	}
+	page, err := h.service.History(c.Request.Context(), detail.ID, request)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, page)
+}
+
+// RevertVersion undoes the latest change to one memory file.
+func (h *Handler) RevertVersion(c *gin.Context) {
+	if !relationshipMemoryWritesEnabled(c) {
+		return
+	}
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return
+	}
+	versionID, err := uuid.Parse(c.Param("version_id"))
+	if err != nil {
+		writeMemoryError(c, ErrUndoUnavailable)
+		return
+	}
+	contract, err := h.managementContract(c, detail)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	actorID := detail.SubjectID
+	item, err := h.service.RevertVersion(c.Request.Context(), detail.ID, versionID, contract, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager})
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"version_id": versionID, "item": item})
+}
+
+// historyRequestFromQuery reads key, limit, and before (RFC 3339) from the
+// query string.
+func historyRequestFromQuery(c *gin.Context) (HistoryRequest, bool) {
+	request := HistoryRequest{Key: strings.TrimSpace(c.Query("key"))}
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 0 {
+			return request, false
+		}
+		request.Limit = limit
+	}
+	if raw := strings.TrimSpace(c.Query("before")); raw != "" {
+		before, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return request, false
+		}
+		request.Before = &before
+	}
+	return request, true
+}
+
+// HistoryRequestFromQuery is historyRequestFromQuery for other modules'
+// handlers that expose the same history.
+func HistoryRequestFromQuery(c *gin.Context) (HistoryRequest, bool) {
+	return historyRequestFromQuery(c)
 }
 
 func (h *Handler) accountRelationship(c *gin.Context) (*RelationshipDetail, bool) {

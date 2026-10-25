@@ -65,6 +65,30 @@ func (h *AgentsHandler) UndoWebAppMemoryOperation(c *gin.Context) {
 	}
 }
 
+func (h *AgentsHandler) GetWebAppMemoryHistory(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.getDirectMemoryHistory(c, access)
+	}
+}
+
+func (h *AgentsHandler) RevertWebAppMemoryVersion(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.revertDirectMemoryVersion(c, access)
+	}
+}
+
+func (h *AgentsHandler) GetAPIKeyAgentMemoryHistory(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.getDirectMemoryHistory(c, access)
+	}
+}
+
+func (h *AgentsHandler) RevertAPIKeyAgentMemoryVersion(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.revertDirectMemoryVersion(c, access)
+	}
+}
+
 func (h *AgentsHandler) GetWebAppMemorySettings(c *gin.Context) {
 	if access, ok := h.webAppMemoryAccess(c); ok {
 		h.getDirectMemorySettings(c, access)
@@ -387,6 +411,49 @@ func (h *AgentsHandler) undoDirectMemory(c *gin.Context, access memoryAccessScop
 		return
 	}
 	response.Success(c, result)
+}
+
+// getDirectMemoryHistory lists the user's memory changes (ADR 0013). History
+// is kept by the relationship store only.
+func (h *AgentsHandler) getDirectMemoryHistory(c *gin.Context, access memoryAccessScope) {
+	if !relationshipmemory.RuntimeEnabled() {
+		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
+		return
+	}
+	request, ok := relationshipmemory.HistoryRequestFromQuery(c)
+	if !ok {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	page, err := relationshipmemory.NewAgentAdapter(h.db).History(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID, request)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, page)
+}
+
+// revertDirectMemoryVersion undoes the latest change to one memory file.
+func (h *AgentsHandler) revertDirectMemoryVersion(c *gin.Context, access memoryAccessScope) {
+	if !relationshipmemory.RuntimeEnabled() {
+		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
+		return
+	}
+	if !access.writesEnabled {
+		response.FailWithMessage(c, response.ErrInvalidParam, "Agent Memory is disabled")
+		return
+	}
+	versionID, err := uuid.Parse(strings.TrimSpace(c.Param("version_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	item, err := relationshipmemory.NewAgentAdapter(h.db).RevertVersion(c.Request.Context(), access.workspaceID, access.agentID, access.writeSlots, access.userScope, access.userID, versionID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"version_id": versionID, "item": item})
 }
 
 type directMemorySettingsRequest struct {

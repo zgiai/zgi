@@ -328,6 +328,9 @@ type MutationMetadata struct {
 	OperationID           uuid.UUID
 	ExpectedMemoryEpoch   *int64
 	EvidenceFromUserInput bool
+	// Evidence and Reason are recorded on the change's history version.
+	Evidence string
+	Reason   string
 }
 
 type PutItemRequest struct {

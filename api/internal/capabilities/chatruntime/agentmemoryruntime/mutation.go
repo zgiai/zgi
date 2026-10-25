@@ -130,6 +130,8 @@ func prepareMutations(req MutationRequest, arguments ToolArguments) ([]agentmemo
 			Mode:             mode,
 			ExpectedRevision: revisions[key],
 			OperationID:      deterministicOperationID(*req.MutationMetadata.SourceMessageID, key, action, mode),
+			Evidence:         evidence,
+			Reason:           legacyMutationReason(mode),
 		})
 	}
 	return mutations, summary, nil
@@ -193,6 +195,13 @@ func ErrorCode(err error) string {
 
 func ValidationError(err error) bool {
 	return ErrorCode(err) == "invalid_arguments"
+}
+
+func legacyMutationReason(mode string) string {
+	if mode == agentMemoryModeExplicit {
+		return "the user asked to remember"
+	}
+	return "saved during the conversation"
 }
 
 func findEnabledSlot(slots []Slot, key string) (Slot, bool) {

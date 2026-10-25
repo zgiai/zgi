@@ -47,23 +47,32 @@ type MemoryCommit struct {
 func (MemoryCommit) TableName() string { return "memory_commits" }
 
 type MemoryFileVersion struct {
-	ID              uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
-	CommitID        uuid.UUID  `gorm:"type:uuid;not null;index" json:"commit_id"`
-	RelationshipID  uuid.UUID  `gorm:"type:uuid;not null;index" json:"relationship_id"`
-	DefinitionID    *uuid.UUID `gorm:"type:uuid" json:"definition_id,omitempty"`
-	MemoryKey       string     `gorm:"type:varchar(64);not null" json:"key"`
-	Action          string     `gorm:"type:varchar(16);not null" json:"action"`
-	BeforeRevision  *int64     `json:"before_revision,omitempty"`
-	AfterRevision   *int64     `json:"after_revision,omitempty"`
-	BeforePayload   string     `gorm:"type:text;not null;default:''" json:"-"`
-	BeforeEncoding  string     `gorm:"type:varchar(24);not null;default:'plain'" json:"-"`
-	BeforeKeyID     *string    `gorm:"type:varchar(128)" json:"-"`
-	AfterPayload    string     `gorm:"type:text;not null;default:''" json:"-"`
-	AfterEncoding   string     `gorm:"type:varchar(24);not null;default:'plain'" json:"-"`
-	AfterKeyID      *string    `gorm:"type:varchar(128)" json:"-"`
+	ID             uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
+	CommitID       uuid.UUID  `gorm:"type:uuid;not null;index" json:"commit_id"`
+	RelationshipID uuid.UUID  `gorm:"type:uuid;not null;index" json:"relationship_id"`
+	DefinitionID   *uuid.UUID `gorm:"type:uuid" json:"definition_id,omitempty"`
+	MemoryKey      string     `gorm:"type:varchar(64);not null" json:"key"`
+	Action         string     `gorm:"type:varchar(16);not null" json:"action"`
+	BeforeRevision *int64     `json:"before_revision,omitempty"`
+	AfterRevision  *int64     `json:"after_revision,omitempty"`
+	BeforePayload  string     `gorm:"type:text;not null;default:''" json:"-"`
+	BeforeEncoding string     `gorm:"type:varchar(24);not null;default:'plain'" json:"-"`
+	BeforeKeyID    *string    `gorm:"type:varchar(128)" json:"-"`
+	AfterPayload   string     `gorm:"type:text;not null;default:''" json:"-"`
+	AfterEncoding  string     `gorm:"type:varchar(24);not null;default:'plain'" json:"-"`
+	AfterKeyID     *string    `gorm:"type:varchar(128)" json:"-"`
+	// Evidence quotes the user's words the change was based on; it is user
+	// content and is purged with the payloads. Reason says why it was made.
+	Evidence        string     `gorm:"type:text;not null;default:''" json:"-"`
+	Reason          string     `gorm:"type:text;not null;default:''" json:"-"`
 	ContentPurgedAt *time.Time `json:"content_purged_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 }
+
+const (
+	maxVersionEvidenceRunes = 500
+	maxVersionReasonRunes   = 300
+)
 
 func (MemoryFileVersion) TableName() string { return "memory_file_versions" }
 
@@ -119,7 +128,8 @@ func (s *Service) recordVersion(ctx context.Context, tx *gorm.DB, relationship *
 	if err != nil {
 		return err
 	}
-	version := MemoryFileVersion{ID: uuid.New(), CommitID: commitID, RelationshipID: relationship.ID, DefinitionID: definitionID, MemoryKey: key, Action: action, CreatedAt: s.now()}
+	version := MemoryFileVersion{ID: uuid.New(), CommitID: commitID, RelationshipID: relationship.ID, DefinitionID: definitionID, MemoryKey: key, Action: action,
+		Evidence: truncateHistoryText(meta.Evidence, maxVersionEvidenceRunes), Reason: truncateHistoryText(meta.Reason, maxVersionReasonRunes), CreatedAt: s.now()}
 	if before != nil {
 		revision := before.Revision
 		version.BeforeRevision, version.BeforePayload, version.BeforeEncoding, version.BeforeKeyID = &revision, before.ContentPayload, before.ContentEncoding, before.ContentKeyID
@@ -148,7 +158,7 @@ func definitionIDFor(ctx context.Context, tx *gorm.DB, relationship *UserMemoryR
 // values gone too.
 func (s *Service) purgeVersionContent(tx *gorm.DB, relationshipID uuid.UUID) error {
 	return tx.Model(&MemoryFileVersion{}).Where("relationship_id = ? AND content_purged_at IS NULL", relationshipID).
-		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "content_purged_at": s.now()}).Error
+		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "evidence": "", "content_purged_at": s.now()}).Error
 }
 
 // CleanupExpiredHistory purges version content older than its retention and
@@ -160,7 +170,7 @@ func (s *Service) CleanupExpiredHistory(ctx context.Context) error {
 	now := s.now()
 	db := s.db.WithContext(ctx)
 	if err := db.Model(&MemoryFileVersion{}).Where("content_purged_at IS NULL AND created_at < ?", now.Add(-versionContentRetention)).
-		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "content_purged_at": now}).Error; err != nil {
+		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "evidence": "", "content_purged_at": now}).Error; err != nil {
 		return fmt.Errorf("purge expired memory version content: %w", err)
 	}
 	if err := db.Where("created_at < ?", now.Add(-historyRetention)).Delete(&MemoryCommit{}).Error; err != nil {

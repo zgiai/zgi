@@ -136,6 +136,18 @@ func FilePolicyMessage(proactiveAllowed bool) adapter.Message {
 	}, "\n")}
 }
 
+func appendDistinct(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 // InstructionsMessage frames the builder's memory instructions as business
 // preference under the fixed memory rules, or returns nil when there are none.
 func InstructionsMessage(instructions string) *adapter.Message {
@@ -176,6 +188,7 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 	}
 	working := map[string]string{}
 	explicit := map[string]bool{}
+	evidence := map[string][]string{}
 	order := []string{}
 	outcomes := make([]EditOutcome, 0, len(arguments.Edits))
 	for index, edit := range arguments.Edits {
@@ -190,6 +203,7 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 			order = append(order, key)
 		}
 		working[key] = content
+		evidence[key] = appendDistinct(evidence[key], strings.TrimSpace(edit.Evidence))
 		if strings.EqualFold(strings.TrimSpace(edit.Mode), agentMemoryModeExplicit) {
 			explicit[key] = true
 		}
@@ -207,12 +221,13 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 		if content == "" {
 			action = agentmemory.MutationActionClear
 		}
-		mode := agentMemoryModeProactive
+		mode, reason := agentMemoryModeProactive, "saved during the conversation"
 		if explicit[key] {
-			mode = agentMemoryModeExplicit
+			mode, reason = agentMemoryModeExplicit, "the user asked to remember"
 		}
 		mutations = append(mutations, agentmemory.ValueMutation{
 			Action: action, Key: key, Content: content, Mode: mode, ExpectedRevision: revisions[key],
+			Evidence: strings.Join(evidence[key], " / "), Reason: reason,
 			OperationID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(req.MutationMetadata.SourceMessageID.String()+":"+req.CallID+":"+key+":edit")),
 		})
 	}

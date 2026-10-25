@@ -512,6 +512,7 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 			metadata.SourceMessageID = operation.SourceMessageID
 			metadata.SourceCompletedAt = operation.SourceCompletedAt
 			metadata.EvidenceFromUserInput = metadata.EvidenceFromUserInput || operation.SourceMessageID != nil
+			metadata.Evidence, metadata.Reason = operation.Evidence, operation.Reason
 			if operation.Action == agentmemory.MutationActionClear {
 				deleted, err := transactionService.DeleteItem(ctx, relationship.ID, operation.Key, operation.ExpectedRevision, metadata)
 				if err != nil {
@@ -831,6 +832,33 @@ func (a *AgentAdapter) agentExtractionJob(ctx context.Context, job *UserMemoryEx
 		ErrorCode: job.ErrorCode, ScheduledAt: job.ScheduledAt, ForceAt: job.ForceAt,
 		StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
 	}, nil
+}
+
+// History returns the memory history of one Agent user.
+func (a *AgentAdapter) History(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, req HistoryRequest) (*HistoryPage, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	page, err := a.service.History(ctx, relationship.ID, req)
+	if err != nil {
+		return nil, mapAgentMemoryError(err)
+	}
+	return page, nil
+}
+
+// RevertVersion undoes the latest change to one of an Agent user's memory
+// files, within the published slots.
+func (a *AgentAdapter) RevertVersion(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID, versionID uuid.UUID) (*UserMemoryItem, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	item, err := a.service.RevertVersion(ctx, relationship.ID, versionID, agentContract(slots), agentManagementMetadata(userScope, userID))
+	if err != nil {
+		return nil, mapAgentMemoryError(err)
+	}
+	return item, nil
 }
 
 func relationshipMetadata(meta agentmemory.MutationMetadata, operationID uuid.UUID) MutationMetadata {

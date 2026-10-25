@@ -294,6 +294,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.DELETE("/:web_app_id/memory", appHandler.DeleteAllWebAppMemory)
 	protectedWebApps.GET("/:web_app_id/memory/export", appHandler.ExportWebAppMemory)
 	protectedWebApps.POST("/:web_app_id/memory/operations/:operation_id/undo", appHandler.UndoWebAppMemoryOperation)
+	protectedWebApps.GET("/:web_app_id/memory/history", appHandler.GetWebAppMemoryHistory)
+	protectedWebApps.POST("/:web_app_id/memory/history/:version_id/revert", appHandler.RevertWebAppMemoryVersion)
 	protectedWebApps.GET("/:web_app_id/memory/settings", appHandler.GetWebAppMemorySettings)
 	protectedWebApps.PATCH("/:web_app_id/memory/settings", appHandler.PatchWebAppMemorySettings)
 

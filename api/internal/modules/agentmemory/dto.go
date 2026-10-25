@@ -87,6 +87,9 @@ type ValueMutation struct {
 	OperationID       uuid.UUID
 	SourceMessageID   *uuid.UUID
 	SourceCompletedAt *time.Time
+	// Evidence and Reason explain the change in the user's memory history.
+	Evidence string
+	Reason   string
 }
 
 type MutateValuesRequest struct {
