@@ -44,6 +44,8 @@ display:
 
 Follow the employee's persona, rules and current task for business policy. This Skill supplies generic persistence and an external-operation state machine; it does not select an industry, account, language, approval policy, schedule or metric interval. Existing Automation Tasks choose when to run. These tools are available in scheduled task runs after the Skill binding is published. A schedule does not create tool availability or connector authorization. Read [social-operations.md](references/social-operations.md) or [customer-support.md](references/customer-support.md) when useful; both are editable examples, not mandatory workflows.
 
+For product or industry collection, read [research-collection.md](references/research-collection.md) when the task calls for it. For runtime reference reads, use the catalog path `research-collection.md`. It describes source verification, incremental progress, deduplication and material briefs using the existing tools; sources and record fields remain scenario choices.
+
 ## Durable business records
 
 Every tool takes one JSON-string `input`. Use only the advertised schema and returned identifiers. Server-side scope is the current owner, organization, workspace and employee; records continue across employee versions. Never put another scope into an input or assume it is available. Do not put credentials into records.

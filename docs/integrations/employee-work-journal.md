@@ -65,6 +65,19 @@ These references do not grant artifact access or validate existence; reads conti
 
 Sharing uses the existing platform interface/API, not a second share service or new Work Journal tools. Shares pin a version and follow the existing ownership, expiry, archive and sharing-disabled checks. Bearer URLs/tokens are not copied into business records or sources. Creating a share does not prove a social post or message was delivered; connector writes still use the operation lifecycle. Existing legacy records, artifacts and files are not migrated or deleted.
 
+## Source collection SOP
+
+The editable social-operations prompt and [research reference](../../api/internal/modules/skills/catalog/work-journal/references/research-collection.md) describe a configurable collection process:
+
+1. Restore each source checkpoint and pending items through existing journal tools; check actual read/search tools and approved sources.
+2. Read changed product sources first, then search industry topics and open original evidence. A commit is not a deployment; planned and unconfirmed capabilities stay distinct from released capabilities.
+3. Preserve source IDs/URLs, article/event/observation times, excerpts and verification state. Unknown dates remain unknown; conflicting claims stay pending.
+4. Deduplicate exact sources and repeated core claims against material records and recent topics. Save evidence using the observed CAS revision before advancing completed source progress.
+5. Retain unresolved positions and incomplete coverage on failed reads, partial pagination, exhausted budgets or failed writes; continue other independent sources.
+6. Select useful, supported candidates and save the material brief through the existing artifact center. Keep its returned artifact ID/version, source coverage and pending work in the journal.
+
+This is an instruction template using existing infrastructure, not a new hardcoded collector. Source lists, queries, windows, cadence and record fields remain user choices. It does not create connections, grant access or configure a running employee automatically. Full collection acceptance requires configuring an employee and exercising its actual source tools; infrastructure tests do not prove an LLM followed this procedure against real sources.
+
 ## Read-only APIs
 
 All paths are beneath `/console/api/digital-humans/{employeeId}/work-journal` and restore the authenticated organization, workspace and owner. The permission is `digital_human.logs.view`.

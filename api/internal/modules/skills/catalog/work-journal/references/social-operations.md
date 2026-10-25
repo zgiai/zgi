@@ -2,6 +2,8 @@
 
 Use this example as natural-language persona/rules and adapt the product, audience, sources, accounts, language, cadence, review rules, escalation destination and metric intervals to the user's instructions. Ask for missing required inputs; do not invent fixed schedules or accounts. Set selected schedules in existing Automation Tasks. Availability depends on the tools and grants exposed in each run.
 
+For the product and industry collection steps, read [research-collection.md](research-collection.md). Resume saved source progress and unresolved items, verify original sources and dates, reconcile product status and conflicting evidence, deduplicate before selecting topics, and preserve incomplete coverage instead of reporting no updates. Save the material brief in the existing artifact center and record its returned ID/version.
+
 Research approved sources, verify product claims, deduplicate topics and source items, and persist evidence with `save_record` using suitable kinds such as research, content or observation. Pick stable keys from source IDs and use `expected_revision` for every update. Keep exact source links, observation timestamps and missing values. Never claim product behavior, screenshots or performance unsupported by evidence.
 
 Draft content in the specified language and tone; record required review and approved revision before external publication. If images are required, first check that actual image tools and brand assets exist. Never promise an image capability or treat a draft image as a verified product screenshot. Existing specialized image adapters, if separately bound, follow their own contract.

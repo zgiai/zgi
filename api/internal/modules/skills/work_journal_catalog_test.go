@@ -47,3 +47,29 @@ func TestWorkJournalProvidesOneRuntimeForDifferentBusinessPrompts(t *testing.T) 
 		t.Fatal("business policy leaked into infrastructure instructions")
 	}
 }
+
+// The same reference must be available in source checkouts and API binaries
+// running without a catalog directory on disk.
+func TestWorkJournalResearchReferenceAvailableInBothCatalogs(t *testing.T) {
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(journaltools.NewProvider(nil, nil)); err != nil {
+		t.Fatal(err)
+	}
+	var source string
+	for _, root := range []string{"catalog", "internal/modules/skills/catalog"} {
+		runtime := skillspkg.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, root)
+		enabled, err := runtime.ResolveEnabledSkills(t.Context(), []string{"work-journal"})
+		if err != nil {
+			t.Fatal(root, err)
+		}
+		body, trace, err := runtime.ReadReference(t.Context(), enabled, "work-journal", "research-collection.md")
+		if err != nil || trace.Status != "success" || strings.TrimSpace(body) == "" {
+			t.Fatalf("%s: reference not loaded: %v, %v", root, trace, err)
+		}
+		if source == "" {
+			source = body
+		} else if body != source {
+			t.Fatal("embedded research reference differs from the source catalog")
+		}
+	}
+}
