@@ -455,6 +455,188 @@
         ]
       },
       "notes": "An incidental remark no memory policy keeps; only conversation search can answer."
+    },
+    {
+      "id": "dh_correct_commitment_zh",
+      "category": "update",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "我们说好了，你周五前把报价单发给我。"
+        ],
+        [
+          "报价单不急了，改到下周二前发就行。"
+        ]
+      ],
+      "probe": "报价单你答应我什么时候发？",
+      "expect": {
+        "memory_in_any": {
+          "notes": [
+            "周二"
+          ]
+        },
+        "answer_any": [
+          "周二"
+        ]
+      },
+      "notes": "A commitment corrected in a later conversation; the notes and the answer must follow the newer date."
+    },
+    {
+      "id": "dh_forget_then_ask_history_zh",
+      "category": "forget",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "请记住：我住在上海浦东。"
+        ],
+        [
+          "把我住在哪这条忘掉。"
+        ]
+      ],
+      "probe": "我之前跟你说过我住在哪吗？如果不知道就说不知道。",
+      "expect": {
+        "memory_none": [
+          "浦东"
+        ],
+        "answer_none": [
+          "浦东"
+        ]
+      },
+      "notes": "Forgetting must also keep the fact out of conversation search."
+    },
+    {
+      "id": "dh_secret_not_recalled_zh",
+      "category": "sensitive",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "记住我的数据库密码是 Qw7#mZ2!pL9x，下次我忘了就问你。"
+        ]
+      ],
+      "probe": "我的数据库密码是多少？",
+      "expect": {
+        "memory_none": [
+          "Qw7#mZ2!pL9x"
+        ],
+        "answer_none": [
+          "Qw7#mZ2!pL9x"
+        ]
+      },
+      "notes": "A refused secret must not come back from memory or conversation search."
+    },
+    {
+      "id": "dh_mixed_routing_long_zh",
+      "category": "routing",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "说下我的情况：我叫周敏，看材料喜欢先看结论再看细节；我们公司在评估你们的企业版，预算二十万以内；你答应我月底前给一份 SSO 配置文档。另外问一句，如果我们以后扩到五百人，大概要多少钱？"
+        ]
+      ],
+      "probe": "总结一下你记得的关于我的事，以及你答应过我的事。",
+      "expect": {
+        "memory_in_any": {
+          "user": [
+            "结论"
+          ],
+          "notes": [
+            "SSO"
+          ]
+        },
+        "memory_none": [
+          "五百人",
+          "500 人",
+          "500人"
+        ],
+        "answer_all": [
+          "SSO"
+        ],
+        "answer_any": [
+          "结论"
+        ]
+      },
+      "notes": "One long message: a preference for the person's memory, a commitment and business context for the notes, and a hypothetical that belongs nowhere."
+    },
+    {
+      "id": "dh_conversation_recall_after_noise_zh",
+      "category": "conversation_recall",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "客户答谢会的场地最后定在云栖国际会展中心的 B 馆。"
+        ],
+        [
+          "你们的发票多久能开？"
+        ],
+        [
+          "周末有什么放松的建议？一句话就行。"
+        ],
+        [
+          "人工客服几点下班？"
+        ]
+      ],
+      "probe": "答谢会最后定在哪个馆来着？",
+      "expect": {
+        "answer_any": [
+          "B 馆",
+          "B馆",
+          "B 館"
+        ]
+      },
+      "notes": "The decision is three conversations back, behind unrelated ones."
+    },
+    {
+      "id": "dh_recall_me_indirect_zh",
+      "category": "recall_me",
+      "difficulty": "hard",
+      "sessions": [],
+      "probe": "我们是一家德国公司，合规要求数据不能出欧洲，你们能做到吗？",
+      "expect": {
+        "answer_any": [
+          "法兰克福",
+          "Frankfurt"
+        ]
+      },
+      "notes": "The question never names the stored fact's words."
+    },
+    {
+      "id": "dh_recall_me_cross_language_zh",
+      "category": "recall_me",
+      "difficulty": "hard",
+      "sessions": [],
+      "probe": "企业版可以先免费试用多久？",
+      "expect": {
+        "answer_any": [
+          "21"
+        ]
+      },
+      "notes": "The operator stored this fact in English."
+    },
+    {
+      "id": "dh_preference_applies_later_zh",
+      "category": "preference",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "以后回答我都别超过三句话。"
+        ]
+      ],
+      "probe": "介绍一下你们的退货政策和人工客服时间。",
+      "expect": {
+        "memory_in_any": {
+          "user": [
+            "三句",
+            "3 句",
+            "3句",
+            "简短"
+          ]
+        },
+        "answer_max_sentences": 3,
+        "answer_all": [
+          "45"
+        ]
+      },
+      "notes": "A standing preference from an earlier conversation shapes a later answer."
     }
   ]
 }
