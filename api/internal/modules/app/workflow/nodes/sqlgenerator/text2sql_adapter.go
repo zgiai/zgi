@@ -120,7 +120,12 @@ func (n *Node) executeText2SQL(ctx context.Context) (*shared.NodeRunResult, erro
 	})
 	inputs := map[string]any{"prompt": map[string]any{"user": question}}
 	if err != nil {
-		return n.failureResult(inputs, map[string]any{"selection_mode": mode, "failed_stage": "text2sql_engine"}, text2SQLErrorType(err), err), nil
+		failed := n.failureResult(inputs, map[string]any{"selection_mode": mode, "failed_stage": "text2sql_engine"}, text2SQLErrorType(err), err)
+		// Calls made before the failure still count toward the run's tokens.
+		if usage.total > 0 {
+			failed.Outputs["usage"] = usage.output()
+		}
+		return failed, nil
 	}
 	process := map[string]any{
 		"attempts":         result.Generation.Attempts,
