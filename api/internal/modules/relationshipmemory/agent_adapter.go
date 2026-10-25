@@ -858,6 +858,28 @@ func (a *AgentAdapter) SearchArchive(ctx context.Context, workspaceID, agentID u
 	return a.service.SearchArchive(ctx, relationship.ID, query, limit)
 }
 
+// Archive lists an Agent user's archive, newest first.
+func (a *AgentAdapter) Archive(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]UserMemoryArchiveEntry, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := a.service.ArchiveEntries(ctx, relationship.ID, 0)
+	if err != nil {
+		return nil, mapAgentMemoryError(err)
+	}
+	return entries, nil
+}
+
+// DeleteArchiveEntry removes one entry from an Agent user's archive.
+func (a *AgentAdapter) DeleteArchiveEntry(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, entryID uuid.UUID) error {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return err
+	}
+	return mapAgentMemoryError(a.service.DeleteArchiveEntry(ctx, relationship.ID, entryID, agentManagementMetadata(userScope, userID)))
+}
+
 // History returns the memory history of one Agent user.
 func (a *AgentAdapter) History(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, req HistoryRequest) (*HistoryPage, error) {
 	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)

@@ -45,6 +45,9 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/relationships/:id/operations/:operation_id/undo", h.Undo)
 	group.GET("/relationships/:id/history", h.History)
 	group.POST("/relationships/:id/history/:version_id/revert", h.RevertVersion)
+	group.GET("/relationships/:id/archive", h.Archive)
+	group.PATCH("/relationships/:id/archive/:entry_id", h.UpdateArchiveEntry)
+	group.DELETE("/relationships/:id/archive/:entry_id", h.DeleteArchiveEntry)
 }
 
 func (h *Handler) ListRelationships(c *gin.Context) {
@@ -310,6 +313,78 @@ func (h *Handler) RevertVersion(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"version_id": versionID, "item": item})
+}
+
+// Archive lists the relationship's archive (ADR 0014), newest first.
+func (h *Handler) Archive(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	entries, err := h.service.ArchiveEntries(c.Request.Context(), detail.ID, 0)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entries": entries})
+}
+
+type archiveEntryRequest struct {
+	Content string `json:"content" binding:"required"`
+}
+
+// UpdateArchiveEntry replaces one archive entry's text.
+func (h *Handler) UpdateArchiveEntry(c *gin.Context) {
+	detail, entryID, ok := h.manageArchiveEntry(c)
+	if !ok {
+		return
+	}
+	var request archiveEntryRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeMemoryError(c, ErrPolicyRejected)
+		return
+	}
+	actorID := detail.SubjectID
+	entry, err := h.service.UpdateArchiveEntry(c.Request.Context(), detail.ID, entryID, request.Content, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager})
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, entry)
+}
+
+// DeleteArchiveEntry removes one archive entry.
+func (h *Handler) DeleteArchiveEntry(c *gin.Context) {
+	detail, entryID, ok := h.manageArchiveEntry(c)
+	if !ok {
+		return
+	}
+	actorID := detail.SubjectID
+	if err := h.service.DeleteArchiveEntry(c.Request.Context(), detail.ID, entryID, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager}); err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entry_id": entryID})
+}
+
+func (h *Handler) manageArchiveEntry(c *gin.Context) (*RelationshipDetail, uuid.UUID, bool) {
+	if !relationshipMemoryWritesEnabled(c) {
+		return nil, uuid.Nil, false
+	}
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return nil, uuid.Nil, false
+	}
+	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return nil, uuid.Nil, false
+	}
+	entryID, err := uuid.Parse(c.Param("entry_id"))
+	if err != nil {
+		writeMemoryError(c, ErrRelationshipNotFound)
+		return nil, uuid.Nil, false
+	}
+	return detail, entryID, true
 }
 
 // historyRequestFromQuery reads key, limit, and before (RFC 3339) from the

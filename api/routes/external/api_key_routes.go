@@ -200,6 +200,8 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		externalGroup.POST("/agents/memory/operations/:operation_id/undo", withAgentAPIKeyContext(agentHandler.UndoAPIKeyAgentMemoryOperation))
 		externalGroup.GET("/agents/memory/history", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemoryHistory))
 		externalGroup.POST("/agents/memory/history/:version_id/revert", withAgentAPIKeyContext(agentHandler.RevertAPIKeyAgentMemoryVersion))
+		externalGroup.GET("/agents/memory/archive", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemoryArchive))
+		externalGroup.DELETE("/agents/memory/archive/:entry_id", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryArchiveEntry))
 		externalGroup.GET("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemorySettings))
 		externalGroup.PATCH("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.PatchAPIKeyAgentMemorySettings))
 		externalGroup.GET("/agents/conversations", withAgentAPIKeyContext(agentHandler.ListAPIKeyAgentRuntimeConversations))

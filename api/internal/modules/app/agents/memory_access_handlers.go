@@ -89,6 +89,30 @@ func (h *AgentsHandler) RevertAPIKeyAgentMemoryVersion(c *gin.Context) {
 	}
 }
 
+func (h *AgentsHandler) GetWebAppMemoryArchive(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.getDirectMemoryArchive(c, access)
+	}
+}
+
+func (h *AgentsHandler) DeleteWebAppMemoryArchiveEntry(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.deleteDirectMemoryArchiveEntry(c, access)
+	}
+}
+
+func (h *AgentsHandler) GetAPIKeyAgentMemoryArchive(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.getDirectMemoryArchive(c, access)
+	}
+}
+
+func (h *AgentsHandler) DeleteAPIKeyAgentMemoryArchiveEntry(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.deleteDirectMemoryArchiveEntry(c, access)
+	}
+}
+
 func (h *AgentsHandler) GetWebAppMemorySettings(c *gin.Context) {
 	if access, ok := h.webAppMemoryAccess(c); ok {
 		h.getDirectMemorySettings(c, access)
@@ -454,6 +478,39 @@ func (h *AgentsHandler) revertDirectMemoryVersion(c *gin.Context, access memoryA
 		return
 	}
 	response.Success(c, gin.H{"version_id": versionID, "item": item})
+}
+
+// getDirectMemoryArchive lists the user's memory archive (ADR 0014).
+func (h *AgentsHandler) getDirectMemoryArchive(c *gin.Context, access memoryAccessScope) {
+	if !relationshipmemory.RuntimeEnabled() {
+		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
+		return
+	}
+	entries, err := relationshipmemory.NewAgentAdapter(h.db).Archive(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entries": entries})
+}
+
+// deleteDirectMemoryArchiveEntry removes one entry from the user's archive.
+// Deleting is allowed while memory is off, so users can always remove data.
+func (h *AgentsHandler) deleteDirectMemoryArchiveEntry(c *gin.Context, access memoryAccessScope) {
+	if !relationshipmemory.RuntimeEnabled() {
+		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
+		return
+	}
+	entryID, err := uuid.Parse(strings.TrimSpace(c.Param("entry_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if err := relationshipmemory.NewAgentAdapter(h.db).DeleteArchiveEntry(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID, entryID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entry_id": entryID})
 }
 
 type directMemorySettingsRequest struct {
