@@ -21,6 +21,14 @@ export function useConnectorOAuthFlow(flowId?: string) {
   useEffect(() => {
     if (flow?.status === 'ready') invalidatePersonalConnectionQueries(queryClient);
   }, [flow?.id, flow?.status, queryClient]);
+  const completeInstallation = useMutation({
+    mutationFn: () => connectorService.completeOAuthInstallation(flowId ?? ''),
+    onError: async () => {
+      await query.refetch();
+    },
+    onSuccess: response =>
+      queryClient.setQueryData([...CONNECTOR_KEYS.all, 'oauth-flow', flowId], response),
+  });
   const selectPage = useMutation({
     mutationFn: (pageId: string) => connectorService.selectOAuthPage(flowId ?? '', pageId),
     // The opener and callback window can submit the same Page concurrently.
@@ -31,5 +39,5 @@ export function useConnectorOAuthFlow(flowId?: string) {
     onSuccess: response =>
       queryClient.setQueryData([...CONNECTOR_KEYS.all, 'oauth-flow', flowId], response),
   });
-  return { query, flow, selectPage };
+  return { query, flow, selectPage, completeInstallation };
 }

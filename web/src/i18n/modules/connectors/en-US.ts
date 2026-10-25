@@ -60,7 +60,7 @@ const messages = {
     },
   },
   oauth: {
-    title: 'Connect your social account',
+    title: 'Connect your platform account',
     description:
       'Authorize access on the platform. ZGI saves credentials securely and renews them automatically when the platform supports it. You may need to reconnect when authorization expires or is revoked.',
     connect: 'Connect account',
@@ -69,6 +69,12 @@ const messages = {
       'Authorize the same account to keep this connection and its usage locations. A different account or Facebook Page creates a separate connection.',
     loading: 'Loading…',
     waiting: 'Complete authorization in the new window. This screen updates automatically.',
+    installApp:
+      'Install ZGI Connect on GitHub and choose the repositories to allow. Then return here to finish connecting.',
+    openInstallation: 'Choose GitHub repositories',
+    completeInstallation: 'I have installed the app — continue',
+    installationFailed:
+      'Could not verify the installation. Check the selected account and repository access, then try again.',
     selectPage: 'Choose the Facebook Page to connect',
     noPages: 'No authorized Pages are available. Reconnect and grant access to a Page you manage.',
     pageFailed: 'Could not save this Page. Retry your selection or refresh the status.',

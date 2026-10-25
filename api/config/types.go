@@ -548,6 +548,8 @@ type ToolingConfig struct {
 
 // SocialOAuthProviderConfig holds deployment-owned OAuth application settings.
 type SocialOAuthProviderConfig struct {
+	AppID        string   `json:"-"`
+	AppSlug      string   `json:"-"`
 	ClientID     string   `json:"-"`
 	ClientSecret string   `json:"-"`
 	RedirectURL  string   `json:"-"`

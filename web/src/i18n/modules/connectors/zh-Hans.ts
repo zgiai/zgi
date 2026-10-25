@@ -56,7 +56,7 @@ const messages: ConnectorMessages = {
     },
   },
   oauth: {
-    title: '连接社交账号',
+    title: '连接平台账号',
     description:
       '在平台上授权后，ZGI 会安全保存凭据，并在平台支持时自动续期。授权过期或被撤销后，可能需要重新连接。',
     connect: '连接账号',
@@ -65,6 +65,10 @@ const messages: ConnectorMessages = {
       '授权同一账号可保留当前连接及其使用位置。授权其他账号或 Facebook 公共主页会创建独立的新连接。',
     loading: '正在加载…',
     waiting: '请在新窗口中完成平台授权，此页面会自动更新。',
+    installApp: '请在 GitHub 安装 ZGI Connect 并选择允许访问的仓库，然后返回此处完成连接。',
+    openInstallation: '选择 GitHub 仓库',
+    completeInstallation: '已完成安装，继续连接',
+    installationFailed: '无法确认应用安装，请检查所选账号和仓库权限后重试。',
     selectPage: '选择要连接的 Facebook 公共主页',
     noPages: '没有可用的已授权公共主页。请重新连接，并授权访问你管理的公共主页。',
     pageFailed: '无法保存公共主页，请重新选择或刷新授权状态。',

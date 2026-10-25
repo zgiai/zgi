@@ -624,8 +624,9 @@ export interface ConnectorConfirmationPreview {
 export interface ConnectorOAuthFlow {
   id: string;
   connector_id: string;
-  status: 'pending' | 'processing' | 'select_page' | 'ready' | 'failed';
+  status: 'pending' | 'processing' | 'select_page' | 'install_app' | 'ready' | 'failed';
   authorize_url?: string;
+  install_url?: string;
   connection_id?: string;
   pages?: Array<{ id: string; name: string }>;
   error_code?: string;

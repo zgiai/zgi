@@ -16,7 +16,7 @@ func (c *ServiceContainer) GetConnectorSocialOAuthService() *socialoauth.Service
 	if c.connectorSocialOAuth == nil {
 		providers := make(map[string]socialoauth.ProviderConfig)
 		for id, cfg := range c.config.Connectors.SocialOAuthProviders {
-			providers[id] = socialoauth.ProviderConfig{ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, RedirectURL: cfg.RedirectURL, Scopes: cfg.Scopes, APIVersion: cfg.APIVersion}
+			providers[id] = socialoauth.ProviderConfig{ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, RedirectURL: cfg.RedirectURL, Scopes: cfg.Scopes, APIVersion: cfg.APIVersion, AppID: cfg.AppID, AppSlug: cfg.AppSlug}
 		}
 		service, err := socialoauth.New(c.db, c.getConnectorCredentialCipher(), c.GetConnectorConnectionService(), socialoauth.Options{
 			Providers: providers, FrontendURL: c.config.Connectors.SocialOAuthFrontendURL,
@@ -41,13 +41,13 @@ func (c *ServiceContainer) GetConnectorRefreshingCredentialResolver() *connector
 	return &connectorRefreshingCredentials{container: c}
 }
 func (r *connectorRefreshingCredentials) ResolveCredentials(ctx context.Context, request execution.CredentialResolutionRequest) (map[string]string, error) {
-	if request.ConnectorID != "x-social" && request.ConnectorID != "linkedin-social" && request.ConnectorID != "facebook-social" {
+	if request.ConnectorID != "github" && request.ConnectorID != "x-social" && request.ConnectorID != "linkedin-social" && request.ConnectorID != "facebook-social" {
 		return r.container.GetConnectorCredentialResolver().ResolveCredentials(ctx, request)
 	}
 	return r.container.GetConnectorSocialOAuthService().ResolveCredentials(ctx, request)
 }
 func (r *connectorRefreshingCredentials) ResolveConnectionCredentials(ctx context.Context, c core.PersonalConnection) (map[string]string, error) {
-	if c.ConnectorID != "x-social" && c.ConnectorID != "linkedin-social" && c.ConnectorID != "facebook-social" {
+	if c.ConnectorID != "github" && c.ConnectorID != "x-social" && c.ConnectorID != "linkedin-social" && c.ConnectorID != "facebook-social" {
 		return r.container.GetConnectorCredentialResolver().ResolveConnectionCredentials(ctx, c)
 	}
 	return r.container.GetConnectorSocialOAuthService().ResolveConnectionCredentials(ctx, c)

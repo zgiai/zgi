@@ -23,6 +23,8 @@ import (
 )
 
 type ProviderConfig struct {
+	AppID        string
+	AppSlug      string
 	ClientID     string
 	ClientSecret string `json:"-"`
 	RedirectURL  string
@@ -51,6 +53,7 @@ type Page struct {
 	Name string `json:"name"`
 }
 type Flow struct {
+	InstallURL   string    `json:"install_url,omitempty"`
 	ID           uuid.UUID `json:"id"`
 	ConnectorID  string    `json:"connector_id"`
 	Status       string    `json:"status"`
@@ -138,6 +141,9 @@ func New(db *gorm.DB, vault *credentials.Store, lifecycle Lifecycle, opts Option
 		if e != nil || u.User != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) || u.RawQuery != "" || u.Fragment != "" || c.ClientID == "" || c.ClientSecret == "" {
 			return nil, fail(core.ErrorCodeInvalidInput)
 		}
+		if id == "github" && (!regexp.MustCompile(`^[1-9][0-9]{0,17}$`).MatchString(c.AppID) || !regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,98}[a-z0-9])?$`).MatchString(c.AppSlug)) {
+			return nil, fail(core.ErrorCodeInvalidInput)
+		}
 		if id == "facebook-social" {
 			if c.APIVersion == "" {
 				c.APIVersion = "v23.0"
@@ -153,7 +159,7 @@ func New(db *gorm.DB, vault *credentials.Store, lifecycle Lifecycle, opts Option
 	return &Service{db: db, vault: vault, lifecycle: lifecycle, opts: opts, now: func() time.Time { return time.Now().UTC() }}, nil
 }
 func supported(id string) bool {
-	return id == "x-social" || id == "linkedin-social" || id == "facebook-social"
+	return id == "github" || id == "x-social" || id == "linkedin-social" || id == "facebook-social"
 }
 func (s *Service) Available(id string) bool {
 	if s == nil {
@@ -241,6 +247,12 @@ func (s *Service) authorize(id, state, verifier string) string {
 	scopes := c.Scopes
 	endpoint := "https://www.linkedin.com/oauth/v2/authorization"
 	switch id {
+	case "github":
+		endpoint = "https://github.com/login/oauth/authorize"
+		scopes = []string{"offline_access"}
+		h := sha256.Sum256([]byte(verifier))
+		q.Set("code_challenge", base64.RawURLEncoding.EncodeToString(h[:]))
+		q.Set("code_challenge_method", "S256")
 	case "x-social":
 		endpoint = "https://x.com/i/oauth2/authorize"
 		if len(scopes) == 0 {
@@ -282,7 +294,7 @@ func (s *Service) Get(ctx context.Context, org, owner, id uuid.UUID) (Flow, erro
 		return Flow{}, fail(core.ErrorCodeNotFound)
 	}
 	f := publicFlow(r)
-	if (r.Status == "pending" || r.Status == "select_page" || r.Status == "processing") && !s.now().Before(r.ExpiresAt) {
+	if (r.Status == "pending" || r.Status == "select_page" || r.Status == "install_app" || r.Status == "processing") && !s.now().Before(r.ExpiresAt) {
 		if e := s.finishFailure(ctx, &r, core.ErrorCodeFlowExpired); e != nil {
 			return Flow{}, e
 		}
@@ -294,6 +306,9 @@ func (s *Service) Get(ctx context.Context, org, owner, id uuid.UUID) (Flow, erro
 	var secret secretFlow
 	if e := s.open(flowSubject(r), r.Envelope, &secret); e != nil {
 		return Flow{}, e
+	}
+	if r.Status == "install_app" {
+		f.InstallURL = s.githubInstallURL()
 	}
 	if r.Status == "select_page" {
 		for _, p := range secret.Pages {
@@ -345,6 +360,18 @@ func (s *Service) Complete(ctx context.Context, id, state, code string, denied b
 		return r.ID, s.finishFailure(ctx, &r, core.ErrorCodeOf(e))
 	}
 	secret.Grant = g
+	if id == "github" {
+		installed, err := s.githubInstalled(ctx, g.AccessToken)
+		if err != nil {
+			return r.ID, s.finishFailure(ctx, &r, core.ErrorCodeOf(err))
+		}
+		if !installed {
+			if err := s.waitForGitHubInstallation(ctx, &r, secret); err != nil {
+				return r.ID, err
+			}
+			return r.ID, nil
+		}
+	}
 	if id == "facebook-social" {
 		pages, e := s.facebookPages(ctx, g.AccessToken)
 		if e != nil {
@@ -382,7 +409,7 @@ func (s *Service) finishFailure(ctx context.Context, r *flowRecord, code core.Er
 	if !code.Valid() {
 		code = core.ErrorCodeInternal
 	}
-	e = s.db.WithContext(ctx).Model(r).Where("status IN ?", []string{"pending", "processing", "select_page"}).Updates(map[string]any{"status": "failed", "error_code": string(code), "envelope": envelope}).Error
+	e = s.db.WithContext(ctx).Model(r).Where("status IN ?", []string{"pending", "processing", "select_page", "install_app"}).Updates(map[string]any{"status": "failed", "error_code": string(code), "envelope": envelope}).Error
 	if e != nil {
 		return fail(core.ErrorCodeInternal)
 	}

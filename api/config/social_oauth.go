@@ -9,13 +9,16 @@ import (
 )
 
 func loadSocialOAuthProviders(source *envSource) map[string]SocialOAuthProviderConfig {
-	result := make(map[string]SocialOAuthProviderConfig, 3)
+	result := make(map[string]SocialOAuthProviderConfig, 4)
 	for _, entry := range []struct{ id, prefix, scopes string }{
+		{"github", "CONNECTOR_GITHUB_OAUTH_", "offline_access"},
 		{"x-social", "CONNECTOR_X_OAUTH_", "tweet.read tweet.write users.read media.write dm.read dm.write offline.access"},
 		{"linkedin-social", "CONNECTOR_LINKEDIN_OAUTH_", "openid profile r_organization_social w_organization_social r_organization_social_feed w_organization_social_feed rw_organization_admin"},
 		{"facebook-social", "CONNECTOR_FACEBOOK_OAUTH_", "pages_show_list pages_read_engagement pages_read_user_content pages_manage_posts pages_manage_engagement pages_manage_metadata pages_messaging read_insights"},
 	} {
 		cfg := SocialOAuthProviderConfig{
+			AppID:        strings.TrimSpace(source.string("", entry.prefix+"APP_ID")),
+			AppSlug:      strings.TrimSpace(source.string("", entry.prefix+"APP_SLUG")),
 			ClientID:     strings.TrimSpace(source.string("", entry.prefix+"CLIENT_ID")),
 			ClientSecret: strings.TrimSpace(source.string("", entry.prefix+"CLIENT_SECRET")),
 			RedirectURL:  strings.TrimSpace(source.string("", entry.prefix+"REDIRECT_URL")),
@@ -45,7 +48,7 @@ func validateSocialOAuthURL(raw string) (*url.URL, error) {
 func validateSocialOAuthConfig(cfg ConnectorsConfig) error {
 	enabled := false
 	for id, provider := range cfg.SocialOAuthProviders {
-		if id != "x-social" && id != "linkedin-social" && id != "facebook-social" {
+		if id != "github" && id != "x-social" && id != "linkedin-social" && id != "facebook-social" {
 			return fmt.Errorf("unsupported social OAuth provider")
 		}
 		if provider.ClientID == "" && provider.ClientSecret == "" && provider.RedirectURL == "" {
@@ -54,6 +57,9 @@ func validateSocialOAuthConfig(cfg ConnectorsConfig) error {
 		enabled = true
 		if provider.ClientID == "" || provider.ClientSecret == "" || provider.RedirectURL == "" || len(provider.Scopes) == 0 {
 			return fmt.Errorf("social OAuth provider %s requires client ID, secret, callback and scopes", id)
+		}
+		if id == "github" && (!regexp.MustCompile(`^[1-9][0-9]{0,17}$`).MatchString(provider.AppID) || !regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,98}[a-z0-9])?$`).MatchString(provider.AppSlug)) {
+			return fmt.Errorf("GitHub OAuth requires app ID and app slug")
 		}
 		callback, err := validateSocialOAuthURL(provider.RedirectURL)
 		if err != nil || callback.Path != "/console/api/connectors/"+id+"/oauth/callback" {

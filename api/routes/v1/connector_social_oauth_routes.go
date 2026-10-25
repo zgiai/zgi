@@ -22,6 +22,7 @@ type connectorSocialOAuthService interface {
 	Start(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID) (socialoauth.Flow, error)
 	Complete(context.Context, string, string, string, bool) (uuid.UUID, error)
 	Get(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (socialoauth.Flow, error)
+	CompleteInstallation(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (socialoauth.Flow, error)
 	SelectPage(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string) (socialoauth.Flow, error)
 }
 
@@ -30,6 +31,7 @@ func (h *connectorHandler) registerSocialOAuth(group *gin.RouterGroup) {
 	group.POST("/connectors/:connectorId/oauth", h.startSocialOAuth)
 	group.GET("/connectors/oauth-flows/:flowId", h.getSocialOAuth)
 	group.POST("/connectors/oauth-flows/:flowId/page", h.selectSocialOAuthPage)
+	group.POST("/connectors/oauth-flows/:flowId/installation", h.completeOAuthInstallation)
 }
 
 // The provider cannot carry ZGI's JWT. Only a one-use, actor-bound state may
@@ -49,7 +51,7 @@ func (h *connectorHandler) socialOAuthAvailability(c *gin.Context) {
 	if _, _, ok := connectorActor(c); !ok {
 		return
 	}
-	if !catalog.IsSocialMCPConnector(c.Param("connectorId")) {
+	if !supportsConnectorOAuth(c.Param("connectorId")) {
 		connectorRouteError(c, core.NewError(core.ErrorCodeNotFound, false, nil))
 		return
 	}
@@ -155,7 +157,7 @@ func (h *connectorHandler) completeSocialOAuth(c *gin.Context) {
 	query, err := url.ParseQuery(c.Request.URL.RawQuery)
 	state, code := query.Get("state"), query.Get("code")
 	denied := query.Get("error") != ""
-	if err != nil || len(query["state"]) != 1 || len(query["code"]) > 1 || len(query["error"]) > 1 || state == "" || len(state) > 512 || len(code) > 8192 || (!denied && code == "") || h.socialOAuth == nil || !catalog.IsSocialMCPConnector(c.Param("connectorId")) {
+	if err != nil || len(query["state"]) != 1 || len(query["code"]) > 1 || len(query["error"]) > 1 || state == "" || len(state) > 512 || len(code) > 8192 || (!denied && code == "") || h.socialOAuth == nil || !supportsConnectorOAuth(c.Param("connectorId")) {
 		connectorRouteError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
 		return
 	}
@@ -197,4 +199,36 @@ func socialOAuthBrowserCookie(provider, state string) *http.Cookie {
 	digest := sha256.Sum256([]byte(state))
 	value := hex.EncodeToString(digest[:])
 	return &http.Cookie{Name: "zgi_social_oauth_" + value[:16], Value: value, Path: "/console/api/connectors/" + provider + "/oauth/callback", MaxAge: 600, HttpOnly: true, SameSite: http.SameSiteLaxMode}
+}
+
+func supportsConnectorOAuth(id string) bool {
+	return id == "github" || catalog.IsSocialMCPConnector(id)
+}
+func (h *connectorHandler) completeOAuthInstallation(c *gin.Context) {
+	socialOAuthHeaders(c)
+	org, owner, ok := connectorActor(c)
+	if !ok {
+		return
+	}
+	if h.socialOAuth == nil {
+		connectorRouteError(c, core.NewError(core.ErrorCodeConnectorUnavailable, false, nil))
+		return
+	}
+	id, err := parseConnectorUUID(c.Param("flowId"))
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	var input struct{}
+	if decodeConnectorJSON(c, &input) != nil {
+		connectorRouteError(c, core.NewError(core.ErrorCodeInvalidInput, false, nil))
+		return
+	}
+	flow, err := h.socialOAuth.CompleteInstallation(c.Request.Context(), org, owner, id)
+	if err != nil {
+		connectorRouteError(c, err)
+		return
+	}
+	connectorSuccess(c, http.StatusOK, flow)
 }

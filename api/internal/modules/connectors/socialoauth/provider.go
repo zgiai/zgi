@@ -28,6 +28,11 @@ func (s *Service) exchange(ctx context.Context, id, code, verifier string, refre
 		form.Set("redirect_uri", c.RedirectURL)
 	}
 	switch id {
+	case "github":
+		endpoint = "https://github.com/login/oauth/access_token"
+		if !refresh {
+			form.Set("code_verifier", verifier)
+		}
 	case "x-social":
 		endpoint = "https://api.x.com/2/oauth2/token"
 		form.Del("client_secret")

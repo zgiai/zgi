@@ -143,3 +143,43 @@ func TestSocialOAuthCallbackRequiresInitiatingBrowser(t *testing.T) {
 		t.Fatal("callback accepted outside initiating browser")
 	}
 }
+
+func (s *oauthRouteStub) CompleteInstallation(_ context.Context, o, a, id uuid.UUID) (socialoauth.Flow, error) {
+	s.org = o
+	s.owner = a
+	s.flow = id
+	return socialoauth.Flow{ID: id, ConnectorID: "github", Status: "ready"}, s.err
+}
+func TestGitHubOAuthRoutesAndBrowserBinding(t *testing.T) {
+	org, owner, flow := uuid.New(), uuid.New(), uuid.New()
+	s := &oauthRouteStub{flow: flow}
+	r := socialOAuthRouter(s, org, owner)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/console/api/connectors/github/oauth", nil))
+	if w.Code != 200 {
+		t.Fatal("GitHub OAuth availability not registered", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/console/api/connectors/oauth-flows/"+flow.String()+"/installation", strings.NewReader(`{}`)))
+	if w.Code != 200 || s.org != org || s.owner != owner {
+		t.Fatal("installation resume not actor scoped", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/console/api/connectors/oauth-flows/"+flow.String()+"/installation", strings.NewReader(`{"installation_id":123}`)))
+	if w.Code != 400 {
+		t.Fatal("browser installation id trusted", w.Code)
+	}
+	req := httptest.NewRequest("GET", "/console/api/connectors/github/oauth/callback?state=state-secret&code=code-secret", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code == 303 {
+		t.Fatal("callback accepted without browser cookie")
+	}
+	req = httptest.NewRequest("GET", "/console/api/connectors/github/oauth/callback?state=state-secret&code=code-secret", nil)
+	req.AddCookie(socialOAuthBrowserCookie("github", "state-secret"))
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 303 || s.provider != "github" || strings.Contains(w.Header().Get("Location"), "secret") {
+		t.Fatal("GitHub callback failed", w.Code)
+	}
+}

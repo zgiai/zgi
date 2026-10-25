@@ -59,3 +59,23 @@ func TestSocialOAuthDefaultsIncludeIdentityAndRenewalScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestGitHubOAuthConfigRequiresAppMetadata(t *testing.T) {
+	values := map[string]string{"CONNECTOR_GITHUB_OAUTH_CLIENT_ID": "Iv-client", "CONNECTOR_GITHUB_OAUTH_CLIENT_SECRET": "secret", "CONNECTOR_GITHUB_OAUTH_REDIRECT_URL": "https://api.example/console/api/connectors/github/oauth/callback", "CONNECTOR_GITHUB_OAUTH_APP_ID": "12345", "CONNECTOR_GITHUB_OAUTH_APP_SLUG": "example-app"}
+	providers := loadSocialOAuthProviders(&envSource{lookupEnv: func(k string) (string, bool) { v, ok := values[k]; return v, ok }})
+	p, ok := providers["github"]
+	if !ok {
+		t.Fatal("GitHub provider not loaded")
+	}
+	cfg := ConnectorsConfig{SocialOAuthProviders: providers, SocialOAuthFrontendURL: "https://app.example"}
+	if err := validateSocialOAuthConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, slug := range []string{"../evil", "app?next=evil", "app/evil", ""} {
+		p.AppSlug = slug
+		cfg.SocialOAuthProviders["github"] = p
+		if validateSocialOAuthConfig(cfg) == nil {
+			t.Fatal("unsafe app slug accepted")
+		}
+	}
+}

@@ -106,6 +106,15 @@ class ConnectorService extends BaseService {
     );
   }
 
+  completeOAuthInstallation(flowId: string): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request(
+      'post',
+      `/connectors/oauth-flows/${encodeURIComponent(flowId)}/installation`,
+      {},
+      { retryAttemptsOverride: 0 }
+    );
+  }
+
   prepareSocialImage(source: Blob): Promise<ApiResponseData<PreparedSocialImage>> {
     return this.request('post', '/connectors/social-media/prepare-image', source, {
       headers: { 'Content-Type': 'application/octet-stream' },

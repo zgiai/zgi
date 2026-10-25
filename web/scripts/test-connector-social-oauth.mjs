@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { harness, jsx, load, nodes, ui, flush } from './connector-fixture.mjs';
 const state = load('src/components/connectors/setup/social-oauth-state.ts');
-for (const id of ['x-social', 'facebook-social', 'linkedin-social'])
+for (const id of ['x-social', 'facebook-social', 'linkedin-social', 'github'])
   assert.equal(state.supportsSocialOAuth({ id }), true);
 assert.equal(state.supportsSocialOAuth({ id: 'x' }), false);
-for (const status of ['pending', 'processing', 'select_page'])
+assert.equal(state.supportsSocialOAuth({ id: 'github-mcp' }), false);
+for (const status of ['pending', 'processing', 'select_page', 'install_app'])
   assert.equal(state.isOAuthFlowActive({ status }), true);
 for (const status of ['ready', 'failed']) assert.equal(state.isOAuthFlowActive({ status }), false);
 for (const url of [
@@ -167,8 +168,17 @@ assert.deepEqual(requests.at(-1).slice(0, 3), [
   { page_id: 'page' },
 ]);
 assert.equal(requests.at(-1)[3].withCredentials, undefined);
+await connectorService.completeOAuthInstallation('flow/encoded');
+assert.deepEqual(requests.at(-1).slice(0, 3), [
+  'post',
+  '/connectors/oauth-flows/flow%2Fencoded/installation',
+  {},
+]);
+assert.equal(requests.at(-1)[3].retryAttemptsOverride, 0);
 console.log('Social OAuth service contract checks passed');
 
+let installationCompletions = 0,
+  installationError = false;
 let selection,
   selectionError = false,
   statusFlow = { status: 'select_page', pages: [{ id: 'p1', name: 'My Page' }] };
@@ -177,12 +187,20 @@ const { ConnectorOAuthFlowStatus } = load(
   {
     'react/jsx-runtime': jsx,
     'next/link': { default: 'Link' },
+    './social-oauth-state': state,
     '@/components/ui/button': ui,
     '@/i18n': { useT: () => key => key },
     '@/hooks/connectors/use-connector-oauth': {
       useConnectorOAuthFlow: () => ({
         flow: statusFlow,
         query: {},
+        completeInstallation: {
+          isError: installationError,
+          isPending: false,
+          mutate() {
+            installationCompletions++;
+          },
+        },
         selectPage: {
           isError: selectionError,
           mutate(id) {
@@ -197,6 +215,35 @@ let tree = ConnectorOAuthFlowStatus({ flowId: 'flow' });
 const pageButton = nodes(tree).find(n => n.type === 'Button' && n.props.children === 'My Page');
 pageButton.props.onClick();
 assert.equal(selection, 'p1');
+statusFlow = {
+  status: 'install_app',
+  install_url: 'https://github.com/apps/zgi-connect/installations/new',
+};
+tree = ConnectorOAuthFlowStatus({ flowId: 'flow' });
+const installLink = nodes(tree).find(n => n.type === 'a');
+assert.equal(installLink.props.href, statusFlow.install_url);
+assert.equal(installLink.props.target, '_blank');
+assert.equal(installLink.props.rel, 'noreferrer');
+const resume = nodes(tree).find(
+  n => n.type === 'Button' && n.props.children === 'oauth.completeInstallation'
+);
+resume.props.onClick();
+assert.equal(installationCompletions, 1);
+installationError = true;
+assert(
+  nodes(ConnectorOAuthFlowStatus({ flowId: 'flow' })).some(
+    n => n.props.children === 'oauth.installationFailed'
+  )
+);
+for (const install_url of [
+  'javascript:alert(1)',
+  'https://evil.example/apps/zgi-connect/installations/new',
+  'https://github.com/other',
+]) {
+  statusFlow = { status: 'install_app', install_url };
+  tree = ConnectorOAuthFlowStatus({ flowId: 'flow' });
+  assert(!nodes(tree).some(n => n.type === 'a'), 'untrusted installation URL must not render');
+}
 statusFlow = { status: 'ready', connection_id: 'different-account' };
 tree = ConnectorOAuthFlowStatus({ flowId: 'flow', reconnectId: 'original-account' });
 assert(nodes(tree).some(n => n.props.children === 'oauth.changedIdentity'));
@@ -230,7 +277,7 @@ const hook = harness(react => {
       },
       useMutation(options) {
         mutationOptions = options;
-        return {};
+        return { options };
       },
       useQueryClient: () => ({
         setQueryData(_key, data) {
@@ -239,7 +286,11 @@ const hook = harness(react => {
       }),
     },
     '@/hooks/query-keys': { CONNECTOR_KEYS: { all: ['connectors'] } },
-    '@/services/connector.service': { connectorService: {} },
+    '@/services/connector.service': {
+      connectorService: {
+        completeOAuthInstallation: async id => ({ data: { id, status: 'ready' } }),
+      },
+    },
     '@/components/connectors/setup/social-oauth-state': state,
     './connection-detail-query': {
       invalidatePersonalConnectionQueries() {
@@ -249,7 +300,7 @@ const hook = harness(react => {
   });
   return () => useConnectorOAuthFlow('shared-flow');
 });
-for (const status of ['pending', 'processing', 'ready']) {
+for (const status of ['pending', 'processing', 'install_app', 'ready']) {
   queryResult.data = { data: { id: 'shared-flow', status } };
   hook.render();
   assert.equal(
@@ -258,6 +309,12 @@ for (const status of ['pending', 'processing', 'ready']) {
   );
 }
 assert(invalidations > 0);
+const installationMutation = hook.render().completeInstallation.options;
+assert.deepEqual(await installationMutation.mutationFn(), {
+  data: { id: 'shared-flow', status: 'ready' },
+});
+installationMutation.onSuccess({ data: { id: 'shared-flow', status: 'install_app' } });
+assert.equal(queryResult.data.data.status, 'install_app');
 // Another window won the Page selection race; the losing mutation must read
 // the saved status and render success, without leaving a stale Page failure.
 queryResult.data = { data: { id: 'shared-flow', status: 'select_page' } };
