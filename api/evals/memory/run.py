@@ -152,14 +152,41 @@ def setup_agent(client, workspace_id, label, auto):
     return {"agent_id": agent_id, "name": name, "model_provider": config.get("model_provider"), "model": config.get("model")}
 
 
+FILLER_SENTENCES = [
+    "历史备注：这条记录来自较早的对话，没有特别事项。",
+    "以前提过的一般性偏好，后来没有再提起。",
+    "Older note from a previous conversation with no follow-up. ",
+]
+
+
+def expand_filler(text):
+    """Replaces {{filler:N}} with about N characters of neutral note text."""
+    def fill(match):
+        size, parts, index = int(match.group(1)), [], 0
+        while sum(len(part) for part in parts) < size:
+            parts.append(FILLER_SENTENCES[index % len(FILLER_SENTENCES)])
+            index += 1
+        return "".join(parts)[:size]
+    return re.sub(r"\{\{filler:(\d+)\}\}", fill, text)
+
+
 def contains(text, needle):
     return needle.lower() in text.lower()
 
 
-def score(scenario, memory_text, answer, other_memory):
+def score(scenario, memory, answer, other_memory):
+    memory_text = "\n".join(memory.values())
     expect, checks = scenario.get("expect", {}), []
     for needle in expect.get("memory_all", []):
         checks.append(("memory has " + needle, contains(memory_text, needle)))
+    if expect.get("memory_any"):
+        checks.append(("memory has any of " + "/".join(expect["memory_any"]), any(contains(memory_text, n) for n in expect["memory_any"])))
+    for key, needles in expect.get("memory_in", {}).items():
+        for needle in needles:
+            checks.append((f"{key} has {needle}", contains(memory.get(key, ""), needle)))
+    for needle, limit in expect.get("memory_max_occurrences", {}).items():
+        count = memory_text.lower().count(needle.lower())
+        checks.append((f"memory mentions {needle} at most {limit} times ({count})", count <= limit))
     for needle in expect.get("memory_none", []):
         checks.append(("memory lacks " + needle, not contains(memory_text, needle)))
     for needle in expect.get("answer_all", []):
@@ -170,6 +197,11 @@ def score(scenario, memory_text, answer, other_memory):
         checks.append(("answer lacks " + needle, not contains(answer, needle)))
     if expect.get("answer_regex"):
         checks.append(("answer matches pattern", re.search(expect["answer_regex"], answer) is not None))
+    if "answer_max_chars" in expect:
+        checks.append((f"answer has at most {expect['answer_max_chars']} chars ({len(answer)})", len(answer) <= expect["answer_max_chars"]))
+    if "answer_max_sentences" in expect:
+        sentences = len([part for part in re.split(r"[。！？!?\n]+|(?<=[a-z])\.\s", answer) if part.strip()])
+        checks.append((f"answer has at most {expect['answer_max_sentences']} sentences ({sentences})", sentences <= expect["answer_max_sentences"]))
     if "answer_max_cjk" in expect:
         cjk = len(re.findall(r"[一-鿿]", answer))
         checks.append((f"answer has at most {expect['answer_max_cjk']} CJK chars ({cjk})", cjk <= expect["answer_max_cjk"]))
@@ -182,6 +214,8 @@ def run_scenario(client, scenario, run_index, wait_after_session, auto):
     user = f"eval-{scenario['id']}-{run_index}-{uuid.uuid4().hex[:8]}"
     if auto:
         client.enable_auto_capture(user)
+    for key, content in scenario.get("preload", {}).items():
+        client.external("PUT", f"/agents/memory/{urllib.parse.quote(key)}?user={urllib.parse.quote(user)}", {"content": expand_filler(content)})
     turns = []
     for session in scenario["sessions"]:
         conversation = None
@@ -192,16 +226,16 @@ def run_scenario(client, scenario, run_index, wait_after_session, auto):
         if wait_after_session:
             time.sleep(wait_after_session)
     memory = client.memory(user)
-    memory_text = "\n".join(memory.values())
     probe_user = user + "-other" if scenario.get("probe_as_other_user") else user
     if probe_user != user and auto:
         client.enable_auto_capture(probe_user)
     probe = client.chat(probe_user, scenario["probe"])
     other_memory = client.memory(probe_user) if probe_user != user else None
-    checks = score(scenario, memory_text, probe["answer"], other_memory)
+    checks = score(scenario, memory, probe["answer"], other_memory)
     return {
         "scenario": scenario["id"],
         "category": scenario.get("category"),
+        "difficulty": scenario.get("difficulty", "basic"),
         "run": run_index,
         "requires_auto": bool(scenario.get("requires_auto")),
         "observe": bool(scenario.get("observe")),
@@ -215,15 +249,17 @@ def run_scenario(client, scenario, run_index, wait_after_session, auto):
 
 def summarize(results, auto):
     scored = [r for r in results if not r["observe"] and (auto or not r["requires_auto"])]
-    by_category = {}
+    by_category, by_difficulty = {}, {}
     for result in scored:
-        bucket = by_category.setdefault(result["category"], [0, 0])
-        bucket[0] += 1 if result["passed"] else 0
-        bucket[1] += 1
+        for table, name in ((by_category, result["category"]), (by_difficulty, result.get("difficulty", "basic"))):
+            bucket = table.setdefault(name, [0, 0])
+            bucket[0] += 1 if result["passed"] else 0
+            bucket[1] += 1
     turns = [t for r in results for t in r["turns"] + [r["probe"]]]
     return {
         "scenarios_scored": len(scored),
         "scenarios_passed": sum(1 for r in scored if r["passed"]),
+        "by_difficulty": {k: {"passed": v[0], "total": v[1]} for k, v in sorted(by_difficulty.items())},
         "by_category": {k: {"passed": v[0], "total": v[1]} for k, v in sorted(by_category.items())},
         "checks_passed": sum(c["passed"] for r in scored for c in r["checks"]),
         "checks_total": sum(len(r["checks"]) for r in scored),
@@ -243,7 +279,9 @@ def write_report(path, meta, summary, results):
              f"**Scenarios passed: {summary['scenarios_passed']}/{summary['scenarios_scored']}** "
              f"(checks {summary['checks_passed']}/{summary['checks_total']}); "
              f"avg latency {summary['avg_latency_s']}s; avg tokens {summary['avg_prompt_tokens']} in / {summary['avg_completion_tokens']} out", "",
-             "| Category | Passed |", "|---|---|"]
+             "| Difficulty | Passed |", "|---|---|"]
+    lines += [f"| {k} | {v['passed']}/{v['total']} |" for k, v in summary["by_difficulty"].items()]
+    lines += ["", "| Category | Passed |", "|---|---|"]
     lines += [f"| {k} | {v['passed']}/{v['total']} |" for k, v in summary["by_category"].items()]
     lines += ["", "| Scenario | Run | Result | Failed checks |", "|---|---|---|---|"]
     for r in sorted(results, key=lambda x: (x["scenario"], x["run"])):
@@ -264,6 +302,7 @@ def main():
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--only", nargs="*", help="Run only these scenario IDs")
+    parser.add_argument("--difficulty", choices=["basic", "hard"], help="Run only scenarios of this difficulty")
     parser.add_argument("--env-file")
     parser.add_argument("--out", default=os.path.join(HERE, "results"))
     args = parser.parse_args()
@@ -278,6 +317,8 @@ def main():
         scenarios = json.load(handle)["scenarios"]
     if args.only:
         scenarios = [s for s in scenarios if s["id"] in set(args.only)]
+    if args.difficulty:
+        scenarios = [s for s in scenarios if s.get("difficulty", "basic") == args.difficulty]
 
     client = Client(args.base_url)
     client.login(email, password)
@@ -294,7 +335,7 @@ def main():
             try:
                 result = future.result()
             except Exception as err:  # keep the rest of the suite running
-                result = {"scenario": scenario_id, "category": "error", "run": run, "requires_auto": False, "observe": False,
+                result = {"scenario": scenario_id, "category": "error", "difficulty": "error", "run": run, "requires_auto": False, "observe": False,
                           "memory": {}, "turns": [], "probe": {"answer": "", "latency_s": 0, "prompt_tokens": 0, "completion_tokens": 0, "memory_events": [], "errors": [str(err)]},
                           "checks": [{"check": "scenario ran: " + str(err)[:200], "passed": False}], "passed": False}
             results.append(result)
