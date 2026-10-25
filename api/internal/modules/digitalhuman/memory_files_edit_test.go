@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 )
 
 type recordingEditor struct {
@@ -78,5 +80,25 @@ func TestMemoryEditGuidanceListsWhatEachDirectoryHolds(t *testing.T) {
 	guidance := memoryEditGuidance([]memoryFileEditor{&recordingEditor{dir: "/user/notes/"}, &recordingEditor{dir: "/user/"}})
 	if !strings.Contains(guidance, "- /user/notes/: things for /user/notes/") || !strings.Contains(guidance, "- /user/: things for /user/") || !strings.Contains(guidance, "memory_edit") {
 		t.Fatalf("guidance = %s", guidance)
+	}
+}
+
+func TestMemorySearchAddsThePersonsArchiveOnlyForPersonPaths(t *testing.T) {
+	inner := skillloop.RuntimeTool{Definition: adapter.Tool{Function: adapter.Function{Name: memorySearchToolName}}, Handler: func(context.Context, adapter.ToolCall) skillloop.RuntimeToolResult {
+		return skillloop.RuntimeToolResult{Status: "success", ModelResult: map[string]any{"files": []any{}}}
+	}}
+	calls := 0
+	search := func(_ context.Context, query string, _ int) ([]relationshipmemory.UserMemoryArchiveEntry, error) {
+		calls++
+		return []relationshipmemory.UserMemoryArchiveEntry{{ID: uuid.New(), Tags: "preference", ContentPayload: "坐长途航班喜欢靠过道。"}}, nil
+	}
+	tools := withArchiveResults([]skillloop.RuntimeTool{inner}, search)
+	result := tools[0].Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"query":"航班 座位"}`}})
+	archive, _ := result.ModelResult["archive"].([]map[string]any)
+	if len(archive) != 1 || !strings.HasPrefix(archive[0]["path"].(string), "/user/archive/") || archive[0]["owner"] != "user" {
+		t.Fatalf("archive results = %+v", result.ModelResult)
+	}
+	if result = tools[0].Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{Arguments: `{"query":"退货","path":"/me/"}`}}); result.ModelResult["archive"] != nil || calls != 1 {
+		t.Fatalf("a /me/ search included the person's archive: %+v", result.ModelResult)
 	}
 }

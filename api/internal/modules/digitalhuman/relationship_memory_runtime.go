@@ -55,6 +55,12 @@ func (p *CompositeMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, 
 		}
 		result.Tools = append(result.Tools, prepared.Tools...)
 		result.fileEditors = append(result.fileEditors, prepared.fileEditors...)
+		if prepared.archiveSearch != nil {
+			result.archiveSearch = prepared.archiveSearch
+		}
+	}
+	if result.archiveSearch != nil {
+		result.Tools = withArchiveResults(result.Tools, result.archiveSearch)
 	}
 	if len(result.fileEditors) > 0 {
 		result.SystemPromptAddendum += "\n\n" + memoryEditGuidance(result.fileEditors)
@@ -147,6 +153,10 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 		preparation := &MemoryRuntimePreparation{SystemPromptAddendum: renderUserMemoryFilesGuidance(items, relationship.AutoCaptureEnabled && contract.AutoCaptureAllowed)}
 		if writable {
 			preparation.fileEditors = []memoryFileEditor{&relationshipFileEditor{service: p.service, run: run, relationship: relationship, contract: contract}}
+		}
+		relationshipID := relationship.ID
+		preparation.archiveSearch = func(ctx context.Context, query string, limit int) ([]relationshipmemory.UserMemoryArchiveEntry, error) {
+			return p.service.SearchArchive(ctx, relationshipID, query, limit)
 		}
 		return preparation, nil
 	}

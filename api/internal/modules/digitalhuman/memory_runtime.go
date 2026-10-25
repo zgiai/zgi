@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"gorm.io/datatypes"
@@ -78,6 +79,9 @@ type MemoryRuntimePreparation struct {
 	// fileEditors are the directories this run may change with memory_edit
 	// (ADR 0014). The composite provider builds the one tool over them.
 	fileEditors []memoryFileEditor
+	// archiveSearch finds the user's archive entries; the composite provider
+	// adds them to memory_search results.
+	archiveSearch func(ctx context.Context, query string, limit int) ([]relationshipmemory.UserMemoryArchiveEntry, error)
 }
 
 // MemoryRuntimeProvider keeps DigitalHuman memory out of the generic
