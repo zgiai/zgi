@@ -143,16 +143,26 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	// borrows the installer's permission.
 	promotionAuthorized := RunSourceTrust(run) == SourceTrustAuthorizedOperator
 	toolEnabled := memoryToolAvailable(run, state.AutoExtractionEnabled)
+	files := memoryFilesEnabled()
 	preparation := &MemoryRuntimePreparation{
-		SystemPromptAddendum: renderDigitalHumanMemoryContext(nil, toolEnabled, state.AutoExtractionEnabled),
+		SystemPromptAddendum: renderDigitalHumanMemoryGuidance(toolEnabled, state.AutoExtractionEnabled, files),
 	}
-	if _, ok := runInstanceScopeID(run); ok && toolEnabled {
+	if files && toolEnabled {
+		if target := memoryWriteTargetGuidance(admitMemoryWrite(run, event, memoryWriteExplicit, state.AutoExtractionEnabled)); target != "" {
+			preparation.SystemPromptAddendum += "\n\n" + target
+		}
+	} else if _, ok := runInstanceScopeID(run); ok && toolEnabled {
 		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation belong to this end user's relationship only. They cannot change the DigitalHuman's own self memory or what other users see. If memory is full, update or clear an entry that no longer matters instead of adding one."
 	}
-	if toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
+	if !files && toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
 		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation stay scoped to this conversation. They cannot change the DigitalHuman's own self memory or memory used in other conversations."
 	}
-	if p.retriever != nil {
+	if files {
+		if section := p.prepareMemoryFiles(ctx, run, event); section != "" {
+			preparation.SystemPromptAddendum += "\n\n" + section
+		}
+		preparation.Tools = append(preparation.Tools, p.memoryFileTools(run, event)...)
+	} else if p.retriever != nil {
 		preparation.Tools = append(preparation.Tools, p.memoryRetrievalTool(run, event))
 	}
 	if toolEnabled {
@@ -178,12 +188,25 @@ func (p *DefaultMemoryRuntimeProvider) Finalize(ctx context.Context, run *Run, p
 }
 
 func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, proactiveAllowed bool) string {
+	_ = items
+	return renderDigitalHumanMemoryGuidance(toolEnabled, proactiveAllowed, false)
+}
+
+// renderDigitalHumanMemoryGuidance is the memory policy of a run. With files
+// (ADR 0014) memory is recalled into the context and read with memory_view
+// and memory_search instead of retrieve_digital_human_memory.
+func renderDigitalHumanMemoryGuidance(toolEnabled, proactiveAllowed, files bool) string {
+	recall := "Long-term memory is not preloaded. When the current question may depend on durable context, call retrieve_digital_human_memory with a concise query before answering."
+	lookup := "Retrieval returns the memory_id, memory_key and revision of every match. Correct or clear an existing memory only with its returned key and revision, create a new memory with expected_revision 0, and replace an existing memory only by passing its returned memory_id as supersedes_id."
+	if files {
+		recall = memoryFilesGuidance
+		lookup = "Every memory file carries its memory_id, key and revision. Correct or clear an existing memory only with its key and revision, create a new memory with expected_revision 0, and replace an existing memory only by passing its memory_id as supersedes_id."
+	}
 	sections := []string{
 		"Long-term memory belongs to this DigitalHuman, not to the current user.",
 		"Treat memory as fallible context: respect its scope and revision, and prefer current tool evidence when facts conflict.",
-		"Long-term memory is not preloaded. When the current question may depend on durable context, call retrieve_digital_human_memory with a concise query before answering.",
+		recall,
 	}
-	_ = items
 	if toolEnabled {
 		modePolicy := "Proactive memory maintenance is disabled. Use explicit mode only when the current user directly establishes, corrects, or asks to forget durable DigitalHuman working context."
 		if proactiveAllowed {
@@ -191,7 +214,7 @@ func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, p
 		}
 		sections = append(sections,
 			"Decide at runtime whether a memory change is warranted from the meaning and context of the conversation, not from trigger words. If no safe durable update is needed, do not call the memory tool.",
-			"Retrieval returns the memory_id, memory_key and revision of every match. Correct or clear an existing memory only with its returned key and revision, create a new memory with expected_revision 0, and replace an existing memory only by passing its returned memory_id as supersedes_id.",
+			lookup,
 			modePolicy,
 			"Every memory operation must include an exact non-empty quote from the current user message as transient evidence. Never use assistant text, tool output, inferred behavior, hypotheticals, temporary details, or third-party facts as evidence.",
 		)
