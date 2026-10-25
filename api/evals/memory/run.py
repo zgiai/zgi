@@ -85,25 +85,42 @@ class Client:
         data = self.console("POST", "/login", {"email": email, "password": password})
         self.console_token = data.get("access_token") or data["data"]["access_token"]
 
-    def chat(self, user, query, conversation_id=None):
-        """Sends one turn and returns the answer, memory events, usage, and latency."""
-        body = {"query": query, "response_mode": "streaming", "user": user}
-        if conversation_id:
-            body["conversation_id"] = conversation_id
-        req = urllib.request.Request(self.base + "/api/v1/agents/chat", data=json.dumps(body).encode(), method="POST")
+    def chat(self, user, query, conversation_id=None, pending_input=None):
+        """Sends one turn and returns the answer, memory events, usage, and latency.
+
+        When the previous turn ended with the Agent asking the user a question,
+        the conversation accepts only an answer to it (a new chat turn gets 400),
+        so the query is sent as the answer to every pending question instead.
+        """
+        if pending_input:
+            path = "/api/v1/agents/conversations/{}/messages/{}/user-input/{}/continue?user={}".format(
+                pending_input["conversation_id"], pending_input["message_id"],
+                urllib.parse.quote(pending_input["request_id"]), urllib.parse.quote(user))
+            body = {"answers": {question_id: query for question_id in pending_input["question_ids"]}}
+        else:
+            path = "/api/v1/agents/chat"
+            body = {"query": query, "response_mode": "streaming", "user": user}
+            if conversation_id:
+                body["conversation_id"] = conversation_id
+        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(), method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + self.api_key)
         started = time.time()
         events = []
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            for raw in resp:
-                line = raw.decode("utf-8", "replace").strip()
-                if line.startswith("data:"):
-                    try:
-                        events.append(json.loads(line[5:]))
-                    except ValueError:
-                        pass
-        answer, conversation, usage, memory_events, errors = [], conversation_id, [], [], []
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                for raw in resp:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if line.startswith("data:"):
+                        try:
+                            events.append(json.loads(line[5:]))
+                        except ValueError:
+                            pass
+        except urllib.error.HTTPError as err:
+            with err:
+                detail = err.read().decode("utf-8", "replace")[:300]
+            raise RuntimeError(f"POST {path.split('?')[0]} failed: {err.code} {detail}") from err
+        answer, conversation, usage, memory_events, errors, pending = [], conversation_id, [], [], [], None
         for event in events:
             kind, data = event.get("event"), event.get("data") or {}
             conversation = data.get("conversation_id") or conversation
@@ -115,10 +132,21 @@ class Client:
                 memory_events.append({k: data.get(k) for k in ("action", "key", "mutation_status", "reason", "error_code")})
             elif kind in ("error", "message_error"):
                 errors.append(data)
+            elif kind == "user_input_requested":
+                # Unnamed questions are answered as q1, q2, ... like the runtime expects.
+                questions = data.get("questions") or []
+                pending = {
+                    "conversation_id": data.get("conversation_id") or conversation,
+                    "message_id": data.get("message_id"),
+                    "request_id": data.get("request_id"),
+                    "question_ids": [str(q.get("id") or f"q{i + 1}") for i, q in enumerate(questions)] or ["q1"],
+                }
         return {
             "query": query,
             "answer": "".join(answer),
             "conversation_id": conversation,
+            "answered_question": bool(pending_input),
+            "pending_input": pending,
             "latency_s": round(time.time() - started, 2),
             "prompt_tokens": sum(u.get("prompt_tokens", 0) for u in usage),
             "completion_tokens": sum(u.get("completion_tokens", 0) for u in usage),
@@ -218,10 +246,10 @@ def run_scenario(client, scenario, run_index, wait_after_session, auto):
         client.external("PUT", f"/agents/memory/{urllib.parse.quote(key)}?user={urllib.parse.quote(user)}", {"content": expand_filler(content)})
     turns = []
     for session in scenario["sessions"]:
-        conversation = None
+        conversation, pending = None, None
         for query in session:
-            turn = client.chat(user, query, conversation)
-            conversation = turn["conversation_id"]
+            turn = client.chat(user, query, conversation, pending)
+            conversation, pending = turn["conversation_id"], turn["pending_input"]
             turns.append(turn)
         if wait_after_session:
             time.sleep(wait_after_session)
