@@ -392,6 +392,9 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		if search, ok := s.agentConversationSearchTool(prepared); ok {
 			tools = append(tools, search)
 		}
+		if archive, ok := s.agentArchiveSearchTool(prepared, agentID, state.UserScope); ok {
+			tools = append(tools, archive)
+		}
 	}
 	return tools
 }

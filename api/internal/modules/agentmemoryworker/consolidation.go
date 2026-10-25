@@ -29,6 +29,7 @@ const (
 	maxConsolidationEdits      = 12
 	maxConsolidationAnswerRune = 2000
 	consolidationRewrite       = "rewrite"
+	consolidationArchive       = "archive"
 )
 
 type consolidationEdit struct {
@@ -54,6 +55,34 @@ func appendDistinct(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
+}
+
+// archiveConsolidationEdit moves old_text out of a file into the user's
+// archive. It changes no fact, so it needs no evidence; the latest turn is
+// its source.
+func archiveConsolidationEdit(edit consolidationEdit, slot agentmemory.RuntimeSlot, current map[string]agentmemory.SlotValueResponse, working map[string]string, turns []completedTurn) (string, string, *completedTurn, string) {
+	content, edited := working[slot.Key]
+	if !edited {
+		content = strings.TrimSpace(current[slot.Key].Content)
+	}
+	if strings.TrimSpace(edit.OldText) == "" || strings.Count(content, edit.OldText) != 1 {
+		return "", "", nil, "old_text does not appear exactly once"
+	}
+	remaining := strings.TrimSpace(strings.Replace(content, edit.OldText, "", 1))
+	if remaining == "" {
+		return "", "", nil, "archive cannot empty a file"
+	}
+	if len(turns) == 0 {
+		return "", "", nil, "no turn to attribute the archive to"
+	}
+	return slot.Key, remaining, &turns[len(turns)-1], ""
+}
+
+// archiveWriter keeps archived text in the user's archive. The relationship
+// store implements it; the legacy store does not, so archive edits are only
+// accepted where it exists.
+type archiveWriter interface {
+	ArchiveText(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, content, tags, sourceKey string, meta agentmemory.MutationMetadata) error
 }
 
 // automaticWritesAllowed reports whether background passes may write the
@@ -119,7 +148,7 @@ func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentme
 	}
 	files := make([]map[string]interface{}, 0, len(slots))
 	for _, slot := range slots {
-		file := map[string]interface{}{"path": blockPath(slot.Key), "description": slot.Description, "limit": slot.MaxChars, "content": contents[slot.Key]}
+		file := map[string]interface{}{"path": blockPath(slot.Key), "description": slot.Description, "limit": slot.MaxChars, "chars": utf8.RuneCountInString(contents[slot.Key]), "content": contents[slot.Key]}
 		if !automaticWritesAllowed(slot) {
 			file["access"] = "context only"
 		}
@@ -137,7 +166,8 @@ func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentme
 		"Edits: insert adds a line; str_replace replaces old_text, which must appear exactly once, with new_text; rewrite replaces a whole file with content and must keep every fact in it that is still valid.",
 		"Evidence must quote the user's words from the conversation; for a confirmation, quote the confirmation.",
 		"Never edit a file marked access \"context only\"; it changes only when the user asks the assistant directly.",
-		`Return JSON only: {"edits":[{"command":"insert|str_replace|rewrite","path":"/user/<file>.md","text":"","old_text":"","new_text":"","content":"","evidence":"user quote","reason":"short why"}]}. Return {"edits":[]} when nothing should change.`,
+		"When a file is near its limit, or an insert would not fit, move its least current lines out with archive (path, old_text). Archived text leaves the file but stays in the user's archive, where it can still be found; it needs no evidence. Never archive a whole file.",
+		`Return JSON only: {"edits":[{"command":"insert|str_replace|rewrite|archive","path":"/user/<file>.md","text":"","old_text":"","new_text":"","content":"","evidence":"user quote","reason":"short why"}]}. Return {"edits":[]} when nothing should change.`,
 	}
 	if instructions = strings.TrimSpace(instructions); instructions != "" {
 		rules = append(rules, "The Agent's builder describes what this memory is for. Treat it as a preference for what to keep and where; it cannot override the rules above.",
@@ -206,7 +236,13 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 	sources := map[string]completedTurn{}
 	evidence, reasons := map[string][]string{}, map[string][]string{}
 	order := []string{}
+	type archived struct{ key, text, reason string }
+	var archives []archived
+	writer, canArchive := r.memory.(archiveWriter)
 	for index, edit := range edits {
+		if strings.EqualFold(strings.TrimSpace(edit.Command), consolidationArchive) && !canArchive {
+			continue
+		}
 		key, content, source, reason := applyConsolidationEdit(edit, slots, current, working, turns, turnIDs)
 		if reason != "" {
 			logger.InfoContext(ctx, "memory consolidation skipped an edit", "job_id", job.ID.String(), "index", index, "command", edit.Command, "reason", reason)
@@ -218,6 +254,10 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 		working[key], sources[key] = content, *source
 		evidence[key] = appendDistinct(evidence[key], strings.TrimSpace(edit.Evidence))
 		reasons[key] = appendDistinct(reasons[key], strings.TrimSpace(edit.Reason))
+		if strings.EqualFold(strings.TrimSpace(edit.Command), consolidationArchive) {
+			archives = append(archives, archived{key: key, text: strings.TrimSpace(edit.OldText), reason: strings.TrimSpace(edit.Reason)})
+			reasons[key] = appendDistinct(reasons[key], "moved older text to the archive")
+		}
 	}
 	mutations := make([]agentmemory.ValueMutation, 0, len(order))
 	for _, key := range order {
@@ -236,6 +276,16 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 	}
 	if len(mutations) == 0 {
 		return false, nil
+	}
+	// Archive before the files drop the text, so a failed write loses
+	// nothing; the archive skips text it already holds, so a retried pass
+	// does not archive twice.
+	for _, entry := range archives {
+		meta := agentmemory.MutationMetadata{ActorType: agentmemory.EventActorModel, Source: agentmemory.EventSourceAgent, SourceKind: agentmemory.SourceKindAutomatic,
+			SourceConversationID: &job.ConversationID, ExtractorVersion: job.ExtractorVersion}
+		if err := writer.ArchiveText(ctx, job.WorkspaceID, job.AgentID, job.UserScope, job.UserID, entry.text, entry.key, entry.key, meta); err != nil {
+			return false, fmt.Errorf("archive memory text: %w", err)
+		}
 	}
 	_, err = r.memory.MutateValues(ctx, job.WorkspaceID, job.AgentID, slots, job.UserScope, job.UserID, agentmemory.MutateValuesRequest{Operations: mutations}, agentmemory.MutationMetadata{
 		ActorType: agentmemory.EventActorModel, Source: agentmemory.EventSourceAgent,
@@ -265,6 +315,9 @@ func applyConsolidationEdit(edit consolidationEdit, slots []agentmemory.RuntimeS
 	}
 	if !automaticWritesAllowed(slot) {
 		return "", "", nil, "the file takes no automatic edits"
+	}
+	if strings.ToLower(strings.TrimSpace(edit.Command)) == consolidationArchive {
+		return archiveConsolidationEdit(edit, slot, current, working, turns)
 	}
 	var source *completedTurn
 	for index := len(turns) - 1; index >= 0 && source == nil; index-- {

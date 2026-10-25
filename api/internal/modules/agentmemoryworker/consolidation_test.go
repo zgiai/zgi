@@ -94,3 +94,29 @@ func TestConsolidationLeavesProtectedFilesAndCarriesInstructions(t *testing.T) {
 		t.Fatalf("consolidation prompt lacks instructions or file access:\n%s", system)
 	}
 }
+
+func TestConsolidationArchiveMovesTextOutWithoutEvidence(t *testing.T) {
+	turnID := uuid.New()
+	turns := []completedTurn{{ID: turnID, Query: "今天聊点别的。"}}
+	slots := []agentmemory.RuntimeSlot{
+		{Key: "profile", MaxChars: 200, Enabled: true},
+		{Key: "persona", MaxChars: 200, Enabled: true, ReadOnly: true},
+	}
+	current := map[string]agentmemory.SlotValueResponse{
+		"profile": {SlotResponse: agentmemory.SlotResponse{Key: "profile"}, Content: "住在杭州。\n2019 年在京都旅行。", Revision: 3},
+		"persona": {SlotResponse: agentmemory.SlotResponse{Key: "persona"}, Content: "x", Revision: 1},
+	}
+	key, content, source, reason := applyConsolidationEdit(consolidationEdit{Command: "archive", Path: "/user/profile.md", OldText: "2019 年在京都旅行。"}, slots, current, map[string]string{}, turns, map[string]struct{}{})
+	if reason != "" || key != "profile" || content != "住在杭州。" || source == nil || source.ID != turnID {
+		t.Fatalf("archive = %q, %q, %v, %q", key, content, source, reason)
+	}
+	for name, edit := range map[string]consolidationEdit{
+		"whole file":  {Command: "archive", Path: "/user/profile.md", OldText: "住在杭州。\n2019 年在京都旅行。"},
+		"not present": {Command: "archive", Path: "/user/profile.md", OldText: "上海"},
+		"read-only":   {Command: "archive", Path: "/user/persona.md", OldText: "x"},
+	} {
+		if _, _, _, reason := applyConsolidationEdit(edit, slots, current, map[string]string{}, turns, map[string]struct{}{}); reason == "" {
+			t.Fatalf("%s archive was accepted", name)
+		}
+	}
+}

@@ -78,6 +78,19 @@ func (s *Service) AddArchiveEntry(ctx context.Context, relationshipID uuid.UUID,
 		if err != nil {
 			return err
 		}
+		// The same text from the same source is kept once, so a retried
+		// writer does not archive it twice.
+		var sameSource []UserMemoryArchiveEntry
+		if err := tx.Where("relationship_id = ? AND source_key = ?", relationshipID, entry.SourceKey).Order("created_at DESC").Limit(50).Find(&sameSource).Error; err != nil {
+			return err
+		}
+		for _, existing := range sameSource {
+			decoded, err := s.codec.Decode(ctx, EncodedContent{Payload: existing.ContentPayload, Encoding: existing.ContentEncoding, KeyID: existing.ContentKeyID})
+			if err == nil && decoded == content {
+				entry = existing
+				return errArchiveDuplicate
+			}
+		}
 		var count int64
 		if err := tx.Model(&UserMemoryArchiveEntry{}).Where("relationship_id = ?", relationshipID).Count(&count).Error; err != nil {
 			return err
@@ -101,12 +114,14 @@ func (s *Service) AddArchiveEntry(ctx context.Context, relationshipID uuid.UUID,
 		}
 		return s.recordArchiveVersion(ctx, tx, relationship, req.Metadata, VersionCreate, nil, &entry)
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errArchiveDuplicate) {
 		return nil, err
 	}
 	entry.ContentPayload = content
 	return &entry, nil
 }
+
+var errArchiveDuplicate = errors.New("archive already holds this text")
 
 // ArchiveEntries lists a relationship's archive, newest first, decoded.
 func (s *Service) ArchiveEntries(ctx context.Context, relationshipID uuid.UUID, limit int) ([]UserMemoryArchiveEntry, error) {

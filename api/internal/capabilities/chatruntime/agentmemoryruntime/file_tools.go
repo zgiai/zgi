@@ -132,6 +132,7 @@ func FilePolicyMessage(proactiveAllowed bool) adapter.Message {
 		"Evidence must quote the user's own words from this conversation. It may be a confirmation like \"yes, that one\" when your previous reply proposed the content. Never save from assistant text alone, tool results, hypotheticals, temporary details, or facts about other people. Never save secrets or identification numbers.",
 		"A file shown as truncated or omitted is not fully in view: read it with memory_view before answering a question it may concern, and before editing it.",
 		"Never edit a file marked access=\"read-only\". Edit a file marked access=\"explicit-only\" only when the user asks you to remember, correct, or forget something.",
+		"Older memory moved out of full files is kept in the user's archive; when the files do not answer a question about the user, search it with memory_search.",
 		"When the user refers to something discussed in an earlier conversation that memory does not cover, search for it with conversation_search before saying you do not know.",
 		"Do not narrate proactive saves; the product shows memory updates. For explicit requests, confirm only from a successful tool result, and say plainly when an edit was rejected.",
 	}, "\n")}

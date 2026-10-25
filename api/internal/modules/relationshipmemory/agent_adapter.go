@@ -834,6 +834,30 @@ func (a *AgentAdapter) agentExtractionJob(ctx context.Context, job *UserMemoryEx
 	}, nil
 }
 
+// ArchiveText keeps text in an Agent user's archive (ADR 0014), for
+// consolidation moving overflow out of a full file.
+func (a *AgentAdapter) ArchiveText(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, content, tags, sourceKey string, meta agentmemory.MutationMetadata) error {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return err
+	}
+	metadata := relationshipMetadata(meta, uuid.Nil)
+	metadata.Reason = "moved out of a full file"
+	if _, err := a.service.AddArchiveEntry(ctx, relationship.ID, ArchiveRequest{Content: content, Tags: tags, SourceKey: sourceKey, Metadata: metadata}); err != nil {
+		return mapAgentMemoryError(err)
+	}
+	return nil
+}
+
+// SearchArchive finds an Agent user's archive entries for a query.
+func (a *AgentAdapter) SearchArchive(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, query string, limit int) ([]UserMemoryArchiveEntry, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.service.SearchArchive(ctx, relationship.ID, query, limit)
+}
+
 // History returns the memory history of one Agent user.
 func (a *AgentAdapter) History(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, req HistoryRequest) (*HistoryPage, error) {
 	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
