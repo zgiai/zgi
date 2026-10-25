@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "notes": "Each scenario runs as its own API end user. Sessions are separate conversations; the probe is a new conversation after all sessions. Checks are case-insensitive substring matches. requires_auto marks scenarios that only an automatic-capture configuration is expected to pass. observe marks scenarios whose expected outcome is a product decision; they are reported but not scored.",
+  "scenarios": [
+    {
+      "id": "explicit_allergy_zh",
+      "category": "explicit",
+      "sessions": [["请记住：我对花生过敏。"]],
+      "probe": "给我推荐一道适合我的晚餐，简短回答。",
+      "expect": {"memory_all": ["花生"], "answer_any": ["花生"]}
+    },
+    {
+      "id": "explicit_bullets_en",
+      "category": "explicit",
+      "sessions": [["Please remember that I prefer answers as bullet points."]],
+      "probe": "Give me three tips for better sleep.",
+      "expect": {"memory_all": ["bullet"], "answer_regex": "(?m)^\\s*([-*•]|\\d+\\.)\\s"}
+    },
+    {
+      "id": "explicit_forget_zh",
+      "category": "forget",
+      "sessions": [["请记住我住在上海浦东。"], ["请忘掉我的住址。"]],
+      "probe": "我住在哪里？",
+      "expect": {"memory_none": ["浦东"], "answer_none": ["浦东"]}
+    },
+    {
+      "id": "update_city_keep_coffee_zh",
+      "category": "update",
+      "sessions": [["请记住：我住在上海，平时喜欢喝美式咖啡。"], ["更正一下，我已经搬到杭州了，请更新记忆。"]],
+      "probe": "我住哪个城市？平时喝什么咖啡？",
+      "expect": {"memory_all": ["杭州", "美式"], "answer_all": ["杭州", "美式"]}
+    },
+    {
+      "id": "multi_fact_retention_zh",
+      "category": "update",
+      "sessions": [["请记住：我喜欢简洁的回答；我主要用 Go 语言；我在东八区。"], ["再记一条：我不喜欢表情符号。"]],
+      "probe": "总结一下你记得的我的偏好。",
+      "expect": {"memory_all": ["简洁", "Go", "东八区", "表情"], "answer_all": ["简洁", "Go", "表情"]}
+    },
+    {
+      "id": "paraphrase_nickname_zh",
+      "category": "paraphrase",
+      "sessions": [["记一下哈，以后叫我小王就行。"]],
+      "probe": "你应该怎么称呼我？",
+      "expect": {"memory_all": ["小王"], "answer_all": ["小王"]}
+    },
+    {
+      "id": "confirmation_goal_zh",
+      "category": "confirmation",
+      "sessions": [["我想定一个每天的运动目标，给我三个选项，分别标 A、B、C，其中 B 必须是“每天步行 8000 步”。", "就选 B，帮我记住这个目标。"]],
+      "probe": "我的每日运动目标是什么？",
+      "expect": {"memory_all": ["8000"], "answer_all": ["8000"]}
+    },
+    {
+      "id": "cross_turn_decision_zh",
+      "category": "confirmation",
+      "sessions": [["我在考虑换城市工作，候选是成都和杭州。", "嗯，我决定去成都了，帮我记住。"]],
+      "probe": "我决定去哪个城市工作？",
+      "expect": {"memory_all": ["成都"], "answer_all": ["成都"]}
+    },
+    {
+      "id": "project_context_zh",
+      "category": "explicit",
+      "sessions": [["记住：我正在做的项目叫“青鸟”，是给连锁药店用的库存系统，下个月 15 号上线。"]],
+      "probe": "我们的项目叫什么？什么时候上线？",
+      "expect": {"memory_all": ["青鸟"], "answer_all": ["青鸟", "15"]}
+    },
+    {
+      "id": "standing_instruction_en",
+      "category": "explicit",
+      "sessions": [["From now on, always reply in English even if I write in Chinese. Please remember this."]],
+      "probe": "推荐一本适合周末读的书。",
+      "expect": {"memory_all": ["English"], "answer_max_cjk": 10}
+    },
+    {
+      "id": "capacity_many_facts_zh",
+      "category": "capacity",
+      "sessions": [["请记住以下关于我的十条信息：1. 我的车是一辆白色的比亚迪汉；2. 我每周二晚上打羽毛球；3. 我女儿叫朵朵，今年六岁；4. 我对芒果过敏；5. 我在一家做光伏逆变器的公司做采购；6. 我习惯早上六点起床；7. 我最喜欢的城市是厦门；8. 我不喝酒；9. 我在学西班牙语；10. 我的生日是十一月三日。"]],
+      "probe": "我的车是什么？我的生日是哪天？我在学什么语言？",
+      "expect": {"memory_all": ["比亚迪", "朵朵", "芒果", "西班牙"], "answer_all": ["比亚迪", "西班牙"]}
+    },
+    {
+      "id": "temporary_cold_zh",
+      "category": "should_not_store",
+      "sessions": [["我今天有点感冒，帮我写一句请假的话。"]],
+      "probe": "你记得我最近的身体状况吗？",
+      "expect": {"memory_none": ["感冒"]}
+    },
+    {
+      "id": "hypothetical_lawyer_zh",
+      "category": "should_not_store",
+      "sessions": [["假如我是一名律师，帮我想一个邮件签名。"]],
+      "probe": "我的职业是什么？",
+      "expect": {"memory_none": ["律师"]}
+    },
+    {
+      "id": "third_party_colleague_zh",
+      "category": "should_not_store",
+      "sessions": [["我同事老李特别喜欢喝绿茶，帮我想个送他的小礼物。"]],
+      "probe": "我喜欢喝什么茶？",
+      "expect": {"memory_none": ["绿茶"]}
+    },
+    {
+      "id": "secret_password_zh",
+      "category": "sensitive",
+      "sessions": [["记住我的数据库密码是 Zx9!kq2#Lm8w。"]],
+      "probe": "我的数据库密码是什么？",
+      "expect": {"memory_none": ["Zx9!kq2#Lm8w"], "answer_none": ["Zx9!kq2#Lm8w"]}
+    },
+    {
+      "id": "contact_callback_zh",
+      "category": "sensitive",
+      "observe": true,
+      "sessions": [["请记住我的回电号码是 13800001111，有事打这个。"]],
+      "probe": "有事的话应该打我哪个号码？",
+      "expect": {"memory_all": ["13800001111"], "answer_all": ["13800001111"]}
+    },
+    {
+      "id": "forget_all_en",
+      "category": "forget",
+      "sessions": [["Please remember that I live in Berlin and I am vegetarian."], ["Forget everything you know about me."]],
+      "probe": "Where do I live and what do I eat?",
+      "expect": {"memory_none": ["Berlin", "vegetarian"], "answer_none": ["you live in Berlin"]}
+    },
+    {
+      "id": "isolation_other_user_zh",
+      "category": "isolation",
+      "probe_as_other_user": true,
+      "sessions": [["请记住：我最喜欢的水果是山竹。"]],
+      "probe": "我最喜欢的水果是什么？",
+      "expect": {"memory_all": ["山竹"], "answer_none": ["山竹"], "other_memory_empty": true}
+    },
+    {
+      "id": "implicit_no_spicy_zh",
+      "category": "implicit",
+      "requires_auto": true,
+      "sessions": [["帮我列一个简单的工作日晚餐清单，别放辣，我一点辣都不吃。"], ["上次说过我不吃辣，再给我一个周末菜单。"]],
+      "probe": "推荐一个午饭，简短回答。",
+      "expect": {"memory_all": ["辣"]}
+    },
+    {
+      "id": "implicit_job_en",
+      "category": "implicit",
+      "requires_auto": true,
+      "sessions": [["I'm a nurse working night shifts. Any quick breakfast ideas for after my shift?"]],
+      "probe": "What do you know about my job?",
+      "expect": {"memory_all": ["nurse"], "answer_any": ["nurse", "护士"]}
+    }
+  ]
+}
