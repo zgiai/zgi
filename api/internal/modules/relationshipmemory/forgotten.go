@@ -95,6 +95,10 @@ func normalizeForgotten(value string) string {
 	return b.String()
 }
 
+// SearchTerms splits text into lowercase words, and runs of CJK text into
+// their two-character pieces, for keyword matching across memory stores.
+func SearchTerms(value string) []string { return forgottenTerms(value) }
+
 // forgottenTerms splits text into words, and runs of CJK text into their
 // two-character pieces.
 func forgottenTerms(value string) []string {

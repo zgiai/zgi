@@ -34,6 +34,7 @@ const (
 	memoryFilesBudgetChars    = 6000
 	memoryFilesRecallTopK     = 5
 	memoryFilesIndexLimit     = 200
+	memoryArchiveSearchWindow = 200
 	memoryFilesIndexLineRunes = 80
 	memoryFilesRecallTimeout  = 8 * time.Second
 )
@@ -280,6 +281,13 @@ func (p *DefaultMemoryRuntimeProvider) memoryFileTools(run *Run, event invocatio
 		files := searchMemoryFiles(result.Items, args.Path, args.Limit)
 		p.recordRetrieval(ctx, run, files)
 		modelResult := map[string]any{"query": args.Query, "files": memoryFileSummaries(files), "result_count": len(files)}
+		readScope := memoryReadScopeForRun(run, event)
+		if archived, err := p.service.repo.ArchivedMemories(ctx, runScope(run), run.DigitalHumanID, memoryArchiveSearchWindow, &readScope); err == nil {
+			if matches := searchArchivedMemoryFiles(archived, args.Query, args.Path, args.Limit); len(matches) > 0 {
+				modelResult["archive"] = matches
+				modelResult["archive_note"] = "Archived entries: older memory kept for reference, not current."
+			}
+		}
 		if len(result.Warnings) > 0 {
 			modelResult["warnings"] = result.Warnings
 		}
@@ -348,6 +356,59 @@ func searchMemoryFiles(items []*DigitalHumanMemory, path string, limit int) []*D
 		if len(out) == limit {
 			break
 		}
+	}
+	return out
+}
+
+// archivedMemoryFilePath shows an archived entry under its directory's
+// archive/ folder; archived entries appear only in memory_search.
+func archivedMemoryFilePath(memory *DigitalHumanMemory) string {
+	directory := memoryFileDirectory(memory)
+	if directory == "" {
+		return ""
+	}
+	return directory + "archive/" + strings.ReplaceAll(strings.TrimSpace(memory.MemoryKey), "/", "_") + ".md"
+}
+
+// searchArchivedMemoryFiles ranks archived entries by how many of the query's
+// words they share, newest first among equals.
+func searchArchivedMemoryFiles(items []*DigitalHumanMemory, query, path string, limit int) []map[string]any {
+	terms := relationshipmemory.SearchTerms(query)
+	if len(terms) == 0 || limit <= 0 {
+		return nil
+	}
+	type scored struct {
+		memory *DigitalHumanMemory
+		path   string
+		score  int
+	}
+	var matches []scored
+	for _, memory := range items {
+		file := archivedMemoryFilePath(memory)
+		if file == "" || (strings.TrimSpace(path) != "" && !strings.HasPrefix(file, strings.TrimSpace(path))) {
+			continue
+		}
+		text := map[string]bool{}
+		for _, term := range relationshipmemory.SearchTerms(memory.MemoryKey + " " + memory.Content) {
+			text[term] = true
+		}
+		score := 0
+		for _, term := range terms {
+			if text[term] {
+				score++
+			}
+		}
+		if score > 0 {
+			matches = append(matches, scored{memory: memory, path: file, score: score})
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+	out := make([]map[string]any, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, map[string]any{"path": match.path, "tags": string(match.memory.MemoryType), "content": strings.TrimSpace(match.memory.Content), "updated_at": match.memory.UpdatedAt.UTC().Format(time.RFC3339)})
 	}
 	return out
 }

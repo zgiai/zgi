@@ -107,3 +107,15 @@ func TestMemoryFilesGuidanceReplacesRetrievalOnlyWhenEnabled(t *testing.T) {
 		t.Fatal("legacy guidance changed")
 	}
 }
+
+func TestMemorySearchFindsArchivedEntriesUnderArchive(t *testing.T) {
+	expired := fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeOpenLoop, "quote_due", "答应周五前把报价单发过去。")
+	other := fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeFact, "office", "办公室在三楼。")
+	found := searchArchivedMemoryFiles([]*DigitalHumanMemory{other, expired}, "报价单什么时候发", "", 5)
+	if len(found) != 1 || found[0]["path"] != "/user/notes/archive/quote_due.md" || found[0]["tags"] != "open_loop" {
+		t.Fatalf("archive matches = %+v", found)
+	}
+	if found := searchArchivedMemoryFiles([]*DigitalHumanMemory{expired}, "报价单", "/me/", 5); len(found) != 0 {
+		t.Fatalf("a /me/ search returned the person's archived notes: %+v", found)
+	}
+}

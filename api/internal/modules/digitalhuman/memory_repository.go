@@ -248,6 +248,24 @@ func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digita
 	return items, nil
 }
 
+// ArchivedMemories returns the newest archived entries the run may read
+// (ADR 0014 consumer-owned archive), such as instance notes past their TTL.
+func (r *GormRepository) ArchivedMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int, readScope *memoryReadScope) ([]*DigitalHumanMemory, error) {
+	db := r.db.WithContext(ctx).Where(
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND status = ?",
+		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, MemoryStatusArchived,
+	)
+	if readScope != nil {
+		clause, args := readScope.sqlPredicate()
+		db = db.Where(clause, args...)
+	}
+	items := make([]*DigitalHumanMemory, 0, limit)
+	if err := db.Order("updated_at DESC, id DESC").Limit(limit).Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("retrieve archived DigitalHuman memories: %w", err)
+	}
+	return items, nil
+}
+
 func (r *GormRepository) MemoryEventByOperation(ctx context.Context, scope Scope, digitalHumanID, operationID uuid.UUID) (*MemoryEvent, error) {
 	var event MemoryEvent
 	err := r.db.WithContext(ctx).Where(
