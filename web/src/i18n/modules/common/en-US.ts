@@ -554,6 +554,40 @@ const messages = {
     inputPlaceholder: 'Please enter...',
     searchPlaceholder: 'Search...',
   },
+  memoryHistory: {
+    title: 'History',
+    description: 'Every change to this memory: what changed, the words it was based on, and why.',
+    empty: 'No changes yet.',
+    unavailable: 'History is not available for this memory.',
+    loadMore: 'Load more',
+    loadFailed: 'Could not load the history.',
+    revert: 'Revert',
+    reverted: 'Change reverted.',
+    revertFailed: 'Could not revert. The memory may have changed; refresh and try again.',
+    revertConfirmTitle: 'Revert this change?',
+    revertConfirmDescription:
+      'The memory goes back to what it was before this change. The revert itself appears in the history.',
+    cancel: 'Cancel',
+    before: 'Before',
+    after: 'After',
+    emptyValue: '(empty)',
+    purged: 'Content no longer kept',
+    evidence: 'Based on: “{evidence}”',
+    reason: 'Why: {reason}',
+    actions: {
+      create: 'Added',
+      update: 'Changed',
+      delete: 'Removed',
+      clear: 'Cleared',
+      undo: 'Undone',
+    },
+    sources: {
+      explicit: 'You asked',
+      automatic: 'Saved automatically',
+      manager: 'Edited by hand',
+      legacy: 'Earlier memory',
+    },
+  },
 };
 
 export default messages;

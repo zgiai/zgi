@@ -16,6 +16,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ProtectedRoute } from '@/components/auth/protected-route';
+import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,6 +60,7 @@ function downloadJSON(filename: string, value: unknown) {
 
 export default function ProfileMemoryPage() {
   const t = useT('profile');
+  const tHistory = useT('common.memoryHistory');
   const router = useRouter();
   const queryClient = useQueryClient();
   const sessionStatus = useAuthStore.use.sessionStatus();
@@ -641,6 +643,22 @@ export default function ProfileMemoryPage() {
                         </Button>
                       </div>
                     ) : null}
+                    <div className="space-y-3 border-t pt-4">
+                      <h3 className="text-sm font-medium">{tHistory('title')}</h3>
+                      <MemoryHistoryPanel
+                        key={detail.id}
+                        load={async before =>
+                          (await relationshipMemoryService.history(detail.id, { before })).data
+                        }
+                        revert={versionId => relationshipMemoryService.revert(detail.id, versionId)}
+                        labelFor={key =>
+                          detail.items.find(item => item.key === key)?.display_name || key
+                        }
+                        canRevert={detail.can_manage}
+                        refreshKey={detailQuery.dataUpdatedAt}
+                        onReverted={refresh}
+                      />
+                    </div>
                   </div>
                 </div>
               ) : null}

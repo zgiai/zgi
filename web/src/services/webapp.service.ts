@@ -14,6 +14,7 @@ import type {
   WebAppAgentMemoryValue,
 } from './types/webapp';
 import type { AIChatModelPrecheckResponse } from './types/aichat';
+import type { MemoryHistoryPage } from './types/memory-history';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
 import {
   getWebAppErrorCode,
@@ -188,6 +189,25 @@ export class WebAppService {
   ): Promise<WebAppApiResponseData<WebAppAgentMemoryUndoResponse>> {
     return webappHttp.post<WebAppApiResponseData<WebAppAgentMemoryUndoResponse>>(
       `/console/api/webapps/${webAppId}/memory/operations/${encodeURIComponent(operationId)}/undo`
+    );
+  }
+
+  static async getAgentMemoryHistory(
+    webAppId: string,
+    params: { key?: string; before?: string; limit?: number } = {}
+  ): Promise<WebAppApiResponseData<MemoryHistoryPage>> {
+    return webappHttp.get<WebAppApiResponseData<MemoryHistoryPage>>(
+      `/console/api/webapps/${webAppId}/memory/history`,
+      { params }
+    );
+  }
+
+  static async revertAgentMemoryVersion(
+    webAppId: string,
+    versionId: string
+  ): Promise<WebAppApiResponseData<unknown>> {
+    return webappHttp.post<WebAppApiResponseData<unknown>>(
+      `/console/api/webapps/${webAppId}/memory/history/${encodeURIComponent(versionId)}/revert`
     );
   }
 

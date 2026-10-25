@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Brain, Download, Loader2, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -15,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
 import WebAppService from '@/services/webapp.service';
@@ -41,7 +43,9 @@ function downloadJSON(filename: string, value: unknown) {
 
 export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManagerProps) {
   const t = useT('webapp.agentChat.memory');
+  const tHistory = useT('common.memoryHistory');
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'memory' | 'history'>('memory');
   const [values, setValues] = useState<WebAppAgentMemoryValue[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -182,95 +186,119 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
             <DialogDescription>{t('description')}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
-            {loading ? (
-              <div className="flex min-h-40 items-center justify-center">
-                <Loader2 className="size-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : values.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                {t('empty')}
-              </div>
-            ) : (
-              values.map(value => {
-                const draft = drafts[value.key] ?? '';
-                const isBusy = busyKey === value.key;
-                const undoable =
-                  value.source_kind === 'automatic' &&
-                  Boolean(value.last_operation_id) &&
-                  Boolean(value.undoable_until && value.undoable_until > Date.now() / 1000);
-                return (
-                  <section key={value.key} className="space-y-3 rounded-xl border p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <div className="font-medium">{value.name || value.key}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {t('metadata', {
-                            source: value.source_kind
-                              ? t(`sources.${value.source_kind}`)
-                              : t('notSaved'),
-                            revision: value.revision,
-                            time: value.updated_at
-                              ? new Date(value.updated_at * 1000).toLocaleString()
-                              : t('notSaved'),
-                          })}
+            <Tabs value={tab} onValueChange={value => setTab(value as 'memory' | 'history')}>
+              <TabsList>
+                <TabsTrigger value="memory">{t('title')}</TabsTrigger>
+                <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
+              </TabsList>
+              <TabsContent value="history" className="mt-4">
+                {tab === 'history' ? (
+                  <MemoryHistoryPanel
+                    load={async before =>
+                      (await WebAppService.getAgentMemoryHistory(webAppId, { before })).data
+                    }
+                    revert={versionId =>
+                      WebAppService.revertAgentMemoryVersion(webAppId, versionId)
+                    }
+                    labelFor={key => valuesByKey.get(key)?.name || key}
+                    canRevert={memoryEnabled}
+                    refreshKey={values}
+                    onReverted={load}
+                  />
+                ) : null}
+              </TabsContent>
+              <TabsContent value="memory" className="mt-4 space-y-4">
+                {loading ? (
+                  <div className="flex min-h-40 items-center justify-center">
+                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : values.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                    {t('empty')}
+                  </div>
+                ) : (
+                  values.map(value => {
+                    const draft = drafts[value.key] ?? '';
+                    const isBusy = busyKey === value.key;
+                    const undoable =
+                      value.source_kind === 'automatic' &&
+                      Boolean(value.last_operation_id) &&
+                      Boolean(value.undoable_until && value.undoable_until > Date.now() / 1000);
+                    return (
+                      <section key={value.key} className="space-y-3 rounded-xl border p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="font-medium">{value.name || value.key}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {t('metadata', {
+                                source: value.source_kind
+                                  ? t(`sources.${value.source_kind}`)
+                                  : t('notSaved'),
+                                revision: value.revision,
+                                time: value.updated_at
+                                  ? new Date(value.updated_at * 1000).toLocaleString()
+                                  : t('notSaved'),
+                              })}
+                            </div>
+                          </div>
+                          <Badge variant="outline">{value.key}</Badge>
                         </div>
-                      </div>
-                      <Badge variant="outline">{value.key}</Badge>
-                    </div>
-                    <Textarea
-                      value={draft}
-                      maxLength={value.max_chars}
-                      rows={4}
-                      disabled={isBusy || !memoryEnabled}
-                      onChange={event =>
-                        setDrafts(current => ({ ...current, [value.key]: event.target.value }))
-                      }
-                    />
-                    <div className="flex flex-wrap justify-end gap-2">
-                      {undoable ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={isBusy}
-                          onClick={() => void undo(value)}
-                        >
-                          <RotateCcw className="mr-1.5 size-3.5" />
-                          {t('undo')}
-                        </Button>
-                      ) : null}
-                      {value.content ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={isBusy}
-                          onClick={() => setDeleteKey(value.key)}
-                        >
-                          <Trash2 className="mr-1.5 size-3.5" />
-                          {t('delete')}
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={
-                          isBusy || !memoryEnabled || !draft.trim() || draft === value.content
-                        }
-                        onClick={() => void save(value)}
-                      >
-                        {isBusy ? (
-                          <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                        ) : (
-                          <Save className="mr-1.5 size-3.5" />
-                        )}
-                        {t('save')}
-                      </Button>
-                    </div>
-                  </section>
-                );
-              })
-            )}
+                        <Textarea
+                          value={draft}
+                          maxLength={value.max_chars}
+                          rows={4}
+                          disabled={isBusy || !memoryEnabled}
+                          onChange={event =>
+                            setDrafts(current => ({ ...current, [value.key]: event.target.value }))
+                          }
+                        />
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {undoable ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isBusy}
+                              onClick={() => void undo(value)}
+                            >
+                              <RotateCcw className="mr-1.5 size-3.5" />
+                              {t('undo')}
+                            </Button>
+                          ) : null}
+                          {value.content ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isBusy}
+                              onClick={() => setDeleteKey(value.key)}
+                            >
+                              <Trash2 className="mr-1.5 size-3.5" />
+                              {t('delete')}
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={
+                              isBusy || !memoryEnabled || !draft.trim() || draft === value.content
+                            }
+                            onClick={() => void save(value)}
+                          >
+                            {isBusy ? (
+                              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                            ) : (
+                              <Save className="mr-1.5 size-3.5" />
+                            )}
+                            {t('save')}
+                          </Button>
+                        </div>
+                      </section>
+                    );
+                  })
+                )}
+              </TabsContent>
+            </Tabs>
           </DialogBody>
           <DialogFooter className="justify-between">
             <Button

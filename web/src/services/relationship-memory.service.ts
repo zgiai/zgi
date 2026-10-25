@@ -1,5 +1,6 @@
 import { http } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
+import type { MemoryHistoryPage } from './types/memory-history';
 import type {
   UserMemoryDeleteResponse,
   UserMemoryRelationshipDetailResponse,
@@ -84,6 +85,18 @@ export const relationshipMemoryService = {
   undo(id: string, operationId: string) {
     return http.post<ApiResponseData<unknown>>(
       `${basePath}/${encodeURIComponent(id)}/operations/${encodeURIComponent(operationId)}/undo`
+    );
+  },
+
+  history(id: string, params: { key?: string; before?: string; limit?: number } = {}) {
+    return http.get<ApiResponseData<MemoryHistoryPage>>(
+      `${basePath}/${encodeURIComponent(id)}/history${queryString(params)}`
+    );
+  },
+
+  revert(id: string, versionId: string) {
+    return http.post<ApiResponseData<unknown>>(
+      `${basePath}/${encodeURIComponent(id)}/history/${encodeURIComponent(versionId)}/revert`
     );
   },
 };
