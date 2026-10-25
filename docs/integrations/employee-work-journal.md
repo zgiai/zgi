@@ -47,6 +47,24 @@ JSON payloads are bounded to 48 KiB per value after normalization. Frozen operat
 
 Tool pages use `next_after_id` or `next_after_revision`. Follow returned cursors even if a page contains fewer than the requested row count: large records may exhaust the bounded tool response budget first. HTTP lists are limited to 100 rows.
 
+## Mainline artifact center integration
+
+Finished documents and generated files use the existing [artifact center](../architecture/decisions/0009-artifact-center.md). Its runtime tools remain `publish_artifact`, `list_artifacts`, `read_artifact` and `archive_artifact`. They are injected by the existing artifact runtime provider, independently of the nine Work Journal tools. Runtime-exported files reuse their returned artifact references; they are not published a second time.
+
+Work Journal stores business state and evidence, with returned artifact references in arbitrary record content:
+
+```json
+{
+  "deliverable": {"artifact_id": "<UUID returned by the artifact tool>", "version": 2},
+  "publication_url": "<verified platform URL>",
+  "share_id": "<ID returned by the existing share API, when requested>"
+}
+```
+
+These references do not grant artifact access or validate existence; reads continue through the artifact center's existing scope checks. An artifact version is independent of the journal's CAS revision. If publishing fails or tools are unavailable, retain a pending/blocked business state rather than claiming a saved deliverable.
+
+Sharing uses the existing platform interface/API, not a second share service or new Work Journal tools. Shares pin a version and follow the existing ownership, expiry, archive and sharing-disabled checks. Bearer URLs/tokens are not copied into business records or sources. Creating a share does not prove a social post or message was delivered; connector writes still use the operation lifecycle. Existing legacy records, artifacts and files are not migrated or deleted.
+
 ## Read-only APIs
 
 All paths are beneath `/console/api/digital-humans/{employeeId}/work-journal` and restore the authenticated organization, workspace and owner. The permission is `digital_human.logs.view`.
