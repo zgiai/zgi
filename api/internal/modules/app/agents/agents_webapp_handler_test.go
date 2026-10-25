@@ -990,6 +990,10 @@ func (s *stubWebAppStatusHandlerService) ReplaceAgentMemorySlots(context.Context
 	return nil, nil
 }
 
+func (s *stubWebAppStatusHandlerService) PreviewAgentMemory(context.Context, string, string, string, dto.AgentMemoryPreviewRequest) (interface{}, error) {
+	return nil, nil
+}
+
 func (s *stubWebAppStatusHandlerService) UpdateAgentMemoryConfig(context.Context, string, string, dto.AgentMemoryConfigRequest) (*dto.AgentMemoryConfigResponse, error) {
 	return nil, nil
 }

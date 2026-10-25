@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemoryworker"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -348,6 +351,7 @@ func truncateRunes(value string, limit int) string {
 
 // Agent memory block limits (ADR 0013).
 const (
+	maxAgentMemorySlots            = 10
 	maxAgentMemorySlotChars        = 5000
 	maxAgentMemoryDescriptionChars = 1000
 )
@@ -477,6 +481,62 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 		return nil
 	})
 	return result, err
+}
+
+// PreviewAgentMemory runs a dry consolidation pass (ADR 0013) over a sample
+// conversation with the given or draft memory configuration, using the
+// Agent's draft model. Nothing is saved.
+func (s *agentsService) PreviewAgentMemory(ctx context.Context, agentID, accountID, organizationID string, req dto.AgentMemoryPreviewRequest) (interface{}, error) {
+	if s.llmClient == nil {
+		return nil, fmt.Errorf("memory preview needs a model client")
+	}
+	draft, err := s.GetAgentDraftRuntimeConfig(ctx, agentID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	slots := draft.Config.AgentMemorySlots
+	if req.Slots != nil {
+		if len(*req.Slots) > maxAgentMemorySlots {
+			return nil, fmt.Errorf("%w: at most %d memory blocks", agentmemory.ErrInvalidInput, maxAgentMemorySlots)
+		}
+		slots = normalizeAgentMemorySlotConfigs(*req.Slots)
+	}
+	instructions := draft.Config.AgentMemoryInstructions
+	if req.Instructions != nil {
+		if utf8.RuneCountInString(strings.TrimSpace(*req.Instructions)) > maxAgentMemoryInstructionsChars {
+			return nil, fmt.Errorf("%w: memory instructions exceed %d characters", agentmemory.ErrInvalidInput, maxAgentMemoryInstructionsChars)
+		}
+		instructions = normalizeAgentMemoryInstructions(*req.Instructions)
+	}
+	runtimeSlots := make([]agentmemory.RuntimeSlot, 0, len(slots))
+	for _, slot := range enabledAgentMemorySlots(slots) {
+		runtimeSlots = append(runtimeSlots, agentmemory.RuntimeSlot{
+			Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: true,
+			SortOrder: slot.SortOrder, ReadOnly: slot.ReadOnly, ManualOnly: !*agentMemoryAutoWrite(slot.AutoWrite),
+		})
+	}
+	if len(runtimeSlots) == 0 {
+		return nil, fmt.Errorf("%w: memory preview needs at least one enabled block", agentmemory.ErrInvalidInput)
+	}
+	turns := make([]agentmemoryworker.PreviewTurn, 0, len(req.Turns))
+	for _, turn := range req.Turns {
+		turns = append(turns, agentmemoryworker.PreviewTurn{User: turn.User, Assistant: turn.Assistant})
+	}
+	result, err := agentmemoryworker.Preview(ctx, s.llmClient, agentmemoryworker.PreviewRequest{
+		Slots: runtimeSlots, Instructions: instructions, Turns: turns, Current: req.Current,
+		Provider: draft.Config.ModelProvider, Model: draft.Config.Model,
+		AppContext: &llmclient.AppContext{
+			OrganizationID: organizationID, WorkspaceID: draft.WorkspaceID, BillingSubjectType: llmclient.BillingSubjectTypeOrganization,
+			AppID: draft.AgentID, AppType: "agent", AccountID: accountID,
+		},
+	})
+	if err != nil {
+		if errors.Is(err, agentmemory.ErrInvalidInput) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("memory preview: %w", err)
+	}
+	return result, nil
 }
 
 func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemorySlotConfig) string {

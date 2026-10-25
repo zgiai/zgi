@@ -145,16 +145,12 @@ func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentme
 	}, nil
 }
 
-func (r *Runner) consolidate(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, instructions string) ([]consolidationEdit, error) {
+func (r *Runner) consolidate(ctx context.Context, appContext *llmclient.AppContext, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, instructions string) ([]consolidationEdit, error) {
 	request, err := r.consolidationChatRequest(turns, slots, values, instructions)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := r.llmClient.AppChat(ctx, &llmclient.AppContext{
-		OrganizationID: scope.OrganizationID.String(), WorkspaceID: scope.WorkspaceID.String(), BillingSubjectType: llmclient.BillingSubjectTypeOrganization,
-		AppID: job.AgentID.String(), AppType: "agent", AccountID: scope.AccountID.String(), SessionID: job.ConversationID.String(),
-		ConversationID: job.ConversationID.String(), ModelUseCase: consolidationUseCase, SuppressInvocationContent: true,
-	}, request)
+	resp, err := r.llmClient.AppChat(ctx, appContext, request)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +174,11 @@ func (r *Runner) consolidate(ctx context.Context, job *agentmemory.AgentMemoryEx
 // edits as one commit. It reports whether the pass should be retried after a
 // revision conflict.
 func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, instructions string) (bool, error) {
-	edits, err := r.consolidate(ctx, job, scope, turns, slots, values, instructions)
+	edits, err := r.consolidate(ctx, &llmclient.AppContext{
+		OrganizationID: scope.OrganizationID.String(), WorkspaceID: scope.WorkspaceID.String(), BillingSubjectType: llmclient.BillingSubjectTypeOrganization,
+		AppID: job.AgentID.String(), AppType: "agent", AccountID: scope.AccountID.String(), SessionID: job.ConversationID.String(),
+		ConversationID: job.ConversationID.String(), ModelUseCase: consolidationUseCase, SuppressInvocationContent: true,
+	}, turns, slots, values, instructions)
 	if err != nil {
 		return false, err
 	}

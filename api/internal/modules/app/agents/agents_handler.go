@@ -903,6 +903,40 @@ func (h *AgentsHandler) GetAgentMemoryTemplates(c *gin.Context) {
 	})
 }
 
+// PreviewAgentMemory shows what a memory configuration would save from a
+// sample conversation, without saving anything.
+func (h *AgentsHandler) PreviewAgentMemory(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	organizationID, err := uuid.Parse(strings.TrimSpace(util.GetOrganizationID(c)))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID.String())
+	if !ok {
+		return
+	}
+	var req dto.AgentMemoryPreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	result, err := h.appService.PreviewAgentMemory(ctx, c.Param("agent_id"), accountID.String(), organizationID.String(), req)
+	if err != nil {
+		if errors.Is(err, agentmemory.ErrInvalidInput) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) ListAgentMemoryValues(c *gin.Context) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {

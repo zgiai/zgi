@@ -31,6 +31,8 @@ type AgentsService interface {
 	ListAgentMemorySlots(ctx context.Context, agentID, accountID string) ([]dto.AgentMemorySlotConfig, error)
 	ReplaceAgentMemorySlots(ctx context.Context, agentID, accountID string, slots []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error)
 	UpdateAgentMemoryConfig(ctx context.Context, agentID, accountID string, req dto.AgentMemoryConfigRequest) (*dto.AgentMemoryConfigResponse, error)
+	// PreviewAgentMemory returns an *agentmemoryworker.PreviewResult.
+	PreviewAgentMemory(ctx context.Context, agentID, accountID, organizationID string, req dto.AgentMemoryPreviewRequest) (interface{}, error)
 	ListAgentMemoryValues(ctx context.Context, agentID, accountID string) (*dto.AgentMemoryValuesResponse, error)
 	UpdateAgentMemoryValue(ctx context.Context, agentID, accountID string, req dto.UpdateAgentMemoryValueRequest) (*dto.AgentMemoryValueResponse, error)
 	ClearAgentMemoryValue(ctx context.Context, agentID, accountID, key string) (*dto.AgentMemoryValueResponse, error)
