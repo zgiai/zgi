@@ -9,8 +9,8 @@ import (
 )
 
 func TestSocialConfirmationPreviewShowsAccountActionAndExactPost(t *testing.T) {
-	account := "2112563196477485056"
-	connection := core.PersonalConnection{Name: "hank han", ExternalAccountID: &account}
+	account := "test-account-123"
+	connection := core.PersonalConnection{Name: "Social account", ExternalAccountID: &account}
 	for _, input := range []struct {
 		operation string
 		arguments map[string]any
@@ -60,5 +60,37 @@ func TestSocialConfirmationPreviewRejectsUnknownIncompleteAndAlteredRequests(t *
 				t.Fatal("secret leaked")
 			}
 		}
+	}
+}
+
+func TestSocialConfirmationPreviewRequiresPublishingAccountAndPinsImage(t *testing.T) {
+	account := "test-account-123"
+	connection := core.PersonalConnection{ExternalAccountID: &account}
+	request := ExecutionRequest{ConnectorID: "linkedin-social", OperationID: "linkedin-social.post.create", Input: map[string]any{"text": "Test"}}
+	if buildConfirmationPreview(request, connection, "").Complete {
+		t.Fatal("missing required publishing account admitted")
+	}
+	request.Input.(map[string]any)["account_id"] = "urn:li:organization:test"
+	if !buildConfirmationPreview(request, connection, "").Complete {
+		t.Fatal("valid company-page target rejected")
+	}
+	request = ExecutionRequest{ConnectorID: "x-social", OperationID: "x-social.post.create", Input: map[string]any{"text": "Test", "image_data": "aW1hZ2UtYnl0ZXM=", "mime_type": "image/png"}}
+	preview := buildConfirmationPreview(request, connection, "")
+	if !preview.Complete {
+		t.Fatal("image request rejected")
+	}
+	digestFound := false
+	for _, field := range preview.Fields {
+		if field.Label == "Image SHA-256" && len(field.Value) == 64 {
+			digestFound = true
+		}
+	}
+	raw, _ := json.Marshal(preview)
+	if !digestFound || strings.Contains(string(raw), "aW1hZ2UtYnl0ZXM=") {
+		t.Fatal("attachment bytes exposed or not pinned")
+	}
+	account = "bad\u202eaccount"
+	if buildConfirmationPreview(request, connection, "").Complete {
+		t.Fatal("altered account identity admitted")
 	}
 }
