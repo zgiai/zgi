@@ -266,7 +266,7 @@ def run_scenario(client, scenario, run_index, wait_after_session, auto):
             time.sleep(wait_after_session)
     memory = client.memory(user)
     expect = scenario.get("expect", {})
-    archive = client.archive(user) if expect.get("archive_nonempty") or expect.get("archive_any") else None
+    archive = client.archive(user) if expect.get("archive_nonempty") or expect.get("archive_any") or expect.get("archive_observe") else None
     probe_user = user + "-other" if scenario.get("probe_as_other_user") else user
     if probe_user != user and auto:
         client.enable_auto_capture(probe_user)

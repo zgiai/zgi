@@ -308,9 +308,10 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 	}
 	proactiveAllowed := parts.AgentMemoryAutoExtractionEnabled && relationshipAutoCaptureAllowed && globalAgentMemoryAutoExtractionEnabled()
 	blocks := relationshipmemory.MemoryBlocksEnabled()
+	archiveAvailable := blocks && relationshipmemory.RuntimeEnabled() && s.repos != nil && s.repos.DB != nil
 	var definitions []adapter.Tool
 	if blocks {
-		definitions = agentmemoryruntime.FileTools(state.EnabledSlots, proactiveAllowed)
+		definitions = agentmemoryruntime.FileTools(state.EnabledSlots, proactiveAllowed, archiveAvailable)
 	} else {
 		definitions = agentmemoryruntime.Tools(state.EnabledSlots, proactiveAllowed)
 	}
@@ -352,6 +353,12 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			Slots: state.EnabledSlots, CurrentValues: state.SavedValues,
 			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: currentTurnUserText(parts),
 			ProactiveAllowed: proactiveAllowed, RecentUserMessages: parts.AgentMemoryRecentUserMessages, CallID: call.ID,
+		}
+		if archiveAvailable {
+			userScope, userID := parts.AgentMemoryUserScope, request.UserID
+			request.Archive = func(ctx context.Context, content, sourceKey string) error {
+				return relationshipmemory.NewAgentAdapter(s.repos.DB).ArchiveText(ctx, workspaceID, agentID, userScope, userID, content, sourceKey, sourceKey, request.MutationMetadata)
+			}
 		}
 		var result agentmemoryruntime.MutationResult
 		if blocks {

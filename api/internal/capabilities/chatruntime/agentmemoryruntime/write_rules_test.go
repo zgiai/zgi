@@ -17,7 +17,7 @@ func TestMemoryEditFollowsBlockWriteRules(t *testing.T) {
 	}
 
 	// A read-only file can be viewed but is not offered to memory_edit.
-	tools := FileTools(request.Slots, true)
+	tools := FileTools(request.Slots, true, false)
 	raw, _ := json.Marshal(tools[0].Function.Parameters)
 	if strings.Contains(string(raw), "/user/persona.md") {
 		t.Fatalf("memory_edit offers the read-only file: %s", raw)
@@ -41,7 +41,7 @@ func TestMemoryEditFollowsBlockWriteRules(t *testing.T) {
 	}
 
 	// With only read-only files, there is nothing for memory_edit to do.
-	if tools := FileTools([]Slot{{Key: "persona", Enabled: true, ReadOnly: true}}, true); len(tools) != 1 || tools[0].Function.Name != ToolMemoryView {
+	if tools := FileTools([]Slot{{Key: "persona", Enabled: true, ReadOnly: true}}, true, false); len(tools) != 1 || tools[0].Function.Name != ToolMemoryView {
 		t.Fatalf("read-only files gave tools %+v", tools)
 	}
 }

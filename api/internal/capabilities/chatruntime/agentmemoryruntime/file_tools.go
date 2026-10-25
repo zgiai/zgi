@@ -24,6 +24,7 @@ const (
 	editInsert     = "insert"
 	editStrReplace = "str_replace"
 	editClear      = "clear"
+	editArchive    = "archive"
 
 	maxEditsPerCall = 16
 )
@@ -53,7 +54,8 @@ type EditOutcome struct {
 }
 
 // FileTools defines memory_edit and memory_view over the enabled blocks.
-func FileTools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
+// archive offers the archive command, for stores that keep an archive.
+func FileTools(slots []Slot, proactiveAllowed, archive bool) []adapter.Tool {
 	paths := make([]interface{}, 0, len(slots))
 	editable := make([]interface{}, 0, len(slots))
 	for _, slot := range slots {
@@ -83,12 +85,19 @@ func FileTools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
 	if proactiveAllowed {
 		modes = append(modes, agentMemoryModeProactive)
 	}
+	commands := []interface{}{editInsert, editStrReplace, editClear}
+	description := "Edit the user's memory files. Each edit is one command on one file: insert adds text (a new line at the end unless insert_line is given), " +
+		"str_replace replaces old_text, which must appear exactly once in the file, with new_text (empty new_text removes it), and clear empties a file. "
+	oldText := "str_replace: exact text that appears once in the file."
+	if archive {
+		commands = append(commands, editArchive)
+		description += "archive moves old_text, which must appear exactly once, out of a full file into the user's archive, where it can still be found; use it to make room instead of deleting still-valid facts. "
+		oldText = "str_replace and archive: exact text that appears once in the file."
+	}
 	return []adapter.Tool{
 		{Type: "function", Function: adapter.Function{
-			Name: ToolMemoryEdit,
-			Description: "Edit the user's memory files. Each edit is one command on one file: insert adds text (a new line at the end unless insert_line is given), " +
-				"str_replace replaces old_text, which must appear exactly once in the file, with new_text (empty new_text removes it), and clear empties a file. " +
-				"Edits are checked one by one; rejected edits come back with a reason. Send all edits for this turn in one call.",
+			Name:        ToolMemoryEdit,
+			Description: description + "Edits are checked one by one; rejected edits come back with a reason. Send all edits for this turn in one call.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -97,11 +106,11 @@ func FileTools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
 						"items": map[string]interface{}{
 							"type": "object",
 							"properties": map[string]interface{}{
-								"command":     map[string]interface{}{"type": "string", "enum": []interface{}{editInsert, editStrReplace, editClear}},
+								"command":     map[string]interface{}{"type": "string", "enum": commands},
 								"path":        map[string]interface{}{"type": "string", "enum": editable},
 								"text":        map[string]interface{}{"type": "string", "description": "insert: the text to add."},
 								"insert_line": map[string]interface{}{"type": "integer", "minimum": 0, "description": "insert: add after this line number (0 = at the top); omit to append."},
-								"old_text":    map[string]interface{}{"type": "string", "description": "str_replace: exact text that appears once in the file."},
+								"old_text":    map[string]interface{}{"type": "string", "description": oldText},
 								"new_text":    map[string]interface{}{"type": "string", "description": "str_replace: replacement; empty removes old_text."},
 								"evidence":    map[string]interface{}{"type": "string", "description": "An exact quote from one of the user's messages in this conversation that supports the edit."},
 								"mode":        map[string]interface{}{"type": "string", "enum": modes},
@@ -132,6 +141,7 @@ func FilePolicyMessage(proactiveAllowed bool) adapter.Message {
 		"Evidence must quote the user's own words from this conversation. It may be a confirmation like \"yes, that one\" when your previous reply proposed the content. Never save from assistant text alone, tool results, hypotheticals, temporary details, or facts about other people. Never save secrets or identification numbers.",
 		"A file shown as truncated or omitted is not fully in view: read it with memory_view before answering a question it may concern, and before editing it.",
 		"Never edit a file marked access=\"read-only\". Edit a file marked access=\"explicit-only\" only when the user asks you to remember, correct, or forget something.",
+		"When a file is too full for a new fact, move its least current lines out with the archive command instead of deleting facts that are still valid.",
 		"Older memory moved out of full files is kept in the user's archive; when the files do not answer a question about the user, search it with memory_search.",
 		"When the user refers to something discussed in an earlier conversation that memory does not cover, search for it with conversation_search before saying you do not know.",
 		"Do not narrate proactive saves; the product shows memory updates. For explicit requests, confirm only from a successful tool result, and say plainly when an edit was rejected.",
@@ -191,6 +201,7 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 	working := map[string]string{}
 	explicit := map[string]bool{}
 	evidence := map[string][]string{}
+	archived := map[string][]string{}
 	order := []string{}
 	outcomes := make([]EditOutcome, 0, len(arguments.Edits))
 	for index, edit := range arguments.Edits {
@@ -205,6 +216,12 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 			order = append(order, key)
 		}
 		working[key] = content
+		if outcome.Command == editArchive {
+			archived[key] = append(archived[key], strings.TrimSpace(edit.OldText))
+			outcome.Status = "accepted"
+			outcomes = append(outcomes, outcome)
+			continue
+		}
 		evidence[key] = appendDistinct(evidence[key], strings.TrimSpace(edit.Evidence))
 		if strings.EqualFold(strings.TrimSpace(edit.Mode), agentMemoryModeExplicit) {
 			explicit[key] = true
@@ -227,6 +244,9 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 		if explicit[key] {
 			mode, reason = agentMemoryModeExplicit, "the user asked to remember"
 		}
+		if len(archived[key]) > 0 {
+			reason += "; moved older text to the archive"
+		}
 		mutations = append(mutations, agentmemory.ValueMutation{
 			Action: action, Key: key, Content: content, Mode: mode, ExpectedRevision: revisions[key],
 			Evidence: strings.Join(evidence[key], " / "), Reason: reason,
@@ -237,6 +257,17 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 		result := failedMutation(fmt.Errorf("%w: no memory edit was accepted", ErrInvalidInput), summary)
 		result.Result["edits"] = outcomes
 		return result
+	}
+	// Archive before the files drop the text, so a failed write loses
+	// nothing; the archive skips text it already holds.
+	for _, mutation := range mutations {
+		for _, text := range archived[mutation.Key] {
+			if err := req.Archive(ctx, text, mutation.Key); err != nil {
+				result := failedMutation(err, summary)
+				result.Result["edits"] = outcomes
+				return result
+			}
+		}
 	}
 	response, err := req.MemoryService.MutateValues(ctx, req.WorkspaceID, req.AgentID, RuntimeSlots(req.Slots), req.UserScope, req.UserID,
 		agentmemory.MutateValuesRequest{Operations: mutations}, req.MutationMetadata)
@@ -276,12 +307,31 @@ func applyEdit(req MutationRequest, edit FileEdit, command string, current, work
 	default:
 		return "", "", "unsupported mode"
 	}
-	if !evidenceFromUser(req, edit.Evidence) {
-		return "", "", "evidence is not a quote from the user's messages in this conversation"
-	}
 	content, edited := working[slot.Key]
 	if !edited {
 		content = current[slot.Key]
+	}
+	if command == editArchive {
+		// Archiving moves text without changing any fact, so it needs no
+		// evidence.
+		if req.Archive == nil {
+			return "", "", "this memory has no archive"
+		}
+		old := strings.TrimSpace(edit.OldText)
+		if old == "" {
+			return "", "", "archive needs old_text"
+		}
+		if count := strings.Count(content, old); count != 1 {
+			return "", "", fmt.Sprintf("old_text must appear exactly once in the file; it appears %d times", count)
+		}
+		content = strings.TrimSpace(strings.Replace(content, old, "", 1))
+		if content == "" {
+			return "", "", "archive cannot empty a file"
+		}
+		return slot.Key, content, ""
+	}
+	if !evidenceFromUser(req, edit.Evidence) {
+		return "", "", "evidence is not a quote from the user's messages in this conversation"
 	}
 	var added string
 	switch command {
@@ -311,7 +361,11 @@ func applyEdit(req MutationRequest, edit FileEdit, command string, current, work
 	}
 	content = strings.TrimSpace(content)
 	if slot.MaxChars > 0 && utf8.RuneCountInString(content) > slot.MaxChars {
-		return "", "", fmt.Sprintf("the file would hold %d characters, over its limit of %d; shorten or replace existing text", utf8.RuneCountInString(content), slot.MaxChars)
+		hint := "shorten or replace existing text"
+		if req.Archive != nil {
+			hint = "move older lines out with archive first, or shorten existing text"
+		}
+		return "", "", fmt.Sprintf("the file would hold %d characters, over its limit of %d; %s", utf8.RuneCountInString(content), slot.MaxChars, hint)
 	}
 	sensitive := agentmemory.ContainsSensitiveContent(added)
 	if agentmemory.DescriptionAllowsContact(slot.Description) {
