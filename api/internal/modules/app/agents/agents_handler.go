@@ -21,11 +21,13 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	fileprocessservice "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -877,6 +879,28 @@ func (h *AgentsHandler) UpdateAgentMemoryConfig(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+// GetAgentMemoryTemplates returns the memory template catalog (ADR 0013) in
+// the caller's language, and whether this deployment runs memory blocks, which
+// decides which editor controls take effect.
+func (h *AgentsHandler) GetAgentMemoryTemplates(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
+		return
+	}
+	locale := strings.TrimSpace(c.Query("language"))
+	if locale == "" {
+		locale = c.GetHeader("Accept-Language")
+	}
+	response.Success(c, gin.H{
+		"catalog":        agentmemory.Templates(locale),
+		"blocks_enabled": relationshipmemory.MemoryBlocksEnabled(),
+	})
 }
 
 func (h *AgentsHandler) ListAgentMemoryValues(c *gin.Context) {
