@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	runtimerepository "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -68,5 +69,17 @@ func TestConversationSearchStaysInsideTheRunsBoundary(t *testing.T) {
 	task.Surface = SurfaceTask
 	if sql := boundarySQL(t, db, &task, invocation.Event{}); sql != "" {
 		t.Fatalf("a scheduled task may search: %s", sql)
+	}
+}
+
+func TestConversationSearchWithholdsSecretsAndIdentifiers(t *testing.T) {
+	result := conversationSearchModelResult([]runtimerepository.KeywordMatch{
+		{ConversationID: uuid.New(), Query: "记住我的数据库密码是 Zx9!kq2#Lm8w", Answer: "我不会保存密码。"},
+		{ConversationID: uuid.New(), Query: "我的身份证号是 110101199003071234", Answer: "好的。"},
+		{ConversationID: uuid.New(), Query: "客户答谢会定在湖滨酒店。", Answer: "收到。"},
+	})
+	matches := result["matches"].([]map[string]any)
+	if len(matches) != 1 || matches[0]["user"] != "客户答谢会定在湖滨酒店。" || result["withheld"] != 2 {
+		t.Fatalf("result = %+v", result)
 	}
 }
