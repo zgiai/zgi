@@ -76,7 +76,7 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 	}
 	state.SavedValues = append([]agentmemory.SlotValueResponse(nil), values...)
 	state.ContextStatus = "success"
-	rendered, injected := RenderContextWithMetadata(values, req.Budget)
+	rendered, injected := Render(values, req.Budget, req.Blocks)
 	metadata["agent_memory"] = map[string]interface{}{
 		"enabled":        true,
 		"available":      len(injected) > 0,

@@ -20,6 +20,10 @@ import (
 const agentMemoryToolMutate = agentmemoryruntime.ToolMutate
 const maxUserRelationshipMemoryContextChars = 4000
 
+// maxMemoryBlocksContextChars bounds memory blocks (ADR 0013), which show
+// every block and so need more room than the legacy list.
+const maxMemoryBlocksContextChars = 8000
+
 func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string, modelInputLimit int) (string, map[string]interface{}, error) {
 	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
 		return systemPrompt, nil, nil
@@ -47,23 +51,30 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 	if resourceWorkspaceID := scope.AgentResourceWorkspaceID(); resourceWorkspaceID != nil {
 		workspaceID = *resourceWorkspaceID
 	}
+	blocks := relationshipmemory.MemoryBlocksEnabled()
 	budgetTokens := maxAgentMemoryContextTokens
-	if modelInputLimit > 0 && modelInputLimit/10 < budgetTokens {
+	if blocks && modelInputLimit > 0 {
+		budgetTokens = modelInputLimit / 10
+	} else if modelInputLimit > 0 && modelInputLimit/10 < budgetTokens {
 		budgetTokens = modelInputLimit / 10
 	}
 	if budgetTokens <= 0 {
 		return systemPrompt, nil, nil
 	}
+	maxChars := maxUserRelationshipMemoryContextChars
+	if blocks {
+		maxChars = maxMemoryBlocksContextChars
+	}
 	budgetChars := budgetTokens * 4
-	if budgetChars > maxUserRelationshipMemoryContextChars {
-		budgetChars = maxUserRelationshipMemoryContextChars
+	if budgetChars > maxChars {
+		budgetChars = maxChars
 	}
 	result, err := agentmemoryruntime.BuildContext(ctx, agentmemoryruntime.ContextRequest{
 		SystemPrompt: systemPrompt, Enabled: parts.AgentMemoryEnabled,
 		Slots: enabledAgentMemorySlots(parts.AgentMemorySlots), MemoryService: s.agentMemoryService,
 		WorkspaceID: workspaceID, AgentID: agentID, UserID: agentMemoryUserID(scope),
 		UserScope: parts.AgentMemoryUserScope, ConfigScope: parts.AgentMemoryConfigScope,
-		ConfigRevision: parts.AgentMemoryConfigRevision, Budget: budgetChars,
+		ConfigRevision: parts.AgentMemoryConfigRevision, Budget: budgetChars, Blocks: blocks,
 	})
 	if strings.TrimSpace(result.Context) != "" && result.State != nil && s.tokenEstimator != nil {
 		bestContext := ""
@@ -71,7 +82,7 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		low, high := 1, budgetChars
 		for low <= high {
 			mid := low + (high-low)/2
-			candidate, values := agentmemoryruntime.RenderContextWithMetadata(result.State.SavedValues, mid)
+			candidate, values := agentmemoryruntime.Render(result.State.SavedValues, mid, blocks)
 			tokens := s.tokenEstimator.EstimateMessages([]adapter.Message{{Role: "user", Content: candidate}}, parts.ModelName).Tokens
 			if strings.TrimSpace(candidate) != "" && tokens <= budgetTokens {
 				bestContext, bestValues = candidate, values

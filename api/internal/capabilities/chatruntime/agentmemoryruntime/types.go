@@ -79,6 +79,8 @@ type ContextRequest struct {
 	ConfigScope    string
 	ConfigRevision string
 	Budget         int
+	// Blocks renders memory as files (ADR 0013) instead of the legacy list.
+	Blocks bool
 }
 
 type ContextResult struct {
