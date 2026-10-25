@@ -89,7 +89,7 @@ class Client:
         """Sends one turn and returns the answer, memory events, usage, and latency.
 
         When the previous turn ended with the Agent asking the user a question,
-        the conversation accepts only an answer to it (a new chat turn gets 400),
+        the conversation accepts only an answer to it (a new chat turn is refused),
         so the query is sent as the answer to every pending question instead.
         """
         if pending_input:

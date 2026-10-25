@@ -254,6 +254,7 @@ export interface AgentRuntimeConfig {
   agent_memory_auto_extraction_enabled?: boolean;
   agent_memory_slots?: AgentMemorySlotConfig[];
   agent_memory_config_revision?: string;
+  agent_memory_instructions?: string;
   file_upload_enabled: boolean;
   home_title: string;
   opening_statement: string;
@@ -447,6 +448,10 @@ export interface AgentMemorySlotConfig {
   max_chars: number;
   enabled: boolean;
   sort_order: number;
+  /** Written only by builders and users, never by the model. */
+  read_only?: boolean;
+  /** Allows automatic writes when the Agent enables them; absent means true. */
+  auto_write?: boolean;
   created_at?: number;
   updated_at?: number;
   created_at_unix?: number;
@@ -486,6 +491,67 @@ export interface AgentMemoryConfigResponse {
   auto_extraction_enabled: boolean;
   slots: AgentMemorySlotConfig[];
   config_revision: string;
+  instructions?: string;
+}
+
+export interface AgentMemoryTemplateBlock {
+  key: string;
+  name: string;
+  description: string;
+  max_chars: number;
+  read_only: boolean;
+  auto_write: boolean;
+}
+
+export interface AgentMemoryPreviewTurn {
+  user: string;
+  assistant?: string;
+}
+
+export interface AgentMemoryTemplateSample {
+  name: string;
+  turns: AgentMemoryPreviewTurn[];
+}
+
+export interface AgentMemoryTemplate {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  blocks: AgentMemoryTemplateBlock[];
+  samples: AgentMemoryTemplateSample[];
+}
+
+export interface AgentMemoryTemplatesResponse {
+  catalog: { version: number; templates: AgentMemoryTemplate[] };
+  blocks_enabled: boolean;
+}
+
+export interface AgentMemoryPreviewRequest {
+  slots?: AgentMemorySlotConfig[];
+  instructions?: string;
+  turns: AgentMemoryPreviewTurn[];
+  current?: Record<string, string>;
+}
+
+export interface AgentMemoryPreviewEdit {
+  command: string;
+  path: string;
+  text?: string;
+  old_text?: string;
+  new_text?: string;
+  content?: string;
+  evidence: string;
+  reason?: string;
+  status: 'accepted' | 'rejected';
+  rejection?: string;
+}
+
+export interface AgentMemoryPreviewResult {
+  provider: string;
+  model: string;
+  edits: AgentMemoryPreviewEdit[];
+  files: Array<{ key: string; path: string; before: string; after: string }>;
 }
 
 export interface UpdateAgentRuntimeConfigRequest {
@@ -501,6 +567,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   agent_memory_auto_extraction_enabled?: boolean;
   agent_memory_slots?: AgentMemorySlotConfig[];
   agent_memory_config_revision?: string;
+  agent_memory_instructions?: string;
   file_upload_enabled: boolean;
   home_title: string;
   opening_statement: string;

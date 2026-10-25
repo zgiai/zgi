@@ -60,7 +60,13 @@ import type {
   AgentPublishedVersionListItem,
   AgentRuntimeSelectedSkillItem,
 } from '../types';
-import { buildAgentRuntimeSignature, toModelParams, validateAgentMemorySlots } from '../utils';
+import {
+  AGENT_MEMORY_LIMITS,
+  buildAgentRuntimeSignature,
+  clampAgentMemoryMaxChars,
+  toModelParams,
+  validateAgentMemorySlots,
+} from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import { getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
@@ -340,6 +346,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [agentMemoryAutoExtractionEnabled, setAgentMemoryAutoExtractionEnabled] = useState(false);
   const [agentMemoryConfigRevision, setAgentMemoryConfigRevision] = useState('');
   const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
+  const [agentMemoryInstructions, setAgentMemoryInstructions] = useState('');
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
   const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(null);
   const [executionRuntime, setExecutionRuntime] = useState<AgentExecutionRuntimeConfig | null>(
@@ -550,12 +557,20 @@ export function useAgentRuntimePageModel(agentId: string) {
       use_memory: false,
       agent_memory_enabled: agentMemoryEnabled,
       agent_memory_auto_extraction_enabled: agentMemoryAutoExtractionEnabled,
-      agent_memory_slots: agentMemorySlots.slice(0, 5).map((slot, index) => ({
-        ...slot,
-        description: slot.description.slice(0, 200),
-        max_chars: 2000,
-        sort_order: index,
-      })),
+      agent_memory_slots: agentMemorySlots
+        .slice(0, AGENT_MEMORY_LIMITS.maxBlocks)
+        .map((slot, index) => ({
+          ...slot,
+          description: slot.description.slice(0, AGENT_MEMORY_LIMITS.maxDescriptionChars),
+          max_chars: clampAgentMemoryMaxChars(slot.max_chars),
+          read_only: slot.read_only ?? false,
+          auto_write: slot.auto_write ?? true,
+          sort_order: index,
+        })),
+      agent_memory_instructions: agentMemoryInstructions.slice(
+        0,
+        AGENT_MEMORY_LIMITS.maxInstructionsChars
+      ),
       file_upload_enabled: fileUploadEnabled,
       file_upload_policy: fileUploadPolicy,
       home_title: homeTitle.trim() || defaultHomeTitle,
@@ -583,6 +598,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
       agentMemorySlots,
+      agentMemoryInstructions,
       homeTitle,
       openingStatement,
       inputPlaceholder,
@@ -624,6 +640,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setAgentMemoryEnabled(payload.agent_memory_enabled ?? false);
     setAgentMemoryAutoExtractionEnabled(payload.agent_memory_auto_extraction_enabled ?? false);
     setAgentMemorySlots(payload.agent_memory_slots ?? []);
+    setAgentMemoryInstructions(payload.agent_memory_instructions ?? '');
     setFileUploadEnabled(payload.file_upload_enabled);
     setFileUploadPolicy(payload.file_upload_policy ?? null);
     setExecutionRuntime(payload.execution_runtime ?? null);
@@ -664,6 +681,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       agent_memory_slots: runtimeConfig.agent_memory_slots ?? fallback?.agent_memory_slots ?? [],
       agent_memory_config_revision:
         runtimeConfig.agent_memory_config_revision ?? fallback?.agent_memory_config_revision,
+      agent_memory_instructions:
+        runtimeConfig.agent_memory_instructions ?? fallback?.agent_memory_instructions ?? '',
       file_upload_enabled:
         runtimeConfig.file_upload_enabled ?? fallback?.file_upload_enabled ?? false,
       file_upload_policy: runtimeConfig.file_upload_policy ?? fallback?.file_upload_policy ?? null,
@@ -797,6 +816,7 @@ export function useAgentRuntimePageModel(agentId: string) {
             payload.agent_memory_auto_extraction_enabled,
           agent_memory_slots: savedPayload.agent_memory_slots,
           agent_memory_config_revision: savedPayload.agent_memory_config_revision,
+          agent_memory_instructions: savedPayload.agent_memory_instructions,
         },
       });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
@@ -1615,6 +1635,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       agentMemoryAutoExtractionEnabled,
       agentMemorySlots,
       agentMemorySlotValidationErrors,
+      agentMemoryInstructions,
       defaultHomeTitle,
       defaultInputPlaceholder,
       openingGuideBrand: agentOpeningGuideBrand,
@@ -1705,6 +1726,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => {
         if (isRuntimeConfigReadOnly) return;
         setAgentMemorySlots(value);
+      },
+      onChangeAgentMemoryInstructions: (value: string) => {
+        if (isRuntimeConfigReadOnly) return;
+        setAgentMemoryInstructions(value);
       },
     },
     preview: {

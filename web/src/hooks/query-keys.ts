@@ -163,6 +163,8 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(agentId), 'runtime-run-detail', messageId] as const,
   runtimeRunSteps: (agentId: string, messageId: string) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-run-steps', messageId] as const,
+  memoryTemplates: (agentId: string, language: string) =>
+    [...AGENT_KEYS.detail(agentId), 'memory-templates', language] as const,
   modelPrecheck: (agentId: string, provider: string, model: string) =>
     [...AGENT_KEYS.detail(agentId), 'model-precheck', provider, model] as const,
 } as const;

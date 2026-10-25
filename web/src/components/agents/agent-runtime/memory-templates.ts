@@ -1,67 +1,19 @@
-import type { AgentMemorySlotConfig } from '@/services/types/agent';
-
-const MAX_AGENT_MEMORY_SLOTS = 5;
-const DEFAULT_AGENT_MEMORY_MAX_CHARS = 2000;
+import type {
+  AgentMemorySlotConfig,
+  AgentMemoryTemplate,
+  AgentMemoryTemplateBlock,
+} from '@/services/types/agent';
+import { AGENT_MEMORY_LIMITS, clampAgentMemoryMaxChars } from './utils';
 
 export type AgentMemoryTemplateMode = 'merge' | 'replace';
-export type AgentMemoryTemplateID =
-  | 'general_assistant'
-  | 'project_collaboration'
-  | 'support_operations';
-
-export interface AgentMemoryTemplateSlot {
-  key: string;
-  name: string;
-  description: string;
-  max_chars: number;
-  enabled: boolean;
-}
-
-export interface AgentMemoryTemplate {
-  id: AgentMemoryTemplateID;
-  name: string;
-  description: string;
-  slots: AgentMemoryTemplateSlot[];
-}
 
 export type AgentMemoryTemplateResult =
   | { ok: true; slots: AgentMemorySlotConfig[] }
   | { ok: false; reason: 'too_many' };
 
-type Translate = (key: string) => string;
-
-const TEMPLATE_DEFINITIONS: Array<{
-  id: AgentMemoryTemplateID;
-  slots: string[];
-}> = [
-  {
-    id: 'general_assistant',
-    slots: ['profile', 'preferences', 'standing_instructions', 'project_context'],
-  },
-  {
-    id: 'project_collaboration',
-    slots: ['profile', 'project_context', 'standing_instructions', 'delivery_preferences'],
-  },
-  {
-    id: 'support_operations',
-    slots: [
-      'customer_profile',
-      'communication_preferences',
-      'business_context',
-      'standing_instructions',
-    ],
-  },
-];
-
-export function createAgentMemoryTemplates(t: Translate): AgentMemoryTemplate[] {
-  return TEMPLATE_DEFINITIONS.map(template => ({
-    id: template.id,
-    name: t(`memory.templates.${template.id}.name`),
-    description: t(`memory.templates.${template.id}.description`),
-    slots: template.slots.map(key => createTemplateSlot(key, t)),
-  }));
-}
-
+// Templates come from the backend catalog (ADR 0013). Applying one copies its
+// blocks into the draft: replace swaps the whole set, merge keeps existing
+// blocks, refreshes those the template also defines, and adds the rest.
 export function applyAgentMemoryTemplate(
   currentSlots: AgentMemorySlotConfig[],
   template: AgentMemoryTemplate,
@@ -70,93 +22,66 @@ export function applyAgentMemoryTemplate(
   if (mode === 'replace') {
     return {
       ok: true,
-      slots: template.slots.map((slot, index) => templateSlotToConfig(slot, index)),
+      slots: template.blocks.map((block, index) => templateBlockToConfig(block, index)),
     };
   }
 
   const existingKeys = new Set(currentSlots.map(slot => normalizeKey(slot.key)).filter(Boolean));
-  const missingSlots = template.slots.filter(slot => !existingKeys.has(normalizeKey(slot.key)));
-  if (currentSlots.length + missingSlots.length > MAX_AGENT_MEMORY_SLOTS) {
+  const missingBlocks = template.blocks.filter(block => !existingKeys.has(normalizeKey(block.key)));
+  if (currentSlots.length + missingBlocks.length > AGENT_MEMORY_LIMITS.maxBlocks) {
     return { ok: false, reason: 'too_many' };
   }
 
-  const templateByKey = new Map(template.slots.map(slot => [normalizeKey(slot.key), slot]));
+  const templateByKey = new Map(template.blocks.map(block => [normalizeKey(block.key), block]));
   const merged = currentSlots.map(slot => {
-    const templateSlot = templateByKey.get(normalizeKey(slot.key));
-    if (!templateSlot) return slot;
+    const block = templateByKey.get(normalizeKey(slot.key));
+    if (!block) return slot;
     return {
       ...slot,
-      name: slot.name?.trim() || templateSlot.name,
-      description: templateSlot.description,
-      max_chars: templateSlot.max_chars,
-      enabled: templateSlot.enabled,
+      name: slot.name?.trim() || block.name,
+      description: block.description.slice(0, AGENT_MEMORY_LIMITS.maxDescriptionChars),
+      max_chars: clampAgentMemoryMaxChars(block.max_chars),
+      read_only: block.read_only,
+      auto_write: block.auto_write,
+      enabled: true,
     };
   });
 
-  for (const slot of missingSlots) {
-    merged.push(templateSlotToConfig(slot, merged.length));
+  for (const block of missingBlocks) {
+    merged.push(templateBlockToConfig(block, merged.length));
   }
   return { ok: true, slots: merged.map((slot, index) => ({ ...slot, sort_order: index })) };
 }
 
-export function addAgentMemoryTemplateSlot(
+export function addAgentMemoryTemplateBlock(
   currentSlots: AgentMemorySlotConfig[],
-  slot: AgentMemoryTemplateSlot
+  block: AgentMemoryTemplateBlock
 ): AgentMemoryTemplateResult {
-  const key = normalizeKey(slot.key);
+  const key = normalizeKey(block.key);
   if (!key || currentSlots.some(item => normalizeKey(item.key) === key)) {
     return { ok: true, slots: currentSlots };
   }
-  if (currentSlots.length >= MAX_AGENT_MEMORY_SLOTS) {
+  if (currentSlots.length >= AGENT_MEMORY_LIMITS.maxBlocks) {
     return { ok: false, reason: 'too_many' };
   }
   return {
     ok: true,
-    slots: [...currentSlots, templateSlotToConfig(slot, currentSlots.length)],
+    slots: [...currentSlots, templateBlockToConfig(block, currentSlots.length)],
   };
 }
 
-export function validateAgentMemoryTemplates(templates: AgentMemoryTemplate[]): string[] {
-  const errors: string[] = [];
-  for (const template of templates) {
-    if (template.slots.length > MAX_AGENT_MEMORY_SLOTS) {
-      errors.push(`${template.id}: too many slots`);
-    }
-    const seen = new Set<string>();
-    for (const slot of template.slots) {
-      const key = normalizeKey(slot.key);
-      if (!/^[a-z][a-z0-9_]*$/.test(key)) {
-        errors.push(`${template.id}: invalid key ${slot.key}`);
-      }
-      if (seen.has(key)) {
-        errors.push(`${template.id}: duplicate key ${slot.key}`);
-      }
-      seen.add(key);
-    }
-  }
-  return errors;
-}
-
-function createTemplateSlot(key: string, t: Translate): AgentMemoryTemplateSlot {
-  return {
-    key,
-    name: t(`memory.templateSlots.${key}.name`),
-    description: t(`memory.templateSlots.${key}.description`),
-    max_chars: DEFAULT_AGENT_MEMORY_MAX_CHARS,
-    enabled: true,
-  };
-}
-
-function templateSlotToConfig(
-  slot: AgentMemoryTemplateSlot,
+function templateBlockToConfig(
+  block: AgentMemoryTemplateBlock,
   sortOrder: number
 ): AgentMemorySlotConfig {
   return {
-    key: normalizeKey(slot.key),
-    name: slot.name.slice(0, 80),
-    description: slot.description.slice(0, 200),
-    max_chars: slot.max_chars,
-    enabled: slot.enabled,
+    key: normalizeKey(block.key),
+    name: block.name.slice(0, 80),
+    description: block.description.slice(0, AGENT_MEMORY_LIMITS.maxDescriptionChars),
+    max_chars: clampAgentMemoryMaxChars(block.max_chars),
+    read_only: block.read_only,
+    auto_write: block.auto_write,
+    enabled: true,
     sort_order: sortOrder,
   };
 }

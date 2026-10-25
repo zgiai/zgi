@@ -376,6 +376,10 @@ We keep the relationship store and extend it; we do not create a parallel one.
   - the template catalog;
   - the preview panel.
   - The hidden auto-maintenance switch is replaced by per-block `auto_write`.
+  - As built in step 3, two parts differ:
+    - The Agent-level automatic-memory switch stays as the gate, shown only where memory blocks are on, with per-block `auto_write` under it. A per-block `auto_write: true` therefore cannot turn automatic writes on for an Agent that never enabled them.
+    - Label renames and `retention` are deferred. Labels stay fixed after creation until values are looked up by `definition_id`.
+  - The preview runs the consolidation pass only. Inline `memory_edit` calls happen inside a live chat, so the editor's chat preview already shows them.
 - **End user.** WebApp "My Memory", `/profile/memory`, and `/api/v1/agents/memory` show blocks with history:
   - each commit shows its source quote and reason;
   - users can edit, clear, export, and roll back.

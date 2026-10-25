@@ -24,6 +24,9 @@ import type {
   UpdateAgentMemoryValueRequest,
   AgentMemoryValue,
   AgentMemoryConfigResponse,
+  AgentMemoryPreviewRequest,
+  AgentMemoryPreviewResult,
+  AgentMemoryTemplatesResponse,
   PublishAgentResponse,
   PublishAgentRequest,
   AgentPublishedVersionsResponse,
@@ -334,6 +337,25 @@ class AgentService extends BaseService {
     }
   ): Promise<ApiResponseData<AgentMemoryConfigResponse>> {
     return this.request('put', `/agents/${agentId}/memory/config`, payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentMemoryTemplates(
+    agentId: string,
+    language: string
+  ): Promise<ApiResponseData<AgentMemoryTemplatesResponse>> {
+    return this.request('get', `/agents/${agentId}/memory/templates`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params: { language },
+    });
+  }
+
+  previewAgentMemory(
+    agentId: string,
+    payload: AgentMemoryPreviewRequest
+  ): Promise<ApiResponseData<AgentMemoryPreviewResult>> {
+    return this.request('post', `/agents/${agentId}/memory/preview`, payload, {
       headers: { 'Content-Type': 'application/json' },
     });
   }

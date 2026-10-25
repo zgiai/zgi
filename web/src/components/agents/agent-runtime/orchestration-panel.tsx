@@ -66,6 +66,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   executionRuntimeCapability?: AgentExecutionRuntimeCapability | null;
   agentMemoryEnabled: boolean;
   agentMemoryAutoExtractionEnabled: boolean;
+  agentMemoryInstructions: string;
   agentMemorySlots: AgentMemorySlotConfig[];
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   defaultHomeTitle: string;
@@ -100,6 +101,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeExecutionRuntime: (value: AgentExecutionRuntimeConfig) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
+  onChangeAgentMemoryInstructions: (value: string) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
 }
 
@@ -137,6 +139,7 @@ export function AgentRuntimeOrchestrationPanel({
   executionRuntimeCapability,
   agentMemoryEnabled,
   agentMemoryAutoExtractionEnabled,
+  agentMemoryInstructions,
   agentMemorySlots,
   agentMemorySlotValidationErrors,
   defaultHomeTitle,
@@ -169,6 +172,7 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeExecutionRuntime,
   onChangeAgentMemoryEnabled,
   onChangeAgentMemoryAutoExtractionEnabled,
+  onChangeAgentMemoryInstructions,
   onChangeAgentMemorySlots,
 }: AgentRuntimeOrchestrationPanelProps) {
   const t = useT('agents.agentRuntime');
@@ -301,16 +305,19 @@ export function AgentRuntimeOrchestrationPanel({
           <Separator className="h-px" />
 
           <AgentRuntimeMemorySection
+            agentId={agentId}
             open={openSections.memory}
             agentMemoryEnabled={agentMemoryEnabled}
             agentMemoryAutoExtractionEnabled={agentMemoryAutoExtractionEnabled}
             agentMemorySlots={agentMemorySlots}
             agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
+            agentMemoryInstructions={agentMemoryInstructions}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeAgentMemoryEnabled={onChangeAgentMemoryEnabled}
             onChangeAgentMemoryAutoExtractionEnabled={onChangeAgentMemoryAutoExtractionEnabled}
             onChangeAgentMemorySlots={onChangeAgentMemorySlots}
+            onChangeAgentMemoryInstructions={onChangeAgentMemoryInstructions}
           />
 
           <Separator className="h-px" />

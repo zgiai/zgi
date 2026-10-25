@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Sparkles, Trash2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { FlaskConical, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,49 +19,57 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { AGENT_KEYS } from '@/hooks/query-keys';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
-import type { AgentMemorySlotConfig } from '@/services/types/agent';
-import {
-  addAgentMemoryTemplateSlot,
-  applyAgentMemoryTemplate,
-  createAgentMemoryTemplates,
-  type AgentMemoryTemplate,
-} from '../memory-templates';
+import agentService from '@/services/agent.service';
+import type { AgentMemorySlotConfig, AgentMemoryTemplate } from '@/services/types/agent';
+import { AgentMemoryPreviewDialog } from '../memory-preview-dialog';
+import { addAgentMemoryTemplateBlock, applyAgentMemoryTemplate } from '../memory-templates';
 import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection } from '../types';
-import type { AgentMemorySlotValidationError } from '../utils';
+import {
+  AGENT_MEMORY_LIMITS,
+  clampAgentMemoryMaxChars,
+  type AgentMemorySlotValidationError,
+} from '../utils';
 
-const MAX_AGENT_MEMORY_SLOTS = 5;
-// Automatic memory maintenance is implemented but not exposed during the initial release.
-// Keep the UI and configuration wiring intact so it can be restored without a migration.
-const SHOW_AGENT_MEMORY_AUTO_MAINTENANCE = false;
+const MAX_AGENT_MEMORY_SLOTS = AGENT_MEMORY_LIMITS.maxBlocks;
 
 interface AgentRuntimeMemorySectionProps {
+  agentId: string;
   open: boolean;
   agentMemoryEnabled: boolean;
   agentMemoryAutoExtractionEnabled: boolean;
   agentMemorySlots: AgentMemorySlotConfig[];
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
+  agentMemoryInstructions: string;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
+  onChangeAgentMemoryInstructions: (value: string) => void;
 }
 
 export function AgentRuntimeMemorySection({
+  agentId,
   open,
   agentMemoryEnabled,
   agentMemoryAutoExtractionEnabled,
   agentMemorySlots,
   agentMemorySlotValidationErrors,
+  agentMemoryInstructions,
   readOnly = false,
   onToggleSection,
   onChangeAgentMemoryEnabled,
   onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemorySlots,
+  onChangeAgentMemoryInstructions,
 }: AgentRuntimeMemorySectionProps) {
   const t = useT('agents.agentRuntime');
+  const { locale } = useLocale();
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [pendingRemoveMemoryIndex, setPendingRemoveMemoryIndex] = useState<number | null>(null);
   const [pendingReplaceTemplate, setPendingReplaceTemplate] = useState<AgentMemoryTemplate | null>(
     null
@@ -70,7 +79,16 @@ export function AgentRuntimeMemorySection({
   const [newMemoryName, setNewMemoryName] = useState('');
   const [newMemoryKey, setNewMemoryKey] = useState('');
   const [newMemoryDescription, setNewMemoryDescription] = useState('');
-  const memoryTemplates = createAgentMemoryTemplates(key => t(key as Parameters<typeof t>[0]));
+  const templatesQuery = useQuery({
+    queryKey: AGENT_KEYS.memoryTemplates(agentId, locale),
+    queryFn: () => agentService.getAgentMemoryTemplates(agentId, locale),
+    enabled: Boolean(agentId) && open,
+    staleTime: 10 * 60 * 1000,
+  });
+  const memoryTemplates = templatesQuery.data?.data?.catalog.templates ?? [];
+  // Automatic memory and the preview run on memory blocks (ADR 0013); without
+  // them the switch stays hidden, as it was before blocks existed.
+  const blocksEnabled = templatesQuery.data?.data?.blocks_enabled ?? false;
 
   const usedAgentMemorySlotKeys = new Set(
     agentMemorySlots.map(slot => slot.key.trim().toLowerCase()).filter(Boolean)
@@ -102,8 +120,10 @@ export function AgentRuntimeMemorySection({
       {
         key,
         name: newMemoryName.trim().slice(0, 80),
-        description: newMemoryDescription.trim().slice(0, 200),
-        max_chars: 2000,
+        description: newMemoryDescription.trim().slice(0, AGENT_MEMORY_LIMITS.maxDescriptionChars),
+        max_chars: AGENT_MEMORY_LIMITS.defaultChars,
+        read_only: false,
+        auto_write: true,
         enabled: true,
         sort_order: agentMemorySlots.length,
       },
@@ -145,6 +165,9 @@ export function AgentRuntimeMemorySection({
     }
     onChangeAgentMemoryEnabled(true);
     onChangeAgentMemorySlots(result.slots);
+    if (mode === 'replace' || !agentMemoryInstructions.trim()) {
+      onChangeAgentMemoryInstructions(template.instructions);
+    }
     setMemoryTemplateDialogOpen(false);
     setPendingReplaceTemplate(null);
     toast.success(
@@ -153,9 +176,9 @@ export function AgentRuntimeMemorySection({
   };
   const addTemplateSlot = (template: AgentMemoryTemplate, slotKey: string) => {
     if (readOnly) return;
-    const slot = template.slots.find(item => item.key === slotKey);
-    if (!slot) return;
-    const result = addAgentMemoryTemplateSlot(agentMemorySlots, slot);
+    const block = template.blocks.find(item => item.key === slotKey);
+    if (!block) return;
+    const result = addAgentMemoryTemplateBlock(agentMemorySlots, block);
     if (!result.ok) {
       toast.error(t('memory.templateTooMany'));
       return;
@@ -165,10 +188,20 @@ export function AgentRuntimeMemorySection({
     toast.success(t('memory.templateSlotAdded'));
   };
   const missingTemplateSlotCount = (template: AgentMemoryTemplate) =>
-    template.slots.filter(slot => !usedAgentMemorySlotKeys.has(slot.key)).length;
+    template.blocks.filter(slot => !usedAgentMemorySlotKeys.has(slot.key)).length;
 
   return (
     <>
+      {previewOpen && (
+        <AgentMemoryPreviewDialog
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          agentId={agentId}
+          slots={agentMemorySlots}
+          instructions={agentMemoryInstructions}
+          templates={memoryTemplates}
+        />
+      )}
       <ConfirmDialog
         open={pendingRemoveMemoryIndex !== null}
         onOpenChange={dialogOpen => {
@@ -248,12 +281,16 @@ export function AgentRuntimeMemorySection({
               <Textarea
                 id="agent-memory-description"
                 value={newMemoryDescription}
-                maxLength={200}
+                maxLength={AGENT_MEMORY_LIMITS.maxDescriptionChars}
                 showCharacterCount
                 className="min-h-24"
                 placeholder={t('memory.slotDescriptionPlaceholder')}
                 disabled={readOnly}
-                onChange={event => setNewMemoryDescription(event.target.value.slice(0, 200))}
+                onChange={event =>
+                  setNewMemoryDescription(
+                    event.target.value.slice(0, AGENT_MEMORY_LIMITS.maxDescriptionChars)
+                  )
+                }
               />
             </div>
           </DialogBody>
@@ -281,6 +318,9 @@ export function AgentRuntimeMemorySection({
             <DialogDescription>{t('memory.templateDialogDescription')}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-3">
+            {templatesQuery.isLoading && (
+              <div className="text-xs text-muted-foreground">{t('memory.templatesLoading')}</div>
+            )}
             {memoryTemplates.map(template => {
               const missingCount = missingTemplateSlotCount(template);
               const mergeWouldExceed =
@@ -298,11 +338,14 @@ export function AgentRuntimeMemorySection({
                       </div>
                     </div>
                     <Badge variant="secondary">
-                      {t('memory.templateSlotCount', { count: template.slots.length })}
+                      {t('memory.templateSlotCount', { count: template.blocks.length })}
                     </Badge>
                   </div>
+                  <div className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    {template.instructions}
+                  </div>
                   <div className="space-y-2">
-                    {template.slots.map(slot => {
+                    {template.blocks.map(slot => {
                       const alreadyAdded = usedAgentMemorySlotKeys.has(slot.key);
                       const addDisabled =
                         alreadyAdded || agentMemorySlots.length >= MAX_AGENT_MEMORY_SLOTS;
@@ -328,7 +371,9 @@ export function AgentRuntimeMemorySection({
                             onClick={() => addTemplateSlot(template, slot.key)}
                           >
                             <Plus className="size-3" />
-                            {alreadyAdded ? t('memory.templateSlotExists') : t('memory.templateAddSlot')}
+                            {alreadyAdded
+                              ? t('memory.templateSlotExists')
+                              : t('memory.templateAddSlot')}
                           </Button>
                         </div>
                       );
@@ -385,7 +430,7 @@ export function AgentRuntimeMemorySection({
             </div>
             {agentMemoryEnabled && (
               <div className="space-y-2">
-                {SHOW_AGENT_MEMORY_AUTO_MAINTENANCE ? (
+                {blocksEnabled ? (
                   <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
                     <div>
                       <div className="text-xs font-medium">{t('memory.autoExtractionTitle')}</div>
@@ -423,6 +468,39 @@ export function AgentRuntimeMemorySection({
                       ? t('memory.maxItemsReached')
                       : t('memory.addCustomSlot')}
                   </Button>
+                  {blocksEnabled && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPreviewOpen(true)}
+                      disabled={!agentMemorySlots.some(slot => slot.enabled)}
+                    >
+                      <FlaskConical className="size-4" />
+                      {t('memory.preview.open')}
+                    </Button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    {t('memory.instructionsLabel')}
+                  </div>
+                  <Textarea
+                    value={agentMemoryInstructions}
+                    maxLength={AGENT_MEMORY_LIMITS.maxInstructionsChars}
+                    showCharacterCount
+                    className="min-h-20"
+                    placeholder={t('memory.instructionsPlaceholder')}
+                    disabled={readOnly}
+                    onChange={event =>
+                      onChangeAgentMemoryInstructions(
+                        event.target.value.slice(0, AGENT_MEMORY_LIMITS.maxInstructionsChars)
+                      )
+                    }
+                  />
+                  <div className="text-[11px] text-muted-foreground">
+                    {t('memory.instructionsHelp')}
+                  </div>
                 </div>
                 {agentMemorySlots.length === 0 ? (
                   <div className="space-y-3 rounded-md border border-dashed p-3">
@@ -510,20 +588,83 @@ export function AgentRuntimeMemorySection({
                           </div>
                           <Textarea
                             value={slot.description}
-                            maxLength={200}
+                            maxLength={AGENT_MEMORY_LIMITS.maxDescriptionChars}
                             showCharacterCount
                             className="min-h-20"
                             placeholder={t('memory.slotDescriptionPlaceholder')}
                             disabled={readOnly}
                             onChange={event =>
                               updateAgentMemorySlot(index, {
-                                description: event.target.value.slice(0, 200),
+                                description: event.target.value.slice(
+                                  0,
+                                  AGENT_MEMORY_LIMITS.maxDescriptionChars
+                                ),
                               })
                             }
                           />
                           <div className="text-[11px] text-muted-foreground">
                             {t('memory.descriptionHelp')}
                           </div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-xs font-medium text-muted-foreground">
+                              {t('memory.limitLabel')}
+                            </div>
+                            <Input
+                              className="w-28"
+                              type="number"
+                              min={AGENT_MEMORY_LIMITS.minChars}
+                              max={AGENT_MEMORY_LIMITS.maxChars}
+                              step={100}
+                              value={slot.max_chars || AGENT_MEMORY_LIMITS.defaultChars}
+                              disabled={readOnly}
+                              onChange={event =>
+                                updateAgentMemorySlot(index, {
+                                  max_chars: Number(event.target.value),
+                                })
+                              }
+                              onBlur={() =>
+                                updateAgentMemorySlot(index, {
+                                  max_chars: clampAgentMemoryMaxChars(slot.max_chars),
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2">
+                            <div>
+                              <div className="text-xs font-medium">{t('memory.readOnlyLabel')}</div>
+                              <div className="text-[11px] text-muted-foreground">
+                                {t('memory.readOnlyHelp')}
+                              </div>
+                            </div>
+                            <Switch
+                              checked={slot.read_only ?? false}
+                              disabled={readOnly}
+                              onCheckedChange={checked =>
+                                updateAgentMemorySlot(index, { read_only: checked })
+                              }
+                            />
+                          </div>
+                          {blocksEnabled && agentMemoryAutoExtractionEnabled ? (
+                            <div className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2">
+                              <div>
+                                <div className="text-xs font-medium">
+                                  {t('memory.autoWriteLabel')}
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  {t('memory.autoWriteHelp')}
+                                </div>
+                              </div>
+                              <Switch
+                                checked={!slot.read_only && (slot.auto_write ?? true)}
+                                disabled={readOnly || slot.read_only}
+                                onCheckedChange={checked =>
+                                  updateAgentMemorySlot(index, { auto_write: checked })
+                                }
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );

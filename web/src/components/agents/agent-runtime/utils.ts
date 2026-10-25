@@ -38,6 +38,8 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
     max_chars: slot.max_chars,
     enabled: slot.enabled,
     sort_order: slot.sort_order,
+    read_only: slot.read_only ?? false,
+    auto_write: slot.auto_write ?? true,
   }));
 
   return JSON.stringify({
@@ -62,6 +64,24 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
   });
 }
 
+// Agent memory block limits (ADR 0013); the backend enforces the same.
+export const AGENT_MEMORY_LIMITS = {
+  maxBlocks: 10,
+  maxDescriptionChars: 1000,
+  minChars: 100,
+  maxChars: 5000,
+  defaultChars: 2000,
+  maxInstructionsChars: 2000,
+} as const;
+
+export function clampAgentMemoryMaxChars(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) return AGENT_MEMORY_LIMITS.defaultChars;
+  return Math.min(
+    AGENT_MEMORY_LIMITS.maxChars,
+    Math.max(AGENT_MEMORY_LIMITS.minChars, Math.round(value))
+  );
+}
+
 export function validateAgentMemorySlots(
   slots: AgentMemorySlotConfig[]
 ): AgentMemorySlotValidationError[] {
@@ -72,7 +92,7 @@ export function validateAgentMemorySlots(
   }, {});
 
   return normalizedKeys.map(key => {
-    if (slots.length > 5) return 'too_many';
+    if (slots.length > AGENT_MEMORY_LIMITS.maxBlocks) return 'too_many';
     if (!key) return 'required';
     if (!AGENT_MEMORY_SLOT_KEY_PATTERN.test(key)) return 'pattern';
     if ((keyCounts[key] ?? 0) > 1) return 'duplicate';
