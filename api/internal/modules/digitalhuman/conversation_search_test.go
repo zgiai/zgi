@@ -1,0 +1,72 @@
+package digitalhuman
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+func dryRunDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: "host=localhost user=dry dbname=dry sslmode=disable"}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func boundarySQL(t *testing.T, db *gorm.DB, run *Run, event invocation.Event) string {
+	t.Helper()
+	boundary := conversationSearchBoundary(db, run, event)
+	if boundary == nil {
+		return ""
+	}
+	var ids []uuid.UUID
+	return boundary.Session(&gorm.Session{DryRun: true}).Find(&ids).Statement.SQL.String()
+}
+
+func TestConversationSearchStaysInsideTheRunsBoundary(t *testing.T) {
+	db := dryRunDB(t)
+	subject := uuid.New()
+	trust := string(SourceTrustChannelParticipant)
+	base := Run{ID: uuid.New(), OrganizationID: uuid.New(), WorkspaceID: uuid.New(), DigitalHumanID: uuid.New()}
+
+	person := base
+	person.Surface, person.UserSubjectID = SurfaceAPI, &subject
+	if sql := boundarySQL(t, db, &person, invocation.Event{}); !strings.Contains(sql, "user_subject_id = $") || !strings.Contains(sql, "digital_human_id = $") {
+		t.Fatalf("person boundary = %s", sql)
+	}
+
+	anonymous := base
+	anonymous.Surface = SurfaceWebApp
+	if sql := boundarySQL(t, db, &anonymous, invocation.Event{}); sql != "" {
+		t.Fatalf("a run without a verified person may search: %s", sql)
+	}
+
+	group := base
+	group.Surface, group.SourceTrust = SurfaceChannel, &trust
+	groupEvent := invocation.Event{Context: map[string]any{"conversation_type": "group"}}
+	if sql := boundarySQL(t, db, &group, groupEvent); !strings.Contains(sql, "conversation_type' = $") || strings.Contains(sql, "reply_to") || strings.Contains(sql, "user_subject_id") {
+		t.Fatalf("group boundary = %s", sql)
+	}
+
+	direct := base
+	direct.Surface, direct.SourceTrust = SurfaceChannel, &trust
+	directEvent := invocation.Event{Context: map[string]any{"conversation_type": "single"}, ReplyTo: &invocation.ReplyAddress{Provider: "dingtalk", InstallationID: "install-1", ConversationID: "user:abc"}}
+	if sql := boundarySQL(t, db, &direct, directEvent); !strings.Contains(sql, "reply_to' ->> 'conversation_id' = $") {
+		t.Fatalf("direct chat boundary = %s", sql)
+	}
+	if sql := boundarySQL(t, db, &direct, invocation.Event{Context: map[string]any{"conversation_type": "single"}}); sql != "" {
+		t.Fatalf("a direct chat without a reply address may search: %s", sql)
+	}
+
+	task := base
+	task.Surface = SurfaceTask
+	if sql := boundarySQL(t, db, &task, invocation.Event{}); sql != "" {
+		t.Fatalf("a scheduled task may search: %s", sql)
+	}
+}

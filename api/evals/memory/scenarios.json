@@ -1087,6 +1087,42 @@
         "other_memory_empty": true
       },
       "difficulty": "hard"
+    },
+    {
+      "id": "conversation_incidental_zh",
+      "category": "conversation_recall",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "顺便说一句，我楼下新开了一家咖啡店，叫“蓝山小铺”。好了，帮我想一个周末短途旅行的点子，一句话就行。"
+        ]
+      ],
+      "probe": "我上次随口提到楼下新开的那家咖啡店，叫什么名字来着？",
+      "expect": {
+        "answer_any": [
+          "蓝山小铺"
+        ]
+      },
+      "notes": "An incidental remark no memory policy keeps; only conversation search (ADR 0014) can answer."
+    },
+    {
+      "id": "conversation_isolation_zh",
+      "category": "isolation",
+      "difficulty": "hard",
+      "probe_as_other_user": true,
+      "sessions": [
+        [
+          "我们内部的新项目代号叫“蓝鲸”，先别对外说。"
+        ]
+      ],
+      "probe": "之前有人跟你提过什么项目代号吗？如果没有就说没有。",
+      "expect": {
+        "answer_none": [
+          "蓝鲸"
+        ],
+        "other_memory_empty": true
+      },
+      "notes": "Another user's conversation must not be reachable through conversation search."
     }
   ]
 }

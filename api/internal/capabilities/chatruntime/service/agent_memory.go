@@ -384,9 +384,14 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		})
 		return skillloop.RuntimeToolResult{Status: "success", Arguments: result.Arguments, Result: result.Result}
 	}
-	tools := make([]skillloop.RuntimeTool, 0, len(definitions))
+	tools := make([]skillloop.RuntimeTool, 0, len(definitions)+1)
 	for _, definition := range definitions {
 		tools = append(tools, skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillAgentMemory, Handler: handler})
+	}
+	if blocks {
+		if search, ok := s.agentConversationSearchTool(prepared); ok {
+			tools = append(tools, search)
+		}
 	}
 	return tools
 }

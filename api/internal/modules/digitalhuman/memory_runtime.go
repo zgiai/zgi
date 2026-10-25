@@ -165,6 +165,10 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 			preparation.SystemPromptAddendum += "\n\n" + section
 		}
 		preparation.Tools = append(preparation.Tools, p.memoryFileTools(run, event)...)
+		if search, ok := p.conversationSearchTool(run, event); ok {
+			preparation.Tools = append(preparation.Tools, search)
+			preparation.SystemPromptAddendum += "\n\nWhen the user refers to something discussed in an earlier conversation that your memory files do not cover, search for it with conversation_search before saying you do not know."
+		}
 	} else if p.retriever != nil {
 		preparation.Tools = append(preparation.Tools, p.memoryRetrievalTool(run, event))
 	}

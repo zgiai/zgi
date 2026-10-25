@@ -438,6 +438,23 @@
         "other_memory_empty": true
       },
       "notes": "Another user's conversation must not be reachable, through memory or conversation search."
+    },
+    {
+      "id": "dh_conversation_incidental_zh",
+      "category": "conversation_recall",
+      "difficulty": "hard",
+      "sessions": [
+        [
+          "顺便说一句，我们公司楼下新开了一家咖啡店，叫“蓝山小铺”。好了，说正事：基础版最少要买几个席位？"
+        ]
+      ],
+      "probe": "我上次随口提到楼下新开的那家咖啡店，叫什么名字来着？",
+      "expect": {
+        "answer_any": [
+          "蓝山小铺"
+        ]
+      },
+      "notes": "An incidental remark no memory policy keeps; only conversation search can answer."
     }
   ]
 }
