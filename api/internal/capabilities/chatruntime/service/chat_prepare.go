@@ -498,6 +498,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		branch := contextState.RawMessages
+		parts.AgentMemoryRecentUserMessages = recentUserQueries(branch, agentMemoryEvidenceWindow)
 		registerAttachmentReadFiles(parts, branch)
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
@@ -529,6 +530,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		branch := state.RawMessages
+		parts.AgentMemoryRecentUserMessages = recentUserQueries(branch, agentMemoryEvidenceWindow)
 		registerAttachmentReadFiles(parts, branch)
 		if !shouldIsolateHistoryForCurrentTurn(parts) {
 			groups, err := s.historyMessageGroupsForCurrentRequest(ctx, branch, parts)

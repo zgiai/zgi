@@ -500,19 +500,28 @@ func validateMutation(req PutItemRequest) error {
 	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > maxMemoryContentChars {
 		return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
 	}
-	if agentmemory.ContainsSensitiveContent(req.Content) {
-		return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
-	}
 	if req.Contract.DefinitionMode == "slots" {
 		for _, definition := range req.Contract.Definitions {
 			if definition.Enabled && definition.Key == req.Key {
 				if definition.MaxChars > 0 && utf8.RuneCountInString(req.Content) > definition.MaxChars {
 					return fmt.Errorf("%w: content exceeds definition limit", ErrPolicyRejected)
 				}
+				// A block described as holding contact details may keep them;
+				// secrets and identifiers are never saved.
+				sensitive := agentmemory.ContainsSensitiveContent(req.Content)
+				if agentmemory.DescriptionAllowsContact(definition.Description) {
+					sensitive = agentmemory.ContainsSecretContent(req.Content)
+				}
+				if sensitive {
+					return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+				}
 				return nil
 			}
 		}
 		return fmt.Errorf("%w: key is not in the published contract", ErrPolicyRejected)
+	}
+	if agentmemory.ContainsSensitiveContent(req.Content) {
+		return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
 	}
 	if req.Contract.DefinitionMode == "dynamic" {
 		if _, ok := allowedDigitalHumanCategories[req.Category]; !ok {

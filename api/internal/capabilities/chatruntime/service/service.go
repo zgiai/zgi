@@ -821,11 +821,14 @@ type chatRequestParts struct {
 	AgentMemoryConfigRevision string
 	AgentMemoryAgentID        string
 	AgentMemoryRuntimeState   *AgentMemoryRuntimeState
-	AgentMemoryContext        string
-	RuntimeTools              []skillloop.RuntimeTool
-	SourceMessageID           *uuid.UUID
-	BillingSource             string
-	ModelTurnIntent           *AIChatModelTurnIntent
-	ModelTurnIntentError      string
-	HistoryPolicy             *runtimedto.ConversationHistoryPolicy
+	// AgentMemoryRecentUserMessages are the user's earlier messages on this
+	// branch, which memory_edit evidence may quote (ADR 0013).
+	AgentMemoryRecentUserMessages []string
+	AgentMemoryContext            string
+	RuntimeTools                  []skillloop.RuntimeTool
+	SourceMessageID               *uuid.UUID
+	BillingSource                 string
+	ModelTurnIntent               *AIChatModelTurnIntent
+	ModelTurnIntentError          string
+	HistoryPolicy                 *runtimedto.ConversationHistoryPolicy
 }

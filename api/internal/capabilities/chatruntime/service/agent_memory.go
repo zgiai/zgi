@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -290,14 +292,29 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		relationshipAutoCaptureAllowed = state.AutoCaptureEnabled
 	}
 	proactiveAllowed := parts.AgentMemoryAutoExtractionEnabled && relationshipAutoCaptureAllowed && globalAgentMemoryAutoExtractionEnabled()
-	definitions := agentmemoryruntime.Tools(state.EnabledSlots, proactiveAllowed)
+	blocks := relationshipmemory.MemoryBlocksEnabled()
+	var definitions []adapter.Tool
+	if blocks {
+		definitions = agentmemoryruntime.FileTools(state.EnabledSlots, proactiveAllowed)
+	} else {
+		definitions = agentmemoryruntime.Tools(state.EnabledSlots, proactiveAllowed)
+	}
 	if len(definitions) == 0 {
 		return nil
 	}
 	validationFailures := 0
 	succeeded := false
 	terminalFailure := false
+	views := 0
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+		if blocks && call.Function.Name == agentmemoryruntime.ToolMemoryView {
+			views++
+			if views > 5 {
+				return memoryRuntimeFailure("view_limit", false)
+			}
+			result := agentmemoryruntime.ExecuteView(agentmemoryruntime.MutationRequest{Slots: state.EnabledSlots, CurrentValues: state.SavedValues}, call.Function.Arguments)
+			return skillloop.RuntimeToolResult{Status: fmt.Sprint(result["status"]), Arguments: map[string]interface{}{}, Result: result}
+		}
 		if succeeded {
 			return memoryRuntimeFailure("already_mutated", false)
 		}
@@ -313,13 +330,19 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		workspaceID := *resourceWorkspaceID
 		mutationCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		result := agentmemoryruntime.Execute(mutationCtx, agentmemoryruntime.MutationRequest{
+		request := agentmemoryruntime.MutationRequest{
 			MemoryService: s.agentMemoryService, WorkspaceID: workspaceID, AgentID: agentID,
 			UserID: agentMemoryUserID(prepared.Scope), UserScope: parts.AgentMemoryUserScope,
 			Slots: state.EnabledSlots, CurrentValues: state.SavedValues,
 			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: parts.Query,
-			ProactiveAllowed: proactiveAllowed,
-		}, call.Function.Arguments)
+			ProactiveAllowed: proactiveAllowed, RecentUserMessages: parts.AgentMemoryRecentUserMessages, CallID: call.ID,
+		}
+		var result agentmemoryruntime.MutationResult
+		if blocks {
+			result = agentmemoryruntime.ExecuteEdits(mutationCtx, request, call.Function.Arguments)
+		} else {
+			result = agentmemoryruntime.Execute(mutationCtx, request, call.Function.Arguments)
+		}
 		if result.Error != nil {
 			if agentmemoryruntime.ValidationError(result.Error) {
 				validationFailures++
@@ -339,7 +362,34 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		})
 		return skillloop.RuntimeToolResult{Status: "success", Arguments: result.Arguments, Result: result.Result}
 	}
-	return []skillloop.RuntimeTool{{Definition: definitions[0], SkillID: skills.SkillAgentMemory, Handler: handler}}
+	tools := make([]skillloop.RuntimeTool, 0, len(definitions))
+	for _, definition := range definitions {
+		tools = append(tools, skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillAgentMemory, Handler: handler})
+	}
+	return tools
+}
+
+// agentMemoryEvidenceWindow is how many recent user messages memory_edit
+// evidence may quote besides the current one.
+const agentMemoryEvidenceWindow = 6
+
+func hasAgentMemoryRuntimeTool(tools []skillloop.RuntimeTool) bool {
+	for _, tool := range tools {
+		if tool.SkillID == skills.SkillAgentMemory {
+			return true
+		}
+	}
+	return false
+}
+
+func recentUserQueries(branch []*runtimemodel.Message, limit int) []string {
+	queries := make([]string, 0, limit)
+	for index := len(branch) - 1; index >= 0 && len(queries) < limit; index-- {
+		if branch[index] != nil && strings.TrimSpace(branch[index].Query) != "" {
+			queries = append(queries, branch[index].Query)
+		}
+	}
+	return queries
 }
 
 func memoryRuntimeFailure(code string, recoverable bool) skillloop.RuntimeToolResult {

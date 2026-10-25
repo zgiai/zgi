@@ -1154,12 +1154,40 @@ func undoRecordForAutomaticWrite(operationID uuid.UUID, after, before *AgentMemo
 	return record
 }
 
+// ContainsSensitiveContent reports secrets, identifiers, special-category
+// data, and contact details.
 func ContainsSensitiveContent(content string) bool {
+	return containsSensitiveContent(content, false)
+}
+
+// ContainsSecretContent reports what ContainsSensitiveContent does except
+// contact details, for a memory block whose description permits them.
+func ContainsSecretContent(content string) bool {
+	return containsSensitiveContent(content, true)
+}
+
+var contactMarkers = map[string]struct{}{"email address": {}, "phone number": {}, "邮箱": {}, "手机号": {}, "电话号码": {}}
+
+var contactDescriptionMarkers = []string{"contact", "phone", "email", "callback", "联系方式", "联系电话", "电话", "手机", "邮箱", "回电"}
+
+// DescriptionAllowsContact reports whether a memory block's description says
+// it holds contact details, such as a support Agent's callback number.
+func DescriptionAllowsContact(description string) bool {
+	normalized := strings.ToLower(description)
+	for _, marker := range contactDescriptionMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSensitiveContent(content string, allowContact bool) bool {
 	normalized := strings.ToLower(strings.TrimSpace(content))
 	if normalized == "" {
 		return false
 	}
-	if emailPattern.MatchString(normalized) || secretPattern.MatchString(normalized) || phonePattern.MatchString(normalized) {
+	if secretPattern.MatchString(normalized) || (!allowContact && (emailPattern.MatchString(normalized) || phonePattern.MatchString(normalized))) {
 		return true
 	}
 	digits := 0
@@ -1177,6 +1205,9 @@ func ContainsSensitiveContent(content string) bool {
 		"password", "passwd", "passcode", "credential", "secret", "api key", "apikey", "access token", "refresh token", "private key", "credit card", "bank card", "card number", "ssn", "email address", "phone number", "home address", "medical record", "health condition", "sexual orientation", "religion", "political affiliation",
 		"密码", "口令", "凭据", "令牌", "秘钥", "银行卡", "信用卡", "身份证", "证件号", "验证码", "支付", "邮箱", "手机号", "电话号码", "家庭住址", "病历", "健康状况", "性取向", "宗教信仰", "政治面貌",
 	} {
+		if _, contact := contactMarkers[marker]; contact && allowContact {
+			continue
+		}
 		if strings.Contains(normalized, marker) {
 			return true
 		}

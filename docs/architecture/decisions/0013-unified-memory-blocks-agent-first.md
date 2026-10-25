@@ -258,15 +258,13 @@ We do not expose full extraction prompts. A wholesale editable prompt would let 
 
 ### File-style tools
 
-The inline tool set replaces `mutate_user_relationship_memory`. It follows the file-editing commands models already know:
+The inline tool set replaces `mutate_user_relationship_memory`. Like Anthropic's memory tool, it is one editing tool whose edits name a file-editing command, so one call is one commit:
 
 | Tool | Effect |
 |---|---|
-| `memory_view(path?)` | Lists the readable tree, or returns one file with line numbers. Pinned files are already in context, so this is mostly for unpinned files (phase 2). |
-| `memory_insert(path, text, line?, evidence)` | Inserts text into a writable file. Appends when `line` is omitted. |
-| `memory_str_replace(path, old_text, new_text, evidence)` | Replaces one exact, unique substring. Empty `new_text` removes it, which is how "forget X" works. |
-| `memory_clear(path, evidence)` | Empties a pinned file. Explicit requests only. |
-| `memory_create(path, text, evidence)`, `memory_delete(path, evidence)`, `memory_rename(path, new_path)` | Phase 2. Only for unpinned files in writable directories. |
+| `memory_edit(edits[])` | Each edit is `insert` (add `text`, appended unless `insert_line` is given), `str_replace` (replace `old_text`, which must appear exactly once, with `new_text`; empty `new_text` removes it, which is how "forget X" works), or `clear` (explicit requests only) on one `path`, with `evidence` and `mode`. Edits to one file apply in order and are written as one value. |
+| `memory_view(path?)` | Lists the files, or returns one file in full with line numbers, for example one rendered as truncated or omitted. Read-only. |
+| `create`, `delete`, `rename` commands | Phase 2. Only for unpinned files in writable directories. |
 | `memory_search(query, path?)` | Phase 2. Semantic search over unpinned files and archive entries. |
 | `conversation_search(query)` | Phase 2. |
 
@@ -361,7 +359,7 @@ We keep the relationship store and extend it; we do not create a parallel one.
 
 ### Runtime
 
-- **Tools.** `memory_view`, `memory_insert`, `memory_str_replace` and `memory_clear` replace `mutate_user_relationship_memory` for Agents. Paths are limited to `/user/<label>.md`.
+- **Tools.** `memory_edit` and `memory_view` replace `mutate_user_relationship_memory` for Agents. Paths are limited to `/user/<label>.md`.
   - The explicit-request fast path, the 2-second timeout, and the single retry stay.
   - For models without verified function calling, the existing fallback stays: they chat normally and cannot claim a write.
 - **Consolidation.**
@@ -429,8 +427,8 @@ These are summarized here and detailed in follow-up ADRs.
 
 ### Risks
 
-- **Weak tool-calling models** may misuse `memory_str_replace` or browse unpinned files poorly. Mitigation:
-  - per-model capability flags that fall back to `memory_insert` only, leaving restructuring to consolidation;
+- **Weak tool-calling models** may misuse `str_replace` edits or browse unpinned files poorly. Mitigation:
+  - per-model capability flags that fall back to `insert` edits only, leaving restructuring to consolidation;
   - from phase 2, preloading the top-k relevant unpinned content so recall does not depend on the model navigating the tree.
 - **Memory poisoning through builder text or user content.** Mitigation: the fixed system layer, untrusted-context framing, and trust admission. Builder instructions are evaluated in the preview, and they cannot override evidence or sensitivity rules.
 - **Concurrent writes.** Mitigation: revision CAS per file, as today. Rewrites are only allowed for consolidation, and they are serialized per partition instance. Free-text merging is never attempted.

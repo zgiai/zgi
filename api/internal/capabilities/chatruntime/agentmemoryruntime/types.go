@@ -101,6 +101,11 @@ type MutationRequest struct {
 	MutationMetadata  agentmemory.MutationMetadata
 	LatestUserMessage string
 	ProactiveAllowed  bool
+	// RecentUserMessages are earlier user messages in the conversation that
+	// memory_edit evidence may quote; CallID keeps one call's operations apart
+	// from another's in the same turn.
+	RecentUserMessages []string
+	CallID             string
 }
 
 type MutationResult struct {
