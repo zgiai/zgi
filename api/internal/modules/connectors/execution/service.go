@@ -351,6 +351,11 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	// grants, caller flags and a low-risk classification alone cannot authorize
 	// unattended provider access.
 	digitalHuman := digitalHumanApproval(request.Target, risk, request.Interactive, confirmation, pinned.Receipt)
+	// When the host installs bounded task authorization, unattended reads
+	// must pass it too; trusted-low risk does not override that authority.
+	if digitalHuman == digitalHumanApprovalTrustedLow && !request.Interactive && service.backgroundAuthorizer != nil {
+		digitalHuman = digitalHumanApprovalNonInteractiveBlocked
+	}
 	backgroundAuthorized := false
 	if digitalHuman == digitalHumanApprovalNonInteractiveBlocked ||
 		(digitalHuman == digitalHumanApprovalFailClosed && risk == RiskTrustedLow && !request.Interactive && confirmation == nil) {
