@@ -31,18 +31,27 @@ export function DigitalHumanAvatar({
   );
 }
 
-export function DigitalHumanTagList({ tags }: { tags: readonly string[] }) {
+// With limit, the list stays on one line and counts the tags it leaves out,
+// so a fixed-height slot never cuts a second row in half.
+export function DigitalHumanTagList({ tags, limit }: { tags: readonly string[]; limit?: number }) {
   if (tags.length === 0) return null;
+  const shown = limit ? tags.slice(0, limit) : tags;
+  const hidden = tags.length - shown.length;
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {tags.map(tag => (
+    <div className={limit ? 'flex min-w-0 flex-nowrap gap-1.5' : 'flex flex-wrap gap-1.5'}>
+      {shown.map(tag => (
         <span
           key={tag}
-          className="rounded-md bg-muted px-2 py-0.5 text-[11px] leading-5 text-muted-foreground"
+          className="truncate rounded-md bg-muted px-2 py-0.5 text-[11px] leading-5 text-muted-foreground"
         >
           {tag}
         </span>
       ))}
+      {hidden > 0 ? (
+        <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-[11px] leading-5 text-muted-foreground">
+          +{hidden}
+        </span>
+      ) : null}
     </div>
   );
 }

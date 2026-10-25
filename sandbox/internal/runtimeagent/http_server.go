@@ -40,14 +40,18 @@ type HTTPServer struct {
 }
 
 type httpServerJob struct {
-	mu          sync.Mutex
-	specHash    string
-	running     agentexecution.RunningJob
-	chunks      []agentexecution.OutputChunk
-	outputBytes int64
-	truncated   bool
-	done        bool
-	result      agentexecution.JobResult
+	mu       sync.Mutex
+	specHash string
+	running  agentexecution.RunningJob
+	// cancelStart aborts a start still in progress; cancelRequested keeps a
+	// cancellation that arrived before the job had a running handle.
+	cancelStart     context.CancelFunc
+	cancelRequested bool
+	chunks          []agentexecution.OutputChunk
+	outputBytes     int64
+	truncated       bool
+	done            bool
+	result          agentexecution.JobResult
 }
 
 func NewHTTPServer(backend agentexecution.ExecutionBackend, options HTTPServerOptions) (*HTTPServer, error) {
@@ -257,23 +261,46 @@ func (s *HTTPServer) startJob(w http.ResponseWriter, request *http.Request) {
 		writeRuntimeAgentJSON(w, http.StatusAccepted, map[string]any{"data": existing.snapshot()})
 		return
 	}
-	job := &httpServerJob{specHash: hash, chunks: make([]agentexecution.OutputChunk, 0)}
+	// A retried start can attach to this job, and cancel it, while the start
+	// below is still preparing the session: the start runs under its own
+	// context so such a cancellation stops it before the command runs.
+	startCtx, cancelStart := context.WithCancel(s.ctx)
+	job := &httpServerJob{specHash: hash, chunks: make([]agentexecution.OutputChunk, 0), cancelStart: cancelStart}
 	s.jobs[spec.JobID] = job
 	s.mu.Unlock()
 
-	running, err := s.backend.StartJob(s.ctx, agentexecution.Allocation{}, spec, func(chunk agentexecution.OutputChunk) error {
+	running, err := s.backend.StartJob(startCtx, agentexecution.Allocation{}, spec, func(chunk agentexecution.OutputChunk) error {
 		return job.appendOutput(chunk, s.maxBufferedOutputBytes)
 	})
+	job.mu.Lock()
+	canceled := job.cancelRequested
+	if err != nil && canceled {
+		// The start stopped for the cancellation: the job settles canceled for
+		// whoever attached to it.
+		job.done = true
+		job.result = agentexecution.JobResult{ExitCode: -1, Canceled: true}
+	}
+	if err == nil {
+		job.running = running
+	}
+	job.mu.Unlock()
 	if err != nil {
-		s.mu.Lock()
-		delete(s.jobs, spec.JobID)
-		s.mu.Unlock()
-		s.writeResult(w, http.StatusAccepted, nil, err)
+		cancelStart()
+		if !canceled {
+			s.mu.Lock()
+			delete(s.jobs, spec.JobID)
+			s.mu.Unlock()
+			s.writeResult(w, http.StatusAccepted, nil, err)
+			return
+		}
+		writeRuntimeAgentJSON(w, http.StatusAccepted, map[string]any{"data": job.snapshot()})
 		return
 	}
-	job.mu.Lock()
-	job.running = running
-	job.mu.Unlock()
+	if canceled {
+		// The cancellation came after the command started but before the
+		// start returned; stop it the way a running job is stopped.
+		_ = running.Cancel(s.ctx)
+	}
 	go job.wait(s.ctx)
 	writeRuntimeAgentJSON(w, http.StatusAccepted, map[string]any{"data": job.snapshot()})
 }
@@ -299,6 +326,14 @@ func (s *HTTPServer) cancelJob(w http.ResponseWriter, request *http.Request, job
 	job.mu.Lock()
 	running := job.running
 	done := job.done
+	if running == nil && !done {
+		// The job is still starting: keep the cancellation for the start to
+		// honor and stop the preparation it is waiting on.
+		job.cancelRequested = true
+		if job.cancelStart != nil {
+			job.cancelStart()
+		}
+	}
 	job.mu.Unlock()
 	if running != nil && !done {
 		if err := running.Cancel(request.Context()); err != nil {
@@ -433,7 +468,12 @@ func (j *httpServerJob) wait(ctx context.Context) {
 	j.mu.Lock()
 	j.result = result
 	j.done = true
+	cancelStart := j.cancelStart
 	j.mu.Unlock()
+	if cancelStart != nil {
+		// Release the start context once the job has ended.
+		cancelStart()
+	}
 }
 
 func (j *httpServerJob) snapshot() runtimeJobStatus {

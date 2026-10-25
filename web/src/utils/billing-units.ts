@@ -1,5 +1,5 @@
 /**
- * Canonical billing units (frozen contract: 单位注册表-v1.json).
+ * Canonical billing units (frozen contract: the v1 unit registry).
  *
  * 1 USD = 1,000 points = 1,000,000 milli-points.
  *

@@ -14,6 +14,10 @@ const (
 	SurfaceAPI     = "digital_human_api"
 	SurfaceTask    = "digital_human_task"
 	SurfaceChannel = "channel"
+	// SurfacePreview is the configuration page's preview: a person who may
+	// edit the DigitalHuman chats with its unpublished draft. It never
+	// changes tasks, artifacts, memory, or connected systems.
+	SurfacePreview = "digital_human_preview"
 )
 
 // Scope is the authenticated organization, workspace, and actor boundary.
@@ -27,6 +31,9 @@ type Scope struct {
 	UserSubjectID   *uuid.UUID
 	WebAppID        *uuid.UUID
 	Surface         string
+	// RuntimeWorkspaceID is set when a Runtime Workspace credential is the
+	// API caller instead of a DigitalHuman API key (ADR 0010).
+	RuntimeWorkspaceID *uuid.UUID
 }
 
 // PresentationPolicy is the versioned public appearance of a DigitalHuman.
@@ -99,6 +106,9 @@ type ListQuery struct {
 	Page     int
 	PageSize int
 	Search   string
+	// RequesterKinds and RequesterID narrow runs to who asked for them.
+	RequesterKinds []TaskRequesterKind
+	RequesterID    string
 }
 
 // ListResult is one page of DigitalHuman definitions.
@@ -112,9 +122,12 @@ type ListResult struct {
 
 // Detail combines aggregate metadata with its draft and latest publication.
 type Detail struct {
-	Definition                 *Definition                 `json:"definition"`
-	Draft                      *Version                    `json:"draft"`
-	Published                  *Version                    `json:"published,omitempty"`
+	Definition *Definition `json:"definition"`
+	Draft      *Version    `json:"draft"`
+	Published  *Version    `json:"published,omitempty"`
+	// HasUnpublishedChanges compares the draft with the current publication,
+	// including resource bindings, which the configuration revision omits.
+	HasUnpublishedChanges      bool                        `json:"has_unpublished_changes"`
 	ExecutionRuntimeCapability *ExecutionRuntimeCapability `json:"execution_runtime_capability,omitempty"`
 }
 

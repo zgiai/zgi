@@ -42,6 +42,7 @@ const (
 	SkillAgentMemory            = "agent-memory"
 	SkillDigitalHumanMemory     = "digital-human-memory"
 	SkillDigitalHumanTasks      = "digital-human-tasks"
+	SkillDigitalHumanArtifacts  = "digital-human-artifacts"
 	SkillUserMemory             = "user-memory"
 	SkillConnectorRuntime       = "connector-runtime"
 	// SkillZGIMarketTools is the request-scoped Skill of the ZGI Market tools bound to the
@@ -115,7 +116,7 @@ type SkillExposureProfile struct {
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillDigitalHumanMemory, SkillUserMemory, SkillConnectorRuntime:
+	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillDigitalHumanMemory, SkillDigitalHumanArtifacts, SkillUserMemory, SkillConnectorRuntime:
 		return true
 	default:
 		return false
@@ -196,7 +197,7 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			PageContextRequired: false,
 			GovernanceRisk:      SkillGovernanceRiskLow,
 		}
-	case SkillDigitalHumanMemory:
+	case SkillDigitalHumanMemory, SkillDigitalHumanArtifacts:
 		return SkillExposureProfile{
 			Category:            SkillExposureHiddenRuntime,
 			UserSelectable:      false,

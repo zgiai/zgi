@@ -72,6 +72,10 @@ const (
 	// digitalHumanApprovalFailClosed means the invocation is rejected before
 	// any credential is opened or any provider is invoked.
 	digitalHumanApprovalFailClosed
+	// digitalHumanApprovalTrustedLow means a trusted-low operation, such as a
+	// read, runs without confirmation, as it does for Chat and Agent, while
+	// no session grant or caller preauthorization applies.
+	digitalHumanApprovalTrustedLow
 )
 
 // governs reports whether the explicit DigitalHuman boundary applies.
@@ -94,10 +98,10 @@ func (decision digitalHumanApprovalDecision) sessionGrantPreauthorizes() bool {
 //  2. High or unclassified risk needs a fresh interactive confirmation bound to
 //     the pinned receipt. Without that confirmation a non-interactive
 //     invocation is blocked.
-//  3. A resolver-supplied RiskTrustedLow classification fails closed before any
-//     provider or credential access. A DigitalHuman action must never silently
-//     run as low risk, and a low-risk confirmation continuation is not a valid
-//     path.
+//  3. A resolver-supplied RiskTrustedLow classification runs without a
+//     confirmation, like Chat and Agent reads. A low-risk confirmation
+//     continuation is not a valid path and fails closed, as does any unknown
+//     classification.
 //
 // It returns digitalHumanApprovalShared for every other target so existing
 // Chat, Agent, and Workflow behavior is preserved. Now that the DigitalHuman
@@ -115,8 +119,15 @@ func digitalHumanApproval(
 	if target.Type != core.TargetTypeDigitalHuman {
 		return digitalHumanApprovalShared
 	}
-	// Rule 3: only high and unclassified risk may ever reach the interactive
-	// confirmation gate. Trusted-low and any unknown classification fail closed.
+	// Rule 3: trusted-low runs without confirmation; only high and
+	// unclassified risk reach the interactive confirmation gate. A low-risk
+	// confirmation and any unknown classification fail closed.
+	if risk == RiskTrustedLow {
+		if confirmation != nil {
+			return digitalHumanApprovalFailClosed
+		}
+		return digitalHumanApprovalTrustedLow
+	}
 	if risk != RiskHigh && risk != RiskUnclassified {
 		return digitalHumanApprovalFailClosed
 	}

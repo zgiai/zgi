@@ -448,8 +448,34 @@ func MergeOrganizationPricingOverride(basePricing, overridePricing json.RawMessa
 	}
 
 	overrideRules := extractPricingOverrideRules(overridePricing)
-	if len(overrideRules) == 0 {
+	var overrideEnvelope map[string]json.RawMessage
+	if err := json.Unmarshal(overridePricing, &overrideEnvelope); err != nil {
 		return basePricing
+	}
+	toolBlock, overridesTools := overrideEnvelope["tools"]
+	if len(overrideRules) == 0 && !overridesTools {
+		return basePricing
+	}
+	// The tenant owns this lane's complete tools block. Do not inherit a
+	// platform model's tool prices into an explicitly private configuration.
+	// In particular, retain channel null entries and the tenant price version.
+	if overridesTools {
+		var tools *ToolPricingTools
+		if err := json.Unmarshal(toolBlock, &tools); err != nil {
+			return basePricing
+		}
+		baseEnvelope.Tools = tools
+		for key, target := range map[string]interface{}{
+			"schema_version":  &baseEnvelope.SchemaVersion,
+			"billing_lane":    &baseEnvelope.BillingLane,
+			"pricing_version": &baseEnvelope.PricingVersion,
+		} {
+			if value, present := overrideEnvelope[key]; present {
+				if err := json.Unmarshal(value, target); err != nil {
+					return basePricing
+				}
+			}
+		}
 	}
 
 	overrideByKey := make(map[string]structuredRule, len(overrideRules))

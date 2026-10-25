@@ -54,6 +54,9 @@ type WorkflowRouteDeps struct {
 	EngineFactory               *graph_engine.EngineFactory
 	AutomationRunnerSetter      automationWorkflowRunnerSetter
 	ShortLinkService            shortlinkcap.Service
+	// ApprovalResumeHosts lets the conversation that waits on a workflow
+	// approval resume together with it.
+	ApprovalResumeHosts *approvalruntime.ResumeHosts
 }
 
 // RegisterWorkflowRoutes now uses modular services.
@@ -183,8 +186,8 @@ func RegisterWorkflowRoutes(router *gin.RouterGroup, deps WorkflowRouteDeps) *wo
 	apps.GET("/:agent_id/workflow-runs/:run_id/nodes", runtimeLogHandler.GetWorkflowRunNodeLogs)
 
 	approvalService := approvalruntime.NewServiceWithShortLinkService(deps.DB, deps.ShortLinkService)
-	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler)
-	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler, deps.TaskManager)
+	registerApprovalTaskHandlers(deps.TaskRegistry, deps.TaskManager, approvalService, handler, deps.ApprovalResumeHosts)
+	registerApprovalScheduledTasks(deps.Scheduler, approvalService, handler, deps.TaskManager, deps.ApprovalResumeHosts)
 
 	approvalHandler := approvalruntime.NewHandler(approvalService, deps.TaskManager)
 	approvalRoutes := router.Group("/approval")

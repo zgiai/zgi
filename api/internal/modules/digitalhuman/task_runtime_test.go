@@ -99,6 +99,22 @@ func TestTaskRuntimeChannelIsWritableByDefault(t *testing.T) {
 	}
 }
 
+func TestTaskManagementToolAsksToRewriteStatedTimesWithTheSchedule(t *testing.T) {
+	run, event := taskRuntimeFixture(invocation.OriginManual)
+	preparation, err := NewTaskRuntimeProvider(taskRuntimeService{}).Prepare(t.Context(), run, event)
+	if err != nil || len(preparation.Tools) != 3 {
+		t.Fatalf("Prepare() = %#v, %v", preparation, err)
+	}
+	manage := preparation.Tools[2].Definition.Function
+	if manage.Name != taskManageToolName || !strings.Contains(manage.Description, "use update rather than schedule") {
+		t.Fatalf("task management tool description = %q", manage.Description)
+	}
+	schedule := manage.Parameters.(map[string]any)["properties"].(map[string]any)["schedule"].(map[string]any)
+	if description, _ := schedule["description"].(string); !strings.Contains(description, "goal or success criteria") {
+		t.Fatalf("schedule property = %#v", schedule)
+	}
+}
+
 func TestTaskRuntimeManualAndCurrentScheduleAreWritable(t *testing.T) {
 	provider := NewTaskRuntimeProvider(taskRuntimeService{})
 	run, manual := taskRuntimeFixture(invocation.OriginManual)
@@ -148,7 +164,7 @@ func TestScheduledTaskRuntimeMayOnlyMarkCurrentTaskWaitingOrBlocked(t *testing.T
 	}
 }
 
-func TestTaskRuntimeRequiresApprovalForExplicitRequest(t *testing.T) {
+func TestTaskRuntimeAppliesRequestedLowRiskTasksAtOnce(t *testing.T) {
 	created := []CreateTaskRequest{}
 	mutations := []TaskMutationContext{}
 	provider := NewTaskRuntimeProvider(taskRuntimeService{createCalls: &created, createMutations: &mutations})
@@ -165,15 +181,24 @@ func TestTaskRuntimeRequiresApprovalForExplicitRequest(t *testing.T) {
 	if result.Status != "success" || len(created) != 1 || len(mutations) != 1 {
 		t.Fatalf("create result = %#v, requests = %#v, mutations = %#v", result, created, mutations)
 	}
-	if !mutations[0].Proposed {
-		t.Fatal("explicit create was not persisted as a proposal")
+	// A one-off task the user asked for starts at once, even in a group.
+	if mutations[0].Proposed || !mutations[0].Undoable {
+		t.Fatal("a requested one-off task waited for approval")
 	}
 	if mutations[0].SourceConversationType != "group" {
 		t.Fatalf("create source conversation type = %q, want group", mutations[0].SourceConversationType)
 	}
 	data, ok := result.Result["data"].(map[string]any)
-	if !ok || data["status"] != "proposed" || data["approval_required"] != true {
+	if !ok || data["status"] != "created" || data["approval_required"] != false || data["undo_available"] != true {
 		t.Fatalf("create result data = %#v", result.Result)
+	}
+	// A recurring task in a group waits for approval.
+	recurring := manage.Handler(t.Context(), adapter.ToolCall{ID: "create-daily", Function: adapter.FunctionCall{
+		Name:      taskManageToolName,
+		Arguments: `{"action":"create","name":"Daily check-in","goal":"Remind the group to check in","schedule":{"type":"cron","cron":"0 9 * * *","timezone":"Asia/Shanghai"}}`,
+	}})
+	if recurring.Status != "success" || len(mutations) != 2 || !mutations[1].Proposed {
+		t.Fatalf("a recurring task in a group = %#v, %#v", recurring, mutations)
 	}
 }
 
@@ -230,7 +255,7 @@ func TestTaskRuntimeExternalProposalKeepsSourceConversationDelivery(t *testing.T
 	}
 }
 
-func TestTaskRuntimeKeepsInferredWorkAsProposal(t *testing.T) {
+func TestTaskRuntimeTreatsProposeLikeCreate(t *testing.T) {
 	mutations := []TaskMutationContext{}
 	provider := NewTaskRuntimeProvider(taskRuntimeService{createMutations: &mutations})
 	run, event := taskRuntimeFixture(invocation.OriginManual)
@@ -241,8 +266,9 @@ func TestTaskRuntimeKeepsInferredWorkAsProposal(t *testing.T) {
 	result := prepared.Tools[2].Handler(t.Context(), adapter.ToolCall{ID: "propose-follow-up", Function: adapter.FunctionCall{
 		Name: taskManageToolName, Arguments: `{"action":"propose","name":"Follow up","goal":"Consider following up next week"}`,
 	}})
-	if result.Status != "success" || len(mutations) != 1 || !mutations[0].Proposed {
-		t.Fatalf("proposal result = %#v, mutations = %#v", result, mutations)
+	// The model names the action; a low-risk task starts at once either way.
+	if result.Status != "success" || len(mutations) != 1 || mutations[0].Proposed || !mutations[0].Undoable {
+		t.Fatalf("propose result = %#v, mutations = %#v", result, mutations)
 	}
 }
 
@@ -283,8 +309,8 @@ func TestTaskRuntimeListDefaultsToOpenTasks(t *testing.T) {
 		t.Fatalf("list view = %#v, want %q", data["view"], taskListViewOpen)
 	}
 	scope, ok := data["scope"].(taskListToolScope)
-	if !ok || scope.Visibility != "current_user" {
-		t.Fatalf("manual list scope = %#v, want current user tasks", data["scope"])
+	if !ok || scope.Visibility != "current_user_and_shared" {
+		t.Fatalf("manual list scope = %#v, want the member's and shared tasks", data["scope"])
 	}
 }
 

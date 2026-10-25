@@ -6,7 +6,7 @@ import axios from 'axios';
 import { ErrorNotificationService } from '@/utils/error-notifications';
 import { isAuthRedirectInProgress, isLogoutInProgress } from '@/lib/auth/logout-state';
 import { captureError } from '@/lib/observability';
-import { getEndpointConfig, getHttpConfig, type ApiEndpoint } from './config';
+import { getEndpointConfig, getHttpConfig, UPLOAD_TIMEOUT_MS, type ApiEndpoint } from './config';
 import { isStaleTokenRefreshError, StaleTokenRefreshError, TokenManager } from './token-manager';
 import { SseClient } from './sse-client';
 import type { ExtendedRequestConfig, RetryableConfig, SseOptions, SsePostOptions } from './types';
@@ -398,6 +398,9 @@ export class HttpClient {
   ): Promise<T> {
     const uploadConfig: ExtendedRequestConfig = {
       ...config,
+      // The endpoint timeout is sized for JSON calls; a multipart body streams from
+      // the browser and can take minutes.
+      timeout: config?.timeout ?? UPLOAD_TIMEOUT_MS,
       headers: { ...config?.headers, 'Content-Type': 'multipart/form-data' },
       onUploadProgress: e => {
         if (onProgress && e.total) {

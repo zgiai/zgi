@@ -295,6 +295,56 @@ func (resolver *ChatResolver) resolveDelegatedHostCapabilities(ctx context.Conte
 	return result, nil
 }
 
+// resolveDelegatedIdentity resolves a call through a binding its owner
+// delegated to the host. It re-runs the delegated discovery for the
+// requester, which re-checks the run and the delegation audience, and selects
+// the exact binding the Tool was projected from. The owner's credential acts
+// for the host, so owner and acting principal stay the binding owner.
+func (resolver *ChatResolver) resolveDelegatedIdentity(
+	ctx context.Context,
+	request connectordispatch.IdentityResolutionRequest,
+	candidates HostGrantCandidateReader,
+	authorizer DelegatedRunAuthorizer,
+	surface catalog.Surface,
+	hostInstance string,
+) (connectordispatch.Identity, error) {
+	use := request.Delegation
+	if use == nil || use.RequesterID == uuid.Nil || use.BindingID == uuid.Nil || use.RequesterID == request.OwnerAccountID {
+		return connectordispatch.Identity{}, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+	}
+	host := request.Target
+	host.BindingInstanceID = hostInstance
+	snapshot, err := resolver.resolveDelegatedHostCapabilities(ctx, DelegatedHostRequest{
+		OrganizationID: request.OrganizationID, RequesterID: use.RequesterID, RunID: use.RunID,
+		ConversationID: request.ConversationID, Target: host, Audience: use.Audience,
+	}, candidates, authorizer, surface)
+	if err != nil {
+		return connectordispatch.Identity{}, err
+	}
+	for _, capability := range snapshot.Capabilities {
+		if capability.BindingID != use.BindingID || capability.OwnerAccountID != request.OwnerAccountID ||
+			capability.ConnectorID != request.ConnectorID || !capability.Target.SameIdentity(request.Target) {
+			continue
+		}
+		for _, operation := range capability.Operations {
+			if operation.ID != request.OperationID.String() {
+				continue
+			}
+			return connectordispatch.Identity{
+				ConversationID: request.ConversationID,
+				OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
+				ActingPrincipalID: request.ActingPrincipalID, BindingID: capability.BindingID,
+				ConnectionID: capability.ConnectionID, ConnectorID: capability.ConnectorID,
+				Target: request.Target, OperationID: request.OperationID,
+				LogicalOperationID: request.LogicalOperationID, CorrelationID: request.CorrelationID,
+				Interactive: request.Interactive, Confirmation: request.Confirmation,
+				DelegatedRequesterID: use.RequesterID,
+			}, nil
+		}
+	}
+	return connectordispatch.Identity{}, core.NewError(core.ErrorCodeTargetNotReady, false, nil)
+}
+
 // Both first-chat initialization and ordinary discovery use this exact filter;
 // ready metadata alone must never turn a disabled operation into authority.
 func permittedOperations(definition catalog.Definition, connection core.PersonalConnection, bindingConstraint *core.AccessConstraint, owner uuid.UUID, target core.TargetRef, now time.Time) []catalog.Operation {

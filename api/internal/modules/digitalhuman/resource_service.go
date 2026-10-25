@@ -105,6 +105,15 @@ func buildResourceBindings(scope Scope, digitalHumanID, draftID uuid.UUID, input
 		if err != nil || strings.TrimSpace(input.ResourceRevision) == "" || len(input.ResourceRevision) > 255 || len(input.CredentialRef) > 512 || (!validBindingMode(match.Type, match.AccessMode) && !legacy) {
 			return nil, ErrResourceBindingInvalid
 		}
+		if match.Type == resourcebindings.BindingTypeWorkflow {
+			// Workflow bindings are keyed by the workflow Agent id, matching the key
+			// Skills authorization and binding verification derive at runtime.
+			workflowAgentID := strings.ToLower(stringMapValue(input.Metadata, "workflow_agent_id"))
+			if workflowAgentID == "" || (match.ParentResourceID != "" && !strings.EqualFold(match.ParentResourceID, workflowAgentID)) {
+				return nil, ErrResourceBindingInvalid
+			}
+			match.ParentResourceID = workflowAgentID
+		}
 		input.DisplayName, input.ResourceRevision, input.CredentialRef = strings.TrimSpace(input.DisplayName), strings.TrimSpace(input.ResourceRevision), strings.TrimSpace(input.CredentialRef)
 		if containsCredentialMaterial(input.Metadata) {
 			return nil, ErrResourceBindingInvalid
@@ -121,7 +130,10 @@ func buildResourceBindings(scope Scope, digitalHumanID, draftID uuid.UUID, input
 		var prior *ResourceBinding
 		if input.ID != nil {
 			prior = byID[*input.ID]
-			if *input.ID == uuid.Nil || prior == nil || seenIDs[*input.ID] || prior.BindingType != match.Type || prior.ResourceID != match.ResourceID || prior.ParentResourceID != match.ParentResourceID || prior.AccessMode != match.AccessMode {
+			// Workflow bindings saved before the parent was keyed by the workflow
+			// Agent id have an empty parent; saving them rewrites the parent.
+			legacyWorkflowParent := match.Type == resourcebindings.BindingTypeWorkflow && prior != nil && prior.ParentResourceID == ""
+			if *input.ID == uuid.Nil || prior == nil || seenIDs[*input.ID] || prior.BindingType != match.Type || prior.ResourceID != match.ResourceID || (prior.ParentResourceID != match.ParentResourceID && !legacyWorkflowParent) || prior.AccessMode != match.AccessMode {
 				return nil, ErrResourceBindingInvalid
 			}
 			seenIDs[*input.ID] = true
@@ -134,7 +146,7 @@ func buildResourceBindings(scope Scope, digitalHumanID, draftID uuid.UUID, input
 				}
 			}
 		}
-		if prior != nil && prior.DisplayName == input.DisplayName && prior.ResourceRevision == input.ResourceRevision && prior.CredentialRef == input.CredentialRef && equivalentResourceMetadata(prior.Metadata, metadata) {
+		if prior != nil && prior.ParentResourceID == match.ParentResourceID && prior.DisplayName == input.DisplayName && prior.ResourceRevision == input.ResourceRevision && prior.CredentialRef == input.CredentialRef && equivalentResourceMetadata(prior.Metadata, metadata) {
 			// This is retention in the same locked draft, never a fresh authorization.
 			items = append(items, prior)
 			continue

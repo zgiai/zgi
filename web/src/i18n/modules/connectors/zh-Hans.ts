@@ -259,6 +259,7 @@ const messages: ConnectorMessages = {
     wecom: '使用机器人消息、文档和表格，具体操作需具有对应访问权限。',
     weixin: '显式读取个人会话消息，并通过消息的会话上下文回复。暂不提供手动 Token 添加。',
     unavailable: '当前连接服务暂不可用，请稍后重试。',
+    dingtalkPermission: '钉钉拒绝创建应用：扫码的账号在所选企业中没有开发者权限。请确认扫码时选中的是你管理的企业，并已在钉钉开放平台（open-dev.dingtalk.com）开通开发者身份；也可以改用已有应用的 AppKey 和 AppSecret 手动填写。',
     qrUnavailable: '扫码连接暂不可用，可以手动填写凭据。',
     qr: '扫码连接',
     start: '开始扫码连接',

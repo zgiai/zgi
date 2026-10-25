@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/pkg/apperror"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"gorm.io/datatypes"
 )
 
@@ -49,6 +50,14 @@ type Service struct {
 	}
 	projectionRepairer DigitalHumanMemoryProjectionRepairer
 	now                func() time.Time
+}
+
+// SetConnectorCatalog lets draft saves and publication admit Connector
+// bindings; without it every Connector selection is rejected.
+func (s *Service) SetConnectorCatalog(connectorCatalog ConnectorCatalog) {
+	if s != nil && s.repo != nil {
+		s.repo.SetConnectorCatalog(connectorCatalog)
+	}
 }
 
 // SetIconResolver enables Agent-compatible image icon URLs without coupling the domain to file storage.
@@ -109,8 +118,15 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		Status: StatusDraft, AutonomyLevel: request.AutonomyLevel, Visibility: request.Visibility,
 		Revision: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
+	// New digital humans start with uploads off, like Agents; one created
+	// before this keeps its saved policy.
+	uploadPolicy := chatfile.Clone(request.FileUploadPolicy)
+	if uploadPolicy == nil {
+		uploadPolicy = &chatfile.Policy{AllowedFileTypes: []string{}}
+	}
+	uploadPolicy.Normalize()
 	draft := &Version{
-		FileUploadPolicy: chatfile.Clone(request.FileUploadPolicy),
+		FileUploadPolicy: uploadPolicy,
 		ID:               draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		State: VersionStateDraft, IdentityName: request.IdentityName, Persona: request.Persona, Goals: goals, Rules: rules, DefaultModel: request.DefaultModel,
 		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, PresentationPolicy: presentationPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
@@ -137,7 +153,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	}
 	definition.DraftVersionID = &draftID
 	s.resolveDefinitionIcon(ctx, definition)
-	return &Detail{Definition: definition, Draft: draft}, nil
+	return &Detail{Definition: definition, Draft: draft, HasUnpublishedChanges: true}, nil
 }
 
 // Get returns scoped aggregate metadata with draft and current publication.
@@ -158,7 +174,55 @@ func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*Detail, 
 	if err != nil {
 		return nil, applicationError(err, "digital_human.get")
 	}
-	return &Detail{Definition: definition, Draft: draft, Published: published}, nil
+	detail := &Detail{Definition: definition, Draft: draft, Published: published}
+	if detail.HasUnpublishedChanges, err = s.hasUnpublishedChanges(ctx, s.repo, scope, definition.ID, draft, published); err != nil {
+		return nil, applicationError(err, "digital_human.get")
+	}
+	return detail, nil
+}
+
+// hasUnpublishedChanges reports whether publishing would change what runs:
+// either the draft configuration or its resource bindings differ from the
+// current publication.
+func (s *Service) hasUnpublishedChanges(ctx context.Context, repo *GormRepository, scope Scope, digitalHumanID uuid.UUID, draft, published *Version) (bool, error) {
+	if draft == nil || published == nil || draft.Revision != published.Revision {
+		return true, nil
+	}
+	draftBindings, err := repo.ListResourceBindingRows(ctx, scope, digitalHumanID, draft.ID)
+	if err != nil {
+		return false, err
+	}
+	publishedBindings, err := repo.ListResourceBindingRows(ctx, scope, digitalHumanID, published.ID)
+	if err != nil {
+		return false, err
+	}
+	if len(versionBindingChanges(publishedBindings, draftBindings)) > 0 {
+		return true, nil
+	}
+	return bindingAuthorizersChanged(publishedBindings, draftBindings), nil
+}
+
+// bindingAuthorizersChanged reports a re-authorized binding. The binding
+// revision hashes only its content, but runtime tools act with the published
+// authorizer's permissions, so a new authorizer must be publishable.
+func bindingAuthorizersChanged(published, draft []*ResourceBinding) bool {
+	authorizers := make(map[string]string, len(published))
+	for _, item := range published {
+		authorizers[restoreBindingKey(item)] = bindingAuthorizer(item)
+	}
+	for _, item := range draft {
+		if authorizer, ok := authorizers[restoreBindingKey(item)]; ok && authorizer != bindingAuthorizer(item) {
+			return true
+		}
+	}
+	return false
+}
+
+func bindingAuthorizer(item *ResourceBinding) string {
+	if item == nil || item.AuthorizedBy == nil {
+		return ""
+	}
+	return item.AuthorizedBy.String()
 }
 
 // List returns one workspace-scoped page.
@@ -316,6 +380,7 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 		if err := tx.AdvancePublicationCAS(ctx, scope, definition, request.ExpectedRevision); err != nil {
 			return err
 		}
+		// The next draft is a copy of the publication, so nothing is pending.
 		result = Detail{Definition: definition, Draft: nextDraft, Published: draft}
 		return nil
 	})
@@ -595,10 +660,12 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		changed = true
 	}
 	if request.FileUploadPolicy != nil {
+		request.FileUploadPolicy.Normalize()
 		if request.FileUploadPolicy.Validate() != nil {
 			return ErrInvalidRequest
 		}
 		draft.FileUploadPolicy = chatfile.Clone(request.FileUploadPolicy)
+		draft.FileUploadPolicy.Normalize()
 		changed = true
 	}
 	if !changed {
@@ -883,10 +950,14 @@ func applicationError(err error, operation string) error {
 		code = AppCodeRunNotFound
 	case errors.Is(err, ErrRunConflict):
 		code = AppCodeRunConflict
+	case errors.Is(err, ErrEndUserSuspended):
+		code = AppCodeEndUserSuspended
 	case errors.Is(err, ErrConversationNotFound):
 		code = AppCodeConversationNotFound
 	case errors.Is(err, ErrConsoleFileNotAccessible):
 		code = AppCodeConsoleFileNotAccessible
+	case errors.Is(err, ErrWebAppFileRequiresLogin):
+		code = AppCodeWebAppFileRequiresLogin
 	case errors.Is(err, ErrMemoryNotFound):
 		code = AppCodeMemoryNotFound
 	case errors.Is(err, ErrMemoryConflict):
@@ -903,6 +974,8 @@ func applicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict):
 		code = AppCodeTaskConflict
+	case errors.Is(err, ErrTaskVisibilityForbidden), errors.Is(err, ErrTaskReadOnly):
+		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected
 	case errors.Is(err, ErrChannelInstallationNotFound):
@@ -944,6 +1017,8 @@ func taskApplicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict), errors.Is(err, ErrRevisionConflict):
 		code = AppCodeTaskConflict
+	case errors.Is(err, ErrTaskVisibilityForbidden), errors.Is(err, ErrTaskReadOnly):
+		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected
 	default:

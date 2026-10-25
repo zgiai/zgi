@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -186,9 +187,10 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 		return nil, err
 	}
 	if action == "revise" {
-		// A revision is not a task mutation. The previous proposal is closed as
-		// ineffective and the feedback is returned to the Agent Loop as the
-		// user's next instruction so the model must produce a fresh proposal.
+		// A reply other than approve or decline is not a task mutation. The
+		// proposal is not applied and the reply goes back to the Agent Loop:
+		// a change to the proposal is proposed again, and anything else is
+		// answered without holding the conversation for the proposal.
 		continuationRequest.Status = "rejected"
 		continuationRequest.Outputs = map[string]interface{}{
 			"status":         "proposal_rejected",
@@ -198,7 +200,7 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 			"result_summary": "用户未批准上一版任务变更，未应用请求的变更。",
 			"user_feedback":  feedback,
 		}
-		continuationRequest.ContinuationInstruction = "The user did not approve the previous digital-human task proposal. Treat that task tool call as completed without applying the requested change. The previous proposal may have been discarded, but you must not claim that the requested change was applied. Use the user's feedback below to revise the task parameters, call the digital-human task tool again, and present the new proposal for approval. Do not apply the new proposal directly and do not answer as if the task change succeeded. User feedback: " + feedback
+		continuationRequest.ContinuationInstruction = "The user replied to the pending digital-human task proposal with something other than approving or declining it, so the requested change was not applied; never claim it was. If the reply changes the proposal, revise the task parameters and call the digital-human task tool again; the tool decides whether the revised change applies at once or waits for approval again. If the reply is about something else, answer it normally and do not call the task tool for the proposal again: a proposed task stays in the task list for a day, and the user can still confirm it later. User reply: " + feedback
 		continuationRequest.AllowToolReinvoke = true
 	} else {
 		continuationRequest.Outputs["result_summary"] = answer
@@ -209,6 +211,7 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 			continuationRequest.ContinuationInstruction = "The user declined the digital-human task operation. Treat this as the completed result of the task tool call; the task change was not applied. Continue the same Agent turn and generate a concise final response without claiming success."
 		}
 	}
+	s.resolvePendingTaskToolResult(ctx, continuation.MessageID, taskID, action, firstNonEmptyString(continuationRequest.Outputs["result_summary"]))
 	approvalPayload := map[string]interface{}{"action": action, "status": "submitted", "submitted_at": time.Now().UTC().Format(time.RFC3339)}
 	if action == "revise" {
 		approvalPayload["status"] = "rejected"
@@ -286,6 +289,63 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 	return result, nil
 }
 
+// resolvePendingTaskToolResult rewrites the effective form of the task tool
+// result that paused the turn. That result described a pending proposal and
+// carried the task as it was before the change, so later turns read it as the
+// current state and contradicted the approved outcome. The proposal itself
+// stays in the approval events and the task activity log.
+func (s *service) resolvePendingTaskToolResult(ctx context.Context, messageID uuid.UUID, taskID, decision, summary string) {
+	if s == nil || s.repos == nil || s.repos.TranscriptEntry == nil || messageID == uuid.Nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	entries, err := s.repos.TranscriptEntry.ListPreviewsByMessage(ctx, messageID)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to load the paused task tool result", "message_id", messageID.String(), err)
+		return
+	}
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
+		if entry == nil || entry.Kind != runtimemodel.TranscriptEntryKindTool || !pendingTaskToolResultFor(entry.Preview, taskID) {
+			continue
+		}
+		content, err := json.Marshal(map[string]interface{}{"data": map[string]interface{}{
+			"status":         "approval_resolved",
+			"decision":       decision,
+			"applied":        decision == "approve",
+			"task_id":        taskID,
+			"result_summary": summary,
+		}})
+		if err != nil {
+			return
+		}
+		preview := copyStringAnyMap(entry.Preview)
+		preview["content"] = string(content)
+		encoded, err := json.Marshal(preview)
+		if err != nil {
+			return
+		}
+		if err := s.repos.TranscriptEntry.UpdatePreview(ctx, entry.ID, preview, len(encoded)); err != nil {
+			logger.WarnContext(ctx, "failed to resolve the paused task tool result", "message_id", messageID.String(), "entry_id", entry.ID.String(), err)
+		}
+		return
+	}
+}
+
+func pendingTaskToolResultFor(preview map[string]interface{}, taskID string) bool {
+	var result struct {
+		Data struct {
+			ApprovalRequired bool `json:"approval_required"`
+			Task             struct {
+				ID string `json:"id"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(messageContentText(preview["content"])), &result) != nil {
+		return false
+	}
+	return result.Data.ApprovalRequired && strings.EqualFold(strings.TrimSpace(result.Data.Task.ID), strings.TrimSpace(taskID))
+}
+
 func secureContinuationTokenEqual(expected, actual string) bool {
 	return strings.TrimSpace(expected) != "" && strings.TrimSpace(expected) == strings.TrimSpace(actual)
 }
@@ -306,6 +366,28 @@ type WorkflowContinuationSummaryRequest struct {
 }
 
 func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error) {
+	return s.beginWorkflowApprovalContinuation(ctx, scope, caller, config, conversationID, messageID, false)
+}
+
+// ExternalWorkflowApprovalContinuationBeginner is implemented by the
+// production ChatRuntime; hosts assert it to observe external approvals.
+type ExternalWorkflowApprovalContinuationBeginner interface {
+	BeginExternalWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
+}
+
+var _ ExternalWorkflowApprovalContinuationBeginner = (*service)(nil)
+
+// BeginExternalWorkflowApprovalContinuation claims a message whose workflow
+// approval was completed outside the conversation (an email, SMS or approval
+// page approver), so the host can record how the resumed workflow went on.
+// It submits nothing, so it skips the inline-approval check that guards
+// conversation submissions; the caller must have verified that the workflow
+// left the approval this message waits on. Only one caller can claim the message.
+func (s *service) BeginExternalWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error) {
+	return s.beginWorkflowApprovalContinuation(ctx, scope, caller, config, conversationID, messageID, true)
+}
+
+func (s *service) beginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, external bool) (*WorkflowApprovalContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -337,6 +419,19 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 		state.Completed = true
 		return state, nil
 	}
+	if external && state.Kind != "digital_human_task" && message.Status == runtimemodel.MessageStatusStreaming &&
+		workflowContinuationExternallyResumed(state.Metadata) {
+		// An external continuation already claimed this message and its worker
+		// was lost; the retried resume takes it over again. The workflow's own
+		// resume claim decides which worker actually runs it.
+		if err := validateWorkflowContinuationBinding(state, config.WorkflowBindings); err != nil {
+			return nil, err
+		}
+		return state, nil
+	}
+	if external && (state.Kind == "digital_human_task" || message.Status != runtimemodel.MessageStatusWaitingApproval) {
+		return nil, fmt.Errorf("%w: message is not waiting for an external workflow approval", ErrInvalidInput)
+	}
 	if state.Kind != "digital_human_task" {
 		if err := validateWorkflowContinuationBinding(state, config.WorkflowBindings); err != nil {
 			return nil, err
@@ -352,7 +447,7 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 		// Generic workflow approvals retain the existing begin-and-stream path.
 		return state, nil
 	}
-	if message.Status == runtimemodel.MessageStatusWaitingApproval &&
+	if message.Status == runtimemodel.MessageStatusWaitingApproval && !external &&
 		!workflowContinuationAllowsInlineApproval(caller, state) {
 		return nil, fmt.Errorf("%w: this workflow approval must be completed through its configured approval channel", ErrInvalidInput)
 	}
@@ -360,28 +455,75 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 		return nil, fmt.Errorf("%w: message is not waiting for workflow continuation", ErrInvalidInput)
 	}
 	if message.Status == runtimemodel.MessageStatusWaitingApproval || message.Status == runtimemodel.MessageStatusWaitingQuestion {
+		metadataChanged := false
 		if message.Status == runtimemodel.MessageStatusWaitingQuestion {
 			state.Metadata = workflowContinuationMetadataWithoutUserInputRequest(state.Metadata)
+			metadataChanged = true
+		}
+		// Record whether an external continuation holds the message, so a retried
+		// external resume can take it over again but never takes over one the
+		// conversation started.
+		if markWorkflowContinuationExternalResume(state.Metadata, external) {
+			metadataChanged = true
 		}
 		err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			txRepos := repository.NewRepositories(tx)
 			if err := txRepos.Conversation.StartStreaming(ctx, conversation.ID, scope.OrganizationID, scope.AccountID, message.ID); err != nil {
 				return err
 			}
-			if message.Status == runtimemodel.MessageStatusWaitingQuestion {
+			if metadataChanged {
 				if err := txRepos.Message.UpdateMetadata(ctx, message.ID, state.Metadata); err != nil {
 					return err
 				}
 			}
-			return tx.Model(&runtimemodel.Message{}).
+			result := tx.Model(&runtimemodel.Message{}).
 				Where("id = ? AND deleted_at IS NULL AND status IN ?", message.ID, []string{runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion}).
-				Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming}).Error
+				Updates(map[string]interface{}{"status": runtimemodel.MessageStatusStreaming})
+			if result.Error == nil && external && result.RowsAffected != 1 {
+				return fmt.Errorf("%w: workflow continuation message was already claimed", ErrInvalidInput)
+			}
+			return result.Error
 		})
 		if err != nil {
 			return nil, err
 		}
 	}
 	return state, nil
+}
+
+// workflowContinuationExternalResumeKey marks a continuation an external
+// approval resume claimed, in the message's agent_workflow_continuation.
+const workflowContinuationExternalResumeKey = "external_resume"
+
+func workflowContinuationExternallyResumed(metadata map[string]interface{}) bool {
+	record, _ := metadata["agent_workflow_continuation"].(map[string]interface{})
+	resumed, _ := record[workflowContinuationExternalResumeKey].(bool)
+	return resumed
+}
+
+// markWorkflowContinuationExternalResume sets or clears the marker and
+// reports whether the metadata changed.
+func markWorkflowContinuationExternalResume(metadata map[string]interface{}, external bool) bool {
+	record, ok := metadata["agent_workflow_continuation"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	if external {
+		if workflowContinuationExternallyResumed(metadata) {
+			return false
+		}
+		record = copyStringAnyMap(record)
+		record[workflowContinuationExternalResumeKey] = true
+		metadata["agent_workflow_continuation"] = record
+		return true
+	}
+	if _, present := record[workflowContinuationExternalResumeKey]; !present {
+		return false
+	}
+	record = copyStringAnyMap(record)
+	delete(record, workflowContinuationExternalResumeKey)
+	metadata["agent_workflow_continuation"] = record
+	return true
 }
 
 // claimDigitalHumanTaskApproval atomically claims a waiting task approval.
@@ -457,6 +599,7 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
 	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, workflowContinuationEventPayload(continuation, payload))
+	eventPayload = exposeWorkflowContinuationApproval(continuation.Caller, eventType, eventPayload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -475,10 +618,23 @@ func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, c
 		return s.AppendWorkflowApprovalContinuationStreamEvent(ctx, continuation, eventType, eventPayload)
 	}
 	metadata := mergeWorkflowRunMetadata(continuation.Metadata, eventType, eventPayload)
-	metadata["agent_workflow_continuation"] = mergeWorkflowMap(
-		workflowRecordFromAny(metadata["agent_workflow_continuation"]),
-		map[string]interface{}{"status": workflowContinuationStatusFromEvent(eventType)},
-	)
+	update := map[string]interface{}{"status": workflowContinuationStatusFromEvent(eventType)}
+	if eventType == "approval_requested" {
+		// The continuation now waits on this approval: an in-conversation answer
+		// is checked against its exposure and submitted with its token.
+		allowed, _ := eventPayload["ui_approval_allowed"].(bool)
+		update["ui_approval_allowed"] = allowed
+		update["approval_token"] = firstNonEmptyString(eventPayload["approval_token"])
+		update["approval_form"] = eventPayload["approval_form"]
+		continuation.UIApprovalAllowed = allowed
+	}
+	record := mergeWorkflowMap(workflowRecordFromAny(metadata["agent_workflow_continuation"]), update)
+	if eventType == "approval_requested" && !continuation.UIApprovalAllowed {
+		// The merge keeps a value an empty update would clear: drop the earlier
+		// approval's token so only the approval now waited on is described.
+		delete(record, "approval_token")
+	}
+	metadata["agent_workflow_continuation"] = record
 	continuation.Metadata = metadata
 	var updateErr error
 	if workflowContinuationMessageTerminal(continuation) {
@@ -521,6 +677,7 @@ func (s *service) AppendWorkflowApprovalContinuationStreamEvent(ctx context.Cont
 		return nil, fmt.Errorf("%w: workflow continuation is required", ErrInvalidInput)
 	}
 	eventPayload := projectWorkflowContinuationEventPayload(continuation.Caller, eventType, workflowContinuationEventPayload(continuation, payload))
+	eventPayload = exposeWorkflowContinuationApproval(continuation.Caller, eventType, eventPayload)
 	eventPayload["conversation_id"] = continuation.ConversationID.String()
 	eventPayload["message_id"] = continuation.MessageID.String()
 	if _, ok := eventPayload["workflow_run_id"]; !ok && continuation.WorkflowRunID != "" {
@@ -889,6 +1046,156 @@ func boolFromWorkflowContinuation(value interface{}) bool {
 	return allowed
 }
 
+// exposeWorkflowContinuationApproval applies the workflow tool's approval
+// exposure to an event a continued workflow emits. An approval it requests (a
+// later approval node, or the approval left after a mixed pause's question)
+// is marked with whether the conversation may answer it inline, and only such
+// an approval keeps its credentials: the approval token is also the approval
+// page's access token, so an approval assigned to designated approvers, and
+// every other event (a pause carrying the run outputs, say), loses them.
+func exposeWorkflowContinuationApproval(caller Caller, eventType string, payload map[string]interface{}) map[string]interface{} {
+	if eventType == "approval_requested" {
+		normalizeWorkflowApprovalRequestedPayload(payload)
+		allowed := workflowContinuationApprovalUIAllowed(caller, payload)
+		payload["ui_approval_allowed"] = allowed
+		if allowed {
+			return payload
+		}
+		// The runner's own approval event carries the form's access token at
+		// its top level.
+		delete(payload, "token")
+	}
+	stripped, _ := stripWorkflowApprovalCredentials(payload, false).(map[string]interface{})
+	if stripped == nil {
+		return payload
+	}
+	return stripped
+}
+
+// normalizeWorkflowApprovalRequestedPayload gives an approval the workflow
+// runner requests while it continues (its form spread over the event, with the
+// access token at the top level) the approval_form and approval_token the
+// workflow tool's own approvals carry, so the continuation records, exposes
+// and strips both kinds the same way. The event's own fields are kept.
+func normalizeWorkflowApprovalRequestedPayload(payload map[string]interface{}) {
+	formID := strings.TrimSpace(firstNonEmptyString(payload["form_id"]))
+	if _, nested := payload["approval_form"]; !nested && formID != "" {
+		form := map[string]interface{}{"id": formID}
+		for _, key := range []string{"node_id", "node_title", "content", "fields", "actions", "submit_methods", "expires_at", "token"} {
+			if value, ok := payload[key]; ok && value != nil {
+				form[key] = value
+			}
+		}
+		payload["approval_form"] = form
+	}
+	if _, ok := payload["approval_form_id"]; !ok && formID != "" {
+		payload["approval_form_id"] = formID
+	}
+	if strings.TrimSpace(firstNonEmptyString(payload["approval_token"])) == "" {
+		if token := strings.TrimSpace(firstNonEmptyString(payload["token"])); token != "" {
+			payload["approval_token"] = token
+		}
+	}
+}
+
+// stripWorkflowApprovalCredentials drops approval tokens: approval_token and
+// its output alias anywhere, and token inside an approval form.
+func stripWorkflowApprovalCredentials(value interface{}, inApprovalForm bool) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		stripped := make(map[string]interface{}, len(typed))
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.TrimSpace(key))
+			if normalized == "approval_token" || normalized == "__approval_token" {
+				continue
+			}
+			childIsApprovalForm := inApprovalForm || normalized == "approval_form" || normalized == "__approval_form"
+			if childIsApprovalForm && normalized == "token" {
+				continue
+			}
+			stripped[key] = stripWorkflowApprovalCredentials(child, childIsApprovalForm)
+		}
+		return stripped
+	case []interface{}:
+		stripped := make([]interface{}, len(typed))
+		for index, child := range typed {
+			stripped[index] = stripWorkflowApprovalCredentials(child, inApprovalForm)
+		}
+		return stripped
+	default:
+		if inApprovalForm && value != nil {
+			// A typed approval form (a struct) is stripped through its JSON form.
+			if record := workflowApprovalRecordValue(value); len(record) > 0 {
+				return stripWorkflowApprovalCredentials(record, true)
+			}
+		}
+		return value
+	}
+}
+
+// workflowContinuationApprovalUIAllowed decides whether the conversation may
+// answer an approval requested while a workflow continues, the same way the
+// workflow tool exposes the first one: the console always may, a published
+// surface only when the approval accepts WebApp submissions, and a channel
+// only for a DigitalHuman conversation. An exposure the event already carries
+// is kept.
+func workflowContinuationApprovalUIAllowed(caller Caller, payload map[string]interface{}) bool {
+	if allowed, ok := payload["ui_approval_allowed"].(bool); ok {
+		return allowed
+	}
+	switch strings.ToLower(strings.TrimSpace(caller.Source)) {
+	case runtimemodel.ConversationSourceConsole:
+		return true
+	case runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI:
+		return workflowApprovalAcceptsWebApp(payload)
+	case runtimemodel.ConversationSourceChannel:
+		return caller.Type == runtimemodel.ConversationCallerDigitalHuman && workflowApprovalAcceptsWebApp(payload)
+	default:
+		return false
+	}
+}
+
+// workflowApprovalAcceptsWebApp reports whether the approval form accepts
+// WebApp submissions; an omitted webapp.enabled defaults to true for legacy
+// definitions.
+func workflowApprovalAcceptsWebApp(payload map[string]interface{}) bool {
+	methods := workflowApprovalRecordValue(payload["submit_methods"])
+	if len(methods) == 0 {
+		methods = workflowApprovalRecordValue(workflowApprovalRecordValue(payload["approval_form"])["submit_methods"])
+	}
+	rawWebApp, present := methods["webapp"]
+	if !present || rawWebApp == nil {
+		return false
+	}
+	webApp := workflowApprovalRecordValue(rawWebApp)
+	enabled, exists := webApp["enabled"]
+	if !exists || enabled == nil {
+		return true
+	}
+	value, ok := enabled.(bool)
+	return ok && value
+}
+
+// workflowApprovalRecordValue reads an approval record that live events may
+// carry as a typed struct and stored events as a decoded map.
+func workflowApprovalRecordValue(value interface{}) map[string]interface{} {
+	if value == nil {
+		return map[string]interface{}{}
+	}
+	if record, ok := value.(map[string]interface{}); ok {
+		return record
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+	record := map[string]interface{}{}
+	if err := json.Unmarshal(encoded, &record); err != nil {
+		return map[string]interface{}{}
+	}
+	return record
+}
+
 func workflowContinuationAllowsInlineApproval(caller Caller, continuation *WorkflowApprovalContinuation) bool {
 	if continuation != nil && continuation.Kind == "digital_human_task" {
 		// Channel conversations have no browser composer, but DigitalHuman task
@@ -1138,8 +1445,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
-	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode))
-	return &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation:     conversation,
 		Message:          message,
 		LLMRequest:       llmRequest,
@@ -1152,7 +1458,9 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		parts:            parts,
 		contextBudget:    contextResult,
 		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
-	}, nil
+	}
+	prepared.resumeWith(continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode))
+	return prepared, nil
 }
 
 func workflowTaskContinuationMessage(continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest) adapter.Message {

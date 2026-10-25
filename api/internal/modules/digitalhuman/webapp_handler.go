@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
@@ -69,6 +70,7 @@ func (h *ExternalHandler) RegisterWebAppRoutes(router *gin.RouterGroup) {
 	protected.POST("/tasks/:task_id/actions/:action", h.ApplyWebAppTaskAction)
 	protected.GET("/tasks/:task_id/runs", h.ListWebAppTaskRuns)
 	protected.GET("/tasks/:task_id/activities", h.ListWebAppTaskActivities)
+	h.registerWebAppReportRoutes(protected)
 }
 
 func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
@@ -87,6 +89,7 @@ func (h *ExternalHandler) GetWebAppConfig(c *gin.Context) {
 		SuggestedQuestions:   nonNilStrings(policy.SuggestedQuestions),
 		AnonymousChatEnabled: !webAppLoginRequired(access), LoginRequired: webAppLoginRequired(access),
 		FileUploadEnabled: fileUploadEnabled(access.Version), FileUploadRequiresLogin: true,
+		ChatUploadPolicy:          effectiveFileUploadPolicy(access.Version, h.fileService.GetUploadConfig()),
 		RelationshipMemoryEnabled: true, RuntimeInputEnabled: true,
 		Version: access.Version.VersionNumber, VersionUUID: access.Version.ID.String(),
 	})
@@ -431,7 +434,7 @@ func (h *ExternalHandler) ListWebAppConversationMessages(c *gin.Context) {
 	inputsByMessage := digitalHumanRuntimeInputsByVisibleMessage(inputs)
 	responses := make([]runtimedto.MessageResponse, 0, len(items))
 	for _, item := range items {
-		response := digitalHumanMessageResponse(item)
+		response := digitalHumanMessageResponse(item, runtimemodel.ConversationSourceWebApp)
 		response.RuntimeInputs = inputsByMessage[item.ID]
 		if response.RuntimeInputs == nil {
 			response.RuntimeInputs = []runtimedto.RuntimeInputResponse{}
@@ -652,8 +655,11 @@ func (h *ExternalHandler) webAppScope(c *gin.Context) (Scope, *PublishedAccess, 
 	return scope, access, identity, true
 }
 
+// webAppLoginRequired decides whether visitors must sign in before they chat
+// at all. File uploads do not: only the upload itself needs an identity, which
+// the upload endpoints and file binding enforce.
 func webAppLoginRequired(access *PublishedAccess) bool {
-	return access != nil && access.Version != nil && (fileUploadEnabled(access.Version) || (access.Version.ExecutionRuntime != nil && access.Version.ExecutionRuntime.Enabled))
+	return access != nil && access.Version != nil && access.Version.ExecutionRuntime != nil && access.Version.ExecutionRuntime.Enabled
 }
 
 func (h *ExternalHandler) webAppRunRequest(c *gin.Context) (Scope, *PublishedAccess, webAppRequestIdentity, uuid.UUID, bool) {
@@ -688,26 +694,28 @@ func (h *ExternalHandler) withWebAppConversation(c *gin.Context, operation strin
 }
 
 type WebAppConfigResponse struct {
-	FileUploadPolicy          *chatfile.Policy `json:"file_upload_policy,omitempty"`
-	DigitalHumanID            string           `json:"digital_human_id"`
-	WebAppID                  string           `json:"web_app_id"`
-	Name                      string           `json:"name"`
-	Description               string           `json:"description"`
-	Icon                      string           `json:"icon"`
-	IconType                  string           `json:"icon_type"`
-	IconURL                   string           `json:"icon_url"`
-	HomeTitle                 string           `json:"home_title"`
-	OpeningStatement          string           `json:"opening_statement"`
-	InputPlaceholder          string           `json:"input_placeholder"`
-	SuggestedQuestions        []string         `json:"suggested_questions"`
-	AnonymousChatEnabled      bool             `json:"anonymous_chat_enabled"`
-	LoginRequired             bool             `json:"login_required"`
-	FileUploadEnabled         bool             `json:"file_upload_enabled"`
-	FileUploadRequiresLogin   bool             `json:"file_upload_requires_login"`
-	RelationshipMemoryEnabled bool             `json:"relationship_memory_enabled"`
-	RuntimeInputEnabled       bool             `json:"runtime_input_enabled"`
-	Version                   int              `json:"version"`
-	VersionUUID               string           `json:"version_uuid"`
+	FileUploadPolicy        *chatfile.Policy `json:"file_upload_policy,omitempty"`
+	DigitalHumanID          string           `json:"digital_human_id"`
+	WebAppID                string           `json:"web_app_id"`
+	Name                    string           `json:"name"`
+	Description             string           `json:"description"`
+	Icon                    string           `json:"icon"`
+	IconType                string           `json:"icon_type"`
+	IconURL                 string           `json:"icon_url"`
+	HomeTitle               string           `json:"home_title"`
+	OpeningStatement        string           `json:"opening_statement"`
+	InputPlaceholder        string           `json:"input_placeholder"`
+	SuggestedQuestions      []string         `json:"suggested_questions"`
+	AnonymousChatEnabled    bool             `json:"anonymous_chat_enabled"`
+	LoginRequired           bool             `json:"login_required"`
+	FileUploadEnabled       bool             `json:"file_upload_enabled"`
+	FileUploadRequiresLogin bool             `json:"file_upload_requires_login"`
+	// ChatUploadPolicy is what visitors may attach, shown before they sign in.
+	ChatUploadPolicy          chatfile.Effective `json:"chat_upload_policy"`
+	RelationshipMemoryEnabled bool               `json:"relationship_memory_enabled"`
+	RuntimeInputEnabled       bool               `json:"runtime_input_enabled"`
+	Version                   int                `json:"version"`
+	VersionUUID               string             `json:"version_uuid"`
 }
 
 type WebAppSessionResponse struct {

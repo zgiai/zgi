@@ -1,9 +1,11 @@
 'use client';
 
+import { DigitalHumanApiCallbackGuide } from '@/components/digital-human/digital-human-api-callback-guide';
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, Edit, KeyRound, MoreHorizontal, Plus, Search, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -74,6 +76,7 @@ function DigitalHumanAPIKeysContent({
   canPublish: boolean;
 }) {
   const t = useT('digitalHumans.access');
+  const tCommon = useT('common');
   const access = useDigitalHumanAccess(id, canPublish);
   const keys = useDigitalHumanAPIKeys(id, canPublish && published);
   const mutations = useDigitalHumanAccessMutations(id);
@@ -344,6 +347,22 @@ function DigitalHumanAPIKeysContent({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <section className="rounded-xl border bg-background p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">{tCommon('notifications.webhookSectionTitle')}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{tCommon('notifications.webhookSectionDescription')}</p>
+          </div>
+          <DigitalHumanApiCallbackGuide />
+        </div>
+        <div className="mb-3" />
+        <NotificationChannelManager
+          basePath={`/digital-humans/${id}/notification-channels`}
+          types={['webhook']}
+          canManage={canPublish}
+          events={['task_report', 'task_failed', 'task_approval']}
+        />
+      </section>
     </div>
   );
 }

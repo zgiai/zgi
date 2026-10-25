@@ -29,6 +29,7 @@ import (
 	"github.com/zgiai/zgi-sandbox/internal/policy"
 	"github.com/zgiai/zgi-sandbox/internal/runner"
 	"github.com/zgiai/zgi-sandbox/internal/sandbox"
+	"github.com/zgiai/zgi-sandbox/internal/storage"
 	"github.com/zgiai/zgi-sandbox/internal/testutil"
 )
 
@@ -2440,12 +2441,32 @@ func TestInteractiveProxyRoutesToRegisteredEndpoint(t *testing.T) {
 	}
 }
 
+// migratedTestDatabase holds the store schema, migrated once per test run;
+// every server under test gets its own copy.
+var migratedTestDatabase = testutil.NewTemplateDatabase(func(dsn string) error {
+	cfg := config.FromEnv()
+	cfg.DatabaseURL = dsn
+	store, err := storage.Open(cfg)
+	if err != nil {
+		return err
+	}
+	return store.Close()
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if err := migratedTestDatabase.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "drop template test database: %v\n", err)
+	}
+	os.Exit(code)
+}
+
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
 
 	cfg := config.FromEnv()
 	cfg.DataDir = t.TempDir()
-	cfg.DatabaseURL = testutil.CreateTestPostgresDSN(t)
+	cfg.DatabaseURL = migratedTestDatabase.DSN(t)
 	cfg.WorkerID = "test-worker"
 	cfg.AdvertiseURL = "http://127.0.0.1:2660"
 	cfg.PublicBaseURL = cfg.AdvertiseURL

@@ -186,6 +186,7 @@ interface AIChatShellProps {
   forcedUseMemory?: boolean;
   enableUpload?: boolean;
   fileUploadPolicy?: FileUploadSelection | null;
+  uploadRequiresLogin?: boolean;
   uploadScope?: AIChatUploadScope;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
@@ -224,6 +225,9 @@ interface AIChatShellProps {
   voiceTranscriber?: AIChatVoiceTranscriber;
   speechSynthesizer?: AIChatSpeechSynthesizer;
   headerRightAction?: React.ReactNode;
+  // Text the composer starts with, e.g. a follow-up written for the reader;
+  // a new value replaces what is typed.
+  initialInput?: string;
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
@@ -334,12 +338,14 @@ export function AIChatShell({
   forcedUseMemory,
   enableUpload = true,
   fileUploadPolicy,
+  uploadRequiresLogin,
   uploadScope,
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
   homeBrand,
   openingGuideBrand,
   homeTitle,
+  initialInput,
   homeDescription,
   suggestions: configuredSuggestions,
   inputPlaceholder,
@@ -387,6 +393,9 @@ export function AIChatShell({
     return primary ? ({ '--primary': primary } as CSSProperties) : undefined;
   }, [themeColor]);
   const [input, setInput] = useState('');
+  useEffect(() => {
+    if (initialInput) setInput(initialInput);
+  }, [initialInput]);
   const [queuedTurnsByConversation, setQueuedTurnsByConversation] = useState<
     Record<string, AIChatQueuedTurn[]>
   >({});
@@ -1976,6 +1985,7 @@ export function AIChatShell({
             showMemoryToggle={showMemoryToggle}
             enableUpload={enableUpload}
             fileUploadPolicy={fileUploadPolicy}
+            uploadRequiresLogin={uploadRequiresLogin}
             uploadScope={uploadScope}
             showFileLibraryPicker={showFileLibraryPicker}
             allowWorkspaceSwitch={allowWorkspaceSwitch}

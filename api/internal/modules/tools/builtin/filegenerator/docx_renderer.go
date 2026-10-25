@@ -1,17 +1,13 @@
 package filegenerator
 
 import (
-	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
-
-	docx "github.com/fumiama/go-docx"
 )
 
 const (
@@ -20,10 +16,13 @@ const (
 	docxMaxBlocks         = 200
 	docxMaxTableRows      = 200
 	docxMaxTableCols      = 20
+
+	docxA4WidthTwips       = 11906
+	docxA4HeightTwips      = 16838
+	docxDefaultMarginPoint = 72
 )
 
 var docxHexColorPattern = regexp.MustCompile(`^[0-9a-fA-F]{6}$`)
-var docxSpacingAfterPattern = regexp.MustCompile(`<w:spacing([^>]*) w:val="([0-9]+)"([^>]*)>`)
 
 type DocxDocumentSpec struct {
 	Page         DocxPageSpec           `json:"page,omitempty"`
@@ -158,47 +157,38 @@ func parseDocxDocumentSpecValue(raw interface{}) (*DocxDocumentSpec, error) {
 }
 
 func renderDocx(content string) ([]byte, error) {
-	doc := docx.New().WithDefaultTheme()
+	var body strings.Builder
 	for _, line := range splitDocumentLines(content) {
-		doc.AddParagraph().AddText(line)
+		body.WriteString("<w:p><w:r>")
+		writeDocxRunText(&body, line)
+		body.WriteString("</w:r></w:p>")
 	}
-	return writeDocxToBytes(doc)
+	writeDocxSection(&body, DocxPageSpec{Orientation: "portrait"})
+	return writeDocxPackage(body.String())
 }
 
 func renderRichDocx(spec *DocxDocumentSpec) ([]byte, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("document spec is required")
 	}
-	doc := docx.New().WithDefaultTheme()
+	var body strings.Builder
 	for idx := range spec.Blocks {
 		block := spec.Blocks[idx]
 		switch block.Type {
 		case "heading":
-			renderDocxHeading(doc, spec, block)
+			renderDocxHeading(&body, spec, block)
 		case "paragraph":
-			renderDocxParagraph(doc.AddParagraph(), spec.DefaultStyle, block.Style, block.Text, block.Runs)
+			renderDocxParagraph(&body, spec.DefaultStyle, block.Style, "", block.Text, block.Runs)
 		case "table":
-			renderDocxTable(doc, spec, block)
+			renderDocxTable(&body, spec, block)
 		case "page_break":
-			doc.AddParagraph().AddPageBreaks()
+			body.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
 		default:
 			return nil, fmt.Errorf("unsupported DOCX block type: %s", block.Type)
 		}
 	}
-	appendDocxSection(doc, spec.Page)
-	return writeDocxToBytes(doc)
-}
-
-func writeDocxToBytes(doc *docx.Docx) ([]byte, error) {
-	var buf bytes.Buffer
-	if _, err := doc.WriteTo(&buf); err != nil {
-		return nil, fmt.Errorf("failed to render DOCX: %w", err)
-	}
-	data, err := normalizeDocxSpacingAfter(buf.Bytes())
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	writeDocxSection(&body, spec.Page)
+	return writeDocxPackage(body.String())
 }
 
 func normalizeAndValidateDocxSpec(spec *DocxDocumentSpec) error {
@@ -406,7 +396,7 @@ func validateDocxTextStyle(style DocxTextStyleSpec) error {
 	return nil
 }
 
-func renderDocxHeading(doc *docx.Docx, spec *DocxDocumentSpec, block DocxBlockSpec) {
+func renderDocxHeading(body *strings.Builder, spec *DocxDocumentSpec, block DocxBlockSpec) {
 	style := block.Style
 	if style.FontSize == nil {
 		size := float64(map[int]int{1: 18, 2: 16, 3: 14}[block.Level])
@@ -419,60 +409,57 @@ func renderDocxHeading(doc *docx.Docx, spec *DocxDocumentSpec, block DocxBlockSp
 	if style.Alignment == "" && block.Level == 1 {
 		style.Alignment = "center"
 	}
-	renderDocxParagraph(doc.AddParagraph(), spec.DefaultStyle, style, block.Text, block.Runs)
+	styleID := "Heading" + strconv.Itoa(block.Level)
+	renderDocxParagraph(body, spec.DefaultStyle, style, styleID, block.Text, block.Runs)
 }
 
-func renderDocxParagraph(p *docx.Paragraph, defaultStyle DocxParagraphStyleSpec, style DocxParagraphStyleSpec, text string, runs []DocxRunSpec) {
+func renderDocxParagraph(body *strings.Builder, defaultStyle DocxParagraphStyleSpec, style DocxParagraphStyleSpec, styleID string, text string, runs []DocxRunSpec) {
 	paragraphStyle := mergeDocxParagraphStyle(defaultStyle, style)
-	applyDocxParagraphStyle(p, paragraphStyle)
+	body.WriteString("<w:p>")
+	writeDocxParagraphProperties(body, paragraphStyle, styleID)
 	if len(runs) == 0 {
 		runs = []DocxRunSpec{{Text: text}}
 	}
 	for _, runSpec := range runs {
-		run := p.AddText(runSpec.Text)
-		applyDocxRunStyle(run, mergeDocxTextStyle(paragraphStyle.DocxTextStyleSpec, runSpec.DocxTextStyleSpec))
+		body.WriteString("<w:r>")
+		writeDocxRunProperties(body, mergeDocxTextStyle(paragraphStyle.DocxTextStyleSpec, runSpec.DocxTextStyleSpec))
+		writeDocxRunText(body, runSpec.Text)
+		body.WriteString("</w:r>")
 	}
+	body.WriteString("</w:p>")
 }
 
-func renderDocxTable(doc *docx.Docx, spec *DocxDocumentSpec, block DocxBlockSpec) {
-	rowCount := len(block.Rows)
-	if len(block.Headers) > 0 {
-		rowCount++
-	}
+func renderDocxTable(body *strings.Builder, spec *DocxDocumentSpec, block DocxBlockSpec) {
 	colCount := len(block.Headers)
 	for _, row := range block.Rows {
 		if len(row) > colCount {
 			colCount = len(row)
 		}
 	}
-	rowHeights := make([]int64, rowCount)
-	colWidths := make([]int64, colCount)
-	for idx, width := range block.ColumnWidths {
-		colWidths[idx] = int64(pointsToTwips(width))
-	}
-	var tableWidth int64
+	var tableWidth int
 	if block.TableStyle.Width != nil {
-		tableWidth = int64(pointsToTwips(*block.TableStyle.Width))
+		tableWidth = pointsToTwips(*block.TableStyle.Width)
 	}
-	borderColor, _ := normalizeDocxColor(block.TableStyle.BorderColor)
-	if borderColor == "" {
-		borderColor = "000000"
-	}
-	table := doc.AddTableTwips(rowHeights, colWidths, tableWidth, &docx.APITableBorderColors{
-		Top: borderColor, Left: borderColor, Bottom: borderColor, Right: borderColor, InsideH: borderColor, InsideV: borderColor,
-	})
-	if !docxTableBorderEnabled(block) {
-		noBorder := &docx.WTableBorder{Val: "nil", Size: 0, Space: 0, Color: "auto"}
-		table.TableProperties.TableBorders = &docx.WTableBorders{
-			Top: noBorder, Left: noBorder, Bottom: noBorder, Right: noBorder, InsideH: noBorder, InsideV: noBorder,
-		}
+	colWidths := docxTableColumnWidths(spec.Page, block.ColumnWidths, colCount, tableWidth)
+
+	body.WriteString("<w:tbl><w:tblPr>")
+	if tableWidth > 0 {
+		fmt.Fprintf(body, `<w:tblW w:w="%d" w:type="dxa"/>`, tableWidth)
+	} else {
+		body.WriteString(`<w:tblW w:w="0" w:type="auto"/>`)
 	}
 	if block.TableStyle.Alignment != "" {
 		if jc, err := docxJustificationValue(block.TableStyle.Alignment); err == nil {
-			table.Justification(jc)
+			fmt.Fprintf(body, `<w:jc w:val="%s"/>`, jc)
 		}
 	}
-	rowOffset := 0
+	writeDocxTableBorders(body, block)
+	body.WriteString(`<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>`)
+	for _, width := range colWidths {
+		fmt.Fprintf(body, `<w:gridCol w:w="%d"/>`, width)
+	}
+	body.WriteString("</w:tblGrid>")
+
 	if len(block.Headers) > 0 {
 		headerStyle := block.Style
 		if headerStyle.Bold == nil {
@@ -482,12 +469,52 @@ func renderDocxTable(doc *docx.Docx, spec *DocxDocumentSpec, block DocxBlockSpec
 			}
 			headerStyle.Bold = &bold
 		}
-		renderDocxTableRow(table.TableRows[0], spec.DefaultStyle, headerStyle, block.Headers)
-		rowOffset = 1
+		renderDocxTableRow(body, spec.DefaultStyle, headerStyle, block.Headers, colWidths, true)
 	}
-	for rowIndex, row := range block.Rows {
-		renderDocxTableRow(table.TableRows[rowIndex+rowOffset], spec.DefaultStyle, block.Style, row)
+	for _, row := range block.Rows {
+		renderDocxTableRow(body, spec.DefaultStyle, block.Style, row, colWidths, false)
 	}
+	body.WriteString("</w:tbl>")
+}
+
+// docxTableColumnWidths returns one width in twips per grid column. Explicit
+// widths win; otherwise the table (or text area) width is split evenly.
+func docxTableColumnWidths(page DocxPageSpec, explicit []float64, colCount int, tableWidth int) []int {
+	widths := make([]int, colCount)
+	if len(explicit) == colCount {
+		for idx, width := range explicit {
+			widths[idx] = pointsToTwips(width)
+		}
+		return widths
+	}
+	available := tableWidth
+	if available <= 0 {
+		pageWidth, _ := docxPageSizeTwips(page)
+		available = pageWidth - pointsToTwips(valueOrDefault(page.Margins.Left, docxDefaultMarginPoint)) -
+			pointsToTwips(valueOrDefault(page.Margins.Right, docxDefaultMarginPoint))
+	}
+	if colCount > 0 && available > 0 {
+		for idx := range widths {
+			widths[idx] = available / colCount
+		}
+	}
+	return widths
+}
+
+func writeDocxTableBorders(body *strings.Builder, block DocxBlockSpec) {
+	borderColor, _ := normalizeDocxColor(block.TableStyle.BorderColor)
+	if borderColor == "" {
+		borderColor = "000000"
+	}
+	body.WriteString("<w:tblBorders>")
+	for _, edge := range []string{"top", "left", "bottom", "right", "insideH", "insideV"} {
+		if docxTableBorderEnabled(block) {
+			fmt.Fprintf(body, `<w:%s w:val="single" w:sz="4" w:space="0" w:color="%s"/>`, edge, borderColor)
+		} else {
+			fmt.Fprintf(body, `<w:%s w:val="nil"/>`, edge)
+		}
+	}
+	body.WriteString("</w:tblBorders>")
 }
 
 func docxTableBorderEnabled(block DocxBlockSpec) bool {
@@ -500,97 +527,149 @@ func docxTableBorderEnabled(block DocxBlockSpec) bool {
 	return true
 }
 
-func renderDocxTableRow(row *docx.WTableRow, defaultStyle DocxParagraphStyleSpec, rowStyle DocxParagraphStyleSpec, cells []DocxTableCellSpec) {
+func renderDocxTableRow(body *strings.Builder, defaultStyle DocxParagraphStyleSpec, rowStyle DocxParagraphStyleSpec, cells []DocxTableCellSpec, colWidths []int, header bool) {
+	body.WriteString("<w:tr>")
+	if header {
+		body.WriteString("<w:trPr><w:tblHeader/></w:trPr>")
+	}
 	for idx := range cells {
 		cell := cells[idx]
-		target := row.TableCells[idx]
+		span := 1
+		if cell.ColSpan > 1 {
+			span = cell.ColSpan
+		}
+		width := 0
+		for col := idx; col < idx+span && col < len(colWidths); col++ {
+			width += colWidths[col]
+		}
+		body.WriteString("<w:tc><w:tcPr>")
+		fmt.Fprintf(body, `<w:tcW w:w="%d" w:type="dxa"/>`, width)
+		if span > 1 {
+			fmt.Fprintf(body, `<w:gridSpan w:val="%d"/>`, span)
+		}
 		if cell.BackgroundColor != "" {
 			if fill, err := normalizeDocxColor(cell.BackgroundColor); err == nil {
-				target.Shade("clear", "auto", fill)
+				fmt.Fprintf(body, `<w:shd w:val="clear" w:color="auto" w:fill="%s"/>`, fill)
 			}
 		}
 		if cell.VerticalAlign != "" {
 			if val, err := docxVerticalAlignValue(cell.VerticalAlign); err == nil {
-				target.TableCellProperties.VAlign = &docx.WVerticalAlignment{Val: val}
+				fmt.Fprintf(body, `<w:vAlign w:val="%s"/>`, val)
 			}
 		}
-		if cell.ColSpan > 1 {
-			target.TableCellProperties.GridSpan = &docx.WGridSpan{Val: cell.ColSpan}
-		}
+		body.WriteString("</w:tcPr>")
 		style := mergeDocxParagraphStyle(rowStyle, cell.Style)
-		renderDocxParagraph(target.AddParagraph(), defaultStyle, style, cell.Text, cell.Runs)
+		renderDocxParagraph(body, defaultStyle, style, "", cell.Text, cell.Runs)
+		body.WriteString("</w:tc>")
 	}
+	body.WriteString("</w:tr>")
 }
 
-func appendDocxSection(doc *docx.Docx, page DocxPageSpec) {
-	width, height := 11906, 16838
+func docxPageSizeTwips(page DocxPageSpec) (int, int) {
 	if page.Orientation == "landscape" {
-		width, height = height, width
+		return docxA4HeightTwips, docxA4WidthTwips
 	}
-	doc.Document.Body.Items = append(doc.Document.Body.Items, &docx.SectPr{
-		PgSz: &docx.PgSz{W: width, H: height},
-		PgMar: &docx.PgMar{
-			Top:    pointsToTwips(valueOrDefault(page.Margins.Top, 72)),
-			Right:  pointsToTwips(valueOrDefault(page.Margins.Right, 72)),
-			Bottom: pointsToTwips(valueOrDefault(page.Margins.Bottom, 72)),
-			Left:   pointsToTwips(valueOrDefault(page.Margins.Left, 72)),
-			Header: 720,
-			Footer: 720,
-			Gutter: 0,
-		},
-		Cols:    &docx.Cols{Space: 720},
-		DocGrid: &docx.DocGrid{Type: "lines", LinePitch: 312},
-	})
+	return docxA4WidthTwips, docxA4HeightTwips
 }
 
-func applyDocxParagraphStyle(p *docx.Paragraph, style DocxParagraphStyleSpec) {
-	if style.Alignment != "" {
-		if jc, err := docxJustificationValue(style.Alignment); err == nil {
-			p.Justification(jc)
-		}
+func writeDocxSection(body *strings.Builder, page DocxPageSpec) {
+	width, height := docxPageSizeTwips(page)
+	body.WriteString("<w:sectPr>")
+	fmt.Fprintf(body, `<w:pgSz w:w="%d" w:h="%d"`, width, height)
+	if page.Orientation == "landscape" {
+		body.WriteString(` w:orient="landscape"`)
 	}
-	if p.Properties == nil {
-		p.Properties = &docx.ParagraphProperties{}
+	body.WriteString("/>")
+	fmt.Fprintf(body, `<w:pgMar w:top="%d" w:right="%d" w:bottom="%d" w:left="%d" w:header="720" w:footer="720" w:gutter="0"/>`,
+		pointsToTwips(valueOrDefault(page.Margins.Top, docxDefaultMarginPoint)),
+		pointsToTwips(valueOrDefault(page.Margins.Right, docxDefaultMarginPoint)),
+		pointsToTwips(valueOrDefault(page.Margins.Bottom, docxDefaultMarginPoint)),
+		pointsToTwips(valueOrDefault(page.Margins.Left, docxDefaultMarginPoint)),
+	)
+	body.WriteString(`<w:cols w:space="720"/><w:docGrid w:type="lines" w:linePitch="312"/></w:sectPr>`)
+}
+
+// writeDocxParagraphProperties writes w:pPr children in CT_PPr schema order.
+func writeDocxParagraphProperties(body *strings.Builder, style DocxParagraphStyleSpec, styleID string) {
+	var props strings.Builder
+	if styleID != "" {
+		fmt.Fprintf(&props, `<w:pStyle w:val="%s"/>`, styleID)
 	}
 	if style.LineSpacing != nil || style.SpaceBefore != nil || style.SpaceAfter != nil {
-		p.Properties.Spacing = &docx.Spacing{
-			Val:      pointsToTwips(valueOrDefault(style.SpaceAfter, 0)),
-			Before:   pointsToTwips(valueOrDefault(style.SpaceBefore, 0)),
-			Line:     int(math.Round(valueOrDefault(style.LineSpacing, 1) * 240)),
-			LineRule: "auto",
-		}
+		fmt.Fprintf(&props, `<w:spacing w:before="%d" w:after="%d" w:line="%d" w:lineRule="auto"/>`,
+			pointsToTwips(valueOrDefault(style.SpaceBefore, 0)),
+			pointsToTwips(valueOrDefault(style.SpaceAfter, 0)),
+			int(math.Round(valueOrDefault(style.LineSpacing, 1)*240)),
+		)
 	}
 	if style.IndentLeft != nil || style.FirstLineIndent != nil {
-		p.Properties.Ind = &docx.Ind{
-			Left:      pointsToTwips(valueOrDefault(style.IndentLeft, 0)),
-			FirstLine: pointsToTwips(valueOrDefault(style.FirstLineIndent, 0)),
+		fmt.Fprintf(&props, `<w:ind w:left="%d" w:firstLine="%d"/>`,
+			pointsToTwips(valueOrDefault(style.IndentLeft, 0)),
+			pointsToTwips(valueOrDefault(style.FirstLineIndent, 0)),
+		)
+	}
+	if style.Alignment != "" {
+		if jc, err := docxJustificationValue(style.Alignment); err == nil {
+			fmt.Fprintf(&props, `<w:jc w:val="%s"/>`, jc)
 		}
+	}
+	if props.Len() > 0 {
+		body.WriteString("<w:pPr>")
+		body.WriteString(props.String())
+		body.WriteString("</w:pPr>")
 	}
 }
 
-func applyDocxRunStyle(run *docx.Run, style DocxTextStyleSpec) {
+// writeDocxRunProperties writes w:rPr children in CT_RPr schema order.
+func writeDocxRunProperties(body *strings.Builder, style DocxTextStyleSpec) {
 	font := normalizeDefault(style.FontFamily, docxDefaultFontFamily)
 	eastAsia := normalizeDefault(style.EastAsiaFont, font)
 	ascii := normalizeDefault(style.AsciiFont, font)
-	run.Font(ascii, eastAsia, ascii, "eastAsia")
 	size := docxHalfPointSize(valueOrDefault(style.FontSize, docxDefaultFontSize))
-	run.Size(size).SizeCs(size)
+
+	body.WriteString("<w:rPr>")
+	fmt.Fprintf(body, `<w:rFonts w:ascii="%s" w:eastAsia="%s" w:hAnsi="%s" w:hint="eastAsia"/>`,
+		escapeDocxXML(ascii), escapeDocxXML(eastAsia), escapeDocxXML(ascii))
 	if valueOrDefaultBool(style.Bold, false) {
-		run.Bold()
+		body.WriteString("<w:b/><w:bCs/>")
 	}
 	if valueOrDefaultBool(style.Italic, false) {
-		run.Italic()
-	}
-	if underline, err := docxUnderlineValue(style.Underline); err == nil && underline != "" {
-		run.Underline(underline)
+		body.WriteString("<w:i/><w:iCs/>")
 	}
 	if style.Color != "" {
-		if color, err := normalizeDocxColor(style.Color); err == nil {
-			run.Color(color)
+		if color, err := normalizeDocxColor(style.Color); err == nil && color != "" {
+			fmt.Fprintf(body, `<w:color w:val="%s"/>`, color)
 		}
 	}
-	if style.Highlight != "" {
-		run.Highlight(style.Highlight)
+	fmt.Fprintf(body, `<w:sz w:val="%s"/><w:szCs w:val="%s"/>`, size, size)
+	if highlight, ok := docxHighlightValue(style.Highlight); ok {
+		fmt.Fprintf(body, `<w:highlight w:val="%s"/>`, highlight)
+	}
+	if underline, err := docxUnderlineValue(style.Underline); err == nil && underline != "" {
+		fmt.Fprintf(body, `<w:u w:val="%s"/>`, underline)
+	}
+	body.WriteString("</w:rPr>")
+}
+
+// writeDocxRunText writes run content, mapping tabs and line breaks to their
+// WordprocessingML elements so they survive in Word.
+func writeDocxRunText(body *strings.Builder, text string) {
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	for lineIndex, line := range strings.Split(text, "\n") {
+		if lineIndex > 0 {
+			body.WriteString("<w:br/>")
+		}
+		for segmentIndex, segment := range strings.Split(line, "\t") {
+			if segmentIndex > 0 {
+				body.WriteString("<w:tab/>")
+			}
+			if segment == "" {
+				continue
+			}
+			body.WriteString(`<w:t xml:space="preserve">`)
+			body.WriteString(escapeDocxXML(segment))
+			body.WriteString("</w:t>")
+		}
 	}
 }
 
@@ -719,11 +798,34 @@ func normalizeDocxColor(raw string) (string, error) {
 }
 
 func isDocxHighlightValue(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "darkblue", "darkcyan", "darkgreen", "darkmagenta", "darkred", "darkyellow", "darkgray", "lightgray", "none":
-		return true
+	_, ok := docxHighlightValue(raw)
+	return ok
+}
+
+// docxHighlightValue maps a case-insensitive highlight name to the
+// ST_HighlightColor spelling Word expects.
+func docxHighlightValue(raw string) (string, bool) {
+	switch value := strings.ToLower(strings.TrimSpace(raw)); value {
+	case "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "none":
+		return value, true
+	case "darkblue":
+		return "darkBlue", true
+	case "darkcyan":
+		return "darkCyan", true
+	case "darkgreen":
+		return "darkGreen", true
+	case "darkmagenta":
+		return "darkMagenta", true
+	case "darkred":
+		return "darkRed", true
+	case "darkyellow":
+		return "darkYellow", true
+	case "darkgray":
+		return "darkGray", true
+	case "lightgray":
+		return "lightGray", true
 	default:
-		return false
+		return "", false
 	}
 }
 
@@ -755,48 +857,4 @@ func normalizeDefault(value string, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func normalizeDocxSpacingAfter(data []byte) ([]byte, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to inspect DOCX package: %w", err)
-	}
-	var out bytes.Buffer
-	writer := zip.NewWriter(&out)
-	for _, file := range reader.File {
-		if err := copyDocxZipFile(writer, file); err != nil {
-			_ = writer.Close()
-			return nil, err
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to rewrite DOCX package: %w", err)
-	}
-	return out.Bytes(), nil
-}
-
-func copyDocxZipFile(writer *zip.Writer, file *zip.File) error {
-	handle, err := file.Open()
-	if err != nil {
-		return fmt.Errorf("failed to open DOCX entry %s: %w", file.Name, err)
-	}
-	defer handle.Close()
-
-	content, err := io.ReadAll(handle)
-	if err != nil {
-		return fmt.Errorf("failed to read DOCX entry %s: %w", file.Name, err)
-	}
-	if file.Name == "word/document.xml" {
-		content = []byte(docxSpacingAfterPattern.ReplaceAllString(string(content), `<w:spacing$1 w:after="$2"$3>`))
-	}
-	header := file.FileHeader
-	entry, err := writer.CreateHeader(&header)
-	if err != nil {
-		return fmt.Errorf("failed to create DOCX entry %s: %w", file.Name, err)
-	}
-	if _, err := entry.Write(content); err != nil {
-		return fmt.Errorf("failed to write DOCX entry %s: %w", file.Name, err)
-	}
-	return nil
 }

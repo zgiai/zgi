@@ -17,8 +17,15 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 	ctx context.Context,
 	bc *BillingContext,
 	settlement *adapter.SettlementResult,
-) error {
-	if settlement == nil {
+) (retErr error) {
+	defer func() {
+		if retErr != nil && bc != nil && bc.ToolPostpaid {
+			if err := s.markAttemptSettleFailed(ctx, bc, "TOOL_MIRROR_PENDING", retErr.Error()); err != nil {
+				retErr = fmt.Errorf("tool mirror failed: %v; persist retry: %w", retErr, err)
+			}
+		}
+	}()
+	if settlement == nil || bc != nil && bc.ToolPostpaid {
 		if bc == nil || strings.TrimSpace(bc.OrganizationID) == "" || strings.TrimSpace(bc.AttemptID) == "" {
 			return fmt.Errorf("missing billing identity for console settlement query")
 		}
@@ -43,6 +50,45 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		}
 		if len(result.PricingSnapshot) > 0 && string(result.PricingSnapshot) != "null" {
 			bc.PricingSnapshot = datatypes.JSON(result.PricingSnapshot)
+			if bc.ToolPostpaid {
+				markToolPostpaid(bc)
+			}
+		}
+		projection, projectionErr := toolProjectionFromQuery(result)
+		if projectionErr != nil {
+			return projectionErr
+		}
+		if len(projection) > 0 && string(projection) != "null" && strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack) {
+			var attempt BillingAttempt
+			if err := s.localService.db.WithContext(ctx).Where("attempt_id = ?", bc.AttemptID).First(&attempt).Error; err != nil {
+				return err
+			}
+			return s.mirrorQueriedSettlement(ctx, &attempt, result)
+		}
+		if len(projection) > 0 && string(projection) != "null" {
+			if !strings.EqualFold(result.SettlementStatus, billingAttemptStatusSettled) {
+				return fmt.Errorf("authoritative tool settlement is still pending")
+			}
+			var projected toolSettlement
+			if json.Unmarshal(projection, &projected) != nil || projected.TotalCredits != result.SettledCredits {
+				return fmt.Errorf("authoritative settlement amount mismatch")
+			}
+			applyPlatformSettlementTokenUsage(bc, settlementFromQueryResult(result))
+			return s.mirrorPlatformTools(ctx, bc, projection, datatypes.JSON(result.PricingSnapshot))
+		}
+		if bc.ToolPostpaid {
+			supported, capabilityErr := s.SupportsToolPostpaid(ctx)
+			if capabilityErr != nil {
+				return fmt.Errorf("verify billing capability after missing tool projection: %w", capabilityErr)
+			}
+			if supported {
+				return fmt.Errorf("authoritative tool settlement JSON is still pending")
+			}
+			clearToolPostpaid(bc)
+		}
+		if strings.EqualFold(result.SettlementStatus, billingAttemptStatusRolledBack) && !result.Retryable {
+			bc.Status, bc.ActualCredits = "error", 0
+			return s.finalizeRemoteSettlement(ctx, bc)
 		}
 		if !strings.EqualFold(result.SettlementStatus, "SETTLED") {
 			return fmt.Errorf("console settlement is not terminal: status=%s retryable=%t", result.SettlementStatus, result.Retryable)

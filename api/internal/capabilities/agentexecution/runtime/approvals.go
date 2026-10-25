@@ -19,6 +19,8 @@ const (
 	// where every authenticated organization is entitled to the shared runtime.
 	// It never admits an empty organization ID.
 	OrganizationAccessModeAllAuthenticated = "all_authenticated"
+	// OrganizationAccessModeEnv selects the organization access mode.
+	OrganizationAccessModeEnv = "ZGI_AGENT_RUNTIME_ORG_MODE"
 )
 
 // ApprovalError is an internal operator diagnosis. Entry adapters project it
@@ -87,7 +89,7 @@ func ApprovalsFromEnv() Approvals {
 		DefaultPolicyID:        strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_POLICY_ID")),
 		DefaultHomeSnapshotID:  strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_DEFAULT_HOME_SNAPSHOT_ID")),
 		GatewayReady:           ValidGatewayURL(os.Getenv("ZGI_AGENT_RUNTIME_URL")) && strings.TrimSpace(os.Getenv("ZGI_AGENT_RUNTIME_API_KEY")) != "",
-		OrganizationAccessMode: normalizeOrganizationAccessMode(os.Getenv("ZGI_AGENT_RUNTIME_ORG_MODE")),
+		OrganizationAccessMode: normalizeOrganizationAccessMode(os.Getenv(OrganizationAccessModeEnv)),
 	}
 }
 

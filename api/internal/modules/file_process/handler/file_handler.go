@@ -93,6 +93,10 @@ type fileServiceWithUploadOptions interface {
 	UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options service.UploadFileOptions) (*dto.UploadFile, error)
 }
 
+type temporaryUploadLifecycle interface {
+	CancelTemporaryUpload(ctx context.Context, attemptID, ownerID string) error
+}
+
 type fileSourcePreviewPagesResponse struct {
 	Engine    string   `json:"engine"`
 	PageCount int      `json:"page_count"`
@@ -372,6 +376,28 @@ func (h *FileHandler) GetUploadConfig(c *gin.Context) {
 	response.Success(c, config)
 }
 
+// CancelUploadAttempt cancels a chat attachment upload without changing retention for
+// ordinary temporary files.
+func (h *FileHandler) CancelUploadAttempt(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	attemptID := strings.TrimSpace(c.Param("attempt_id"))
+	if accountID == "" || attemptID == "" {
+		h.businessError(c, response.ErrInvalidParam)
+		return
+	}
+	lifecycle, ok := h.fileService.(temporaryUploadLifecycle)
+	if !ok {
+		h.businessError(c, response.ErrSystemError)
+		return
+	}
+	if err := lifecycle.CancelTemporaryUpload(c.Request.Context(), attemptID, accountID); err != nil {
+		logger.WarnContext(c.Request.Context(), "failed to cancel temporary upload attempt", "attempt_id", attemptID, err)
+		h.businessError(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, nil)
+}
+
 // UploadFile handles file upload
 // POST /files/upload
 func (h *FileHandler) UploadFile(c *gin.Context) {
@@ -402,6 +428,10 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 
 	// Get is_temporary parameter for temporary file uploads
 	isTemporary := c.PostForm("is_temporary") == "true"
+	uploadAttemptID := ""
+	if isTemporary {
+		uploadAttemptID = strings.TrimSpace(c.PostForm("upload_attempt_id"))
+	}
 
 	// Get is_icon parameter for icon uploads (will resize to 200x200)
 	isIcon := c.PostForm("is_icon") == "true"
@@ -500,7 +530,7 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 
 	// Read file content
 	if source != nil && *source == interfaces.FileSourceChat {
-		if err := config.ChatPolicy(nil).ValidateFile(fileExtension, header.Size); err != nil {
+		if err := chatfile.ValidatePlatformFile(fileExtension, header.Size, config.ChatLimits()); err != nil {
 			if errors.Is(err, chatfile.ErrUnsupportedType) {
 				h.businessError(c, response.ErrUnsupportedFileType)
 			} else {
@@ -521,7 +551,7 @@ func (h *FileHandler) UploadFile(c *gin.Context) {
 		mimeType = "application/octet-stream"
 	}
 
-	uploadFile, err := h.uploadFile(c.Request.Context(), header.Filename, content, mimeType, accountID, organizationID, source, teamTenantID, isTemporary, isIcon, shouldUseAssetProcessing)
+	uploadFile, err := h.uploadFile(c.Request.Context(), header.Filename, content, mimeType, accountID, organizationID, source, teamTenantID, isTemporary, isIcon, shouldUseAssetProcessing, uploadAttemptID)
 
 	if err != nil {
 		switch err {
@@ -1617,7 +1647,7 @@ func uuidPointerString(id *uuid.UUID) string {
 	return id.String()
 }
 
-func (h *FileHandler) uploadFile(ctx context.Context, filename string, content []byte, mimeType string, accountID string, organizationID string, source *interfaces.FileSource, teamTenantID *string, isTemporary bool, isIcon bool, useAssetProcessing bool) (*dto.UploadFile, error) {
+func (h *FileHandler) uploadFile(ctx context.Context, filename string, content []byte, mimeType string, accountID string, organizationID string, source *interfaces.FileSource, teamTenantID *string, isTemporary bool, isIcon bool, useAssetProcessing bool, uploadAttemptID string) (*dto.UploadFile, error) {
 	if uploadSvc, ok := h.fileService.(fileServiceWithUploadOptions); ok {
 		return uploadSvc.UploadFileWithOptions(
 			ctx,
@@ -1633,6 +1663,7 @@ func (h *FileHandler) uploadFile(ctx context.Context, filename string, content [
 			isIcon,
 			service.UploadFileOptions{
 				StartLegacyContentExtraction: !useAssetProcessing && !isTemporary,
+				UploadAttemptID:              uploadAttemptID,
 			},
 		)
 	}

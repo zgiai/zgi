@@ -106,7 +106,11 @@ func (s *WorkspaceAssetMoveService) PreviewDependencies(
 		case AssetMoveTypeFile:
 			// Files are not Agent-bindable resources.
 		default:
-			return nil, ErrAssetMoveInvalidRequest
+			// Assets of registered movers are not Agent-bindable resources;
+			// their own preview reports what a move detaches.
+			if s.mover(item.Type) == nil {
+				return nil, ErrAssetMoveInvalidRequest
+			}
 		}
 	}
 

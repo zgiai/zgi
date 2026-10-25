@@ -222,64 +222,66 @@ export function AIChatMessageList({
               </div>
             ) : null}
             {messages.map((message, index) => (
-              <AIChatMessageBubble
-                readExecutionFile={readExecutionFile}
-                key={message.id}
-                message={message}
-                isSending={isSending}
-                timeline={streamingByMessageId[message.id]?.timeline ?? []}
-                modelProcessing={streamingByMessageId[message.id]?.modelProcessing}
-                tokenUsage={
-                  streamingByMessageId[message.id]?.tokenUsage ?? tokenUsageFromMessage(message)
-                }
-                presentationItems={
-                  streamingByMessageId[message.id]?.presentationItems ??
-                  presentationProjectionFromMetadata(message.metadata)?.items
-                }
-                answerBeforeTimelineLength={
-                  streamingByMessageId[message.id]?.answer_before_timeline_length ??
-                  message.metadata?.answer_before_timeline_length
-                }
-                skillDisplayById={skillDisplayById}
-                isLastMessage={index === messages.length - 1}
-                canReplaceRoot={canReplaceRootMessage(
-                  activeConversation,
-                  activeMessageCount,
-                  message
-                )}
-                onRegenerate={onRegenerate}
-                onToolGovernanceDecision={onToolGovernanceDecision}
-                onTaskProposalAction={onTaskProposalAction}
-                onTaskMutation={onTaskMutation}
-                onConnectorRuntimeDecision={
-                  onConnectorRuntimeDecision
-                    ? (command, scope, rememberForSession) =>
-                        onConnectorRuntimeDecision(
-                          message.conversation_id,
-                          message.id,
-                          command,
-                          scope,
-                          rememberForSession
-                        )
-                    : undefined
-                }
-                branchNavigation={branchNavigationByMessageId.get(message.id)}
-                onSwitchBranch={onSwitchBranch}
-                isEditing={editingMessageId === message.id}
-                editValue={editingMessageId === message.id ? editingQuery : ''}
-                onEditStart={onEditStart}
-                onEditChange={onEditChange}
-                onEditCancel={onEditCancel}
-                onEditSubmit={onEditSubmit}
-                showAssistantModelMeta={showAssistantModelMeta}
-                showMemoryKey={showMemoryKey}
-                showSkillEventDetails={showSkillEventDetails}
-                showWorkflowFailureDetails={showWorkflowFailureDetails}
-                showContextualOperationStatus={showContextualOperationStatus}
-                enableToolGovernanceApprovals={enableToolGovernanceApprovals}
-                suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
-                speechPlayback={speechPlayback}
-              />
+              // The message id anchor lets callers bring a message into view.
+              <div key={message.id} data-chat-message-id={message.id}>
+                <AIChatMessageBubble
+                  readExecutionFile={readExecutionFile}
+                  message={message}
+                  isSending={isSending}
+                  timeline={streamingByMessageId[message.id]?.timeline ?? []}
+                  modelProcessing={streamingByMessageId[message.id]?.modelProcessing}
+                  tokenUsage={
+                    streamingByMessageId[message.id]?.tokenUsage ?? tokenUsageFromMessage(message)
+                  }
+                  presentationItems={
+                    streamingByMessageId[message.id]?.presentationItems ??
+                    presentationProjectionFromMetadata(message.metadata)?.items
+                  }
+                  answerBeforeTimelineLength={
+                    streamingByMessageId[message.id]?.answer_before_timeline_length ??
+                    message.metadata?.answer_before_timeline_length
+                  }
+                  skillDisplayById={skillDisplayById}
+                  isLastMessage={index === messages.length - 1}
+                  canReplaceRoot={canReplaceRootMessage(
+                    activeConversation,
+                    activeMessageCount,
+                    message
+                  )}
+                  onRegenerate={onRegenerate}
+                  onToolGovernanceDecision={onToolGovernanceDecision}
+                  onTaskProposalAction={onTaskProposalAction}
+                  onTaskMutation={onTaskMutation}
+                  onConnectorRuntimeDecision={
+                    onConnectorRuntimeDecision
+                      ? (command, scope, rememberForSession) =>
+                          onConnectorRuntimeDecision(
+                            message.conversation_id,
+                            message.id,
+                            command,
+                            scope,
+                            rememberForSession
+                          )
+                      : undefined
+                  }
+                  branchNavigation={branchNavigationByMessageId.get(message.id)}
+                  onSwitchBranch={onSwitchBranch}
+                  isEditing={editingMessageId === message.id}
+                  editValue={editingMessageId === message.id ? editingQuery : ''}
+                  onEditStart={onEditStart}
+                  onEditChange={onEditChange}
+                  onEditCancel={onEditCancel}
+                  onEditSubmit={onEditSubmit}
+                  showAssistantModelMeta={showAssistantModelMeta}
+                  showMemoryKey={showMemoryKey}
+                  showSkillEventDetails={showSkillEventDetails}
+                  showWorkflowFailureDetails={showWorkflowFailureDetails}
+                  showContextualOperationStatus={showContextualOperationStatus}
+                  enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+                  suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
+                  speechPlayback={speechPlayback}
+                />
+              </div>
             ))}
             {pendingUserMessage ? <PendingUserMessageBubble message={pendingUserMessage} /> : null}
             {showPlanningPlaceholder ? (

@@ -52,6 +52,12 @@ interface FileTypeSelectorProps {
   onChange: (types: string[]) => void;
   label?: string;
   availableTypes?: readonly FileType[];
+  // Overrides the shown extensions, e.g. a chat's own document list.
+  extensionsByType?: Partial<Record<FileType, readonly string[]>>;
+  // A short line under each card, e.g. how the type is processed.
+  notesByType?: Partial<Record<FileType, string>>;
+  // Keeps at least one type selected; turning uploads off is done elsewhere.
+  keepOne?: boolean;
 }
 
 /**
@@ -63,6 +69,9 @@ export function FileTypeSelector({
   onChange,
   label,
   availableTypes = FILE_TYPES,
+  extensionsByType,
+  notesByType,
+  keepOne = false,
 }: FileTypeSelectorProps) {
   const t = useT('nodes');
 
@@ -75,12 +84,12 @@ export function FileTypeSelector({
       if (type === 'custom') {
         return '';
       }
-      const extensions = FILE_TYPE_EXTENSIONS[type];
+      const extensions = extensionsByType?.[type] ?? FILE_TYPE_EXTENSIONS[type];
       if (!extensions) return '';
       // Format as ".ext, .ext, ..."
       return extensions.map(ext => `${ext.toUpperCase()}`).join(', ');
     },
-    [t]
+    [extensionsByType]
   );
 
   // Handle type selection
@@ -91,6 +100,7 @@ export function FileTypeSelector({
       if (type === 'custom') {
         // Custom is exclusive - selecting it clears others
         if (isCustomSelected) {
+          if (keepOne) return;
           newTypes = [];
         } else {
           newTypes = ['custom'];
@@ -102,6 +112,7 @@ export function FileTypeSelector({
           newTypes = [type];
         } else if (selectedTypes.includes(type)) {
           // Deselect
+          if (keepOne && selectedTypes.length === 1) return;
           newTypes = selectedTypes.filter(t => t !== type);
         } else {
           // Add to selection
@@ -111,7 +122,7 @@ export function FileTypeSelector({
 
       onChange(newTypes);
     },
-    [selectedTypes, isCustomSelected, onChange]
+    [selectedTypes, isCustomSelected, keepOne, onChange]
   );
 
   // Memoize the file type cards
@@ -168,6 +179,9 @@ export function FileTypeSelector({
                   {getExtensionsDescription(type)}
                 </p>
               )}
+              {notesByType?.[type] ? (
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{notesByType[type]}</p>
+              ) : null}
             </div>
           </div>
         </button>
@@ -180,6 +194,7 @@ export function FileTypeSelector({
     handleTypeClick,
     t,
     getExtensionsDescription,
+    notesByType,
   ]);
 
   return (

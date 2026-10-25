@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	"gorm.io/datatypes"
 )
@@ -65,18 +64,6 @@ func TestMemoryExtractionPromptContainsReferencesWithoutArtifactBodies(t *testin
 	}
 	if strings.Contains(prompt, "artifact bodies") && !strings.Contains(prompt, "Never propose") {
 		t.Fatal("prompt does not retain the artifact-body prohibition")
-	}
-}
-
-func TestMemoryPromotionRequiresTrustedEventFlag(t *testing.T) {
-	t.Parallel()
-	event := invocation.Event{Context: map[string]any{"memory_promotion_authorized": "true"}}
-	if memoryPromotionAuthorized(event) {
-		t.Fatal("string promotion flag was trusted")
-	}
-	event.Context["memory_promotion_authorized"] = true
-	if !memoryPromotionAuthorized(event) {
-		t.Fatal("trusted boolean promotion flag was ignored")
 	}
 }
 

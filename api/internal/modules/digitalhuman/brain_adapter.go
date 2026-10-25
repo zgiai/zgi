@@ -32,6 +32,12 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 	snapshotRef := resourcebindings.SnapshotRef{
 		Subject: resolved.Snapshot.Subject, Phase: resourcebindings.PhasePublished, VersionID: &resolved.Snapshot.DigitalHumanVersion,
 	}
+	preview := resolved.Snapshot.Phase == string(resourcebindings.PhaseDraft)
+	connectorScope, connectorVersion := "published", resolved.Snapshot.DigitalHumanVersion.String()
+	if preview {
+		snapshotRef.Phase = resourcebindings.PhaseDraft
+		connectorScope, connectorVersion = "draft", ""
+	}
 	config := chatruntime.RunConfig{
 		FileUploadEnabled: new(fileUploadEnabled(&Version{FileUploadPolicy: resolved.Snapshot.FileUploadPolicy})),
 		FileUploadPolicy:  chatfile.Clone(resolved.Snapshot.FileUploadPolicy),
@@ -41,7 +47,9 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,
 		UseMemory:          false, AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
 		BindingReader: a.bindingReader, BindingSnapshot: snapshotRef,
-		ConnectorTargetScope: "published", ConnectorTargetVersionID: resolved.Snapshot.DigitalHumanVersion.String(),
+		ConnectorTargetScope: connectorScope, ConnectorTargetVersionID: connectorVersion,
+		// A preview must not act in connected systems.
+		ConnectorToolsDisabled: preview,
 	}
 	databaseByID := make(map[string]*chatruntime.AgentDatabaseBinding)
 	for _, binding := range resolved.Snapshot.Bindings {
@@ -54,6 +62,12 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		}
 		if binding.Authorization.AuthorizedAt != nil {
 			authorization.BoundAtUnix = binding.Authorization.AuthorizedAt.Unix()
+		}
+		if binding.Type == resourcebindings.BindingTypeWorkflow && authorization.ParentResourceID == "" {
+			// Workflow bindings published before the parent was keyed by the
+			// workflow Agent id keep an empty parent; evidence uses the same key
+			// as Agent bindings so tool governance can find it.
+			authorization.ParentResourceID = stringMapValue(binding.Metadata, "workflow_agent_id")
 		}
 		config.BindingAuthorizations = append(config.BindingAuthorizations, authorization)
 		switch binding.Type {
@@ -90,6 +104,7 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 			// authorized native companion binding may expose external operations.
 		}
 	}
+	config.BindingAuthorizations = append(config.BindingAuthorizations, derivedDatabaseAuthorizations(config.BindingAuthorizations)...)
 	for _, database := range databaseByID {
 		database.TableIDs = normalizedUniqueStrings(database.TableIDs)
 		database.WritableTableIDs = normalizedUniqueStrings(database.WritableTableIDs)
@@ -101,6 +116,47 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 	config.EnabledSkillIDs = normalizedUniqueStrings(config.EnabledSkillIDs)
 	config.KnowledgeDatasetIDs = normalizedUniqueStrings(config.KnowledgeDatasetIDs)
 	return config, nil
+}
+
+// derivedDatabaseAuthorizations adds read evidence for a data source that is
+// reached only through table bindings. Agent bindings always carry this parent
+// evidence, and database discovery tools require it; the tools still return
+// only the bound tables. The most recent table authorization is used so the
+// evidence never predates or outlives a concrete table grant.
+func derivedDatabaseAuthorizations(authorizations []chatruntime.ResourceBindingAuthorization) []chatruntime.ResourceBindingAuthorization {
+	explicit := make(map[string]struct{})
+	latest := make(map[string]chatruntime.ResourceBindingAuthorization)
+	for _, authorization := range authorizations {
+		switch resourcebindings.BindingType(authorization.BindingType) {
+		case resourcebindings.BindingTypeDatabase:
+			explicit[authorization.ResourceID] = struct{}{}
+		case resourcebindings.BindingTypeDatabaseTable:
+			if authorization.ParentResourceID == "" || authorization.BoundByAccountID == "" || authorization.BoundAtUnix <= 0 {
+				continue
+			}
+			current, ok := latest[authorization.ParentResourceID]
+			if !ok || authorization.BoundAtUnix > current.BoundAtUnix ||
+				(authorization.BoundAtUnix == current.BoundAtUnix && authorization.BoundByAccountID < current.BoundByAccountID) {
+				latest[authorization.ParentResourceID] = authorization
+			}
+		}
+	}
+	dataSourceIDs := make([]string, 0, len(latest))
+	for dataSourceID := range latest {
+		if _, ok := explicit[dataSourceID]; !ok {
+			dataSourceIDs = append(dataSourceIDs, dataSourceID)
+		}
+	}
+	sort.Strings(dataSourceIDs)
+	derived := make([]chatruntime.ResourceBindingAuthorization, 0, len(dataSourceIDs))
+	for _, dataSourceID := range dataSourceIDs {
+		table := latest[dataSourceID]
+		derived = append(derived, chatruntime.ResourceBindingAuthorization{
+			BindingType: string(resourcebindings.BindingTypeDatabase), ResourceID: dataSourceID,
+			AccessMode: string(resourcebindings.AccessModeRead), BoundByAccountID: table.BoundByAccountID, BoundAtUnix: table.BoundAtUnix,
+		})
+	}
+	return derived
 }
 
 func buildDigitalHumanSystemPrompt(snapshot ExecutionSnapshot) string {

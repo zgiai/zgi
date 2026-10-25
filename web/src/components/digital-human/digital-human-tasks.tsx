@@ -1,12 +1,13 @@
 'use client';
 
 import { useCallback, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
+  ArrowLeft,
   CalendarClock,
   CheckCircle2,
+  ChevronRight,
   ListTodo,
   Loader2,
   MoreHorizontal,
@@ -17,6 +18,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Webhook,
   XCircle,
 } from 'lucide-react';
 import { isAxiosError } from 'axios';
@@ -51,9 +53,20 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { digitalHumanChannelProvider } from '@/components/digital-human/digital-human-channel-providers';
 import { digitalHumanTaskDisplayStatus, digitalHumanTaskScheduleSummary } from '@/components/digital-human/digital-human-task-presentation';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
+import { TaskLatestReport, TaskReportFeed, TaskReportView } from '@/components/digital-human/digital-human-task-reports';
+import {
+  TaskReportDestinations,
+  TaskReportDigest,
+  TaskReportReview,
+} from '@/components/digital-human/digital-human-task-destinations';
+import { RequesterOrigin, TaskRequesterLabelButton, TaskRequesterPicker, requesterName } from '@/components/digital-human/digital-human-task-requesters';
+import { DigitalHumanRunTimeline } from '@/components/digital-human/digital-human-run-timeline';
+import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
+import { TEAM_NOTIFICATION_CHANNELS_PATH } from '@/services/notification-channel.service';
 import { useLocale } from '@/hooks/use-locale';
 import {
   useDigitalHumanTaskDetail,
@@ -65,11 +78,16 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { digitalHumanService } from '@/services/digital-human.service';
 import type {
+  DigitalHumanTaskReportDigest,
+  DigitalHumanTaskReportReview,
   CreateDigitalHumanTaskRequest,
   DigitalHumanTask,
   DigitalHumanTaskPriority,
+  DigitalHumanTaskVisibility,
   DigitalHumanTaskScheduleType,
   DigitalHumanTaskSchedulePreview,
+  DigitalHumanTaskRequester,
+  DigitalHumanTaskRequesterKind,
   DigitalHumanTaskStatus,
 } from '@/services/types/digital-human';
 
@@ -87,6 +105,11 @@ const summaryStatuses: DigitalHumanTaskStatus[] = [
   'canceled',
 ];
 const taskParam = 'task';
+const requesterKindParam = 'requester_kind';
+const requesterParam = 'requester';
+// The header and every row share one column template so they line up.
+const taskColumns =
+  'xl:grid-cols-[minmax(220px,2fr)_minmax(150px,1.1fr)_100px_72px_120px_150px_minmax(150px,1fr)]';
 const taskTimezones = ['UTC', ...(typeof Intl.supportedValuesOf === 'function'
   ? Intl.supportedValuesOf('timeZone')
   : ['Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York'])];
@@ -112,10 +135,20 @@ export function DigitalHumanTasks({ id }: { id: string }) {
   const rawSchedule = searchParams.get('schedule');
   const schedule: ScheduleFilter = taskSchedules.includes(rawSchedule as DigitalHumanTaskScheduleType)
     ? rawSchedule as DigitalHumanTaskScheduleType : 'all';
+  const rawRequesterKind = searchParams.get(requesterKindParam);
+  const requesterKind = requesterKinds.includes(rawRequesterKind as DigitalHumanTaskRequesterKind)
+    ? (rawRequesterKind as DigitalHumanTaskRequesterKind) : undefined;
+  const requesterID = searchParams.get(requesterParam) ?? '';
   const rawPage = Number(searchParams.get('page') ?? 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= 10_000 ? rawPage : 1;
   const selectedTaskID = searchParams.get(taskParam) ?? '';
+  // Reports moved to their own page; keep old links working.
+  const legacyReportsTab = searchParams.get('tab') === 'reports';
+  useEffect(() => {
+    if (legacyReportsTab) router.replace(`/console/digital-humans/${id}/reports`);
+  }, [id, legacyReportsTab, router]);
   const [editorTask, setEditorTask] = useState<DigitalHumanTask | null | undefined>();
+  const [teamChannelsOpen, setTeamChannelsOpen] = useState(false);
   const query = useDigitalHumanTasks(id, {
     page,
     query: deferredSearch.trim() || undefined,
@@ -127,11 +160,19 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           : [status],
     priority: priority === 'all' ? undefined : [priority],
     schedule_type: schedule === 'all' ? undefined : schedule,
+    // Finished work stays in the default view until its report is read.
+    include_unreviewed: status === 'open' || undefined,
+    requester_kind: requesterKind ? [requesterKind] : undefined,
+    requester_id: requesterID || undefined,
   });
   const items = query.data?.data.items ?? [];
+  // Every row belongs to the chosen person, so any row names them.
+  const chosenRequester = requesterID ? items.find(item => item.requester?.id === requesterID)?.requester : undefined;
+  const filterByRequester = (person?: DigitalHumanTaskRequester | null) =>
+    updateParams({ [requesterParam]: person?.id ?? null, page: null });
   const counts = query.data?.data.counts ?? {};
   const hasFilters = Boolean(
-    search.trim() || status !== 'open' || priority !== 'all' || schedule !== 'all'
+    search.trim() || status !== 'open' || priority !== 'all' || schedule !== 'all' || requesterKind || requesterID
   );
   const updateParams = useCallback((updates: Record<string, string | null>) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -160,6 +201,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
     return () => window.clearTimeout(timer);
   }, [search, updateParams, urlSearch]);
   const setSelectedTaskID = (taskId?: string) => updateParams({ [taskParam]: taskId ?? null });
+  const openReport = (reportId: string) => updateParams({ report: reportId });
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-5 px-4 py-6 md:px-8 md:py-8">
@@ -169,7 +211,9 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             <ListTodo className="size-5 text-primary" />
             <h1 className="text-2xl font-semibold tracking-tight">{t('tasks.title')}</h1>
           </div>
-          <p className="max-w-3xl text-sm text-muted-foreground">{t('tasks.description')}</p>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            {canUpdate ? t('tasks.descriptionManager') : t('tasks.description')}
+          </p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -182,6 +226,12 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             {t('common.refresh')}
           </Button>
           {canUpdate ? (
+            <Button variant="outline" size="sm" onClick={() => setTeamChannelsOpen(true)}>
+              <Webhook className="size-4" />
+              {t('tasks.destinations.manage')}
+            </Button>
+          ) : null}
+          {canUpdate ? (
             <Button size="sm" onClick={() => setEditorTask(null)}>
               <Plus className="size-4" />
               {t('tasks.create')}
@@ -190,20 +240,20 @@ export function DigitalHumanTasks({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
+      {/* One row of status filters with counts, instead of a card per status. */}
+      <div className="flex flex-wrap gap-2">
         {summaryStatuses.map(item => (
-          <button
+          <Button
             key={item}
-            type="button"
-            className={cn(
-              'rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:border-primary/30 hover:bg-primary/[0.02] focus-visible:ring-2 focus-visible:ring-ring',
-              status === item && 'border-primary/40 bg-primary/5'
-            )}
+            size="sm"
+            variant={status === item ? 'default' : 'outline'}
+            className="h-8 gap-1.5 rounded-full"
+            aria-pressed={status === item}
             onClick={() => updateParams({ status: status === item ? null : item, page: null })}
           >
-            <p className="text-xs text-muted-foreground">{t(`tasks.status.${item}`)}</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{counts[item] ?? 0}</p>
-          </button>
+            {t(`tasks.status.${item}`)}
+            <span className="tabular-nums opacity-70">{counts[item] ?? 0}</span>
+          </Button>
         ))}
       </div>
 
@@ -215,9 +265,9 @@ export function DigitalHumanTasks({ id }: { id: string }) {
             placeholder={t('tasks.filters.search')}
             leftIcon={<Search />}
             className="h-9"
-            containerClassName="min-w-0 xl:w-[420px]"
+            containerClassName="min-w-0 xl:min-w-[200px] xl:flex-1"
           />
-          <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3 xl:flex xl:justify-end">
+          <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-3 xl:flex xl:flex-none xl:justify-end">
             <TaskFilter
               value={status}
               onChange={value => updateParams({ status: value === 'open' ? null : value, page: null })}
@@ -255,6 +305,27 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                 </SelectItem>
               ))}
             </TaskFilter>
+            <TaskFilter
+              value={requesterKind ?? 'all'}
+              onChange={value =>
+                updateParams({ [requesterKindParam]: value === 'all' ? null : value, [requesterParam]: null, page: null })
+              }
+              label={t('tasks.filters.requester')}
+            >
+              <SelectItem value="all">{t('tasks.filters.allRequesters')}</SelectItem>
+              {requesterKinds.map(kind => (
+                <SelectItem key={kind} value={kind}>
+                  {t(`tasks.requester.${kind}`)}
+                </SelectItem>
+              ))}
+            </TaskFilter>
+            <TaskRequesterPicker
+              digitalHumanId={id}
+              kind={requesterKind}
+              value={requesterID}
+              valueLabel={chosenRequester ? requesterName(chosenRequester, t) : undefined}
+              onChange={filterByRequester}
+            />
           </div>
           {hasFilters ? (
             <Button
@@ -262,7 +333,7 @@ export function DigitalHumanTasks({ id }: { id: string }) {
               size="sm"
               onClick={() => {
                 setSearch('');
-                updateParams({ q: null, status: null, priority: null, schedule: null, page: null });
+                updateParams({ q: null, status: null, priority: null, schedule: null, [requesterKindParam]: null, [requesterParam]: null, page: null });
               }}
             >
               {t('tasks.filters.clear')}
@@ -295,8 +366,9 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           />
         ) : (
           <>
-            <div className="hidden grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_130px] gap-4 border-b bg-muted/20 px-5 py-3 text-xs font-medium text-muted-foreground xl:grid">
+            <div className={cn('hidden gap-4 border-b bg-muted/20 px-5 py-3 text-xs font-medium text-muted-foreground xl:grid', taskColumns)}>
               <span>{t('tasks.columns.name')}</span>
+              <span>{t('tasks.columns.requester')}</span>
               <span>{t('tasks.columns.status')}</span>
               <span>{t('tasks.columns.priority')}</span>
               <span>{t('tasks.columns.schedule')}</span>
@@ -308,16 +380,27 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                 <button
                   key={task.id}
                   type="button"
-                  className="grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:grid-cols-[minmax(240px,2fr)_105px_90px_130px_160px_130px] xl:items-center xl:gap-4 xl:px-5"
+                  className={cn(
+                    'grid w-full gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring xl:items-center xl:gap-4 xl:px-5',
+                    taskColumns
+                  )}
                   onClick={() => setSelectedTaskID(task.id)}
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{task.name}</p>
-                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{task.goal}</p>
-                    <p className="mt-1 truncate text-[11px] text-muted-foreground/80">
-                      {sourceLabel(task, t)}
+                    <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="line-clamp-1">{task.goal}</span>
+                      <TaskVisibilityBadge task={task} />
                     </p>
                   </div>
+                  <TaskListCell label={t('tasks.columns.requester')}>
+                    <TaskRequesterCell
+                      task={task}
+                      digitalHumanId={id}
+                      canLabel={canUpdate}
+                      onFilter={requesterID ? undefined : filterByRequester}
+                    />
+                  </TaskListCell>
                   <TaskListCell label={t('tasks.columns.status')}>
                     <TaskStatusBadge task={task} />
                   </TaskListCell>
@@ -331,9 +414,13 @@ export function DigitalHumanTasks({ id }: { id: string }) {
                     {task.next_run_at ? formatDate(task.next_run_at) : '—'}
                   </TaskListCell>
                   <TaskListCell label={t('tasks.columns.lastResult')}>
-                    {task.last_run_status
-                      ? t(`tasks.runStatus.${normalizeRunStatus(task.last_run_status)}`)
-                      : t('tasks.neverRun')}
+                    {task.latest_report ? (
+                      <TaskLatestReport report={task.latest_report} onOpen={openReport} />
+                    ) : task.last_run_status ? (
+                      t(`tasks.runStatus.${normalizeRunStatus(task.last_run_status)}`)
+                    ) : (
+                      t('tasks.neverRun')
+                    )}
                   </TaskListCell>
                 </button>
               ))}
@@ -380,6 +467,19 @@ export function DigitalHumanTasks({ id }: { id: string }) {
           if (!open) setSelectedTaskID();
         }}
       />
+      {canUpdate ? (
+        <Sheet open={teamChannelsOpen} onOpenChange={setTeamChannelsOpen}>
+          <SheetContent side="right" className="w-[min(560px,100vw)] max-w-none overflow-y-auto sm:max-w-none">
+            <SheetHeader className="text-left">
+              <SheetTitle>{t('tasks.destinations.manage')}</SheetTitle>
+              <SheetDescription>{t('tasks.destinations.manageDescription')}</SheetDescription>
+            </SheetHeader>
+            <div className="mt-4">
+              <NotificationChannelManager basePath={TEAM_NOTIFICATION_CHANNELS_PATH} types={['webhook']} />
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </main>
   );
 }
@@ -409,7 +509,7 @@ function TaskFilter({
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-9 min-w-0 xl:w-[170px]" aria-label={label}>
+      <SelectTrigger className="h-9 min-w-0 xl:w-[150px]" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>{children}</SelectContent>
@@ -440,6 +540,18 @@ function TaskStatusBadge({ task }: { task: DigitalHumanTask }) {
             ? 'warning'
             : 'subtle';
   return <Badge variant={variant}>{t(`tasks.status.${status}`)}</Badge>;
+}
+
+// Workspace tasks are the default in the task center, so only narrower
+// visibility is called out.
+function TaskVisibilityBadge({ task }: { task: DigitalHumanTask }) {
+  const t = useT('digitalHumans');
+  if (!task.visibility || task.visibility === 'workspace') return null;
+  return (
+    <Badge variant="subtle" className="shrink-0 text-[10px]" title={t('tasks.visibilityNote')}>
+      {t(`tasks.visibility.${task.visibility}`)}
+    </Badge>
+  );
 }
 
 function PriorityBadge({ priority }: { priority: DigitalHumanTaskPriority }) {
@@ -484,7 +596,7 @@ function TaskState({
   );
 }
 
-function TaskDetailSheet({
+export function TaskDetailSheet({
   id,
   taskId,
   open,
@@ -505,12 +617,23 @@ function TaskDetailSheet({
   const { locale } = useLocale();
   const [runPage, setRunPage] = useState(1);
   const [activityPage, setActivityPage] = useState(1);
-  useEffect(() => { setRunPage(1); setActivityPage(1); }, [taskId]);
+  // A report opens inside this sheet, in place of the task, rather than in a
+  // second sheet stacked over it.
+  const [reportView, setReportView] = useState<string | null>(null);
+  // A run opens the same way, over the report or task it was opened from.
+  const [runView, setRunView] = useState<string | null>(null);
+  const canViewLogs = useAccountPermissions().hasPermission('digital_human.logs.view');
+  useEffect(() => { setRunPage(1); setActivityPage(1); setReportView(null); setRunView(null); }, [taskId]);
   const detail = useDigitalHumanTaskDetail(id, taskId, runPage, activityPage);
   const mutations = useDigitalHumanTaskMutations(id);
   const task = detail.task.data?.data;
   const actionPendingRef = useRef(false);
   const [confirmAction, setConfirmAction] = useState<'decline' | 'cancel' | 'archive' | null>(null);
+  // A task requested by another account is read-only unless the reader manages
+  // the task center; the server reports this per task.
+  const taskChangeable = task?.can_change !== false;
+  const allowUpdate = canUpdate && taskChangeable;
+  const allowRun = canRun && taskChangeable;
   const perform = async (action: string) => {
     if (!open || !task || actionPendingRef.current) return;
     actionPendingRef.current = true;
@@ -526,9 +649,102 @@ function TaskDetailSheet({
         toast.error(t('tasks.actionStale'));
         return;
       }
+      if (latest.data.data.can_change === false) {
+        toast.error(t('tasks.sharedReadOnly'));
+        return;
+      }
       await mutations.action.mutateAsync({ taskId, action, revision: latest.data.data.revision });
       setConfirmAction(null);
       toast.success(t('tasks.actionApplied'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
+  };
+
+  // The requester chooses the team channels of their shared task; a task
+  // manager may only remove them. The server enforces both.
+  const changeChannels = async (channelIds: string[]) => {
+    if (!open || !task?.notify_channel_access || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    try {
+      const latest = await detail.task.refetch();
+      if (latest.isError || !latest.data?.data || latest.data.data.id !== taskId) {
+        toast.error(t('tasks.loadError'));
+        return;
+      }
+      if (latest.data.data.revision !== task.revision) {
+        toast.error(t('tasks.actionStale'));
+        return;
+      }
+      await mutations.update.mutateAsync({
+        taskId,
+        request: { expected_revision: latest.data.data.revision, notify_channel_ids: channelIds },
+      });
+      toast.success(t('tasks.destinations.updated'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
+  };
+
+  const changeReview = async (review: DigitalHumanTaskReportReview) => {
+    if (!open || !task || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    try {
+      await mutations.update.mutateAsync({ taskId, request: { expected_revision: task.revision, report_review: review } });
+      toast.success(t('tasks.reportReview.updated'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
+  };
+
+  const changeDigest = async (digest: DigitalHumanTaskReportDigest | '') => {
+    if (!open || !task || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    try {
+      await mutations.update.mutateAsync({ taskId, request: { expected_revision: task.revision, report_digest: digest } });
+      toast.success(t('tasks.digest.updated'));
+    } catch {
+      void detail.task.refetch();
+    } finally {
+      actionPendingRef.current = false;
+    }
+  };
+
+  // Visibility belongs to task center managers, including for tasks another
+  // account requested. The server reports it per task, because it also
+  // depends on whether task visibility is enabled.
+  const changeVisibility = async (visibility: DigitalHumanTaskVisibility) => {
+    if (
+      !open ||
+      !task ||
+      !task.visibility_options?.includes(visibility) ||
+      visibility === effectiveTaskVisibility(task) ||
+      actionPendingRef.current
+    ) {
+      return;
+    }
+    actionPendingRef.current = true;
+    try {
+      const latest = await detail.task.refetch();
+      if (latest.isError || !latest.data?.data || latest.data.data.id !== taskId) {
+        toast.error(t('tasks.loadError'));
+        return;
+      }
+      if (latest.data.data.revision !== task.revision) {
+        toast.error(t('tasks.actionStale'));
+        return;
+      }
+      await mutations.update.mutateAsync({
+        taskId,
+        request: { expected_revision: latest.data.data.revision, visibility },
+      });
+      toast.success(t('tasks.visibilityControl.updated'));
     } catch {
       void detail.task.refetch();
     } finally {
@@ -546,7 +762,27 @@ function TaskDetailSheet({
           <SheetTitle>{task?.name ?? t('tasks.detail.title')}</SheetTitle>
           <SheetDescription>{task?.goal ?? t('tasks.detail.description')}</SheetDescription>
         </SheetHeader>
-        {detail.task.isLoading || !task ? (
+        {runView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="space-y-4 p-6">
+              <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setRunView(null)}>
+                <ArrowLeft className="size-4" />
+                {reportView ? t('tasks.runTrace.backToReport') : t('tasks.reports.backToTask')}
+              </Button>
+              <DigitalHumanRunTimeline digitalHumanId={id} runId={runView} />
+            </div>
+          </div>
+        ) : reportView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="space-y-4 p-6">
+              <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setReportView(null)}>
+                <ArrowLeft className="size-4" />
+                {t('tasks.reports.backToTask')}
+              </Button>
+              <TaskReportView digitalHumanId={id} reportId={reportView} mine={false} onOpenRun={canViewLogs ? setRunView : undefined} />
+            </div>
+          </div>
+        ) : detail.task.isLoading || !task ? (
           <div className="space-y-4 p-6">
             <Skeleton className="h-28" />
             <Skeleton className="h-44" />
@@ -557,33 +793,18 @@ function TaskDetailSheet({
               <div className="flex flex-wrap items-center gap-2">
                 <TaskStatusBadge task={task} />
                 <PriorityBadge priority={task.priority} />
+                <TaskVisibilityBadge task={task} />
                 <Badge variant="outline">
                   <CalendarClock className="size-3" />
                   {t(`tasks.schedule.${task.schedule.type}`)}
                 </Badge>
               </div>
-              <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
-                <DetailValue
-                  label={t('tasks.fields.schedule')}
-                  value={<TaskScheduleLabel task={task} />}
-                />
-                <DetailValue
-                  label={t('tasks.fields.delivery')}
-                  value={t(`tasks.delivery.${task.delivery_mode}`)}
-                />
-                <DetailValue
-                  label={t('tasks.fields.nextRun')}
-                  value={task.next_run_at ? formatDate(task.next_run_at) : '—'}
-                />
-                <DetailValue
-                  label={t('tasks.fields.timeout')}
-                  value={t('tasks.seconds', { value: task.execution_timeout_seconds })}
-                />
-                <DetailValue
-                  label={t('tasks.fields.retry')}
-                  value={String(task.max_attempts - 1)}
-                />
-                <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
+              <RequesterOrigin source={sourceLabel(task, t)} requester={task.requester} className="-mt-3" />
+              <section>
+                <h3 className="text-sm font-semibold">{t('tasks.reports.history')}</h3>
+                <div className="mt-3">
+                  <TaskReportFeed digitalHumanId={id} taskId={task.id} onOpen={setReportView} />
+                </div>
               </section>
               {(task.success_criteria ?? []).length ? (
                 <section>
@@ -598,6 +819,64 @@ function TaskDetailSheet({
                   </ul>
                 </section>
               ) : null}
+              <TaskReportDestinations task={task} onChange={changeChannels} />
+              <TaskReportDigest task={task} onChange={changeDigest} />
+              <TaskReportReview task={task} onChange={task.can_change === false ? undefined : changeReview} />
+              {/* What the task produced comes first; how it runs is folded away. */}
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="-ml-2 group">
+                    <ChevronRight className="size-4 transition-transform group-data-[state=open]:rotate-90" />
+                    {t('tasks.detail.settings')}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                <section className="mt-3 grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
+                  <DetailValue
+                    label={t('tasks.fields.schedule')}
+                    value={<TaskScheduleLabel task={task} />}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.delivery')}
+                    value={t(`tasks.delivery.${task.delivery_mode}`)}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.nextRun')}
+                    value={task.next_run_at ? formatDate(task.next_run_at) : '—'}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.timeout')}
+                    value={t('tasks.seconds', { value: task.execution_timeout_seconds })}
+                  />
+                  <DetailValue
+                    label={t('tasks.fields.retry')}
+                    value={String(task.max_attempts - 1)}
+                  />
+                  <DetailValue label={t('tasks.fields.source')} value={sourceLabel(task, t)} />
+                  {task.requester ? (
+                    <DetailValue
+                      label={t('tasks.columns.requester')}
+                      value={<TaskRequesterCell task={task} digitalHumanId={id} canLabel={canUpdate} />}
+                    />
+                  ) : null}
+                  {task.client_reference ? (
+                    <DetailValue
+                      label={t('tasks.fields.clientReference')}
+                      value={<span className="break-all font-mono text-xs">{task.client_reference}</span>}
+                    />
+                  ) : null}
+                  <DetailValue
+                    label={t('tasks.visibilityControl.label')}
+                    value={
+                      <TaskVisibilityControl
+                        task={task}
+                        onChange={visibility => void changeVisibility(visibility)}
+                      />
+                    }
+                  />
+                </section>
+                </CollapsibleContent>
+              </Collapsible>
               <section>
                 <h3 className="text-sm font-semibold">{t('tasks.detail.runs')}</h3>
                 <div className="mt-3 space-y-2">
@@ -611,12 +890,10 @@ function TaskDetailSheet({
                     </p>
                   ) : (
                     (detail.runs.data?.data.items ?? []).map(run => (
-                      <DigitalHumanTaskRunSummary key={run.id} run={run}>
-                        {run.digital_human_run_id ? (
-                          <Button asChild variant="ghost" size="sm" className="mt-2">
-                            <Link href={`/console/digital-humans/${id}/runs?run=${run.digital_human_run_id}`}>
-                              {t('tasks.detail.viewLog')}
-                            </Link>
+                      <DigitalHumanTaskRunSummary key={run.id} run={run} showResult={!task.latest_report}>
+                        {run.digital_human_run_id && canViewLogs ? (
+                          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setRunView(run.digital_human_run_id ?? null)}>
+                            {t('tasks.runTrace.open')}
                           </Button>
                         ) : null}
                       </DigitalHumanTaskRunSummary>
@@ -647,14 +924,17 @@ function TaskDetailSheet({
           </div>
         )}
         {task ? (
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t bg-background px-6 py-4">
-            {canUpdate && task.work_status !== 'canceled' ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t bg-background px-6 py-4">
+            {!taskChangeable ? (
+              <p className="mr-auto text-xs text-muted-foreground">{t('tasks.sharedReadOnly')}</p>
+            ) : null}
+            {allowUpdate && task.work_status !== 'canceled' ? (
               <Button variant="outline" size="sm" onClick={() => onEdit(task)}>
                 <Pencil className="size-4" />
                 {t('common.edit')}
               </Button>
             ) : null}
-            {task.work_status === 'proposed' && canUpdate ? (
+            {task.work_status === 'proposed' && allowUpdate ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => setConfirmAction('decline')}>
                   <XCircle className="size-4" />
@@ -666,7 +946,7 @@ function TaskDetailSheet({
                 </Button>
               </>
             ) : null}
-            {task.lifecycle_status === 'active' && task.work_status === 'pending' && canUpdate ? (
+            {task.lifecycle_status === 'active' && task.work_status === 'pending' && allowUpdate ? (
               <Button variant="outline" size="sm" onClick={() => void perform('pause')}>
                 <Pause className="size-4" />
                 {t('tasks.actions.pause')}
@@ -674,19 +954,19 @@ function TaskDetailSheet({
             ) : null}
             {task.lifecycle_status === 'paused' &&
             !['canceled', 'completed'].includes(task.work_status) &&
-            canUpdate ? (
+            allowUpdate ? (
               <Button variant="outline" size="sm" onClick={() => void perform('resume')}>
                 <Play className="size-4" />
                 {t('tasks.actions.resume')}
               </Button>
             ) : null}
-            {task.work_status === 'blocked' && canRun ? (
+            {task.work_status === 'blocked' && allowRun ? (
               <Button size="sm" onClick={() => void perform('retry')}>
                 <RotateCcw className="size-4" />
                 {t('tasks.actions.retry')}
               </Button>
             ) : null}
-            {!['proposed', 'in_progress', 'canceled', 'blocked'].includes(task.work_status) && canRun ? (
+            {!['proposed', 'in_progress', 'canceled', 'blocked'].includes(task.work_status) && allowRun ? (
               <Button
                 size="sm"
                 onClick={() => void perform('run_now')}
@@ -696,13 +976,13 @@ function TaskDetailSheet({
                 {t('tasks.actions.runNow')}
               </Button>
             ) : null}
-            {!['completed', 'canceled'].includes(task.work_status) && canRun ? (
+            {!['completed', 'canceled'].includes(task.work_status) && allowRun ? (
               <Button variant="outline" size="sm" onClick={() => setConfirmAction('cancel')}>
                 <XCircle className="size-4" />
                 {t('tasks.actions.cancel')}
               </Button>
             ) : null}
-            {['completed', 'canceled'].includes(task.work_status) && canUpdate ? (
+            {['completed', 'canceled'].includes(task.work_status) && allowUpdate ? (
               <Button variant="outline" size="sm" onClick={() => setConfirmAction('archive')}>
                 <MoreHorizontal className="size-4" />
                 {t('tasks.actions.archive')}
@@ -731,6 +1011,58 @@ function TaskDetailSheet({
   );
 }
 
+function effectiveTaskVisibility(task: DigitalHumanTask): DigitalHumanTaskVisibility {
+  if (task.visibility) return task.visibility;
+  if (task.owner_kind === 'conversation') return 'conversation';
+  if (task.owner_kind === 'user_subject') return 'requester';
+  return 'workspace';
+}
+
+// The server lists the visibilities this reader may set: the requester shares
+// or withdraws their task, and a task manager only narrows someone else's.
+function TaskVisibilityControl({
+  task,
+  onChange,
+}: {
+  task: DigitalHumanTask;
+  onChange: (visibility: DigitalHumanTaskVisibility) => void;
+}) {
+  const t = useT('digitalHumans');
+  const options = task.visibility_options ?? [];
+  const stored = effectiveTaskVisibility(task);
+  // A requester-only visibility from an older build shows as this task's
+  // requester-only option.
+  const current = options.includes(stored)
+    ? stored
+    : (options.find(option => option !== 'workspace' && stored !== 'workspace') ?? stored);
+  const hint = t(`tasks.visibilityControl.hint.${current}`);
+  if (options.length < 2) {
+    return (
+      <div>
+        <span>{t(`tasks.visibility.${current}`)}</span>
+        <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <Select value={current} onValueChange={value => onChange(value as DigitalHumanTaskVisibility)}>
+        <SelectTrigger className="h-8 w-full sm:w-56" aria-label={t('tasks.visibilityControl.label')}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(option => (
+            <SelectItem key={option} value={option}>
+              {t(`tasks.visibility.${option}`)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
+}
+
 function DetailValue({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
@@ -754,7 +1086,7 @@ interface TaskFormState {
   attempts: string;
 }
 
-function TaskEditorDialog({
+export function TaskEditorDialog({
   id,
   task,
   open,
@@ -1122,8 +1454,65 @@ function normalizeRunStatus(
     ? (value as 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled')
     : 'unknown';
 }
+const requesterKinds: DigitalHumanTaskRequesterKind[] = ['member', 'api_user', 'channel'];
+
+// Who asked, and where they asked from. Clicking the person shows only
+// their tasks; an API end user can be given a name.
+function TaskRequesterCell({
+  task,
+  digitalHumanId,
+  canLabel,
+  onFilter,
+}: {
+  task: DigitalHumanTask;
+  digitalHumanId: string;
+  canLabel: boolean;
+  onFilter?: (requester: DigitalHumanTaskRequester) => void;
+}) {
+  const t = useT('digitalHumans');
+  const requester = task.requester;
+  const origin = sourceLabel(task, t);
+  if (!requester || requester.kind === 'channel') {
+    return <span className="block truncate text-foreground/80">{origin}</span>;
+  }
+  const name = requesterName(requester, t);
+  return (
+    <span className="block min-w-0" title={requester.email || undefined}>
+      <span className="flex min-w-0 items-center gap-1.5">
+        {onFilter && requester.id ? (
+          <span
+            role="button"
+            tabIndex={0}
+            className="truncate text-foreground/80 hover:text-primary hover:underline"
+            title={t('tasks.requester.onlyThisPerson')}
+            onClick={event => {
+              event.stopPropagation();
+              onFilter(requester);
+            }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                event.stopPropagation();
+                onFilter(requester);
+              }
+            }}
+          >
+            {name}
+          </span>
+        ) : (
+          <span className="truncate text-foreground/80">{name}</span>
+        )}
+        {canLabel ? <TaskRequesterLabelButton digitalHumanId={digitalHumanId} requester={requester} /> : null}
+      </span>
+      <span className="block truncate text-[11px] text-muted-foreground/80">{origin}</span>
+    </span>
+  );
+}
+
 function sourceLabel(task: DigitalHumanTask, t: ReturnType<typeof useT<'digitalHumans'>>) {
+  if (task.owner_kind === 'digital_human') return t('tasks.source.taskCenter');
   if (task.source === 'console') return t('tasks.source.console');
+  if (task.source === 'webapp') return t('tasks.source.webapp');
+  if (task.source === 'external-api') return t('tasks.source.api');
   if (!task.source.startsWith('channel:')) return task.source || t('tasks.source.unknown');
   const providerID = task.source.slice('channel:'.length);
   const provider = digitalHumanChannelProvider(providerID);

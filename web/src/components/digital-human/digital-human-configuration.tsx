@@ -11,9 +11,7 @@ import {
 } from 'react';
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
-  ChevronRight,
   CircleDashed,
   CircleHelp,
   Loader2,
@@ -21,6 +19,7 @@ import {
   Pencil,
   Plus,
   Search,
+  SmilePlus,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -29,11 +28,14 @@ import { ModelSelector, type ModelSelectorValue } from '@/components/common/mode
 import { DigitalHumanResourceBindings } from '@/components/digital-human/digital-human-resource-bindings';
 import { DigitalHumanWorkJournal } from '@/components/digital-human/digital-human-work-journal';
 import { appendWorkJournalPrompt } from '@/components/digital-human/digital-human-work-journal-model';
+import { DigitalHumanDraftPreview } from '@/components/digital-human/digital-human-draft-preview';
 import { useDigitalHumanDraftPersistence } from '@/components/digital-human/use-digital-human-draft-persistence';
 import {
   useDigitalHumanDraftStore,
   useRegisterDigitalHumanDraftEditor,
 } from '@/components/digital-human/digital-human-draft-store';
+import { Badge } from '@/components/ui/badge';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -66,6 +68,28 @@ import type {
 } from '@/services/types/digital-human';
 
 export type DigitalHumanConfigurationPanel = 'response';
+
+const CONFIGURATION_TWO_COLUMN_MIN_WIDTH = 760;
+const CONFIGURATION_INLINE_PREVIEW_MIN_WIDTH = 1280;
+
+function useMeasuredWidth() {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const measure = () => setWidth(Math.floor(node.getBoundingClientRect().width));
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, width };
+}
 
 export function DigitalHumanConfigurationEditor({
   id,
@@ -142,15 +166,37 @@ function ConfigurationEditor({
   const executionRuntimeCapability = detail?.execution_runtime_capability ?? null;
   const canEnableExecution = executionRuntimeCapability?.can_enable ?? true;
   const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(detail?.draft.file_upload_policy ?? null);
-  const [intermediateMessagesEnabled, setIntermediateMessagesEnabled] = useState(
-    detail?.draft.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true
+  const { ref: bodyRef, width: bodyWidth } = useMeasuredWidth();
+  const twoColumns = bodyWidth >= CONFIGURATION_TWO_COLUMN_MIN_WIDTH;
+  // The draft preview sits beside the editor on wide screens, in a sheet otherwise.
+  // While a published version is shown it stays in place, paused, so the page
+  // keeps its shape and the preview conversation is still there afterwards.
+  const previewAvailable = permissions.hasPermission('digital_human.update');
+  const inlinePreview = previewAvailable && bodyWidth >= CONFIGURATION_INLINE_PREVIEW_MIN_WIDTH;
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const renderPreview = (surface: 'inline' | 'sheet'): ReactNode => (
+    <div className={cn('flex min-h-0 min-w-0 overflow-hidden', surface === 'inline' && 'h-full')}>
+      <DigitalHumanDraftPreview
+        id={id}
+        name={identityName.trim()}
+        model={model}
+        fileUploadPolicy={fileUploadPolicy}
+        surfaceMode={surface}
+        pausedVersion={versionPreview ? (versionPreview.version.version_number ?? '') : undefined}
+        onClose={() => setPreviewOpen(false)}
+        beforeSend={() => manualSave()}
+      />
+    </div>
   );
-  const [acknowledgementEnabled, setAcknowledgementEnabled] = useState(
-    detail?.draft.trigger_policy?.channel_response?.acknowledgement_enabled ?? true
-  );
-  const [activePanel, setActivePanel] = useState<DigitalHumanConfigurationPanel | null>(
-    initialPanel ?? null
-  );
+  // Old links to the reply settings land on the section that now holds them.
+  useEffect(() => {
+    if (initialPanel !== 'response') return;
+    const timer = window.setTimeout(
+      () => document.getElementById('configuration-behavior')?.scrollIntoView({ block: 'center' }),
+      300
+    );
+    return () => window.clearTimeout(timer);
+  }, [initialPanel]);
   const models = availableModels.models;
   const canUpdate = permissions.hasPermission('digital_human.update');
   const editingEnabled = canUpdate && !versionPreview;
@@ -169,11 +215,6 @@ function ConfigurationEditor({
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
-        channel_response: {
-          ...(detail?.draft.trigger_policy?.channel_response ?? {}),
-          intermediate_messages_enabled: intermediateMessagesEnabled,
-          acknowledgement_enabled: acknowledgementEnabled,
-        },
       },
     },
   });
@@ -196,11 +237,6 @@ function ConfigurationEditor({
       trigger_policy: {
         ...(detail?.draft.trigger_policy ?? {}),
         manual: detail?.draft.trigger_policy?.manual ?? true,
-        channel_response: {
-          ...(detail?.draft.trigger_policy?.channel_response ?? {}),
-          intermediate_messages_enabled: intermediateMessagesEnabled,
-          acknowledgement_enabled: acknowledgementEnabled,
-        },
       },
     },
   };
@@ -266,12 +302,6 @@ function ConfigurationEditor({
       : ['']
     : rules;
   const displayedModel = previewVersion?.default_model ?? model;
-  const displayedIntermediateMessagesEnabled = previewVersion
-    ? (previewVersion.trigger_policy?.channel_response?.intermediate_messages_enabled ?? true)
-    : intermediateMessagesEnabled;
-  const displayedAcknowledgementEnabled = previewVersion
-    ? (previewVersion.trigger_policy?.channel_response?.acknowledgement_enabled ?? true)
-    : acknowledgementEnabled;
   const selectedModel = models.find(item => item.model === displayedModel);
   const modelValue: ModelSelectorValue = {
     provider: selectedModel?.provider ?? '',
@@ -335,12 +365,157 @@ function ConfigurationEditor({
           </div>
         </section>
       ) : null}
-      <div className="grid min-h-0 min-w-0 flex-1 lg:grid-cols-2 lg:divide-x">
-        <section className="min-h-0 min-w-0 border-b lg:h-full lg:overflow-y-auto lg:border-b-0">
-          {activePanel === null ? (
-            <div className="min-w-0">
-              <section id="configuration-model" className="border-b p-4 md:p-5">
-                <h2 className="mb-3 text-sm font-semibold">{t('settings.modelTitle')}</h2>
+      <div
+        ref={bodyRef}
+        className={cn('min-h-0 min-w-0 flex-1', twoColumns ? 'overflow-hidden' : 'overflow-y-auto')}
+      >
+        <div
+          className={cn(
+            'grid min-h-full min-w-0 grid-cols-1',
+            twoColumns && 'h-full min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] divide-x',
+            inlinePreview && 'grid-cols-[minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,1.2fr)]'
+          )}
+        >
+          {/* Who the digital human is: the counterpart of an Agent's prompt. */}
+          <section
+            id="configuration-identity"
+            className={cn('min-w-0 border-b', twoColumns && 'h-full min-h-0 overflow-y-auto border-b-0')}
+          >
+            <div className="flex min-h-12 items-center justify-between gap-3 border-b px-4 py-2 md:px-5">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold">{t('settings.behaviorTitle')}</h2>
+                <p className="truncate text-xs text-muted-foreground">{t('settings.behaviorDescription')}</p>
+              </div>
+              {editingEnabled ? (
+                <PersonaTemplateActions
+                  identityName={displayedIdentityName}
+                  persona={displayedPersona}
+                  goals={displayedGoals.map(item => item.trim()).filter(Boolean)}
+                  rules={displayedRules.map(item => item.trim()).filter(Boolean)}
+                  onApply={(nextIdentityName, nextPersona, nextGoals, nextRules) => {
+                    setIdentityName(nextIdentityName);
+                    setPersona(nextPersona);
+                    setGoals(nextGoals.length > 0 ? nextGoals : ['']);
+                    setRules(nextRules.length > 0 ? nextRules : ['']);
+                  }}
+                />
+              ) : null}
+            </div>
+            <div className="space-y-5 p-4 md:p-5">
+              <Field
+                label={t('fields.identityName')}
+                description={t('settings.identityNameDescription')}
+                required
+              >
+                <Input
+                  value={displayedIdentityName}
+                  onChange={event => setIdentityName(event.target.value)}
+                  disabled={!editingEnabled}
+                  placeholder={t('settings.identityNamePlaceholder')}
+                  aria-label={t('fields.identityName')}
+                  aria-required="true"
+                />
+              </Field>
+              <Field
+                label={t('fields.persona')}
+                description={t('settings.personaDescription')}
+                required
+              >
+                <Textarea
+                  rows={7}
+                  value={displayedPersona}
+                  onChange={event => setPersona(event.target.value)}
+                  disabled={!editingEnabled}
+                  placeholder={t('settings.personaPlaceholder')}
+                  aria-label={t('fields.persona')}
+                  aria-required="true"
+                />
+              </Field>
+              {/* What it is for comes before what limits it. */}
+              <Field
+                label={t('fields.goals')}
+                description={t('settings.goalsDescription')}
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 gap-1.5 px-2.5"
+                    onClick={() => setGoals([...goals, ''])}
+                    disabled={!editingEnabled}
+                  >
+                    <Plus className="size-3.5" />
+                    {t('settings.addGoal')}
+                  </Button>
+                }
+              >
+                <RulesEditor
+                  rules={displayedGoals}
+                  onChange={setGoals}
+                  disabled={!editingEnabled}
+                  removeLabel={t('settings.removeGoal')}
+                  placeholder={t('settings.goalsPlaceholder')}
+                />
+              </Field>
+              <Field
+                label={t('fields.rules')}
+                description={t('settings.rulesDescription')}
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 gap-1.5 px-2.5"
+                    onClick={() => setRules([...rules, ''])}
+                    disabled={!editingEnabled}
+                  >
+                    <Plus className="size-3.5" />
+                    {t('settings.addRule')}
+                  </Button>
+                }
+              >
+                <RulesEditor
+                  rules={displayedRules}
+                  onChange={setRules}
+                  disabled={!editingEnabled}
+                  removeLabel={t('settings.removeRule')}
+                  placeholder={t('settings.rulesPlaceholder')}
+                />
+              </Field>
+            </div>
+          </section>
+
+          {/* How it works: model, capabilities, conversation, and runtime. */}
+          <section
+            className={cn('min-w-0 bg-muted/[0.08]', twoColumns && 'h-full min-h-0 overflow-y-auto')}
+          >
+            <nav
+              aria-label={t('configurationHub.sectionNav')}
+              className="sticky top-0 z-10 flex min-h-12 flex-wrap items-center gap-1 border-b bg-background px-3 py-2 md:px-4"
+            >
+              {orchestrationSections.map(section => (
+                <Button
+                  key={section.id}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 px-2.5 text-xs"
+                  onClick={() =>
+                    document.getElementById(section.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                >
+                  {t(section.label)}
+                </Button>
+              ))}
+              {editingEnabled && detail.published && detail.has_unpublished_changes ? (
+                <Badge variant="info" className="ml-auto shrink-0">
+                  {t('capabilities.pendingPublish')}
+                </Badge>
+              ) : null}
+            </nav>
+            {/* Leave room for the floating preview button. */}
+            <div className={cn('space-y-4 p-4 md:p-5', previewAvailable && !inlinePreview && 'pb-20 md:pb-20')}>
+              <ConfigurationSection id="configuration-model" title={t('settings.modelTitle')} description={t('settings.modelDescription')}>
                 <ModelSelector
                   modelType="text-chat"
                   availabilityUseCase="agent-runtime"
@@ -360,278 +535,118 @@ function ConfigurationEditor({
                     <span>{t('settings.modelUnavailable')}</span>
                   </div>
                 ) : null}
-              </section>
+              </ConfigurationSection>
 
-              <section id="configuration-identity" className="space-y-5 border-b p-4 md:p-5">
-                <div>
-                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold">{t('settings.behaviorTitle')}</h3>
-                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                        {t('settings.behaviorDescription')}
-                      </p>
-                    </div>
-                    {editingEnabled ? (
-                      <PersonaTemplateActions
-                        identityName={displayedIdentityName}
-                        persona={displayedPersona}
-                        goals={displayedGoals.map(item => item.trim()).filter(Boolean)}
-                        rules={displayedRules.map(item => item.trim()).filter(Boolean)}
-                        onApply={(nextIdentityName, nextPersona, nextGoals, nextRules) => {
-                          setIdentityName(nextIdentityName);
-                          setPersona(nextPersona);
-                          setGoals(nextGoals.length > 0 ? nextGoals : ['']);
-                          setRules(nextRules.length > 0 ? nextRules : ['']);
-                        }}
-                      />
-                    ) : null}
-                  </div>
-                  <div className="space-y-4">
-                    <Field
-                      label={t('fields.identityName')}
-                      description={t('settings.identityNameDescription')}
-                      required
-                    >
-                      <Input
-                        value={displayedIdentityName}
-                        onChange={event => setIdentityName(event.target.value)}
-                        disabled={!editingEnabled}
-                        placeholder={t('settings.identityNamePlaceholder')}
-                        aria-label={t('fields.identityName')}
-                        aria-required="true"
-                      />
-                    </Field>
-                    <Field
-                      label={t('fields.persona')}
-                      description={t('settings.personaDescription')}
-                      required
-                    >
-                      <Textarea
-                        rows={5}
-                        value={displayedPersona}
-                        onChange={event => setPersona(event.target.value)}
-                        disabled={!editingEnabled}
-                        placeholder={t('settings.personaPlaceholder')}
-                        aria-label={t('fields.persona')}
-                        aria-required="true"
-                      />
-                    </Field>
-                    <Field
-                      label={t('fields.rules')}
-                      description={t('settings.rulesDescription')}
-                      action={
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 shrink-0 gap-1.5 px-2.5"
-                          onClick={() => setRules([...rules, ''])}
-                          disabled={!editingEnabled}
-                        >
-                          <Plus className="size-3.5" />
-                          {t('settings.addRule')}
-                        </Button>
-                      }
-                    >
-                      <RulesEditor
-                        rules={displayedRules}
-                        onChange={setRules}
-                        disabled={!editingEnabled}
-                        removeLabel={t('settings.removeRule')}
-                        placeholder={t('settings.rulesPlaceholder')}
-                      />
-                    </Field>
-                    <Field
-                      label={t('fields.goals')}
-                      description={t('settings.goalsDescription')}
-                      action={
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 shrink-0 gap-1.5 px-2.5"
-                          onClick={() => setGoals([...goals, ''])}
-                          disabled={!editingEnabled}
-                        >
-                          <Plus className="size-3.5" />
-                          {t('settings.addGoal')}
-                        </Button>
-                      }
-                    >
-                      <RulesEditor
-                        rules={displayedGoals}
-                        onChange={setGoals}
-                        disabled={!editingEnabled}
-                        removeLabel={t('settings.removeGoal')}
-                        placeholder={t('settings.goalsPlaceholder')}
-                      />
-                    </Field>
-                  </div>
-                </div>
-              </section>
+              <ConfigurationSection
+                id="configuration-capabilities"
+                title={t('capabilities.title')}
+                description={editingEnabled ? t('capabilities.draftHint') : undefined}
+              >
+                <DigitalHumanResourceBindings id={id} />
+                <DigitalHumanWorkJournal
+                  id={id}
+                  canEdit={editingEnabled}
+                  onAppendPrompt={prompt => {
+                    if (editingEnabled) {
+                      setPersona(current => appendWorkJournalPrompt(current, prompt));
+                    }
+                  }}
+                />
+              </ConfigurationSection>
 
-              <div className="p-4 md:p-5">
-                <div className="overflow-hidden rounded-xl border bg-card">
-                  <ConfigurationMenuItem
-                    id="configuration-behavior"
-                    icon={<MessageSquareText className="size-4" />}
-                    title={t('preferences.channelResponseTitle')}
-                    description={t('preferences.channelResponseDescription')}
-                    summary={t('configurationHub.responseEnabledCount', {
-                      count:
-                        Number(displayedIntermediateMessagesEnabled) +
-                        Number(displayedAcknowledgementEnabled),
-                    })}
-                    onClick={() => setActivePanel('response')}
-                    last
+              <ConfigurationSection
+                id="configuration-conversation"
+                title={t('configurationHub.conversationTitle')}
+                description={t('configurationHub.conversationDescription')}
+              >
+                <div className="space-y-3">
+                  <PolicyFileUploadSettings
+                    value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy}
+                    onChange={setFileUploadPolicy}
+                    disabled={!editingEnabled}
                   />
+                  <ChannelReplyFlow />
                 </div>
-              </div>
-            </div>
-          ) : (
-            <div className="min-w-0">
-              <ConfigurationPanelHeader
-                title={t('preferences.channelResponseTitle')}
-                onBack={() => setActivePanel(null)}
-                backLabel={t('configurationHub.backToSettings')}
-              />
-              {activePanel === 'response' ? (
-                <div className="p-4 md:p-5">
-                  <p className="mb-4 text-xs leading-5 text-muted-foreground">
-                    {t('preferences.channelResponseDescription')}
-                  </p>
-                  <div className="min-w-0 divide-y rounded-lg border px-4">
-                    <PreferenceSwitch
-                      title={t('preferences.intermediateMessages')}
-                      description={t('preferences.intermediateMessagesDescription')}
-                      checked={displayedIntermediateMessagesEnabled}
-                      onCheckedChange={setIntermediateMessagesEnabled}
-                      disabled={!editingEnabled}
-                    />
-                    <PreferenceSwitch
-                      title={t('preferences.acknowledgement')}
-                      description={t('preferences.acknowledgementDescription')}
-                      checked={displayedAcknowledgementEnabled}
-                      onCheckedChange={setAcknowledgementEnabled}
-                      disabled={!editingEnabled}
-                    />
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </section>
+              </ConfigurationSection>
 
-        <section
-          id="configuration-capabilities"
-          className="min-h-0 min-w-0 scroll-mt-14 bg-muted/[0.08] lg:h-full lg:overflow-y-auto"
-        >
-          <div className="flex h-12 items-center border-b bg-background px-4 md:px-5">
-            <h2 className="text-sm font-semibold">{t('capabilities.title')}</h2>
-          </div>
-          <div className="p-4 md:p-5">
-            <PreferenceSwitch
-              title={t('preferences.linuxEnvironment')}
-              description={t('preferences.linuxEnvironmentDescription')}
-              checked={displayedExecutionEnabled}
-              onCheckedChange={setExecutionEnabled}
-              disabled={
-                !editingEnabled || (!executionEnabled && !canEnableExecution)
-              }
-            />
-            {executionUnavailable ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                {t('preferences.linuxEnvironmentUnavailable')}
-              </p>
-            ) : null}
-            <DigitalHumanResourceBindings id={id} />
-            <div className="my-4"><PolicyFileUploadSettings value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy} onChange={setFileUploadPolicy} disabled={!editingEnabled} /></div>
-            <DigitalHumanWorkJournal
-              id={id}
-              canEdit={editingEnabled}
-              onAppendPrompt={prompt => {
-                if (editingEnabled) {
-                  setPersona(current => appendWorkJournalPrompt(current, prompt));
-                  setActivePanel(null);
-                }
-              }}
-            />
-          </div>
-        </section>
+              <ConfigurationSection
+                id="configuration-runtime"
+                title={t('preferences.runtimeTitle')}
+                description={t('preferences.runtimeDescription')}
+              >
+                <div className="rounded-md border bg-background px-3">
+                  <PreferenceSwitch
+                    title={t('preferences.linuxEnvironment')}
+                    description={t('preferences.linuxEnvironmentDescription')}
+                    checked={displayedExecutionEnabled}
+                    onCheckedChange={setExecutionEnabled}
+                    disabled={!editingEnabled || (!executionEnabled && !canEnableExecution)}
+                    compact
+                  />
+                  {executionUnavailable ? (
+                    <p className="-mt-1 pb-3 text-xs text-muted-foreground">
+                      {t(linuxEnvironmentUnavailableKey(executionRuntimeCapability?.reason))}
+                    </p>
+                  ) : null}
+                </div>
+              </ConfigurationSection>
+            </div>
+          </section>
+          {inlinePreview ? renderPreview('inline') : null}
+        </div>
       </div>
+      {previewAvailable && !inlinePreview ? (
+        <Sheet open={previewOpen} onOpenChange={setPreviewOpen}>
+          <SheetContent
+            side="right"
+            showClose={false}
+            className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col p-0 sm:max-w-none"
+          >
+            <SheetTitle className="sr-only">{t('preview.title')}</SheetTitle>
+            <SheetDescription className="sr-only">{t('preview.description')}</SheetDescription>
+            {renderPreview('sheet')}
+          </SheetContent>
+        </Sheet>
+      ) : null}
+      {previewAvailable && !inlinePreview && !previewOpen ? (
+        <Button
+          type="button"
+          size="sm"
+          className="fixed bottom-5 right-5 z-20 gap-1.5 shadow-md"
+          onClick={() => setPreviewOpen(true)}
+        >
+          <MessageSquareText className="size-4" />
+          {t('preview.open')}
+        </Button>
+      ) : null}
     </div>
   );
 }
 
-function ConfigurationMenuItem({
+const orchestrationSections = [
+  { id: 'configuration-model', label: 'settings.modelTitle' },
+  { id: 'configuration-capabilities', label: 'capabilities.title' },
+  { id: 'configuration-conversation', label: 'configurationHub.conversationTitle' },
+  { id: 'configuration-runtime', label: 'preferences.runtimeTitle' },
+] as const;
+
+function ConfigurationSection({
   id,
-  icon,
   title,
   description,
-  summary,
-  onClick,
-  last = false,
+  children,
 }: {
   id: string;
-  icon: ReactNode;
   title: string;
-  description: string;
-  summary: string;
-  onClick: () => void;
-  last?: boolean;
+  description?: string;
+  children: ReactNode;
 }) {
   return (
-    <button
-      id={id}
-      type="button"
-      className={cn(
-        'group flex w-full items-start gap-3 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-        !last && 'border-b'
-      )}
-      onClick={onClick}
-    >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background text-primary">
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium">{title}</span>
-        <span className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-          {description}
-        </span>
-        <span className="mt-1.5 block truncate text-xs font-medium text-foreground/80">
-          {summary}
-        </span>
-      </span>
-      <ChevronRight className="mt-2 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-    </button>
-  );
-}
-
-function ConfigurationPanelHeader({
-  title,
-  onBack,
-  backLabel,
-}: {
-  title: string;
-  onBack: () => void;
-  backLabel: string;
-}) {
-  return (
-    <div className="flex h-12 items-center gap-2 border-b px-3">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        isIcon
-        interactive="subtle"
-        className="size-8"
-        aria-label={backLabel}
-        onClick={onBack}
-      >
-        <ArrowLeft className="size-4" />
-      </Button>
-      <h2 className="truncate text-sm font-semibold">{title}</h2>
-    </div>
+    <section id={id} className="scroll-mt-14 rounded-xl border bg-background p-4">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {description ? <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p> : null}
+      <div className="mt-3">{children}</div>
+    </section>
   );
 }
 
@@ -747,21 +762,75 @@ function serializeEditorPart(value: unknown) {
   return JSON.stringify(value);
 }
 
+// The server reports why the Linux environment cannot be enabled; each reason
+// needs a different administrator action, so it is shown instead of one
+// generic sentence.
+const linuxEnvironmentUnavailableReasons = [
+  'disabled',
+  'organization_not_enabled',
+  'entry_not_enabled',
+  'runtime_unavailable',
+] as const;
+
+function linuxEnvironmentUnavailableKey(reason?: string) {
+  const known = linuxEnvironmentUnavailableReasons.find(item => item === reason);
+  return known
+    ? (`preferences.linuxEnvironmentUnavailableReasons.${known}` as const)
+    : ('preferences.linuxEnvironmentUnavailable' as const);
+}
+
+const CHANNEL_REPLY_STEPS = [
+  { key: 'received', icon: SmilePlus },
+  { key: 'working', icon: MessageSquareText },
+  { key: 'done', icon: CheckCircle2 },
+] as const;
+
+// How a digital human answers in a chat channel. It is not configurable: every
+// channel message is acknowledged and reports progress.
+function ChannelReplyFlow() {
+  const t = useT('digitalHumans');
+  return (
+    <div id="configuration-behavior" className="rounded-lg border bg-background px-4 py-3">
+      <p className="text-xs font-medium text-muted-foreground">{t('preferences.channelResponseTitle')}</p>
+      <ol className="mt-3 space-y-3">
+        {CHANNEL_REPLY_STEPS.map(({ key, icon: Icon }, index) => (
+          <li key={key} className="flex gap-3">
+            <div className="flex flex-col items-center">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <Icon className="size-3.5" aria-hidden="true" />
+              </span>
+              {index < CHANNEL_REPLY_STEPS.length - 1 ? <span className="mt-1 w-px flex-1 bg-border" /> : null}
+            </div>
+            <div className="min-w-0 pb-1">
+              <p className="text-sm font-medium">{t(`preferences.channelReply.${key}.title`)}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                {t(`preferences.channelReply.${key}.description`)}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function PreferenceSwitch({
   title,
   description,
   checked,
   onCheckedChange,
   disabled,
+  compact = false,
 }: {
   title: string;
   description: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled: boolean;
+  compact?: boolean;
 }) {
   return (
-    <div className="flex items-start justify-between gap-6 py-5">
+    <div className={cn('flex items-start justify-between gap-6', compact ? 'py-3' : 'py-5')}>
       <div className="max-w-3xl space-y-1">
         <div className="text-sm font-medium">{title}</div>
         <p className="text-xs leading-5 text-muted-foreground">{description}</p>

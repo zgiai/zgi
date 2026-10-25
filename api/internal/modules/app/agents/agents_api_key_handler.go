@@ -137,6 +137,19 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 	}
 	agentID := *runtimeCtx.Caller.ID
 	ctx := c.Request.Context()
+	// A Runtime Workspace end user over their points quota is refused before
+	// any conversation turn starts (ADR 0010).
+	if scope := runtimeCtx.Scope; scope.RuntimeWorkspaceID != nil && scope.RuntimeSubjectID != nil {
+		if err := runtimeservice.CheckEndUserQuota(ctx, runtimeservice.EndUserQuotaRef{
+			RuntimeWorkspaceID: *scope.RuntimeWorkspaceID,
+			SubjectID:          *scope.RuntimeSubjectID,
+			AppType:            runtimemodel.ConversationCallerAgent,
+			AppID:              agentID.String(),
+		}); err != nil {
+			h.failRuntime(c, err)
+			return
+		}
+	}
 
 	published, err := h.appService.GetPublishedAgentRuntimeConfig(ctx, agentID.String())
 	if err != nil {

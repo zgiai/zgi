@@ -2,7 +2,9 @@ package digitalhuman
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
@@ -171,5 +173,61 @@ func TestResourceBindingIdentityUnchangedNativeDoesNotGainAuthority(t *testing.T
 				t.Fatalf("retention altered authority: %#v", states)
 			}
 		})
+	}
+}
+
+func TestWorkflowBindingParentFollowsWorkflowAgentID(t *testing.T) {
+	scope := testScope()
+	agentID := "0782665b-5d7b-4972-9ea6-0f5cc2a3a710"
+	input := func(parent string, metadata map[string]any) ResourceBindingInput {
+		return ResourceBindingInput{
+			Type: resourcebindings.BindingTypeWorkflow, ResourceID: agentID, ParentResourceID: parent,
+			AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "sha256:rev", Metadata: metadata,
+		}
+	}
+	metadata := map[string]any{"workflow_agent_id": agentID, "workflow_id": "workflow", "version_uuid": "version"}
+	for _, parent := range []string{"", agentID} {
+		items, err := buildResourceBindings(scope, uuid.New(), uuid.New(), []ResourceBindingInput{input(parent, metadata)}, nil, time.Now())
+		if err != nil || len(items) != 1 || items[0].ParentResourceID != agentID {
+			t.Fatalf("parent %q: items = %#v, err = %v", parent, items, err)
+		}
+	}
+	for name, test := range map[string]ResourceBindingInput{
+		"mismatched parent": input(uuid.NewString(), metadata),
+		"missing agent id":  input("", map[string]any{"workflow_id": "workflow"}),
+	} {
+		if _, err := buildResourceBindings(scope, uuid.New(), uuid.New(), []ResourceBindingInput{test}, nil, time.Now()); !errors.Is(err, ErrResourceBindingInvalid) {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestLegacyWorkflowBindingWithEmptyParentIsSavedAndUpgraded(t *testing.T) {
+	scope := testScope()
+	digitalHumanID, draftID := uuid.New(), uuid.New()
+	agentID := "0782665b-5d7b-4972-9ea6-0f5cc2a3a710"
+	metadata := map[string]any{"workflow_agent_id": agentID, "workflow_id": "workflow", "version_uuid": "version"}
+	rawMetadata, err := safeJSON(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().Add(-time.Hour)
+	legacy := &ResourceBinding{
+		ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
+		DigitalHumanID: digitalHumanID, DigitalHumanVersionID: draftID,
+		BindingType: resourcebindings.BindingTypeWorkflow, ResourceID: agentID, ParentResourceID: "",
+		DisplayName: "Approval", AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "sha256:rev",
+		Metadata: rawMetadata, CreatedAt: created,
+	}
+	input := ResourceBindingInput{
+		ID: &legacy.ID, Type: resourcebindings.BindingTypeWorkflow, ResourceID: agentID,
+		DisplayName: "Approval", AccessMode: resourcebindings.AccessModeExecute, ResourceRevision: "sha256:rev", Metadata: metadata,
+	}
+	items, err := buildResourceBindings(scope, digitalHumanID, draftID, []ResourceBindingInput{input}, []*ResourceBinding{legacy}, time.Now())
+	if err != nil {
+		t.Fatalf("saving an unchanged legacy workflow binding failed: %v", err)
+	}
+	if len(items) != 1 || items[0] == legacy || items[0].ID != legacy.ID || !items[0].CreatedAt.Equal(created) || items[0].ParentResourceID != agentID {
+		t.Fatalf("items = %#v, want the legacy row rewritten with the workflow Agent parent", items)
 	}
 }

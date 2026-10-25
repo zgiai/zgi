@@ -49,6 +49,17 @@ func TestAttachmentFileIDsFromMessageMetadataPreservesReplayInputs(t *testing.T)
 	}
 }
 
+func TestTemporaryAttachmentIDsOnlyTracksExplicitTemporaryFiles(t *testing.T) {
+	got := temporaryAttachmentIDs(&attachmentBundle{Files: []attachmentFile{
+		{ID: "temporary-1", IsTemporary: true},
+		{ID: "permanent-1", IsTemporary: false},
+		{ID: "", IsTemporary: true},
+	}})
+	if len(got) != 1 || got[0] != "temporary-1" {
+		t.Fatalf("temporary attachment ids = %#v, want [temporary-1]", got)
+	}
+}
+
 func TestRuntimeContextIsTransientUserContent(t *testing.T) {
 	svc := &service{}
 	parts := &chatRequestParts{

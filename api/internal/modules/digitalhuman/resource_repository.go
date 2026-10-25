@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,37 @@ import (
 )
 
 // RuntimePublishedVersion resolves the exact immutable identity used by an invocation.
+// RuntimeDraftVersion returns a DigitalHuman with its editable draft, for a
+// configuration preview.
+func (r *GormRepository) RuntimeDraftVersion(ctx context.Context, subject runtimeidentity.SubjectRef) (*Definition, *Version, error) {
+	if subject.Type != runtimeidentity.SubjectTypeDigitalHuman || subject.ID == uuid.Nil || subject.OrganizationID == uuid.Nil || subject.WorkspaceID == uuid.Nil {
+		return nil, nil, ErrInvalidRequest
+	}
+	var definition Definition
+	if err := r.db.WithContext(ctx).
+		Where("id = ? AND organization_id = ? AND workspace_id = ? AND deleted_at IS NULL", subject.ID, subject.OrganizationID, subject.WorkspaceID).
+		Take(&definition).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("resolve DigitalHuman draft definition: %w", err)
+	}
+	if definition.DraftVersionID == nil || *definition.DraftVersionID == uuid.Nil {
+		return nil, nil, ErrVersionNotFound
+	}
+	var version Version
+	if err := r.db.WithContext(ctx).Where(
+		"id = ? AND digital_human_id = ? AND organization_id = ? AND workspace_id = ? AND state = ?",
+		*definition.DraftVersionID, subject.ID, subject.OrganizationID, subject.WorkspaceID, VersionStateDraft,
+	).Take(&version).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrVersionNotFound
+		}
+		return nil, nil, fmt.Errorf("resolve DigitalHuman draft version: %w", err)
+	}
+	return &definition, &version, nil
+}
+
 func (r *GormRepository) RuntimePublishedVersion(ctx context.Context, subject runtimeidentity.SubjectRef, versionID *uuid.UUID) (*Definition, *Version, error) {
 	if subject.Type != runtimeidentity.SubjectTypeDigitalHuman || subject.ID == uuid.Nil || subject.OrganizationID == uuid.Nil || subject.WorkspaceID == uuid.Nil {
 		return nil, nil, ErrInvalidRequest
@@ -192,9 +224,18 @@ func (r *GormRepository) Verify(ctx context.Context, ref resourcebindings.Snapsh
 		return resourcebindings.Decision{}, err
 	}
 	query := r.db.WithContext(ctx).Where(
-		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND digital_human_version_id = ? AND binding_type = ? AND resource_id = ? AND parent_resource_id = ?",
-		ref.Subject.OrganizationID, ref.Subject.WorkspaceID, ref.Subject.ID, version.ID, match.Type, match.ResourceID, match.ParentResourceID,
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND digital_human_version_id = ? AND binding_type = ? AND resource_id = ?",
+		ref.Subject.OrganizationID, ref.Subject.WorkspaceID, ref.Subject.ID, version.ID, match.Type, match.ResourceID,
 	)
+	legacyWorkflowParent := match.Type == resourcebindings.BindingTypeWorkflow && match.ParentResourceID != ""
+	if legacyWorkflowParent {
+		// Published workflow rows saved before the parent was keyed by the
+		// workflow Agent id keep an empty parent; their metadata must still name
+		// the same workflow Agent.
+		query = query.Where("parent_resource_id IN ?", []string{match.ParentResourceID, ""}).Order("parent_resource_id DESC")
+	} else {
+		query = query.Where("parent_resource_id = ?", match.ParentResourceID)
+	}
 	if match.AccessMode == resourcebindings.AccessModeRead {
 		query = query.Where("access_mode IN ?", []resourcebindings.AccessMode{resourcebindings.AccessModeRead, resourcebindings.AccessModeWrite})
 	} else {
@@ -208,6 +249,9 @@ func (r *GormRepository) Verify(ctx context.Context, ref resourcebindings.Snapsh
 		return resourcebindings.Decision{}, fmt.Errorf("verify DigitalHuman resource binding: %w", err)
 	}
 	binding := projectDigitalHumanBinding(ref, &row)
+	if legacyWorkflowParent && row.ParentResourceID == "" && !strings.EqualFold(stringMapValue(binding.Metadata, "workflow_agent_id"), match.ParentResourceID) {
+		return resourcebindings.Decision{Reason: "resource_not_bound"}, nil
+	}
 	if match.ActionID != "" && !resourcebindings.AllowsIntegrationAction(binding.Metadata, match.ActionID) {
 		return resourcebindings.Decision{Binding: &binding, Reason: "integration_action_not_allowed"}, nil
 	}

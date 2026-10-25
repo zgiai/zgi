@@ -1133,7 +1133,7 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 		if customModel && official {
 			continue
 		}
-		if !route.SupportsModelForProvider(modelProvider, modelName) {
+		if !route.SupportsPlatformModel(modelProvider, modelName) {
 			continue
 		}
 		if !requiresAgentProtocol {

@@ -26,6 +26,7 @@ type AccessEventInput struct {
 	CredentialID       uuid.UUID
 	SubjectID          uuid.UUID
 	AgentID            uuid.UUID
+	AppType            string
 	Method             string
 	Route              string
 	StatusCode         int
@@ -81,6 +82,10 @@ func (s *Service) RecordAccessEvent(ctx context.Context, input AccessEventInput)
 	}
 	if input.SubjectID != uuid.Nil {
 		event.SubjectID = &input.SubjectID
+	}
+	if input.AppType != "" {
+		appType := input.AppType
+		event.AppType = &appType
 	}
 	if input.AgentID != uuid.Nil {
 		event.AgentID = &input.AgentID

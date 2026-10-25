@@ -31,7 +31,7 @@ var identitySuffixes = []string{
 //	"agicto"            -> "agicto"
 //	"Agicto Supplier"   -> "agicto"
 //	"agicto-supplier"   -> "agicto"
-//	"agicto 供应商"      -> "agicto"
+//	"agicto" + Chinese "supplier" -> "agicto"
 //	"zhipu"             -> "glm"
 func NormalizeIdentityKey(raw string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))

@@ -23,3 +23,23 @@ func TestEntryAdmissionDefaultsAndExplicitOrganizationAllowlist(t *testing.T) {
 		}
 	}
 }
+
+func TestAllOrganizationsEntryAdmissionSkipsTheAllowlist(t *testing.T) {
+	policy := AllOrganizationsEntryAdmission()
+	org := "00000000-0000-4000-8000-000000000123"
+	for _, entry := range []struct{ application, entry string }{
+		{"agent", "console"}, {"agent", "webapp"}, {"agent", "external-api"},
+		{"digital_human", "console"}, {"digital_human", "webapp"}, {"digital_human", "external-api"},
+		{"digital_human", "channel"}, {"digital_human", "task"},
+	} {
+		if !policy.Allows(org, entry.application, entry.entry) {
+			t.Fatalf("%s:%s was refused for an authenticated organization", entry.application, entry.entry)
+		}
+	}
+	if policy.Allows("", "digital_human", "console") {
+		t.Fatal("an empty organization was admitted")
+	}
+	if policy.Allows(org, "agent", "channel") || policy.Allows(org, "workflow", "console") {
+		t.Fatal("an unsupported entry was admitted")
+	}
+}

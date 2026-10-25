@@ -21,6 +21,7 @@ import type {
   DigitalHumanBindingType,
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryProposalRequest,
+  DigitalHumanMemoryRescopeRequest,
   DigitalHumanResourceBindingInput,
   DraftResourceBindings,
   ManualDigitalHumanInvocationRequest,
@@ -191,10 +192,15 @@ export function useDigitalHumanBindingCandidates(
   });
 }
 
-export function useDigitalHumanRuns(id: string, enabled = true) {
+export function useDigitalHumanRuns(
+  id: string,
+  enabled = true,
+  // Narrows runs to who asked for them.
+  requester?: { 'requester_kind[]'?: string[]; requester_id?: string }
+) {
   return useQuery({
-    queryKey: DIGITAL_HUMAN_KEYS.runs(id),
-    queryFn: () => digitalHumanService.listRuns(id, { page: 1, page_size: 100 }),
+    queryKey: requester ? [...DIGITAL_HUMAN_KEYS.runs(id), requester] : DIGITAL_HUMAN_KEYS.runs(id),
+    queryFn: () => digitalHumanService.listRuns(id, { page: 1, page_size: 100, ...requester }),
     enabled: enabled && Boolean(id),
     refetchInterval: query => {
       const active = query.state.data?.data?.items.some(run =>
@@ -228,6 +234,8 @@ export function useDigitalHumanRunRuntimeLog(
     queryFn: () => digitalHumanService.getRunRuntimeLog(id, runId),
     enabled: enabled && Boolean(id) && Boolean(runId),
     refetchInterval: query => {
+      // A log that cannot be read stays unreadable; do not keep asking.
+      if (query.state.status === 'error') return false;
       const status = query.state.data?.data?.detail?.status;
       return pollWhilePending || (status && isActiveDigitalHumanRunStatus(status)) ? 1_500 : false;
     },
@@ -377,6 +385,7 @@ export function useDigitalHumanMutations(id?: string) {
     onError: error => mutationError(error, t('errors.role')),
   });
   const replaceBindings = useMutation({
+    mutationKey: id ? DIGITAL_HUMAN_KEYS.replaceDraftBindings(id) : undefined,
     onMutate: () => ({ scope: digitalHumanRequestScope() }),
     mutationFn: ({
       digitalHumanId,
@@ -453,6 +462,22 @@ export function useDigitalHumanMutations(id?: string) {
       }),
     onError: error => mutationError(error, t('memory.errors.mutate')),
   });
+  const rescopeMemory = useMutation({
+    mutationFn: ({
+      digitalHumanId,
+      memoryId,
+      request,
+    }: {
+      digitalHumanId: string;
+      memoryId: string;
+      request: DigitalHumanMemoryRescopeRequest;
+    }) => digitalHumanService.rescopeMemory(digitalHumanId, memoryId, request),
+    onSuccess: (_, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: DIGITAL_HUMAN_KEYS.memories(variables.digitalHumanId),
+      }),
+    onError: error => mutationError(error, t('memory.errors.mutate')),
+  });
   const undoMemory = useMutation({
     mutationFn: ({
       digitalHumanId,
@@ -514,6 +539,7 @@ export function useDigitalHumanMutations(id?: string) {
     invoke,
     cancelRun,
     applyMemoryProposal,
+    rescopeMemory,
     undoMemory,
     updateMemoryState,
     repairMemory,

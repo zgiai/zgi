@@ -68,7 +68,7 @@ func TestAgentExecutionDependencyPreparationProgramPreparesAndReusesPythonWheel(
 		return result
 	}
 	first := run()
-	if first["status"] != "ready" || first["cache_status"] != "created" || first["source_mode"] != "offline-bundled" || first["preparation_version"] != "v2" {
+	if first["status"] != "ready" || first["cache_status"] != "created" || first["source_mode"] != "offline-bundled" || first["preparation_version"] != "v4" {
 		t.Fatalf("first Python preparation result = %#v", first)
 	}
 	pythonPath, ok := first["python_path"].(string)
@@ -80,6 +80,18 @@ func TestAgentExecutionDependencyPreparationProgramPreparesAndReusesPythonWheel(
 	output, err := check.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(output)) != "ready" {
 		t.Fatalf("prepared Python cannot import wheel: %v\n%s", err, output)
+	}
+	// A console script runs through the shebang pip wrote, which must name the
+	// published environment rather than the temporary one it was prepared in.
+	pythonBin := filepath.Dir(filepath.Join(workspace, filepath.FromSlash(pythonPath)))
+	cli := exec.Command(filepath.Join(pythonBin, "demo-cli"))
+	cli.Env = append(os.Environ(), "HOME="+home)
+	if output, err := cli.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "ready" {
+		t.Fatalf("prepared console script cannot run: %v\n%s", err, output)
+	}
+	activate, err := os.ReadFile(filepath.Join(pythonBin, "activate"))
+	if err != nil || strings.Contains(string(activate), ".deps-") || !strings.Contains(string(activate), filepath.Dir(pythonBin)) {
+		t.Fatalf("activate script still points at the temporary environment (err %v):\n%s", err, activate)
 	}
 	second := run()
 	if second["status"] != "reused" || second["cache_status"] != "reused" {
@@ -94,10 +106,11 @@ func writeTestWheel(path string) error {
 	}
 	archive := zip.NewWriter(file)
 	files := map[string]string{
-		"demo_dependency/__init__.py":              "VALUE = 'ready'\n",
-		"demo_dependency-1.0.0.dist-info/METADATA": "Metadata-Version: 2.1\nName: demo-dependency\nVersion: 1.0.0\n\n",
-		"demo_dependency-1.0.0.dist-info/WHEEL":    "Wheel-Version: 1.0\nGenerator: zgi-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n\n",
-		"demo_dependency-1.0.0.dist-info/RECORD":   "",
+		"demo_dependency/__init__.py":                      "VALUE = 'ready'\n\ndef main():\n    print(VALUE)\n",
+		"demo_dependency-1.0.0.dist-info/entry_points.txt": "[console_scripts]\ndemo-cli = demo_dependency:main\n",
+		"demo_dependency-1.0.0.dist-info/METADATA":         "Metadata-Version: 2.1\nName: demo-dependency\nVersion: 1.0.0\n\n",
+		"demo_dependency-1.0.0.dist-info/WHEEL":            "Wheel-Version: 1.0\nGenerator: zgi-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n\n",
+		"demo_dependency-1.0.0.dist-info/RECORD":           "",
 	}
 	for name, content := range files {
 		entry, err := archive.Create(name)
@@ -480,7 +493,7 @@ func TestAgentExecutionDependencyPreparationRunsOfflineJob(t *testing.T) {
 		return agentSkillPackage{ID: skillID, Root: root, ExpectedDigest: digest}, nil
 	})
 	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-1", Function: adapter.FunctionCall{Arguments: `{"skill_id":"dependency-demo","package_sha256":"` + digest + `"}`}})
-	if result.Error != nil || result.Status != "success" || result.Result["status"] != "ready" || result.Result["fingerprint"] != "fingerprint-1" || result.Result["source_mode"] != "offline-bundled" || result.Result["preparation_version"] != "v2" {
+	if result.Error != nil || result.Status != "success" || result.Result["status"] != "ready" || result.Result["fingerprint"] != "fingerprint-1" || result.Result["source_mode"] != "offline-bundled" || result.Result["preparation_version"] != "v4" {
 		t.Fatalf("dependency preparation result = %#v", result)
 	}
 	if fake.setupJobs != 1 || fake.command != "python3" || fake.networkPolicy != "offline" {
@@ -507,7 +520,7 @@ func TestAgentExecutionDependencyPreparationRunsControlledHTTPJob(t *testing.T) 
 	fake := &fakeAgentExecutionGateway{
 		binding: agentExecutionBinding{ID: "binding-1", Status: "active"},
 		job:     agentExecutionJob{ID: "job-controlled-1", Status: "succeeded", ExitCode: &exitCode},
-		output:  []agentExecutionOutputChunk{{Sequence: 0, Stream: "stdout", Data: []byte(`{"status":"ready","source_mode":"controlled-http","preparation_version":"v3"}`)}},
+		output:  []agentExecutionOutputChunk{{Sequence: 0, Stream: "stdout", Data: []byte(`{"status":"ready","source_mode":"controlled-http","preparation_version":"v5"}`)}},
 		capabilities: agentExecutionCapabilities{
 			Shell: true, FileTransfer: true, DependencyPreparation: true, DependencyPreparationMode: "controlled-http", NetworkMode: "controlled-http", EgressProxyAddress: "127.0.0.1:3128", MaxUploadBytes: 1024 * 1024,
 		},
@@ -519,7 +532,7 @@ func TestAgentExecutionDependencyPreparationRunsControlledHTTPJob(t *testing.T) 
 		return agentSkillPackage{ID: skillID, Root: root, ExpectedDigest: digest}, nil
 	})
 	result := tool.Handler(t.Context(), adapter.ToolCall{ID: "call-controlled-1", Function: adapter.FunctionCall{Arguments: `{"skill_id":"controlled-demo","package_sha256":"` + digest + `"}`}})
-	if result.Error != nil || result.Status != "success" || result.Result["source_mode"] != "controlled-http" || result.Result["preparation_version"] != "v3" || result.Result["offline_only"] != false {
+	if result.Error != nil || result.Status != "success" || result.Result["source_mode"] != "controlled-http" || result.Result["preparation_version"] != "v5" || result.Result["offline_only"] != false {
 		t.Fatalf("controlled dependency preparation result = %#v", result)
 	}
 	if len(fake.args) != 6 || fake.args[5] != "controlled-http" || fake.networkPolicy != "controlled-http" {

@@ -354,6 +354,7 @@ const messages = {
     login: 'Sign in',
     loginHint: 'Sign in to save conversations and use more capabilities',
     signedIn: 'Signed in',
+    back: 'Back',
   },
   agentChat: {
     fallbackTitle: 'Agent',
@@ -451,6 +452,11 @@ const messages = {
     },
   },
   consoleChat: {
+    taskReport: {
+      title: 'Scheduled task',
+      view: 'View report',
+      outcome: { done: 'Done', partial: 'Partly done', not_done: 'Not done', failed: 'Failed' },
+    },
     title: 'Workbench assistant',
     loading: 'Loading chat service...',
     loadError: 'Failed to load chat service',
@@ -581,8 +587,16 @@ const messages = {
       supplement: 'What should change',
       supplementPlaceholder: 'For example: Move it to 9:00 AM and keep only the key metrics…',
       supplementHint:
-        'If this proposal does not meet your needs, explain what should change. Choose “Add instructions and regenerate” to reject this proposal without applying it and ask the Agent to generate a new one for approval.',
+        'Regenerating discards this proposal without applying it. The digital human then prepares a new one for you to review.',
       supplementRequired: 'Describe what should change before regenerating the proposal.',
+      requestChanges: 'Request changes',
+      regenerate: 'Regenerate proposal',
+      backToReview: 'Back',
+      nextRunRecalculated: 'Recalculated after you confirm',
+      relatedFieldsHint:
+        'The schedule changes, but the task goal and success criteria stay the same. Check that they still match the new schedule.',
+      showUnchanged: 'Show full task ({count} unchanged)',
+      hideUnchanged: 'Hide unchanged fields',
       emptyValue: 'Not set',
       manual: 'Manual execution',
       once: 'One-time execution',
@@ -620,7 +634,7 @@ const messages = {
       confirmRetry: 'Confirm retry',
       confirmArchive: 'Confirm archive',
       revise: 'Add instructions and regenerate',
-      decline: 'Cancel operation',
+      decline: "Don't apply",
     },
     contextCompaction: {
       running: 'Organizing conversation context. Your response will continue automatically…',
@@ -1561,6 +1575,22 @@ const messages = {
         other: 'Other',
       },
     },
+    uploadSettings: {
+      title: 'File uploads',
+      description: 'People can attach files in the chat.',
+      configure: 'Upload settings',
+      dialogTitle: 'File upload settings',
+      count: 'Files per message',
+      countValue: '{count}',
+      summary: '{kinds} · up to {count} per message',
+      customExtensions: 'Allowed extensions',
+      customPlaceholder: 'Type an extension, e.g. .dwg',
+      documentNote: 'Text is read for the model.',
+      imageNote: 'Vision models can see them.',
+      storedNote: 'Kept as files; code execution can open them.',
+      separator: ', ',
+      kinds: { document: 'Documents', image: 'Images', audio: 'Audio', video: 'Video', custom: 'Custom' },
+    },
     attachments: {
       upload: 'Upload files',
       uploadDocument: 'Upload document',
@@ -1599,6 +1629,9 @@ const messages = {
       turnTooLarge: 'Attachments in one message must total no more than {max} MiB',
       imageDisabled: 'Image attachments are disabled for this application.',
       allowedTypes: 'Allowed attachments',
+      loginRequiredTitle: 'Sign in to upload',
+      loginRequiredDescription: 'You can chat without signing in. Uploading files needs an account, and signing in starts a new conversation.',
+      goToLogin: 'Sign in',
       documentType: 'Documents',
       imageType: 'Images',
       imageFileHint:
@@ -1740,6 +1773,8 @@ const messages = {
       workflowRun: 'Workflow run',
       workflowNode: 'Workflow node: {name}',
       workflowApproval: 'Workflow approval',
+      taskApproval: 'Task confirmation',
+      taskApprovalNamed: 'Task confirmation: {name}',
     },
     runtimeModelPhases: {
       final_answer: 'Final answer generation',

@@ -48,6 +48,9 @@ type fileService struct {
 
 type UploadFileOptions struct {
 	StartLegacyContentExtraction bool
+	// UploadAttemptID is set only for chat attachment uploads. It gives cancellation
+	// and cleanup a scoped lifecycle without changing retention for ordinary temporary files.
+	UploadAttemptID string
 }
 
 func isAssetProcessableExtension(ext string) bool {
@@ -183,6 +186,13 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		return nil, fmt.Errorf("failed to save replacement file to storage: %w", err)
 	}
 
+	// The replaced object stops being referenced the moment the record points at the new
+	// key, so its removal is recorded in the same transaction as that switch.
+	var pendingOldObject *model.FileObjectDeletion
+	if oldKey != "" && oldKey != newKey {
+		pendingOldObject = model.NewFileObjectDeletion(oldKey, time.Now().UTC())
+	}
+
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		updates := map[string]interface{}{
 			"storage_type": storageType,
@@ -202,6 +212,12 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		}
 		if err := s.fileRepo.WithTx(tx).DeleteExtractionCaches(ctx, fileID); err != nil {
 			return fmt.Errorf("failed to clear file extraction caches: %w", err)
+		}
+
+		if pendingOldObject != nil {
+			if err := tx.WithContext(ctx).Create(pendingOldObject).Error; err != nil {
+				return fmt.Errorf("failed to record pending file object deletion for %s: %w", oldKey, err)
+			}
 		}
 
 		if delta != 0 && groupID != nil && s.quotaService != nil {
@@ -246,17 +262,17 @@ func (s *fileService) ReplaceFileContent(ctx context.Context, fileID string, fil
 		return nil
 	})
 	if err != nil {
-		if deleteErr := s.storage.Delete(newKey); deleteErr != nil {
-			logger.Warn("Failed to delete replacement file after DB rollback", "key", newKey, "error", deleteErr.Error())
+		if !s.replacementObjectIsReferenced(ctx, fileID, newKey) {
+			// The record still points at the object being replaced, so the new one is
+			// unreachable and can be removed.
+			s.removeOrphanedObject(ctx, newKey)
 		}
 		return nil, err
 	}
 
-	if oldKey != "" && oldKey != newKey {
-		if err := s.storage.Delete(oldKey); err != nil {
-			logger.Warn("Failed to delete old file content after replacement", "file_id", fileID, "key", oldKey, "error", err.Error())
-		}
-	}
+	// The record points at the new object now, so the replaced one is unreachable and can be
+	// removed. A storage failure leaves the pending row for the retry worker.
+	s.removeObjectWithRetry(ctx, pendingOldObject)
 
 	replaced, err := s.fileRepo.GetByTenantAndID(ctx, organizationID, fileID)
 	if err != nil {
@@ -301,7 +317,9 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	// Check file size
 	fileSize := int64(len(content))
 	if isTemporary && !isIcon && source != nil && *source == interfaces.FileSourceChat {
-		if err := s.GetUploadConfig().ChatUploadPolicy.ValidateFile(extension, fileSize); err != nil {
+		// Any type an application may allow is admitted here; the
+		// application's own policy applies when the file joins a turn.
+		if err := chatfile.ValidatePlatformFile(extension, fileSize, s.GetUploadConfig().ChatLimits()); err != nil {
 			if errors.Is(err, chatfile.ErrUnsupportedType) {
 				return nil, model.ErrUnsupportedFileType
 			}
@@ -354,6 +372,14 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	fileUUID := uuid.New().String()
 	storageType := config.Current().Storage.Type
 	fileKey := fmt.Sprintf("upload_files/%s/%s.%s", uploadOrganizationID, fileUUID, extension)
+	if isTemporary && strings.TrimSpace(options.UploadAttemptID) != "" {
+		if _, err := uuid.Parse(strings.TrimSpace(options.UploadAttemptID)); err != nil {
+			return nil, fmt.Errorf("invalid upload attempt id: %w", err)
+		}
+		if err := s.beginTemporaryUploadAttempt(ctx, strings.TrimSpace(options.UploadAttemptID), userID, fileUUID, fileKey); err != nil {
+			return nil, err
+		}
+	}
 
 	// Calculate file hash
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
@@ -378,21 +404,26 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 		SourceURL:      "",
 	}
 
-	// Step 4: Execute upload and record usage in a transaction
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		// Save file to storage
-		if err := s.storage.Save(fileKey, content); err != nil {
-			return fmt.Errorf("failed to save file to storage: %w", err)
-		}
+	// Step 4: Persist the object before opening the transaction. Saving to storage
+	// is a network call that can take seconds, and holding a database transaction
+	// (and its connection) across it serializes concurrent uploads.
+	if err := s.storage.Save(fileKey, content); err != nil {
+		return nil, fmt.Errorf("failed to save file to storage: %w", err)
+	}
 
+	// Step 5: Record the file and its quota usage in a transaction
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if isTemporary && strings.TrimSpace(options.UploadAttemptID) != "" {
+			if err := s.ensureTemporaryUploadAttemptPending(ctx, tx, strings.TrimSpace(options.UploadAttemptID), userID, fileUUID); err != nil {
+				return err
+			}
+		}
 		// Save to database using transaction
 		if err := s.fileRepo.WithTx(tx).Create(ctx, localUploadFile); err != nil {
-			// If database save fails, delete uploaded file
-			s.storage.Delete(fileKey)
 			return fmt.Errorf("failed to save file record: %w", err)
 		}
 
-		// Step 5: Record usage history if groupID exists
+		// Step 6: Record usage history if groupID exists
 		if groupID != nil && s.quotaService != nil {
 			logger.Info("Recording quota usage: groupID=%s, fileSize=%d, fileUUID=%s", groupID.String(), fileSize, fileUUID)
 
@@ -450,10 +481,17 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 			}
 		}
 
+		if isTemporary && strings.TrimSpace(options.UploadAttemptID) != "" {
+			if err := s.markTemporaryUploadCompleted(ctx, tx, strings.TrimSpace(options.UploadAttemptID)); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 
 	if err != nil {
+		s.compensateFailedUpload(ctx, fileKey, fileUUID)
 		return nil, err
 	}
 
@@ -463,6 +501,120 @@ func (s *fileService) UploadFileWithOptions(ctx context.Context, filename string
 	}
 
 	return s.convertToInterfaceUploadFile(localUploadFile), nil
+}
+
+// uploadRollbackReconcileTimeout bounds the record lookup that decides whether an
+// object may be removed. The request context is usually already canceled at that
+// point, so the lookup runs on a detached context with its own budget.
+const uploadRollbackReconcileTimeout = 3 * time.Second
+
+// pendingObjectDeletionClearTimeout bounds clearing the object-deletion handoff after a
+// successful removal, which also runs detached because the caller may already be gone.
+const pendingObjectDeletionClearTimeout = 3 * time.Second
+
+// compensateFailedUpload removes the object written for an upload whose database
+// transaction reported a failure.
+//
+// A transaction can report an error after the database actually committed, for
+// example when the connection drops while the commit acknowledgement is in flight.
+// Deleting unconditionally would then leave a durable record pointing at a missing
+// blob, which is worse for the user than a stray object. Reconcile the record first
+// and only remove the object once it is confirmed absent; when the outcome cannot be
+// established, keep the object.
+func (s *fileService) compensateFailedUpload(ctx context.Context, fileKey, fileID string) {
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadRollbackReconcileTimeout)
+	defer cancel()
+
+	record, err := s.fileRepo.GetByID(reconcileCtx, fileID)
+	switch {
+	case err == nil && record != nil:
+		logger.Warn("Keeping uploaded object: its record persisted despite the transaction error",
+			"key", fileKey, "file_id", fileID)
+		return
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		// Either the lookup failed or it returned a shape we cannot read as "absent"
+		// (a nil record without an error). Only a positive not-found result justifies
+		// removing the object. Record the lookup error when there is one.
+		fields := []interface{}{"key", fileKey, "file_id", fileID}
+		if err != nil {
+			fields = append(fields, "error", err.Error())
+		} else {
+			fields = append(fields, "record", "nil")
+		}
+		logger.Warn("Keeping uploaded object: could not confirm the record was rolled back", fields...)
+		return
+	}
+
+	// The record is confirmed absent, so the object is unreferenced. Removals that storage
+	// refuses are recorded for the retry worker rather than dropped after a log line.
+	s.removeOrphanedObject(ctx, fileKey)
+}
+
+// orphanedObjectRetryTimeout bounds recording a pending removal for an object whose upload
+// never became a record. It runs on a detached context because the request is already gone.
+const orphanedObjectRetryTimeout = 3 * time.Second
+
+// removeOrphanedObject removes an object that no upload record references any more.
+//
+// The pending row is written before the removal is attempted: at this point nothing else
+// names the object, so the intent has to be durable first. A process that dies between the
+// two then still leaves a row the retry worker finishes, instead of an object nothing can
+// find again.
+func (s *fileService) removeOrphanedObject(ctx context.Context, objectKey string) {
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanedObjectRetryTimeout)
+	defer cancel()
+
+	pending := model.NewFileObjectDeletion(objectKey, time.Now().UTC())
+	if err := s.db.WithContext(recordCtx).Create(pending).Error; err != nil {
+		// Nothing durable names the object now, so no worker can pick this up: the removal
+		// below is a plain best effort, and the object is unreferenced either way, so
+		// skipping it would only guarantee the leak. Report it as the untracked removal it
+		// is, rather than as work the retry worker owns.
+		logger.Error("Failed to record a pending file object deletion; removing the object untracked",
+			"key", objectKey, "error", err.Error())
+
+		if deleteErr := s.storage.Delete(objectKey); deleteErr != nil {
+			logger.Error("Failed to remove an untracked file object",
+				"key", objectKey, "error", deleteErr.Error())
+		}
+		return
+	}
+
+	s.removeObjectWithRetry(recordCtx, pending)
+}
+
+// replacementObjectIsReferenced reports whether the new object of a replacement must be
+// kept after the transaction reported a failure.
+//
+// A transaction can report an error after the database actually committed, and the record
+// then points at the new object: removing it would leave the file with no content at all.
+// Reconcile the record first, and keep the object whenever the answer cannot be trusted.
+func (s *fileService) replacementObjectIsReferenced(ctx context.Context, fileID, newKey string) bool {
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadRollbackReconcileTimeout)
+	defer cancel()
+
+	record, err := s.fileRepo.GetByID(reconcileCtx, fileID)
+	switch {
+	case err == nil && record != nil:
+		if record.Key == newKey {
+			logger.Warn("Keeping replacement object: its record persisted despite the transaction error",
+				"file_id", fileID, "key", newKey)
+			return true
+		}
+		return false
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// Nothing references the new object any more.
+		return false
+	default:
+		fields := []interface{}{"file_id", fileID, "key", newKey}
+		if err != nil {
+			fields = append(fields, "error", err.Error())
+		} else {
+			fields = append(fields, "record", "nil")
+		}
+		logger.Warn("Keeping replacement object: could not confirm the record still points at the old key", fields...)
+		return true
+	}
 }
 
 // AddFileToFolder adds a file to a folder
@@ -926,13 +1078,25 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 			logger.Info("File deletion: using tenantID as groupID=%s", groupID.String())
 		}
 
-		// Execute deletion and record usage in a transaction
-		err = s.db.Transaction(func(tx *gorm.DB) error {
-			// Delete file from storage
-			if err := s.storage.Delete(file.Key); err != nil {
-				return fmt.Errorf("failed to delete file %s from storage: %w", fileID, err)
-			}
+		// Resolve everything that depends on the object still being present, and fail
+		// before anything is destroyed. A parse failure used to abort a delete that had
+		// already removed the object, and the page count was read after it was gone.
+		prep, err := s.prepareDeletion(file, groupID)
+		if err != nil {
+			return err
+		}
 
+		// The object removal is recorded in the same transaction that deletes the record,
+		// so a storage rejection or a crash after the commit can never lose track of the
+		// object. The row is cleared as soon as the object is really gone.
+		pendingDeletion := model.NewFileObjectDeletion(file.Key, time.Now().UTC())
+
+		// Execute deletion and record usage in a transaction. The object is deliberately
+		// left in place until the transaction commits: removing it first meant a rolled
+		// back delete kept the record while its content was already gone.
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			// Runs before every destructive step: this is the check that can still refuse
+			// the delete.
 			if s.assetDeletion != nil {
 				if err := s.assetDeletion.DeleteBySourceFileInTx(ctx, tx, file.OrganizationID, fileID); err != nil {
 					if errors.Is(err, datalibraryservice.ErrFileAssetDeletionBlocked) {
@@ -947,26 +1111,20 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 				return fmt.Errorf("failed to delete file %s record: %w", fileID, err)
 			}
 
+			// Durable handoff for the object: written here so it is either recorded
+			// together with the record deletion or not at all.
+			if err := tx.WithContext(ctx).Create(pendingDeletion).Error; err != nil {
+				return fmt.Errorf("failed to record pending file object deletion for %s: %w", fileID, err)
+			}
+
 			// Record usage decrease if groupID exists
-			if groupID != nil && s.quotaService != nil {
-				// Parse createdBy to UUID
-				accountUUID, err := uuid.Parse(file.CreatedBy)
-				if err != nil {
-					return fmt.Errorf("failed to parse user ID: %w", err)
-				}
-
-				// Parse tenantID to UUID
-				tenantUUID, err := uuid.Parse(file.OrganizationID)
-				if err != nil {
-					return fmt.Errorf("failed to parse tenant ID: %w", err)
-				}
-
+			if prep.quotaEnabled {
 				// Create usage history record with negative delta
 				usageRecord := &quota_model.QuotaUsageHistory{
 					ID:           uuid.New().String(),
 					GroupID:      *groupID,
-					AccountID:    accountUUID,
-					TenantID:     &tenantUUID,
+					AccountID:    prep.accountUUID,
+					TenantID:     &prep.tenantUUID,
 					ResourceType: quota_model.ResourceTypeStorage,
 					Delta:        -file.Size, // Negative delta for deletion
 					ResourceID:   &fileID,
@@ -984,45 +1142,22 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 				}
 
 				// Record OCR quota decrease for PDF and image files
-				if s.shouldCheckOCRQuota(file.Extension) {
-					// Calculate OCR pages (same logic as upload)
-					expectedPages := int64(1) // Default to 1 page for images
-
-					// For PDF files, try to get accurate page count
-					if file.Extension == "pdf" {
-						// Load file content from storage
-						content, err := s.storage.Load(file.Key)
-						if err == nil {
-							tempDir, err := os.MkdirTemp("", "pdf_ocr_delete")
-							if err == nil {
-								defer os.RemoveAll(tempDir)
-
-								tempFile := filepath.Join(tempDir, "temp.pdf")
-								if err := os.WriteFile(tempFile, content, 0644); err == nil {
-									pageCount, err := s.getQuickPDFPageCount(tempFile)
-									if err == nil {
-										expectedPages = int64(pageCount)
-									}
-								}
-							}
-						}
-					}
-
+				if prep.countOCR {
 					// Create OCR usage history record with negative delta
 					ocrUsageRecord := &quota_model.QuotaUsageHistory{
 						ID:           uuid.New().String(),
 						GroupID:      *groupID,
-						AccountID:    accountUUID,
-						TenantID:     &tenantUUID,
+						AccountID:    prep.accountUUID,
+						TenantID:     &prep.tenantUUID,
 						ResourceType: quota_model.ResourceTypeOCRPages,
-						Delta:        -expectedPages, // Negative delta for deletion
+						Delta:        -prep.ocrPages, // Negative delta for deletion
 						ResourceID:   &fileID,
 						ResourceName: &file.Name,
 						Metadata: &quota_model.JSONMap{
 							"file_id":   fileID,
 							"file_name": file.Name,
 							"file_size": file.Size,
-							"pages":     expectedPages,
+							"pages":     prep.ocrPages,
 							"action":    "deleted",
 						},
 					}
@@ -1031,7 +1166,7 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 						return fmt.Errorf("failed to record OCR usage decrease: %w", err)
 					}
 
-					logger.Info("Successfully recorded OCR quota decrease: %d pages", expectedPages)
+					logger.Info("Successfully recorded OCR quota decrease: %d pages", prep.ocrPages)
 				}
 			}
 
@@ -1041,9 +1176,127 @@ func (s *fileService) DeleteFiles(ctx context.Context, fileIDs []string) error {
 		if err != nil {
 			return err
 		}
+
+		// The record is gone, so nothing can reach the object any more.
+		s.removeObjectWithRetry(ctx, pendingDeletion)
 	}
 
 	return nil
+}
+
+// removeObjectWithRetry removes an object that has a pending deletion row and clears the row
+// once the object is really gone.
+//
+// The row is the only record of the object, so it is cleared only on a successful removal;
+// a storage failure leaves it to the retry worker. This is what makes the removal
+// recoverable instead of silently skipped.
+func (s *fileService) removeObjectWithRetry(ctx context.Context, pending *model.FileObjectDeletion) {
+	if pending == nil {
+		return
+	}
+
+	if deleteErr := s.storage.Delete(pending.ObjectKey); deleteErr != nil {
+		logger.Warn("File object deletion deferred to the retry worker",
+			"key", pending.ObjectKey, "pending_id", pending.ID, "error", deleteErr.Error())
+		return
+	}
+
+	if clearErr := s.clearPendingObjectDeletion(ctx, pending.ID); clearErr != nil {
+		// Harmless on its own: the worker asks the backend whether the object is still
+		// there and clears the row when it is gone.
+		logger.Warn("Failed to clear the completed file object deletion",
+			"id", pending.ID, "error", clearErr.Error())
+	}
+}
+
+// clearPendingObjectDeletion drops the handoff row once the object is really gone.
+func (s *fileService) clearPendingObjectDeletion(ctx context.Context, id string) error {
+	clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pendingObjectDeletionClearTimeout)
+	defer cancel()
+
+	return s.db.WithContext(clearCtx).
+		Where("id = ?", id).
+		Delete(&model.FileObjectDeletion{}).Error
+}
+
+// deletionPreparation holds everything a delete transaction needs that has to be resolved
+// while the file object is still readable.
+type deletionPreparation struct {
+	quotaEnabled bool
+	accountUUID  uuid.UUID
+	tenantUUID   uuid.UUID
+	countOCR     bool
+	ocrPages     int64
+}
+
+// prepareDeletion resolves the quota identifiers and the OCR page count before the delete
+// touches anything. Both used to be evaluated inside the transaction, where an
+// unparseable id aborted a delete that had already removed the object, and where the page
+// count was read back after the object was gone and therefore always fell back to one.
+func (s *fileService) prepareDeletion(file *model.UploadFile, groupID *uuid.UUID) (deletionPreparation, error) {
+	var prep deletionPreparation
+	if file != nil && file.IsTemporary {
+		// Temporary uploads do not consume organization quota at creation time, so their
+		// cleanup must not emit negative storage or OCR usage either.
+		return prep, nil
+	}
+	if groupID == nil || s.quotaService == nil {
+		return prep, nil
+	}
+
+	accountUUID, err := uuid.Parse(file.CreatedBy)
+	if err != nil {
+		return prep, fmt.Errorf("failed to parse user ID: %w", err)
+	}
+	tenantUUID, err := uuid.Parse(file.OrganizationID)
+	if err != nil {
+		return prep, fmt.Errorf("failed to parse tenant ID: %w", err)
+	}
+
+	prep.quotaEnabled = true
+	prep.accountUUID = accountUUID
+	prep.tenantUUID = tenantUUID
+
+	if !s.shouldCheckOCRQuota(file.Extension) {
+		return prep, nil
+	}
+
+	prep.countOCR = true
+	prep.ocrPages = s.expectedOCRPagesOnDelete(file)
+	return prep, nil
+}
+
+// expectedOCRPagesOnDelete reports how many OCR pages to credit back for a deleted file.
+// It reads the object, so it has to run before the object is removed.
+func (s *fileService) expectedOCRPagesOnDelete(file *model.UploadFile) int64 {
+	// Images and every other OCR format count as a single page.
+	if file.Extension != "pdf" {
+		return 1
+	}
+
+	content, err := s.storage.Load(file.Key)
+	if err != nil {
+		logger.Warn("Falling back to one OCR page: could not read the file to count its pages",
+			"file_id", file.ID, "key", file.Key, "error", err.Error())
+		return 1
+	}
+
+	tempDir, err := os.MkdirTemp("", "pdf_ocr_delete")
+	if err != nil {
+		return 1
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempFile := filepath.Join(tempDir, "temp.pdf")
+	if err := os.WriteFile(tempFile, content, 0644); err != nil {
+		return 1
+	}
+
+	pageCount, err := s.getQuickPDFPageCount(tempFile)
+	if err != nil || pageCount <= 0 {
+		return 1
+	}
+	return int64(pageCount)
 }
 
 // GetStorageUsage gets the storage usage for a tenant

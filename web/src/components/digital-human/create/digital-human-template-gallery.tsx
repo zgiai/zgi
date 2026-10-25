@@ -113,7 +113,7 @@ export function DigitalHumanTemplateGallery({
                     the slot (the tags stay available in the detail drawer). */}
                 <div className="relative mt-3 h-8">
                   <div className="hidden h-full items-center overflow-hidden sm:flex sm:transition-opacity motion-reduce:transition-none sm:group-hover:opacity-0 sm:group-focus-within:opacity-0">
-                    <DigitalHumanTagList tags={templateTags(template)} />
+                    <DigitalHumanTagList tags={templateTags(template)} limit={2} />
                   </div>
                   <div className="absolute inset-0 flex items-center gap-2 opacity-100 transition-opacity motion-reduce:transition-none sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                     <Button

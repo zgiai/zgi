@@ -144,6 +144,8 @@ func normalizeConversationSource(value string) string {
 		return runtimemodel.ConversationSourceChannel
 	case runtimemodel.ConversationSourceTask:
 		return runtimemodel.ConversationSourceTask
+	case runtimemodel.ConversationSourcePreview:
+		return runtimemodel.ConversationSourcePreview
 	case runtimemodel.ConversationSourceMigration:
 		return runtimemodel.ConversationSourceMigration
 	default:

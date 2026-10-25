@@ -14,6 +14,7 @@ const messages = {
   systemSettings: 'Personal Settings',
   profile: 'Profile',
   memory: 'My AI memories',
+  notifications: 'Notification settings',
   models: 'Models',
   modelPlaza: 'Model Plaza',
   zgiMarket: 'ZGI Market',

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
@@ -209,6 +210,12 @@ func (h *RuntimeHandler) taskApprovalIDs(c *gin.Context) (Scope, uuid.UUID, uuid
 	scope.Surface = SurfaceConsole
 	scope.PrincipalType = string(invocation.PrincipalAccount)
 	scope.PrincipalID = scope.ActorID
+	// Continuations re-check run ownership by UserSubject, including when
+	// they re-authorize Linux execution. Without it every console approval of
+	// a run with execution enabled is rejected as forbidden.
+	subjectID := scope.ActorID
+	scope.UserSubjectKind = string(usersubject.Account)
+	scope.UserSubjectID = &subjectID
 	conversationID, err := uuid.Parse(strings.TrimSpace(c.Param("conversation_id")))
 	if err != nil || conversationID == uuid.Nil {
 		h.base.writeError(c, applicationError(ErrInvalidRequest, "digital_human.task.approval.conversation"))

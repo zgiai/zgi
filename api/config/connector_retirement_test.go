@@ -33,3 +33,18 @@ func TestConnectorRetirementDeferredWithoutLoadedConfigReadsEnvironment(t *testi
 		t.Fatal("empty retirement mode was treated as deferred")
 	}
 }
+
+func TestConnectorRetirementModeDefaultsToAutoAndRejectsTypos(t *testing.T) {
+	previous := GlobalConfig
+	t.Cleanup(func() { GlobalConfig = previous })
+	GlobalConfig = nil
+	for value, want := range map[string]string{
+		"": ConnectorRetirementModeAuto, "auto": ConnectorRetirementModeAuto, " Deferred ": ConnectorRetirementModeDeferred,
+		"strict": ConnectorRetirementModeStrict, "deffered": ConnectorRetirementModeStrict,
+	} {
+		t.Setenv(ConnectorRetirementModeEnv, value)
+		if got := ConnectorRetirementMode(); got != want {
+			t.Fatalf("mode for %q = %q, want %q", value, got, want)
+		}
+	}
+}

@@ -69,6 +69,7 @@ export type AgentRuntimeStepType =
   | 'workflow_run'
   | 'workflow_node'
   | 'workflow_approval'
+  | 'task_approval'
   | 'model_call'
   | 'model_answer'
   | 'agent_step'

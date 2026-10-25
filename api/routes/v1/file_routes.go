@@ -37,6 +37,51 @@ type FileRouteDeps struct {
 	Scheduler                  *pkgscheduler.Scheduler
 }
 
+// fileObjectDeletionTaskRegistrar is the slice of the scheduler the retry worker needs,
+// which keeps the registration branch testable without a running scheduler.
+type fileObjectDeletionTaskRegistrar interface {
+	RegisterTask(pkgscheduler.ScheduledTask, pkgscheduler.TaskHandler) error
+}
+
+// registerFileObjectDeletionRetry schedules the worker that finishes the object removals a
+// delete request could not complete. It is a safety net rather than a hard dependency: a
+// deployment without a scheduler keeps serving, it only loses the automatic retry.
+func registerFileObjectDeletionRetry(
+	scheduler fileObjectDeletionTaskRegistrar,
+	db *gorm.DB,
+	backend storage.Storage,
+) {
+	if scheduler == nil || db == nil || backend == nil {
+		return
+	}
+
+	processor := fileProcessService.NewFileObjectDeletionProcessor(db, backend)
+	task := &fileProcessService.FileObjectDeletionTask{}
+	handler := fileProcessService.NewFileObjectDeletionTaskHandler(processor, 50)
+	if err := scheduler.RegisterTask(task, handler); err != nil {
+		// Pending rows stay durable, and a restart retries the registration, so this must
+		// not take the API down.
+		logger.Error("Failed to register the file object deletion retry task", "error", err.Error())
+		return
+	}
+
+	logger.Info("File object deletion retry task registered", "interval", task.Interval().String())
+}
+
+func registerTemporaryUploadCleanup(scheduler fileObjectDeletionTaskRegistrar, db *gorm.DB) {
+	if scheduler == nil || db == nil {
+		return
+	}
+	processor := fileProcessService.NewFileUploadAttemptCleanupProcessor(db)
+	task := &fileProcessService.FileUploadAttemptCleanupTask{}
+	handler := fileProcessService.NewFileUploadAttemptCleanupTaskHandler(processor)
+	if err := scheduler.RegisterTask(task, handler); err != nil {
+		logger.Error("Failed to register temporary upload cleanup task", "error", err.Error())
+		return
+	}
+	logger.Info("Temporary upload cleanup task registered", "interval", task.Interval().String())
+}
+
 // registerFileRoutesLegacy keeps original implementation details.
 func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	fileRepo := fileProcessRepo.NewFileRepository(deps.DB)
@@ -84,6 +129,9 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 	imagePreviewHandler := fileProcessHandler.NewImagePreviewHandler(fileService, deps.AccountService, deps.OrganizationService, deps.Storage)
 	toolFileHandler := tool_file.NewHTTPHandler(tool_file.GlobalToolFileManager)
 
+	registerFileObjectDeletionRetry(deps.Scheduler, deps.DB, deps.Storage)
+	registerTemporaryUploadCleanup(deps.Scheduler, deps.DB)
+
 	files := v1.Group("/files",
 		jwtMiddleware.JWTWithOrganizationAndService(deps.AccountService),
 	)
@@ -91,6 +139,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
 		files.GET("/upload", fileHandler.GetUploadConfig)
 
 		files.POST("/upload", fileHandler.UploadFile)
+		files.DELETE("/upload-attempts/:attempt_id", fileHandler.CancelUploadAttempt)
 
 		files.POST("/text", fileHandler.CreateTextFile)
 

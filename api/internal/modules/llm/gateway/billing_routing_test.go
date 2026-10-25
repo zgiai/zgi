@@ -301,6 +301,19 @@ func TestBillingRouting_CheckBalanceAndPreDeduct_Official_UsesRemoteBilling(t *t
 	}
 }
 
+func TestBillingRouting_ToolPostpaidStillChecksOfficialTokenBalance(t *testing.T) {
+	remote := &fakeBillingProvider{checkBalanceResult: false}
+	s := &llmGatewayServiceImpl{billing: remote, localBilling: &fakeBillingProvider{checkBalanceResult: true}}
+	bc := &BillingContext{APIKeyID: "k1", UseSystemProvider: true, BillingLane: UsageBillingLanePlatform, ToolPostpaid: true, EstimatedCredits: 123}
+	err := s.checkBalanceAndPreDeduct(context.Background(), &ProviderSelection{UseSystemProvider: true}, uuid.New(), uuid.New(), 123, bc)
+	if !errors.Is(err, ErrInsufficientBalance) {
+		t.Fatalf("err=%v, want %v", err, ErrInsufficientBalance)
+	}
+	if remote.checkBalanceCalls != 1 || remote.preDeductCalls != 0 {
+		t.Fatalf("check=%d prededuct=%d", remote.checkBalanceCalls, remote.preDeductCalls)
+	}
+}
+
 func TestBillingRouting_CheckBalanceAndPreDeduct_PlatformLaneWinsOverLegacyFlag(t *testing.T) {
 	remote := &fakeBillingProvider{checkBalanceResult: true}
 	local := &fakeBillingProvider{checkBalanceResult: true}

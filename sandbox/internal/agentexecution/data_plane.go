@@ -275,17 +275,21 @@ type WorkerOptions struct {
 	CancelPollInterval time.Duration
 	MaxOutputBytes     int64
 	QuarantineJob      func(context.Context, Job) error
+	// StartUnknownTimeout bounds how long a start whose outcome is unknown is
+	// retried before the job is fenced and failed.
+	StartUnknownTimeout time.Duration
 }
 
 type Worker struct {
-	jobs               JobRepository
-	backends           map[string]ExecutionBackend
-	ownerID            string
-	now                func() time.Time
-	claimLease         time.Duration
-	cancelPollInterval time.Duration
-	maxOutputBytes     int64
-	quarantineJob      func(context.Context, Job) error
+	jobs                JobRepository
+	backends            map[string]ExecutionBackend
+	ownerID             string
+	now                 func() time.Time
+	claimLease          time.Duration
+	cancelPollInterval  time.Duration
+	maxOutputBytes      int64
+	quarantineJob       func(context.Context, Job) error
+	startUnknownTimeout time.Duration
 }
 
 func NewWorker(jobs JobRepository, backends map[string]ExecutionBackend, options WorkerOptions) (*Worker, error) {
@@ -304,11 +308,14 @@ func NewWorker(jobs JobRepository, backends map[string]ExecutionBackend, options
 	if options.MaxOutputBytes <= 0 {
 		options.MaxOutputBytes = defaultJobOutputBytes
 	}
+	if options.StartUnknownTimeout <= 0 {
+		options.StartUnknownTimeout = 2 * options.ClaimLease
+	}
 	return &Worker{
 		jobs: jobs, backends: copyExecutionBackends(backends), ownerID: strings.TrimSpace(options.OwnerID),
 		now: options.Now, claimLease: options.ClaimLease,
 		cancelPollInterval: options.CancelPollInterval, maxOutputBytes: options.MaxOutputBytes,
-		quarantineJob: options.QuarantineJob,
+		quarantineJob: options.QuarantineJob, startUnknownTimeout: options.StartUnknownTimeout,
 	}, nil
 }
 
@@ -346,14 +353,27 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 		}
 		return err
 	}
-	running, err := backend.StartJob(jobCtx, allocationForJob(job), JobSpec{
+	start, err := w.startJob(ctx, jobCtx, job, backend, JobSpec{
 		JobID: job.ID, Command: job.Command, Args: append([]string(nil), job.Args...),
 		Environment: cloneEnvironment(job.Environment), WorkDir: job.WorkDir,
 		PTY: job.PTY, PTYColumns: job.PTYColumns, PTYRows: job.PTYRows, Timeout: job.Timeout,
-	}, sink)
+	}, sink, now.Add(w.claimLease/2))
 	if err != nil {
-		return true, w.finishJob(context.WithoutCancel(ctx), job, JobResult{ExitCode: -1, Error: err.Error()})
+		// The claim is kept for the next worker, whose start attaches to the job
+		// if it is running.
+		return true, err
 	}
+	if start.rejected != nil {
+		return true, w.finishJob(context.WithoutCancel(ctx), job, JobResult{ExitCode: -1, Error: start.rejected.Error()})
+	}
+	if start.unresolved != nil {
+		// The job may be running where it can no longer be reached or stopped:
+		// fence its compute before the job settles.
+		return true, w.settleJob(ctx, job, JobResult{
+			ExitCode: -1, Error: start.unresolved.Error(), TerminationFailed: true,
+		})
+	}
+	running := start.running
 
 	waitResult := make(chan workerResult, 1)
 	go func() {
@@ -363,7 +383,12 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 	ticker := time.NewTicker(w.cancelPollInterval)
 	defer ticker.Stop()
 	cancelSent := false
-	nextRenewal := now.Add(w.claimLease / 2)
+	nextRenewal := start.nextRenewal
+	if start.cancelRequested {
+		// Cancellation was requested while the start was unresolved.
+		cancelSent = true
+		_ = running.Cancel(jobCtx)
+	}
 	for {
 		select {
 		case result := <-waitResult:
@@ -377,14 +402,7 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 			if result.err != nil && result.result.Error == "" {
 				result.result.Error = result.err.Error()
 			}
-			var quarantineErr error
-			if result.result.TerminationFailed && w.quarantineJob != nil {
-				cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-				quarantineErr = w.quarantineJob(cleanupCtx, job)
-				cleanupCancel()
-			}
-			finishErr := w.finishJob(context.WithoutCancel(ctx), job, result.result)
-			return true, errors.Join(finishErr, quarantineErr)
+			return true, w.settleJob(ctx, job, result.result)
 		case <-ticker.C:
 			tickNow := w.now().UTC()
 			if !tickNow.Before(nextRenewal) {
@@ -408,6 +426,77 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 			return true, ctx.Err()
 		}
 	}
+}
+
+// jobStart is how a job's start resolved: attached to its running job,
+// rejected by the backend, or still unknown when the start window closed.
+type jobStart struct {
+	running         RunningJob
+	rejected        error
+	unresolved      error
+	cancelRequested bool
+	nextRenewal     time.Time
+}
+
+// startJob starts the job on its backend. A start whose outcome is unknown
+// (the request may have reached the backend, but no answer came back) is not a
+// failure: the job may be running. The backend start is idempotent by job ID,
+// so it is retried to attach to the job while the claim is kept, and a
+// cancellation requested meanwhile is reported for the caller to send once
+// attached. An error is returned only when the claim must be left as is.
+func (w *Worker) startJob(ctx context.Context, jobCtx context.Context, job Job, backend ExecutionBackend, spec JobSpec, sink func(OutputChunk) error, nextRenewal time.Time) (jobStart, error) {
+	start := jobStart{nextRenewal: nextRenewal}
+	deadline := w.now().UTC().Add(w.startUnknownTimeout)
+	delay := w.cancelPollInterval
+	for {
+		running, err := backend.StartJob(jobCtx, allocationForJob(job), spec, sink)
+		switch {
+		case err == nil:
+			start.running = running
+			return start, nil
+		case !errors.Is(err, ErrJobStartUnknown):
+			start.rejected = err
+			return start, nil
+		case !w.now().UTC().Before(deadline):
+			start.unresolved = err
+			return start, nil
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return jobStart{}, ctx.Err()
+		case <-timer.C:
+		}
+		delay = min(delay*2, max(w.claimLease/4, w.cancelPollInterval))
+		now := w.now().UTC()
+		if !now.Before(start.nextRenewal) {
+			if err := w.jobs.RenewJobClaim(jobCtx, job.ID, w.ownerID, now, now.Add(w.claimLease)); err != nil {
+				return jobStart{}, err
+			}
+			start.nextRenewal = now.Add(w.claimLease / 2)
+		}
+		if !start.cancelRequested {
+			requested, err := w.jobs.JobCancellationRequested(jobCtx, job.ID)
+			if err != nil {
+				return jobStart{}, err
+			}
+			start.cancelRequested = requested
+		}
+	}
+}
+
+// settleJob records a job's result, quarantining its compute first when the
+// job could not be confirmed stopped.
+func (w *Worker) settleJob(ctx context.Context, job Job, result JobResult) error {
+	var quarantineErr error
+	if result.TerminationFailed && w.quarantineJob != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		quarantineErr = w.quarantineJob(cleanupCtx, job)
+		cleanupCancel()
+	}
+	finishErr := w.finishJob(context.WithoutCancel(ctx), job, result)
+	return errors.Join(finishErr, quarantineErr)
 }
 
 func (w *Worker) finishJob(ctx context.Context, job Job, result JobResult) error {

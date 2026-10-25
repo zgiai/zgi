@@ -62,3 +62,19 @@ func TestBindExternalFileRequiresUserSubjectAndMatchingSurface(t *testing.T) {
 		t.Fatalf("BindExternalFile(surface mismatch) error = %v, want ErrInvalidRequest", err)
 	}
 }
+
+func TestValidateExternalFilesAsksAnonymousWebAppVisitorToSignIn(t *testing.T) {
+	service := &AccessService{}
+	files := []string{uuid.NewString()}
+	webApp := Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), Surface: SurfaceWebApp}
+	if err := service.ValidateExternalFiles(t.Context(), webApp, uuid.New(), files, SurfaceWebApp); !errors.Is(err, ErrWebAppFileRequiresLogin) {
+		t.Fatalf("ValidateExternalFiles(anonymous webapp) error = %v, want ErrWebAppFileRequiresLogin", err)
+	}
+	if err := service.ValidateExternalFiles(t.Context(), webApp, uuid.New(), nil, SurfaceWebApp); err != nil {
+		t.Fatalf("ValidateExternalFiles(anonymous webapp, no files) error = %v", err)
+	}
+	api := Scope{OrganizationID: uuid.New(), WorkspaceID: uuid.New(), Surface: SurfaceAPI}
+	if err := service.ValidateExternalFiles(t.Context(), api, uuid.New(), files, SurfaceAPI); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ValidateExternalFiles(api without subject) error = %v, want ErrNotFound", err)
+	}
+}

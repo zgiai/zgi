@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"gorm.io/gorm"
 )
@@ -59,10 +60,11 @@ type PublishedAccess struct {
 
 // AccessService owns DigitalHuman external surfaces and API credentials.
 type AccessService struct {
-	db          *gorm.DB
-	repo        *GormRepository
-	runtimeAuth *runtimeauth.Store
-	now         func() time.Time
+	db                *gorm.DB
+	repo              *GormRepository
+	runtimeAuth       *runtimeauth.Store
+	runtimeWorkspaces RuntimeWorkspaceAccess
+	now               func() time.Time
 }
 
 func NewAccessService(db *gorm.DB) *AccessService {
@@ -70,6 +72,27 @@ func NewAccessService(db *gorm.DB) *AccessService {
 		panic("digital human access service requires db")
 	}
 	return &AccessService{db: db, repo: NewRepository(db), runtimeAuth: runtimeauth.NewStore(db), now: func() time.Time { return time.Now().UTC() }}
+}
+
+// digitalHumanAPIIssuerType identifies API end users derived from a
+// DigitalHuman's `user` values. The DigitalHuman is the issuer.
+const digitalHumanAPIIssuerType = "digital_human_api"
+
+// EnsureAPIEndUserSubject registers an API end user before any stateful API
+// work. Only a caller holding the raw `user` value can derive the subject, so
+// the external API may register it. Without it, task and file requests from a
+// user who has not chatted yet were rejected as an unknown subject.
+func (s *AccessService) EnsureAPIEndUserSubject(ctx context.Context, digitalHumanID uuid.UUID, subject usersubject.Ref) error {
+	if s == nil || s.db == nil || digitalHumanID == uuid.Nil || subject.Kind != usersubject.APIEndUser {
+		return ErrInvalidRequest
+	}
+	issuer := digitalHumanID
+	if _, err := usersubject.NewService(s.db).Ensure(ctx, usersubject.EnsureRequest{
+		Subject: subject, IssuerType: digitalHumanAPIIssuerType, IssuerID: &issuer,
+	}); err != nil {
+		return fmt.Errorf("ensure DigitalHuman API end user: %w", err)
+	}
+	return nil
 }
 
 func (s *AccessService) GetSettings(ctx context.Context, scope Scope, digitalHumanID uuid.UUID) (*AccessSettings, error) {
@@ -437,9 +460,19 @@ func (s *AccessService) ValidateExternalFiles(ctx context.Context, scope Scope, 
 	if len(fileIDs) == 0 {
 		return nil
 	}
-	if digitalHumanID == uuid.Nil || scope.UserSubjectID == nil || *scope.UserSubjectID == uuid.Nil ||
-		strings.TrimSpace(scope.UserSubjectKind) == "" || (surface != SurfaceAPI && surface != SurfaceWebApp) || scope.Surface != surface {
+	if digitalHumanID == uuid.Nil || (surface != SurfaceAPI && surface != SurfaceWebApp) || scope.Surface != surface {
 		return ErrNotFound
+	}
+	if scope.UserSubjectID == nil || *scope.UserSubjectID == uuid.Nil || strings.TrimSpace(scope.UserSubjectKind) == "" {
+		// WebApp files are bound to the signed-in visitor who uploaded them, so
+		// an anonymous visitor cannot own any; say so instead of "not found".
+		if surface == SurfaceWebApp {
+			return ErrWebAppFileRequiresLogin
+		}
+		return ErrNotFound
+	}
+	if scope.RuntimeWorkspaceID != nil {
+		return s.validateRuntimeWorkspaceFiles(ctx, scope, fileIDs)
 	}
 	parsed := make([]uuid.UUID, 0, len(fileIDs))
 	seen := make(map[uuid.UUID]struct{}, len(fileIDs))

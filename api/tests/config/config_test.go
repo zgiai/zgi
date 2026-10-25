@@ -917,6 +917,7 @@ func TestLoadFallsBackToEnvironmentWhenEnvFileMissing(t *testing.T) {
 
 	t.Setenv("SERVER_MODE", "release")
 	t.Setenv("ENV", "production")
+	t.Setenv("CONSOLE_API_URL", testConsoleAPIURL)
 	t.Setenv("SECRET_KEY", "env-secret")
 	t.Setenv("EMAIL_MAIL_DEFAULT_SEND_FROM", "noreply@example.com")
 	t.Setenv("EMAIL_RESEND_API_KEY", "test-api-key")
@@ -942,6 +943,7 @@ func TestLoadWorkflowTestTaskBackend(t *testing.T) {
 
 	t.Setenv("SERVER_MODE", "release")
 	t.Setenv("ENV", "production")
+	t.Setenv("CONSOLE_API_URL", testConsoleAPIURL)
 	t.Setenv("SECRET_KEY", "env-secret")
 	t.Setenv("EMAIL_MAIL_DEFAULT_SEND_FROM", "noreply@example.com")
 	t.Setenv("EMAIL_RESEND_API_KEY", "test-api-key")
@@ -971,6 +973,7 @@ func TestLoadPrefersEnvironmentOverEnvFile(t *testing.T) {
 		"EMAIL_RESEND_API_KEY=test-api-key",
 		"API_KEY_ENCRYPTION_KEY=test-api-key-encryption-key-32!!",
 		"SERVER_PORT=3200",
+		"CONSOLE_API_URL=" + testConsoleAPIURL,
 		"",
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -1059,6 +1062,8 @@ func TestLoadAllowsPlaceholderSecretForLocalDockerExample(t *testing.T) {
 	}
 }
 
+const testConsoleAPIURL = "https://console.example.com"
+
 func writeEnvFile(t *testing.T, values map[string]string) string {
 	t.Helper()
 
@@ -1066,6 +1071,11 @@ func writeEnvFile(t *testing.T, values map[string]string) string {
 		if _, ok := values["API_KEY_ENCRYPTION_KEY"]; !ok {
 			values["API_KEY_ENCRYPTION_KEY"] = "test-api-key-encryption-key-32!!"
 		}
+	}
+	if _, ok := values["CONSOLE_API_URL"]; !ok {
+		// Outside development the Console control plane must be reached over
+		// HTTPS; the loader's local default is plain HTTP.
+		values["CONSOLE_API_URL"] = testConsoleAPIURL
 	}
 
 	var builder strings.Builder

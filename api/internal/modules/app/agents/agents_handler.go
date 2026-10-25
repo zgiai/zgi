@@ -24,6 +24,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	fileprocessservice "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -62,6 +63,14 @@ type workflowContinuationRunner interface {
 	ResumeApprovalWorkflow(ctx context.Context, form *approvalruntime.Form) error
 	ResumeQuestionAnswerWorkflow(ctx context.Context, workflowRunID string, inputs map[string]interface{}) error
 	StopWorkflowContinuation(ctx context.Context, workflowRunID string, accountID string) error
+}
+
+type webAppFileServiceWithUploadOptions interface {
+	UploadFileWithOptions(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole filemodel.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool, options fileprocessservice.UploadFileOptions) (*dto.UploadFile, error)
+}
+
+type temporaryUploadCanceller interface {
+	CancelTemporaryUpload(ctx context.Context, attemptID, ownerID string) error
 }
 
 type workflowContinuationStreamRunner interface {
@@ -1309,19 +1318,38 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		mimeType = "application/octet-stream"
 	}
 	workspaceID := published.WorkspaceID
-	uploadFile, err := h.fileService.UploadFile(
-		c.Request.Context(),
-		header.Filename,
-		content,
-		mimeType,
-		accountID,
-		published.OrganizationID,
-		filemodel.CreatedByRoleEndUser,
-		nil,
-		&workspaceID,
-		true,
-		false,
-	)
+	uploadAttemptID := strings.TrimSpace(c.PostForm("upload_attempt_id"))
+	var uploadFile *dto.UploadFile
+	if uploadSvc, ok := h.fileService.(webAppFileServiceWithUploadOptions); ok {
+		uploadFile, err = uploadSvc.UploadFileWithOptions(
+			c.Request.Context(),
+			header.Filename,
+			content,
+			mimeType,
+			accountID,
+			published.OrganizationID,
+			filemodel.CreatedByRoleEndUser,
+			nil,
+			&workspaceID,
+			true,
+			false,
+			fileprocessservice.UploadFileOptions{UploadAttemptID: uploadAttemptID},
+		)
+	} else {
+		uploadFile, err = h.fileService.UploadFile(
+			c.Request.Context(),
+			header.Filename,
+			content,
+			mimeType,
+			accountID,
+			published.OrganizationID,
+			filemodel.CreatedByRoleEndUser,
+			nil,
+			&workspaceID,
+			true,
+			false,
+		)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, filemodel.ErrFileTooLarge):
@@ -1348,6 +1376,40 @@ func (h *AgentsHandler) UploadWebAppFile(c *gin.Context) {
 		}
 	}
 	response.Success(c, dto.NewFileUploadResponse(uploadFile))
+}
+
+func (h *AgentsHandler) CancelWebAppUploadFile(c *gin.Context) {
+	if h.fileService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !h.requireWebAppRuntimeAccess(c) {
+		return
+	}
+	if _, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id")); err != nil {
+		h.failWebAppRuntime(c, err)
+		return
+	}
+	if !requireAuthenticatedWebAppAgentFileAccess(c) {
+		return
+	}
+	lifecycle, ok := h.fileService.(temporaryUploadCanceller)
+	if !ok {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	accountID := strings.TrimSpace(c.GetString("account_id"))
+	attemptID := strings.TrimSpace(c.Param("attempt_id"))
+	if accountID == "" || attemptID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if err := lifecycle.CancelTemporaryUpload(c.Request.Context(), attemptID, accountID); err != nil {
+		logger.WarnContext(c.Request.Context(), "failed to cancel webapp temporary upload attempt", "attempt_id", attemptID, err)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	response.Success(c, nil)
 }
 
 func agentRuntimeRequestContext(c *gin.Context, accountID string) context.Context {
@@ -1389,8 +1451,10 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		SupportsVision:     result.Config.SupportsVision,
 		AgentMemoryEnabled: result.Config.AgentMemoryEnabled,
 		LoginRequired:      agentWebAppRequiresLogin(result.Config),
-		Version:            result.Version,
-		VersionUUID:        result.VersionUUID,
+		// Visitors chat anonymously; only attaching a file asks them to sign in.
+		FileUploadRequiresLogin: result.Config.FileUpload,
+		Version:                 result.Version,
+		VersionUUID:             result.VersionUUID,
 	}
 }
 
@@ -1402,8 +1466,11 @@ func requireAuthenticatedWebAppAgentWhenMemoryEnabled(c *gin.Context, published 
 	return true
 }
 
+// agentWebAppRequiresLogin decides whether visitors must sign in before they
+// chat at all. File uploads do not: they need an identity only for the upload
+// itself, which the upload endpoints and the chat below enforce.
 func agentWebAppRequiresLogin(config dto.AgentConfigResponse) bool {
-	return config.AgentMemoryEnabled || config.FileUpload || (config.ExecutionRuntime != nil && config.ExecutionRuntime.Enabled)
+	return config.AgentMemoryEnabled || (config.ExecutionRuntime != nil && config.ExecutionRuntime.Enabled)
 }
 
 func requireAuthenticatedWebAppAgentFileAccess(c *gin.Context) bool {
@@ -1472,6 +1539,11 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 	var req runtimedto.ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	// Anonymous visitors may chat but not attach files.
+	if len(req.FileIDs) > 0 && !c.GetBool("is_authenticated") {
+		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 	scope := runtimeservice.Scope{OrganizationID: organizationID, AccountID: accountID, WorkspaceID: &workspaceID, SkipAccessCheck: true}

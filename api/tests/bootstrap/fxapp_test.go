@@ -61,6 +61,11 @@ func TestValidateAppModuleWithGRPCDisabled(t *testing.T) {
 func writeBootstrapEnvFile(t *testing.T, values map[string]string) string {
 	t.Helper()
 
+	if _, ok := values["CONSOLE_API_URL"]; !ok {
+		// Outside development the Console control plane must be reached over
+		// HTTPS; the loader's local default is plain HTTP.
+		values["CONSOLE_API_URL"] = "https://console.example.com"
+	}
 	path := t.TempDir() + "/.env"
 	var content string
 	for key, value := range values {

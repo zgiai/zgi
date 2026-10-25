@@ -42,6 +42,10 @@ type DependencyBuildRequestRecord struct {
 	UpdatedAt             time.Time       `json:"updated_at"`
 }
 
+// storeSchemaPreparationTimeout bounds the schema preparation and migrations
+// run when the store opens.
+const storeSchemaPreparationTimeout = 2 * time.Minute
+
 func Open(cfg config.Config) (*Store, error) {
 	if cfg.AgentRuntimeAdmission != nil {
 		if err := cfg.AgentRuntimeAdmission.Validate(); err != nil {
@@ -62,9 +66,9 @@ func Open(cfg config.Config) (*Store, error) {
 	db.SetConnMaxLifetime(30 * time.Minute)
 	db.SetConnMaxIdleTime(5 * time.Minute)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
+	pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelPing()
+	if err := db.PingContext(pingCtx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping postgres store: %w", err)
 	}
@@ -78,7 +82,12 @@ func Open(cfg config.Config) (*Store, error) {
 		limits := cfg.AgentRuntimeAdmission.WithDefaults()
 		store.admission = &limits
 	}
-	if err := store.prepare(ctx); err != nil {
+	// A new or long-behind database applies every schema migration in one
+	// transaction, which takes far longer than a ping on a loaded server; it
+	// gets its own budget so startup does not fail halfway through.
+	prepareCtx, cancelPrepare := context.WithTimeout(context.Background(), storeSchemaPreparationTimeout)
+	defer cancelPrepare()
+	if err := store.prepare(prepareCtx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

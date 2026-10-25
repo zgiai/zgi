@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"errors"
+	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -9,6 +10,32 @@ import (
 )
 
 const platformCLIApprovalOrigin = "platform_cli"
+
+// workflowApprovalOrigin marks a run held by a generic workflow approval that a
+// bound workflow raised inside the Agent loop.
+const workflowApprovalOrigin = "workflow"
+
+// taskApprovalOrigin marks a run held by a DigitalHuman task approval in an
+// interactive conversation; answering the approval resumes and settles it.
+const taskApprovalOrigin = "task"
+
+// runHasTaskApprovalMessage reports whether the run's own message waits on a
+// DigitalHuman task approval on an interactive surface.
+func runHasTaskApprovalMessage(tx *gorm.DB, run *Run, status string) (bool, error) {
+	if run == nil || run.MessageID == nil || run.ConversationID == nil || !workflowContinuationSurface(run.Surface) {
+		return false, nil
+	}
+	var message runtimemodel.Message
+	if err := tx.Where("id = ? AND conversation_id = ? AND status = ? AND deleted_at IS NULL",
+		*run.MessageID, *run.ConversationID, status).Take(&message).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	kind, _ := workflowContinuationRecord(message.Metadata)["kind"].(string)
+	return strings.TrimSpace(kind) == "digital_human_task", nil
+}
 
 // Platform CLI approvals are message-owned, not Connector route receipts. Only
 // the persisted, sealed invocation may put their host run into a waiting state.
@@ -60,4 +87,30 @@ func platformGovernanceMessageMatchesRun(run *Run, message *runtimemodel.Message
 			origin.ConversationID == message.ConversationID.String() && origin.MessageID == message.ID.String()
 	}
 	return false
+}
+
+// runHasWorkflowContinuationMessage reports whether the run's own message is
+// paused on a generic workflow continuation. Task approvals keep their own
+// lifecycle and never hold the run through this path.
+func runHasWorkflowContinuationMessage(tx *gorm.DB, run *Run, status string) (bool, error) {
+	if run == nil || run.MessageID == nil || run.ConversationID == nil {
+		return false, nil
+	}
+	// Channel and background runs keep their own approval lifecycle; the waiting
+	// state constraint only admits the interactive surfaces.
+	if !workflowContinuationSurface(run.Surface) {
+		return false, nil
+	}
+	var message runtimemodel.Message
+	if err := tx.Where("id = ? AND conversation_id = ? AND status = ? AND deleted_at IS NULL",
+		*run.MessageID, *run.ConversationID, status).Take(&message).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	state := workflowContinuationRecord(message.Metadata)
+	kind, _ := state["kind"].(string)
+	workflowRunID, _ := state["workflow_run_id"].(string)
+	return strings.TrimSpace(workflowRunID) != "" && strings.TrimSpace(kind) != "digital_human_task", nil
 }

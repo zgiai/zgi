@@ -55,6 +55,10 @@ type AppContext struct {
 	NodeID                    string
 	NodeType                  string
 	SuppressInvocationContent bool
+	// EndUserSubjectID attributes the call to an external end user, and
+	// RuntimeWorkspaceID to their Runtime Workspace when it is known.
+	RuntimeWorkspaceID *uuid.UUID
+	EndUserSubjectID   *uuid.UUID
 }
 
 // LLMGatewayService defines the interface for LLM gateway operations
@@ -224,6 +228,12 @@ func NewLLMGatewayServiceWithCrypto(
 		platformContainer = &platform.Container{
 			Console: pconsole.NewStandalone(),
 		}
+	}
+	// Every gateway instance, including the workspace chat runtime, needs the
+	// same live channel projection. HTTP route registration is not invoked for
+	// internally constructed services and cannot be the sole injection point.
+	if channelRouter != nil && cloudMode {
+		channelRouter.SetChannelProvider(platformContainer.Channel)
 	}
 	logger.Info("llm gateway console provider initialized", "mode", platformContainer.Console.GetMode())
 

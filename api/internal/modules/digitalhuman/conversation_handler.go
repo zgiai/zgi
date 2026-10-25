@@ -117,7 +117,7 @@ func (h *RuntimeHandler) ListConversationMessages(c *gin.Context) {
 	inputsByMessage := digitalHumanRuntimeInputsByVisibleMessage(runtimeInputs)
 	responses := make([]runtimedto.MessageResponse, 0, len(items))
 	for _, item := range items {
-		response := digitalHumanMessageResponse(item)
+		response := digitalHumanMessageResponse(item, runtimemodel.ConversationSourceConsole)
 		response.RuntimeInputs = inputsByMessage[item.ID]
 		if response.RuntimeInputs == nil {
 			response.RuntimeInputs = []runtimedto.RuntimeInputResponse{}
@@ -265,13 +265,13 @@ func digitalHumanConversationResponse(conversation *runtimemodel.Conversation) r
 	return response
 }
 
-func digitalHumanMessageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
+func digitalHumanMessageResponse(message *runtimemodel.Message, source string) runtimedto.MessageResponse {
 	response := runtimedto.MessageResponse{
 		ID: message.ID.String(), ConversationID: message.ConversationID.String(), Query: message.Query,
 		Answer: message.Answer, Status: message.Status, Error: message.Error,
 		ModelProvider: message.ModelProvider, ModelName: message.ModelName,
 		BillingReasonSource: message.BillingReasonSource, ModelParameters: redactConversationMap(message.ModelParameters),
-		Metadata: redactConversationMap(message.Metadata), CreatedAt: message.CreatedAt.Unix(), UpdatedAt: message.UpdatedAt.Unix(),
+		Metadata: digitalHumanMessageMetadata(message, source), CreatedAt: message.CreatedAt.Unix(), UpdatedAt: message.UpdatedAt.Unix(),
 	}
 	if message.ParentID != nil {
 		value := message.ParentID.String()
@@ -362,6 +362,53 @@ func digitalHumanStopConversationResponse(result *runtimeservice.StopConversatio
 		response.Status = result.Message.Status
 	}
 	return response
+}
+
+// digitalHumanMessageMetadata is a message's metadata as a reader of the given
+// source sees it. A workflow approval's token is also its approval page's
+// access token, so it is only returned while the message waits on an approval
+// this reader may answer in the conversation, as for Agent conversations.
+func digitalHumanMessageMetadata(message *runtimemodel.Message, source string) map[string]interface{} {
+	metadata := redactConversationMap(message.Metadata)
+	if !digitalHumanMessageNeedsApprovalToken(message, source) {
+		removeWorkflowApprovalTokens(metadata)
+	}
+	return metadata
+}
+
+func digitalHumanMessageNeedsApprovalToken(message *runtimemodel.Message, source string) bool {
+	if message == nil || message.Status != runtimemodel.MessageStatusWaitingApproval {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case runtimemodel.ConversationSourceConsole:
+		return true
+	case runtimemodel.ConversationSourceWebApp, runtimemodel.ConversationSourceExternalAPI:
+		continuation, _ := message.Metadata["agent_workflow_continuation"].(map[string]interface{})
+		allowed, _ := continuation["ui_approval_allowed"].(bool)
+		return allowed
+	default:
+		return false
+	}
+}
+
+// removeWorkflowApprovalTokens drops approval tokens, including the approval
+// node's output alias; the form's own token is already redacted as a token.
+func removeWorkflowApprovalTokens(value interface{}) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			if normalized := strings.ToLower(strings.TrimSpace(key)); normalized == "approval_token" || normalized == "__approval_token" {
+				delete(typed, key)
+				continue
+			}
+			removeWorkflowApprovalTokens(item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			removeWorkflowApprovalTokens(item)
+		}
+	}
 }
 
 func redactConversationMap(value map[string]interface{}) map[string]interface{} {

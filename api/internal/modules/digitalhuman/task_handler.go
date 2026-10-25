@@ -16,6 +16,8 @@ import (
 type TaskHandler struct {
 	service TaskHandlerService
 	base    *Handler
+	pending TaskPendingChangeSource
+	files   TaskReportFileSource
 }
 
 func NewTaskHandler(service TaskHandlerService, projector *apptransport.Projector) *TaskHandler {
@@ -25,11 +27,26 @@ func NewTaskHandler(service TaskHandlerService, projector *apptransport.Projecto
 	return &TaskHandler{service: service, base: &Handler{projector: projector}}
 }
 
+// WithPendingChanges marks personal-view tasks whose proposed change waits for
+// the reader's approval, so the task panel can point to the approval card.
+func (h *TaskHandler) WithPendingChanges(source TaskPendingChangeSource) *TaskHandler {
+	h.pending = source
+	return h
+}
+
+// WithReportFiles lets reports carry and serve their run's files.
+func (h *TaskHandler) WithReportFiles(source TaskReportFileSource) *TaskHandler {
+	h.files = source
+	return h
+}
+
 func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group := router.Group("/digital-humans/:id/tasks")
 	group.GET("", h.list)
 	group.POST("", h.create)
 	group.POST("/schedule-preview", h.previewSchedule)
+	group.GET("/requesters", h.requesters)
+	group.PATCH("/requesters/:requester_id", h.labelRequester)
 	group.GET("/:task_id", h.get)
 	group.PATCH("/:task_id", h.update)
 	group.POST("/:task_id/actions/:action", h.applyAction)
@@ -50,7 +67,8 @@ func (h *TaskHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ClientReference: c.Query("client_reference"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+		IncludeUnreviewed: c.Query("include_unreviewed") == "true"}
 	var err error
 	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
 	if err != nil {
@@ -68,7 +86,11 @@ func (h *TaskHandler) list(c *gin.Context) {
 	for _, value := range append(c.QueryArray("priority"), c.QueryArray("priority[]")...) {
 		query.Priorities = append(query.Priorities, TaskPriority(value))
 	}
-	result, err := h.service.ListTasks(c.Request.Context(), sharedTaskAccess(scope, id), query)
+	for _, value := range append(c.QueryArray("requester_kind"), c.QueryArray("requester_kind[]")...) {
+		query.RequesterKinds = append(query.RequesterKinds, TaskRequesterKind(value))
+	}
+	query.RequesterID = c.Query("requester_id")
+	result, err := h.service.ListTasks(c.Request.Context(), h.sharedAccess(c, scope, id), query)
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.list"))
 		return
@@ -88,6 +110,53 @@ func optionalRFC3339Query(raw string) (*time.Time, error) {
 	return &parsed, nil
 }
 
+// requesters searches who asked for tasks in the task center.
+func (h *TaskHandler) requesters(c *gin.Context) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	directory, ok := h.service.(TaskRequesterDirectory)
+	if !ok {
+		h.base.writeError(c, taskApplicationError(ErrTaskNotFound, "digital_human.task.requesters"))
+		return
+	}
+	result, err := directory.ListTaskRequesters(c.Request.Context(), h.sharedAccess(c, scope, id), TaskRequesterQuery{
+		Query: c.Query("query"), Kind: TaskRequesterKind(c.Query("kind")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+	})
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.requesters"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// labelRequester names an API end user for the task center.
+func (h *TaskHandler) labelRequester(c *gin.Context) {
+	scope, id, ok := h.base.scopeAndID(c)
+	if !ok {
+		return
+	}
+	subjectID, err := uuid.Parse(strings.TrimSpace(c.Param("requester_id")))
+	directory, supported := h.service.(TaskRequesterDirectory)
+	if err != nil || !supported {
+		h.base.writeError(c, taskApplicationError(ErrInvalidRequest, "digital_human.task.requester.label"))
+		return
+	}
+	var req struct {
+		Label string `json:"label"`
+	}
+	if !h.base.decode(c, &req) {
+		return
+	}
+	result, err := directory.LabelTaskRequester(c.Request.Context(), h.sharedAccess(c, scope, id), subjectID, req.Label)
+	if err != nil {
+		h.base.writeError(c, taskApplicationError(err, "digital_human.task.requester.label"))
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
 func (h *TaskHandler) previewSchedule(c *gin.Context) {
 	scope, id, ok := h.base.scopeAndID(c)
 	if !ok {
@@ -97,7 +166,7 @@ func (h *TaskHandler) previewSchedule(c *gin.Context) {
 	if !h.base.decode(c, &req) {
 		return
 	}
-	result, err := h.service.PreviewTaskSchedule(c.Request.Context(), sharedTaskAccess(scope, id), req)
+	result, err := h.service.PreviewTaskSchedule(c.Request.Context(), h.sharedAccess(c, scope, id), req)
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.schedule_preview"))
 		return
@@ -114,7 +183,7 @@ func (h *TaskHandler) create(c *gin.Context) {
 	if !h.base.decode(c, &req) {
 		return
 	}
-	result, err := h.service.CreateTask(c.Request.Context(), sharedTaskAccess(scope, id), req, accountMutation(scope))
+	result, err := h.service.CreateTask(c.Request.Context(), h.sharedAccess(c, scope, id), req, accountMutation(scope))
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.create"))
 		return
@@ -127,7 +196,7 @@ func (h *TaskHandler) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.GetTask(c.Request.Context(), sharedTaskAccess(scope, id), taskID)
+	result, err := h.service.GetTask(c.Request.Context(), h.sharedAccess(c, scope, id), taskID)
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.get"))
 		return
@@ -143,7 +212,7 @@ func (h *TaskHandler) update(c *gin.Context) {
 	if !h.base.decode(c, &req) {
 		return
 	}
-	result, err := h.service.UpdateTask(c.Request.Context(), sharedTaskAccess(scope, id), taskID, req, accountMutation(scope))
+	result, err := h.service.UpdateTask(c.Request.Context(), h.sharedAccess(c, scope, id), taskID, req, accountMutation(scope))
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.update"))
 		return
@@ -161,7 +230,7 @@ func (h *TaskHandler) applyAction(c *gin.Context) {
 	if !h.base.decode(c, &req) {
 		return
 	}
-	result, err := h.service.ApplyTaskAction(c.Request.Context(), sharedTaskAccess(scope, id), taskID, action, req, accountMutation(scope))
+	result, err := h.service.ApplyTaskAction(c.Request.Context(), h.sharedAccess(c, scope, id), taskID, action, req, accountMutation(scope))
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.action"))
 		return
@@ -174,7 +243,7 @@ func (h *TaskHandler) runs(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.ListTaskRuns(c.Request.Context(), sharedTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
+	result, err := h.service.ListTaskRuns(c.Request.Context(), h.sharedAccess(c, scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.runs"))
 		return
@@ -186,7 +255,7 @@ func (h *TaskHandler) activities(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.ListTaskActivities(c.Request.Context(), sharedTaskAccess(scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
+	result, err := h.service.ListTaskActivities(c.Request.Context(), h.sharedAccess(c, scope, id), taskID, intQuery(c, "page"), intQuery(c, "page_size"))
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.activities"))
 		return
@@ -212,7 +281,8 @@ func (h *TaskHandler) myList(c *gin.Context) {
 	if !ok {
 		return
 	}
-	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size")}
+	query := TaskListQuery{Query: c.Query("query"), Source: c.Query("source"), ScheduleType: TaskScheduleType(c.Query("schedule_type")), Page: intQuery(c, "page"), PageSize: intQuery(c, "page_size"),
+		IncludeUnreviewed: c.Query("include_unreviewed") == "true"}
 	var err error
 	query.RunFinishedAfter, err = optionalRFC3339Query(c.Query("run_finished_after"))
 	if err != nil {
@@ -234,6 +304,9 @@ func (h *TaskHandler) myList(c *gin.Context) {
 	if err != nil {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.list"))
 		return
+	}
+	if result != nil {
+		withPendingChanges(c.Request.Context(), h.pending, scope, id, result.Items)
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
@@ -265,6 +338,7 @@ func (h *TaskHandler) myGet(c *gin.Context) {
 		h.base.writeError(c, taskApplicationError(err, "digital_human.task.get"))
 		return
 	}
+	withPendingChanges(c.Request.Context(), h.pending, scope, id, []*Task{result})
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
@@ -343,6 +417,15 @@ func (h *TaskHandler) myIDs(c *gin.Context) (Scope, uuid.UUID, uuid.UUID, bool) 
 func accountMutation(scope Scope) TaskMutationContext {
 	return TaskMutationContext{ActorType: "account", ActorRef: scope.ActorID.String(), OperationID: uuid.New(), Source: "console"}
 }
+
+// sharedAccess is the task center view. The route permission check records
+// whether the caller may manage every task of the DigitalHuman.
+func (h *TaskHandler) sharedAccess(c *gin.Context, scope Scope, digitalHumanID uuid.UUID) TaskAccessContext {
+	access := sharedTaskAccess(scope, digitalHumanID)
+	access.Viewer.Manager = c.GetBool(TaskManagerContextKey)
+	return access
+}
+
 func sharedTaskAccess(scope Scope, digitalHumanID uuid.UUID) TaskAccessContext {
 	return TaskAccessContext{
 		OrganizationID: scope.OrganizationID,
@@ -351,6 +434,7 @@ func sharedTaskAccess(scope Scope, digitalHumanID uuid.UUID) TaskAccessContext {
 		Principal:      invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
 		Owner:          SharedTaskOwner(),
 		Surface:        SurfaceConsole,
+		Viewer:         TaskViewer{Mode: TaskViewTaskCenter},
 	}
 }
 
@@ -366,6 +450,7 @@ func userTaskAccess(scope Scope, digitalHumanID uuid.UUID) TaskAccessContext {
 		Principal:      invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: scope.ActorID.String()},
 		Owner:          UserTaskOwner(subject),
 		Surface:        SurfaceConsole,
+		Viewer:         TaskViewer{Mode: TaskViewMember},
 	}
 }
 func intQuery(c *gin.Context, key string) int {

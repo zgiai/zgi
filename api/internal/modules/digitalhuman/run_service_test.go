@@ -49,6 +49,28 @@ func TestScheduledAPIEndUserTaskDoesNotBorrowPersonalConnectors(t *testing.T) {
 	}
 }
 
+func TestScheduledAPIEndUserTaskKeepsOnlyItsOwnConnectors(t *testing.T) {
+	t.Setenv("ZGI_DIGITAL_HUMAN_PER_USER_CONNECTORS_ENABLED", "true")
+	event := invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginSchedule}}
+	config := chatruntime.RunConfig{}
+	applyScheduledConnectorPolicy(&config, &Run{Surface: SurfaceTask, UserSubjectKind: string(usersubject.APIEndUser)}, event)
+	if config.ConnectorToolsDisabled || !config.ConnectorDelegationDisabled {
+		t.Fatalf("scheduled end-user task = tools disabled %v, delegation disabled %v", config.ConnectorToolsDisabled, config.ConnectorDelegationDisabled)
+	}
+	subject := uuid.New()
+	for name, run := range map[string]*Run{
+		"end user task": {Surface: SurfaceTask, UserSubjectKind: string(usersubject.APIEndUser), UserSubjectID: &subject},
+		"member task":   {Surface: SurfaceTask, UserSubjectKind: string(usersubject.Account), UserSubjectID: &subject},
+	} {
+		if requester, _, ok := perUserRequester(run); !ok || requester != subject {
+			t.Fatalf("%s acts as %v, %v", name, requester, ok)
+		}
+	}
+	if _, _, ok := perUserRequester(&Run{Surface: SurfaceTask}); ok {
+		t.Fatal("a task without a requester resolved a per-user slot")
+	}
+}
+
 func TestScheduledAPIEndUserTaskPreparesChatWithoutPersonalConnectors(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	service := newTestRuntimeService(t, store, dispatcher, chat)
@@ -748,48 +770,6 @@ func TestRuntimeServicePublishesSafeChannelProgressBeforeFinalAnswer(t *testing.
 	}
 }
 
-func TestRuntimeServiceDoesNotPublishChannelProgressWhenDisabled(t *testing.T) {
-	store, dispatcher := newFakeRunStore(), &fakeRunDispatcher{}
-	chat := &fakeDigitalHumanChat{events: []chatruntime.StreamEvent{{
-		EventType: channelEventMessageRetract, Payload: map[string]any{
-			"content": "不应发送", "presentation_disposition": "process", "segment_id": "disabled",
-		},
-	}}}
-	now := time.Date(2026, 8, 21, 6, 0, 0, 0, time.UTC)
-	transient := &channelTransientDispatcherStub{}
-	service := NewRuntimeService(
-		store,
-		fakeExecutionResolver{now: now, channelPolicy: &ChannelResponsePolicy{
-			IntermediateMessagesEnabled: false, AcknowledgementEnabled: true,
-		}},
-		fakeBrainAdapter{}, chat, dispatcher, WithChannelTransientDispatcher(transient),
-	)
-	service.now = func() time.Time { return now }
-	scope, digitalHumanID, conversationID := testRunScope(), uuid.New(), uuid.New()
-	installationID := uuid.NewString()
-	event := invocation.Event{
-		ID: "feishu-progress-disabled", Type: invocation.EventTypeChannelMessage,
-		Origin: invocation.Origin{Kind: invocation.OriginChannel, Provider: "feishu", InstallationID: installationID},
-		Target: runtimeidentity.SubjectRef{
-			Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID,
-			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
-		},
-		Sender:     invocation.PrincipalRef{Type: invocation.PrincipalExternalUser, ID: "ou_sender"},
-		OccurredAt: now,
-		ReplyTo:    &invocation.ReplyAddress{Provider: "feishu", InstallationID: installationID, ConversationID: "oc_disabled"},
-	}
-	run, created, err := service.SubmitInvocation(t.Context(), scope, event, "测试", &conversationID)
-	if err != nil || !created {
-		t.Fatalf("SubmitInvocation() = created %v, err %v", created, err)
-	}
-	if err := service.Execute(t.Context(), run.ID); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if len(transient.requests) != 0 {
-		t.Fatalf("transient requests = %#v, want none", transient.requests)
-	}
-}
-
 func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T) {
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	now := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
@@ -1403,8 +1383,7 @@ func (c *fakeDigitalHumanChat) ListSkills(context.Context, chatruntime.Scope) ([
 }
 
 type fakeExecutionResolver struct {
-	now           time.Time
-	channelPolicy *ChannelResponsePolicy
+	now time.Time
 }
 
 func (r fakeExecutionResolver) Resolve(_ context.Context, event invocation.Event, _ *uuid.UUID) (*ResolvedExecution, error) {
@@ -1412,9 +1391,6 @@ func (r fakeExecutionResolver) Resolve(_ context.Context, event invocation.Event
 		SchemaVersion: executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: uuid.New(),
 		IdentityName: "Atlas", Persona: "Researcher", Rules: []string{"cite evidence"}, Model: "test-model",
 		UseUserMemory: false, UseAgentMemory: false, ResolvedAt: r.now,
-	}
-	if r.channelPolicy != nil {
-		snapshot.ChannelResponsePolicy = channelResponsePolicyPointer(*r.channelPolicy)
 	}
 	var err error
 	snapshot.Revision, err = executionSnapshotRevision(snapshot)

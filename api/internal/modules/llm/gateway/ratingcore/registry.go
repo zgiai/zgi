@@ -1,6 +1,6 @@
 package ratingcore
 
-// UnitDefinition is one frozen row of 单位注册表-v1.json. operation x meter maps
+// UnitDefinition is one frozen row of unit-registry-v1.json. operation x meter maps
 // to exactly one unit/base_unit; unknown combinations must be rejected rather
 // than guessed.
 type UnitDefinition struct {
@@ -14,7 +14,7 @@ type UnitDefinition struct {
 }
 
 // unitRegistry is the single source of truth for legal pricing combinations.
-// It mirrors 单位注册表-v1.json exactly; RatingCore registry tests assert the
+// It mirrors unit-registry-v1.json exactly; RatingCore registry tests assert the
 // mirror so a drift fails CI instead of silently rating a wrong unit.
 var unitRegistry = []UnitDefinition{
 	{Operation: "chat", Meter: "input_token", Unit: "per_1m_tokens", BaseUnit: "per_1m_tokens", PerQuantityDefault: 1000000, QuantityKind: "tokens", PricingSource: "rules"},

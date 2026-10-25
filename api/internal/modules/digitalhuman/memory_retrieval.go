@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -103,8 +104,10 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
 	}
+	scoped := memoryReadScopeForRun(req.Run, req.Event)
+	readScope := &scoped
 	if p.knowledge == nil || p.vectorDB == nil {
-		return p.fallbackToRecentMemories(ctx, req.Run, "projection backend unavailable", fmt.Errorf("digital human memory projection backend is not configured"))
+		return p.fallbackToRecentMemories(ctx, req.Run, readScope, "projection backend unavailable", fmt.Errorf("digital human memory projection backend is not configured"))
 	}
 	scope := projectionScopeForRun(req.Run)
 	// Recall repairs the projection as a side effect, so it shares the rebuild
@@ -113,12 +116,12 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 	dataset, err := p.ensureProjection(ctx, scope)
 	if err != nil {
 		releaseProjection()
-		return p.fallbackToRecentMemories(ctx, req.Run, "projection unavailable", err)
+		return p.fallbackToRecentMemories(ctx, req.Run, readScope, "projection unavailable", err)
 	}
 	memories, err := p.syncProjection(ctx, scope, dataset)
 	releaseProjection()
 	if err != nil {
-		return p.fallbackToRecentMemories(ctx, req.Run, "projection sync failed", err)
+		return p.fallbackToRecentMemories(ctx, req.Run, readScope, "projection sync failed", err)
 	}
 	if len(memories) == 0 {
 		return &DigitalHumanMemoryRetrievalResult{Status: datasetservice.KnowledgeRetrieveStatusNoResults, Context: "", Warnings: []string{"no active long-term memory matches are available"}}, nil
@@ -127,16 +130,142 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 	if topK <= 0 || topK > 20 {
 		topK = 5
 	}
+	// The projection holds every scope, so a scoped recall over-fetches before
+	// filtering and trims back to the requested size.
+	recallTopK := topK
+	if readScope != nil {
+		recallTopK = max(topK, memoryScopedRecallTopK)
+	}
 	response, err := p.knowledge.Retrieve(ctx, datasetservice.KnowledgeRetrieveRequest{
 		Scope: datasetservice.KnowledgeScope{OrganizationID: req.Run.OrganizationID.String(), WorkspaceID: req.Run.WorkspaceID.String(), AccountID: dataset.CreatedBy},
-		Query: query, DatasetIDs: []string{dataset.ID}, AgentBindingGrant: true, AllowRuntimeManagedDataset: true, TopK: topK,
+		Query: query, DatasetIDs: []string{dataset.ID}, AgentBindingGrant: true, AllowRuntimeManagedDataset: true, TopK: recallTopK,
 		RetrievalMode:    strings.TrimSpace(req.RetrievalMode),
 		ContextSeparator: "\n\n", MaxContextChars: 12000,
 	})
 	if err != nil {
-		return p.fallbackToRecentMemories(ctx, req.Run, "vector recall failed", err)
+		return p.fallbackToRecentMemories(ctx, req.Run, readScope, "vector recall failed", err)
 	}
-	return p.authoritativeResult(response, memories), nil
+	result := p.authoritativeResult(response, memories, readScope, topK)
+	// Memories of other instances and channels can fill the shared recall
+	// before this run's own; then recall within the run's scopes directly.
+	if result.ResultCount < topK && len(response.Resources) >= recallTopK {
+		p.recallWithinScopes(ctx, scope, dataset, query, memories, readScope, topK, result)
+	}
+	return result, nil
+}
+
+// scopedVectorSearch is a vector store that can search the objects with one
+// property value.
+type scopedVectorSearch interface {
+	SearchVectorsWhereEqual(ctx context.Context, className, property, value string, vector []float64, limit int, returnFields []string) ([]map[string]interface{}, error)
+}
+
+// scopedRecallLimit is how many vector hits one scope's own recall reads.
+const scopedRecallLimit = 50
+
+// recallWithinScopes adds to result the best matches among the memories of
+// the run's own instance and channel, which a recall over every scope can
+// miss. It is best effort: on any error result stays as it is.
+func (p *DigitalHumanMemoryProjectionProvider) recallWithinScopes(ctx context.Context, scope memoryProjectionScope, dataset *datasetmodel.Dataset, query string, memories map[uuid.UUID]*DigitalHumanMemory, readScope *memoryReadScope, limit int, result *DigitalHumanMemoryRetrievalResult) {
+	search, ok := p.vectorDB.(scopedVectorSearch)
+	if !ok || readScope == nil {
+		return
+	}
+	scopeIDs := []string{}
+	for _, id := range []string{readScope.instanceID, readScope.channelID} {
+		if id != "" {
+			scopeIDs = append(scopeIDs, id)
+		}
+	}
+	if len(scopeIDs) == 0 {
+		return
+	}
+	resolved, err := p.resolveProjectionEmbedding(ctx, scope)
+	if err != nil {
+		return
+	}
+	embeddingService, err := datasetindexing.NewGatewayEmbeddingService(p.llmClient, dataset.CreatedBy, dataset.ID, "dataset", resolved.Model, dataset.WorkspaceID)
+	if err != nil {
+		return
+	}
+	vector, err := embeddingService.EmbedText(ctx, query)
+	if err != nil {
+		return
+	}
+	var rows []map[string]interface{}
+	className := datasetmodel.GenCollectionNameByID(dataset.ID)
+	for _, scopeID := range scopeIDs {
+		found, err := search.SearchVectorsWhereEqual(ctx, className, "scope_id", scopeID, vector, scopedRecallLimit, []string{"memory_id"})
+		if err != nil {
+			logger.WarnContext(ctx, "digital human scoped memory recall failed", "digital_human_id", scope.DigitalHumanID.String(), err)
+			continue
+		}
+		rows = append(rows, found...)
+	}
+	mergeScopedRecall(result, rows, memories, readScope, limit)
+}
+
+// mergeScopedRecall fills result up to limit with the readable memories of
+// vector hits from a scope's own recall, best first, skipping those already
+// in it.
+func mergeScopedRecall(result *DigitalHumanMemoryRetrievalResult, rows []map[string]interface{}, memories map[uuid.UUID]*DigitalHumanMemory, readScope *memoryReadScope, limit int) {
+	type hit struct {
+		memory *DigitalHumanMemory
+		score  float64
+	}
+	var hits []hit
+	for _, row := range rows {
+		memoryID, err := uuid.Parse(fmt.Sprint(row["memory_id"]))
+		if err != nil {
+			continue
+		}
+		memory := memories[memoryID]
+		if memory == nil || memory.Status != MemoryStatusActive || readScope == nil || !readScope.allows(memory) {
+			continue
+		}
+		score := 0.0
+		if additional, ok := row["_additional"].(map[string]interface{}); ok {
+			if distance, ok := additional["distance"].(float64); ok {
+				score = 1 - distance
+			}
+		}
+		hits = append(hits, hit{memory: memory, score: score})
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	seen := make(map[uuid.UUID]bool, len(result.Items))
+	for _, memory := range result.Items {
+		seen[memory.ID] = true
+	}
+	for _, candidate := range hits {
+		if result.ResultCount >= limit {
+			break
+		}
+		if seen[candidate.memory.ID] {
+			continue
+		}
+		seen[candidate.memory.ID] = true
+		appendRecalledMemory(result, candidate.memory, candidate.score, "semantic")
+	}
+}
+
+// appendRecalledMemory adds one memory to a recall result, numbered after
+// those already in it.
+func appendRecalledMemory(result *DigitalHumanMemoryRetrievalResult, memory *DigitalHumanMemory, score float64, matchType string) {
+	result.Items = append(result.Items, memory)
+	position := len(result.Items)
+	part := fmt.Sprintf("[memory %d] %s", position, memory.Content)
+	if result.Context == "" {
+		result.Context = part
+	} else {
+		result.Context += "\n\n" + part
+	}
+	result.ContextBlocks = append(result.ContextBlocks, map[string]any{"position": position, "source": "digital_human_long_term_memory", "score": score, "memory_id": memory.ID.String(), "memory_key": memory.MemoryKey, "revision": memory.Revision})
+	result.SourceSummary = append(result.SourceSummary, map[string]any{"position": position, "match_type": matchType, "score": score})
+	result.ResultCount = len(result.Items)
+	result.Status = datasetservice.KnowledgeRetrieveStatusSuccess
+	if result.TopScore == nil {
+		result.TopScore = &score
+	}
 }
 
 // fallbackToRecentMemories keeps recall usable when the vector projection
@@ -144,8 +273,8 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 // memories. Recency is not relevance, so the result is flagged for the model
 // and the underlying cause is written to the operator log rather than into
 // model-facing text.
-func (p *DigitalHumanMemoryProjectionProvider) fallbackToRecentMemories(ctx context.Context, run *Run, cause string, causeErr error) (*DigitalHumanMemoryRetrievalResult, error) {
-	items, err := NewRepository(p.db).ActiveMemories(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, fallbackRecentMemoryLimit)
+func (p *DigitalHumanMemoryProjectionProvider) fallbackToRecentMemories(ctx context.Context, run *Run, readScope *memoryReadScope, cause string, causeErr error) (*DigitalHumanMemoryRetrievalResult, error) {
+	items, err := NewRepository(p.db).ActiveMemories(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, fallbackRecentMemoryLimit, readScope)
 	if err != nil {
 		return nil, fmt.Errorf("digital human memory recall failed (%s): %v: %w", cause, causeErr, err)
 	}
@@ -465,7 +594,11 @@ func projectionEmbeddingChanged(dataset *datasetmodel.Dataset, resolved *llmrunt
 	return !strings.EqualFold(recordedProvider, resolvedProvider)
 }
 
-func (p *DigitalHumanMemoryProjectionProvider) authoritativeResult(response *datasetservice.KnowledgeRetrieveResponse, memories map[uuid.UUID]*DigitalHumanMemory) *DigitalHumanMemoryRetrievalResult {
+// authoritativeResult maps vector hits back to the authoritative rows. With a
+// read scope, hits outside the run's readable scopes are dropped and the
+// result is trimmed to limit; without one every active memory is recallable,
+// so legacy business rows stay visible.
+func (p *DigitalHumanMemoryProjectionProvider) authoritativeResult(response *datasetservice.KnowledgeRetrieveResponse, memories map[uuid.UUID]*DigitalHumanMemory, readScope *memoryReadScope, limit int) *DigitalHumanMemoryRetrievalResult {
 	if response == nil {
 		return &DigitalHumanMemoryRetrievalResult{Status: datasetservice.KnowledgeRetrieveStatusNoResults}
 	}
@@ -479,11 +612,10 @@ func (p *DigitalHumanMemoryProjectionProvider) authoritativeResult(response *dat
 			continue
 		}
 		memory := memories[memoryID]
-		// Convergence: a DigitalHuman currently owns a single self memory store, so
-		// every active memory is recallable regardless of class or business scope.
-		// Scope partitioning is deferred as a future extension; legacy business rows
-		// stay visible instead of being migrated or hidden.
 		if memory == nil || memory.Status != MemoryStatusActive {
+			continue
+		}
+		if readScope != nil && (!readScope.allows(memory) || len(items) >= limit) {
 			continue
 		}
 		items = append(items, memory)
@@ -501,6 +633,10 @@ func (p *DigitalHumanMemoryProjectionProvider) authoritativeResult(response *dat
 	}
 	return result
 }
+
+// memoryScopedRecallTopK is the largest page the knowledge retrieval service
+// returns; scoped recall asks for all of it before filtering.
+const memoryScopedRecallTopK = 10
 
 func projectionAccountID(scope memoryProjectionScope) string {
 	if scope.ActorID != nil && *scope.ActorID != uuid.Nil {

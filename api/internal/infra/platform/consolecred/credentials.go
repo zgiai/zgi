@@ -1,4 +1,4 @@
-// Package consolecred holds the per-instance credential that zgi-pre uses to call the
+// Package consolecred holds the per-instance credential that Pre uses to call the
 // Console control plane in Cloud mode.
 //
 // MERGE-NOTE(codex-video-image-rollback): the branch ships

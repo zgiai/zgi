@@ -268,6 +268,23 @@ func TestDigitalHumanChannelPostgresConcurrentReplayAndDeliveryIntent(t *testing
 		t.Fatal(err)
 	}
 	workspaceRef := workspaceID
+	// Runtime inputs reference the chat runtime conversation and message, so
+	// the run's turn must exist before an input can be recorded against it.
+	if err := db.Create(&runtimemodel.Conversation{
+		ID: conversationID, OrganizationID: organizationID, WorkspaceID: &workspaceRef, AccountID: actorID,
+		CallerType: runtimemodel.ConversationCallerDigitalHuman, CallerID: &detail.Definition.ID,
+		Title: "Channel conversation", Source: runtimemodel.ConversationSourceChannel,
+		Metadata: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&runtimemodel.Message{
+		ID: messageID, ConversationID: conversationID, Query: "请回复", Status: runtimemodel.MessageStatusStreaming,
+		ModelName: "test-model", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{},
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	mode := runtimemodel.RuntimeInputConsumptionCurrentRun
 	consumedAt := now.Add(750 * time.Millisecond)
 	if err := db.Create(&runtimemodel.RuntimeInput{
@@ -473,8 +490,9 @@ func cleanupChannelPostgresFixture(db *gorm.DB, organizationID, actorID uuid.UUI
 	if db == nil {
 		return
 	}
+	_ = db.Exec("DELETE FROM chat_runtime_messages WHERE conversation_id IN (SELECT id FROM chat_runtime_conversations WHERE organization_id = ?)", organizationID).Error
 	for _, table := range []string{
-		"channel_processing_markers", "channel_delivery_outbox", "channel_inbound_events", "channel_bindings", "external_conversation_mappings", "channel_installation_credentials", "channel_installations",
+		"chat_runtime_inputs", "chat_runtime_conversations", "channel_processing_markers", "channel_delivery_outbox", "channel_inbound_events", "channel_bindings", "external_conversation_mappings", "channel_installation_credentials", "channel_installations",
 		"digital_human_run_outbox", "digital_human_memory_jobs", "digital_human_action_ledger", "digital_human_memory_undo_records",
 		"digital_human_memory_events", "digital_human_memories", "digital_human_memory_states", "digital_human_resource_bindings",
 		"digital_human_runs", "digital_human_versions", "digital_humans", "workspaces", "organizations",

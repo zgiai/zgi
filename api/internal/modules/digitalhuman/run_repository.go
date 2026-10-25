@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -139,7 +140,11 @@ func (r *GormRepository) RunByIdempotency(ctx context.Context, organizationID, d
 func (r *GormRepository) ListRuns(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, query ListQuery) ([]*Run, int64, error) {
 	db := r.db.WithContext(ctx).Model(&Run{}).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ?", scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
-	)
+	).Where("surface <> ?", SurfacePreview) // Configuration previews are not work the DigitalHuman did.
+	db, err := applyRunRequesterFilter(db, query)
+	if err != nil {
+		return nil, 0, err
+	}
 	var total int64
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("count DigitalHuman runs: %w", err)
@@ -182,7 +187,7 @@ func (r *GormRepository) LinkRunMessage(ctx context.Context, runID, conversation
 func (r *GormRepository) ResumeWaitingRun(ctx context.Context, runID uuid.UUID, now time.Time) error {
 	result := r.db.WithContext(ctx).Model(&Run{}).
 		Where("id = ? AND status = ?", runID, RunStatusWaiting).
-		Updates(map[string]any{"status": RunStatusRunning, "waiting_reason": "", "updated_at": now})
+		Updates(map[string]any{"status": RunStatusRunning, "waiting_reason": "", "waiting_receipt": nil, "waiting_approval_origin": "", "updated_at": now})
 	if result.Error != nil {
 		return fmt.Errorf("resume DigitalHuman run: %w", result.Error)
 	}
@@ -275,10 +280,26 @@ func (r *GormRepository) MarkRunWaiting(ctx context.Context, runID uuid.UUID, re
 				if err != nil {
 					return err
 				}
-				if !matched {
-					return ErrRunConflict
+				if matched {
+					approvalOrigin = platformCLIApprovalOrigin
+				} else {
+					workflowMatched, err := runHasWorkflowContinuationMessage(tx, &run, runtimemodel.MessageStatusWaitingApproval)
+					if err != nil {
+						return err
+					}
+					if workflowMatched {
+						approvalOrigin = workflowApprovalOrigin
+					} else {
+						taskMatched, err := runHasTaskApprovalMessage(tx, &run, runtimemodel.MessageStatusWaitingApproval)
+						if err != nil {
+							return err
+						}
+						if !taskMatched {
+							return ErrRunConflict
+						}
+						approvalOrigin = taskApprovalOrigin
+					}
 				}
-				approvalOrigin = platformCLIApprovalOrigin
 			}
 		}
 		result := tx.Model(&Run{}).Where("id = ? AND status = ?", runID, RunStatusRunning).
@@ -395,6 +416,61 @@ func (r *GormRepository) MarkStaleRunsUnknown(ctx context.Context, updatedBefore
 			"error_message": "Execution was interrupted and its external side effects may be unknown.",
 			"completed_at":  now, "updated_at": now,
 		}).Error
+}
+
+// RunHeldByWorkflowApproval returns the interactive run of this workflow run
+// that a generic workflow approval holds: one still waiting on it, or one an
+// external approval resume already claimed (retaken=true) whose worker may
+// have been lost before the conversation settled. A claimed run may still be
+// waiting: the message is claimed before the run, so a worker lost between
+// the two leaves the run for the retake to start. It returns nil when no run
+// is held.
+func (r *GormRepository) RunHeldByWorkflowApproval(ctx context.Context, workflowRunID string) (*Run, bool, error) {
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return nil, false, nil
+	}
+	waiting, err := r.runHeldByWorkflow(ctx, workflowRunID,
+		"digital_human_runs.status = ? AND digital_human_runs.waiting_reason = ? AND digital_human_runs.waiting_approval_origin = ? AND chat_runtime_messages.status = ?",
+		RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, workflowApprovalOrigin, runtimemodel.MessageStatusWaitingApproval)
+	if err != nil || waiting != nil {
+		return waiting, false, err
+	}
+	claimed, err := r.runHeldByWorkflow(ctx, workflowRunID,
+		"(digital_human_runs.status = ? OR (digital_human_runs.status = ? AND digital_human_runs.waiting_approval_origin = ?)) AND chat_runtime_messages.status = ?",
+		RunStatusRunning, RunStatusWaiting, workflowApprovalOrigin, runtimemodel.MessageStatusStreaming)
+	if err != nil || claimed == nil {
+		return nil, false, err
+	}
+	// Only a continuation an external resume claimed is retaken; one the
+	// conversation is running stays with it. The marker is read in Go because
+	// JSON booleans compare differently across databases.
+	var message runtimemodel.Message
+	if err := r.db.WithContext(ctx).Select("id", "metadata").Where("id = ?", *claimed.MessageID).Take(&message).Error; err != nil {
+		return nil, false, fmt.Errorf("load DigitalHuman workflow continuation message: %w", err)
+	}
+	record, _ := message.Metadata["agent_workflow_continuation"].(map[string]interface{})
+	if externalResume, _ := record["external_resume"].(bool); !externalResume {
+		return nil, false, nil
+	}
+	return claimed, true, nil
+}
+
+func (r *GormRepository) runHeldByWorkflow(ctx context.Context, workflowRunID, condition string, args ...interface{}) (*Run, error) {
+	var runs []*Run
+	if err := r.db.WithContext(ctx).Model(&Run{}).
+		Joins("JOIN chat_runtime_messages ON chat_runtime_messages.id = digital_human_runs.message_id").
+		Where("digital_human_runs.conversation_id IS NOT NULL AND chat_runtime_messages.deleted_at IS NULL AND chat_runtime_messages.metadata->'agent_workflow_continuation'->>'workflow_run_id' = ?", workflowRunID).
+		Where(condition, args...).
+		Limit(2).Find(&runs).Error; err != nil {
+		return nil, fmt.Errorf("find DigitalHuman run held by workflow approval: %w", err)
+	}
+	if len(runs) != 1 {
+		// A workflow run belongs to one conversation message; anything else is
+		// not a hold this host can resume.
+		return nil, nil
+	}
+	return runs[0], nil
 }
 
 func terminalRunStatus(status RunStatus) bool {

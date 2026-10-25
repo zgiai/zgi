@@ -102,6 +102,12 @@ func (b *RemoteBackend) StartJob(ctx context.Context, _ agentexecution.Allocatio
 	request := runtimeJobRequestFrom(spec)
 	var status runtimeJobStatus
 	if err := b.doJSON(ctx, http.MethodPost, "/v1/jobs", request, &status); err != nil {
+		var unanswered *runtimeAgentUnanswered
+		if errors.As(err, &unanswered) {
+			// The agent may have started the job: its start is idempotent by job
+			// ID, so the caller retries the same start to attach to it.
+			return nil, fmt.Errorf("%w: %w", agentexecution.ErrJobStartUnknown, err)
+		}
 		return nil, err
 	}
 	return &remoteRunningJob{backend: b, jobID: spec.JobID, sink: sink, nextSequence: -1}, nil
@@ -275,11 +281,21 @@ func (b *RemoteBackend) doJSON(ctx context.Context, method string, requestPath s
 	}
 	response, err := b.client.Do(request)
 	if err != nil {
-		return err
+		return &runtimeAgentUnanswered{err: err}
 	}
 	defer response.Body.Close()
 	return decodeRuntimeResponse(response, target)
 }
+
+// runtimeAgentUnanswered is a request the runtime agent gave no answer to: the
+// transport failed, or a proxy in front of the agent reported a gateway error.
+// The agent may still have acted on it.
+type runtimeAgentUnanswered struct {
+	err error
+}
+
+func (e *runtimeAgentUnanswered) Error() string { return e.err.Error() }
+func (e *runtimeAgentUnanswered) Unwrap() error { return e.err }
 
 func (b *RemoteBackend) applyHeaders(request *http.Request) {
 	for key, values := range b.headers {
@@ -425,13 +441,23 @@ func decodeRuntimeResponse(response *http.Response, target any) error {
 		Data  json.RawMessage    `json:"data"`
 		Error *runtimeAgentError `json:"error"`
 	}
+	gateway := response.StatusCode == http.StatusBadGateway || response.StatusCode == http.StatusServiceUnavailable || response.StatusCode == http.StatusGatewayTimeout
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 16*1024*1024))
 	if err := decoder.Decode(&envelope); err != nil {
-		return fmt.Errorf("decode runtime agent response: %w", err)
+		if gateway {
+			return &runtimeAgentUnanswered{err: fmt.Errorf("runtime agent returned HTTP %d", response.StatusCode)}
+		}
+		// A reply cut off or timed out while it was read is no answer either:
+		// the agent may have acted on the request.
+		return &runtimeAgentUnanswered{err: fmt.Errorf("decode runtime agent response: %w", err)}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || envelope.Error != nil {
 		if envelope.Error == nil {
-			return fmt.Errorf("runtime agent returned HTTP %d", response.StatusCode)
+			err := fmt.Errorf("runtime agent returned HTTP %d", response.StatusCode)
+			if gateway {
+				return &runtimeAgentUnanswered{err: err}
+			}
+			return err
 		}
 		return runtimeAgentClientError(envelope.Error.Code)
 	}
@@ -439,7 +465,7 @@ func decodeRuntimeResponse(response *http.Response, target any) error {
 		return nil
 	}
 	if err := json.Unmarshal(envelope.Data, target); err != nil {
-		return fmt.Errorf("decode runtime agent data: %w", err)
+		return &runtimeAgentUnanswered{err: fmt.Errorf("decode runtime agent data: %w", err)}
 	}
 	return nil
 }

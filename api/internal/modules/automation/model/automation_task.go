@@ -21,6 +21,10 @@ type AutomationTask struct {
 	OwnerSubjectID          *string                  `gorm:"column:owner_subject_id;type:uuid" json:"owner_subject_id,omitempty"`
 	OwnerConversationID     *string                  `gorm:"column:owner_conversation_id;type:uuid" json:"owner_conversation_id,omitempty"`
 	OriginSurface           *string                  `gorm:"column:origin_surface;type:varchar(32)" json:"origin_surface,omitempty"`
+	Visibility              *string                  `gorm:"column:visibility;type:varchar(16)" json:"visibility,omitempty"`
+	ConfirmedByType         *string                  `gorm:"column:confirmed_by_type;type:varchar(32)" json:"confirmed_by_type,omitempty"`
+	ConfirmedByRef          *string                  `gorm:"column:confirmed_by_ref;type:varchar(255)" json:"confirmed_by_ref,omitempty"`
+	ConfirmedAt             *time.Time               `gorm:"column:confirmed_at" json:"confirmed_at,omitempty"`
 	WorkStatus              *AutomationWorkStatus    `gorm:"column:work_status;type:varchar(32)" json:"work_status,omitempty"`
 	Priority                *AutomationTaskPriority  `gorm:"column:priority;type:varchar(16)" json:"priority,omitempty"`
 	Goal                    *string                  `gorm:"column:goal;type:text" json:"goal,omitempty"`
@@ -42,6 +46,7 @@ type AutomationTask struct {
 	SourceType              AutomationSourceType     `gorm:"column:source_type;type:varchar(32);not null" json:"source_type"`
 	SourceRef               *string                  `gorm:"column:source_ref;type:varchar(255)" json:"source_ref,omitempty"`
 	SourceSnapshot          map[string]interface{}   `gorm:"column:source_snapshot;type:jsonb;serializer:json" json:"source_snapshot,omitempty"`
+	ClientReference         *string                  `gorm:"column:client_reference;type:varchar(255)" json:"client_reference,omitempty"`
 	CreatedBy               string                   `gorm:"column:created_by;type:uuid;not null" json:"created_by"`
 	UpdatedBy               string                   `gorm:"column:updated_by;type:uuid;not null" json:"updated_by"`
 	CreatedAt               time.Time                `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`

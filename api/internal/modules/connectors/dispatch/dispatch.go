@@ -33,6 +33,20 @@ type Identity struct {
 	Confirmation       *execution.RuntimeConfirmationCommand
 	ActionStepID       string
 	PlanPhaseID        string
+	// DelegatedRequesterID is the requester of a run that uses a binding its
+	// owner delegated to the host; the owner's credential acts for the host.
+	// It is empty when the owner acts for themselves.
+	DelegatedRequesterID uuid.UUID
+}
+
+// DelegatedUse proves a run may use a binding its owner delegated to the
+// host audience. Resolvers re-check it against the run and the delegation
+// before they return an identity.
+type DelegatedUse struct {
+	RequesterID uuid.UUID
+	RunID       uuid.UUID
+	BindingID   uuid.UUID
+	Audience    core.HostAudience
 }
 
 // IdentityResolutionRequest is the complete non-secret authorization input a
@@ -52,6 +66,8 @@ type IdentityResolutionRequest struct {
 	CorrelationID      string
 	Interactive        bool
 	Confirmation       *execution.RuntimeConfirmationCommand
+	// Delegation is set when the binding owner is not the requester.
+	Delegation *DelegatedUse
 }
 
 // IdentityResolver resolves a current, owner-scoped Connector identity for a

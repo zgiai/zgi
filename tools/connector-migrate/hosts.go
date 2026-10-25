@@ -274,7 +274,11 @@ func (c *converter) convertChatPreferences() {
 			if text(chat, "organization_id") != org || text(chat, "account_id") != owner || chat["deleted_at"] != nil || text(chat, "caller_type") != "aichat" {
 				continue
 			}
-			if workspace := text(preference, "workspace_id"); workspace != "" && text(chat, "workspace_id") != workspace {
+			// Legacy preferences use an exact workspace scope. An unscoped
+			// preference is not a fallback for workspace-scoped conversations;
+			// applying it there can both widen selection and collide with the
+			// workspace's independently selected connection.
+			if text(preference, "workspace_id") != text(chat, "workspace_id") {
 				continue
 			}
 			target := c.target("chat", text(chat, "id"), "live", "", "", org, owner)

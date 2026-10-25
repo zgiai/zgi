@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
 	"github.com/zgiai/zgi/api/internal/modules/llm/billingsettings"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/modelmeta"
@@ -17,7 +18,6 @@ import (
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"gorm.io/gorm"
 )
 
@@ -175,10 +175,14 @@ func (s *Synchronizer) connect(ctx context.Context) (catalogRPCClient, io.Closer
 		report, err := service.ApplyPublishedCatalogWithReport(ctx, catalog)
 		if err != nil {
 			_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
-			return nil, closer, nil, err
+			logger.WarnContext(ctx, "Catalog reapply failed, continuing to watch for newer publishes",
+				zap.Int64("version", lastSeenVersion),
+				zap.Error(err),
+			)
+		} else {
+			s.recordCatalogApplyReport(ctx, report)
+			s.applyBillingSettings(ctx, catalog)
 		}
-		s.recordCatalogApplyReport(ctx, report)
-		s.applyBillingSettings(ctx, catalog)
 	}
 
 	stream, err := client.WatchCatalogPublishes(ctx, &pb.WatchCatalogPublishesRequest{
@@ -540,7 +544,11 @@ func (s *Synchronizer) loadLastAppliedVersion(ctx context.Context) (int64, error
 }
 
 func newGRPCCatalogClient(addr string) (catalogRPCClient, io.Closer, error) {
-	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	transportCredentials, err := consolecred.TransportCredentials(addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(transportCredentials)}
 	dialOptions = append(dialOptions, observability.GRPCDialOptions()...)
 	conn, err := grpc.Dial(addr, dialOptions...)
 	if err != nil {

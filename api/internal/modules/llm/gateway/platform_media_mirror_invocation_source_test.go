@@ -25,7 +25,7 @@ func (f *fakeMediaMirrorBillingProvider) MirrorPlatformMediaSettlement(_ context
 // A media call must persist a stable invocation source: product surfaces
 // declare it on the context, while a public Gateway call resolves to "api".
 // Before this was wired the media mirror wrote an empty source that normalized
-// to "unknown", so Pre's statistics showed media calls as "来源未识别".
+// to "unknown", so Pre's statistics showed media calls as an unrecognized source.
 func TestMirrorPlatformMediaSettlementRecordsInvocationSource(t *testing.T) {
 	cases := []struct {
 		name string

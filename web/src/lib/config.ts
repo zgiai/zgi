@@ -122,6 +122,13 @@ export const LOGO_REDIRECT_URL: string = withBasePathIfInternal(
 );
 
 /**
+ * Back button on agent landing pages (WebApps). Empty hides it; "back"
+ * returns to the previous page; any other value is the link it opens, an
+ * internal path or a full URL.
+ */
+export const WEBAPP_BACK_TARGET: string = (readPublicEnvRaw('NEXT_PUBLIC_WEBAPP_BACK_URL') || '').trim();
+
+/**
  * Redirect URL after logout completes.
  * Supports internal paths and full external URLs.
  */
@@ -364,5 +371,10 @@ export const ENABLE_AGENT_RUNTIME_LOGS_PAGE: boolean =
 
 export const ENABLE_RUNTIME_WORKSPACE: boolean =
   readPublicEnvRaw('NEXT_PUBLIC_ENABLE_RUNTIME_WORKSPACE') === 'true';
+
+// Per-user DigitalHuman Connector slots (ADR 0007); the API flag is
+// ZGI_DIGITAL_HUMAN_PER_USER_CONNECTORS_ENABLED.
+export const ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS') === 'true';
 
 // Add more env variables here as needed, always use this file for env access

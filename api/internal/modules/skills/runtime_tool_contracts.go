@@ -543,8 +543,8 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			Description: "Get the current system time with optional timezone and format.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"format":   stringValueSchema("Optional strftime-style output format. Defaults to %Y-%m-%d %H:%M:%S."),
-					"timezone": stringValueSchema("Optional IANA timezone such as Asia/Shanghai. Defaults to UTC."),
+					"format":   stringValueSchema("Optional strftime-style output format. Defaults to %Y-%m-%d %H:%M:%S %Z (UTC%z)."),
+					"timezone": stringValueSchema("Optional IANA timezone such as Asia/Shanghai. Defaults to the user's timezone, or UTC when it is unknown."),
 				},
 				nil,
 			),
@@ -561,7 +561,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 					"amount":      numberSchema("Interval amount for add or subtract. Defaults to 1."),
 					"unit":        enumStringSchema("Interval unit for add or subtract.", []string{"day", "week", "month", "year"}),
 					"target_date": stringValueSchema("Target date in YYYY-MM-DD format. Required when operation is diff."),
-					"timezone":    stringValueSchema("IANA timezone used when base_date is omitted. Defaults to UTC."),
+					"timezone":    stringValueSchema("IANA timezone used when base_date is omitted. Defaults to the user's timezone, or UTC when it is unknown."),
 				},
 				[]string{"operation"},
 			),

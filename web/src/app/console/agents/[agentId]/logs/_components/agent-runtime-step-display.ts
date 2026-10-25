@@ -201,6 +201,16 @@ export function getAgentRuntimeStepDisplay(
         title: translate(t, 'appLogs.runtimeEventTitles.workflowApproval'),
         subtitle: stringValue(process.workflow_run_id) || rawTitle || type,
       };
+    case 'task_approval': {
+      // A digital human asking to confirm a task change, not a workflow approval.
+      const name = stringValue(process.task_name);
+      return {
+        title: name
+          ? translate(t, 'appLogs.runtimeEventTitles.taskApprovalNamed', { name })
+          : translate(t, 'appLogs.runtimeEventTitles.taskApproval'),
+        subtitle: stringValue(process.task_action) || stringValue(process.task_id) || type,
+      };
+    }
     case 'model_answer':
       return {
         title: translate(t, 'appLogs.runtimeEventTitles.finalAnswer'),

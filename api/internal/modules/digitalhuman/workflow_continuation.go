@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -64,10 +65,18 @@ func (s *RuntimeService) continueWorkflowApproval(
 	if err != nil {
 		return "", err
 	}
-	config, err := s.workflowContinuationConfig(ctx, scope, digitalHumanID, messageID)
+	run, config, err := s.workflowContinuationConfig(ctx, scope, digitalHumanID, conversationID, messageID)
 	if err != nil {
 		return "", err
 	}
+	// The resumed Agent loop (summary, connector tools, workspace) is owned by
+	// this run, exactly like the other DigitalHuman continuations.
+	caller.RunID = cloneUUIDPointer(&run.ID)
+	if run.Surface == SurfaceTask {
+		// The run drawer answers a task run's approval in its task conversation.
+		caller.Source = digitalHumanConversationSourceForRun(run)
+	}
+	heldRun := workflowHeldRun(run)
 	runtime, ok := s.chat.(workflowContinuationChatRuntime)
 	if !ok {
 		return "", fmt.Errorf("digital human workflow continuation runtime is unavailable")
@@ -87,6 +96,14 @@ func (s *RuntimeService) continueWorkflowApproval(
 	// conversation stays blocked on a message no run owns.
 	lifecycle := &digitalHumanWorkflowContinuation{
 		ctx: context.WithoutCancel(ctx), runtime: runtime, scope: runtimeScope, continuation: continuation, onEvent: onEvent,
+	}
+	if heldRun != nil {
+		lifecycle.settle = func(settleCtx context.Context, status, answer string, metadata map[string]interface{}) {
+			s.settleWorkflowContinuationRun(settleCtx, heldRun, status, answer, metadata)
+		}
+		if err := s.resumeHeldWorkflowRun(ctx, heldRun); err != nil {
+			return "", lifecycle.abortBeforeResume(err)
+		}
 	}
 	if err := lifecycle.emit(chatruntime.StreamEvent{EventType: "message_start", Payload: map[string]interface{}{
 		"conversation_id": conversationID.String(), "message_id": messageID.String(),
@@ -161,6 +178,16 @@ const (
 	workflowContinuationUnobserved
 )
 
+// workflowFinishedInstruction tells the summary that the workflow's requests
+// were settled while it was paused. The conversation still shows the workflow
+// tool call waiting on its approval or question, so without this the model
+// may ask the user for them again.
+const workflowFinishedInstruction = "The workflow has finished. Every approval and question it requested while paused was already settled, so do not ask the user for them again."
+
+// workflowApprovalExpiredInstruction tells the summary how an approval that
+// timed out ended; the workflow outputs may still carry the unanswered form.
+const workflowApprovalExpiredInstruction = "The workflow approval expired before any approver approved or rejected it, and the workflow continued on its expiry path. Report that the approval timed out without a decision. Do not describe the request as approved, rejected, or still waiting for approval."
+
 // digitalHumanWorkflowContinuation mirrors the Agent continuation lifecycle:
 // it records resumed workflow events on the message, pauses again on a new
 // approval or question, and completes or fails the message when the
@@ -174,11 +201,19 @@ type digitalHumanWorkflowContinuation struct {
 	continuation *chatruntime.WorkflowApprovalContinuation
 	onEvent      func(chatruntime.StreamEvent) error
 
+	// settle records where the message ended on the DigitalHuman run. It is nil
+	// when the run is not held by this workflow approval (channel and background
+	// runs keep their own lifecycle).
+	settle func(ctx context.Context, status, answer string, metadata map[string]interface{})
+
 	waitingStatus string
 	terminal      bool
-	runStatus     string
-	runOutputs    map[string]interface{}
-	runError      string
+	// approvalExpired records that an approval timed out without a decision, so
+	// the summary does not read the leftover approval form as still pending.
+	approvalExpired bool
+	runStatus       string
+	runOutputs      map[string]interface{}
+	runError        string
 	// answer is the final assistant answer once the continuation completes.
 	answer string
 }
@@ -206,6 +241,8 @@ func (l *digitalHumanWorkflowContinuation) handle(rawEventType string, rawPayloa
 		l.waitingStatus = runtimemodel.MessageStatusWaitingApproval
 	case "question_answer_requested":
 		l.waitingStatus = runtimemodel.MessageStatusWaitingQuestion
+	case "approval_expired":
+		l.approvalExpired = true
 	case "workflow_failed":
 		l.terminal = true
 		if l.runStatus == "" {
@@ -268,22 +305,30 @@ func (l *digitalHumanWorkflowContinuation) finish(resume workflowContinuationRes
 	if status == "" {
 		status = "succeeded"
 	}
-	result, err := l.runtime.SummarizeWorkflowApprovalContinuation(ctx, l.scope, l.continuation, chatruntime.WorkflowContinuationSummaryRequest{
+	summary := chatruntime.WorkflowContinuationSummaryRequest{
 		WorkflowRunID: l.continuation.WorkflowRunID,
 		Status:        status,
 		Outputs:       l.runOutputs,
 		Error:         l.runError,
-	}, func(event chatruntime.StreamEvent) error {
+	}
+	summary.ContinuationInstruction = workflowFinishedInstruction
+	if l.approvalExpired {
+		summary.ContinuationInstruction += " " + workflowApprovalExpiredInstruction
+	}
+	result, err := l.runtime.SummarizeWorkflowApprovalContinuation(ctx, l.scope, l.continuation, summary, func(event chatruntime.StreamEvent) error {
 		return l.emit(chatruntime.ProjectWorkflowContinuationEvent(l.continuation, event))
 	})
 	if err != nil {
 		if chatruntime.IsFinalizedStreamError(err) {
+			// The runtime already finalized the message as failed.
+			l.settleRun(ctx, runtimemodel.MessageStatusError, nil)
 			return err
 		}
 		l.fail(ctx, err)
 		return err
 	}
 	if result != nil && result.Status != "" && result.Status != runtimemodel.MessageStatusCompleted {
+		l.settleRun(ctx, result.Status, result.Metadata)
 		return nil
 	}
 	metadata := map[string]interface{}{}
@@ -302,6 +347,8 @@ func (l *digitalHumanWorkflowContinuation) abortBeforeResume(cause error) error 
 	case runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion:
 		if _, err := l.runtime.PauseWorkflowApprovalContinuation(l.ctx, l.continuation, l.continuation.MessageStatus); err != nil {
 			l.fail(l.ctx, errors.Join(cause, err))
+		} else {
+			l.settleRun(l.ctx, l.continuation.MessageStatus, nil)
 		}
 	default:
 		l.fail(l.ctx, cause)
@@ -326,6 +373,7 @@ func (l *digitalHumanWorkflowContinuation) fail(ctx context.Context, cause error
 	metadata, err := l.runtime.FailWorkflowApprovalContinuation(ctx, l.continuation, message)
 	if err != nil {
 		logger.WarnContext(ctx, "failed to mark digital human workflow continuation failed", "workflow_run_id", l.continuation.WorkflowRunID, err)
+		l.settleRun(ctx, runtimemodel.MessageStatusError, nil)
 		return
 	}
 	_ = l.appendAndEmit(ctx, "message_end", map[string]interface{}{
@@ -334,15 +382,32 @@ func (l *digitalHumanWorkflowContinuation) fail(ctx context.Context, cause error
 		"status":          runtimemodel.MessageStatusError,
 		"metadata":        metadata,
 	})
+	l.settleRun(ctx, runtimemodel.MessageStatusError, metadata)
 }
 
 func (l *digitalHumanWorkflowContinuation) emitMessageEnd(ctx context.Context, status string, metadata map[string]interface{}) error {
-	return l.appendAndEmit(ctx, "message_end", map[string]interface{}{
+	err := l.appendAndEmit(ctx, "message_end", map[string]interface{}{
 		"conversation_id": l.continuation.ConversationID.String(),
 		"message_id":      l.continuation.MessageID.String(),
 		"status":          status,
 		"metadata":        metadata,
 	})
+	// The message is already persisted in its final state; the run follows it
+	// even when the client is gone and the event could not be delivered.
+	l.settleRun(ctx, status, metadata)
+	return err
+}
+
+func (l *digitalHumanWorkflowContinuation) settleRun(ctx context.Context, status string, metadata map[string]interface{}) {
+	if l.settle == nil {
+		return
+	}
+	if status == runtimemodel.MessageStatusCompleted && strings.EqualFold(strings.TrimSpace(l.runStatus), "failed") {
+		// The summary of a failed workflow completes the message, but the run
+		// still reports the workflow outcome.
+		status = runtimemodel.MessageStatusError
+	}
+	l.settle(ctx, status, l.answer, metadata)
 }
 
 func (l *digitalHumanWorkflowContinuation) appendAndEmit(ctx context.Context, eventType string, payload map[string]interface{}) error {
@@ -373,26 +438,125 @@ func workflowContinuationPayloadString(payload map[string]interface{}, key strin
 	return strings.TrimSpace(value)
 }
 
-func (s *RuntimeService) workflowContinuationConfig(ctx context.Context, scope Scope, digitalHumanID, messageID uuid.UUID) (chatruntime.RunConfig, error) {
+// workflowContinuationConfig verifies the run belongs to this conversation
+// message and restores its execution snapshot, tools, connector identity and
+// workspace, so the resumed Agent loop behaves like the original turn.
+func (s *RuntimeService) workflowContinuationConfig(ctx context.Context, scope Scope, digitalHumanID, conversationID, messageID uuid.UUID) (*Run, chatruntime.RunConfig, error) {
 	lookup, ok := s.store.(channelApprovalRunLookup)
 	if !ok {
-		return chatruntime.RunConfig{}, ErrRunNotFound
+		return nil, chatruntime.RunConfig{}, ErrRunNotFound
 	}
 	run, err := lookup.RunByMessageID(ctx, scope.OrganizationID, scope.WorkspaceID, digitalHumanID, messageID)
 	if err != nil {
-		return chatruntime.RunConfig{}, err
+		return nil, chatruntime.RunConfig{}, err
 	}
 	if run == nil {
-		return chatruntime.RunConfig{}, ErrRunNotFound
+		return nil, chatruntime.RunConfig{}, ErrRunNotFound
+	}
+	if run.DigitalHumanID != digitalHumanID || run.OrganizationID != scope.OrganizationID || run.WorkspaceID != scope.WorkspaceID ||
+		run.ConversationID == nil || *run.ConversationID != conversationID || run.MessageID == nil || *run.MessageID != messageID {
+		return nil, chatruntime.RunConfig{}, ErrConversationNotFound
 	}
 	resolved, event, err := decodeAndVerifyRun(run)
 	if err != nil {
-		return chatruntime.RunConfig{}, err
+		return nil, chatruntime.RunConfig{}, err
 	}
-	config, err := s.brain.RunConfig(resolved)
+	config, _, err := s.userInputContinuationConfig(ctx, run, resolved, event, scope)
 	if err != nil {
-		return chatruntime.RunConfig{}, err
+		return nil, chatruntime.RunConfig{}, err
 	}
-	s.attachAttachmentReader(&config, run, resolved, event, nil)
-	return config, nil
+	return run, config, nil
+}
+
+// workflowHeldRun returns the run only when this workflow continuation holds it:
+// waiting on a generic workflow approval (workflow origin) or on a workflow
+// question. The caller has already verified the run owns this conversation
+// message. Channel and background runs keep their own lifecycle (a channel
+// continuation delivers its own reply) and are left untouched.
+func workflowHeldRun(run *Run) *Run {
+	if run == nil || run.Status != RunStatusWaiting || !workflowContinuationSurface(run.Surface) {
+		return nil
+	}
+	switch {
+	case run.WaitingReason == runtimemodel.MessageStatusWaitingApproval && run.WaitingApprovalOrigin == workflowApprovalOrigin:
+		return run
+	case run.WaitingReason == runtimemodel.MessageStatusWaitingQuestion && run.WaitingApprovalOrigin == "":
+		return run
+	default:
+		return nil
+	}
+}
+
+// workflowContinuationSurface reports whether a run's surface resumes a
+// workflow continuation interactively (console, WebApp, API).
+func workflowContinuationSurface(surface string) bool {
+	return surface == SurfaceConsole || surface == SurfaceWebApp || surface == SurfaceAPI
+}
+
+// resumeHeldWorkflowRun moves the waiting run back to running. A run that is
+// already running is a retry of an in-flight continuation and just observes it.
+func (s *RuntimeService) resumeHeldWorkflowRun(ctx context.Context, run *Run) error {
+	waiter, ok := s.store.(runWaitingStore)
+	if !ok {
+		return fmt.Errorf("digital human waiting run resume is unavailable")
+	}
+	if err := waiter.ResumeWaitingRun(ctx, run.ID, s.now()); err != nil && !errors.Is(err, ErrRunConflict) {
+		return err
+	}
+	return nil
+}
+
+const (
+	workflowContinuationFailedCode    = "digital_human.run.execution_failed"
+	workflowContinuationFailedMessage = "The DigitalHuman continuation failed."
+)
+
+// workflowContinuationEndedFailed reports whether the message's workflow
+// continuation recorded a failed workflow. The summary of a failed workflow
+// still completes the message, so recovering a run from its message has to
+// read the workflow outcome.
+func workflowContinuationEndedFailed(metadata map[string]interface{}) bool {
+	workflowRunID, _ := workflowContinuationRecord(metadata)["workflow_run_id"].(string)
+	workflowRunID = strings.TrimSpace(workflowRunID)
+	if workflowRunID == "" {
+		return false
+	}
+	runs, _ := metadata["workflow_runs"].([]interface{})
+	for _, item := range runs {
+		run, _ := item.(map[string]interface{})
+		if id, _ := run["workflow_run_id"].(string); strings.TrimSpace(id) != workflowRunID {
+			continue
+		}
+		status, _ := run["status"].(string)
+		return failureprojection.IsFailureStatus(status)
+	}
+	return false
+}
+
+// settleWorkflowContinuationRun records where the continuation ended on the run:
+// completed, waiting again for another approval or question, or stopped/failed.
+func (s *RuntimeService) settleWorkflowContinuationRun(ctx context.Context, run *Run, status, answer string, metadata map[string]interface{}) {
+	ctx = context.WithoutCancel(ctx)
+	var err error
+	switch status {
+	case runtimemodel.MessageStatusCompleted:
+		err = s.store.CompleteRunWithDelivery(ctx, run.ID, answer, executionTraceFromMetadata(metadata), s.now())
+	case runtimemodel.MessageStatusWaitingApproval, runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingBudget, runtimemodel.MessageStatusWaitingClientAction:
+		// The resumed Agent loop can also stop on a budget or client action; the
+		// run must stay waiting so those continuations can pick it up.
+		waiter, ok := s.store.(runWaitingStore)
+		if !ok {
+			err = fmt.Errorf("digital human waiting run resume is unavailable")
+			break
+		}
+		err = waiter.MarkRunWaiting(ctx, run.ID, status, s.now())
+	case runtimemodel.MessageStatusStopped:
+		err = s.store.FailRun(ctx, run.ID, "digital_human.run.canceled", "The DigitalHuman run was stopped.", s.now())
+	default:
+		err = s.store.FailRun(ctx, run.ID, workflowContinuationFailedCode, workflowContinuationFailedMessage, s.now())
+	}
+	if err != nil {
+		logger.WarnContext(ctx, "failed to settle digital human run after workflow continuation", "run_id", run.ID.String(), "status", status, err)
+	}
 }

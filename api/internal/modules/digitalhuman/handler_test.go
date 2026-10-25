@@ -170,6 +170,29 @@ func TestHandlerProjectsDigitalHumanEntryAdmission(t *testing.T) {
 			t.Fatalf("entry capabilities = %+v", capability.EntryCapabilities)
 		}
 	})
+	t.Run("all authenticated organizations skip the entry allowlist", func(t *testing.T) {
+		// A private deployment opens the runtime to every organization with
+		// one setting; the organization is in neither the profile nor any
+		// entry allowlist.
+		t.Setenv("ZGI_AGENT_RUNTIME_ORG_MODE", "all_authenticated")
+		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", "")
+		h := &Handler{executionApprovals: executionruntime.Approvals{
+			Enabled: true, GatewayReady: true, DefaultProfileID: "standard",
+			OrganizationAccessMode: executionruntime.OrganizationAccessModeAllAuthenticated,
+			Profiles: map[string]executionruntime.ProfileApproval{
+				"standard": {Backend: "local-gvisor", PolicyIDs: []string{"offline"}},
+			},
+		}}
+		capability := h.decorateExecutionRuntimeCapability(scope, &Detail{}).(*Detail).ExecutionRuntimeCapability
+		if !capability.Available || !capability.CanEnable || capability.Reason != "" {
+			t.Fatalf("capability = %+v", capability)
+		}
+		for entry, admitted := range capability.EntryCapabilities {
+			if !admitted.Available {
+				t.Fatalf("entry %s refused in all_authenticated mode: %+v", entry, admitted)
+			}
+		}
+	})
 	t.Run("legacy empty environment does not admit digital human", func(t *testing.T) {
 		t.Setenv("ZGI_AGENT_RUNTIME_ENTRY_ALLOWLIST_JSON", "")
 		result := base.decorateExecutionRuntimeCapability(scope, &Detail{}).(*Detail)

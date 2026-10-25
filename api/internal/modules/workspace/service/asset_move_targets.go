@@ -162,12 +162,20 @@ type assetMoveScope struct {
 }
 
 func (s *WorkspaceAssetMoveService) resolveAssetMoveScope(ctx context.Context, db *gorm.DB, organizationID string, item dto.WorkspaceAssetMoveItem) (assetMoveScope, error) {
-	permission, supported := assetMovePermissionForType(item.Type)
+	permission, supported := s.assetMovePermission(item.Type)
 	if !supported {
 		return assetMoveScope{}, ErrAssetMoveInvalidRequest
 	}
 
 	scope := assetMoveScope{permission: permission}
+	if mover := s.mover(item.Type); mover != nil {
+		workspaceID, err := mover.SourceWorkspace(ctx, db, organizationID, item.ID)
+		if err != nil {
+			return assetMoveScope{}, assetMoveScopeLookupError(err)
+		}
+		scope.sourceWorkspaceID = workspaceID
+		return scope, nil
+	}
 	switch item.Type {
 	case AssetMoveTypeAgent:
 		var agent struct {

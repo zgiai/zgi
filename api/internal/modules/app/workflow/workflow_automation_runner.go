@@ -593,26 +593,31 @@ func emitAutomationWorkflowPaused(sink automationaction.WorkflowRunEventSink, re
 	if result != nil {
 		pausedSnapshots = workflowGraphPausedSnapshots(result.NodeExecutions)
 	}
+	interactions := automationPausedInteractions(pausedSnapshots)
 	nodeIDs := make([]string, 0, len(pausedSnapshots))
 	for _, snapshot := range pausedSnapshots {
 		nodeIDs = append(nodeIDs, snapshot.NodeID)
 	}
+	// A pause waiting on a question reports pending_question, matching the
+	// status the workflow tool result gives the conversation.
 	pauseStatus := "pending_approval"
-	pauseReason := workflowpause.ReasonTypeApprovalRequired
-	if len(pausedSnapshots) > 0 && pausedSnapshots[0].NodeType == workflowshared.QuestionAnswer {
-		pauseStatus = "pending_question"
-		pauseReason = workflowpause.ReasonTypeQuestionAnswerRequired
+	reasons := make([]interface{}, 0, len(interactions))
+	for _, snapshot := range interactions {
+		reason := map[string]interface{}{"type": automationPauseReasonType(snapshot), "node_id": snapshot.NodeID}
+		if snapshot.NodeType == workflowshared.QuestionAnswer {
+			pauseStatus = "pending_question"
+		} else if formID := automationSnapshotApprovalFormID(snapshot, outputs); formID != "" {
+			reason["form_id"] = formID
+		}
+		reasons = append(reasons, reason)
 	}
 	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
 		"status":       pauseStatus,
 		"node_ids":     nodeIDs,
 		"elapsed_time": elapsedTime,
 		"outputs":      copyWorkflowAnyMap(outputs),
-		"reasons": []interface{}{map[string]interface{}{
-			"type":    pauseReason,
-			"node_id": firstPausedAutomationNodeID(pausedSnapshots),
-		}},
-		"created_at": time.Now().Unix(),
+		"reasons":      reasons,
+		"created_at":   time.Now().Unix(),
 	})
 	if len(pausedSnapshots) > 0 {
 		meta := automationWorkflowEventNodeMeta(nodeMetas, pausedSnapshots[0].NodeID, string(pausedSnapshots[0].NodeType))
@@ -621,55 +626,91 @@ func emitAutomationWorkflowPaused(sink automationaction.WorkflowRunEventSink, re
 		}
 	}
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventPaused, payload)
-	if pauseReason == workflowpause.ReasonTypeQuestionAnswerRequired {
-		emitAutomationWorkflowQuestionRequested(sink, req, workflow, workflowRunID, outputs, elapsedTime, pausedSnapshots, nodeMetas)
-	} else {
-		emitAutomationWorkflowApprovalRequested(sink, req, workflow, workflowRunID, outputs, elapsedTime, pausedSnapshots, nodeMetas)
+	// Every paused node gets its own durable request, so each pending reason of
+	// a mixed pause can be projected after another one is completed.
+	for _, snapshot := range interactions {
+		if snapshot.NodeType == workflowshared.QuestionAnswer {
+			emitAutomationWorkflowQuestionRequested(sink, req, workflow, workflowRunID, elapsedTime, snapshot, nodeMetas)
+		} else {
+			emitAutomationWorkflowApprovalRequested(sink, req, workflow, workflowRunID, outputs, elapsedTime, snapshot, nodeMetas)
+		}
 	}
 }
 
-func firstPausedAutomationNodeID(pausedSnapshots []graph_engine.NodeExecutionSnapshot) string {
-	if len(pausedSnapshots) == 0 {
+// automationPausedInteractions orders the paused nodes approvals first and
+// questions last, so the last request a conversation sees is the question it
+// is asked to answer, as the workflow tool result reports.
+func automationPausedInteractions(pausedSnapshots []graph_engine.NodeExecutionSnapshot) []graph_engine.NodeExecutionSnapshot {
+	ordered := make([]graph_engine.NodeExecutionSnapshot, 0, len(pausedSnapshots))
+	for _, snapshot := range pausedSnapshots {
+		if snapshot.NodeID != "" && snapshot.NodeType != workflowshared.QuestionAnswer {
+			ordered = append(ordered, snapshot)
+		}
+	}
+	for _, snapshot := range pausedSnapshots {
+		if snapshot.NodeID != "" && snapshot.NodeType == workflowshared.QuestionAnswer {
+			ordered = append(ordered, snapshot)
+		}
+	}
+	return ordered
+}
+
+func automationPauseReasonType(snapshot graph_engine.NodeExecutionSnapshot) string {
+	if snapshot.NodeType == workflowshared.QuestionAnswer {
+		return workflowpause.ReasonTypeQuestionAnswerRequired
+	}
+	return workflowpause.ReasonTypeApprovalRequired
+}
+
+// automationSnapshotApprovalFormID is the approval form of a paused approval
+// node. The merged run outputs only describe one approval, so they are a
+// fallback for a node whose own outputs lack it.
+func automationSnapshotApprovalFormID(snapshot graph_engine.NodeExecutionSnapshot, outputs map[string]interface{}) string {
+	if snapshot.NodeType == workflowshared.QuestionAnswer {
 		return ""
 	}
-	return pausedSnapshots[0].NodeID
+	if formID := automationApprovalFormID(snapshot.Outputs); formID != "" {
+		return formID
+	}
+	return automationApprovalFormID(outputs)
 }
 
-func emitAutomationWorkflowApprovalRequested(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64, pausedSnapshots []graph_engine.NodeExecutionSnapshot, nodeMetas map[string]automationWorkflowNodeMeta) {
+func emitAutomationWorkflowApprovalRequested(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64, snapshot graph_engine.NodeExecutionSnapshot, nodeMetas map[string]automationWorkflowNodeMeta) {
 	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
 		"status":       "pending_approval",
 		"elapsed_time": elapsedTime,
 		"created_at":   time.Now().Unix(),
 	})
-	for key, value := range automationApprovalEventFields(outputs) {
+	fields := automationApprovalEventFields(snapshot.Outputs)
+	if len(fields) == 0 {
+		fields = automationApprovalEventFields(outputs)
+	}
+	for key, value := range fields {
 		payload[key] = value
 	}
-	if len(pausedSnapshots) > 0 {
-		meta := automationWorkflowEventNodeMeta(nodeMetas, pausedSnapshots[0].NodeID, string(pausedSnapshots[0].NodeType))
-		for key, value := range automationWorkflowNodePayload(meta) {
-			payload[key] = value
-		}
+	if formID := automationSnapshotApprovalFormID(snapshot, outputs); formID != "" {
+		// The pause matches a pending approval to its request by form_id.
+		payload["form_id"] = formID
+	}
+	meta := automationWorkflowEventNodeMeta(nodeMetas, snapshot.NodeID, string(snapshot.NodeType))
+	for key, value := range automationWorkflowNodePayload(meta) {
+		payload[key] = value
 	}
 	emitAutomationWorkflowEvent(sink, automationWorkflowEventApprovalRequested, payload)
 }
 
-func emitAutomationWorkflowQuestionRequested(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64, pausedSnapshots []graph_engine.NodeExecutionSnapshot, nodeMetas map[string]automationWorkflowNodeMeta) {
+func emitAutomationWorkflowQuestionRequested(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, elapsedTime float64, snapshot graph_engine.NodeExecutionSnapshot, nodeMetas map[string]automationWorkflowNodeMeta) {
 	payload := automationWorkflowBasePayload(req, workflow, workflowRunID, map[string]interface{}{
 		"status":       "pending_question",
 		"elapsed_time": elapsedTime,
 		"created_at":   time.Now().Unix(),
 	})
-	if len(pausedSnapshots) > 0 {
-		snapshot := pausedSnapshots[0]
-		meta := automationWorkflowEventNodeMeta(nodeMetas, snapshot.NodeID, string(snapshot.NodeType))
-		for key, value := range automationWorkflowNodePayload(meta) {
-			payload[key] = value
-		}
-		copyAutomationQuestionAnswerFields(payload, snapshot.Outputs)
+	meta := automationWorkflowEventNodeMeta(nodeMetas, snapshot.NodeID, string(snapshot.NodeType))
+	for key, value := range automationWorkflowNodePayload(meta) {
+		payload[key] = value
 	}
-	if len(payload) > 0 {
-		emitAutomationWorkflowEvent(sink, automationWorkflowEventQuestionRequested, payload)
-	}
+	copyAutomationQuestionAnswerFields(payload, snapshot.Outputs)
+	emitAutomationWorkflowEvent(sink, automationWorkflowEventQuestionRequested, payload)
 }
 
 func emitAutomationWorkflowFinished(sink automationaction.WorkflowRunEventSink, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, outputs map[string]interface{}, elapsedTime float64) {
@@ -721,12 +762,24 @@ func collectAutomationWorkflowPausedEvents(req automationaction.WorkflowRunReque
 }
 
 func persistAutomationWorkflowPause(ctx context.Context, req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, inputs map[string]interface{}, outputs map[string]interface{}, totalSteps int, elapsedTime float64, durableEvents []automationaction.WorkflowRunEvent) error {
-	if result == nil {
+	owner, _ := workflowExecutionOwnerFromContext(ctx)
+	params, ok := automationWorkflowPauseSaveParams(req, workflow, workflowRunID, result, inputs, outputs, totalSteps, elapsedTime, durableEvents, owner)
+	if !ok {
 		return nil
+	}
+	_, err := workflowpause.NewService(database.GetDB()).Save(ctx, params)
+	return err
+}
+
+// automationWorkflowPauseSaveParams builds the durable pause of an automation
+// run: one reason per paused node, and the request events emitted for them.
+func automationWorkflowPauseSaveParams(req automationaction.WorkflowRunRequest, workflow *Workflow, workflowRunID string, result *WorkflowExecutionResult, inputs map[string]interface{}, outputs map[string]interface{}, totalSteps int, elapsedTime float64, durableEvents []automationaction.WorkflowRunEvent, owner workflowExecutionOwner) (workflowpause.SaveParams, bool) {
+	if result == nil {
+		return workflowpause.SaveParams{}, false
 	}
 	pausedSnapshots := workflowGraphPausedSnapshots(result.NodeExecutions)
 	if len(pausedSnapshots) == 0 {
-		return nil
+		return workflowpause.SaveParams{}, false
 	}
 	pausedNodeIDs := make([]string, 0, len(pausedSnapshots))
 	reasons := make([]workflowpause.Reason, 0, len(pausedSnapshots))
@@ -735,18 +788,16 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 			continue
 		}
 		pausedNodeIDs = append(pausedNodeIDs, snapshot.NodeID)
-		reasonType := workflowpause.ReasonTypeApprovalRequired
-		if snapshot.NodeType == workflowshared.QuestionAnswer {
-			reasonType = workflowpause.ReasonTypeQuestionAnswerRequired
-		}
+		// A question reason has no form: the pause matches it to its request by
+		// node only.
 		reasons = append(reasons, workflowpause.Reason{
-			Type:   reasonType,
+			Type:   automationPauseReasonType(snapshot),
 			NodeID: snapshot.NodeID,
-			FormID: automationApprovalFormID(snapshot.Outputs, outputs),
+			FormID: automationSnapshotApprovalFormID(snapshot, outputs),
 		})
 	}
 	if len(pausedNodeIDs) == 0 {
-		return nil
+		return workflowpause.SaveParams{}, false
 	}
 	nodeQueue, completedNodes, failedNodes, executionOutputs := workflowGraphPauseExecutorState(result.NodeExecutions, pausedNodeIDs)
 
@@ -791,20 +842,19 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 		},
 		VariablePool: workflowpause.SnapshotVariablePool(variablePool),
 	}
-	service := workflowpause.NewService(database.GetDB())
-	owner, _ := workflowExecutionOwnerFromContext(ctx)
 	outputsJSON, _ := json.Marshal(outputs)
 	pauseEvents := make([]workflowpause.AppendEventParams, 0, len(durableEvents))
 	for index := range durableEvents {
 		event := &durableEvents[index]
 		pauseEvents = append(pauseEvents, workflowpause.AppendEventParams{
-			EventType:      event.Type,
-			EventData:      event.Payload,
-			Category:       workflowEventCategory(event.Type),
-			IdempotencyKey: fmt.Sprintf("automation-pause:%s:%s", workflowRunID, event.Type),
+			EventType: event.Type,
+			EventData: event.Payload,
+			Category:  workflowEventCategory(event.Type),
+			// One key per event: a mixed pause stores a request for each node.
+			IdempotencyKey: fmt.Sprintf("automation-pause:%s:%s:%d", workflowRunID, event.Type, index),
 		})
 	}
-	_, err := service.Save(ctx, workflowpause.SaveParams{
+	return workflowpause.SaveParams{
 		TenantID:       req.WorkspaceID,
 		AppID:          appID,
 		WorkflowRunID:  workflowRunID,
@@ -819,8 +869,7 @@ func persistAutomationWorkflowPause(ctx context.Context, req automationaction.Wo
 		RunElapsedTime: elapsedTime,
 		RunTotalSteps:  totalSteps,
 		Events:         pauseEvents,
-	})
-	return err
+	}, true
 }
 
 func automationWorkflowPauseRunType(workflow *Workflow) string {

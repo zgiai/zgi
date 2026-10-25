@@ -77,6 +77,58 @@ export const RUNTIME_WORKSPACE_KEYS = {
     'credentials',
     workspaceId,
   ],
+  managedApps: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'managed-apps',
+    workspaceId,
+    params,
+  ],
+  appCandidatesPage: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'app-candidates-page',
+    workspaceId,
+    params,
+  ],
+  endUsers: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.all,
+    'end-users',
+    workspaceId,
+  ],
+  endUserList: (workspaceId: string | null, params: unknown) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'list',
+    params,
+  ],
+  endUserEvents: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'events',
+    subjectId,
+  ],
+  endUserDigitalHumans: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'digital-humans',
+    subjectId,
+  ],
+  endUserCredits: (workspaceId: string | null, subjectId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'credits',
+    subjectId,
+  ],
+  webhook: (workspaceId: string | null) => [...RUNTIME_WORKSPACE_KEYS.all, 'webhook', workspaceId],
+  webhookDeliveries: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.webhook(workspaceId),
+    'deliveries',
+  ],
+  endUserSummary: (workspaceId: string | null) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'summary',
+  ],
+  endUserUsageSeries: (workspaceId: string | null, subjectId: string | null, days: number) => [
+    ...RUNTIME_WORKSPACE_KEYS.endUsers(workspaceId),
+    'usage-series',
+    subjectId,
+    days,
+  ],
 } as const;
 
 // 3. Agent Related
@@ -129,6 +181,9 @@ export const DIGITAL_HUMAN_KEYS = {
       ? ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates'] as const)
       : ([...DIGITAL_HUMAN_KEYS.all, 'persona-templates', params] as const),
   draftBindings: (id: string) => [...DIGITAL_HUMAN_KEYS.detail(id), 'draft-bindings'] as const,
+  /** Mutation key for saving draft resource bindings, so the header can show progress. */
+  replaceDraftBindings: (id: string) =>
+    [...DIGITAL_HUMAN_KEYS.draftBindings(id), 'replace'] as const,
   bindingCandidates: (id: string, params: unknown) =>
     [...DIGITAL_HUMAN_KEYS.detail(id), 'binding-candidates', params] as const,
   /** Workspace skills a new digital human may bind, available before creation. */
@@ -160,6 +215,14 @@ export const DIGITAL_HUMAN_KEYS = {
     [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'runs'] as const,
   taskActivities: (id: string, taskId: string) =>
     [...DIGITAL_HUMAN_KEYS.task(id, taskId), 'activities'] as const,
+  taskReports: (id: string, params?: unknown) =>
+    [...DIGITAL_HUMAN_KEYS.detail(id), 'task-reports', params].filter(Boolean),
+} as const;
+
+export const INBOX_KEYS = {
+  all: ['inbox'] as const,
+  list: (params?: unknown) => [...INBOX_KEYS.all, 'list', params].filter(Boolean),
+  unread: () => [...INBOX_KEYS.all, 'unread'] as const,
 } as const;
 
 export const CONNECTOR_KEYS = {

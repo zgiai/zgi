@@ -64,6 +64,7 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.ConnectorTargetScope = config.ConnectorTargetScope
 	parts.ConnectorTargetVersionID = config.ConnectorTargetVersionID
 	parts.ConnectorToolsDisabled = config.ConnectorToolsDisabled
+	parts.ConnectorDelegationDisabled = config.ConnectorDelegationDisabled
 	parts.ConnectorTargetType = config.ConnectorTargetType
 	parts.ConnectorRunID = config.ConnectorRunID
 	parts.ConnectorInteractive = config.ConnectorInteractive

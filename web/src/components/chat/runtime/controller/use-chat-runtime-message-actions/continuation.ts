@@ -498,6 +498,25 @@ export function useWorkflowContinuationActions({
           },
           onErrorEvent: (payload, eventId) => {
             if (abortController.signal.aborted) return;
+            if (!streamStarted && approvalPayload) {
+              // The server rejected the approval before resuming anything, so
+              // the approval is still pending. Restore the form and show why,
+              // instead of leaving the message looking like it is streaming.
+              streamEnded = true;
+              // The server localizes payload.message; the code is only a fallback.
+              restoreWorkflowApprovalContinuation(
+                payload.message || payload.error_code || String(payload.code ?? '')
+              );
+              syncContinuationState();
+              setControllerState(current => ({
+                ...current,
+                connectionByConversation: {
+                  ...current.connectionByConversation,
+                  [conversationId]: 'idle',
+                },
+              }));
+              return;
+            }
             streamStarted = true;
             streamEnded = true;
             applyStreamError(payload, eventId, conversationId);

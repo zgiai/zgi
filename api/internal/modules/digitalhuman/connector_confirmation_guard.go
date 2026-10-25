@@ -64,14 +64,37 @@ func (guard *ConnectorConfirmationGuard) AuthorizeContinuation(
 	queryErr := guard.db.WithContext(ctx).
 		Model(&Run{}).
 		Where(
-			"id = ? AND organization_id = ? AND (actor_id = ? OR (actor_id IS NULL AND surface IN (?, ?))) AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ? AND status = ? AND waiting_reason = ? AND waiting_receipt = ? AND cancel_requested_at IS NULL",
-			request.RunID, request.OrganizationID, request.OwnerAccountID, SurfaceAPI, SurfaceWebApp,
+			"id = ? AND organization_id = ? AND (actor_id = ? OR user_subject_id = ?) AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ? AND status = ? AND waiting_reason = ? AND waiting_receipt = ? AND cancel_requested_at IS NULL",
+			request.RunID, request.OrganizationID, request.DeciderID, request.DeciderID,
 			request.DigitalHumanID, request.DigitalHumanVersionID,
 			request.ConversationID, request.MessageID,
 			RunStatusWaiting, runtimemodel.MessageStatusWaitingApproval, receipt,
 		).
 		Count(&matched).Error
 	if queryErr != nil {
+		return connectorcore.NewError(connectorcore.ErrorCodeInternal, false, nil)
+	}
+	if matched != 1 {
+		return connectorConfirmationGuardConflict()
+	}
+	return nil
+}
+
+// AuthorizeDecider lets the requester of a DigitalHuman run read the status
+// of a confirmation frozen in it, at any run state.
+func (guard *ConnectorConfirmationGuard) AuthorizeDecider(
+	ctx context.Context,
+	request connectorconfirmation.DigitalHumanContinuationGuardRequest,
+) error {
+	if guard == nil || guard.db == nil || ctx == nil || !validConnectorConfirmationGuardRequest(request) {
+		return connectorConfirmationGuardConflict()
+	}
+	var matched int64
+	if err := guard.db.WithContext(ctx).Model(&Run{}).
+		Where("id = ? AND organization_id = ? AND (actor_id = ? OR user_subject_id = ?) AND digital_human_id = ? AND digital_human_version_id = ? AND conversation_id = ? AND message_id = ?",
+			request.RunID, request.OrganizationID, request.DeciderID, request.DeciderID,
+			request.DigitalHumanID, request.DigitalHumanVersionID, request.ConversationID, request.MessageID).
+		Count(&matched).Error; err != nil {
 		return connectorcore.NewError(connectorcore.ErrorCodeInternal, false, nil)
 	}
 	if matched != 1 {
@@ -87,7 +110,7 @@ func connectorConfirmationGuardConflict() error {
 func validConnectorConfirmationGuardRequest(
 	request connectorconfirmation.DigitalHumanContinuationGuardRequest,
 ) bool {
-	if request.OrganizationID == uuid.Nil || request.OwnerAccountID == uuid.Nil ||
+	if request.OrganizationID == uuid.Nil || request.OwnerAccountID == uuid.Nil || request.DeciderID == uuid.Nil ||
 		request.DigitalHumanID == uuid.Nil || request.DigitalHumanVersionID == uuid.Nil ||
 		request.RunID == uuid.Nil || request.ConversationID == uuid.Nil || request.MessageID == uuid.Nil {
 		return false

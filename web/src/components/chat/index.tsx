@@ -127,6 +127,8 @@ interface ImgChatVariantProps {
 
 interface AIChatVariantProps {
   fileUploadPolicy?: FileUploadSelection | null;
+  // Anonymous visitors see upload buttons that ask them to sign in.
+  uploadRequiresLogin?: boolean;
   mode: 'aichat';
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;

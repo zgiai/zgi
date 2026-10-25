@@ -95,15 +95,23 @@ func questionAnswerSubmissionIdempotencyKey(pauseID string, generation int64, st
 }
 
 func questionAnswerSubmittedNodeID(state *workflowpause.State, inputs map[string]interface{}) string {
-	for _, key := range []string{"question_answer_node_id", "inputs.question_answer_node_id"} {
-		if value, ok := inputs[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
+	if nodeID := questionAnswerInputNodeID(inputs); nodeID != "" {
+		return nodeID
 	}
 	if state == nil {
 		return ""
 	}
 	return strings.TrimSpace(state.ExecutorState.PausedNodeID)
+}
+
+// questionAnswerInputNodeID is the question node an answer names, if any.
+func questionAnswerInputNodeID(inputs map[string]interface{}) string {
+	for _, key := range []string{"question_answer_node_id", "inputs.question_answer_node_id"} {
+		if value, ok := inputs[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func questionAnswerSubmittedRound(inputs map[string]interface{}) int {

@@ -6,7 +6,10 @@ import { Plus, PlugZap, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { toast } from 'sonner';
+import { ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS } from '@/lib/config';
+import { connectorCatalogItems, useConnectorCatalog } from '@/hooks/connectors/use-connectors';
 import {
   useDigitalHumanDraftBindings,
   useDigitalHumanBindingCandidates,
@@ -36,7 +39,10 @@ import {
 import {
   beginConnectorSelection,
   digitalHumanBindingInput,
+  digitalHumanResourceKey,
+  isPerUserConnectorSlot,
   observeConnectorDraft,
+  toPerUserConnectorSlot,
   type DigitalHumanConnectorSelection,
 } from './digital-human-connector-model';
 import {
@@ -191,6 +197,41 @@ function ScopedConnectorSection({
       changeSelection({ ...current, status: conflict ? 'conflict' : 'failed' });
     }
   };
+  const catalogQuery = useConnectorCatalog(
+    undefined,
+    ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS && items.length > 0
+  );
+  const catalog = connectorCatalogItems(catalogQuery.data?.data);
+  const [modeSaving, setModeSaving] = useState(false);
+  // A per-user slot acts as each requester with their own connection. Moving a
+  // connection to per-user saves at once; moving back picks a connection.
+  const makePerUser = async (item: DigitalHumanResourceBindingInput) => {
+    if (!canUpdate || modeSaving || currentRef.current) return;
+    setModeSaving(true);
+    try {
+      const result = await query.refetch();
+      const draft = result.data?.data;
+      if (!draft) return;
+      const name = catalog.find(value => value.id === item.parent_resource_id)?.name ?? '';
+      await mutations.replaceBindings.mutateAsync({
+        digitalHumanId: id,
+        expectedDraftLockVersion: draft.draft_lock_version,
+        expectedDraftVersionId: draft.draft_version_id,
+        items: draft.items
+          .map(digitalHumanBindingInput)
+          .map(value =>
+            digitalHumanResourceKey(value) === digitalHumanResourceKey(item)
+              ? toPerUserConnectorSlot(value, name)
+              : value
+          ),
+      });
+      toast.success(t('bindings.connectors.modeSaved'));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      if (mountedRef.current) setModeSaving(false);
+    }
+  };
   const reload = async () => {
     const current = currentRef.current;
     if (!current || current.status === 'saving') return;
@@ -282,6 +323,39 @@ function ScopedConnectorSection({
                 canUpdate ? (item, trigger) => void open(undefined, item.id, trigger) : undefined
               }
             />
+            {ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS && canUpdate && !preview
+              ? items.map(item => (
+                  <div
+                    key={`mode:${digitalHumanResourceKey(item)}`}
+                    className="mt-3 flex min-w-0 flex-col items-start gap-1.5 text-xs"
+                  >
+                    <span className="max-w-full truncate text-muted-foreground">
+                      {t('bindings.connectors.modeLabel', { name: item.display_name ?? '' })}
+                    </span>
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      value={isPerUserConnectorSlot(item) ? 'per_user' : 'shared'}
+                      disabled={modeSaving || opening || mutations.replaceBindings.isPending}
+                      onValueChange={value => {
+                        if (value === 'per_user' && !isPerUserConnectorSlot(item)) {
+                          void makePerUser(item);
+                        } else if (value === 'shared' && isPerUserConnectorSlot(item)) {
+                          void open(undefined, item.id);
+                        }
+                      }}
+                    >
+                      <ToggleGroupItem value="shared" className="px-2 text-xs">
+                        {t('bindings.connectors.modeShared')}
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="per_user" className="px-2 text-xs">
+                        {t('bindings.connectors.modePerUser')}
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  </div>
+                ))
+              : null}
             {items.map(item => {
               const publishedBinding = publishedBindings.find(
                 binding =>

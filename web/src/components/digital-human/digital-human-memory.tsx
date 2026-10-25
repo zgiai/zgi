@@ -2,8 +2,10 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import {
   AlertCircle,
+  ArrowRightLeft,
   BrainCircuit,
   Clock3,
   ExternalLink,
@@ -70,6 +72,7 @@ const scopeTypes: DigitalHumanMemoryScopeType[] = [
   'customer',
   'campaign',
   'channel',
+  'instance',
 ];
 
 export function DigitalHumanMemory({ id }: { id: string }) {
@@ -79,7 +82,9 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const [search, setSearch] = useState('');
   const [memoryClass, setMemoryClass] = useState<typeof all | DigitalHumanMemoryClass>(all);
   const [memoryType, setMemoryType] = useState<typeof all | DigitalHumanMemoryType>(all);
-  const [status, setStatus] = useState<typeof all | DigitalHumanMemoryStatus>(all);
+  // Invalidated memories no longer shape behavior; they are hidden unless
+  // the reader asks for them.
+  const [status, setStatus] = useState<typeof all | DigitalHumanMemoryStatus>('active');
   const [scopeType, setScopeType] = useState<typeof all | DigitalHumanMemoryScopeType>(all);
   const [scopeId, setScopeId] = useState('');
   const [source, setSource] = useState('');
@@ -107,7 +112,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     search.trim() ||
       memoryClass !== all ||
       memoryType !== all ||
-      status !== all ||
+      status !== 'active' ||
       scopeType !== all ||
       scopeId.trim() ||
       source.trim()
@@ -117,7 +122,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     setSearch('');
     setMemoryClass(all);
     setMemoryType(all);
-    setStatus(all);
+    setStatus('active');
     setScopeType(all);
     setScopeId('');
     setSource('');
@@ -162,6 +167,32 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       },
     });
     toast.success(t('memory.invalidated'));
+    setSelected(null);
+  };
+
+  const rescope = async (memory: DigitalHumanMemoryRecord, target: 'self' | 'workspace') => {
+    const state = data?.state;
+    if (!state) return;
+    try {
+      await mutations.rescopeMemory.mutateAsync({
+        digitalHumanId: id,
+        memoryId: memory.id,
+        request: {
+          operation_id: crypto.randomUUID(),
+          expected_revision: memory.revision,
+          config_revision: state.config_revision,
+          memory_epoch: state.memory_epoch,
+          // The server always uses the current workspace as the scope.
+          ...(target === 'self'
+            ? { memory_class: 'self' as const }
+            : { memory_class: 'business' as const, scope: { type: 'workspace' as const, id: '' } }),
+        },
+      });
+    } catch {
+      // The mutation already reports the error.
+      return;
+    }
+    toast.success(t('memory.rescope.done'));
     setSelected(null);
   };
 
@@ -377,8 +408,9 @@ export function DigitalHumanMemory({ id }: { id: string }) {
         canManage={canManage}
         onOpenChange={open => !open && setSelected(null)}
         onInvalidate={invalidate}
+        onRescope={rescope}
         onUndo={undo}
-        invalidating={mutations.applyMemoryProposal.isPending}
+        invalidating={mutations.applyMemoryProposal.isPending || mutations.rescopeMemory.isPending}
         undoing={mutations.undoMemory.isPending}
       />
     </div>
@@ -487,7 +519,7 @@ function MemoryBody({
           <div className="text-xs text-muted-foreground">
             <div className="font-medium text-foreground">{t(memoryScopeKey(memory))}</div>
             <div className="mt-1">
-              {t('memory.confidence', { value: Math.round(memory.confidence * 100) })}
+              {t(`memory.confidenceLevel.${memory.confidence >= 0.8 ? 'high' : memory.confidence >= 0.5 ? 'medium' : 'low'}`)}
             </div>
             <div className="mt-1">
               {t('memory.sourceSummary', {
@@ -513,6 +545,7 @@ function MemoryDetail({
   canManage,
   onOpenChange,
   onInvalidate,
+  onRescope,
   onUndo,
   invalidating,
   undoing,
@@ -522,11 +555,13 @@ function MemoryDetail({
   canManage: boolean;
   onOpenChange: (open: boolean) => void;
   onInvalidate: (memory: DigitalHumanMemoryRecord) => Promise<void>;
+  onRescope: (memory: DigitalHumanMemoryRecord, target: 'self' | 'workspace') => Promise<void>;
   onUndo: (memory: DigitalHumanMemoryRecord) => Promise<void>;
   invalidating: boolean;
   undoing: boolean;
 }) {
   const t = useT('digitalHumans');
+  const objectHref = useDigitalHumanObjectHref();
   if (!memory) return null;
   const undoAvailable = Boolean(
     memory.undoable_until &&
@@ -562,7 +597,8 @@ function MemoryDetail({
                       {evidence.type === 'run' ? (
                         <Button variant="ghost" size="sm" asChild>
                           <Link
-                            href={`/console/digital-humans/${digitalHumanId}/runs?run=${encodeURIComponent(evidence.id)}`}
+                            href={objectHref('run', evidence.id, digitalHumanId)}
+                            scroll={false}
                           >
                             {t('memory.details')}
                             <ExternalLink className="size-3" />
@@ -617,6 +653,21 @@ function MemoryDetail({
                       )}
                       {undoing ? t('memory.undoing') : t('memory.undo')}
                     </Button>
+                    {memory.status === 'active'
+                      ? memoryRescopeTargets(memory).map(target => (
+                          <Button
+                            key={target}
+                            variant="outline"
+                            size="sm"
+                            disabled={invalidating || undoing}
+                            title={t('memory.rescope.hint')}
+                            onClick={() => void onRescope(memory, target)}
+                          >
+                            <ArrowRightLeft className="size-4" />
+                            {target === 'self' ? t('memory.rescope.toSelf') : t('memory.rescope.toWorkspace')}
+                          </Button>
+                        ))
+                      : null}
                     {memory.status === 'active' ? (
                       <ConfirmDialog
                         variant="danger"
@@ -692,6 +743,15 @@ function MemoryStatusBadge({ status }: { status: DigitalHumanMemoryStatus }) {
       {t(`memory.status.${status}`)}
     </Badge>
   );
+}
+
+// Memories move between self memory and workspace business memory. Identity
+// always stays self memory; other scopes are resolved by the runtime.
+function memoryRescopeTargets(memory: DigitalHumanMemoryRecord): Array<'self' | 'workspace'> {
+  if (memory.memory_class === 'self') {
+    return memory.memory_type === 'identity' ? [] : ['workspace'];
+  }
+  return memory.scope_type === 'workspace' ? ['self'] : ['self', 'workspace'];
 }
 
 function memoryScopeKey(memory: DigitalHumanMemoryRecord) {

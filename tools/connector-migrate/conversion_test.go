@@ -79,7 +79,6 @@ func TestPreviousFormatsConvertWithPurposeAndIdentityIsolation(t *testing.T) {
 func fixture(t *testing.T) databaseSnapshot {
 	subject := secretSubject{orgID, connID, "github", "connection-key", 1}
 	s := databaseSnapshot{
-		migrationHistoryKey:          migrationRows(testHistoricalMigrations),
 		"connector_schema_readiness": {row{"id": 1, "schema_version": 1, "state": "conversion_required"}},
 		"integration_connections":    {row{"id": connID, "organization_id": orgID, "owner_account_id": ownerID, "integration_id": "github", "driver_id": "github-rest", "credential_source": "account", "auth_type": "api_key", "auth_method_id": "personal_access_token", "name": "Personal", "status": "active", "auth_status": "valid", "health_status": "healthy", "scope_status": "verified", "credential_version": 1, "revision": 4, "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z", "config": row{}, "encrypted_credentials": oldEnvelope(t, "v2", subject, []byte(`{"token":"`+secretMarker+`"}`))}},
 		"agent_resource_bindings":    {row{"id": bindingID, "agent_id": agentID, "consumer_id": agentID, "consumer_type": "agent", "binding_scope": "draft", "organization_id": orgID, "workspace_id": workspaceID, "binding_type": "integration_connection", "resource_id": connID, "parent_resource_id": "github", "authorized_by": ownerID, "metadata": row{"allowed_action_ids": []string{"github.user.get"}}}},

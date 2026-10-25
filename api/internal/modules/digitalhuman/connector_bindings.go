@@ -59,13 +59,15 @@ func (r *GormRepository) syncConnectorBindings(ctx context.Context, scope Scope,
 	}
 	desired := map[uuid.UUID]*ResourceBinding{}
 	for _, row := range rows {
-		if row.BindingType == resourcebindings.BindingTypeConnector {
+		if row.BindingType == resourcebindings.BindingTypeConnector && connectorCredentialMode(row) == ConnectorCredentialShared {
 			desired[row.ID] = row
 		}
 	}
 	if r.connectorCatalog == nil {
-		for rowID := range desired {
-			if !keepOnly[rowID] {
+		// Without a catalog no Connector selection, shared or per-user, can be
+		// admitted; only unchanged rows are kept.
+		for _, row := range rows {
+			if row.BindingType == resourcebindings.BindingTypeConnector && !keepOnly[row.ID] {
 				return ErrResourceBindingInvalid
 			}
 		}
@@ -119,6 +121,14 @@ func (r *GormRepository) syncConnectorBindings(ctx context.Context, scope Scope,
 		if keepOnly[row.ID] {
 			// Preserve even a missing/disabled reference without granting authority.
 			// Only a changed selection passes through admission and lifecycle writes.
+			continue
+		}
+		if connectorCredentialMode(row) == ConnectorCredentialPerUser {
+			// A per-user slot names no Connection of its editor. Each requester
+			// binds their own when they run the published version.
+			if err := r.validatePerUserConnectorSlot(row); err != nil {
+				return err
+			}
 			continue
 		}
 		if row.AuthorizedBy == nil || *row.AuthorizedBy == uuid.Nil || row.CredentialRef != "" {

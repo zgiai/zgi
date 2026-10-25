@@ -1,5 +1,6 @@
 import { BaseService } from '@/lib/http/services';
 import { createDigitalHumanWebAppHttp, webappHttp } from '@/lib/http';
+import { UPLOAD_TIMEOUT_MS } from '@/lib/http/config';
 import type { ApiResponseData } from './types/common';
 import type { FileParseProviderKey, FileUploadProcessingMode } from './types/file';
 
@@ -29,17 +30,29 @@ export interface UploadConfig {
   workflow_file_upload_limit: number;
 }
 
+export type ChatFileKind = 'document' | 'image' | 'audio' | 'video' | 'custom';
+
 export interface ChatUploadPolicy {
-  allowed_file_types: Array<'document' | 'image'>;
+  allowed_file_types: ChatFileKind[];
   allowed_extensions: string[];
   number_limit: number;
   document_max_bytes: number;
   image_max_bytes: number;
+  audio_max_bytes?: number;
+  video_max_bytes?: number;
   turn_max_bytes: number;
+  /** Extensions read for the model as text. */
+  parsed_extensions?: string[];
+  /** Image extensions a vision model can see. */
+  vision_extensions?: string[];
 }
 
 export interface FileUploadSelection {
-  allowed_file_types: Array<'document' | 'image'>;
+  allowed_file_types: ChatFileKind[];
+  /** Extensions without dots, used only with the custom kind. */
+  allowed_file_extensions?: string[];
+  /** Files per turn, 1-10; unset means the default of 5. */
+  number_limits?: number;
 }
 
 export interface MultipleUploadResponse {
@@ -48,7 +61,9 @@ export interface MultipleUploadResponse {
   failed: number;
 }
 
-function isUploadCanceledError(error: unknown): boolean {
+// Exported so callers that cancel an upload can tell a deliberate cancellation apart
+// from a genuine failure.
+export function isUploadCanceledError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
     return false;
   }
@@ -84,6 +99,7 @@ export class UploadService extends BaseService {
       source?: 'chat';
       processing_mode?: FileUploadProcessingMode;
       parse_provider?: FileParseProviderKey;
+      upload_attempt_id?: string;
       onProgress?: (progress: number) => void;
       signal?: AbortSignal;
     } = {}
@@ -102,6 +118,7 @@ export class UploadService extends BaseService {
           ...(options.source && { source: options.source }),
           ...(options.processing_mode && { processing_mode: options.processing_mode }),
           ...(options.parse_provider && { parse_provider: options.parse_provider }),
+          ...(options.upload_attempt_id && { upload_attempt_id: options.upload_attempt_id }),
         },
         signal: options.signal,
       });
@@ -127,11 +144,14 @@ export class UploadService extends BaseService {
     file: File,
     options: {
       onProgress?: (progress: number) => void;
+      signal?: AbortSignal;
+      upload_attempt_id?: string;
     } = {}
   ): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('is_temporary', 'true');
+    if (options.upload_attempt_id) formData.append('upload_attempt_id', options.upload_attempt_id);
 
     const response = await webappHttp.post<ApiResponseData<UploadResponse>>(
       `/console/api/webapps/${webAppId}/files/upload`,
@@ -140,9 +160,16 @@ export class UploadService extends BaseService {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        // The default client timeout is sized for JSON calls. An upload streams from
+        // the browser and a batch of images can legitimately take minutes, so use the
+        // shared upload budget instead of aborting mid-flight.
+        timeout: UPLOAD_TIMEOUT_MS,
+        signal: options.signal,
         onUploadProgress: options.onProgress
           ? progressEvent => {
-              const progress = Math.round((progressEvent.loaded * 98) / (progressEvent.total || 1));
+              // Guard against an unknown body size; see BaseService.uploadFile.
+              const total = progressEvent.total || 0;
+              const progress = total > 0 ? Math.round((progressEvent.loaded * 98) / total) : 0;
               options.onProgress?.(progress);
             }
           : undefined,
@@ -157,7 +184,7 @@ export class UploadService extends BaseService {
   async uploadDigitalHumanWebAppSingle(
     webAppId: string,
     file: File,
-    options: { onProgress?: (progress: number) => void } = {}
+    options: { onProgress?: (progress: number) => void; signal?: AbortSignal } = {}
   ): Promise<UploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
@@ -165,15 +192,28 @@ export class UploadService extends BaseService {
       ApiResponseData<UploadResponse>
     >(`/api/v1/digital-human-webapps/${encodeURIComponent(webAppId)}/files/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      // Same upload budget as the other multipart paths; see uploadWebAppSingle.
+      timeout: UPLOAD_TIMEOUT_MS,
+      signal: options.signal,
       onUploadProgress: options.onProgress
         ? progressEvent => {
-            const progress = Math.round((progressEvent.loaded * 98) / (progressEvent.total || 1));
+            // Guard against an unknown body size; see BaseService.uploadFile.
+            const total = progressEvent.total || 0;
+            const progress = total > 0 ? Math.round((progressEvent.loaded * 98) / total) : 0;
             options.onProgress?.(progress);
           }
         : undefined,
     });
     if (response.code === '0' && response.data) return response.data;
     throw new Error(response.message || 'Failed to upload file');
+  }
+
+  async cancelUploadAttempt(attemptID: string): Promise<void> {
+    await this.request('delete', `/upload-attempts/${encodeURIComponent(attemptID)}`);
+  }
+
+  async cancelWebAppUploadAttempt(webAppId: string, attemptID: string): Promise<void> {
+    await webappHttp.delete(`/console/api/webapps/${webAppId}/files/upload-attempts/${encodeURIComponent(attemptID)}`);
   }
 
   // Get upload configuration

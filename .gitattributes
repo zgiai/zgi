@@ -1,4 +1,5 @@
 *.sh text eol=lf
 Dockerfile text eol=lf
 Dockerfile* text eol=lf
-sandbox/profiles/cc-codex-standard/resources/** text eol=lf
+sandbox/profiles/** text eol=lf
+sandbox/scripts/** text eol=lf
