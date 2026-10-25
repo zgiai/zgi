@@ -10,6 +10,9 @@ A replayable scenario suite for Agent memory. It drives an Agent through the ext
   - `other_memory_empty`: checks isolation.
   `requires_auto` marks scenarios that only automatic capture is expected to pass; `observe` marks product decisions that are reported but not scored.
 - `run.py`: creates an Agent with the general-assistant slots, publishes it, creates an API key, runs every scenario as its own API end user, and writes `results.json` and `report.md`.
+- `dh_scenarios.json` and `dh.py`: the DigitalHuman scenarios (ADR 0014) and their driver.
+  - `dh.py` creates a DigitalHuman, writes the `me_preload` facts as an operator, publishes it with API access, and runs each scenario as its own API end user. Scoring and reports are the same as for Agents.
+  - The DigitalHuman external API does not expose memory, so `dh.py` reads it from the deployment's database through `docker exec` (`--db`, `--container`), grouped as `user` (the user's relationship memory), `notes` (the DigitalHuman's instance memory about this person), and `me` (its own memory, scored only where a scenario sets `score_me`).
 - `seed.py`: writes memory in the shapes a migration must handle (limits, a 64-character key, a CJK slot name, a disabled slot, revisions, cleared and disabled relationships, a draft that differs from the published contract) and writes a manifest.
 
 ## Running
@@ -29,5 +32,12 @@ The deployment's memory switches decide which runtime is measured:
 | Legacy slot store | `false` | `false` | no |
 | Explicit writes only | `true` | `false` | no |
 | Automatic capture | `true` | `true` | yes, with `--wait-after-session` long enough for background extraction (about 90s) |
+
+DigitalHuman runs need `ZGI_RELATIONSHIP_MEMORY_ENABLED=true` for the `user` group; `--auto` turns on the DigitalHuman's automatic extraction:
+
+```bash
+python dh.py --workspace-id <id> --label dh-explicit --db <database> --repeat 3 --env-file ../../../.env.test.local
+python dh.py --workspace-id <id> --label dh-auto --auto --wait-after-session 90 --db <database> --repeat 3 --concurrency 6 --env-file ../../../.env.test.local
+```
 
 Results go to `results/`, which is not committed. Keep the model fixed across runs you compare; the report records the Agent's model.
