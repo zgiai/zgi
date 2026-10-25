@@ -16,6 +16,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ProtectedRoute } from '@/components/auth/protected-route';
+import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -61,6 +62,7 @@ function downloadJSON(filename: string, value: unknown) {
 export default function ProfileMemoryPage() {
   const t = useT('profile');
   const tHistory = useT('common.memoryHistory');
+  const tArchive = useT('common.memoryArchive');
   const router = useRouter();
   const queryClient = useQueryClient();
   const sessionStatus = useAuthStore.use.sessionStatus();
@@ -657,6 +659,23 @@ export default function ProfileMemoryPage() {
                         canRevert={detail.can_manage}
                         refreshKey={detailQuery.dataUpdatedAt}
                         onReverted={refresh}
+                      />
+                    </div>
+                    <div className="space-y-3 border-t pt-4">
+                      <h3 className="text-sm font-medium">{tArchive('title')}</h3>
+                      <MemoryArchivePanel
+                        key={detail.id}
+                        load={async () =>
+                          (await relationshipMemoryService.archive(detail.id)).data.entries
+                        }
+                        remove={entryId =>
+                          relationshipMemoryService.deleteArchiveEntry(detail.id, entryId)
+                        }
+                        update={(entryId, content) =>
+                          relationshipMemoryService.updateArchiveEntry(detail.id, entryId, content)
+                        }
+                        canManage={detail.can_manage}
+                        refreshKey={detailQuery.dataUpdatedAt}
                       />
                     </div>
                   </div>

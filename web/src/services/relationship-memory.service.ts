@@ -1,6 +1,6 @@
 import { http } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
-import type { MemoryHistoryPage } from './types/memory-history';
+import type { MemoryArchiveEntry, MemoryHistoryPage } from './types/memory-history';
 import type {
   UserMemoryDeleteResponse,
   UserMemoryRelationshipDetailResponse,
@@ -97,6 +97,25 @@ export const relationshipMemoryService = {
   revert(id: string, versionId: string) {
     return http.post<ApiResponseData<unknown>>(
       `${basePath}/${encodeURIComponent(id)}/history/${encodeURIComponent(versionId)}/revert`
+    );
+  },
+
+  archive(id: string) {
+    return http.get<ApiResponseData<{ entries: MemoryArchiveEntry[] }>>(
+      `${basePath}/${encodeURIComponent(id)}/archive`
+    );
+  },
+
+  updateArchiveEntry(id: string, entryId: string, content: string) {
+    return http.patch<ApiResponseData<MemoryArchiveEntry>>(
+      `${basePath}/${encodeURIComponent(id)}/archive/${encodeURIComponent(entryId)}`,
+      { content }
+    );
+  },
+
+  deleteArchiveEntry(id: string, entryId: string) {
+    return http.delete<ApiResponseData<{ entry_id: string }>>(
+      `${basePath}/${encodeURIComponent(id)}/archive/${encodeURIComponent(entryId)}`
     );
   },
 };

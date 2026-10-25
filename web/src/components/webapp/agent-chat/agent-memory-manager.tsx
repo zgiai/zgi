@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Brain, Download, Loader2, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -44,8 +45,9 @@ function downloadJSON(filename: string, value: unknown) {
 export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManagerProps) {
   const t = useT('webapp.agentChat.memory');
   const tHistory = useT('common.memoryHistory');
+  const tArchive = useT('common.memoryArchive');
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'memory' | 'history'>('memory');
+  const [tab, setTab] = useState<'memory' | 'history' | 'archive'>('memory');
   const [values, setValues] = useState<WebAppAgentMemoryValue[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -186,11 +188,28 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
             <DialogDescription>{t('description')}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
-            <Tabs value={tab} onValueChange={value => setTab(value as 'memory' | 'history')}>
+            <Tabs
+              value={tab}
+              onValueChange={value => setTab(value as 'memory' | 'history' | 'archive')}
+            >
               <TabsList>
                 <TabsTrigger value="memory">{t('title')}</TabsTrigger>
                 <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
+                <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
               </TabsList>
+              <TabsContent value="archive" className="mt-4">
+                {tab === 'archive' ? (
+                  <MemoryArchivePanel
+                    load={async () =>
+                      (await WebAppService.getAgentMemoryArchive(webAppId)).data.entries
+                    }
+                    remove={entryId =>
+                      WebAppService.deleteAgentMemoryArchiveEntry(webAppId, entryId)
+                    }
+                    refreshKey={values}
+                  />
+                ) : null}
+              </TabsContent>
               <TabsContent value="history" className="mt-4">
                 {tab === 'history' ? (
                   <MemoryHistoryPanel

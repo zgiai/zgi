@@ -570,6 +570,23 @@ const messages: CommonMessages = {
       legacy: '早期记忆',
     },
   },
+  memoryArchive: {
+    title: '归档',
+    description: '记忆文件写满后移出的较早记忆，助手需要时会搜索这里。',
+    empty: '还没有归档内容。',
+    unavailable: '这份记忆暂不支持查看归档。',
+    from: '来自 {key}',
+    edit: '编辑',
+    save: '保存',
+    saved: '归档已保存。',
+    saveFailed: '归档保存失败。',
+    delete: '删除',
+    deleted: '归档已删除。',
+    deleteFailed: '归档删除失败。',
+    deleteConfirmTitle: '删除这条归档？',
+    deleteConfirmDescription: '删除后助手将不再找到它，删除操作会记录在修改历史中。',
+    cancel: '取消',
+  },
 };
 
 export default messages;

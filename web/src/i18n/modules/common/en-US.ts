@@ -588,6 +588,24 @@ const messages = {
       legacy: 'Earlier memory',
     },
   },
+  memoryArchive: {
+    title: 'Archive',
+    description:
+      'Older memory moved out of full memory files. The assistant searches it when it needs to.',
+    empty: 'Nothing archived yet.',
+    unavailable: 'The archive is not available for this memory.',
+    from: 'From {key}',
+    edit: 'Edit',
+    save: 'Save',
+    saved: 'Archive entry saved.',
+    saveFailed: 'Could not save the archive entry.',
+    delete: 'Delete',
+    deleted: 'Archive entry deleted.',
+    deleteFailed: 'Could not delete the archive entry.',
+    deleteConfirmTitle: 'Delete this archive entry?',
+    deleteConfirmDescription: 'The assistant will no longer find it. The deletion appears in the history.',
+    cancel: 'Cancel',
+  },
 };
 
 export default messages;
