@@ -13,6 +13,16 @@ func RuntimeEnabled() bool {
 	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
+// MemoryBlocksEnabled selects the memory block runtime for Agents (ADR 0013):
+// file-style memory tools, block rendering, and consolidation. It is
+// fail-closed and needs the relationship store, which blocks build on; run
+// "go run ./cmd/migrate memory-sync-legacy -apply" before turning it on where
+// the legacy slot store was in use.
+func MemoryBlocksEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("ZGI_MEMORY_BLOCKS_ENABLED")))
+	return RuntimeEnabled() && (value == "1" || value == "true" || value == "yes" || value == "on")
+}
+
 // AutomaticExtractionEnabled is fail-closed. The legacy variable is accepted
 // for one release so a rolling deployment has one consistent extraction fence.
 func AutomaticExtractionEnabled() bool {

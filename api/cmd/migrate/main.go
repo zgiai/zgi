@@ -99,6 +99,10 @@ func main() {
 		if err := runConnectorCheckpoint(os.Args[2:]); err != nil {
 			logger.Fatal("Connector checkpoint failed: %v", err)
 		}
+	case "memory-sync-legacy":
+		if err := runMemorySyncLegacy(os.Args[2:]); err != nil {
+			logger.Fatal("Legacy memory sync failed: %v", err)
+		}
 
 	case "make":
 		runMakeCommand()
@@ -336,6 +340,10 @@ Commands:
 Migration Options:
   -pretend        Show migration status without applying changes
   -no-lock        Unsafe: run without the PostgreSQL advisory migration lock; requires ZGI_UNSAFE_NO_MIGRATION_LOCK=1
+
+Memory Options:
+  memory-sync-legacy [-apply]   Bring legacy Agent memory into the relationship store before
+                                enabling memory blocks; plans and rolls back unless -apply
 
 Seed Options:
   -env string     Environment (development, staging, production) (default: development)
