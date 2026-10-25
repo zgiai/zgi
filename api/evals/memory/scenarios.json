@@ -1123,6 +1123,31 @@
         "other_memory_empty": true
       },
       "notes": "Another user's conversation must not be reachable through conversation search."
+    },
+    {
+      "id": "archive_overflow_keeps_old_zh",
+      "category": "budget",
+      "difficulty": "hard",
+      "requires_auto": true,
+      "preload": {
+        "preferences": "坐长途航班喜欢靠过道的座位。{{filler:1900}}"
+      },
+      "sessions": [
+        [
+          "我最近改喝燕麦奶拿铁了，普通牛奶喝了胃不舒服。帮我想一个适合办公的咖啡店风格，一句话就行。"
+        ]
+      ],
+      "probe": "我坐长途航班喜欢什么座位？",
+      "expect": {
+        "memory_all": [
+          "燕麦奶"
+        ],
+        "answer_any": [
+          "过道"
+        ],
+        "archive_nonempty": true
+      },
+      "notes": "The preferences file is nearly full and the new preference is implicit, so consolidation must make room. Moving older lines to the archive (ADR 0014) keeps both the new and the old preference."
     }
   ]
 }
