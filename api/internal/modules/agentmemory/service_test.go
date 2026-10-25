@@ -743,13 +743,14 @@ func TestReplaceSlotsLimitsSlotCountAndDescriptionLength(t *testing.T) {
 	agentID := uuid.New()
 	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{
 		{Key: "memory_1"}, {Key: "memory_2"}, {Key: "memory_3"}, {Key: "memory_4"}, {Key: "memory_5"}, {Key: "memory_6"},
+		{Key: "memory_7"}, {Key: "memory_8"}, {Key: "memory_9"}, {Key: "memory_10"}, {Key: "memory_11"},
 	}})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ReplaceSlots too many error = %v, want ErrInvalidInput", err)
 	}
 	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
 		Key:         "profile",
-		Description: strings.Repeat("x", 201),
+		Description: strings.Repeat("x", 1001),
 	}}})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ReplaceSlots long description error = %v, want ErrInvalidInput", err)

@@ -8,7 +8,7 @@ import (
 )
 
 func blockValue(key, description, content string) agentmemory.SlotValueResponse {
-	return agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: key, Description: description, MaxChars: 2000}, Content: content, Revision: 1}
+	return agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: key, Description: description, MaxChars: 2000, AutoWrite: true}, Content: content, Revision: 1}
 }
 
 func TestMemoryBlocksShowEveryFileAndNeverDropOneSilently(t *testing.T) {

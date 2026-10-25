@@ -363,8 +363,12 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 		return false, err
 	}
 	build := r.extractionChatRequest
+	instructions := ""
 	if relationshipmemory.MemoryBlocksEnabled() {
-		build = r.consolidationChatRequest
+		instructions = r.memoryInstructions(ctx, job)
+		build = func(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error) {
+			return r.consolidationChatRequest(turns, slots, values, instructions)
+		}
 	}
 	turns, err = r.fitTurnBudget(turns, runtimeSlots, values, build)
 	if err != nil {
@@ -374,7 +378,7 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 		return false, nil
 	}
 	if relationshipmemory.MemoryBlocksEnabled() {
-		return r.consolidateAndApply(ctx, job, scope, turns, runtimeSlots, values)
+		return r.consolidateAndApply(ctx, job, scope, turns, runtimeSlots, values, instructions)
 	}
 	operations, err := r.decide(ctx, job, scope, turns, runtimeSlots, values)
 	if err != nil {
@@ -564,7 +568,7 @@ func parseAutomaticOperations(content string) ([]automaticOperation, error) {
 
 func automaticSlot(slots []agentmemory.RuntimeSlot, key string) (agentmemory.RuntimeSlot, bool) {
 	for _, slot := range slots {
-		if slot.Enabled && slot.Key == strings.TrimSpace(key) {
+		if slot.Enabled && automaticWritesAllowed(slot) && slot.Key == strings.TrimSpace(key) {
 			return slot, true
 		}
 	}

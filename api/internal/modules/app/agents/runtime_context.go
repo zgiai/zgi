@@ -359,6 +359,7 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		AgentMemoryUserScope:             agentMemoryUserScope,
 		AgentMemoryConfigScope:           memoryConfigScope,
 		AgentMemoryConfigRevision:        cfg.AgentMemoryConfigRevision,
+		AgentMemoryInstructions:          cfg.AgentMemoryInstructions,
 		BillingAppID:                     agentID,
 		BillingAppType:                   runtimemodel.ConversationCallerAgent,
 	}
@@ -460,6 +461,8 @@ func agentMemoryRuntimeSlots(slots []dto.AgentMemorySlotConfig) []runtimeservice
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   slot.SortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  !*agentMemoryAutoWrite(slot.AutoWrite),
 		})
 	}
 	return out

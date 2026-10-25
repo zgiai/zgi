@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const maxRevisionSlotChars = 2000
+const (
+	maxRevisionSlotChars        = 5000
+	maxRevisionDescriptionChars = 1000
+)
 
 type configRevisionSlot struct {
 	Key         string `json:"key"`
@@ -17,6 +20,10 @@ type configRevisionSlot struct {
 	MaxChars    int    `json:"max_chars"`
 	Enabled     bool   `json:"enabled"`
 	SortOrder   int    `json:"sort_order"`
+	// The write rules are omitted when off, so revisions of configurations
+	// that predate them do not change.
+	ReadOnly   bool `json:"read_only,omitempty"`
+	ManualOnly bool `json:"manual_only,omitempty"`
 }
 
 // ConfigRevision returns the canonical revision fence for Agent memory
@@ -54,7 +61,8 @@ func normalizeConfigRevisionSlots(slots []RuntimeSlot) []configRevisionSlot {
 		}
 		seen[key] = struct{}{}
 
-		maxChars := maxRevisionSlotChars
+		// A missing limit means the 2,000-character default, as it always has.
+		maxChars := defaultSlotMaxChars
 		if slot.MaxChars > 0 && slot.MaxChars <= maxRevisionSlotChars {
 			maxChars = slot.MaxChars
 		}
@@ -65,10 +73,12 @@ func normalizeConfigRevisionSlots(slots []RuntimeSlot) []configRevisionSlot {
 		normalized = append(normalized, configRevisionSlot{
 			Key:         key,
 			Name:        truncateConfigRevisionRunes(strings.TrimSpace(slot.Name), 80),
-			Description: truncateConfigRevisionRunes(strings.TrimSpace(slot.Description), 200),
+			Description: truncateConfigRevisionRunes(strings.TrimSpace(slot.Description), maxRevisionDescriptionChars),
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   sortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  slot.ManualOnly,
 		})
 	}
 

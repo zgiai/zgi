@@ -26,6 +26,10 @@ type Slot struct {
 	MaxChars    int    `json:"max_chars"`
 	Enabled     bool   `json:"enabled"`
 	SortOrder   int    `json:"sort_order"`
+	// ReadOnly blocks are shown to the model but never written by it.
+	ReadOnly bool `json:"read_only,omitempty"`
+	// ManualOnly blocks take explicit user requests only.
+	ManualOnly bool `json:"manual_only,omitempty"`
 }
 
 type State struct {
@@ -129,6 +133,8 @@ func RuntimeSlots(input []Slot) []agentmemory.RuntimeSlot {
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   slot.SortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  slot.ManualOnly,
 		})
 	}
 	return out

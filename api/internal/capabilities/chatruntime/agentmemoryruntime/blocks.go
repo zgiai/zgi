@@ -97,8 +97,20 @@ func RenderBlocks(values []agentmemory.SlotValueResponse, budget int) (string, [
 	return strings.TrimSpace(b.String()), rendered
 }
 
+// blockAccess marks a file the model may not freely write: read-only files
+// are never edited, and explicit-only files change only on the user's request.
+func blockAccess(value agentmemory.SlotValueResponse) string {
+	switch {
+	case value.ReadOnly:
+		return ` access="read-only"`
+	case !value.AutoWrite:
+		return ` access="explicit-only"`
+	}
+	return ""
+}
+
 func blockHeader(value agentmemory.SlotValueResponse, length int) string {
-	return fmt.Sprintf("<file path=%q owner=\"user\" chars=\"%d/%d\">\n", BlockPath(value.Key), length, value.MaxChars)
+	return fmt.Sprintf("<file path=%q owner=\"user\"%s chars=\"%d/%d\">\n", BlockPath(value.Key), blockAccess(value), length, value.MaxChars)
 }
 
 func blockFile(value agentmemory.SlotValueResponse, content string, length int, truncated bool) string {
@@ -134,5 +146,5 @@ func fitBlockFile(value agentmemory.SlotValueResponse, content string, length, r
 }
 
 func blockOmitted(value agentmemory.SlotValueResponse, length int) string {
-	return fmt.Sprintf("<file path=%q owner=\"user\" chars=\"%d/%d\" omitted=\"context budget\" />\n", BlockPath(value.Key), length, value.MaxChars)
+	return fmt.Sprintf("<file path=%q owner=\"user\"%s chars=\"%d/%d\" omitted=\"context budget\" />\n", BlockPath(value.Key), blockAccess(value), length, value.MaxChars)
 }

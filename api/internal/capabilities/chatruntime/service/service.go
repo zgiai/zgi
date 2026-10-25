@@ -224,8 +224,10 @@ type RunConfig struct {
 	UserTimezone              string
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
-	BillingAppID              string
-	BillingAppType            string
+	// AgentMemoryInstructions is the builder's guidance on what to remember.
+	AgentMemoryInstructions string
+	BillingAppID            string
+	BillingAppType          string
 	// BillingRuntimeWorkspaceID and BillingEndUserSubjectID name the Runtime
 	// Workspace end user a run is made for when its scope does not, such as
 	// a DigitalHuman run; model calls are metered and quota-checked for them.
@@ -819,6 +821,7 @@ type chatRequestParts struct {
 	ConnectorInteractive      bool
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
+	AgentMemoryInstructions   string
 	AgentMemoryAgentID        string
 	AgentMemoryRuntimeState   *AgentMemoryRuntimeState
 	// AgentMemoryRecentUserMessages are the user's earlier messages on this

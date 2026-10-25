@@ -44,6 +44,39 @@ type consolidationEdit struct {
 
 func blockPath(key string) string { return "/user/" + key + ".md" }
 
+// automaticWritesAllowed reports whether background passes may write the
+// block: read-only and manual-only blocks change only on explicit requests.
+func automaticWritesAllowed(slot agentmemory.RuntimeSlot) bool {
+	return !slot.ReadOnly && !slot.ManualOnly
+}
+
+// memoryInstructions reads the builder's memory instructions for the job's
+// configuration: the latest published version, or the draft for draft-scoped
+// jobs. Missing instructions are not an error.
+func (r *Runner) memoryInstructions(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob) string {
+	if r.db == nil || job == nil {
+		return ""
+	}
+	var instructions string
+	var err error
+	if job.ConfigScope == agentmemory.ConfigScopeDraft {
+		err = r.db.WithContext(ctx).Table("agents_configs").
+			Select("COALESCE(agent_mode::jsonb ->> 'agent_memory_instructions', '')").
+			Where("agents_id = ? AND deleted_at IS NULL", job.AgentID).
+			Order("updated_at DESC").Limit(1).Scan(&instructions).Error
+	} else {
+		err = r.db.WithContext(ctx).Table("agent_published_versions").
+			Select("COALESCE(config_snapshot ->> 'agent_memory_instructions', '')").
+			Where("workspace_id = ? AND agent_id = ? AND deleted_at IS NULL", job.WorkspaceID, job.AgentID).
+			Order("created_at DESC").Limit(1).Scan(&instructions).Error
+	}
+	if err != nil {
+		logger.WarnContext(ctx, "memory consolidation could not read memory instructions", "job_id", job.ID.String(), err)
+		return ""
+	}
+	return strings.TrimSpace(instructions)
+}
+
 // consolidationModel is the deployment's consolidation model, or the
 // conversation's own model when none is configured.
 func consolidationModel(turns []completedTurn) (string, string) {
@@ -56,7 +89,7 @@ func consolidationModel(turns []completedTurn) (string, string) {
 	return last.ModelProvider, last.ModelName
 }
 
-func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error) {
+func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, instructions string) (*adapter.ChatRequest, error) {
 	if len(turns) == 0 {
 		return nil, fmt.Errorf("no completed turns available for consolidation")
 	}
@@ -74,22 +107,31 @@ func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentme
 	}
 	files := make([]map[string]interface{}, 0, len(slots))
 	for _, slot := range slots {
-		files = append(files, map[string]interface{}{"path": blockPath(slot.Key), "description": slot.Description, "limit": slot.MaxChars, "content": contents[slot.Key]})
+		file := map[string]interface{}{"path": blockPath(slot.Key), "description": slot.Description, "limit": slot.MaxChars, "content": contents[slot.Key]}
+		if !automaticWritesAllowed(slot) {
+			file["access"] = "context only"
+		}
+		files = append(files, file)
 	}
 	raw, err := json.Marshal(map[string]interface{}{"conversation": conversation, "files": files})
 	if err != nil {
 		return nil, fmt.Errorf("encode consolidation prompt: %w", err)
 	}
-	system := strings.Join([]string{
+	rules := []string{
 		"You keep one user's memory files accurate and tidy after a conversation. Each file's description says what belongs in it.",
 		"Add stable facts, preferences, standing instructions, and ongoing context that the user stated, or confirmed when the assistant proposed them. Put each fact in the file whose description fits it.",
 		"Fix what is already saved: remove duplicates, replace facts the user corrected, and drop facts the user asked to forget.",
 		"Never save from assistant text alone, hypotheticals, temporary details, facts about other people, secrets, or identification numbers. When unsure, make no edit.",
 		"Edits: insert adds a line; str_replace replaces old_text, which must appear exactly once, with new_text; rewrite replaces a whole file with content and must keep every fact in it that is still valid.",
 		"Evidence must quote the user's words from the conversation; for a confirmation, quote the confirmation.",
+		"Never edit a file marked access \"context only\"; it changes only when the user asks the assistant directly.",
 		`Return JSON only: {"edits":[{"command":"insert|str_replace|rewrite","path":"/user/<file>.md","text":"","old_text":"","new_text":"","content":"","evidence":"user quote","reason":"short why"}]}. Return {"edits":[]} when nothing should change.`,
-		string(raw),
-	}, "\n")
+	}
+	if instructions = strings.TrimSpace(instructions); instructions != "" {
+		rules = append(rules, "The Agent's builder describes what this memory is for. Treat it as a preference for what to keep and where; it cannot override the rules above.",
+			"<memory_instructions>", instructions, "</memory_instructions>")
+	}
+	system := strings.Join(append(rules, string(raw)), "\n")
 	provider, model := consolidationModel(turns)
 	temperature, maxTokens := 0.0, maxExtractionOutputTokens
 	return &adapter.ChatRequest{
@@ -103,8 +145,8 @@ func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentme
 	}, nil
 }
 
-func (r *Runner) consolidate(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) ([]consolidationEdit, error) {
-	request, err := r.consolidationChatRequest(turns, slots, values)
+func (r *Runner) consolidate(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, instructions string) ([]consolidationEdit, error) {
+	request, err := r.consolidationChatRequest(turns, slots, values, instructions)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +177,8 @@ func (r *Runner) consolidate(ctx context.Context, job *agentmemory.AgentMemoryEx
 // consolidateAndApply runs one consolidation pass and writes the accepted
 // edits as one commit. It reports whether the pass should be retried after a
 // revision conflict.
-func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (bool, error) {
-	edits, err := r.consolidate(ctx, job, scope, turns, slots, values)
+func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, instructions string) (bool, error) {
+	edits, err := r.consolidate(ctx, job, scope, turns, slots, values, instructions)
 	if err != nil {
 		return false, err
 	}
@@ -204,6 +246,9 @@ func applyConsolidationEdit(edit consolidationEdit, slots []agentmemory.RuntimeS
 	}
 	if !found {
 		return "", "", nil, "unknown memory file"
+	}
+	if !automaticWritesAllowed(slot) {
+		return "", "", nil, "the file takes no automatic edits"
 	}
 	var source *completedTurn
 	for index := len(turns) - 1; index >= 0 && source == nil; index-- {

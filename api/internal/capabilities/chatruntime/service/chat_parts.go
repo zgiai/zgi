@@ -70,6 +70,7 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.ConnectorInteractive = config.ConnectorInteractive
 	parts.AgentMemoryConfigScope = strings.TrimSpace(config.AgentMemoryConfigScope)
 	parts.AgentMemoryConfigRevision = strings.TrimSpace(config.AgentMemoryConfigRevision)
+	parts.AgentMemoryInstructions = strings.TrimSpace(config.AgentMemoryInstructions)
 	parts.AgentMemoryAgentID = strings.TrimSpace(config.BillingAppID)
 	parts.RuntimeTools = append([]skillloop.RuntimeTool(nil), config.RuntimeTools...)
 	parts.AttachmentReadAllowed = config.AttachmentReadAuthorizer != nil
@@ -143,6 +144,8 @@ func normalizeAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotC
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   sortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  slot.ManualOnly,
 		})
 	}
 	return out

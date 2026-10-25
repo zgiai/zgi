@@ -243,6 +243,9 @@ func normalizeValueMutations(input []ValueMutation, slots []RuntimeSlot) ([]norm
 		if mode == MutationModeProactive && action != MutationActionUpsert {
 			return nil, fmt.Errorf("%w: proactive mutation is not allowed for slot %s", ErrUnauthorized, key)
 		}
+		if err := checkSlotWriteRules(slot, mode); err != nil {
+			return nil, err
+		}
 		content := strings.TrimSpace(raw.Content)
 		if action == MutationActionUpsert {
 			if content == "" {

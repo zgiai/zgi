@@ -91,6 +91,12 @@ func prepareMutations(req MutationRequest, arguments ToolArguments) ([]agentmemo
 		if !ok {
 			return nil, summary, fmt.Errorf("%w: memory key is not enabled", ErrInvalidInput)
 		}
+		if slot.ReadOnly {
+			return nil, summary, fmt.Errorf("%w: memory block is read-only", ErrInvalidInput)
+		}
+		if slot.ManualOnly && mode == agentMemoryModeProactive {
+			return nil, summary, fmt.Errorf("%w: memory block takes explicit requests only", ErrInvalidInput)
+		}
 		key = slot.Key
 		if _, exists := seen[key]; exists {
 			return nil, summary, fmt.Errorf("%w: duplicate memory key", ErrInvalidInput)

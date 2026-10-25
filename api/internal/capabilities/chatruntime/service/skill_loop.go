@@ -152,6 +152,11 @@ func (s *service) runPreparedToolLoop(
 		} else {
 			additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
 		}
+		if hasAgentMemoryRuntimeTool(runtimeTools) {
+			if instructions := agentmemoryruntime.InstructionsMessage(prepared.parts.AgentMemoryInstructions); instructions != nil {
+				additionalSystemMessages = append(additionalSystemMessages, *instructions)
+			}
+		}
 	}
 	executionContext := s.skillExecutionContext(prepared)
 	scriptModel, _ := s.newSkillScriptModelChannel(

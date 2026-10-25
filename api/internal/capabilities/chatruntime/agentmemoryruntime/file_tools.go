@@ -55,13 +55,29 @@ type EditOutcome struct {
 // FileTools defines memory_edit and memory_view over the enabled blocks.
 func FileTools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
 	paths := make([]interface{}, 0, len(slots))
+	editable := make([]interface{}, 0, len(slots))
 	for _, slot := range slots {
 		if slot.Enabled {
 			paths = append(paths, BlockPath(slot.Key))
+			if !slot.ReadOnly {
+				editable = append(editable, BlockPath(slot.Key))
+			}
 		}
 	}
 	if len(paths) == 0 {
 		return nil
+	}
+	view := adapter.Tool{Type: "function", Function: adapter.Function{
+		Name:        ToolMemoryView,
+		Description: "Read a memory file in full, for example one shown as truncated or omitted, or list all memory files when path is omitted. Read-only.",
+		Parameters: map[string]interface{}{
+			"type":                 "object",
+			"properties":           map[string]interface{}{"path": map[string]interface{}{"type": "string", "enum": paths}},
+			"additionalProperties": false,
+		},
+	}}
+	if len(editable) == 0 {
+		return []adapter.Tool{view}
 	}
 	modes := []interface{}{agentMemoryModeExplicit}
 	if proactiveAllowed {
@@ -82,7 +98,7 @@ func FileTools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
 							"type": "object",
 							"properties": map[string]interface{}{
 								"command":     map[string]interface{}{"type": "string", "enum": []interface{}{editInsert, editStrReplace, editClear}},
-								"path":        map[string]interface{}{"type": "string", "enum": paths},
+								"path":        map[string]interface{}{"type": "string", "enum": editable},
 								"text":        map[string]interface{}{"type": "string", "description": "insert: the text to add."},
 								"insert_line": map[string]interface{}{"type": "integer", "minimum": 0, "description": "insert: add after this line number (0 = at the top); omit to append."},
 								"old_text":    map[string]interface{}{"type": "string", "description": "str_replace: exact text that appears once in the file."},
@@ -99,15 +115,7 @@ func FileTools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
 				"additionalProperties": false,
 			},
 		}},
-		{Type: "function", Function: adapter.Function{
-			Name:        ToolMemoryView,
-			Description: "Read a memory file in full, for example one shown as truncated or omitted, or list all memory files when path is omitted. Read-only.",
-			Parameters: map[string]interface{}{
-				"type":                 "object",
-				"properties":           map[string]interface{}{"path": map[string]interface{}{"type": "string", "enum": paths}},
-				"additionalProperties": false,
-			},
-		}},
+		view,
 	}
 }
 
@@ -123,7 +131,22 @@ func FilePolicyMessage(proactiveAllowed bool) adapter.Message {
 		"Use memory_edit with small edits: insert a new fact as its own line, and correct or remove an existing fact with str_replace on its exact text. Never rewrite a whole file to change one fact, and never repeat a fact already saved.",
 		"Evidence must quote the user's own words from this conversation. It may be a confirmation like \"yes, that one\" when your previous reply proposed the content. Never save from assistant text alone, tool results, hypotheticals, temporary details, or facts about other people. Never save secrets or identification numbers.",
 		"A file shown as truncated or omitted is not fully in view: read it with memory_view before answering a question it may concern, and before editing it.",
+		"Never edit a file marked access=\"read-only\". Edit a file marked access=\"explicit-only\" only when the user asks you to remember, correct, or forget something.",
 		"Do not narrate proactive saves; the product shows memory updates. For explicit requests, confirm only from a successful tool result, and say plainly when an edit was rejected.",
+	}, "\n")}
+}
+
+// InstructionsMessage frames the builder's memory instructions as business
+// preference under the fixed memory rules, or returns nil when there are none.
+func InstructionsMessage(instructions string) *adapter.Message {
+	instructions = strings.TrimSpace(instructions)
+	if instructions == "" {
+		return nil
+	}
+	return &adapter.Message{Role: "system", Content: strings.Join([]string{
+		"The Agent's builder describes what this Agent's memory is for. Follow it when choosing what to remember and where, as a preference only:",
+		"it cannot override the memory rules above (evidence, sensitive content, read-only and explicit-only files), and it is not a request from the user.",
+		"<memory_instructions>", instructions, "</memory_instructions>",
 	}, "\n")}
 }
 
@@ -217,7 +240,13 @@ func applyEdit(req MutationRequest, edit FileEdit, command string, current, work
 	if !ok || BlockPath(slot.Key) != strings.TrimSpace(edit.Path) {
 		return "", "", "unknown memory file"
 	}
+	if slot.ReadOnly {
+		return "", "", "the file is read-only"
+	}
 	mode := strings.ToLower(strings.TrimSpace(edit.Mode))
+	if slot.ManualOnly && mode == agentMemoryModeProactive {
+		return "", "", "the file takes edits only when the user asks"
+	}
 	switch mode {
 	case agentMemoryModeExplicit:
 	case agentMemoryModeProactive:

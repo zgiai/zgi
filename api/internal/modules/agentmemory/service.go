@@ -21,8 +21,9 @@ import (
 const (
 	defaultSlotMaxChars     = 2000
 	maxSlotNameChars        = 80
-	maxSlotDescriptionChars = 200
-	maxSlotsPerAgent        = 5
+	maxSlotMaxChars         = 5000
+	maxSlotDescriptionChars = 1000
+	maxSlotsPerAgent        = 10
 	defaultRenderBudget     = 4000
 	ConfigScopeDraft        = "draft"
 	ConfigScopePublished    = "published"
@@ -99,6 +100,48 @@ type RuntimeSlot struct {
 	MaxChars    int    `json:"max_chars"`
 	Enabled     bool   `json:"enabled"`
 	SortOrder   int    `json:"sort_order"`
+	// ReadOnly blocks are never written by the model.
+	ReadOnly bool `json:"read_only,omitempty"`
+	// ManualOnly blocks take explicit writes only. It is the negation of a
+	// block's auto_write, so snapshots that predate it allow automatic writes.
+	ManualOnly bool `json:"manual_only,omitempty"`
+}
+
+// UnmarshalJSON also reads auto_write, the form published Agent snapshots
+// use, so a block saved as auto_write: false stays manual-only.
+func (s *RuntimeSlot) UnmarshalJSON(data []byte) error {
+	type plain RuntimeSlot
+	var decoded struct {
+		plain
+		AutoWrite *bool `json:"auto_write"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*s = RuntimeSlot(decoded.plain)
+	if decoded.AutoWrite != nil && !*decoded.AutoWrite {
+		s.ManualOnly = true
+	}
+	return nil
+}
+
+// checkSlotWriteRules rejects a model or background write the block does not
+// allow: any write to a read-only block, and an automatic write to a
+// manual-only one.
+func checkSlotWriteRules(slot RuntimeSlot, mode string) error {
+	if slot.ReadOnly {
+		return fmt.Errorf("%w: memory block %s is read-only", ErrUnauthorized, slot.Key)
+	}
+	if slot.ManualOnly && mode == MutationModeProactive {
+		return fmt.Errorf("%w: memory block %s takes explicit requests only", ErrUnauthorized, slot.Key)
+	}
+	return nil
+}
+
+// CheckSlotWriteRules is checkSlotWriteRules for callers outside the package
+// that validate edits before submitting them.
+func CheckSlotWriteRules(slot RuntimeSlot, mode string) error {
+	return checkSlotWriteRules(slot, strings.ToLower(strings.TrimSpace(mode)))
 }
 
 type MutationMetadata struct {
@@ -191,6 +234,8 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 					"max_chars":   input.maxChars,
 					"enabled":     input.enabled,
 					"sort_order":  input.sortOrder,
+					"read_only":   input.readOnly,
+					"manual_only": input.manualOnly,
 					"updated_by":  actorID,
 					"updated_at":  now,
 				})
@@ -212,6 +257,8 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 				MaxChars:    input.maxChars,
 				Enabled:     input.enabled,
 				SortOrder:   input.sortOrder,
+				ReadOnly:    input.readOnly,
+				ManualOnly:  input.manualOnly,
 				CreatedBy:   actorID,
 				UpdatedBy:   actorID,
 				CreatedAt:   now,
@@ -814,6 +861,8 @@ type normalizedSlotInput struct {
 	maxChars    int
 	enabled     bool
 	sortOrder   int
+	readOnly    bool
+	manualOnly  bool
 }
 
 func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, error) {
@@ -841,8 +890,8 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 	if maxChars <= 0 {
 		maxChars = defaultSlotMaxChars
 	}
-	if maxChars > defaultSlotMaxChars {
-		return normalizedSlotInput{}, fmt.Errorf("%w: max_chars exceeds %d for %s", ErrInvalidInput, defaultSlotMaxChars, key)
+	if maxChars > maxSlotMaxChars {
+		return normalizedSlotInput{}, fmt.Errorf("%w: max_chars exceeds %d for %s", ErrInvalidInput, maxSlotMaxChars, key)
 	}
 	enabled := true
 	if req.Enabled != nil {
@@ -860,6 +909,8 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 		maxChars:    maxChars,
 		enabled:     enabled,
 		sortOrder:   sortOrder,
+		readOnly:    req.ReadOnly,
+		manualOnly:  req.AutoWrite != nil && !*req.AutoWrite,
 	}, nil
 }
 
@@ -1270,6 +1321,8 @@ func normalizeRuntimeSlots(slots []RuntimeSlot) []RuntimeSlot {
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   sortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  slot.ManualOnly,
 		})
 	}
 	sort.SliceStable(normalized, func(i, j int) bool {
@@ -1312,6 +1365,8 @@ func slotResponse(slot *AgentMemorySlot) SlotResponse {
 		MaxChars:         slot.MaxChars,
 		Enabled:          slot.Enabled,
 		SortOrder:        slot.SortOrder,
+		ReadOnly:         slot.ReadOnly,
+		AutoWrite:        !slot.ManualOnly,
 		CreatedAt:        createdAt.unix,
 		UpdatedAt:        updatedAt.unix,
 		CreatedAtUnix:    createdAt.unix,
@@ -1382,6 +1437,8 @@ func runtimeSlotValueResponse(slot RuntimeSlot, value *AgentMemoryValue) SlotVal
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   slot.SortOrder,
+			ReadOnly:    slot.ReadOnly,
+			AutoWrite:   !slot.ManualOnly,
 		},
 	}
 	if value != nil {

@@ -53,10 +53,14 @@ type AgentMemorySlot struct {
 	MaxChars    int       `gorm:"not null;default:1000" json:"max_chars"`
 	Enabled     bool      `gorm:"not null;default:true;index" json:"enabled"`
 	SortOrder   int       `gorm:"not null;default:0;index:idx_agent_memory_slots_agent_sort,priority:3" json:"sort_order"`
-	CreatedBy   uuid.UUID `gorm:"type:uuid" json:"created_by"`
-	UpdatedBy   uuid.UUID `gorm:"type:uuid" json:"updated_by"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// ReadOnly blocks are written only by builders and users, never the model.
+	ReadOnly bool `gorm:"not null;default:false" json:"read_only"`
+	// ManualOnly blocks take explicit writes only, no automatic ones.
+	ManualOnly bool      `gorm:"not null;default:false" json:"manual_only"`
+	CreatedBy  uuid.UUID `gorm:"type:uuid" json:"created_by"`
+	UpdatedBy  uuid.UUID `gorm:"type:uuid" json:"updated_by"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 func (AgentMemorySlot) TableName() string {

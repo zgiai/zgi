@@ -14,6 +14,8 @@ type SlotResponse struct {
 	MaxChars         int    `json:"max_chars"`
 	Enabled          bool   `json:"enabled"`
 	SortOrder        int    `json:"sort_order"`
+	ReadOnly         bool   `json:"read_only"`
+	AutoWrite        bool   `json:"auto_write"`
 	CreatedAt        int64  `json:"created_at"`
 	UpdatedAt        int64  `json:"updated_at"`
 	CreatedAtUnix    int64  `json:"created_at_unix"`
@@ -49,6 +51,10 @@ type SlotUpsertRequest struct {
 	MaxChars    int    `json:"max_chars,omitempty"`
 	Enabled     *bool  `json:"enabled,omitempty"`
 	SortOrder   int    `json:"sort_order,omitempty"`
+	ReadOnly    bool   `json:"read_only,omitempty"`
+	// AutoWrite defaults to true: the block takes automatic writes whenever
+	// the Agent allows them.
+	AutoWrite *bool `json:"auto_write,omitempty"`
 }
 
 type UpdateValueRequest struct {

@@ -11,7 +11,7 @@ func Tools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
 	keys := make([]interface{}, 0, len(slots))
 	descriptions := make([]string, 0, len(slots))
 	for _, slot := range slots {
-		if !slot.Enabled {
+		if !slot.Enabled || slot.ReadOnly {
 			continue
 		}
 		keys = append(keys, slot.Key)
@@ -19,7 +19,13 @@ func Tools(slots []Slot, proactiveAllowed bool) []adapter.Tool {
 		if description == "" {
 			description = "enabled memory block"
 		}
+		if slot.ManualOnly {
+			description += "; explicit requests only"
+		}
 		descriptions = append(descriptions, fmt.Sprintf("%s (%s)", slot.Key, description))
+	}
+	if len(keys) == 0 {
+		return nil
 	}
 	modeValues := []interface{}{agentMemoryModeExplicit}
 	if proactiveAllowed {

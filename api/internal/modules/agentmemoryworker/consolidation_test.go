@@ -1,6 +1,7 @@
 package agentmemoryworker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -67,5 +68,29 @@ func TestConsolidationModelFollowsTheDeploymentSetting(t *testing.T) {
 	t.Setenv(consolidationModelVariable, "not-a-model")
 	if provider, _ := consolidationModel(turns); provider != "deepseek" {
 		t.Fatalf("malformed setting was used: %s", provider)
+	}
+}
+
+func TestConsolidationLeavesProtectedFilesAndCarriesInstructions(t *testing.T) {
+	turnID := uuid.New()
+	turns := []completedTurn{{ID: turnID, Query: "我住在杭州。", ModelProvider: "deepseek", ModelName: "deepseek-v4-flash"}}
+	slots := []agentmemory.RuntimeSlot{
+		{Key: "persona", Description: "Set by the builder.", MaxChars: 200, Enabled: true, ReadOnly: true},
+		{Key: "contact", Description: "Callback number.", MaxChars: 200, Enabled: true, ManualOnly: true},
+		{Key: "profile", Description: "Stable facts.", MaxChars: 200, Enabled: true},
+	}
+	for _, path := range []string{"/user/persona.md", "/user/contact.md"} {
+		edit := consolidationEdit{Command: "insert", Path: path, Text: "住在杭州", Evidence: "我住在杭州"}
+		if _, _, _, reason := applyConsolidationEdit(edit, slots, map[string]agentmemory.SlotValueResponse{}, map[string]string{}, turns, map[string]struct{}{turnID.String(): {}}); reason == "" {
+			t.Fatalf("background edit of %s was accepted", path)
+		}
+	}
+	request, err := (&Runner{}).consolidationChatRequest(turns, slots, nil, "Keep the customer's plan tier.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	system, _ := request.Messages[0].Content.(string)
+	if !strings.Contains(system, "<memory_instructions>\nKeep the customer's plan tier.\n</memory_instructions>") || !strings.Contains(system, `"access":"context only"`) {
+		t.Fatalf("consolidation prompt lacks instructions or file access:\n%s", system)
 	}
 }

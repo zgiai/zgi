@@ -248,7 +248,8 @@ func (a *AgentAdapter) readUserMemory(ctx context.Context, workspaceID, agentID 
 	}
 	values := make([]agentmemory.SlotValueResponse, 0, len(slots))
 	for _, slot := range slots {
-		response := agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder}}
+		response := agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars,
+			Enabled: slot.Enabled, SortOrder: slot.SortOrder, ReadOnly: slot.ReadOnly, AutoWrite: !slot.ManualOnly}}
 		if item, exists := byKey[slot.Key]; exists {
 			if item.LastOperationID != nil {
 				if expiresAt, ok := undoExpiries[*item.LastOperationID]; ok {
@@ -436,9 +437,9 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 		return nil, agentmemory.ErrInvalidInput
 	}
 	slots = published.Slots
-	allowedSlots := make(map[string]struct{}, len(slots))
+	allowedSlots := make(map[string]agentmemory.RuntimeSlot, len(slots))
 	for _, slot := range slots {
-		allowedSlots[slot.Key] = struct{}{}
+		allowedSlots[slot.Key] = slot
 	}
 	if len(req.Operations) == 0 || len(req.Operations) > 5 {
 		return nil, agentmemory.ErrInvalidInput
@@ -459,8 +460,12 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 		if operation.Action == agentmemory.MutationActionClear && strings.TrimSpace(operation.Content) != "" {
 			return nil, agentmemory.ErrInvalidInput
 		}
-		if _, ok := allowedSlots[operation.Key]; !ok {
+		slot, ok := allowedSlots[operation.Key]
+		if !ok {
 			return nil, agentmemory.ErrInvalidInput
+		}
+		if err := agentmemory.CheckSlotWriteRules(slot, operation.Mode); err != nil {
+			return nil, agentmemory.ErrUnauthorized
 		}
 		if _, duplicate := seenKeys[operation.Key]; duplicate {
 			return nil, agentmemory.ErrInvalidInput
@@ -843,10 +848,11 @@ func agentManagementMetadata(userScope string, userID uuid.UUID) MutationMetadat
 func slotResponse(slots []agentmemory.RuntimeSlot, key string) agentmemory.SlotResponse {
 	for _, slot := range slots {
 		if slot.Key == strings.TrimSpace(key) {
-			return agentmemory.SlotResponse{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder}
+			return agentmemory.SlotResponse{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars,
+				Enabled: slot.Enabled, SortOrder: slot.SortOrder, ReadOnly: slot.ReadOnly, AutoWrite: !slot.ManualOnly}
 		}
 	}
-	return agentmemory.SlotResponse{Key: strings.TrimSpace(key), Name: strings.TrimSpace(key), MaxChars: maxMemoryContentChars, Enabled: true}
+	return agentmemory.SlotResponse{Key: strings.TrimSpace(key), Name: strings.TrimSpace(key), MaxChars: maxMemoryContentChars, Enabled: true, AutoWrite: true}
 }
 
 func slotName(slots []agentmemory.RuntimeSlot, key string) string {

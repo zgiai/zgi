@@ -443,8 +443,8 @@ func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
 	if slots[0].CreatedAt != 0 || slots[0].UpdatedAt != 0 {
 		t.Fatalf("snapshot preserved timestamps created=%d updated=%d", slots[0].CreatedAt, slots[0].UpdatedAt)
 	}
-	if slots[0].MaxChars != 2000 {
-		t.Fatalf("snapshot max chars = %d, want 2000", slots[0].MaxChars)
+	if slots[0].MaxChars != 4000 {
+		t.Fatalf("snapshot max chars = %d, want the configured 4000", slots[0].MaxChars)
 	}
 	if slots[0].Name != "用户资料" {
 		t.Fatalf("snapshot name = %q, want 用户资料", slots[0].Name)

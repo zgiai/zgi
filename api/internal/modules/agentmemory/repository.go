@@ -29,7 +29,8 @@ func (r *Repository) SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID
 	for _, slot := range slots {
 		if slot != nil {
 			mirrored = append(mirrored, memoryblock.AgentSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description,
-				MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder})
+				MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder,
+				ReadOnly: slot.ReadOnly, AutoWrite: !slot.ManualOnly})
 		}
 	}
 	return memoryblock.SyncAgentSlots(ctx, r.db, agentID, mirrored)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -259,6 +260,8 @@ func agentMemorySlotConfigFromResponse(slot agentmemory.SlotResponse) dto.AgentM
 		MaxChars:         slot.MaxChars,
 		Enabled:          slot.Enabled,
 		SortOrder:        slot.SortOrder,
+		ReadOnly:         slot.ReadOnly,
+		AutoWrite:        agentMemoryAutoWrite(&slot.AutoWrite),
 		CreatedAt:        slot.CreatedAt,
 		UpdatedAt:        slot.UpdatedAt,
 		CreatedAtUnix:    slot.CreatedAtUnix,
@@ -286,6 +289,8 @@ func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig, pres
 			MaxChars:    slot.MaxChars,
 			Enabled:     &enabled,
 			SortOrder:   firstNonZeroInt(slot.SortOrder, i),
+			ReadOnly:    slot.ReadOnly,
+			AutoWrite:   agentMemoryAutoWrite(slot.AutoWrite),
 		})
 	}
 	return req
@@ -302,9 +307,11 @@ func agentMemorySnapshotSlots(slots []dto.AgentMemorySlotConfig) []dto.AgentMemo
 			Key:         key,
 			Name:        truncateRunes(strings.TrimSpace(slot.Name), 80),
 			Description: strings.TrimSpace(slot.Description),
-			MaxChars:    2000,
+			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   slot.SortOrder,
+			ReadOnly:    slot.ReadOnly,
+			AutoWrite:   agentMemoryAutoWrite(slot.AutoWrite),
 		})
 	}
 	return normalizeAgentMemorySlotConfigs(out)
@@ -339,6 +346,25 @@ func truncateRunes(value string, limit int) string {
 	return string(runes[:limit])
 }
 
+// Agent memory block limits (ADR 0013).
+const (
+	maxAgentMemorySlotChars        = 5000
+	maxAgentMemoryDescriptionChars = 1000
+)
+
+// maxAgentMemoryInstructionsChars bounds the builder's memory instructions.
+const maxAgentMemoryInstructionsChars = 2000
+
+func normalizeAgentMemoryInstructions(value string) string {
+	return truncateRunes(strings.TrimSpace(value), maxAgentMemoryInstructionsChars)
+}
+
+// agentMemoryAutoWrite resolves an optional auto_write: absent means true.
+func agentMemoryAutoWrite(value *bool) *bool {
+	enabled := value == nil || *value
+	return &enabled
+}
+
 func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.AgentMemorySlotConfig {
 	if len(slots) == 0 {
 		return []dto.AgentMemorySlotConfig{}
@@ -355,7 +381,7 @@ func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.Ag
 		}
 		seen[key] = struct{}{}
 		maxChars := 2000
-		if slot.MaxChars > 0 && slot.MaxChars <= 2000 {
+		if slot.MaxChars > 0 && slot.MaxChars <= maxAgentMemorySlotChars {
 			maxChars = slot.MaxChars
 		}
 		sortOrder := slot.SortOrder
@@ -366,10 +392,12 @@ func normalizeAgentMemorySlotConfigs(slots []dto.AgentMemorySlotConfig) []dto.Ag
 			ID:          strings.TrimSpace(slot.ID),
 			Key:         key,
 			Name:        truncateRunes(strings.TrimSpace(slot.Name), 80),
-			Description: truncateRunes(strings.TrimSpace(slot.Description), 200),
+			Description: truncateRunes(strings.TrimSpace(slot.Description), maxAgentMemoryDescriptionChars),
 			MaxChars:    maxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   sortOrder,
+			ReadOnly:    slot.ReadOnly,
+			AutoWrite:   agentMemoryAutoWrite(slot.AutoWrite),
 			CreatedAt:   slot.CreatedAt,
 			UpdatedAt:   slot.UpdatedAt,
 		})
@@ -423,6 +451,12 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 		configReq := agentConfigRequestFromResponse(*currentConfig)
 		configReq.AgentMemoryEnabled = req.Enabled
 		configReq.AgentMemoryAutoExtractionEnabled = req.AutoExtractionEnabled
+		if req.Instructions != nil {
+			if utf8.RuneCountInString(strings.TrimSpace(*req.Instructions)) > maxAgentMemoryInstructionsChars {
+				return fmt.Errorf("%w: memory instructions exceed %d characters", agentmemory.ErrInvalidInput, maxAgentMemoryInstructionsChars)
+			}
+			configReq.AgentMemoryInstructions = normalizeAgentMemoryInstructions(*req.Instructions)
+		}
 		if _, err := applyAgentConfigRequestToDraft(&current, configReq, accountID); err != nil {
 			return err
 		}
@@ -435,7 +469,8 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 			return err
 		}
 		slots := agentMemorySlotConfigsFromResponses(updatedSlots)
-		result = &dto.AgentMemoryConfigResponse{Enabled: req.Enabled, AutoExtractionEnabled: req.AutoExtractionEnabled, Slots: slots, ConfigRevision: agentMemoryConfigRevision(req.Enabled, req.AutoExtractionEnabled, slots)}
+		result = &dto.AgentMemoryConfigResponse{Enabled: req.Enabled, AutoExtractionEnabled: req.AutoExtractionEnabled, Slots: slots,
+			ConfigRevision: agentMemoryConfigRevision(req.Enabled, req.AutoExtractionEnabled, slots), Instructions: configReq.AgentMemoryInstructions}
 		if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, result.ConfigRevision); err != nil {
 			return err
 		}
@@ -454,6 +489,8 @@ func agentMemoryConfigRevision(enabled, automatic bool, slots []dto.AgentMemoryS
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   slot.SortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  !*agentMemoryAutoWrite(slot.AutoWrite),
 		})
 	}
 	return agentmemory.ConfigRevision(enabled, automatic, runtimeSlots)

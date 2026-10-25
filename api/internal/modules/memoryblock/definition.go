@@ -56,13 +56,15 @@ type AgentSlot struct {
 	MaxChars    int
 	Enabled     bool
 	SortOrder   int
+	ReadOnly    bool
+	AutoWrite   bool
 }
 
 // SyncAgentSlots makes an Agent's definitions match its current slots: each
 // slot's definition is created or refreshed under its key, and definitions of
 // removed slots are marked deleted. Call it in the transaction that changes
-// the slots. Agent slots are person-partition files the user owns; whether
-// automatic writes are allowed still follows the Agent-level setting.
+// the slots. Agent slots are person-partition files the user owns. Automatic
+// writes also need the Agent-level setting.
 func SyncAgentSlots(ctx context.Context, tx *gorm.DB, agentID uuid.UUID, slots []AgentSlot) error {
 	if tx == nil || agentID == uuid.Nil {
 		return errors.New("sync memory block definitions: missing transaction or agent")
@@ -74,14 +76,15 @@ func SyncAgentSlots(ctx context.Context, tx *gorm.DB, agentID uuid.UUID, slots [
 		definition := Definition{
 			ID: uuid.New(), ConsumerType: ConsumerAgent, ConsumerID: agentID, Label: slot.Key,
 			Name: slot.Name, Description: slot.Description, LimitChars: slot.MaxChars,
-			Partition: PartitionPerson, Owner: OwnerUser, AutoWrite: true,
+			Partition: PartitionPerson, Owner: OwnerUser, ReadOnly: slot.ReadOnly, AutoWrite: slot.AutoWrite,
 			Enabled: slot.Enabled, SortOrder: slot.SortOrder, CreatedAt: now, UpdatedAt: now,
 		}
 		err := tx.WithContext(ctx).Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "consumer_type"}, {Name: "consumer_id"}, {Name: "label"}},
 			DoUpdates: clause.Assignments(map[string]any{
 				"name": slot.Name, "description": slot.Description, "limit_chars": slot.MaxChars,
-				"enabled": slot.Enabled, "sort_order": slot.SortOrder, "deleted_at": nil, "updated_at": now,
+				"enabled": slot.Enabled, "sort_order": slot.SortOrder, "read_only": slot.ReadOnly, "auto_write": slot.AutoWrite,
+				"deleted_at": nil, "updated_at": now,
 			}),
 		}).Create(&definition).Error
 		if err != nil {

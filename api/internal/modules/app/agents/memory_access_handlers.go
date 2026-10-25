@@ -257,7 +257,8 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 func agentMemoryRuntimeStoreSlots(slots []runtimeservice.AgentMemorySlotConfig) []agentmemory.RuntimeSlot {
 	out := make([]agentmemory.RuntimeSlot, 0, len(slots))
 	for _, slot := range slots {
-		out = append(out, agentmemory.RuntimeSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder})
+		out = append(out, agentmemory.RuntimeSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars,
+			Enabled: slot.Enabled, SortOrder: slot.SortOrder, ReadOnly: slot.ReadOnly, ManualOnly: slot.ManualOnly})
 	}
 	return out
 }

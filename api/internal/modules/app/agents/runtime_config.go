@@ -600,6 +600,8 @@ func mergeAgentConfigRequestedFields(current dto.AgentConfigRequest, requested d
 			current.AgentMemoryEnabled = requested.AgentMemoryEnabled
 		case "agent_memory_auto_extraction_enabled":
 			current.AgentMemoryAutoExtractionEnabled = requested.AgentMemoryAutoExtractionEnabled
+		case "agent_memory_instructions":
+			current.AgentMemoryInstructions = requested.AgentMemoryInstructions
 		case "file_upload_enabled":
 			current.FileUpload = requested.FileUpload
 		case "file_upload_policy":
@@ -1357,6 +1359,7 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		UseMemory:                        false,
 		AgentMemoryEnabled:               config.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: config.AgentMemoryAutoExtractionEnabled,
+		AgentMemoryInstructions:          config.AgentMemoryInstructions,
 		FileUpload:                       config.FileUpload,
 		FileUploadPolicy:                 chatfile.Clone(config.FileUploadPolicy),
 		HomeTitle:                        config.HomeTitle,
@@ -1527,6 +1530,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		UseMemory:                        false,
 		AgentMemoryEnabled:               runtimeCfg.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: runtimeCfg.AgentMemoryAutoExtractionEnabled,
+		AgentMemoryInstructions:          normalizeAgentMemoryInstructions(runtimeCfg.AgentMemoryInstructions),
 		FileUploadEnabled:                runtimeCfg.FileUpload,
 		FileUploadPolicy:                 chatfile.Clone(runtimeCfg.FileUploadPolicy),
 		HomeTitle:                        runtimeCfg.HomeTitle,
@@ -1570,6 +1574,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		AgentMemoryEnabled:               mode.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: mode.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
+		AgentMemoryInstructions:          normalizeAgentMemoryInstructions(mode.AgentMemoryInstructions),
 		FileUpload:                       mode.FileUploadEnabled,
 		FileUploadPolicy:                 chatfile.Clone(mode.FileUploadPolicy),
 		HomeTitle:                        normalizeAgentHomeTitle(mode.HomeTitle),
@@ -1624,6 +1629,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"agent_memory_auto_extraction_enabled": resp.AgentMemoryAutoExtractionEnabled,
 		"agent_memory_slots":                   normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
 		"agent_memory_config_revision":         resp.AgentMemoryConfigRevision,
+		"agent_memory_instructions":            normalizeAgentMemoryInstructions(resp.AgentMemoryInstructions),
 		"file_upload_enabled":                  resp.FileUpload,
 		"file_upload_policy":                   chatfile.Clone(resp.FileUploadPolicy),
 		"home_title":                           resp.HomeTitle,
@@ -1679,6 +1685,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		resp.AgentMemoryAutoExtractionEnabled = enabled
 	}
 	resp.AgentMemorySlots = agentMemorySlotConfigsFromSnapshot(snapshot["agent_memory_slots"])
+	resp.AgentMemoryInstructions = normalizeAgentMemoryInstructions(stringFromSnapshot(snapshot, "agent_memory_instructions"))
 	resp.AgentMemoryConfigRevision = strings.TrimSpace(stringFromSnapshot(snapshot, "agent_memory_config_revision"))
 	if resp.AgentMemoryConfigRevision == "" {
 		resp.AgentMemoryConfigRevision = agentMemoryConfigRevision(resp.AgentMemoryEnabled, resp.AgentMemoryAutoExtractionEnabled, resp.AgentMemorySlots)
