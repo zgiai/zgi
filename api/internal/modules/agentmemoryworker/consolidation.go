@@ -205,8 +205,13 @@ func applyConsolidationEdit(edit consolidationEdit, slots []agentmemory.RuntimeS
 	if !found {
 		return "", "", nil, "unknown memory file"
 	}
-	source, ok := evidenceSourceTurn(edit.Evidence, turns)
-	if !ok {
+	var source *completedTurn
+	for index := len(turns) - 1; index >= 0 && source == nil; index-- {
+		if agentmemory.QuotedIn(edit.Evidence, turns[index].Query) {
+			source = &turns[index]
+		}
+	}
+	if source == nil {
 		return "", "", nil, "evidence is not a quote from a user message"
 	}
 	content, edited := working[slot.Key]

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
@@ -22,9 +23,23 @@ import (
 const agentMemoryToolMutate = agentmemoryruntime.ToolMutate
 const maxUserRelationshipMemoryContextChars = 4000
 
-// maxMemoryBlocksContextChars bounds memory blocks (ADR 0013), which show
-// every block and so need more room than the legacy list.
-const maxMemoryBlocksContextChars = 8000
+// minMemoryBlocksContextChars is the least room memory blocks (ADR 0013)
+// get; they get as much as all blocks can hold, within 10% of the model's
+// input, so a model with room never sees a block cut.
+const minMemoryBlocksContextChars = 8000
+
+// memoryBlocksContextChars is the room all enabled blocks need when full:
+// their limits plus the file framing and descriptions around them.
+func memoryBlocksContextChars(slots []AgentMemorySlotConfig) int {
+	total := 600
+	for _, slot := range slots {
+		total += slot.MaxChars + utf8.RuneCountInString(slot.Description) + 160
+	}
+	if total < minMemoryBlocksContextChars {
+		return minMemoryBlocksContextChars
+	}
+	return total
+}
 
 func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string, modelInputLimit int) (string, map[string]interface{}, error) {
 	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
@@ -65,7 +80,7 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 	}
 	maxChars := maxUserRelationshipMemoryContextChars
 	if blocks {
-		maxChars = maxMemoryBlocksContextChars
+		maxChars = memoryBlocksContextChars(enabledAgentMemorySlots(parts.AgentMemorySlots))
 	}
 	budgetChars := budgetTokens * 4
 	if budgetChars > maxChars {
@@ -305,6 +320,7 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 	validationFailures := 0
 	succeeded := false
 	terminalFailure := false
+	partialCalls := 0
 	views := 0
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
 		if blocks && call.Function.Name == agentmemoryruntime.ToolMemoryView {
@@ -355,7 +371,13 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			result.Result["retry_allowed"] = false
 			return skillloop.RuntimeToolResult{Status: "failed", Arguments: result.Arguments, Result: result.Result, Error: result.Error}
 		}
-		succeeded = true
+		// Under memory blocks, a call whose edits were partly rejected may be
+		// followed by one more call that corrects them.
+		if blocks && editsRejected(result.Result) && partialCalls == 0 {
+			partialCalls++
+		} else {
+			succeeded = true
+		}
 		s.recordAgentMemoryMutationEvents(ctx, prepared, result.Response, timeline)
 		s.updateAgentMemoryRuntimeMetadataBestEffort(persistCtx, prepared, map[string]interface{}{
 			"inline_status": "success", "inline_operation_count": len(result.Response.Operations),
@@ -372,6 +394,16 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 // agentMemoryEvidenceWindow is how many recent user messages memory_edit
 // evidence may quote besides the current one.
 const agentMemoryEvidenceWindow = 6
+
+func editsRejected(result map[string]interface{}) bool {
+	outcomes, _ := result["edits"].([]agentmemoryruntime.EditOutcome)
+	for _, outcome := range outcomes {
+		if outcome.Status != "accepted" {
+			return true
+		}
+	}
+	return false
+}
 
 func hasAgentMemoryRuntimeTool(tools []skillloop.RuntimeTool) bool {
 	for _, tool := range tools {

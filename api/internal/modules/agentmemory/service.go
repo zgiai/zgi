@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -1169,6 +1171,32 @@ func ContainsSecretContent(content string) bool {
 var contactMarkers = map[string]struct{}{"email address": {}, "phone number": {}, "邮箱": {}, "手机号": {}, "电话号码": {}}
 
 var contactDescriptionMarkers = []string{"contact", "phone", "email", "callback", "联系方式", "联系电话", "电话", "手机", "邮箱", "回电"}
+
+// QuotedIn reports whether quote appears in one of messages, ignoring
+// whitespace, punctuation, and case, so a quote that drops a list number, a
+// comma, or a space still counts as the user's words.
+func QuotedIn(quote string, messages ...string) bool {
+	normalized := normalizeQuote(quote)
+	if utf8.RuneCountInString(normalized) < 2 {
+		return false
+	}
+	for _, message := range messages {
+		if strings.Contains(normalizeQuote(message), normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeQuote(value string) string {
+	var b strings.Builder
+	for _, char := range strings.ToLower(value) {
+		if unicode.IsLetter(char) || unicode.IsNumber(char) {
+			b.WriteRune(char)
+		}
+	}
+	return b.String()
+}
 
 // DescriptionAllowsContact reports whether a memory block's description says
 // it holds contact details, such as a support Agent's callback number.

@@ -25,7 +25,7 @@ const (
 	editStrReplace = "str_replace"
 	editClear      = "clear"
 
-	maxEditsPerCall = 8
+	maxEditsPerCall = 16
 )
 
 type FileEdit struct {
@@ -122,7 +122,7 @@ func FilePolicyMessage(proactiveAllowed bool) adapter.Message {
 		modePolicy,
 		"Use memory_edit with small edits: insert a new fact as its own line, and correct or remove an existing fact with str_replace on its exact text. Never rewrite a whole file to change one fact, and never repeat a fact already saved.",
 		"Evidence must quote the user's own words from this conversation. It may be a confirmation like \"yes, that one\" when your previous reply proposed the content. Never save from assistant text alone, tool results, hypotheticals, temporary details, or facts about other people. Never save secrets or identification numbers.",
-		"Use memory_view to read a file shown as truncated or omitted before editing it.",
+		"A file shown as truncated or omitted is not fully in view: read it with memory_view before answering a question it may concern, and before editing it.",
 		"Do not narrate proactive saves; the product shows memory updates. For explicit requests, confirm only from a successful tool result, and say plainly when an edit was rejected.",
 	}, "\n")}
 }
@@ -293,21 +293,10 @@ func insertText(content, text string, line *int) string {
 }
 
 // evidenceFromUser accepts a quote from the current message or any recent user
-// message in the conversation.
+// message in the conversation. Spacing, punctuation, and case are ignored, so
+// a quote that drops a list number or a comma still counts.
 func evidenceFromUser(req MutationRequest, evidence string) bool {
-	evidence = strings.TrimSpace(evidence)
-	if evidence == "" {
-		return false
-	}
-	if strings.Contains(req.LatestUserMessage, evidence) {
-		return true
-	}
-	for _, message := range req.RecentUserMessages {
-		if strings.Contains(message, evidence) {
-			return true
-		}
-	}
-	return false
+	return agentmemory.QuotedIn(evidence, append([]string{req.LatestUserMessage}, req.RecentUserMessages...)...)
 }
 
 // ExecuteView answers memory_view from the values read for this run, in full.

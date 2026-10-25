@@ -796,18 +796,13 @@
           "profile": [
             "陈晨"
           ],
-          "preferences": [
-            "表格"
-          ],
-          "standing_instructions": [
-            "总结"
-          ],
           "project_context": [
             "PMP"
           ]
         }
       },
-      "difficulty": "hard"
+      "difficulty": "hard",
+      "notes": "Where 'end each answer with a summary' goes (preferences or standing instructions) is a judgment call; only the unambiguous routes are scored."
     },
     {
       "id": "mixed_language_profile",
