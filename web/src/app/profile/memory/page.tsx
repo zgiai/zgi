@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
+import { MemoryNotesPanel } from '@/components/memory/memory-notes-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,6 +64,7 @@ export default function ProfileMemoryPage() {
   const t = useT('profile');
   const tHistory = useT('common.memoryHistory');
   const tArchive = useT('common.memoryArchive');
+  const tNotes = useT('common.memoryNotes');
   const router = useRouter();
   const queryClient = useQueryClient();
   const sessionStatus = useAuthStore.use.sessionStatus();
@@ -472,7 +474,11 @@ export default function ProfileMemoryPage() {
                           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
                               <span className="font-medium">{item.display_name || item.key}</span>
-                              <Badge variant="outline">{item.key}</Badge>
+                              <Badge variant="outline">
+                                {detail.consumer_type === 'digital_human'
+                                  ? `/user/${item.key.replaceAll('/', '_')}.md`
+                                  : item.key}
+                              </Badge>
                               {item.category ? (
                                 <Badge variant="secondary">
                                   {t(`memory.category.${item.category}`)}
@@ -661,6 +667,18 @@ export default function ProfileMemoryPage() {
                         onReverted={refresh}
                       />
                     </div>
+                    {detail.consumer_type === 'digital_human' ? (
+                      <div className="space-y-3 border-t pt-4">
+                        <h3 className="text-sm font-medium">{tNotes('title')}</h3>
+                        <MemoryNotesPanel
+                          key={detail.id}
+                          load={async () =>
+                            (await relationshipMemoryService.notes(detail.id)).data.notes
+                          }
+                          refreshKey={detailQuery.dataUpdatedAt}
+                        />
+                      </div>
+                    ) : null}
                     <div className="space-y-3 border-t pt-4">
                       <h3 className="text-sm font-medium">{tArchive('title')}</h3>
                       <MemoryArchivePanel

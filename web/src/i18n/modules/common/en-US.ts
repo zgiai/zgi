@@ -588,6 +588,13 @@ const messages = {
       legacy: 'Earlier memory',
     },
   },
+  memoryNotes: {
+    title: 'Notes about you',
+    description:
+      'What the DigitalHuman keeps track of in its work with you, such as promises and open questions. It keeps these notes, so you can read them but not change them.',
+    empty: 'No notes yet.',
+    unavailable: 'Notes are not available right now.',
+  },
   memoryArchive: {
     title: 'Archive',
     description:

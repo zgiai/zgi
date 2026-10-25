@@ -459,6 +459,8 @@ export interface DigitalHumanMemory {
   id: string;
   digital_human_id: string;
   memory_key: string;
+  /** File path in the model's view (ADR 0014). */
+  path?: string;
   memory_class: DigitalHumanMemoryClass;
   memory_type: DigitalHumanMemoryType;
   scope_type?: DigitalHumanMemoryScopeType | '';

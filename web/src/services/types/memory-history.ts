@@ -37,6 +37,14 @@ export interface MemoryArchiveEntry {
   updated_at?: string;
 }
 
+// A DigitalHuman's note on the user (ADR 0014 /user/notes/), read-only.
+export interface MemoryNote {
+  path: string;
+  tags?: string;
+  content: string;
+  updated_at: string;
+}
+
 export interface MemoryHistoryPage {
   commits: MemoryHistoryCommit[];
   next_before?: string;

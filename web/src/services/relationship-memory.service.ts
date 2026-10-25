@@ -1,6 +1,6 @@
 import { http } from '@/lib/http';
 import type { ApiResponseData } from './types/common';
-import type { MemoryArchiveEntry, MemoryHistoryPage } from './types/memory-history';
+import type { MemoryArchiveEntry, MemoryHistoryPage, MemoryNote } from './types/memory-history';
 import type {
   UserMemoryDeleteResponse,
   UserMemoryRelationshipDetailResponse,
@@ -97,6 +97,12 @@ export const relationshipMemoryService = {
   revert(id: string, versionId: string) {
     return http.post<ApiResponseData<unknown>>(
       `${basePath}/${encodeURIComponent(id)}/history/${encodeURIComponent(versionId)}/revert`
+    );
+  },
+
+  notes(id: string) {
+    return http.get<ApiResponseData<{ notes: MemoryNote[] }>>(
+      `${basePath}/${encodeURIComponent(id)}/notes`
     );
   },
 

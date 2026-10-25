@@ -570,6 +570,12 @@ const messages: CommonMessages = {
       legacy: '早期记忆',
     },
   },
+  memoryNotes: {
+    title: '关于你的笔记',
+    description: '数字人在与你协作中记下的事项，例如承诺和待办。笔记由数字人维护，你可以查看但不能修改。',
+    empty: '还没有笔记。',
+    unavailable: '暂时无法查看笔记。',
+  },
   memoryArchive: {
     title: '归档',
     description: '记忆文件写满后移出的较早记忆，助手需要时会搜索这里。',

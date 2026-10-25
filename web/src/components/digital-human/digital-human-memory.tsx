@@ -500,6 +500,11 @@ function MemoryBody({
               <Badge variant="outline">{t(`memory.type.${memory.memory_type}`)}</Badge>
               <MemoryStatusBadge status={memory.status} />
             </div>
+            {memory.path ? (
+              <code className="mt-1 block truncate text-xs text-muted-foreground">
+                {memory.path}
+              </code>
+            ) : null}
             <p
               className={cn(
                 'line-clamp-2 text-sm font-medium leading-6',
@@ -571,6 +576,7 @@ function MemoryDetail({
           </div>
           <SheetDescription>
             {t(memoryScopeKey(memory))} · {t(`memory.type.${memory.memory_type}`)}
+            {memory.path ? <code className="ml-2 text-xs">{memory.path}</code> : null}
           </SheetDescription>
         </SheetHeader>
         <div className="mt-6 space-y-6">
