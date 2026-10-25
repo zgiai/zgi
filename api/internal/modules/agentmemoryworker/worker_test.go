@@ -65,7 +65,7 @@ func TestFitTurnBudgetKeepsNewestCompleteTurns(t *testing.T) {
 		{Query: strings.Repeat("old ", 12000), ModelName: "test"},
 		{Query: "new durable preference", ModelName: "test"},
 	}
-	selected, err := runner.fitTurnBudget(turns, nil, nil)
+	selected, err := runner.fitTurnBudget(turns, nil, nil, runner.extractionChatRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestFitTurnBudgetCountsCurrentMemoryAndSlotPayload(t *testing.T) {
 	runner := NewRunner(nil, nil, nil)
 	turns := []completedTurn{{Query: "I prefer concise replies", ModelName: "test"}}
 	values := []agentmemory.SlotValueResponse{{Content: strings.Repeat("existing memory ", 12000)}}
-	selected, err := runner.fitTurnBudget(turns, []agentmemory.RuntimeSlot{{Key: "profile", Enabled: true}}, values)
+	selected, err := runner.fitTurnBudget(turns, []agentmemory.RuntimeSlot{{Key: "profile", Enabled: true}}, values, runner.extractionChatRequest)
 	if err != nil {
 		t.Fatal(err)
 	}

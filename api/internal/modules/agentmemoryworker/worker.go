@@ -209,6 +209,7 @@ func extractionRetryAt(attemptCount int, now time.Time) (time.Time, bool) {
 type completedTurn struct {
 	ID            uuid.UUID
 	Query         string
+	Answer        string
 	CompletedAt   time.Time
 	ModelProvider string
 	ModelName     string
@@ -275,7 +276,7 @@ func (r *Runner) loadCompletedTurns(ctx context.Context, job *agentmemory.AgentM
 		lowerBound = &value
 	}
 	query := r.db.WithContext(ctx).Table("chat_runtime_messages").
-		Select("id, query, updated_at AS completed_at, COALESCE(model_provider, '') AS model_provider, model_name").
+		Select("id, query, COALESCE(answer, '') AS answer, updated_at AS completed_at, COALESCE(model_provider, '') AS model_provider, model_name").
 		Where("conversation_id = ? AND status = ? AND created_at <= ? AND deleted_at IS NULL", job.ConversationID, "completed", watermark.CreatedAt)
 	if lowerBound != nil {
 		query = query.Where("created_at > ?", *lowerBound)
@@ -290,13 +291,15 @@ func (r *Runner) loadCompletedTurns(ctx context.Context, job *agentmemory.AgentM
 	return turns, scope, nil
 }
 
-func (r *Runner) fitTurnBudget(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) ([]completedTurn, error) {
+type chatRequestBuilder func([]completedTurn, []agentmemory.RuntimeSlot, []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error)
+
+func (r *Runner) fitTurnBudget(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, build chatRequestBuilder) ([]completedTurn, error) {
 	selected := make([]completedTurn, 0, len(turns))
 	for i := len(turns) - 1; i >= 0; i-- {
 		candidate := make([]completedTurn, 0, len(selected)+1)
 		candidate = append(candidate, turns[i])
 		candidate = append(candidate, selected...)
-		request, err := r.extractionChatRequest(candidate, slots, values)
+		request, err := build(candidate, slots, values)
 		if err != nil {
 			return nil, err
 		}
@@ -328,12 +331,19 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 	if err != nil {
 		return false, err
 	}
-	turns, err = r.fitTurnBudget(turns, runtimeSlots, values)
+	build := r.extractionChatRequest
+	if relationshipmemory.MemoryBlocksEnabled() {
+		build = r.consolidationChatRequest
+	}
+	turns, err = r.fitTurnBudget(turns, runtimeSlots, values, build)
 	if err != nil {
 		return false, err
 	}
 	if len(turns) == 0 {
 		return false, nil
+	}
+	if relationshipmemory.MemoryBlocksEnabled() {
+		return r.consolidateAndApply(ctx, job, scope, turns, runtimeSlots, values)
 	}
 	operations, err := r.decide(ctx, job, scope, turns, runtimeSlots, values)
 	if err != nil {

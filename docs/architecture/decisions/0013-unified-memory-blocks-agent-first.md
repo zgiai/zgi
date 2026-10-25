@@ -287,7 +287,7 @@ The existing idle-time background job becomes a consolidation pass:
 - **Input:** recent turns, both user and assistant (assistant text is context only, never evidence), current blocks with their limits, the consumer's memory instructions, and later relevant archive entries.
 - **Output:** per-file operations (`insert`, `str_replace`, `rewrite`), plus later `create`, `delete`, and `expire` for unpinned files and archive entries.
 - **Rewrite:** only consolidation may `rewrite` a file, and only within its limit. A rewrite keeps the facts it does not intentionally drop, and its commit records exactly what changed.
-- **Model:** configurable per deployment through a new `memory-consolidation` use case. A cheap model is the default. The conversation model is the fallback.
+- **Model:** configurable per deployment with `ZGI_MEMORY_CONSOLIDATION_MODEL` (`provider/model`); requests carry the `memory-consolidation` use case for accounting. When it is unset, the conversation's model is used.
 - **Fences:** the existing deletion cutoffs, memory epochs, config revisions, and inline deduplication stay.
 
 ### Versions are commits
