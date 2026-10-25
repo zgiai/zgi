@@ -695,6 +695,19 @@ func (s *Service) ClearItems(ctx context.Context, relationshipID uuid.UUID, meta
 				return err
 			}
 		}
+		// Clearing all memory clears the archive too.
+		var archived []UserMemoryArchiveEntry
+		if err := tx.Where("relationship_id = ?", relationshipID).Find(&archived).Error; err != nil {
+			return err
+		}
+		for index := range archived {
+			if err := s.recordArchiveVersion(ctx, tx, &relationship, meta, VersionClear, &archived[index], nil); err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("relationship_id = ?", relationshipID).Delete(&UserMemoryArchiveEntry{}).Error; err != nil {
+			return err
+		}
 		if err := s.purgeVersionContent(tx, relationshipID); err != nil {
 			return err
 		}
@@ -879,9 +892,10 @@ func (s *Service) Undo(ctx context.Context, relationshipID, operationID uuid.UUI
 }
 
 type ExportResponse struct {
-	Relationship UserMemoryRelationship `json:"relationship"`
-	ExportedAt   time.Time              `json:"exported_at"`
-	Items        []UserMemoryItem       `json:"items"`
+	Relationship UserMemoryRelationship   `json:"relationship"`
+	ExportedAt   time.Time                `json:"exported_at"`
+	Items        []UserMemoryItem         `json:"items"`
+	Archive      []UserMemoryArchiveEntry `json:"archive"`
 }
 
 func (s *Service) Export(ctx context.Context, relationshipID uuid.UUID) (*ExportResponse, error) {
@@ -900,7 +914,11 @@ func (s *Service) Export(ctx context.Context, relationshipID uuid.UUID) (*Export
 		}
 		items[index].ContentPayload = decoded
 	}
-	return &ExportResponse{Relationship: relationship, ExportedAt: s.now().UTC(), Items: items}, nil
+	archive, err := s.ArchiveEntries(ctx, relationshipID, maxArchiveEntries)
+	if err != nil {
+		return nil, err
+	}
+	return &ExportResponse{Relationship: relationship, ExportedAt: s.now().UTC(), Items: items, Archive: archive}, nil
 }
 
 func (s *Service) RenderContext(ctx context.Context, relationshipID uuid.UUID, contract ConsumerMemoryContract) (string, []UserMemoryItem, error) {
