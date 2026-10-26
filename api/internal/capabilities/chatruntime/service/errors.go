@@ -1,6 +1,10 @@
 package service
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/google/uuid"
+)
 
 var (
 	ErrUnauthorized                = errors.New("unauthorized")
@@ -14,7 +18,7 @@ var (
 	ErrConversationIdle            = errors.New("conversation has no active runtime")
 	ErrRuntimeInputDisabled        = errors.New("runtime input is disabled for this run")
 	ErrConversationWaitingApproval = errors.New("conversation is waiting for workflow approval")
-	ErrConversationWaitingQuestion = errors.New("conversation is waiting for workflow question answer")
+	ErrConversationWaitingQuestion = errors.New("conversation is waiting for an answer to a question")
 	ErrConversationWaitingAction   = errors.New("conversation is waiting for client action")
 	ErrConversationWaitingBudget   = errors.New("conversation is waiting for token budget continuation")
 	ErrStreamEventsUnavailable     = errors.New("stream events are unavailable")
@@ -23,6 +27,22 @@ var (
 	ErrModelIdleTimeout            = errors.New("model idle timeout")
 	ErrWorkflowBindingUnavailable  = errors.New("workflow binding unavailable")
 )
+
+// ConversationWaitingError names the message a new turn is blocked on, so a
+// caller can continue that message instead. It wraps one of the
+// ErrConversationWaiting* errors.
+type ConversationWaitingError struct {
+	Cause     error
+	MessageID uuid.UUID
+	Status    string
+	// RequestID is the pending user-input request when the message waits for
+	// an answer to a question.
+	RequestID string
+}
+
+func (e *ConversationWaitingError) Error() string { return e.Cause.Error() }
+
+func (e *ConversationWaitingError) Unwrap() error { return e.Cause }
 
 type finalizedStreamError struct {
 	cause error
