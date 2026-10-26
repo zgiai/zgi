@@ -24,6 +24,7 @@ func TestRunsKeepArtifactsForTheirRequester(t *testing.T) {
 		"member chat":      {run: Run{UserSubjectKind: "account", UserSubjectID: &account}, owner: artifacts.OwnerAccount, visibility: artifacts.VisibilityOwner, member: true},
 		"end user":         {run: Run{UserSubjectKind: "api_end_user", UserSubjectID: &endUser}, owner: artifacts.OwnerAPIEndUser, visibility: artifacts.VisibilityOwner},
 		"task center task": {run: Run{Surface: SurfaceTask, ActorID: &actor}, context: map[string]any{"task_owner_kind": "digital_human"}, owner: artifacts.OwnerAccount, visibility: artifacts.VisibilityTeam, member: true},
+		"scheduled task":   {run: Run{Surface: SurfaceTask, PrincipalType: "system", PrincipalID: &actor}, context: map[string]any{"task_owner_kind": "digital_human"}, owner: artifacts.OwnerAccount, visibility: artifacts.VisibilityTeam, member: true},
 		"channel task":     {run: Run{Surface: SurfaceTask}, context: map[string]any{"task_owner_kind": "conversation"}, owner: artifacts.OwnerWorkspace, visibility: artifacts.VisibilityTeam, member: true},
 		"channel run":      {run: Run{Surface: SurfaceChannel}, owner: artifacts.OwnerWorkspace, visibility: artifacts.VisibilityTeam, member: true},
 	} {
