@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,8 +139,13 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 		_ = json.Unmarshal(encoded, &dh)
 	}
 	if len(export.Conversations) != 1 || len(export.Conversations[0].Messages) != 1 || export.Conversations[0].Messages[0].Answer != "Four." ||
-		dh == nil || len(dh.Instances) != 1 || len(dh.Memory) != 1 || len(dh.Runs) != 1 || len(dh.Tasks) != 1 || len(dh.Notifications) != 1+extraNotifications {
+		dh == nil || len(dh.Instances) != 1 || len(dh.Memory) != 0 || len(dh.Runs) != 1 || len(dh.Tasks) != 1 || len(dh.Notifications) != 1+extraNotifications {
 		t.Fatalf("alice export = %+v / %+v", export, dh)
+	}
+	// The DigitalHuman's notes on alice are part of her relationship memory
+	// (ADR 0015), so the export carries them there.
+	if encoded, _ := json.Marshal(export.Memory); !strings.Contains(string(encoded), `"notes/pet-alice"`) {
+		t.Fatalf("alice's notes are missing from her memory export: %s", encoded)
 	}
 
 	panels, err := NewEndUserData().EndUserPanels(ctx, tx, organizationID, alice, []EndUserApp{{AppKey: "app_dh", DigitalHumanID: digitalHumanID}, {AppKey: "app_unused", DigitalHumanID: uuid.New()}})
@@ -156,11 +162,11 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 		t.Fatalf("erasing alice's instance was audited %d times: %v", erasedEvents, err)
 	}
 	for name, n := range map[string]int64{
-		"conversations":   count("SELECT count(*) FROM chat_runtime_conversations WHERE account_id = ?", alice),
-		"runs":            count("SELECT count(*) FROM digital_human_runs WHERE user_subject_id = ?", alice),
-		"instance memory": count("SELECT count(*) FROM digital_human_memories WHERE scope_type = 'instance' AND scope_id = ?", aliceInstance.String()),
-		"tasks":           count("SELECT count(*) FROM automation_tasks WHERE owner_subject_id = ?", alice),
-		"notifications":   count("SELECT count(*) FROM inbox_notifications WHERE recipient_id = ?", alice),
+		"conversations": count("SELECT count(*) FROM chat_runtime_conversations WHERE account_id = ?", alice),
+		"runs":          count("SELECT count(*) FROM digital_human_runs WHERE user_subject_id = ?", alice),
+		"notes":         count("SELECT count(*) FROM user_memory_items item JOIN user_memory_relationships relationship ON relationship.id = item.relationship_id WHERE relationship.subject_id = ?", alice),
+		"tasks":         count("SELECT count(*) FROM automation_tasks WHERE owner_subject_id = ?", alice),
+		"notifications": count("SELECT count(*) FROM inbox_notifications WHERE recipient_id = ?", alice),
 	} {
 		if n != 0 {
 			t.Fatalf("alice kept %d %s", n, name)

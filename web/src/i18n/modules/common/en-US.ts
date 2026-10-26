@@ -591,9 +591,15 @@ const messages = {
   memoryNotes: {
     title: 'Notes about you',
     description:
-      'What the DigitalHuman keeps track of in its work with you, such as promises and open questions. It keeps these notes, so you can read them but not change them.',
+      'What the DigitalHuman keeps track of in its work with you, such as promises and open questions. It keeps these notes: you can read and delete them, but not edit them.',
     empty: 'No notes yet.',
     unavailable: 'Notes are not available right now.',
+    delete: 'Delete',
+    deleted: 'Note deleted.',
+    deleteFailed: 'Could not delete the note.',
+    deleteConfirmTitle: 'Delete this note?',
+    deleteConfirmDescription: 'The DigitalHuman will no longer remember it. The deletion appears in the history.',
+    cancel: 'Cancel',
   },
   memoryArchive: {
     title: 'Archive',

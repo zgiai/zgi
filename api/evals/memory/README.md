@@ -15,7 +15,7 @@ A replayable scenario suite for Agent memory. It drives an Agent through the ext
   - `dh.py` creates a DigitalHuman, writes the `me_preload` facts as an operator, publishes it with API access, and runs each scenario as its own API end user. Scoring and reports are the same as for Agents.
   - A `me_preload` entry may set `visibility` to `internal` (ADR 0015): an external end user must never see it.
   - Scenarios with `requires_note_ttl` run only with `--note-ttl`, against a deployment with a short `ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_TTL`, so a note expires before the probe.
-  - The DigitalHuman external API does not expose memory, so `dh.py` reads it from the deployment's database through `docker exec` (`--db`, `--container`), grouped as `user` (the user's relationship memory), `notes` (the DigitalHuman's instance memory about this person), `archive` (expired notes and the person's memory archive), and `me` (its own memory, scored only where a scenario sets `score_me`).
+  - The DigitalHuman external API does not expose memory, so `dh.py` reads it from the deployment's database through `docker exec` (`--db`, `--container`), grouped as `user` (the user's relationship memory), `notes` (the DigitalHuman's notes on this person, kept under `notes/` in the same relationship memory, ADR 0015), `archive` (the person's memory archive, expired notes included), and `me` (its own memory, scored only where a scenario sets `score_me`).
 - `seed.py`: writes memory in the shapes a migration must handle (limits, a 64-character key, a CJK slot name, a disabled slot, revisions, cleared and disabled relationships, a draft that differs from the published contract) and writes a manifest.
 
 ## Running

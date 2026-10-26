@@ -163,7 +163,6 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatalf("created memory = %#v", created.Memory)
 	}
 
-	otherScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: uuid.NewString()}
 	var items []*DigitalHumanMemory
 	for name, scope := range map[string]Scope{"actor_a": scopeA, "actor_b": scopeB} {
 		retrieved, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)
@@ -309,34 +308,9 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	if len(supersedeUndo.SupersededSnapshot) == 0 {
 		t.Fatal("supersede undo snapshot is empty")
 	}
-	otherScopeProposal := oldProposal
-	otherScopeProposal.OperationID, otherScopeProposal.Key, otherScopeProposal.Scope = uuid.New(), "other-project-fact", &otherScope
-	otherScopeProposal.MemoryClass = memoryruntime.MemoryClassBusiness
-	otherScopeMemory, err := service.ApplyMemoryProposal(t.Context(), scopeA, detail.Definition.ID, otherScopeProposal)
-	if err != nil || otherScopeMemory.Memory == nil {
-		t.Fatalf("create other-scope memory = %#v, err %v", otherScopeMemory, err)
-	}
-	if err := tx.SavePoint("cross_scope_supersedes_guard").Error; err != nil {
-		t.Fatal(err)
-	}
-	crossScopeErr := tx.Model(&DigitalHumanMemory{}).Where("id = ?", replacement.Memory.ID).
-		Update("supersedes_id", otherScopeMemory.Memory.ID).Error
-	if crossScopeErr == nil {
-		t.Fatal("database accepted a cross-scope supersedes reference")
-	}
-	if err := tx.RollbackTo("cross_scope_supersedes_guard").Error; err != nil {
-		t.Fatal(err)
-	}
 	items, err = service.RetrieveMemories(t.Context(), scopeA, detail.Definition.ID, 10)
-	if err != nil || len(items) != 2 {
+	if err != nil || len(items) != 1 || items[0].ID != replacement.Memory.ID {
 		t.Fatalf("retrieval after supersede = %#v, err %v", items, err)
-	}
-	seenAfterSupersede := map[uuid.UUID]bool{}
-	for _, item := range items {
-		seenAfterSupersede[item.ID] = true
-	}
-	if !seenAfterSupersede[replacement.Memory.ID] || !seenAfterSupersede[otherScopeMemory.Memory.ID] {
-		t.Fatalf("retrieval after supersede missing active memories = %#v", items)
 	}
 
 	restored, err := service.UndoMemory(t.Context(), scopeA, detail.Definition.ID, supersede.OperationID, MemoryUndoRequest{ExpectedRevision: 1})
@@ -351,7 +325,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatalf("replacement after undo = %#v", invalidatedReplacement)
 	}
 	items, err = service.RetrieveMemories(t.Context(), scopeB, detail.Definition.ID, 10)
-	if err != nil || len(items) != 2 {
+	if err != nil || len(items) != 1 {
 		t.Fatalf("retrieval after supersede undo = %#v, err %v", items, err)
 	}
 	var restoredOld *DigitalHumanMemory

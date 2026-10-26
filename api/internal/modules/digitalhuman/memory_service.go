@@ -252,6 +252,18 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 		s.recordRejectedMemoryProposal(ctx, scope, digitalHumanID, request, err)
 		return nil, applicationError(err, "digital_human.memory.propose")
 	}
+	// The DigitalHuman's notes on an end user live in that person's
+	// relationship memory (ADR 0015).
+	if request.Scope != nil && request.Scope.Type == memoryruntime.MemoryScopeInstance {
+		result, err := s.applyInstanceNote(ctx, scope, digitalHumanID, request)
+		if err != nil {
+			if errors.Is(err, errInstanceMemoryFull) || errors.Is(err, ErrMemoryPolicyRejected) {
+				s.recordRejectedMemoryProposal(ctx, scope, digitalHumanID, request, err)
+			}
+			return nil, applicationError(err, "digital_human.memory.propose")
+		}
+		return result, nil
+	}
 
 	var result *MemoryMutationResult
 	err = s.repo.Transaction(ctx, func(tx *GormRepository) error {

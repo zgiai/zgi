@@ -142,17 +142,10 @@ class DigitalHumanClient:
         subject = api_end_user_subject(self.workspace_id, self.digital_human_id, user)
         dh = self.digital_human_id
         rows = self.sql(f"""
-            SELECT 'user', i.memory_key, replace(i.content_payload, E'\\n', ' ') FROM user_memory_items i
+            SELECT CASE WHEN i.memory_key LIKE 'notes/%' THEN 'notes' ELSE 'user' END, i.memory_key, replace(i.content_payload, E'\\n', ' ')
+              FROM user_memory_items i
               JOIN user_memory_relationships r ON r.id = i.relationship_id
              WHERE r.consumer_type = 'digital_human' AND r.consumer_id = '{dh}' AND r.subject_id = '{subject}'
-            UNION ALL
-            SELECT 'notes', m.memory_key, replace(m.content, E'\\n', ' ') FROM digital_human_memories m
-              JOIN digital_human_end_user_instances n ON n.id::text = m.scope_id
-             WHERE m.digital_human_id = '{dh}' AND m.scope_type = 'instance' AND m.status = 'active' AND n.subject_id = '{subject}'
-            UNION ALL
-            SELECT 'archive', m.memory_key, replace(m.content, E'\\n', ' ') FROM digital_human_memories m
-              JOIN digital_human_end_user_instances n ON n.id::text = m.scope_id
-             WHERE m.digital_human_id = '{dh}' AND m.scope_type = 'instance' AND m.status = 'archived' AND n.subject_id = '{subject}'
             UNION ALL
             SELECT 'archive', a.source_key, replace(a.content_payload, E'\\n', ' ') FROM user_memory_archive_entries a
               JOIN user_memory_relationships r ON r.id = a.relationship_id

@@ -106,6 +106,12 @@ export const relationshipMemoryService = {
     );
   },
 
+  deleteNote(id: string, key: string, expectedRevision: number) {
+    return http.delete<ApiResponseData<unknown>>(
+      `${basePath}/${encodeURIComponent(id)}/notes/${encodeURIComponent(key)}?expected_revision=${expectedRevision}`
+    );
+  },
+
   archive(id: string) {
     return http.get<ApiResponseData<{ entries: MemoryArchiveEntry[] }>>(
       `${basePath}/${encodeURIComponent(id)}/archive`

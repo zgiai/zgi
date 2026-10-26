@@ -264,7 +264,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryRetrievalTool(run *Run, event invoc
 		if err != nil {
 			return skillloop.RuntimeToolResult{Status: "error", Error: err, Recoverable: true}
 		}
-		result, err := p.retriever.Retrieve(ctx, DigitalHumanMemoryRetrievalRequest{
+		result, err := p.retrieve(ctx, DigitalHumanMemoryRetrievalRequest{
 			Run: run, Event: event, Query: args.Query, TopK: args.TopK, RetrievalMode: args.RetrievalMode,
 		})
 		if err != nil {
@@ -413,6 +413,9 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 	}
 	request.SourceContext.SourceTrust = admission.Trust
 	admission.stamp(&request)
+	if mode == memoryWriteProactive {
+		request.noteSourceKind = relationshipmemory.SourceAutomatic
+	}
 	if !admission.Allowed {
 		p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, admission.err())
 		return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)

@@ -215,6 +215,7 @@ func (h *ExternalHandler) RuntimeWorkspaceHandler(name string) gin.HandlerFunc {
 		"tasks.schedule_preview": h.PreviewAPITaskSchedule,
 		"memory.get":             h.GetAPIEndUserMemory, "memory.delete_item": h.DeleteAPIEndUserMemoryItem, "memory.clear": h.ClearAPIEndUserMemory,
 		"memory.archive": h.GetAPIEndUserMemoryArchive, "memory.archive.delete": h.DeleteAPIEndUserMemoryArchiveEntry,
+		"memory.note.delete": h.DeleteAPIEndUserNote,
 	}
 	if _, ok := h.tasks.(TaskReportService); ok {
 		handlers["reports.list"], handlers["reports.get"] = h.ListAPITaskReports, h.GetAPITaskReport

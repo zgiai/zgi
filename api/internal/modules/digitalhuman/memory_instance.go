@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 )
 
@@ -91,9 +92,8 @@ func (s *Service) ArchiveExpiredInstanceMemories(ctx context.Context) (int64, er
 	if s == nil || s.repo == nil || ttl == 0 {
 		return 0, nil
 	}
-	now := s.now()
-	result := s.repo.db.WithContext(ctx).Model(&DigitalHumanMemory{}).
-		Where("memory_class = ? AND scope_type = ? AND status = ? AND updated_at < ?", memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, MemoryStatusActive, now.Add(-ttl)).
-		Updates(map[string]any{"status": MemoryStatusArchived, "updated_at": now})
-	return result.RowsAffected, result.Error
+	// Notes now live in relationship memory (ADR 0015); an expired one moves
+	// into the person's archive, where it can still be found.
+	moved, err := relationshipmemory.NewService(s.repo.db).ExpireNotes(ctx, s.now().Add(-ttl), noteExpiryBatch)
+	return int64(moved), err
 }

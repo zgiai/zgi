@@ -12,10 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestDigitalHumanMemoryRescopePostgres(t *testing.T) {
+func TestDigitalHumanMemoryVisibilityPostgres(t *testing.T) {
 	dsn := os.Getenv("ZGI_MIGRATION_TEST_DSN")
 	if dsn == "" {
-		t.Skip("set ZGI_MIGRATION_TEST_DSN to run DigitalHuman memory rescope PostgreSQL integration")
+		t.Skip("set ZGI_MIGRATION_TEST_DSN to run DigitalHuman memory visibility PostgreSQL integration")
 	}
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -76,57 +76,6 @@ func TestDigitalHumanMemoryRescopePostgres(t *testing.T) {
 		}
 		return result.Memory
 	}
-	rescope := func(memory *DigitalHumanMemory, class memoryruntime.MemoryClass, memoryScope *memoryruntime.MemoryScopeRef) (*MemoryMutationResult, error) {
-		return service.RescopeMemory(t.Context(), scope, digitalHumanID, memory.ID, MemoryRescopeRequest{
-			OperationID: uuid.New(), ExpectedRevision: memory.Revision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-			MemoryClass: class, Scope: memoryScope,
-		})
-	}
-	instance := &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: uuid.NewString()}
-
-	// An operator promotes an end user's note into the DigitalHuman's own
-	// memory; it starts internal (ADR 0015).
-	note := write("release-window", memoryruntime.MemoryTypeFact, memoryruntime.MemoryClassBusiness, instance)
-	promoted, err := rescope(note, memoryruntime.MemoryClassSelf, nil)
-	if err != nil {
-		t.Fatalf("promote note: %v", err)
-	}
-	if promoted.Memory.MemoryClass != memoryruntime.MemoryClassSelf || promoted.Memory.ScopeType != "" || promoted.Memory.Visibility != MemoryVisibilityInternal ||
-		promoted.Memory.Content != note.Content || promoted.Memory.SupersedesID != nil {
-		t.Fatalf("promoted memory = %#v", promoted.Memory)
-	}
-	old, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, note.ID)
-	if err != nil || old.Status != MemoryStatusInvalidated {
-		t.Fatalf("note after promotion = %#v, %v", old, err)
-	}
-
-	// A retry with the same operation replays the committed move.
-	retried, err := service.RescopeMemory(t.Context(), scope, digitalHumanID, note.ID, MemoryRescopeRequest{
-		OperationID: promoted.Event.OperationID, ExpectedRevision: note.Revision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-		MemoryClass: memoryruntime.MemoryClassSelf,
-	})
-	if err != nil || !retried.Replayed || retried.Memory.ID != promoted.Memory.ID {
-		t.Fatalf("retried promotion = %#v, %v", retried, err)
-	}
-
-	// The move is an ordinary memory operation and can be undone.
-	if _, err := service.UndoMemory(t.Context(), scope, digitalHumanID, promoted.Event.OperationID, MemoryUndoRequest{ExpectedRevision: promoted.Memory.Revision}); err != nil {
-		t.Fatalf("undo promotion: %v", err)
-	}
-	restored, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, note.ID)
-	if err != nil || restored.Status != MemoryStatusActive {
-		t.Fatalf("note after undo = %#v, %v", restored, err)
-	}
-
-	// The DigitalHuman's own memory is the only target.
-	if _, err := rescope(restored, memoryruntime.MemoryClassBusiness, instance); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("rescope to a business scope error = %v, want invalid request", err)
-	}
-	identity := write("who-i-am", memoryruntime.MemoryTypeIdentity, memoryruntime.MemoryClassSelf, nil)
-	if _, err := rescope(identity, memoryruntime.MemoryClassSelf, nil); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("same-scope rescope error = %v, want invalid request", err)
-	}
-
 	// An operator switches who may see a memory; each switch is a recorded,
 	// undoable change.
 	public := write("price-list", memoryruntime.MemoryTypeFact, memoryruntime.MemoryClassSelf, nil)

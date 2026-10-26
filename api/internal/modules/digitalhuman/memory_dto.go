@@ -42,6 +42,9 @@ type MemoryProposalRequest struct {
 	internalOnly    bool
 	origin          MemoryOrigin
 	originChannelID string
+	// noteSourceKind records whether a note write was explicit or automatic
+	// (ADR 0015).
+	noteSourceKind string
 }
 
 type MemoryListQuery struct {

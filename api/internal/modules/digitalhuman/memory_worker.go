@@ -16,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 )
 
@@ -374,6 +375,7 @@ func (r *MemoryExtractionRunner) applyDrafts(
 			SourceContext: MemorySourceContext{PrivateConversation: false, SourceTrust: target.Trust}, OccurredAt: source.CompletedAt,
 		}
 		target.stamp(&request)
+		request.noteSourceKind = relationshipmemory.SourceAutomatic
 		result, err := r.service.ApplyAutonomousMemoryProposal(ctx, scope, job.DigitalHumanID, request)
 		if err != nil {
 			if errors.Is(err, ErrMemoryPolicyRejected) || errors.Is(err, ErrInvalidRequest) {

@@ -254,6 +254,15 @@ func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digita
 	if err := db.Order("updated_at DESC, id DESC").Limit(limit).Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("retrieve DigitalHuman memories: %w", err)
 	}
+	// An end user's run also reads the DigitalHuman's notes on them, kept in
+	// their relationship memory (ADR 0015).
+	if readScope != nil && readScope.instanceID != "" {
+		notes, err := r.instanceNotes(ctx, scope, digitalHumanID, readScope.instanceID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, notes...)
+	}
 	return items, nil
 }
 

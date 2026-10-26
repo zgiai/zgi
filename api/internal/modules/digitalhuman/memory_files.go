@@ -196,7 +196,7 @@ func (p *DefaultMemoryRuntimeProvider) prepareMemoryFiles(ctx context.Context, r
 	degraded := false
 	if p.retriever != nil && strings.TrimSpace(run.Query) != "" && len(listed) > 0 {
 		recallCtx, cancel := context.WithTimeout(ctx, memoryFilesRecallTimeout)
-		result, err := p.retriever.Retrieve(recallCtx, DigitalHumanMemoryRetrievalRequest{Run: run, Event: event, Query: run.Query, TopK: memoryFilesRecallTopK, RetrievalMode: "hybrid"})
+		result, err := p.retrieve(recallCtx, DigitalHumanMemoryRetrievalRequest{Run: run, Event: event, Query: run.Query, TopK: memoryFilesRecallTopK, RetrievalMode: "hybrid"})
 		cancel()
 		switch {
 		case err != nil:
@@ -275,7 +275,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryFileTools(run *Run, event invocatio
 		if p.retriever == nil {
 			return skillloop.RuntimeToolResult{Status: "error", Error: fmt.Errorf("memory search is not configured"), Recoverable: false}
 		}
-		result, err := p.retriever.Retrieve(ctx, DigitalHumanMemoryRetrievalRequest{Run: run, Event: event, Query: strings.TrimSpace(args.Query), TopK: maxDigitalHumanMemoryRetrievalTopK, RetrievalMode: "hybrid"})
+		result, err := p.retrieve(ctx, DigitalHumanMemoryRetrievalRequest{Run: run, Event: event, Query: strings.TrimSpace(args.Query), TopK: maxDigitalHumanMemoryRetrievalTopK, RetrievalMode: "hybrid"})
 		if err != nil || result == nil {
 			return skillloop.RuntimeToolResult{Status: "error", Arguments: map[string]any{"query": args.Query}, Error: fmt.Errorf("memory search failed"), Recoverable: true}
 		}

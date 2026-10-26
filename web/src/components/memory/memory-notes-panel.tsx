@@ -1,25 +1,34 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useT } from '@/i18n';
 import type { MemoryNote } from '@/services/types/memory-history';
+import { getErrorMessage } from '@/utils/error-notifications';
 
 interface MemoryNotesPanelProps {
   load: () => Promise<MemoryNote[]>;
+  /** Deletes a note; the person may delete notes but not edit them. */
+  remove?: (note: MemoryNote) => Promise<unknown>;
   /** Changes when the memory was edited elsewhere, so the notes reload. */
   refreshKey?: unknown;
 }
 
-// Shows a DigitalHuman's notes on the user (ADR 0014 /user/notes/), such as
-// commitments and open loops. The DigitalHuman keeps them, so they are
-// read-only here.
-export function MemoryNotesPanel({ load, refreshKey }: MemoryNotesPanelProps) {
+// Shows a DigitalHuman's notes on the user (ADR 0015 /user/notes/), such as
+// commitments and open loops. The DigitalHuman keeps them, so the user can
+// read and delete them but not edit them.
+export function MemoryNotesPanel({ load, remove, refreshKey }: MemoryNotesPanelProps) {
   const t = useT('common.memoryNotes');
   const [notes, setNotes] = useState<MemoryNote[]>([]);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [pending, setPending] = useState<MemoryNote | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const loadRef = useRef(load);
 
   useEffect(() => {
@@ -44,7 +53,22 @@ export function MemoryNotesPanel({ load, refreshKey }: MemoryNotesPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, reloadKey]);
+
+  const confirmDelete = async () => {
+    if (!pending || !remove) return;
+    setDeleting(true);
+    try {
+      await remove(pending);
+      toast.success(t('deleted'));
+      setPending(null);
+      setReloadKey(value => value + 1);
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('deleteFailed'));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   if (failed) {
     return (
@@ -72,11 +96,34 @@ export function MemoryNotesPanel({ load, refreshKey }: MemoryNotesPanelProps) {
               <code className="truncate">{note.path}</code>
               {note.tags ? <Badge variant="secondary">{note.tags}</Badge> : null}
               <span>{new Date(note.updated_at).toLocaleString()}</span>
+              {remove ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="ml-auto"
+                  aria-label={t('delete')}
+                  onClick={() => setPending(note)}
+                >
+                  <Trash2 className="size-3" />
+                </Button>
+              ) : null}
             </div>
             <div className="whitespace-pre-wrap break-words">{note.content}</div>
           </section>
         ))
       )}
+      <ConfirmDialog
+        open={Boolean(pending)}
+        onOpenChange={next => !next && setPending(null)}
+        title={t('deleteConfirmTitle')}
+        description={t('deleteConfirmDescription')}
+        confirmText={t('delete')}
+        cancelText={t('cancel')}
+        variant="warning"
+        loading={deleting}
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
   );
 }

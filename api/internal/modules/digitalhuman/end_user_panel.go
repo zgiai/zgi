@@ -2,10 +2,12 @@ package digitalhuman
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 )
 
@@ -41,6 +43,7 @@ type EndUserPanelMemory struct {
 	MemoryKey  string    `json:"memory_key"`
 	MemoryType string    `json:"memory_type"`
 	Content    string    `json:"content"`
+	Revision   int64     `json:"revision"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
@@ -91,14 +94,26 @@ func (*EndUserData) EndUserPanels(ctx context.Context, db *gorm.DB, organization
 		if len(instances) == 1 {
 			instance := instances[0]
 			panel.Instance = &EndUserPanelInstance{ID: instance.ID, Status: string(instance.Status), FirstSeenAt: instance.FirstSeenAt, LastActiveAt: instance.LastActiveAt}
-			memory := db.WithContext(ctx).Table("digital_human_memories").
-				Where("digital_human_id = ? AND scope_type = 'instance' AND scope_id = ? AND status = 'active'", app.DigitalHumanID, instance.ID.String())
-			if err := memory.Count(&panel.MemoryCount).Error; err != nil {
-				return nil, fmt.Errorf("count instance memory: %w", err)
+			// The DigitalHuman's notes on the person live in their relationship
+			// memory (ADR 0015).
+			memory := relationshipmemory.NewService(db)
+			relationship, err := memory.FindRelationship(ctx, instance.WorkspaceID, subjectID, relationshipmemory.ConsumerDigitalHuman, app.DigitalHumanID)
+			if err != nil && !errors.Is(err, relationshipmemory.ErrRelationshipNotFound) {
+				return nil, fmt.Errorf("load end-user relationship: %w", err)
 			}
-			if err := memory.Select("id, memory_key, memory_type, content, updated_at").Order("updated_at DESC").Limit(endUserPanelLimit).
-				Scan(&panel.Memory).Error; err != nil {
-				return nil, fmt.Errorf("list instance memory: %w", err)
+			if relationship != nil {
+				notes, err := memory.Notes(ctx, relationship.ID)
+				if err != nil {
+					return nil, err
+				}
+				panel.MemoryCount = int64(len(notes))
+				for index, note := range notes {
+					if index == endUserPanelLimit {
+						break
+					}
+					panel.Memory = append(panel.Memory, EndUserPanelMemory{ID: note.ID, MemoryKey: relationshipmemory.NoteName(note.MemoryKey),
+						MemoryType: note.Category, Content: note.ContentPayload, Revision: note.Revision, UpdatedAt: note.UpdatedAt})
+				}
 			}
 		}
 		tasks := db.WithContext(ctx).Table("automation_tasks").

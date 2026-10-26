@@ -413,10 +413,12 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 		}
 		if !exists && relationship.ConsumerType == ConsumerDigitalHuman {
 			var count int64
-			if err := tx.Model(&UserMemoryItem{}).Where("relationship_id = ?", relationshipID).Count(&count).Error; err != nil {
+			// Notes are the DigitalHuman's, not the person's, and have their own
+			// limit (ADR 0015).
+			if err := tx.Model(&UserMemoryItem{}).Where("relationship_id = ? AND memory_key NOT LIKE ?", relationshipID, NoteKeyPrefix+"%").Count(&count).Error; err != nil {
 				return err
 			}
-			if count >= digitalHumanItemLimit {
+			if !IsNoteKey(req.Key) && count >= digitalHumanItemLimit {
 				return ErrCapacityExceeded
 			}
 		}
@@ -502,6 +504,16 @@ func validateMutation(req PutItemRequest) error {
 	}
 	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > maxMemoryContentChars {
 		return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
+	}
+	if IsNoteKey(req.Key) {
+		// A DigitalHuman's note is tagged like its own memory (ADR 0015).
+		if _, ok := noteCategories[req.Category]; !ok || !ValidNoteName(NoteName(req.Key)) {
+			return fmt.Errorf("%w: invalid note", ErrPolicyRejected)
+		}
+		if agentmemory.ContainsSensitiveContent(req.Content) {
+			return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+		}
+		return nil
 	}
 	if req.Contract.DefinitionMode == "slots" {
 		for _, definition := range req.Contract.Definitions {
