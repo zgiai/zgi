@@ -95,6 +95,8 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
 
+	router.GET("/digital-human-memory-templates", h.ListMemoryInstructionsTemplates)
+
 	templates := router.Group("/digital-human-persona-templates")
 	templates.POST("", h.CreatePersonaTemplate)
 	templates.GET("", h.ListPersonaTemplates)
@@ -216,6 +218,12 @@ func (h *Handler) PreviewMemory(c *gin.Context) {
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// ListMemoryInstructionsTemplates returns the memory instruction templates in
+// the requested locale.
+func (h *Handler) ListMemoryInstructionsTemplates(c *gin.Context) {
+	writeDigitalHumanData(c, http.StatusOK, MemoryInstructionsTemplates(c.Query("locale")))
 }
 
 // UndoMemory restores a still-current memory mutation within the undo window.

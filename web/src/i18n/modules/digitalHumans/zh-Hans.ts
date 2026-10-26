@@ -1945,7 +1945,16 @@ const messages: DigitalHumansMessages = {
       '告诉数字人它的记忆用来做什么：记什么、忽略什么、怎么写。这些是偏好；关于证据、敏感内容和可见范围的规则仍然生效。',
     placeholder: '例如：记录客户的投诉和我们承诺的修复及日期。忽略寒暄和一次性的问题。',
     count: '{count}/{max} 字',
+    template: {
+      label: '记忆说明模板',
+      placeholder: '从适合的场景模板开始',
+      replaceTitle: '替换当前的记忆说明？',
+      replaceDescription: '模板会替换你已写的内容，替换后仍可修改。',
+      replace: '替换',
+    },
     preview: {
+      sample: '示例对话',
+      samplePlaceholder: '填入一段示例对话',
       open: '预览',
       title: '预览记忆',
       description: '粘贴一段示例对话，看看按这些说明数字人会记住什么。不会保存任何内容。',

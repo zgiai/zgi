@@ -129,7 +129,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 102; got != want {
+	if got, want := len(routes), 103; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -162,6 +162,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"POST /console/api/digital-humans/:id/memory/:memory_id/visibility":                                                                         false,
 		"POST /console/api/digital-humans/:id/memory/bulk":                                                                                          false,
 		"POST /console/api/digital-humans/:id/memory/preview":                                                                                       false,
+		"GET /console/api/digital-human-memory-templates":                                                                                           false,
 		"PATCH /console/api/digital-humans/:id/memory/state":                                                                                        false,
 		"POST /console/api/digital-humans/:id/memory/operations/:operation_id/undo":                                                                 false,
 		"POST /console/api/digital-humans/:id/memory/repair":                                                                                        false,

@@ -532,6 +532,21 @@ export interface DigitalHumanMemoryPreviewRequest {
   turns: DigitalHumanMemoryPreviewTurn[];
 }
 
+// A starting point for a DigitalHuman's memory instructions, with sample
+// conversations to preview them with.
+export interface DigitalHumanMemoryInstructionsTemplate {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  samples: Array<{ name: string; turns: DigitalHumanMemoryPreviewTurn[] }>;
+}
+
+export interface DigitalHumanMemoryInstructionsCatalog {
+  version: number;
+  templates: DigitalHumanMemoryInstructionsTemplate[];
+}
+
 export interface DigitalHumanMemoryPreviewResult {
   instructions: string;
   proposals: Array<{

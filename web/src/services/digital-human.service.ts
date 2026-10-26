@@ -34,6 +34,7 @@ import type {
   DigitalHumanMemoryVisibilityRequest,
   DigitalHumanMemoryBulkRequest,
   DigitalHumanMemoryPreviewRequest,
+  DigitalHumanMemoryInstructionsCatalog,
   DigitalHumanMemoryPreviewResult,
   DigitalHumanMemoryBulkResult,
   DigitalHumanResourceBindingInput,
@@ -352,6 +353,14 @@ class DigitalHumanService extends BaseService {
     data: DigitalHumanMemoryProposalRequest
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
     return this.request('post', `/digital-humans/${id}/memory/proposals`, data);
+  }
+
+  listMemoryInstructionsTemplates(
+    locale: string
+  ): Promise<ApiResponseData<DigitalHumanMemoryInstructionsCatalog>> {
+    return this.request('get', '/digital-human-memory-templates', undefined, {
+      params: { locale },
+    });
   }
 
   previewMemory(

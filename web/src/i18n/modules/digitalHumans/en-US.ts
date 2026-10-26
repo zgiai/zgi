@@ -2070,7 +2070,16 @@ const messages = {
     placeholder:
       'For example: Keep customer complaints and the fixes we promised, with the date. Ignore small talk and one-off questions.',
     count: '{count}/{max} characters',
+    template: {
+      label: 'Memory instruction template',
+      placeholder: 'Start from a template for a kind of work',
+      replaceTitle: 'Replace the current instructions?',
+      replaceDescription: 'The template replaces what you wrote. You can edit it afterwards.',
+      replace: 'Replace',
+    },
     preview: {
+      sample: 'Sample conversation',
+      samplePlaceholder: 'Fill in a sample conversation',
       open: 'Preview',
       title: 'Preview memory',
       description:

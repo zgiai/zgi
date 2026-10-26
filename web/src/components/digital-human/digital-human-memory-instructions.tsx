@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Eye, Loader2, Play, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogBody,
@@ -13,10 +14,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
-import type { DigitalHumanMemoryPreviewTurn } from '@/services/types/digital-human';
+import type {
+  DigitalHumanMemoryInstructionsTemplate,
+  DigitalHumanMemoryPreviewTurn,
+} from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 export const MAX_MEMORY_INSTRUCTIONS = 2000;
@@ -39,9 +51,63 @@ export function DigitalHumanMemoryInstructions({
   disabled,
 }: DigitalHumanMemoryInstructionsProps) {
   const t = useT('digitalHumans');
+  const { locale } = useLocale();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [templateId, setTemplateId] = useState('');
+  const [pendingTemplate, setPendingTemplate] =
+    useState<DigitalHumanMemoryInstructionsTemplate | null>(null);
+  const templatesQuery = useQuery({
+    queryKey: ['digital-human-memory-templates', locale],
+    queryFn: () => digitalHumanService.listMemoryInstructionsTemplates(locale),
+    staleTime: 10 * 60 * 1000,
+  });
+  const templates = templatesQuery.data?.data?.templates ?? [];
+  const selectedTemplate = templates.find(template => template.id === templateId);
+  // Applying a template replaces the instructions; unsaved text is confirmed
+  // first.
+  const applyTemplate = (template: DigitalHumanMemoryInstructionsTemplate) => {
+    setTemplateId(template.id);
+    onChange(template.instructions);
+    setPendingTemplate(null);
+  };
   return (
     <div className="space-y-2">
+      {templates.length > 0 ? (
+        <Select
+          value={templateId}
+          disabled={disabled}
+          onValueChange={id => {
+            const template = templates.find(item => item.id === id);
+            if (!template) return;
+            if (value.trim() && value.trim() !== template.instructions) {
+              setPendingTemplate(template);
+            } else {
+              applyTemplate(template);
+            }
+          }}
+        >
+          <SelectTrigger aria-label={t('memoryInstructions.template.label')}>
+            <SelectValue placeholder={t('memoryInstructions.template.placeholder')} />
+          </SelectTrigger>
+          <SelectContent>
+            {templates.map(template => (
+              <SelectItem key={template.id} value={template.id}>
+                {template.name} · {template.description}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
+      <ConfirmDialog
+        open={Boolean(pendingTemplate)}
+        onOpenChange={next => !next && setPendingTemplate(null)}
+        title={t('memoryInstructions.template.replaceTitle')}
+        description={t('memoryInstructions.template.replaceDescription')}
+        confirmText={t('memoryInstructions.template.replace')}
+        cancelText={t('common.cancel')}
+        variant="warning"
+        onConfirm={() => pendingTemplate && applyTemplate(pendingTemplate)}
+      />
       <Textarea
         value={value}
         maxLength={MAX_MEMORY_INSTRUCTIONS}
@@ -64,6 +130,13 @@ export function DigitalHumanMemoryInstructions({
         onOpenChange={setPreviewOpen}
         digitalHumanId={digitalHumanId}
         instructions={value}
+        samples={(selectedTemplate ? [selectedTemplate] : templates).flatMap(template =>
+          template.samples.map((sample, index) => ({
+            id: `${template.id}:${index}`,
+            label: `${template.name} · ${sample.name}`,
+            turns: sample.turns,
+          }))
+        )}
       />
     </div>
   );
@@ -76,16 +149,19 @@ function DigitalHumanMemoryPreviewDialog({
   onOpenChange,
   digitalHumanId,
   instructions,
+  samples,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   digitalHumanId: string;
   instructions: string;
+  samples: Array<{ id: string; label: string; turns: DigitalHumanMemoryPreviewTurn[] }>;
 }) {
   const t = useT('digitalHumans');
   const [turns, setTurns] = useState<DigitalHumanMemoryPreviewTurn[]>([
     { user: '', assistant: '' },
   ]);
+  const [sample, setSample] = useState('');
   const preview = useMutation({
     mutationFn: async () =>
       (
@@ -110,6 +186,29 @@ function DigitalHumanMemoryPreviewDialog({
           <DialogDescription>{t('memoryInstructions.preview.description')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
+          {samples.length > 0 ? (
+            <Select
+              value={sample}
+              onValueChange={id => {
+                const picked = samples.find(item => item.id === id);
+                if (!picked) return;
+                setSample(id);
+                setTurns(picked.turns.map(turn => ({ ...turn })));
+                preview.reset();
+              }}
+            >
+              <SelectTrigger aria-label={t('memoryInstructions.preview.sample')}>
+                <SelectValue placeholder={t('memoryInstructions.preview.samplePlaceholder')} />
+              </SelectTrigger>
+              <SelectContent>
+                {samples.map(item => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
           <div className="space-y-3">
             {turns.map((turn, index) => (
               <div key={index} className="space-y-2 rounded-md border p-3">

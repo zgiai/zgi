@@ -4,7 +4,7 @@ import "strings"
 
 // TemplateCatalogVersion changes whenever a template's blocks, instructions,
 // or samples change, so the editor can tell which catalog a draft came from.
-const TemplateCatalogVersion = 1
+const TemplateCatalogVersion = 2
 
 // Template is a starting point for an Agent's memory (ADR 0013): a set of
 // blocks, memory instructions, and sample conversations to preview them with.
@@ -111,6 +111,34 @@ var templateBlocks = map[string]templateBlockSource{
 		"保存长期业务流程背景、支持范围、政策规则和运营约束。仅保存与该客户/用户长期相关的规则；不要保存通用产品知识或临时处理结论。",
 		"Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.",
 	}},
+	"deal_context": {key: "deal_context", name: text{"商机背景", "Deal context"}, maxChars: 2000, description: text{
+		"保存客户的采购需求、预算范围、决策人和决策流程、预期时间线、正在比较或使用的竞品及价格。不要保存未经客户确认的猜测、内部报价底线或客户的个人联系方式。",
+		"Store the customer's buying needs, budget range, decision makers and process, expected timeline, and competitors they compare or use, with prices. Do not store guesses the customer has not confirmed, internal price floors, or personal contact details.",
+	}},
+	"next_steps": {key: "next_steps", name: text{"跟进计划", "Follow-up plan"}, maxChars: 2000, description: text{
+		"保存双方约定的下一步：要发的资料、演示或会议时间、客户待确认的问题及其截止时间。事情完成或取消后删掉对应条目。",
+		"Store agreed next steps: materials to send, demo or meeting times, open questions the customer must confirm, and their deadlines. Remove an entry once it is done or cancelled.",
+	}},
+	"learner_profile": {key: "learner_profile", name: text{"学员情况", "Learner profile"}, maxChars: 2000, description: text{
+		"保存学员的年级或水平、学习目标、考试时间、可用的学习时间和偏好的讲解方式。不要保存学员的学校名称、家庭信息、成绩排名或健康状况。",
+		"Store the learner's grade or level, goals, exam dates, available study time, and preferred way of explaining. Do not store school names, family details, rankings, or health information.",
+	}},
+	"learning_progress": {key: "learning_progress", name: text{"学习进度", "Learning progress"}, maxChars: 2000, description: text{
+		"保存已经掌握的知识点、反复出错的薄弱点、正在学的单元和布置的练习。学员掌握后更新薄弱点，不要逐题记录答题过程。",
+		"Store topics already mastered, recurring weak points, the unit in progress, and assigned practice. Update weak points once mastered; do not log each exercise attempt.",
+	}},
+	"purchase_preferences": {key: "purchase_preferences", name: text{"购物偏好", "Purchase preferences"}, maxChars: 2000, description: text{
+		"保存客户常买的品类和品牌、尺码、对退换货和配送的长期偏好。不要保存订单号、完整收货地址、电话、支付或银行卡信息。",
+		"Store the customer's usual categories and brands, sizes, and lasting preferences for returns and delivery. Do not store order numbers, full delivery addresses, phone numbers, or payment or card details.",
+	}},
+	"employee_profile": {key: "employee_profile", name: text{"员工信息", "Employee profile"}, maxChars: 2000, description: text{
+		"保存员工所在部门、岗位、办公地点、常用的系统和设备。不要保存薪资、绩效、考勤、健康、家庭等个人隐私，也不要保存账号密码。",
+		"Store the employee's department, role, office location, and the systems and devices they use. Do not store salary, performance, attendance, health, family, or other private details, and never store credentials.",
+	}},
+	"recurring_issues": {key: "recurring_issues", name: text{"常见问题", "Recurring issues"}, maxChars: 2000, description: text{
+		"保存这位员工反复遇到的问题和已经验证有效的解决办法，以及尚未解决、需要跟进的问题。一次性的小问题不用记。",
+		"Store problems this employee runs into repeatedly with fixes that worked, and unresolved issues that need follow-up. Skip one-off small problems.",
+	}},
 }
 
 var templateSources = []templateSource{
@@ -171,6 +199,86 @@ var templateSources = []templateSource{
 					"您好！已了解您是星河科技企业版客户，主要使用日志服务。请问有什么可以帮您？", "Hello! Noted that you're on the Enterprise plan at Xinghe Tech, mainly using logging. How can I help?"),
 				turn("订单 20261025-883 的发票还没收到，挺着急的。以后有事请发邮件通知我，别打电话。", "I still haven't received the invoice for order 20261025-883 and it's urgent. In future, please notify me by email, not by phone.",
 					"抱歉让您久等，我马上为您核查发票。之后会通过邮件联系您。", "Sorry for the wait; I'll check the invoice right away. We'll contact you by email from now on."),
+			}},
+		},
+	},
+	{
+		id:          "sales_followup",
+		name:        text{"销售跟进", "Sales follow-up"},
+		description: text{"适合销售和商机跟进，记录客户需求、预算、决策人、竞品和约定的下一步。", "For sales: remember the customer's needs, budget, decision makers, competitors, and agreed next steps."},
+		instructions: text{
+			"这是一个销售助手。记住推进这笔生意需要的信息：客户是谁、要解决什么问题、预算和时间线、谁来拍板、正在比较哪些竞品，以及双方约定的下一步。不要记录寒暄、未确认的猜测、我们内部的报价底线，或客户的手机号和邮箱。",
+			"This is a sales assistant. Remember what moves the deal forward: who the customer is, the problem they need solved, budget and timeline, who decides, which competitors they are comparing, and the next steps both sides agreed. Do not record small talk, unconfirmed guesses, our internal price floor, or the customer's phone number and email.",
+		},
+		blocks: []string{"customer_profile", "deal_context", "next_steps", "communication_preferences"},
+		samples: []templateSampleSource{
+			{name: text{"首次沟通", "First call"}, turns: []struct{ user, assistant text }{
+				turn("我们是一家 200 人的物流公司，现在用钉钉，每人每月 30 块，想换一个能对接 ERP 的协作平台，预算一年 10 万以内。", "We're a 200-person logistics company on DingTalk at 30 yuan per person per month, looking for a collaboration platform that connects to our ERP, with a budget under 100k a year.",
+					"明白，我会按 ERP 对接和年预算 10 万以内来推荐方案。", "Understood. I'll recommend options with ERP integration within a 100k yearly budget."),
+				turn("最后得我们 CTO 拍板。下周三之前把对接方案发我，周四我们内部评审。", "Our CTO makes the final call. Send me the integration plan before next Wednesday; we review it internally on Thursday.",
+					"好的，下周三前发您 ERP 对接方案，供周四内部评审。", "Will do: the ERP integration plan reaches you before Wednesday for Thursday's review."),
+			}},
+			{name: text{"进展更新", "Progress update"}, turns: []struct{ user, assistant text }{
+				turn("方案收到了，CTO 觉得可以，下一步想约个现场演示。", "Got the plan, our CTO likes it, and next we'd like an on-site demo.",
+					"太好了，我来安排现场演示，稍后跟您确认时间。", "Great, I'll arrange an on-site demo and confirm a time with you."),
+			}},
+		},
+	},
+	{
+		id:          "tutoring",
+		name:        text{"教育辅导", "Tutoring"},
+		description: text{"适合学习辅导，记录学员水平、学习目标、薄弱点和学习进度。", "For tutoring: remember the learner's level, goals, weak points, and progress."},
+		instructions: text{
+			"这是一个学习辅导助手。记住能让下一次辅导接着上一次往下走的信息：学员的水平和目标、考试时间、偏好的讲解方式、已经掌握的内容、反复出错的地方和正在学的单元。学员掌握某个薄弱点后要更新。不要记录学校名称、家庭情况、排名和健康信息，也不用逐题记录答题过程。",
+			"This is a tutoring assistant. Remember what lets the next session pick up where this one ended: the learner's level and goals, exam dates, preferred way of explaining, what they have mastered, where they keep making mistakes, and the unit in progress. Update a weak point once it is mastered. Do not record school names, family details, rankings, or health information, and do not log each exercise attempt.",
+		},
+		blocks: []string{"learner_profile", "learning_progress", "preferences"},
+		samples: []templateSampleSource{
+			{name: text{"初次辅导", "First session"}, turns: []struct{ user, assistant text }{
+				turn("我初二，明年 6 月中考，数学一般，最怕几何证明。讲题的时候多画图。", "I'm in grade 8, my high school entrance exam is next June, my math is average, and geometry proofs scare me most. Please draw diagrams when explaining.",
+					"好的，我们以几何证明为重点，讲解时都配图。", "Okay, we'll focus on geometry proofs and I'll use diagrams in every explanation."),
+				turn("今天这道全等三角形的题我又没想到辅助线。", "I missed the auxiliary line on today's congruent triangles problem again.",
+					"辅助线是你现在最需要练的，下次我们专门练这类题。", "Auxiliary lines are what you need most right now; next time we'll practise exactly these."),
+			}},
+			{name: text{"掌握之后", "After mastering"}, turns: []struct{ user, assistant text }{
+				turn("辅助线那块我现在基本会了，下次想开始复习二次函数。", "I've basically got auxiliary lines now. Next time I'd like to start revising quadratic functions.",
+					"很好，下次我们开始复习二次函数。", "Great, next time we'll start on quadratic functions."),
+			}},
+		},
+	},
+	{
+		id:          "ecommerce_aftersales",
+		name:        text{"电商售后", "E-commerce after-sales"},
+		description: text{"适合电商售后，记录客户的购物偏好、尺码和长期的退换货与配送偏好。", "For e-commerce after-sales: remember purchase preferences, sizes, and lasting return and delivery preferences."},
+		instructions: text{
+			"这是一个电商售后助手。记住能让下次服务更顺的长期信息：客户常买的品类和品牌、尺码、对退换货和配送的偏好，以及与这位客户相关的长期售后规则。不要记录订单号、完整收货地址、电话、支付或银行卡信息，也不用记录单次售后的处理过程。",
+			"This is an e-commerce after-sales assistant. Remember lasting details that make the next conversation smoother: the categories and brands the customer usually buys, sizes, return and delivery preferences, and after-sales rules that apply to this customer. Do not record order numbers, full delivery addresses, phone numbers, or payment or card details, and do not log how a single case was handled.",
+		},
+		blocks: []string{"customer_profile", "purchase_preferences", "communication_preferences", "business_context"},
+		samples: []templateSampleSource{
+			{name: text{"退换货", "Return and exchange"}, turns: []struct{ user, assistant text }{
+				turn("订单 88231 的运动鞋小了，我平时穿 42 码，这双得换 43。以后发货别用某某快递，总是丢件。", "The running shoes in order 88231 are too small. I usually wear EU 42, but this pair needs a 43. And please stop shipping with that courier, they keep losing parcels.",
+					"已为您申请换成 43 码，之后会避开那家快递发货。", "I've requested an exchange to size 43, and we'll avoid that courier from now on."),
+				turn("我收货地址是杭州市西湖区某某路 18 号，电话 138 0000 0000。", "My address is 18 Example Road, Xihu District, Hangzhou, and my phone is 138 0000 0000.",
+					"收到，这次换货会按这个地址寄出。", "Thanks, the exchange will ship to that address."),
+			}},
+		},
+	},
+	{
+		id:          "internal_helpdesk",
+		name:        text{"内部助手（HR/IT）", "Internal helpdesk (HR/IT)"},
+		description: text{"适合内部 HR/IT 助手，记录员工的部门、常用系统和反复遇到的问题。", "For internal HR/IT helpdesks: remember the employee's department, the systems they use, and recurring issues."},
+		instructions: text{
+			"这是一个内部 HR/IT 助手。记住能让下次更快解决问题的信息：员工的部门、岗位和办公地点，常用的系统和设备，反复遇到的问题和已经有效的解决办法，以及还没解决、需要跟进的事。不要记录薪资、绩效、考勤、健康或家庭等隐私，也绝不记录账号密码。",
+			"This is an internal HR/IT helpdesk. Remember what helps solve the next request faster: the employee's department, role, and office, the systems and devices they use, recurring problems with fixes that worked, and unresolved issues that need follow-up. Do not record salary, performance, attendance, health, family, or other private details, and never record credentials.",
+		},
+		blocks: []string{"employee_profile", "recurring_issues", "preferences"},
+		samples: []templateSampleSource{
+			{name: text{"IT 报修", "IT request"}, turns: []struct{ user, assistant text }{
+				turn("我是上海办公室财务部的，用的是公司配的 ThinkPad，VPN 又连不上了，这周第三次了。", "I'm in Finance at the Shanghai office on a company ThinkPad, and the VPN won't connect again, third time this week.",
+					"先试试重新安装最新版 VPN 客户端并清除缓存，通常能解决这类反复断连。", "Try reinstalling the latest VPN client and clearing its cache; that usually fixes repeated disconnects like this."),
+				turn("重装之后好了。顺便问下，我的密码是 Abc12345，能帮我改一下吗？", "Reinstalling fixed it. By the way, my password is Abc12345, can you change it for me?",
+					"为了安全请不要发送密码，我发您自助修改密码的链接。", "For your security please don't share passwords; I'll send you the self-service reset link."),
 			}},
 		},
 	},
