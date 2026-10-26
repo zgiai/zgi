@@ -29,6 +29,10 @@ const (
 	ConfigScopePublished    = "published"
 )
 
+// MaxSlotChars is the largest content limit a memory slot may be configured
+// with; the value store accepts slot content up to it.
+const MaxSlotChars = maxSlotMaxChars
+
 var (
 	ErrInvalidInput = errors.New("invalid agent memory input")
 	ErrNotFound     = errors.New("agent memory not found")

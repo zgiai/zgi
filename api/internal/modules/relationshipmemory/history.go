@@ -61,8 +61,14 @@ type MemoryFileVersion struct {
 	AfterPayload   string     `gorm:"type:text;not null;default:''" json:"-"`
 	AfterEncoding  string     `gorm:"type:varchar(24);not null;default:'plain'" json:"-"`
 	AfterKeyID     *string    `gorm:"type:varchar(128)" json:"-"`
+	// BeforeDisplayName and BeforeCategory let a deleted value be restored as
+	// it was; the name is purged with the content.
+	BeforeDisplayName string `gorm:"type:varchar(80);not null;default:''" json:"-"`
+	BeforeCategory    string `gorm:"type:varchar(32);not null;default:''" json:"-"`
 	// Evidence quotes the user's words the change was based on; it is user
-	// content and is purged with the payloads. Reason says why it was made.
+	// content and is purged with the payloads. Reason says why it was made;
+	// written by the model, it can restate the remembered fact, so it is
+	// purged too.
 	Evidence        string     `gorm:"type:text;not null;default:''" json:"-"`
 	Reason          string     `gorm:"type:text;not null;default:''" json:"-"`
 	ContentPurgedAt *time.Time `json:"content_purged_at,omitempty"`
@@ -133,6 +139,7 @@ func (s *Service) recordVersion(ctx context.Context, tx *gorm.DB, relationship *
 	if before != nil {
 		revision := before.Revision
 		version.BeforeRevision, version.BeforePayload, version.BeforeEncoding, version.BeforeKeyID = &revision, before.ContentPayload, before.ContentEncoding, before.ContentKeyID
+		version.BeforeDisplayName, version.BeforeCategory = before.DisplayName, before.Category
 	}
 	if after != nil {
 		revision := after.Revision
@@ -158,7 +165,7 @@ func definitionIDFor(ctx context.Context, tx *gorm.DB, relationship *UserMemoryR
 // values gone too.
 func (s *Service) purgeVersionContent(tx *gorm.DB, relationshipID uuid.UUID) error {
 	return tx.Model(&MemoryFileVersion{}).Where("relationship_id = ? AND content_purged_at IS NULL", relationshipID).
-		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "evidence": "", "content_purged_at": s.now()}).Error
+		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "evidence": "", "reason": "", "before_display_name": "", "content_purged_at": s.now()}).Error
 }
 
 // CleanupExpiredHistory purges version content older than its retention and
@@ -170,7 +177,7 @@ func (s *Service) CleanupExpiredHistory(ctx context.Context) error {
 	now := s.now()
 	db := s.db.WithContext(ctx)
 	if err := db.Model(&MemoryFileVersion{}).Where("content_purged_at IS NULL AND created_at < ?", now.Add(-versionContentRetention)).
-		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "evidence": "", "content_purged_at": now}).Error; err != nil {
+		Updates(map[string]any{"before_payload": "", "after_payload": "", "before_key_id": nil, "after_key_id": nil, "evidence": "", "reason": "", "before_display_name": "", "content_purged_at": now}).Error; err != nil {
 		return fmt.Errorf("purge expired memory version content: %w", err)
 	}
 	if err := db.Where("created_at < ?", now.Add(-historyRetention)).Delete(&MemoryCommit{}).Error; err != nil {

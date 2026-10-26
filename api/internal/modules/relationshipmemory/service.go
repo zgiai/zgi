@@ -500,7 +500,13 @@ func validateMutation(req PutItemRequest) error {
 	if (normalizedSourceKind(req.Metadata.SourceKind) == SourceAutomatic || strings.EqualFold(strings.TrimSpace(req.Metadata.ActorType), "model")) && !req.Metadata.EvidenceFromUserInput {
 		return fmt.Errorf("%w: current-user evidence is required", ErrPolicyRejected)
 	}
-	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > maxMemoryContentChars {
+	// Agent blocks are bounded by their own limit, up to the largest a block
+	// may be configured with; Digital Human items keep the fixed limit.
+	contentLimit := maxMemoryContentChars
+	if req.Contract.DefinitionMode == "slots" {
+		contentLimit = agentmemory.MaxSlotChars
+	}
+	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > contentLimit {
 		return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
 	}
 	if req.Contract.DefinitionMode == "slots" {
