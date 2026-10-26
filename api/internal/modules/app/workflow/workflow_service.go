@@ -3255,9 +3255,13 @@ func (s *WorkflowService) workflowRunNodeTotalTokens(ctx context.Context, workfl
 
 func workflowNodeRuntimeLogTotalTokens(nodeLog WorkflowNodeRuntimeLog) int64 {
 	if outputs, err := nodeLog.GetOutputsDict(); err == nil {
-		if usage, ok := outputs["usage"].(map[string]interface{}); ok {
-			if total := workflowRuntimeTotalTokensValue(usage); total > 0 {
-				return total
+		// LLM, knowledge retrieval and SQL generation nodes report "usage";
+		// the parameter extractor reports "__usage".
+		for _, key := range []string{"usage", "__usage"} {
+			if usage, ok := outputs[key].(map[string]interface{}); ok {
+				if total := workflowRuntimeTotalTokensValue(usage); total > 0 {
+					return total
+				}
 			}
 		}
 	}

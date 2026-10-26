@@ -199,6 +199,33 @@ export function validateWorkflow(
     NODE_TYPES.SQL_GENERATOR,
   ]);
 
+  // A run must be able to reach an end. When every end node is cut off from
+  // the start, point at the nodes nothing leads into, since disconnected
+  // nodes are otherwise treated as comments and not checked.
+  const topLevelOutputs = nodes.filter(n => !n.parentId && allowedOutputs.has(n.data.type));
+  if (topLevelOutputs.length > 0 && !topLevelOutputs.some(n => allRunnableSet.has(n.id))) {
+    const disconnected = nodes.filter(
+      n =>
+        !n.parentId &&
+        !allRunnableSet.has(n.id) &&
+        !incomingEdgesMap.get(n.id)?.length &&
+        n.data.type !== NODE_TYPES.START &&
+        n.data.type !== NODE_TYPES.NOTE
+    );
+    if (disconnected.length === 0) {
+      errors.push({ type: 'error', code: 'workflow.validation.endUnreachable' });
+    }
+    for (const node of disconnected) {
+      errors.push({
+        type: 'error',
+        code: 'workflow.validation.endUnreachableFrom',
+        params: { title: node.data.title || '' },
+        nodeId: node.id,
+        nodeTitle: node.data.title,
+      });
+    }
+  }
+
   const sinkQueue: string[] = [];
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];

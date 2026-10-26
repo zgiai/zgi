@@ -1,8 +1,20 @@
 package workflow
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
 
 const workflowGraphStartNodeType = "start"
+
+// ErrWorkflowEndUnreachable means none of a graph's end or answer nodes can be
+// reached from its start node, so a run could never finish.
+var ErrWorkflowEndUnreachable = errors.New("no end node can be reached from the start node")
+
+// workflowGraphTerminalNodeTypes are the nodes a run finishes on.
+var workflowGraphTerminalNodeTypes = map[string]bool{"end": true, "answer": true}
 
 type workflowGraphReachabilityViews struct {
 	ExecutionGraphData map[string]any
@@ -39,6 +51,9 @@ func buildWorkflowGraphReachabilityViews(graphData map[string]any) (workflowGrap
 	}
 
 	executionReachable := workflowReachableNodeIDs(startNodeID, edgesData, nodeMap, workflowTopLevelNodeIDs(nodeMap))
+	if err := checkWorkflowGraphReachesTerminal(nodeMap, edgesData, executionReachable); err != nil {
+		return workflowGraphReachabilityViews{}, err
+	}
 	runtimeReachable := copyWorkflowBoolMap(executionReachable)
 	expandWorkflowContainerReachability(runtimeReachable, edgesData, nodeMap)
 
@@ -55,6 +70,61 @@ func buildWorkflowGraphReachabilityViews(graphData map[string]any) (workflowGrap
 		RuntimeGraphData:   runtimeGraphData,
 		StartNodeID:        startNodeID,
 	}, nil
+}
+
+// checkWorkflowGraphReachesTerminal fails a graph whose end and answer nodes
+// are all cut off from its start node, naming the nodes nothing leads into.
+// Disconnected nodes are otherwise left alone while some end is reachable,
+// and a graph without any end node is left to the run's own checks.
+func checkWorkflowGraphReachesTerminal(nodeMap map[string]map[string]any, edgesData []any, reachable map[string]bool) error {
+	hasTerminal := false
+	for nodeID, node := range nodeMap {
+		if workflowGraphNodeContainerID(node) != "" || !workflowGraphTerminalNodeTypes[workflowGraphNodeType(node)] {
+			continue
+		}
+		if reachable[nodeID] {
+			return nil
+		}
+		hasTerminal = true
+	}
+	if !hasTerminal {
+		return nil
+	}
+	incoming := make(map[string]bool)
+	for _, edgeInterface := range edgesData {
+		edge, ok := edgeInterface.(map[string]any)
+		if !ok {
+			continue
+		}
+		source, _ := edge["source"].(string)
+		target, _ := edge["target"].(string)
+		if _, exists := nodeMap[source]; exists {
+			incoming[target] = true
+		}
+	}
+	var disconnected []string
+	for nodeID, node := range nodeMap {
+		nodeType := workflowGraphNodeType(node)
+		if reachable[nodeID] || incoming[nodeID] || workflowGraphNodeContainerID(node) != "" ||
+			nodeType == workflowGraphStartNodeType || nodeType == "note" {
+			continue
+		}
+		disconnected = append(disconnected, fmt.Sprintf("%q", workflowGraphNodeTitle(nodeID, node)))
+	}
+	if len(disconnected) == 0 {
+		return ErrWorkflowEndUnreachable
+	}
+	sort.Strings(disconnected)
+	return fmt.Errorf("%w: %s has no incoming connection", ErrWorkflowEndUnreachable, strings.Join(disconnected, ", "))
+}
+
+func workflowGraphNodeTitle(nodeID string, node map[string]any) string {
+	if data, ok := node["data"].(map[string]any); ok {
+		if title, _ := data["title"].(string); strings.TrimSpace(title) != "" {
+			return strings.TrimSpace(title)
+		}
+	}
+	return nodeID
 }
 
 func workflowGraphNodes(graphData map[string]any) ([]any, error) {

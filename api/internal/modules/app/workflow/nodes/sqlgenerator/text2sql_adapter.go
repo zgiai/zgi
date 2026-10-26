@@ -18,7 +18,33 @@ import (
 	"github.com/zgiai/zgi/api/pkg/vectordb"
 )
 
-type workflowGenerator struct{ node *Node }
+// workflowGenerator generates SQL with the node's model, adding up the tokens
+// of every attempt, repairs included.
+type workflowGenerator struct {
+	node  *Node
+	usage *generationUsage
+}
+
+type generationUsage struct{ prompt, completion, total int }
+
+func (u *generationUsage) add(usage *llmadapter.Usage) {
+	if u == nil || usage == nil {
+		return
+	}
+	total := usage.TotalTokens
+	if total == 0 {
+		total = usage.PromptTokens + usage.CompletionTokens
+	}
+	u.prompt += usage.PromptTokens
+	u.completion += usage.CompletionTokens
+	u.total += total
+}
+
+// output is the usage in the shape LLM nodes report it, so the run's token
+// total counts it.
+func (u *generationUsage) output() map[string]any {
+	return map[string]any{"prompt_tokens": u.prompt, "completion_tokens": u.completion, "total_tokens": u.total}
+}
 
 func (g workflowGenerator) Generate(ctx context.Context, request text2sql.GenerationRequest) (string, error) {
 	if g.node == nil || g.node.llmInvoker == nil {
@@ -50,6 +76,7 @@ func (g workflowGenerator) Generate(ctx context.Context, request text2sql.Genera
 	if result == nil {
 		return "", fmt.Errorf("empty chat response")
 	}
+	g.usage.add(result.Usage)
 	return messageContentToString(result.Text), nil
 }
 
@@ -81,7 +108,8 @@ func (n *Node) executeText2SQL(ctx context.Context) (*shared.NodeRunResult, erro
 			return n.failureResult(inputs, map[string]any{"selection_mode": mode, "failed_stage": "schema_index"}, text2SQLErrorType(err), err), nil
 		}
 	}
-	engine := text2sql.NewEngine(n.catalogLoader, workflowGenerator{node: n}, retriever)
+	usage := &generationUsage{}
+	engine := text2sql.NewEngine(n.catalogLoader, workflowGenerator{node: n, usage: usage}, retriever)
 	result, err := engine.Generate(ctx, text2sql.Request{
 		Scope:        text2sql.Scope{OrganizationID: n.OrganizationID, WorkspaceID: n.WorkspaceID, AccountID: n.UserID},
 		DataSourceID: n.NodeData.DataSource.Source.ID, Question: strings.TrimSpace(question), SelectionMode: mode, ManualTables: refs,
@@ -92,7 +120,12 @@ func (n *Node) executeText2SQL(ctx context.Context) (*shared.NodeRunResult, erro
 	})
 	inputs := map[string]any{"prompt": map[string]any{"user": question}}
 	if err != nil {
-		return n.failureResult(inputs, map[string]any{"selection_mode": mode, "failed_stage": "text2sql_engine"}, text2SQLErrorType(err), err), nil
+		failed := n.failureResult(inputs, map[string]any{"selection_mode": mode, "failed_stage": "text2sql_engine"}, text2SQLErrorType(err), err)
+		// Calls made before the failure still count toward the run's tokens.
+		if usage.total > 0 {
+			failed.Outputs["usage"] = usage.output()
+		}
+		return failed, nil
 	}
 	process := map[string]any{
 		"attempts":         result.Generation.Attempts,
@@ -102,10 +135,10 @@ func (n *Node) executeText2SQL(ctx context.Context) (*shared.NodeRunResult, erro
 		"operation":        result.Validation.Analysis.Operation,
 		"statement_count":  result.Validation.Analysis.StatementCount,
 		"repair_count":     result.RepairCount,
-		"model_usage":      map[string]any{"model": result.Generation.Model, "attempts": result.Generation.Attempts},
+		"model_usage":      map[string]any{"model": result.Generation.Model, "attempts": result.Generation.Attempts, "total_tokens": usage.total},
 		"stage_durations":  map[string]any{"total_ms": result.Generation.DurationMS},
 	}
-	outputs := map[string]any{"sql": result.SQL, "raw_response": result.RawResponse, "analysis": result.AnalysisText, "used_fields": result.UsedFields, "structured": result.Structured, "selected_tables": result.SchemaSelection.Selected, "retrieval_summary": result.SchemaSelection, "validation_summary": result.Validation}
+	outputs := map[string]any{"sql": result.SQL, "raw_response": result.RawResponse, "analysis": result.AnalysisText, "used_fields": result.UsedFields, "structured": result.Structured, "selected_tables": result.SchemaSelection.Selected, "retrieval_summary": result.SchemaSelection, "validation_summary": result.Validation, "usage": usage.output()}
 	return &shared.NodeRunResult{Status: shared.SUCCEEDED, Inputs: inputs, ProcessData: process, Outputs: outputs, Metadata: map[shared.WorkflowNodeExecutionMetadataKey]any{shared.ToolInfo: map[string]any{"type": "llm", "model": n.NodeData.Model.Name}}}, nil
 }
 
