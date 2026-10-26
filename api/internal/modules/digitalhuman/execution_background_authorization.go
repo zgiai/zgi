@@ -19,6 +19,17 @@ import (
 // provider route or confirmed task before each Shell, export or CLI operation.
 // It deliberately does not treat a creator or scheduler as an end user.
 func (s *AccessService) AuthorizeBackgroundLinuxExecution(ctx context.Context, run *Run, event invocation.Event) error {
+	return s.authorizeBackgroundExecution(ctx, run, event, true)
+}
+
+// AuthorizeBackgroundConnectorExecution rechecks the same live published
+// employee and task/channel authority as background Linux execution without
+// requiring the publication to opt into a Linux sandbox.
+func (s *AccessService) AuthorizeBackgroundConnectorExecution(ctx context.Context, run *Run, event invocation.Event) error {
+	return s.authorizeBackgroundExecution(ctx, run, event, false)
+}
+
+func (s *AccessService) authorizeBackgroundExecution(ctx context.Context, run *Run, event invocation.Event, requireLinux bool) error {
 	if s == nil || s.db == nil || run == nil || (run.Surface != SurfaceChannel && run.Surface != SurfaceTask) {
 		return ErrNotFound
 	}
@@ -26,7 +37,10 @@ func (s *AccessService) AuthorizeBackgroundLinuxExecution(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	if access.Version.ExecutionRuntime == nil || !access.Version.ExecutionRuntime.Enabled {
+	if access.Version == nil || access.Version.ID != run.DigitalHumanVersionID {
+		return ErrPublishInvalid
+	}
+	if requireLinux && (access.Version.ExecutionRuntime == nil || !access.Version.ExecutionRuntime.Enabled) {
 		return ErrPublishInvalid
 	}
 	var frozen Version
@@ -34,7 +48,7 @@ func (s *AccessService) AuthorizeBackgroundLinuxExecution(ctx context.Context, r
 		run.DigitalHumanVersionID, run.DigitalHumanID, run.OrganizationID, run.WorkspaceID, VersionStatePublished).Take(&frozen).Error; err != nil {
 		return backgroundRecordError(err)
 	}
-	if frozen.ExecutionRuntime == nil || !frozen.ExecutionRuntime.Enabled {
+	if requireLinux && (frozen.ExecutionRuntime == nil || !frozen.ExecutionRuntime.Enabled) {
 		return ErrPublishInvalid
 	}
 	if run.Surface == SurfaceChannel {

@@ -46,6 +46,12 @@ func hasAdditiveDigitalHumanSurfaces(values []Surface) bool {
 }
 
 func validDefinitionSurfaces(d Definition) bool {
+	// Mail retains its V5/V6 credential dialect when the host adds Digital
+	// Human. The surface projection must not recast mail as the unrelated V4
+	// credential contract.
+	if d.IsMailCredentials() {
+		return hasAllFirstReleaseSurfaces(d.Surfaces) || hasAdditiveDigitalHumanSurfaces(d.Surfaces)
+	}
 	if !d.IsDigitalHumanContract() {
 		return hasAllFirstReleaseSurfaces(d.Surfaces)
 	}
@@ -63,11 +69,13 @@ func WithDigitalHumanSurface(d Definition, pluginVersion string) (Definition, er
 	if err := Validate(d); err != nil {
 		return Definition{}, err
 	}
-	if pluginVersion == "" || pluginVersion == d.PluginVersion {
+	if pluginVersion == "" || pluginVersion == d.PluginVersion || slices.Contains(d.Surfaces, SurfaceDigitalHuman) {
 		return Definition{}, invalid("plugin_version")
 	}
 	d = cloneDefinition(d)
-	d.ExtensionSchemaVersion, d.ContractVersion = ZGIMetadataSchemaVersion13, 4
+	if !d.IsMailCredentials() {
+		d.ExtensionSchemaVersion, d.ContractVersion = ZGIMetadataSchemaVersion13, 4
+	}
 	d.PluginVersion, d.PluginDigest = pluginVersion, ""
 	if !slices.Contains(d.Surfaces, SurfaceDigitalHuman) {
 		d.Surfaces = append(d.Surfaces, SurfaceDigitalHuman)
@@ -76,7 +84,15 @@ func WithDigitalHumanSurface(d Definition, pluginVersion string) (Definition, er
 }
 
 func additiveDigitalHumanSurface(current, candidate Definition) bool {
-	if current.IsDigitalHumanContract() || !candidate.IsDigitalHumanContract() || current.PluginVersion == candidate.PluginVersion {
+	if slices.Contains(current.Surfaces, SurfaceDigitalHuman) || current.PluginVersion == candidate.PluginVersion {
+		return false
+	}
+	if current.IsMailCredentials() || candidate.IsMailCredentials() {
+		return current.IsMailCredentials() && candidate.IsMailCredentials() &&
+			current.ExtensionSchemaVersion == candidate.ExtensionSchemaVersion && current.ContractVersion == candidate.ContractVersion &&
+			hasAllFirstReleaseSurfaces(current.Surfaces) && hasAdditiveDigitalHumanSurfaces(candidate.Surfaces)
+	}
+	if !candidate.IsDigitalHumanContract() {
 		return false
 	}
 	base := credentialBase(candidate)

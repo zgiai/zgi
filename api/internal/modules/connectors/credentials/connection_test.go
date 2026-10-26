@@ -209,3 +209,19 @@ func TestNewPersonalConnectionResolverRequiresDependencies(t *testing.T) {
 		})
 	}
 }
+
+type refreshingConnectionStub struct{ calls int }
+
+func (s *refreshingConnectionStub) ResolveConnectionCredentials(_ context.Context, c connectorcore.PersonalConnection) (map[string]string, error) {
+	s.calls++
+	return map[string]string{"token": "renewed"}, nil
+}
+func TestPersonalConnectionResolverAcceptsRenewalBoundary(t *testing.T) {
+	f := newResolverFixture(t, "old")
+	refresh := &refreshingConnectionStub{}
+	resolver := NewPersonalConnectionResolver(f.reader, refresh)
+	_, values, err := resolver.ResolvePersonalConnectionCredentials(t.Context(), f.org, f.owner, f.conn)
+	if err != nil || refresh.calls != 1 || values["token"] != "renewed" {
+		t.Fatal("renewal resolver was bypassed")
+	}
+}

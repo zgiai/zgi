@@ -30,6 +30,10 @@ func TestWebAppAnonymousSessionIsSignedAndBoundToWebApp(t *testing.T) {
 	if _, err := signer.Parse(token, uuid.New()); !errors.Is(err, ErrInvalidWebAppSession) {
 		t.Fatalf("cross-webapp parse error = %v", err)
 	}
+	now = now.Add(webAppSessionTTL + time.Second)
+	if _, err := signer.Parse(token, webAppID); !errors.Is(err, ErrInvalidWebAppSession) {
+		t.Fatal("expired session accepted against signer clock", err)
+	}
 }
 
 func TestWebAppAnonymousSessionRejectsTampering(t *testing.T) {

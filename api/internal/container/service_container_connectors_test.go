@@ -87,7 +87,7 @@ func TestBuiltinConnectorCatalogProjectsSupportedSurfacesForDigitalHumans(t *tes
 	container := &ServiceContainer{}
 	catalog := container.GetConnectorCatalog()
 
-	for _, id := range []string{"github", "web-search", "feishu", "dingtalk", "wecom", "weixin", "serverops_ssh"} {
+	for _, id := range []string{"github", "web-search", "feishu", "dingtalk", "wecom", "weixin", "serverops_ssh", "gmail", "qqmail", "netease163"} {
 		definition, found := catalog.Get(id)
 		if !found {
 			t.Fatalf("builtin connector %q is missing from the catalog", id)
@@ -97,15 +97,18 @@ func TestBuiltinConnectorCatalogProjectsSupportedSurfacesForDigitalHumans(t *tes
 		}
 	}
 
-	// Mail providers retain their separate mail credential contract and are not
-	// silently exposed as Digital-Human host connectors by the projection.
+	// Mail providers retain their separately versioned credential dialect while
+	// gaining the explicitly authorized host surface.
 	for _, id := range []string{"gmail", "qqmail", "netease163"} {
 		definition, found := catalog.Get(id)
 		if !found {
 			t.Fatalf("builtin mail connector %q is missing from the catalog", id)
 		}
-		if definition.Supports(connectorcatalog.SurfaceDigitalHuman) {
-			t.Fatalf("mail connector %q was unexpectedly projected to Digital-Human: %v", id, definition.Surfaces)
+		base, _ := connectorcatalog.MailDefinition(id)
+		if !definition.IsMailCredentials() || definition.ExtensionSchemaVersion != base.ExtensionSchemaVersion ||
+			definition.ContractVersion != base.ContractVersion || definition.SourceDialect != base.SourceDialect ||
+			definition.SourceSchemaVersion != base.SourceSchemaVersion {
+			t.Fatalf("mail connector %q lost its credential dialect: %#v", id, definition)
 		}
 	}
 }

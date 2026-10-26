@@ -45,6 +45,8 @@ import (
 
 // DigitalHumanRouteDeps contains the lifecycle dependencies.
 type DigitalHumanRouteDeps struct {
+	SocialOperations        socialOperationsManagement
+	WorkJournal             workJournalManagement
 	Service                 digitalhuman.HandlerService
 	Runtime                 digitalhuman.RuntimeHandlerService
 	Channels                digitalhuman.ChannelHandlerService
@@ -147,6 +149,8 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 		deps.NotificationChannels.RegisterRoutes(group, "/team-notification-channels", workspaceChannelOwner(errorProjector))
 	}
 	channelHandler.RegisterAuthenticatedRoutes(group)
+	registerSocialOperationsRoutes(group, deps.SocialOperations)
+	registerWorkJournalRoutes(group, deps.WorkJournal)
 }
 
 func digitalHumanPermissionMiddleware(organizationService interfaces.OrganizationService, projector *apptransport.Projector) gin.HandlerFunc {
@@ -218,6 +222,12 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 		}
 		return ""
 	}
+	if strings.Contains(path, "/work-journal/") {
+		if method == http.MethodGet {
+			return workspacemodel.WorkspacePermissionDigitalHumanLogsView
+		}
+		return ""
+	}
 	// Private tasks are part of the formal run surface. A user who can run a
 	// DigitalHuman may manage only their own task namespace from chat; viewers
 	// must not discover it through a direct URL.
@@ -237,7 +247,7 @@ func digitalHumanPermissionForRequest(method, routePath string) workspacemodel.W
 			return ""
 		}
 	}
-	if strings.Contains(path, "/tasks") || strings.Contains(path, "/my-tasks") {
+	if strings.Contains(path, "/tasks") || strings.Contains(path, "/my-tasks") || strings.Contains(path, "/social-operations/") {
 		switch method {
 		case http.MethodGet:
 			return workspacemodel.WorkspacePermissionDigitalHumanView

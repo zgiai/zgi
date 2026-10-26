@@ -39,6 +39,7 @@ func TestNewLinuxTaskConversationIsFreshAndAcceptanceIsIdempotent(t *testing.T) 
 	service.resolver = backgroundOptInResolver{fakeExecutionResolver{now: service.now()}}
 	source, _, event, _ := backgroundLinuxFixture(t, SurfaceTask)
 	delete(event.Context, backgroundExecutionEntryKey)
+	event.Context["max_task_tokens"] = 60000
 	scope := Scope{OrganizationID: source.OrganizationID, WorkspaceID: source.WorkspaceID, ActorID: *source.ActorID, PrincipalID: *source.ActorID, PrincipalType: source.PrincipalType, Surface: SurfaceTask}
 	first, created, err := service.SubmitInvocation(t.Context(), scope, event, "make a report", nil)
 	if err != nil || !created || first.ConversationID == nil || digitalHumanConversationSourceForRun(first) != backgroundTaskEntry {
@@ -56,6 +57,9 @@ func TestNewLinuxTaskConversationIsFreshAndAcceptanceIsIdempotent(t *testing.T) 
 	}
 	if chat.ensureCalls != 1 || chat.ensuredConversationID != *first.ConversationID || chat.caller.Source != backgroundTaskEntry {
 		t.Fatalf("task persisted under wrong conversation source: %+v", chat.caller)
+	}
+	if chat.request.MaxTaskTokens != 60000 {
+		t.Fatal("scheduled task token budget did not reach chat runtime", chat.request.MaxTaskTokens)
 	}
 	event.ID = uuid.NewString()
 	event.IdempotencyKey = ""

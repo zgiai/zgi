@@ -27,6 +27,8 @@ import { toast } from 'sonner';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { DigitalHumanResourceBindings } from '@/components/digital-human/digital-human-resource-bindings';
 import { DigitalHumanMemoryInstructions } from '@/components/digital-human/digital-human-memory-instructions';
+import { DigitalHumanWorkJournal } from '@/components/digital-human/digital-human-work-journal';
+import { appendWorkJournalPrompt } from '@/components/digital-human/digital-human-work-journal-model';
 import { DigitalHumanDraftPreview } from '@/components/digital-human/digital-human-draft-preview';
 import { useDigitalHumanDraftPersistence } from '@/components/digital-human/use-digital-human-draft-persistence';
 import {
@@ -550,6 +552,15 @@ function ConfigurationEditor({
                 description={editingEnabled ? t('capabilities.draftHint') : undefined}
               >
                 <DigitalHumanResourceBindings id={id} />
+                <DigitalHumanWorkJournal
+                  id={id}
+                  canEdit={editingEnabled}
+                  onAppendPrompt={prompt => {
+                    if (editingEnabled) {
+                      setPersona(current => appendWorkJournalPrompt(current, prompt));
+                    }
+                  }}
+                />
               </ConfigurationSection>
 
               <ConfigurationSection

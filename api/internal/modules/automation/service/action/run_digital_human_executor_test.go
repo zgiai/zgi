@@ -53,3 +53,18 @@ func TestRunDigitalHumanExecutorReturnsPendingExternalRun(t *testing.T) {
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestRunDigitalHumanExecutorUsesServerSOPTokenBudget(t *testing.T) {
+	runner := &capturingDigitalHumanRunner{}
+	executor := NewRunDigitalHumanExecutor(func() AutomationDigitalHumanRunner { return runner })
+	subject := uuid.NewString()
+	task := &automationmodel.AutomationTask{ID: uuid.NewString(), SubjectID: &subject, SourceRef: stringPointer("social_operations"), SourceSnapshot: map[string]any{"social_operations": map[string]any{"budget": map[string]any{"max_tokens": 60000}}}}
+	request := ActionExecutionRequest{Task: task, TaskRun: &automationmodel.AutomationTaskRun{ID: uuid.NewString()}, ActionRun: &automationmodel.AutomationActionRun{ID: uuid.NewString()}}
+	if _, err := executor.ExecuteAction(t.Context(), request); err != nil || runner.request.MaxTaskTokens != 60000 {
+		t.Fatal("server token budget not forwarded", runner.request, err)
+	}
+	task.SourceSnapshot = map[string]any{"social_operations": map[string]any{"budget": map[string]any{"max_tokens": 0}}}
+	if _, err := executor.ExecuteAction(t.Context(), request); err == nil {
+		t.Fatal("missing SOP token budget accepted")
+	}
+}

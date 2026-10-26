@@ -1,7 +1,12 @@
 import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
+  ConnectorBackgroundGrant,
+  IssueConnectorBackgroundGrantRequest,
   ConnectorCatalogItem,
+  ConnectorSocialEventPage,
+  PreparedSocialImage,
+  ConnectorOAuthFlow,
   ConnectorOnboardingFlow,
   ConnectorOnboardingRequest,
   ConnectorPendingSetup,
@@ -39,6 +44,106 @@ import type {
 class ConnectorService extends BaseService {
   constructor() {
     super({ basePath: '/console/api', endpoint: 'main' });
+  }
+
+  issueBackgroundGrant(
+    bindingId: string,
+    request: IssueConnectorBackgroundGrantRequest
+  ): Promise<ApiResponseData<ConnectorBackgroundGrant>> {
+    return this.request(
+      'post',
+      `/connector-target-bindings/${encodeURIComponent(bindingId)}/background-grants`,
+      request,
+      {
+        retryAttemptsOverride: 0,
+      }
+    );
+  }
+
+  getBackgroundGrants(): Promise<ApiResponseData<{ items: ConnectorBackgroundGrant[] }>> {
+    return this.request('get', '/connector-background-grants');
+  }
+
+  revokeBackgroundGrant(grantId: string): Promise<ApiResponseData<{ id: string }>> {
+    return this.request(
+      'delete',
+      `/connector-background-grants/${encodeURIComponent(grantId)}`,
+      undefined,
+      {
+        retryAttemptsOverride: 0,
+      }
+    );
+  }
+
+  getOAuthAvailability(connectorId: string): Promise<ApiResponseData<{ available: boolean }>> {
+    return this.request('get', `/connectors/${encodeURIComponent(connectorId)}/oauth`);
+  }
+
+  startOAuth(
+    connectorId: string,
+    connectionId?: string
+  ): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request(
+      'post',
+      `/connectors/${encodeURIComponent(connectorId)}/oauth`,
+      connectionId ? { connection_id: connectionId } : {},
+      { retryAttemptsOverride: 0, withCredentials: true }
+    );
+  }
+
+  getOAuthFlow(flowId: string): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request('get', `/connectors/oauth-flows/${encodeURIComponent(flowId)}`, undefined, {
+      retryAttemptsOverride: 0,
+    });
+  }
+
+  selectOAuthPage(flowId: string, pageId: string): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request(
+      'post',
+      `/connectors/oauth-flows/${encodeURIComponent(flowId)}/page`,
+      { page_id: pageId },
+      { retryAttemptsOverride: 0 }
+    );
+  }
+
+  completeOAuthInstallation(flowId: string): Promise<ApiResponseData<ConnectorOAuthFlow>> {
+    return this.request(
+      'post',
+      `/connectors/oauth-flows/${encodeURIComponent(flowId)}/installation`,
+      {},
+      { retryAttemptsOverride: 0 }
+    );
+  }
+
+  prepareSocialImage(source: Blob): Promise<ApiResponseData<PreparedSocialImage>> {
+    return this.request('post', '/connectors/social-media/prepare-image', source, {
+      headers: { 'Content-Type': 'application/octet-stream' },
+      retryAttemptsOverride: 0,
+    });
+  }
+
+  getSocialEvents(
+    connectionId: string,
+    params?: { after_id?: number; limit?: number }
+  ): Promise<ApiResponseData<ConnectorSocialEventPage>> {
+    return this.request(
+      'get',
+      `/connector-connections/${encodeURIComponent(connectionId)}/social-events`,
+      undefined,
+      { params }
+    );
+  }
+
+  acknowledgeSocialEvents(
+    connectionId: string,
+    throughId: number
+  ): Promise<ApiResponseData<{ acknowledged_through_id: number }>> {
+    return this.request(
+      'post',
+      `/connector-connections/${encodeURIComponent(connectionId)}/social-events/ack`,
+      { through_id: throughId },
+      { retryAttemptsOverride: 0 }
+    );
   }
 
   getCatalog(

@@ -31,6 +31,13 @@ func headers(key string) http.Header {
 	return http.Header{"Authorization": []string{"Bearer " + key}, "X-Github-Api-Version": []string{"2022-11-28"}}
 }
 func (client *Client) Verify(ctx context.Context, key string) (providers.Verification, error) {
+	credential, err := parseInstallation(key)
+	if err != nil {
+		return providers.Verification{}, err
+	}
+	if credential != nil {
+		return client.verifyInstallation(ctx, credential)
+	}
 	if strings.TrimSpace(key) == "" {
 		return providers.Verification{}, providers.Invalid()
 	}
@@ -54,6 +61,16 @@ func (client *Client) Verify(ctx context.Context, key string) (providers.Verific
 }
 
 func (client *Client) Invoke(ctx context.Context, operation, key string, input map[string]any) (providers.Response, error) {
+	credential, err := parseInstallation(key)
+	if err != nil {
+		return providers.Response{}, err
+	}
+	if credential != nil {
+		return client.invokeInstallation(ctx, operation, credential, input)
+	}
+	return client.invokeToken(ctx, operation, key, input)
+}
+func (client *Client) invokeToken(ctx context.Context, operation, key string, input map[string]any, extraSecrets ...string) (providers.Response, error) {
 	args, err := client.schemas.Input(operation, input)
 	if err != nil || strings.TrimSpace(key) == "" {
 		return providers.Response{}, providers.Invalid()
@@ -120,6 +137,18 @@ func (client *Client) Invoke(ctx context.Context, operation, key string, input m
 	header, err := client.http.JSON(ctx, method, endpoint, query, headers(key), body, &raw)
 	if err != nil {
 		return providers.Response{}, err
+	}
+	// Installation credentials contain long key material. Redact before field
+	// bounds can truncate an echoed secret into an unrecognizable prefix.
+	if len(extraSecrets) > 0 {
+		var value any
+		if json.Unmarshal(raw, &value) != nil {
+			return providers.Response{}, badResponse()
+		}
+		for _, secret := range append(extraSecrets, key) {
+			value = providers.Redact(value, secret)
+		}
+		raw, _ = json.Marshal(value)
 	}
 	requestID := providers.SafeRequestID(header.Get("X-GitHub-Request-Id"), key)
 	output := map[string]any{"provider": "github", "request_id": requestID}

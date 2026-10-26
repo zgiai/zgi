@@ -49,6 +49,7 @@ import {
   useZgiMarketSelectedCount,
   ZgiMarketSelectedServers,
 } from '@/components/zgi-market/zgi-market-selected-servers';
+import { DigitalHumanBackgroundGrants } from './digital-human-background-grants';
 
 interface DigitalHumanConnectorSectionProps {
   id: string;
@@ -82,7 +83,7 @@ function ScopedConnectorSection({
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
   const query = useDigitalHumanDraftBindings(id, !preview);
-  const detailQuery = useDigitalHuman(id, !preview);
+  const detailQuery = useDigitalHuman(id);
   const publishedVersionId = detailQuery.data?.data.published?.id;
   const publishedTarget = publishedVersionId
     ? {
@@ -108,7 +109,8 @@ function ScopedConnectorSection({
     items.length > 0
   );
   const mutations = useDigitalHumanMutations(id);
-  const canUpdate = useAccountPermissions().hasPermission('digital_human.update') && !readOnly;
+  const canUpdatePermission = useAccountPermissions().hasPermission('digital_human.update');
+  const canUpdate = canUpdatePermission && !readOnly;
   const marketServerCount = useZgiMarketSelectedCount('digital_human', id);
   const [selection, setSelection] = useState<DigitalHumanConnectorSelection>();
   const [initialReplacement, setInitialReplacement] = useState<DigitalHumanResourceBindingInput>();
@@ -254,7 +256,9 @@ function ScopedConnectorSection({
             <PlugZap className="size-4" />
           </span>
           <h3 className="font-medium">{connectorT('title')}</h3>
-          <Badge variant="subtle">{t('bindings.selectedCount', { count: items.length + marketServerCount })}</Badge>
+          <Badge variant="subtle">
+            {t('bindings.selectedCount', { count: items.length + marketServerCount })}
+          </Badge>
         </div>
         <Button
           type="button"
@@ -359,7 +363,9 @@ function ScopedConnectorSection({
                   binding.connector_id === item.parent_resource_id
               );
               if (!publishedBinding) return null;
-              const audiences = new Set<ConnectorHostAudience>(publishedBinding.host_audiences ?? []);
+              const audiences = new Set<ConnectorHostAudience>(
+                publishedBinding.host_audiences ?? []
+              );
               const options: Array<{ value: ConnectorHostAudience; label: string }> = [
                 {
                   value: 'workspace',
@@ -372,7 +378,10 @@ function ScopedConnectorSection({
                 },
               ];
               return (
-                <div key={`${item.parent_resource_id}:${item.resource_id}`} className="mt-4 flex flex-wrap gap-3">
+                <div
+                  key={`${item.parent_resource_id}:${item.resource_id}`}
+                  className="mt-4 flex flex-wrap gap-3"
+                >
                   {options.map(option => (
                     <label key={option.value} className="flex items-center gap-2 text-xs">
                       <Checkbox
@@ -388,9 +397,7 @@ function ScopedConnectorSection({
                               revision: publishedBinding.revision,
                               audiences: Array.from(next),
                             });
-                            toast.success(
-                              connectorT('picker.authorization.hostDelegationSaved')
-                            );
+                            toast.success(connectorT('picker.authorization.hostDelegationSaved'));
                           } catch (error) {
                             toast.error(
                               getErrorMessage(error) ||
@@ -425,6 +432,15 @@ function ScopedConnectorSection({
             ) : null}
           </>
         )}
+        {publishedVersionId ? (
+          <DigitalHumanBackgroundGrants
+            employeeId={id}
+            versionId={publishedVersionId}
+            bindings={publishedBindings}
+            canView={canUpdatePermission}
+            canCreate={canUpdate}
+          />
+        ) : null}
       </div>
       {selection ? (
         <DigitalHumanConnectorDialog

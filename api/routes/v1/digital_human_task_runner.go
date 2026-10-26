@@ -74,6 +74,9 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 	query := fmt.Sprintf("It is time for the task %q. Do it now: %s%s%s", req.Name, req.Goal, criteria, rework)
 	eventContext := scheduledTaskEventContext(req, owner)
 	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: eventContext, ReplyTo: req.ReplyTo}
+	if req.MaxTaskTokens > 0 && req.MaxTaskTokens <= 100000 {
+		event.Context["max_task_tokens"] = req.MaxTaskTokens
+	}
 	run, _, err := r.runtime.SubmitInvocation(ctx, scope, event, query, nil)
 	if err != nil {
 		return nil, err

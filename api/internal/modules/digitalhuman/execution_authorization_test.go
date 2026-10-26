@@ -180,24 +180,24 @@ func TestDigitalHumanLinuxContinuationUsesFrozenPublicationAndLiveAccess(t *test
 func TestDigitalHumanLinuxAccessLiveExternalRevocation(t *testing.T) {
 	for _, test := range []struct {
 		name, surface string
-		revoke        func(*gorm.DB, Scope, uuid.UUID) error
+		revoke        func(*gorm.DB, Scope, uuid.UUID, time.Time) error
 	}{
-		{"webapp policy", SurfaceWebApp, func(db *gorm.DB, _ Scope, app uuid.UUID) error {
+		{"webapp policy", SurfaceWebApp, func(db *gorm.DB, _ Scope, app uuid.UUID, _ time.Time) error {
 			return db.Exec(`UPDATE published_runtime_surfaces SET enabled = false WHERE resource_id = ? AND surface = 'webapp'`, app).Error
 		}},
-		{"API policy", SurfaceAPI, func(db *gorm.DB, _ Scope, app uuid.UUID) error {
+		{"API policy", SurfaceAPI, func(db *gorm.DB, _ Scope, app uuid.UUID, _ time.Time) error {
 			return db.Exec(`UPDATE published_runtime_surfaces SET enabled = false WHERE resource_id = ? AND surface = 'api'`, app).Error
 		}},
-		{"API key revoked", SurfaceAPI, func(db *gorm.DB, s Scope, _ uuid.UUID) error {
+		{"API key revoked", SurfaceAPI, func(db *gorm.DB, s Scope, _ uuid.UUID, _ time.Time) error {
 			return db.Model(&APIKey{}).Where("id = ?", s.PrincipalID).Update("status", APIKeyStatusRevoked).Error
 		}},
-		{"API key expired", SurfaceAPI, func(db *gorm.DB, s Scope, _ uuid.UUID) error {
-			return db.Model(&APIKey{}).Where("id = ?", s.PrincipalID).Update("expires_at", time.Now().Add(-time.Hour)).Error
+		{"API key expired", SurfaceAPI, func(db *gorm.DB, s Scope, _ uuid.UUID, now time.Time) error {
+			return db.Model(&APIKey{}).Where("id = ?", s.PrincipalID).Update("expires_at", now.Add(-time.Hour)).Error
 		}},
-		{"application disabled", SurfaceAPI, func(db *gorm.DB, _ Scope, app uuid.UUID) error {
+		{"application disabled", SurfaceAPI, func(db *gorm.DB, _ Scope, app uuid.UUID, _ time.Time) error {
 			return db.Model(&Definition{}).Where("id = ?", app).Update("status", StatusDisabled).Error
 		}},
-		{"publication replaced", SurfaceWebApp, func(db *gorm.DB, _ Scope, app uuid.UUID) error {
+		{"publication replaced", SurfaceWebApp, func(db *gorm.DB, _ Scope, app uuid.UUID, _ time.Time) error {
 			return db.Model(&Definition{}).Where("id = ?", app).Update("published_version_id", uuid.New()).Error
 		}},
 	} {
@@ -212,7 +212,7 @@ func TestDigitalHumanLinuxAccessLiveExternalRevocation(t *testing.T) {
 					t.Fatal("authorization changed credential usage")
 				}
 			}
-			if err := test.revoke(s.db, scope, app); err != nil {
+			if err := test.revoke(s.db, scope, app, s.now()); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.AuthorizeLinuxExecution(t.Context(), scope, app, publication); err == nil {

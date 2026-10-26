@@ -127,6 +127,7 @@ func TestConnectorDigitalHumanToolCarriesExactHostBindingIdentity(t *testing.T) 
 			execCtx := ExecutionContext{
 				OrganizationID: organizationID.String(), UserID: ownerID.String(),
 				ConversationID: uuid.NewString(), AppID: digitalHumanID, MessageID: uuid.NewString(),
+				ConnectorRunID:            uuid.NewString(),
 				InvokeFrom:                tools.ToolInvokeFromAIChat,
 				ConnectorTargetType:       core.TargetTypeDigitalHuman,
 				ConnectorTargetScope:      core.ScopePublished,

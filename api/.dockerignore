@@ -68,6 +68,7 @@ Thumbs.db
 
 # Dependencies (will be downloaded in container)
 vendor/
+**/node_modules/
 
 # Runtime and local-only data
 storage/

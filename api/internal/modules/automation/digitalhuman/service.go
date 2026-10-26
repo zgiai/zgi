@@ -211,6 +211,9 @@ func (s *Service) CreateTask(ctx context.Context, access digitalhuman.TaskAccess
 	if mutation.OperationID == uuid.Nil {
 		mutation.OperationID = uuid.New()
 	}
+	if err := validateSocialOperationsMutation(access, mutation); err != nil {
+		return nil, err
+	}
 	if existing, err := s.taskByOperation(ctx, access, mutation.OperationID); err == nil {
 		return publicTask(existing)
 	}
@@ -1187,7 +1190,62 @@ func sourceSnapshot(m digitalhuman.TaskMutationContext) map[string]any {
 	if m.SourceConversationType == "direct" || m.SourceConversationType == "group" {
 		result["conversation_type"] = m.SourceConversationType
 	}
+	if m.SocialOperations != nil {
+		result["social_operations"] = *m.SocialOperations
+	}
 	return result
+}
+
+func validateSocialOperationsMutation(access digitalhuman.TaskAccessContext, mutation digitalhuman.TaskMutationContext) error {
+	metadata := mutation.SocialOperations
+	if metadata == nil {
+		return nil
+	}
+	principalID, err := uuid.Parse(strings.TrimSpace(access.Principal.ID))
+	if err != nil || access.Principal.Type != invocation.PrincipalAccount || principalID != metadata.Scope.OwnerID ||
+		access.OrganizationID != metadata.Scope.OrganizationID || access.WorkspaceID != metadata.Scope.WorkspaceID ||
+		access.DigitalHumanID != metadata.Scope.EmployeeID || access.Owner != digitalhuman.SharedTaskOwner() ||
+		access.Surface != digitalhuman.SurfaceConsole || access.CurrentTaskID != nil || mutation.ActorType != "account" ||
+		strings.TrimSpace(mutation.ActorRef) != metadata.Scope.OwnerID.String() || mutation.Source != "social_operations" ||
+		mutation.Proposed || mutation.OperationID == uuid.Nil || metadata.EmployeeVersionID == uuid.Nil ||
+		metadata.ConfigurationRevision < 1 || metadata.ConfigurationRecordID == uuid.Nil || metadata.ConfigurationArtifactID == uuid.Nil {
+		return digitalhuman.ErrTaskPolicyRejected
+	}
+	validTaskKey := map[string]bool{
+		"daily_content": true, "frequent_inbox": true,
+		"daily_seven_day_samples": true, "weekly_review": true,
+	}[metadata.TaskKey]
+	if !validTaskKey || len(metadata.Stages) == 0 || len(metadata.Stages) > 16 ||
+		len(metadata.ConsumesRecordKinds) > 32 || len(metadata.ProducesRecordKinds) > 32 || len(metadata.UpdatesRecords) > 16 ||
+		metadata.Budget.MaxPages < 1 || metadata.Budget.MaxRecords < 1 || metadata.Budget.MaxConnectorCalls < 1 ||
+		metadata.Budget.MaxTokens < 1 || metadata.Budget.MaxSafeReadAttempts < 1 {
+		return digitalhuman.ErrInvalidRequest
+	}
+	for _, values := range [][]string{metadata.Stages, metadata.ConsumesRecordKinds, metadata.ProducesRecordKinds} {
+		for _, value := range values {
+			if !validSocialOperationsToken(value) {
+				return digitalhuman.ErrInvalidRequest
+			}
+		}
+	}
+	for _, target := range metadata.UpdatesRecords {
+		if !validSocialOperationsToken(target.Kind) || strings.TrimSpace(target.Key) != target.Key || target.Key == "" || len(target.Key) > 128 || strings.ContainsAny(target.Key, "\x00\r\n/\\") {
+			return digitalhuman.ErrInvalidRequest
+		}
+	}
+	return nil
+}
+
+func validSocialOperationsToken(value string) bool {
+	if value == "" || len(value) > 64 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' {
+			return false
+		}
+	}
+	return true
 }
 func sourceType(m digitalhuman.TaskMutationContext) automationmodel.AutomationSourceType {
 	if m.SourceRunID != nil {

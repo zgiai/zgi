@@ -85,8 +85,16 @@ func runArtifactOwner(run *Run, event map[string]any) (owner artifacts.Owner, vi
 	case SurfaceTask:
 		switch kind, _ := event["task_owner_kind"].(string); kind {
 		case string(TaskOwnerDigitalHuman):
-			if run.ActorID != nil && *run.ActorID != uuid.Nil {
-				return artifacts.Owner{Kind: artifacts.OwnerAccount, ID: *run.ActorID}, artifacts.VisibilityTeam, true, true
+			// Scheduled runs carry no interactive actor, so the frozen principal
+			// (the account that created and owns the task) keeps the deliverables.
+			// This matches the background-authorization check that freezes the
+			// task creator as the run's owner.
+			ownerID := run.ActorID
+			if (ownerID == nil || *ownerID == uuid.Nil) && run.PrincipalID != nil && *run.PrincipalID != uuid.Nil {
+				ownerID = run.PrincipalID
+			}
+			if ownerID != nil && *ownerID != uuid.Nil {
+				return artifacts.Owner{Kind: artifacts.OwnerAccount, ID: *ownerID}, artifacts.VisibilityTeam, true, true
 			}
 		case string(TaskOwnerConversation):
 			return artifacts.Owner{Kind: artifacts.OwnerWorkspace, ID: run.WorkspaceID}, artifacts.VisibilityTeam, true, true

@@ -72,6 +72,24 @@ import type {
   DigitalHumanAPIKeyCreated,
   DigitalHumanAPIKeyList,
 } from './types/digital-human';
+import type {
+  SaveSocialOperationsConfigurationRequest,
+  SetupSocialOperationsRequest,
+  SocialOperationsConfigurationResponse,
+  SocialOperationsImageUploadResponse,
+  SocialOperationsVerifiedAccountsResponse,
+  SocialOperationsPreflightReport,
+  SocialOperationsProvisioningResult,
+} from './types/social-operations';
+
+import type {
+  WorkJournalRecord,
+  WorkJournalOperation,
+  WorkJournalOperationState,
+  WorkJournalPage,
+  WorkJournalHistory,
+  WorkJournalListParams,
+} from './types/work-journal';
 
 /** A per-user Connector slot as the signed-in member sees it (ADR 0007). */
 export interface DigitalHumanMemberConnectorSlot {
@@ -139,6 +157,90 @@ class DigitalHumanService extends BaseService {
 
   get(id: string): Promise<ApiResponseData<DigitalHumanDetail>> {
     return this.request('get', `/digital-humans/${id}`);
+  }
+
+  listWorkJournalRecords(
+    id: string,
+    params?: WorkJournalListParams & { kind?: string }
+  ): Promise<ApiResponseData<WorkJournalPage<WorkJournalRecord>>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/records`, undefined, { params });
+  }
+
+  getWorkJournalRecord(
+    id: string,
+    recordId: string
+  ): Promise<ApiResponseData<{ record: WorkJournalRecord }>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/records/${recordId}`);
+  }
+
+  getWorkJournalRecordHistory(
+    id: string,
+    recordId: string,
+    params?: { after_revision?: number; limit?: number }
+  ): Promise<ApiResponseData<WorkJournalHistory>> {
+    return this.request(
+      'get',
+      `/digital-humans/${id}/work-journal/records/${recordId}/history`,
+      undefined,
+      { params }
+    );
+  }
+
+  listWorkJournalOperations(
+    id: string,
+    params?: WorkJournalListParams & { state?: WorkJournalOperationState }
+  ): Promise<ApiResponseData<WorkJournalPage<WorkJournalOperation>>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/operations`, undefined, {
+      params,
+    });
+  }
+
+  getWorkJournalOperation(
+    id: string,
+    operationId: string
+  ): Promise<ApiResponseData<{ operation: WorkJournalOperation }>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/operations/${operationId}`);
+  }
+
+  getSocialOperationsConfiguration(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsConfigurationResponse>> {
+    return this.request('get', `/digital-humans/${id}/social-operations/configuration`);
+  }
+
+  getSocialOperationsAccounts(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsVerifiedAccountsResponse>> {
+    return this.request('get', `/digital-humans/${id}/social-operations/accounts`);
+  }
+
+  saveSocialOperationsConfiguration(
+    id: string,
+    data: SaveSocialOperationsConfigurationRequest
+  ): Promise<ApiResponseData<SocialOperationsConfigurationResponse>> {
+    return this.request('put', `/digital-humans/${id}/social-operations/configuration`, data);
+  }
+
+  preflightSocialOperations(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsPreflightReport>> {
+    return this.request('post', `/digital-humans/${id}/social-operations/preflight`, {});
+  }
+
+  setupSocialOperations(
+    id: string,
+    data: SetupSocialOperationsRequest
+  ): Promise<ApiResponseData<SocialOperationsProvisioningResult>> {
+    return this.request('post', `/digital-humans/${id}/social-operations/setup`, data);
+  }
+
+  uploadSocialOperationsImage(
+    id: string,
+    file: File
+  ): Promise<ApiResponseData<SocialOperationsImageUploadResponse>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request('post', `/digital-humans/${id}/social-operations/assets/images`, formData);
   }
 
   update(
