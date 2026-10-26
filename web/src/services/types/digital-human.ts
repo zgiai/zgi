@@ -508,7 +508,7 @@ export interface DigitalHumanMemoryFacets {
   visibility: Partial<Record<DigitalHumanMemoryVisibility, number>>;
   origins: Partial<Record<DigitalHumanMemoryOrigin, number>>;
   /** Channel conversations that taught the DigitalHuman, most entries first. */
-  channels: { id: string; count: number }[];
+  channels: Array<{ id: string; count: number }>;
 }
 
 // Changes the visibility of, or invalidates, several memories at once. Each
@@ -522,7 +522,7 @@ export interface DigitalHumanMemoryBulkRequest {
 
 export interface DigitalHumanMemoryBulkResult {
   updated: number;
-  skipped: { memory_id: string; reason: string }[];
+  skipped: Array<{ memory_id: string; reason: string }>;
 }
 
 export interface DigitalHumanMemoryListParams {
