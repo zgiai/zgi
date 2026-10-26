@@ -149,19 +149,19 @@ func agentManagementUpdateConfigContract() SkillToolArgumentContract {
 	}
 }
 
-func agentManagementReplaceMemorySlotsContract() SkillToolArgumentContract {
+func agentManagementReplaceMemoryBlocksContract() SkillToolArgumentContract {
 	return SkillToolArgumentContract{
 		SkillID:     SkillAgentManagement,
-		ToolName:    "replace_agent_memory_slots",
-		Description: "Replace the complete draft Agent memory slot list for one resolved AGENT asset.",
+		ToolName:    "replace_agent_memory_blocks",
+		Description: "Replace the complete draft Agent memory block list for one resolved AGENT asset.",
 		Schema: objectSchema(
 			map[string]interface{}{
-				"agent_id":           stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
-				"agent_memory_slots": stringValueSchema("Required JSON array replacing all memory slots. Use [] to clear slots."),
+				"agent_id":            stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"agent_memory_blocks": stringValueSchema("Required JSON array replacing all memory blocks. Use [] to clear blocks."),
 			},
-			[]string{"agent_id", "agent_memory_slots"},
+			[]string{"agent_id", "agent_memory_blocks"},
 		),
-		Example: map[string]interface{}{"agent_id": "agent-id", "agent_memory_slots": "[]"},
+		Example: map[string]interface{}{"agent_id": "agent-id", "agent_memory_blocks": "[]"},
 	}
 }
 

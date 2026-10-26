@@ -57,10 +57,13 @@ The product decision is to keep only blocks. Every Agent's memory uses blocks on
 - `memory_block_definitions` becomes the draft source.
 - The Agent config JSON (`agent_memory_slots` in drafts and published snapshots) remains what runs read.
 - The key name stays for compatibility with published snapshots.
+- Migration `202610261400000000_memory_block_definitions_from_slots` copies the slots onto their definitions once, then `agent_memory_slots` is no longer read or written. The mirror had stored blocks first created disabled or without automatic writes with the column defaults (enabled, automatic writes on); the copy corrects them, and definitions are now inserted with every column set.
+- Block IDs in the builder are definition IDs. An ID from `agent_memory_slots` that no definition has is matched by key, so drafts saved before the change still save.
 
 ### 4. Names and compatibility
 
-- The builder, docs, and API reference say "memory block". The builder AI tool `replace_agent_memory_slots` becomes `replace_agent_memory_blocks`, and the old name is accepted as an alias.
+- The builder, docs, and API reference say "memory block". The builder AI tool `replace_agent_memory_slots` becomes `replace_agent_memory_blocks`, with the argument `agent_memory_blocks` (`agent_memory_slots` is still read). The old name is accepted as an alias: the tool provider resolves it without listing it, and stored events and plans that carry it still render.
+- Removing a block stops the Agent from reading and writing it. Content users already saved there is kept, and they can still view, export, and delete it.
 - External and WebApp memory APIs keep their paths and fields:
   - `/api/v1/agents/memory`, its key, export, undo, history, and archive routes;
   - `values[]` with `key`, `max_chars`, `revision`, and the other existing fields;
@@ -69,11 +72,11 @@ The product decision is to keep only blocks. Every Agent's memory uses blocks on
 
 ## Steps
 
-1. Scenario templates (done separately: four Agent templates and DigitalHuman memory instruction templates).
-2. This ADR and the inventory.
-3. The automatic data migration, with a PostgreSQL test seeded from legacy rows.
-4. Remove both switches and the slot runtime, always wire the Agent adapter, and update tests, docs, env examples, and the evaluation harness.
-5. Block definitions owned by `memory_block_definitions`; builder naming and the `replace_agent_memory_blocks` alias.
+1. Done. Scenario templates (done separately: four Agent templates and DigitalHuman memory instruction templates).
+2. Done. This ADR and the inventory.
+3. Done. The automatic data migration, with a PostgreSQL test seeded from legacy rows.
+4. Done. Remove both switches and the slot runtime, always wire the Agent adapter, and update tests, docs, env examples, and the evaluation harness.
+5. Done. Block definitions owned by `memory_block_definitions`; builder naming and the `replace_agent_memory_blocks` alias.
 6. Full Agent and DigitalHuman evaluation rerun, then a Docker smoke test with no memory switches set.
 
 ## Consequences

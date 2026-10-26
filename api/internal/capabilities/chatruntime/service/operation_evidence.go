@@ -109,7 +109,7 @@ func operationPlanAnnotateEvidenceLedger(ledger []map[string]interface{}) []map[
 		}
 		toolName := strings.TrimSpace(stringFromAny(entry["tool_name"]))
 		switch toolName {
-		case "update_agent_config", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings", "replace_agent_memory_slots":
+		case "update_agent_config", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings", "replace_agent_memory_blocks", "replace_agent_memory_slots":
 			latestUpdate = operationPlanEvidenceFactsForComparison(entry)
 		case "get_agent_config":
 			if len(latestUpdate) == 0 {

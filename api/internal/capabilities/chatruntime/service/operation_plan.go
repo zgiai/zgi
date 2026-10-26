@@ -963,6 +963,7 @@ func operationPlanAgentManagementToolIsMutation(toolName string) bool {
 	case "create_agent",
 		"update_agent_identity",
 		"update_agent_config",
+		"replace_agent_memory_blocks",
 		"replace_agent_memory_slots",
 		"replace_agent_skill_bindings",
 		"replace_agent_knowledge_bindings",
@@ -2880,7 +2881,7 @@ func operationPlanAgentManagementResultHasEvidence(toolName string, result map[s
 				"final_resource_names",
 			) ||
 				operationPlanValuePresent(result, "config"))
-	case "replace_agent_memory_slots":
+	case "replace_agent_memory_blocks", "replace_agent_memory_slots":
 		return operationPlanAgentResultID(result) != "" &&
 			(operationPlanValuePresent(result, "agent_memory_slots") ||
 				operationPlanNestedValuePresent(result, "config", "agent_memory_slots") ||

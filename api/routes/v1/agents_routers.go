@@ -239,6 +239,9 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.PATCH("/:agent_id/webapp/status", appHandler.UpdateWebAppStatus)
 	appsGroup.GET("/:agent_id/delete-impact", appHandler.PreviewAgentDeleteImpact)
 	appsGroup.DELETE("/:agent_id", appHandler.DeleteAgent)
+	appsGroup.GET("/:agent_id/memory/blocks", appHandler.ListAgentMemorySlots)
+	appsGroup.PUT("/:agent_id/memory/blocks", appHandler.ReplaceAgentMemorySlots)
+	// The slots paths predate ADR 0016 and stay as aliases.
 	appsGroup.GET("/:agent_id/memory/slots", appHandler.ListAgentMemorySlots)
 	appsGroup.PUT("/:agent_id/memory/slots", appHandler.ReplaceAgentMemorySlots)
 	appsGroup.PUT("/:agent_id/memory/config", appHandler.UpdateAgentMemoryConfig)

@@ -59,7 +59,7 @@ func TestSystemAssetToolsDeclareGovernance(t *testing.T) {
 		{SkillAgentManagement, "create_agent", toolgovernance.EffectCreate, "agent", toolgovernance.RiskLevelMedium, false},
 		{SkillAgentManagement, "update_agent_identity", toolgovernance.EffectUpdate, "agent", toolgovernance.RiskLevelMedium, true},
 		{SkillAgentManagement, "update_agent_config", toolgovernance.EffectUpdate, "agent", toolgovernance.RiskLevelMedium, true},
-		{SkillAgentManagement, "replace_agent_memory_slots", toolgovernance.EffectUpdate, "agent", toolgovernance.RiskLevelMedium, true},
+		{SkillAgentManagement, "replace_agent_memory_blocks", toolgovernance.EffectUpdate, "agent", toolgovernance.RiskLevelMedium, true},
 		{SkillAgentManagement, "delete_agent", toolgovernance.EffectDelete, "agent", toolgovernance.RiskLevelHigh, true},
 		{SkillAgentManagement, "delete_agents", toolgovernance.EffectDelete, "agent", toolgovernance.RiskLevelHigh, true},
 	}

@@ -63,52 +63,29 @@ func (r *Repository) LockAgent(ctx context.Context, agentID uuid.UUID) error {
 		First(&row).Error
 }
 
+// ListSlots reads an Agent's memory blocks, shaped as slots. Since ADR 0016
+// memory_block_definitions is the draft source; agent_memory_slots is no
+// longer read or written.
 func (r *Repository) ListSlots(ctx context.Context, workspaceID, agentID uuid.UUID, enabledOnly bool) ([]*AgentMemorySlot, error) {
-	var slots []*AgentMemorySlot
-	query := r.db.WithContext(ctx).Where("workspace_id = ? AND agent_id = ?", workspaceID, agentID)
+	var definitions []memoryblock.Definition
+	query := r.db.WithContext(ctx).
+		Where("consumer_type = ? AND consumer_id = ? AND deleted_at IS NULL", memoryblock.ConsumerAgent, agentID)
 	if enabledOnly {
 		query = query.Where("enabled = ?", true)
 	}
-	err := query.Order("sort_order ASC, created_at ASC").Find(&slots).Error
-	return slots, err
-}
-
-func (r *Repository) CreateSlot(ctx context.Context, slot *AgentMemorySlot) error {
-	return r.db.WithContext(ctx).Create(slot).Error
-}
-
-func (r *Repository) UpdateSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID, values map[string]interface{}) (*AgentMemorySlot, error) {
-	if err := r.db.WithContext(ctx).
-		Model(&AgentMemorySlot{}).
-		Where("workspace_id = ? AND agent_id = ? AND id = ?", workspaceID, agentID, slotID).
-		Updates(values).Error; err != nil {
+	if err := query.Order("sort_order ASC, created_at ASC").Find(&definitions).Error; err != nil {
 		return nil, err
 	}
-	return r.GetSlotScoped(ctx, workspaceID, agentID, slotID)
-}
-
-func (r *Repository) DeleteSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) error {
-	result := r.db.WithContext(ctx).
-		Where("workspace_id = ? AND agent_id = ? AND id = ?", workspaceID, agentID, slotID).
-		Delete(&AgentMemorySlot{})
-	if result.Error != nil {
-		return result.Error
+	slots := make([]*AgentMemorySlot, 0, len(definitions))
+	for _, definition := range definitions {
+		slots = append(slots, &AgentMemorySlot{
+			ID: definition.ID, WorkspaceID: workspaceID, AgentID: agentID, Key: definition.Label,
+			Name: definition.Name, Description: definition.Description, MaxChars: definition.LimitChars,
+			Enabled: definition.Enabled, SortOrder: definition.SortOrder, ReadOnly: definition.ReadOnly,
+			ManualOnly: !definition.AutoWrite, CreatedAt: definition.CreatedAt, UpdatedAt: definition.UpdatedAt,
+		})
 	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
-func (r *Repository) GetSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) (*AgentMemorySlot, error) {
-	var slot AgentMemorySlot
-	err := r.db.WithContext(ctx).
-		Where("workspace_id = ? AND agent_id = ? AND id = ?", workspaceID, agentID, slotID).
-		First(&slot).Error
-	if err != nil {
-		return nil, err
-	}
-	return &slot, nil
+	return slots, nil
 }
 
 func (r *Repository) ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error) {

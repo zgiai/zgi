@@ -58,9 +58,6 @@ type store interface {
 	ResolveAgentWorkspace(ctx context.Context, agentID uuid.UUID) (uuid.UUID, error)
 	LockAgent(ctx context.Context, agentID uuid.UUID) error
 	ListSlots(ctx context.Context, workspaceID, agentID uuid.UUID, enabledOnly bool) ([]*AgentMemorySlot, error)
-	CreateSlot(ctx context.Context, slot *AgentMemorySlot) error
-	UpdateSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID, values map[string]interface{}) (*AgentMemorySlot, error)
-	DeleteSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) error
 	SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error
 	ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error)
 	ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error)
@@ -209,92 +206,33 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 		}
 		existing, err := tx.ListSlots(ctx, workspaceID, agentID, false)
 		if err != nil {
-			return fmt.Errorf("list existing agent memory slots: %w", err)
+			return fmt.Errorf("list existing agent memory blocks: %w", err)
 		}
-		existingByKey := map[string]*AgentMemorySlot{}
-		existingByID := map[uuid.UUID]*AgentMemorySlot{}
+		keyByID := make(map[uuid.UUID]string, len(existing))
 		for _, slot := range existing {
 			if slot != nil {
-				existingByKey[slot.Key] = slot
-				existingByID[slot.ID] = slot
+				keyByID[slot.ID] = slot.Key
 			}
 		}
-		now := time.Now()
+		next := make([]*AgentMemorySlot, 0, len(normalized))
 		for _, input := range normalized {
-			if input.id != uuid.Nil {
-				current := existingByID[input.id]
-				if current == nil {
-					return fmt.Errorf("%w: memory item does not exist", ErrInvalidInput)
-				}
-				if current.Key != input.key {
-					return fmt.Errorf("%w: memory key cannot be changed after creation", ErrInvalidInput)
-				}
+			// An ID no block has (one from agent_memory_slots, before ADR
+			// 0016) is matched by key instead.
+			if key, ok := keyByID[input.id]; ok && input.id != uuid.Nil && key != input.key {
+				return fmt.Errorf("%w: memory key cannot be changed after creation", ErrInvalidInput)
 			}
-			if current := existingByKey[input.key]; current != nil {
-				before := *current
-				updated, err := tx.UpdateSlotScoped(ctx, workspaceID, agentID, current.ID, map[string]interface{}{
-					"name":        input.name,
-					"description": input.description,
-					"max_chars":   input.maxChars,
-					"enabled":     input.enabled,
-					"sort_order":  input.sortOrder,
-					"read_only":   input.readOnly,
-					"manual_only": input.manualOnly,
-					"updated_by":  actorID,
-					"updated_at":  now,
-				})
-				if err != nil {
-					return mapRepoError(err, "update agent memory slot")
-				}
-				if err := recordSlotEvent(ctx, tx, workspaceID, agentID, updated.Key, slotUpdateAction(&before, updated), organizerMetadata(), &before, updated); err != nil {
-					return err
-				}
-				delete(existingByKey, input.key)
-				continue
-			}
-			slot := &AgentMemorySlot{
-				WorkspaceID: workspaceID,
-				AgentID:     agentID,
-				Key:         input.key,
-				Name:        input.name,
-				Description: input.description,
-				MaxChars:    input.maxChars,
-				Enabled:     input.enabled,
-				SortOrder:   input.sortOrder,
-				ReadOnly:    input.readOnly,
-				ManualOnly:  input.manualOnly,
-				CreatedBy:   actorID,
-				UpdatedBy:   actorID,
-				CreatedAt:   now,
-				UpdatedAt:   now,
-			}
-			if err := tx.CreateSlot(ctx, slot); err != nil {
-				return fmt.Errorf("create agent memory slot: %w", err)
-			}
-			if err := recordSlotEvent(ctx, tx, workspaceID, agentID, slot.Key, EventActionSlotCreate, organizerMetadata(), nil, slot); err != nil {
-				return err
-			}
+			next = append(next, &AgentMemorySlot{
+				WorkspaceID: workspaceID, AgentID: agentID, Key: input.key, Name: input.name, Description: input.description,
+				MaxChars: input.maxChars, Enabled: input.enabled, SortOrder: input.sortOrder,
+				ReadOnly: input.readOnly, ManualOnly: input.manualOnly, CreatedBy: actorID, UpdatedBy: actorID,
+			})
 		}
-		for _, stale := range existingByKey {
-			if stale == nil {
-				continue
-			}
-			before := *stale
-			if err := tx.DeleteSlotScoped(ctx, workspaceID, agentID, stale.ID); err != nil {
-				return mapRepoError(err, "delete removed agent memory slot")
-			}
-			if err := recordSlotEvent(ctx, tx, workspaceID, agentID, before.Key, EventActionSlotDelete, organizerMetadata(), &before, nil); err != nil {
-				return err
-			}
+		if err := tx.SyncBlockDefinitions(ctx, agentID, next); err != nil {
+			return err
 		}
 		slots, err := tx.ListSlots(ctx, workspaceID, agentID, false)
 		if err != nil {
-			return fmt.Errorf("list updated agent memory slots: %w", err)
-		}
-		// Memory block definitions (ADR 0013) mirror the slots in the same
-		// transaction, so they never drift from what builders configured.
-		if err := tx.SyncBlockDefinitions(ctx, agentID, slots); err != nil {
-			return err
+			return fmt.Errorf("list updated agent memory blocks: %w", err)
 		}
 		response = slotResponses(slots)
 		return nil
@@ -1569,17 +1507,6 @@ func normalizeMutationMetadata(meta MutationMetadata) MutationMetadata {
 		meta.OperationID = &operationID
 	}
 	return meta
-}
-
-func slotUpdateAction(before *AgentMemorySlot, after *AgentMemorySlot) string {
-	if before != nil && after != nil && before.Enabled && !after.Enabled {
-		return EventActionSlotDisable
-	}
-	return EventActionSlotUpdate
-}
-
-func recordSlotEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, action string, meta MutationMetadata, before *AgentMemorySlot, after *AgentMemorySlot) error {
-	return recordEvent(ctx, repo, workspaceID, agentID, slotKey, "", nil, action, meta, nil, nil)
 }
 
 func recordValueEvent(ctx context.Context, repo store, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID, action string, meta MutationMetadata, before *AgentMemoryValue, after *AgentMemoryValue) error {

@@ -102,8 +102,9 @@ func CreateJSONMessage(data map[string]interface{}) tools.ToolInvokeMessage {
 
 // BuiltinProvider is the base struct for builtin tool providers
 type BuiltinProvider struct {
-	entity tools.ToolProviderEntity
-	tools  map[string]tools.Tool
+	entity  tools.ToolProviderEntity
+	tools   map[string]tools.Tool
+	aliases map[string]string
 }
 
 // NewBuiltinProvider creates a new builtin provider
@@ -133,9 +134,21 @@ func (p *BuiltinProvider) GetProviderType() tools.ToolProviderType {
 	return tools.ToolProviderTypeBuiltin
 }
 
-// GetTool returns a tool by name
+// RegisterToolAlias makes GetTool resolve a former tool name to a registered
+// tool. Aliases are not listed by GetTools or the provider entity.
+func (p *BuiltinProvider) RegisterToolAlias(alias, name string) {
+	if p.aliases == nil {
+		p.aliases = map[string]string{}
+	}
+	p.aliases[alias] = name
+}
+
+// GetTool returns a tool by name or alias
 func (p *BuiltinProvider) GetTool(name string) (tools.Tool, error) {
 	if tool, ok := p.tools[name]; ok {
+		return tool, nil
+	}
+	if tool, ok := p.tools[p.aliases[name]]; ok {
 		return tool, nil
 	}
 	return nil, tools.ErrToolNotFound

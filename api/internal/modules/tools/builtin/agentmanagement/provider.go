@@ -23,15 +23,17 @@ import (
 )
 
 const (
-	ProviderID                               = "agent_management"
-	ToolListAgents                           = "list_agents"
-	ToolGetAgent                             = "get_agent"
-	ToolCreateAgent                          = "create_agent"
-	ToolUpdateAgentIdentity                  = "update_agent_identity"
-	ToolDeleteAgent                          = "delete_agent"
-	ToolDeleteAgents                         = "delete_agents"
-	ToolGetAgentConfig                       = "get_agent_config"
-	ToolUpdateAgentConfig                    = "update_agent_config"
+	ProviderID                   = "agent_management"
+	ToolListAgents               = "list_agents"
+	ToolGetAgent                 = "get_agent"
+	ToolCreateAgent              = "create_agent"
+	ToolUpdateAgentIdentity      = "update_agent_identity"
+	ToolDeleteAgent              = "delete_agent"
+	ToolDeleteAgents             = "delete_agents"
+	ToolGetAgentConfig           = "get_agent_config"
+	ToolUpdateAgentConfig        = "update_agent_config"
+	ToolReplaceAgentMemoryBlocks = "replace_agent_memory_blocks"
+	// ToolReplaceAgentMemorySlots is the name before ADR 0016, still accepted.
 	ToolReplaceAgentMemorySlots              = "replace_agent_memory_slots"
 	ToolListAgentSkillCandidates             = "list_agent_skill_candidates"
 	ToolListAgentKnowledgeCandidates         = "list_agent_knowledge_candidates"
@@ -143,7 +145,8 @@ func NewProvider(agentsService interfaces.AgentsService, workspacePerms Workspac
 	provider.RegisterTool(newDeleteAgentsTool(agentsService))
 	provider.RegisterTool(newGetAgentConfigTool(agentsService))
 	provider.RegisterTool(newUpdateAgentConfigToolWithManagedFiles(agentsService, availableModels, provider.managedFiles, workspacePerms))
-	provider.RegisterTool(newReplaceAgentMemorySlotsTool(agentsService))
+	provider.RegisterTool(newReplaceAgentMemoryBlocksTool(agentsService))
+	provider.RegisterToolAlias(ToolReplaceAgentMemorySlots, ToolReplaceAgentMemoryBlocks)
 	provider.RegisterTool(newListAgentSkillCandidatesTool(agentsService))
 	provider.RegisterTool(newListAgentKnowledgeCandidatesTool(agentsService))
 	provider.RegisterTool(newListAgentDatabaseCandidatesTool(agentsService))
@@ -187,7 +190,7 @@ type resolvedSystemPromptMutation struct {
 	Characters int
 	Request    *dto.AgentSystemPromptPatchRequest
 }
-type replaceAgentMemorySlotsTool struct{ agentToolBase }
+type replaceAgentMemoryBlocksTool struct{ agentToolBase }
 type listAgentSkillCandidatesTool struct{ agentToolBase }
 type listAgentKnowledgeCandidatesTool struct{ agentToolBase }
 type listAgentDatabaseCandidatesTool struct{ agentToolBase }
@@ -349,15 +352,15 @@ func newUpdateAgentConfigToolWithManagedFiles(agentsService interfaces.AgentsSer
 	), agentsService, workspacePerms, availableModels), managedFiles: managedFiles}
 }
 
-func newReplaceAgentMemorySlotsTool(agentsService interfaces.AgentsService) tools.Tool {
-	return &replaceAgentMemorySlotsTool{agentToolBase: newAgentToolBase(agentToolEntity(
-		ToolReplaceAgentMemorySlots,
-		"Replace Agent Memory Slots",
-		"Replace the complete draft Agent memory slot list for one resolved AGENT asset. Use together with update_agent_config when enabling or disabling Agent memory.",
+func newReplaceAgentMemoryBlocksTool(agentsService interfaces.AgentsService) tools.Tool {
+	return &replaceAgentMemoryBlocksTool{agentToolBase: newAgentToolBase(agentToolEntity(
+		ToolReplaceAgentMemoryBlocks,
+		"Replace Agent Memory Blocks",
+		"Replace the complete draft Agent memory block list for one resolved AGENT asset. Use together with update_agent_config when enabling or disabling Agent memory.",
 		"database",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
-			stringParameter("agent_memory_slots", "Agent memory slots", "Required JSON array replacing all memory slots. Each item supports key, description, enabled, and optional sort_order. Use [] to clear slots.", true),
+			stringParameter("agent_memory_blocks", "Agent memory blocks", "Required JSON array replacing all memory blocks. Each item supports key, name, description, max_chars, enabled, read_only, auto_write, and optional sort_order. Use [] to clear blocks.", true),
 		},
 	), agentsService, nil, nil)}
 }
@@ -1601,7 +1604,7 @@ func agentModelHintTokenIsGeneric(token string) bool {
 	}
 }
 
-func (t *replaceAgentMemorySlotsTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
+func (t *replaceAgentMemoryBlocksTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
 	_ = conversationID
 	_ = appID
 	_ = messageID
@@ -1613,12 +1616,12 @@ func (t *replaceAgentMemorySlotsTool) Invoke(ctx context.Context, userID string,
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
-	slots, ok, err := agentMemorySlotsParam(params, "agent_memory_slots", "slots")
+	slots, ok, err := agentMemorySlotsParam(params, "agent_memory_blocks", "agent_memory_slots", "blocks", "slots")
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("agent_memory_slots is required")
+		return nil, fmt.Errorf("agent_memory_blocks is required")
 	}
 	updated, err := t.agentsService.ReplaceAgentMemorySlots(t.scopedContext(ctx, scope), agentID, scope.AccountID, slots)
 	if err != nil {
@@ -2978,8 +2981,8 @@ func (t *updateAgentConfigTool) ForkToolRuntime(runtime *tools.ToolRuntime) tool
 	return &updateAgentConfigTool{agentToolBase: t.forkAgentToolBase(runtime), managedFiles: t.managedFiles}
 }
 
-func (t *replaceAgentMemorySlotsTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
-	return &replaceAgentMemorySlotsTool{agentToolBase: t.forkAgentToolBase(runtime)}
+func (t *replaceAgentMemoryBlocksTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
+	return &replaceAgentMemoryBlocksTool{agentToolBase: t.forkAgentToolBase(runtime)}
 }
 
 func (t *listAgentSkillCandidatesTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {

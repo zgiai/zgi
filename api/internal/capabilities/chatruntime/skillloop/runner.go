@@ -1965,7 +1965,7 @@ func isAgentManagementMutationTool(skillID string, toolName string) bool {
 	case "update_agent_identity", "update_agent_config",
 		"replace_agent_skill_bindings", "replace_agent_knowledge_bindings",
 		"replace_agent_database_bindings", "replace_agent_workflow_bindings",
-		"replace_agent_memory_slots":
+		"replace_agent_memory_blocks", "replace_agent_memory_slots":
 		return true
 	default:
 		return false

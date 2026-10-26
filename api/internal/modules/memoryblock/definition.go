@@ -73,20 +73,24 @@ func SyncAgentSlots(ctx context.Context, tx *gorm.DB, agentID uuid.UUID, slots [
 	labels := make([]string, 0, len(slots))
 	for _, slot := range slots {
 		labels = append(labels, slot.Key)
-		definition := Definition{
-			ID: uuid.New(), ConsumerType: ConsumerAgent, ConsumerID: agentID, Label: slot.Key,
-			Name: slot.Name, Description: slot.Description, LimitChars: slot.MaxChars,
-			Partition: PartitionPerson, Owner: OwnerUser, ReadOnly: slot.ReadOnly, AutoWrite: slot.AutoWrite,
-			Enabled: slot.Enabled, SortOrder: slot.SortOrder, CreatedAt: now, UpdatedAt: now,
+		updates := map[string]any{
+			"name": slot.Name, "description": slot.Description, "limit_chars": slot.MaxChars,
+			"enabled": slot.Enabled, "sort_order": slot.SortOrder, "read_only": slot.ReadOnly, "auto_write": slot.AutoWrite,
+			"deleted_at": nil, "updated_at": now,
 		}
-		err := tx.WithContext(ctx).Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "consumer_type"}, {Name: "consumer_id"}, {Name: "label"}},
-			DoUpdates: clause.Assignments(map[string]any{
-				"name": slot.Name, "description": slot.Description, "limit_chars": slot.MaxChars,
-				"enabled": slot.Enabled, "sort_order": slot.SortOrder, "read_only": slot.ReadOnly, "auto_write": slot.AutoWrite,
-				"deleted_at": nil, "updated_at": now,
-			}),
-		}).Create(&definition).Error
+		row := map[string]any{
+			"id": uuid.New(), "consumer_type": ConsumerAgent, "consumer_id": agentID, "label": slot.Key,
+			"partition": PartitionPerson, "owner": OwnerUser, "created_at": now,
+		}
+		for column, value := range updates {
+			row[column] = value
+		}
+		// A map insert keeps false booleans; a struct insert would replace them
+		// with the column defaults (enabled and auto_write default to true).
+		err := tx.WithContext(ctx).Model(&Definition{}).Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "consumer_type"}, {Name: "consumer_id"}, {Name: "label"}},
+			DoUpdates: clause.Assignments(updates),
+		}).Create(row).Error
 		if err != nil {
 			return fmt.Errorf("sync memory block definition %s: %w", slot.Key, err)
 		}

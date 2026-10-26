@@ -517,7 +517,7 @@ func summarizeAgentManagementResult(toolName string, payload map[string]interfac
 		result := compactAgentConfigOperationResult(payload)
 		copyCompactField(result, payload, "draft_updated")
 		return result
-	case "replace_agent_memory_slots":
+	case "replace_agent_memory_blocks", "replace_agent_memory_slots":
 		return compactAgentConfigOperationResult(payload)
 	case "replace_agent_skill_bindings":
 		return compactAgentBindingOperationResult(payload, "agent_skill")

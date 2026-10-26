@@ -744,7 +744,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       const payloadMemorySlotErrors = validateAgentMemorySlots(
         payload.agent_memory_slots ?? []
       ).some(Boolean);
-      if (payloadMemorySlotErrors) throw new Error('Invalid Agent Memory slot configuration');
+      if (payloadMemorySlotErrors) throw new Error('Invalid Agent memory block configuration');
       let configPayload: UpdateAgentRuntimeConfigRequest = {
         ...payload,
         agent_memory_config_revision: agentMemoryConfigRevision || undefined,

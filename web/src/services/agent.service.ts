@@ -308,7 +308,7 @@ class AgentService extends BaseService {
   getAgentMemorySlots(
     agentId: string
   ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
-    return this.request('get', `/agents/${agentId}/memory/slots`, undefined, {
+    return this.request('get', `/agents/${agentId}/memory/blocks`, undefined, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -319,7 +319,7 @@ class AgentService extends BaseService {
   ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
     return this.request(
       'put',
-      `/agents/${agentId}/memory/slots`,
+      `/agents/${agentId}/memory/blocks`,
       { slots },
       {
         headers: { 'Content-Type': 'application/json' },

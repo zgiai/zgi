@@ -94,6 +94,22 @@ func (f *fakeStore) LockAgent(ctx context.Context, agentID uuid.UUID) error {
 
 func (f *fakeStore) SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error {
 	f.syncedDefinitions = len(slots)
+	idByKey := map[string]uuid.UUID{}
+	for id, slot := range f.slots {
+		if slot.AgentID == agentID {
+			idByKey[slot.Key] = id
+			delete(f.slots, id)
+		}
+	}
+	for _, slot := range slots {
+		next := *slot
+		next.WorkspaceID, next.AgentID = f.workspaceID, agentID
+		next.ID = uuid.New()
+		if id, ok := idByKey[slot.Key]; ok {
+			next.ID = id
+		}
+		f.slots[next.ID] = &next
+	}
 	return nil
 }
 
@@ -106,48 +122,6 @@ func (f *fakeStore) ListSlots(ctx context.Context, workspaceID, agentID uuid.UUI
 		}
 	}
 	return out, nil
-}
-
-func (f *fakeStore) CreateSlot(ctx context.Context, slot *AgentMemorySlot) error {
-	if slot.ID == uuid.Nil {
-		slot.ID = uuid.New()
-	}
-	copy := *slot
-	f.slots[slot.ID] = &copy
-	return nil
-}
-
-func (f *fakeStore) UpdateSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID, values map[string]interface{}) (*AgentMemorySlot, error) {
-	slot := f.slots[slotID]
-	if slot == nil || slot.WorkspaceID != workspaceID || slot.AgentID != agentID {
-		return nil, gorm.ErrRecordNotFound
-	}
-	if v, ok := values["description"].(string); ok {
-		slot.Description = v
-	}
-	if v, ok := values["name"].(string); ok {
-		slot.Name = v
-	}
-	if v, ok := values["max_chars"].(int); ok {
-		slot.MaxChars = v
-	}
-	if v, ok := values["enabled"].(bool); ok {
-		slot.Enabled = v
-	}
-	if v, ok := values["sort_order"].(int); ok {
-		slot.SortOrder = v
-	}
-	copy := *slot
-	return &copy, nil
-}
-
-func (f *fakeStore) DeleteSlotScoped(ctx context.Context, workspaceID, agentID, slotID uuid.UUID) error {
-	slot := f.slots[slotID]
-	if slot == nil || slot.WorkspaceID != workspaceID || slot.AgentID != agentID {
-		return gorm.ErrRecordNotFound
-	}
-	delete(f.slots, slotID)
-	return nil
 }
 
 func (f *fakeStore) ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error) {
