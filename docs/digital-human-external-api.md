@@ -350,6 +350,14 @@ key itself. The same key can safely serve many users. Every task request uses
 the same `user` value as chat and conversation requests, and the value is
 validated but never returned or persisted as raw text.
 
+Each returned task also includes `visibility` (`requester` for API tasks),
+`can_change`, and, once a proposal is approved, `confirmed_at`. The API keeps
+returning only tasks requested by the supplied `user`, including after the
+DigitalHuman's task visibility rollout.
+
+返回的任务还包含 `visibility`（API 任务为 `requester`）、`can_change`，以及提案获批后的
+`confirmed_at`。启用数字人任务可见性后，API 依然只返回该 `user` 发起的任务。
+
 API-created tasks use the task center as their primary result destination. The
 returned task includes `delivery_target: "task_center"` and keeps
 `delivery_fallback: "task_center"` for clients that share the same response

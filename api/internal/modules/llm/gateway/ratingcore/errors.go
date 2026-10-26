@@ -6,16 +6,17 @@
 // import is exact decimal arithmetic (github.com/shopspring/decimal). It has no
 // process, network, clock, or filesystem side effects.
 //
-// The source lives at zgi-console/api/internal/modules/billing/ratingcore and
-// is copied wholesale to zgi-pre/api/internal/modules/llm/gateway/ratingcore.
+// The source lives in the Console repository at
+// api/internal/modules/billing/ratingcore and is copied wholesale to the Pre
+// repository at api/internal/modules/llm/gateway/ratingcore.
 // Never edit the Pre copy by hand; run the sync target instead.
 package ratingcore
 
 import "fmt"
 
 // Stable, cataloged error codes. These values are frozen contract and are
-// registered in error-catalog-v1.json / 错误码表-v1.md. Do not invent codes
-// here without registering them in the contract first.
+// registered in error-catalog-v1.json and the v1 error code table. Do not
+// invent codes here without registering them in the contract first.
 const (
 	// CodePricingNotConfigured means no price matched the requested
 	// operation/meter/unit combination. It must never fall back to another

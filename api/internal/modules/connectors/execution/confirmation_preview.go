@@ -123,6 +123,9 @@ func previewText(value string, limit int) (string, bool) {
 }
 
 func buildConfirmationPreview(request ExecutionRequest, connection core.PersonalConnection, recipient string) *ConfirmationPreview {
+	if catalog.IsSocialMCPConnector(request.ConnectorID.String()) {
+		return buildSocialConfirmationPreview(request, connection)
+	}
 	if request.ConnectorID.String() == catalog.ServerOpsSSHConnectorID {
 		return buildServerOpsSSHConfirmationPreview(request, connection)
 	}

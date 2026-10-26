@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/capabilities/text2sql"
+	"github.com/zgiai/zgi/api/internal/capabilities/workjournal"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
@@ -26,6 +27,7 @@ import (
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
 	connectoraudit "github.com/zgiai/zgi/api/internal/modules/connectors/audit"
+	connectorbackgroundauth "github.com/zgiai/zgi/api/internal/modules/connectors/backgroundauth"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectorconnections "github.com/zgiai/zgi/api/internal/modules/connectors/connections"
@@ -42,8 +44,11 @@ import (
 	connectorgmail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/gmail"
 	connectormail "github.com/zgiai/zgi/api/internal/modules/connectors/providers/mailprotocol"
 	connectorserveropsssh "github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
+	connectorsocialmcp "github.com/zgiai/zgi/api/internal/modules/connectors/providers/socialmcp"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	connectorruntimeconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
+	connectorsocialevents "github.com/zgiai/zgi/api/internal/modules/connectors/socialevents"
+	connectorsocialoauth "github.com/zgiai/zgi/api/internal/modules/connectors/socialoauth"
 	"github.com/zgiai/zgi/api/internal/modules/consolesync"
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
@@ -65,6 +70,7 @@ import (
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	"github.com/zgiai/zgi/api/internal/modules/shared/adapters"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/socialops"
 	system_repo "github.com/zgiai/zgi/api/internal/modules/system/repository"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -264,6 +270,8 @@ type ServiceContainer struct {
 	connectorTargetAuthority             *connectorTargetAuthority
 	connectorBindingService              *connectorbindings.Service
 	connectorAuditRepo                   *connectoraudit.GormRepository
+	connectorSocialEvents                *connectorsocialevents.Service
+	connectorSocialOAuth                 *connectorsocialoauth.Service
 	connectorCredentialCipher            *connectorcredentials.Store
 	connectorPersonalConnectionResolver  *connectorcredentials.PersonalConnectionResolver
 	digitalHumanCredentialCipher         credentialcrypto.CredentialCipher
@@ -285,6 +293,9 @@ type ServiceContainer struct {
 	connectorOnboardingService           *connectoronboarding.Service
 	connectorMaintenanceService          *connectorconnections.MaintenanceService
 	connectorChatPreferenceService       *connectorpreferences.Service
+	connectorBackgroundGrantService      *connectorbackgroundauth.Service
+	connectorBackgroundAuthorization     *ConnectorBackgroundAuthorization
+	backgroundTaskRunResolver            *BackgroundTaskRunResolver
 
 	// Legacy external integrations
 
@@ -316,6 +327,12 @@ type ServiceContainer struct {
 	shortLinkService             shortlinkcap.Service
 	digitalHumanService          *digitalhuman.Service
 	digitalHumanChannelReceivers *digitalhuman.ChannelReceiverManager
+	workJournal                  *workjournal.Service
+	workJournalOnce              sync.Once
+	workJournalErr               error
+	socialOperations             *socialops.Service
+	socialOperationsOnce         sync.Once
+	socialOperationsErr          error
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
@@ -1091,6 +1108,8 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 		_ = c.toolManager.RegisterProvider(files_tools.NewProvider(c.GetFileService(), c.GetContentExtractor(), c.GetOrganizationService(), files_tools.WithFileListService(c.GetFileFolderService())))
 		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
 		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
+		_ = c.toolManager.RegisterProvider(c.newSocialOperationsProvider())
+		_ = c.toolManager.RegisterProvider(c.newWorkJournalProvider())
 		if err := c.registerConnectorToolProviders(c.toolManager); err != nil {
 			panic(err)
 		}
@@ -1221,7 +1240,7 @@ func (c *ServiceContainer) GetConnectorCredentialResolver() *connectorcredential
 func (c *ServiceContainer) GetConnectorPersonalConnectionResolver() *connectorcredentials.PersonalConnectionResolver {
 	if c.connectorPersonalConnectionResolver == nil {
 		c.connectorPersonalConnectionResolver = connectorcredentials.NewPersonalConnectionResolver(
-			c.GetConnectorConnectionRepository(), c.GetConnectorCredentialResolver(),
+			c.GetConnectorConnectionRepository(), c.GetConnectorRefreshingCredentialResolver(),
 		)
 	}
 	return c.connectorPersonalConnectionResolver
@@ -1315,6 +1334,13 @@ func (c *ServiceContainer) GetConnectorCandidateVerifier() *connectorproviders.R
 		// invocation, or a host-key probe reaches the capability.
 		_, serverOpsSSH := c.getServerOpsSSHClient()
 		drivers := append([]connectorproviders.Driver{github, githubMCP, exa, feishu, gmail, serverOpsSSH}, c.messagingDrivers()...)
+		for _, id := range []string{"x-social", "linkedin-social", "facebook-social"} {
+			driver, err := connectorsocialmcp.New(id, connectorsocialmcp.Options{NodeCommand: c.config.Connectors.SocialMCPNode, ScriptPath: c.config.Connectors.SocialMCPScript, Events: &connectorSocialEventStore{container: c}})
+			if err != nil {
+				panic("initialize social MCP Connector: invalid deployment configuration")
+			}
+			drivers = append(drivers, driver)
+		}
 		for _, id := range []string{"qqmail", "netease163"} {
 			driver, err := connectormail.New(connectormail.Options{Provider: id, HandleKey: c.config.Connectors.CredentialKeys[c.config.Connectors.CredentialActiveKeyID]})
 			if err != nil {
@@ -1414,7 +1440,7 @@ func (c *ServiceContainer) GetConnectorMaintenanceService() *connectorconnection
 			c.GetConnectorBindingRepository(),
 			c.GetConnectorCandidateVerifier(),
 			c.GetConnectorCredentialSealer(),
-			c.GetConnectorCredentialResolver(),
+			c.GetConnectorRefreshingCredentialResolver(),
 			c.connectorCommandHasher,
 			c.connectorImpactTokenCodec,
 		)
@@ -1449,7 +1475,7 @@ func (c *ServiceContainer) GetConnectorExecutionService() *connectorexecution.Se
 			c.GetConnectorConnectionRepository(),
 			c.GetConnectorTargetAuthority(),
 			c.GetConnectorTrustedRiskResolver(),
-			c.GetConnectorCredentialResolver(),
+			c.GetConnectorRefreshingCredentialResolver(),
 			c.GetConnectorAuditRepository(),
 			c.GetConnectorNativeProviderInvoker(),
 			c.connectorResultProjector,
@@ -1457,7 +1483,7 @@ func (c *ServiceContainer) GetConnectorExecutionService() *connectorexecution.Se
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector execution service: %v", err))
 		}
-		c.connectorExecutionService = executionService
+		c.connectorExecutionService = executionService.WithBackgroundAuthorizer(connectorBackgroundAuthorizationProxy{container: c})
 	}
 	return c.connectorExecutionService
 }

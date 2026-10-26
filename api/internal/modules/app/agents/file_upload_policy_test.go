@@ -34,7 +34,13 @@ func TestFileUploadPolicyDraftSnapshotAndLegacySave(t *testing.T) {
 		t.Fatalf("legacy save broadened=%+v", got)
 	}
 	if _, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{FileUploadPolicy: &chatfile.Policy{AllowedFileTypes: []string{"custom"}}}); err == nil {
-		t.Fatal("custom allowed")
+		t.Fatal("custom without extensions allowed")
+	}
+	if _, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{FileUploadPolicy: &chatfile.Policy{AllowedFileTypes: []string{"custom"}, AllowedFileExtensions: []string{".DWG"}, NumberLimits: 8}}); err != nil {
+		t.Fatalf("custom extensions rejected: %v", err)
+	}
+	if got := agentConfigResponse("agent", cfg).FileUploadPolicy; got == nil || got.AllowedFileExtensions[0] != "dwg" || got.NumberLimits != 8 {
+		t.Fatalf("custom policy = %+v", got)
 	}
 	if got := agentConfigResponseFromSnapshot("agent", map[string]interface{}{}).FileUploadPolicy; got != nil {
 		t.Fatal("legacy snapshot changed")

@@ -199,6 +199,7 @@ assert.match(routeModulesSource, /'connectors'/);
 // Legacy Key setup remains simple. Versioned application and messaging
 // onboarding may expose QR steps without adding a Key policy editor.
 const {
+  oauth: enSocialOAuth,
   app: enApp,
   messaging: enMessaging,
   pending: enPending,
@@ -206,12 +207,17 @@ const {
   ...enKeyCopy
 } = en;
 const {
+  oauth: zhSocialOAuth,
   app: zhApp,
   messaging: zhMessaging,
   pending: zhPending,
   platform: zhPlatform,
   ...zhKeyCopy
 } = zh;
+assert.match(enSocialOAuth.connect, /Connect/);
+assert.match(zhSocialOAuth.connect, /连接/);
+assert.match(enSocialOAuth.changedIdentity, /new connection/);
+assert.match(zhSocialOAuth.changedIdentity, /新连接/);
 assert.match(enPlatform.dingtalk, /choose the original robot/);
 assert.match(zhPlatform.dingtalk, /请选择原机器人/);
 assert.match(enPlatform.wecom, /documents?|table/);

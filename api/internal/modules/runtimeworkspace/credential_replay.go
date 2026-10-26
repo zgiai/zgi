@@ -36,7 +36,7 @@ type CredentialReplayAAD struct {
 
 type CredentialReplayProtector interface {
 	IdempotencyKeyHash(runtimeWorkspaceID, accountID uuid.UUID, rawKey string) (string, error)
-	RequestFingerprint(runtimeWorkspaceID, accountID uuid.UUID, name string, expiresAt *time.Time) string
+	RequestFingerprint(runtimeWorkspaceID, accountID uuid.UUID, name string, expiresAt *time.Time, limits ...string) string
 	Seal(secret string, aad CredentialReplayAAD) (string, error)
 	Open(envelope string, aad CredentialReplayAAD) (string, error)
 }
@@ -81,12 +81,13 @@ func (protector *credentialReplayProtector) IdempotencyKeyHash(runtimeWorkspaceI
 	return protector.digest("idempotency-key", runtimeWorkspaceID.String(), accountID.String(), rawKey), nil
 }
 
-func (protector *credentialReplayProtector) RequestFingerprint(runtimeWorkspaceID, accountID uuid.UUID, name string, expiresAt *time.Time) string {
+func (protector *credentialReplayProtector) RequestFingerprint(runtimeWorkspaceID, accountID uuid.UUID, name string, expiresAt *time.Time, limits ...string) string {
 	expiration := ""
 	if expiresAt != nil {
 		expiration = expiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	return protector.digest("request-fingerprint", runtimeWorkspaceID.String(), accountID.String(), strings.TrimSpace(name), expiration)
+	parts := append([]string{"request-fingerprint", runtimeWorkspaceID.String(), accountID.String(), strings.TrimSpace(name), expiration}, limits...)
+	return protector.digest(parts...)
 }
 
 func (protector *credentialReplayProtector) digest(parts ...string) string {

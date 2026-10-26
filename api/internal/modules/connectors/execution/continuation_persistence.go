@@ -135,6 +135,32 @@ func (store *GormConfirmationContinuationStore) Load(
 	return store.continuationFromRecord(ctx, record)
 }
 
+// LoadByReceipt loads a continuation by tenant and receipt for a decider
+// who is not its owner. Callers must authorize the decider against the
+// continuation's host before they use it.
+func (store *GormConfirmationContinuationStore) LoadByReceipt(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	receipt RouteClaimReceipt,
+) (ConfirmationContinuation, error) {
+	if err := store.available(); err != nil {
+		return ConfirmationContinuation{}, err
+	}
+	if organizationID == uuid.Nil || !validUUIDReceipt(receipt) {
+		return ConfirmationContinuation{}, connectorError(core.ErrorCodeInvalidInput, false)
+	}
+	receiptID, _ := uuid.Parse(string(receipt))
+	var record confirmationContinuationRecord
+	err := store.db.WithContext(ctx).Where("route_receipt = ? AND organization_id = ?", receiptID, organizationID).Take(&record).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ConfirmationContinuation{}, connectorError(core.ErrorCodeAccessDenied, false)
+	}
+	if err != nil {
+		return ConfirmationContinuation{}, connectorError(core.ErrorCodeInternal, false)
+	}
+	return store.continuationFromRecord(ctx, record)
+}
+
 type PendingConfirmationRef struct {
 	RouteReceipt RouteClaimReceipt `json:"route_receipt"`
 	CreatedAt    time.Time         `json:"created_at"`

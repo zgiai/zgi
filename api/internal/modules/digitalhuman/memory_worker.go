@@ -220,12 +220,16 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 			return nil
 		}
 	}
-	if event.Origin.Kind == invocation.OriginManual && !memoryPromotionAuthorized(event) {
-		r.recordExtractionLedger(ctx, job, "rejected", map[string]any{"reason": "private_not_promoted"})
+	// The claim already verified automatic extraction for this epoch.
+	target := admitMemoryWrite(run, event, memoryWriteBackground, true)
+	if !target.Allowed {
+		r.recordExtractionLedger(ctx, job, "rejected", map[string]any{"reason": target.Reason, "source_trust": target.Trust})
 		return nil
 	}
+	scoped := memoryReadScopeForRun(run, event)
+	readScope := &scoped
 	scope := Scope{OrganizationID: job.OrganizationID, WorkspaceID: job.WorkspaceID, ActorID: source.AccountID}
-	current, err := r.service.RetrieveMemories(ctx, scope, job.DigitalHumanID, 50)
+	current, err := r.service.retrieveMemories(ctx, scope, job.DigitalHumanID, 50, readScope)
 	if err != nil {
 		fail("retrieve_current_memory")
 		return err
@@ -238,7 +242,7 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 		fail(memoryExtractionErrorCode(err))
 		return err
 	}
-	committed, rejected, err := r.applyDrafts(ctx, scope, job, run, source, current, drafts)
+	committed, rejected, err := r.applyDrafts(ctx, scope, job, run, source, current, drafts, target)
 	if err != nil {
 		fail(memoryExtractionErrorCode(err))
 		return err
@@ -330,14 +334,19 @@ func (r *MemoryExtractionRunner) applyDrafts(
 	source MemoryExtractionSource,
 	current []*DigitalHumanMemory,
 	drafts []MemoryExtractionDraft,
+	target memoryWriteAdmission,
 ) (int, int, error) {
 	if len(drafts) > memoryExtractionMaxProposals {
 		return 0, 0, ErrMemoryPolicyRejected
 	}
+	// Only memories in the target class and scope can be revised or
+	// superseded by this job; other readable memories only inform the model.
 	currentByKey := make(map[string]*DigitalHumanMemory, len(current))
+	currentByID := make(map[uuid.UUID]struct{}, len(current))
 	for _, item := range current {
-		if item != nil {
+		if item != nil && memoryInWriteTarget(item, target) {
 			currentByKey[memoryIdentity(item.MemoryKey)] = item
+			currentByID[item.ID] = struct{}{}
 		}
 	}
 	committed, rejected := 0, 0
@@ -350,14 +359,19 @@ func (r *MemoryExtractionRunner) applyDrafts(
 			expectedRevision = existing.Revision
 		}
 		operationID := uuid.NewSHA1(job.ID, []byte(identity))
+		if draft.SupersedesID != nil {
+			if _, ok := currentByID[*draft.SupersedesID]; !ok {
+				draft.SupersedesID, draft.ExpectedSupersededRevision = nil, 0
+			}
+		}
 		request := MemoryProposalRequest{
 			OperationID: operationID, Key: draft.Key, Action: memoryruntime.MutationActionUpsert,
-			MemoryClass: memoryruntime.MemoryClassSelf, MemoryType: draft.MemoryType, Content: draft.Content,
+			MemoryClass: target.Class, Scope: target.Scope, MemoryType: draft.MemoryType, Content: draft.Content,
 			ExpectedRevision: expectedRevision, ConfigRevision: job.ConfigRevision, MemoryEpoch: job.MemoryEpoch,
 			SupersedesID: draft.SupersedesID, ExpectedSupersededRevision: draft.ExpectedSupersededRevision,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
-			Visibility: MemoryVisibilityWorkspace, Confidence: draft.Confidence, RunID: &run.ID,
-			SourceContext: MemorySourceContext{PrivateConversation: false}, OccurredAt: source.CompletedAt,
+			Visibility: target.visibility(), Confidence: draft.Confidence, RunID: &run.ID,
+			SourceContext: MemorySourceContext{PrivateConversation: false, SourceTrust: target.Trust}, OccurredAt: source.CompletedAt,
 		}
 		result, err := r.service.ApplyAutonomousMemoryProposal(ctx, scope, job.DigitalHumanID, request)
 		if err != nil {
@@ -458,15 +472,22 @@ func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error
 	return output.Proposals, nil
 }
 
+// memoryInWriteTarget reports whether an existing memory lives in the class
+// and scope a write admission targets.
+func memoryInWriteTarget(memory *DigitalHumanMemory, target memoryWriteAdmission) bool {
+	if memory.MemoryClass != target.Class {
+		return false
+	}
+	if target.Scope == nil {
+		return memory.ScopeType == "" && memory.ScopeID == ""
+	}
+	return memory.ScopeType == target.Scope.Type && memory.ScopeID == target.Scope.ID
+}
+
 // memoryIdentity keys converged self memory by its semantic key alone; class
 // and business scope no longer partition the store.
 func memoryIdentity(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
-}
-
-func memoryPromotionAuthorized(event invocation.Event) bool {
-	value, _ := event.Context["memory_promotion_authorized"].(bool)
-	return value
 }
 
 func memoryExtractionRetryDelay(attempt int) time.Duration {

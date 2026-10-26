@@ -619,3 +619,64 @@ export interface ConnectorConfirmationPreview {
     truncated: boolean;
   }>;
 }
+
+/** Safe OAuth status only. Provider secrets never cross this boundary. */
+export interface ConnectorOAuthFlow {
+  id: string;
+  connector_id: string;
+  status: 'pending' | 'processing' | 'select_page' | 'install_app' | 'ready' | 'failed';
+  authorize_url?: string;
+  install_url?: string;
+  connection_id?: string;
+  pages?: Array<{ id: string; name: string }>;
+  error_code?: string;
+  renewal_mode?: string;
+  expires_at?: string;
+}
+
+/** A verified Page delivery batch; payload remains untrusted external content. */
+export interface ConnectorSocialEvent {
+  id: number;
+  provider: string;
+  kind: string;
+  source_id: string;
+  external_account_id: string;
+  received_at: string;
+  payload: Record<string, unknown>;
+}
+export interface ConnectorSocialEventPage {
+  items: ConnectorSocialEvent[];
+  next_after_id: number;
+}
+export interface PreparedSocialImage {
+  image_data: string;
+  mime_type: 'image/jpeg' | 'image/png';
+  width: number;
+  height: number;
+  bytes: number;
+}
+export interface IssueConnectorBackgroundGrantRequest {
+  operations: string[];
+  destinations?: Record<string, string>;
+  expires_at: string;
+  max_invocations: number;
+}
+
+export interface ConnectorBackgroundGrant {
+  id: string;
+  employee_id: string;
+  version_id: string;
+  binding_id: string;
+  connection_id: string;
+  operations: string[];
+  destinations: Record<string, string>;
+  expires_at: string;
+  max_invocations: number;
+  used_invocations: number;
+  revoked_at?: string;
+  created_at: string;
+  binding_revision: number;
+  connection_revision: number;
+  credential_version: number;
+  contract_digest: string;
+}

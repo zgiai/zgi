@@ -54,27 +54,30 @@ const (
 
 // Definition is the independently owned DigitalHuman aggregate root.
 type Definition struct {
-	ID                 uuid.UUID     `gorm:"type:uuid;primaryKey" json:"id"`
-	WebAppID           uuid.UUID     `gorm:"type:uuid;not null;uniqueIndex;column:web_app_id" json:"web_app_id"`
-	OrganizationID     uuid.UUID     `gorm:"type:uuid;not null;column:organization_id" json:"organization_id"`
-	WorkspaceID        uuid.UUID     `gorm:"type:uuid;not null;column:workspace_id" json:"workspace_id"`
-	Name               string        `gorm:"type:varchar(80);not null" json:"name"`
-	Avatar             string        `gorm:"type:text;not null;default:''" json:"avatar"`
-	IconType           string        `gorm:"type:varchar(16);not null;default:'text';column:icon_type" json:"icon_type"`
-	Icon               string        `gorm:"type:text;not null;default:''" json:"icon"`
-	IconURL            string        `gorm:"-" json:"icon_url,omitempty"`
-	Description        string        `gorm:"type:text;not null;default:''" json:"description"`
-	Status             Status        `gorm:"type:varchar(16);not null;default:'draft'" json:"status"`
-	AutonomyLevel      AutonomyLevel `gorm:"type:varchar(16);not null;default:'supervised'" json:"autonomy_level"`
-	Visibility         Visibility    `gorm:"type:varchar(16);not null;default:'workspace'" json:"visibility"`
-	DraftVersionID     *uuid.UUID    `gorm:"type:uuid;column:draft_version_id" json:"draft_version_id,omitempty"`
-	PublishedVersionID *uuid.UUID    `gorm:"type:uuid;column:published_version_id" json:"published_version_id,omitempty"`
-	Revision           int64         `gorm:"not null;default:1" json:"revision"`
-	CreatedBy          *uuid.UUID    `gorm:"type:uuid;column:created_by" json:"created_by,omitempty"`
-	UpdatedBy          *uuid.UUID    `gorm:"type:uuid;column:updated_by" json:"updated_by,omitempty"`
-	CreatedAt          time.Time     `gorm:"not null" json:"created_at"`
-	UpdatedAt          time.Time     `gorm:"not null" json:"updated_at"`
-	DeletedAt          *time.Time    `gorm:"column:deleted_at" json:"-"`
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey" json:"id"`
+	WebAppID       uuid.UUID `gorm:"type:uuid;not null;uniqueIndex;column:web_app_id" json:"web_app_id"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;column:organization_id" json:"organization_id"`
+	WorkspaceID    uuid.UUID `gorm:"type:uuid;not null;column:workspace_id" json:"workspace_id"`
+	// IdentityWorkspaceID is the workspace end-user identities derive from:
+	// where the DigitalHuman was created, kept across workspace moves.
+	IdentityWorkspaceID *uuid.UUID    `gorm:"type:uuid;column:identity_workspace_id" json:"-"`
+	Name                string        `gorm:"type:varchar(80);not null" json:"name"`
+	Avatar              string        `gorm:"type:text;not null;default:''" json:"avatar"`
+	IconType            string        `gorm:"type:varchar(16);not null;default:'text';column:icon_type" json:"icon_type"`
+	Icon                string        `gorm:"type:text;not null;default:''" json:"icon"`
+	IconURL             string        `gorm:"-" json:"icon_url,omitempty"`
+	Description         string        `gorm:"type:text;not null;default:''" json:"description"`
+	Status              Status        `gorm:"type:varchar(16);not null;default:'draft'" json:"status"`
+	AutonomyLevel       AutonomyLevel `gorm:"type:varchar(16);not null;default:'supervised'" json:"autonomy_level"`
+	Visibility          Visibility    `gorm:"type:varchar(16);not null;default:'workspace'" json:"visibility"`
+	DraftVersionID      *uuid.UUID    `gorm:"type:uuid;column:draft_version_id" json:"draft_version_id,omitempty"`
+	PublishedVersionID  *uuid.UUID    `gorm:"type:uuid;column:published_version_id" json:"published_version_id,omitempty"`
+	Revision            int64         `gorm:"not null;default:1" json:"revision"`
+	CreatedBy           *uuid.UUID    `gorm:"type:uuid;column:created_by" json:"created_by,omitempty"`
+	UpdatedBy           *uuid.UUID    `gorm:"type:uuid;column:updated_by" json:"updated_by,omitempty"`
+	CreatedAt           time.Time     `gorm:"not null" json:"created_at"`
+	UpdatedAt           time.Time     `gorm:"not null" json:"updated_at"`
+	DeletedAt           *time.Time    `gorm:"column:deleted_at" json:"-"`
 }
 
 // TableName returns the DigitalHuman aggregate table.

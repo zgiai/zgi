@@ -34,6 +34,8 @@ const APP_TOKEN_MODULES: ModuleName[] = [
   'nodes',
 ];
 const ANNOUNCEMENT_TOKEN_MODULES: ModuleName[] = ['common', 'ui', 'nodes', 'webapp'];
+// A shared artifact, opened by anyone holding its link.
+const ARTIFACT_SHARE_MODULES: ModuleName[] = ['common', 'ui', 'webapp', 'digitalHumans'];
 const PROFILE_MODULES: ModuleName[] = ['common', 'ui', 'navigation', 'profile'];
 
 const CONSOLE_MODULES: ModuleName[] = [
@@ -118,6 +120,7 @@ function normalizePathname(pathname: string): string {
       'profile',
       'register',
       'reset-password',
+      's',
       'sso',
       'terms',
       'verify',
@@ -141,6 +144,7 @@ export function getModulesForPathname(pathname: string): ModuleName[] {
   if (firstSegment === 'webapp') return uniqueModules(WEBAPP_MODULES);
   if (firstSegment === 'a') return uniqueModules(APP_TOKEN_MODULES);
   if (firstSegment === 'n') return uniqueModules(ANNOUNCEMENT_TOKEN_MODULES);
+  if (firstSegment === 's') return uniqueModules(ARTIFACT_SHARE_MODULES);
   if (firstSegment === 'profile') return uniqueModules(PROFILE_MODULES);
 
   return PUBLIC_MODULES;

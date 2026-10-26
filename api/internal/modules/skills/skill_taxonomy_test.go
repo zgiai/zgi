@@ -58,8 +58,8 @@ func TestEmbeddedSkillCatalogUsesKnownTaxonomy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSystemSkillsBestEffort() error = %v", err)
 	}
-	if len(catalog) != 32 {
-		t.Fatalf("catalog size = %d, want 32", len(catalog))
+	if len(catalog) != 34 {
+		t.Fatalf("catalog size = %d, want 34", len(catalog))
 	}
 
 	iconOwners := make(map[string]string, len(catalog))

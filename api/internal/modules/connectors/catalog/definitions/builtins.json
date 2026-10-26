@@ -34,17 +34,17 @@
     "key_fields": [
       {
         "name": "token",
-        "label": "Personal access token",
+        "label": "Personal access token or App installation JSON",
         "label_i18n": {
-          "en-US": "Personal access token",
-          "zh-Hans": "个人访问令牌"
+          "en-US": "Personal access token or App installation JSON",
+          "zh-Hans": "个人访问令牌或 App 安装凭据 JSON"
         },
-        "placeholder": "github_pat_…",
+        "placeholder": "github_pat_… or github_app_installation_v1 JSON",
         "placeholder_i18n": {
-          "en-US": "github_pat_…",
-          "zh-Hans": "请输入 github_pat_…"
+          "en-US": "github_pat_… or github_app_installation_v1 JSON",
+          "zh-Hans": "输入 github_pat_… 或 github_app_installation_v1 JSON"
         },
-        "help_url": "https://github.com/settings/personal-access-tokens/new",
+        "help_url": "https://github.com/zgiai/zgi/blob/main/docs/integrations/social-oauth.md#github-app-installation-credentials",
         "required": true,
         "secret": true
       }

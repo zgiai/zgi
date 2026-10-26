@@ -23,6 +23,8 @@ import { supportsMessagingContract } from './messaging-setup-state';
 import { ConnectorMessagingSetupPanel } from './connector-messaging-setup-panel';
 import { supportsMailSetup } from './mail-setup-state';
 import { ConnectorMailSetupPanel } from './connector-mail-setup-panel';
+import { ConnectorSocialOAuthPanel } from './connector-social-oauth-panel';
+import { supportsSocialOAuth } from './social-oauth-state';
 import { ServerOpsSSHSetupPanel } from './serverops-ssh-setup-panel';
 
 function errorText(t: ScopedTranslations<'connectors'>, code: string | undefined): string {
@@ -63,6 +65,14 @@ export interface ConnectorKeySetupPanelProps {
 }
 
 export function ConnectorKeySetupPanel(props: ConnectorKeySetupPanelProps) {
+  if (supportsSocialOAuth(props.connector)) {
+    return (
+      <ConnectorSocialOAuthPanel
+        {...props}
+        manualFallback={<LegacyConnectorKeySetupPanel {...props} />}
+      />
+    );
+  }
   // Setup dispatch is connector-owned, so Connector Center, Agent, Digital
   // Human, and future hosts all receive the same SSH credential experience.
   if (supportsServerOpsSSHConnectorSetup(props.connector)) {

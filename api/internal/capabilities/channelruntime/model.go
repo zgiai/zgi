@@ -189,6 +189,10 @@ type ProcessingMarker struct {
 	ErrorMessage      string                      `gorm:"type:text;not null" json:"error_message,omitempty"`
 	CreatedAt         time.Time                   `gorm:"not null" json:"created_at"`
 	UpdatedAt         time.Time                   `gorm:"not null" json:"updated_at"`
+
+	// ProviderConversationID is set for providers whose markers address the
+	// message by its conversation too.
+	ProviderConversationID string `gorm:"type:varchar(255);not null" json:"provider_conversation_id,omitempty"`
 }
 
 func (ProcessingMarker) TableName() string { return "channel_processing_markers" }

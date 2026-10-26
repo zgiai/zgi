@@ -59,8 +59,22 @@ func (adapter *ChannelAdapter) sendChannelMessage(ctx context.Context, region, t
 	if err != nil {
 		return "", responseMeta{}, err
 	}
+	if card, ok := buildChannelCard(request); ok {
+		body = card
+	}
 	var response feishuMessageData
 	meta, err := adapter.provider.client.sendMessage(ctx, region, token, "chat_id", body, &response)
+	if err != nil && body.MsgType == "interactive" && feishuContentRejected(meta) {
+		// A rejected card goes as rich text; its text says what to reply.
+		body, err = buildChannelMessage(request, false)
+		if err != nil {
+			return "", meta, err
+		}
+		response = feishuMessageData{}
+		retryMeta, retryErr := adapter.provider.client.sendMessage(ctx, region, token, "chat_id", body, &response)
+		retryMeta.Attempts += meta.Attempts
+		meta, err = retryMeta, retryErr
+	}
 	if err != nil && body.MsgType == "post" && feishuContentRejected(meta) {
 		// Only an explicit content rejection proves that the first send did
 		// not succeed. Auth errors, DLP rejection, timeouts and invalid success

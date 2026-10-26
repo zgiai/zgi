@@ -2,6 +2,7 @@ package external
 
 import (
 	"context"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 
 	"github.com/gin-gonic/gin"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -35,7 +36,7 @@ import (
 )
 
 // RegisterAPIKeyRoutes registers external API routes with API key authentication
-func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, connectorDispatcher connectordispatch.Dispatcher, connectorRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorCatalog connectorexecution.DefinitionCatalog) {
+func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, connectorDispatcher connectordispatch.Dispatcher, connectorRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorCatalog connectorexecution.DefinitionCatalog, extras ...APIKeyRouteExtras) {
 	// Create repositories
 	workflowRepo := workflow.NewWorkflowRepository(db)
 	workflowRunLogRepo := workflow.NewWorkflowRunLogRepository(db)
@@ -217,9 +218,21 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 
 	// Runtime Workspace exposes the same published Agent runtime through one
 	// rotatable group credential while keeping the legacy /v1 contract intact.
-	RegisterRuntimeWorkspaceRoutes(r, RuntimeWorkspaceRouteDeps{
+	runtimeDeps := RuntimeWorkspaceRouteDeps{
 		DB:           db,
 		FileService:  fileService,
 		AgentHandler: agentHandler,
-	})
+	}
+	for _, extra := range extras {
+		if extra.DigitalHuman != nil {
+			runtimeDeps.DigitalHuman = extra.DigitalHuman
+		}
+	}
+	RegisterRuntimeWorkspaceRoutes(r, runtimeDeps)
+}
+
+// APIKeyRouteExtras carries optional collaborators of the external routes:
+// the DigitalHuman handler lets Runtime Workspaces serve bound DigitalHumans.
+type APIKeyRouteExtras struct {
+	DigitalHuman *digitalhuman.ExternalHandler
 }

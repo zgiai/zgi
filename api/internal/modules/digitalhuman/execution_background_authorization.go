@@ -19,6 +19,17 @@ import (
 // provider route or confirmed task before each Shell, export or CLI operation.
 // It deliberately does not treat a creator or scheduler as an end user.
 func (s *AccessService) AuthorizeBackgroundLinuxExecution(ctx context.Context, run *Run, event invocation.Event) error {
+	return s.authorizeBackgroundExecution(ctx, run, event, true)
+}
+
+// AuthorizeBackgroundConnectorExecution rechecks the same live published
+// employee and task/channel authority as background Linux execution without
+// requiring the publication to opt into a Linux sandbox.
+func (s *AccessService) AuthorizeBackgroundConnectorExecution(ctx context.Context, run *Run, event invocation.Event) error {
+	return s.authorizeBackgroundExecution(ctx, run, event, false)
+}
+
+func (s *AccessService) authorizeBackgroundExecution(ctx context.Context, run *Run, event invocation.Event, requireLinux bool) error {
 	if s == nil || s.db == nil || run == nil || (run.Surface != SurfaceChannel && run.Surface != SurfaceTask) {
 		return ErrNotFound
 	}
@@ -26,7 +37,10 @@ func (s *AccessService) AuthorizeBackgroundLinuxExecution(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	if access.Version.ExecutionRuntime == nil || !access.Version.ExecutionRuntime.Enabled {
+	if access.Version == nil || access.Version.ID != run.DigitalHumanVersionID {
+		return ErrPublishInvalid
+	}
+	if requireLinux && (access.Version.ExecutionRuntime == nil || !access.Version.ExecutionRuntime.Enabled) {
 		return ErrPublishInvalid
 	}
 	var frozen Version
@@ -34,7 +48,7 @@ func (s *AccessService) AuthorizeBackgroundLinuxExecution(ctx context.Context, r
 		run.DigitalHumanVersionID, run.DigitalHumanID, run.OrganizationID, run.WorkspaceID, VersionStatePublished).Take(&frozen).Error; err != nil {
 		return backgroundRecordError(err)
 	}
-	if frozen.ExecutionRuntime == nil || !frozen.ExecutionRuntime.Enabled {
+	if requireLinux && (frozen.ExecutionRuntime == nil || !frozen.ExecutionRuntime.Enabled) {
 		return ErrPublishInvalid
 	}
 	if run.Surface == SurfaceChannel {
@@ -132,7 +146,11 @@ func (s *AccessService) authorizeBackgroundTask(ctx context.Context, run *Run, e
 		}
 		var subject usersubject.Subject
 		if err := s.db.WithContext(ctx).Where("id = ? AND kind = ? AND issuer_type = ? AND issuer_id = ?", *run.UserSubjectID, usersubject.APIEndUser, "digital_human_api", run.DigitalHumanID).Take(&subject).Error; err != nil {
-			return ErrNotFound
+			// An end user of a Runtime Workspace that still binds this
+			// DigitalHuman is authorized the same way (ADR 0010).
+			if runtimeWorkspaces := s.runtimeWorkspaceAccess(); runtimeWorkspaces == nil || runtimeWorkspaces.SubjectBound(ctx, *run.UserSubjectID, run.DigitalHumanID) != nil {
+				return ErrNotFound
+			}
 		}
 	case TaskOwnerDigitalHuman:
 		// Scheduler runs intentionally do not persist an interactive ActorID.
@@ -172,8 +190,10 @@ func (s *AccessService) authorizeBackgroundAccount(ctx context.Context, run *Run
 	err := s.db.WithContext(ctx).Table("accounts AS accounts").
 		Joins("JOIN workspace_members AS members ON members.account_id = accounts.id").
 		Joins("JOIN workspaces ON workspaces.id = members.workspace_id").
-		Where("accounts.id = ? AND accounts.status = ? AND accounts.deleted_at IS NULL AND members.workspace_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?",
-			account, "active", run.WorkspaceID, run.OrganizationID, "normal").Count(&count).Error
+		// A pending account, such as the administrator created during setup,
+		// signs in and owns its tasks like an active one.
+		Where("accounts.id = ? AND accounts.status IN ? AND accounts.deleted_at IS NULL AND members.workspace_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?",
+			account, []string{"active", "pending"}, run.WorkspaceID, run.OrganizationID, "normal").Count(&count).Error
 	if err != nil {
 		return err
 	}

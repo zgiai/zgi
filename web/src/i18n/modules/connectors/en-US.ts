@@ -1,4 +1,98 @@
 const messages = {
+  backgroundGrants: {
+    title: 'Scheduled connector access',
+    description:
+      'Let scheduled runs use selected operations on one connected account within a fixed time and call limit.',
+    create: 'Add grant',
+    creating: 'Adding…',
+    created: 'Scheduled connector access added.',
+    createFailed: 'Could not add scheduled connector access.',
+    loadFailed: 'Could not load scheduled connector access.',
+    empty: 'No scheduled connector access has been granted for this digital human.',
+    regrantNotice:
+      'Publishing a new version, reconnecting the account, or changing its permissions makes an existing grant stale. Review the new setup and grant access again.',
+    unknownAccount: 'Unavailable account',
+    status: {
+      active: 'Active',
+      expired: 'Expired',
+      revoked: 'Revoked',
+      stale: 'Needs a new grant',
+    },
+    expires: 'Expires {date}',
+    usage: '{used} of {total} calls used',
+    revoke: 'Revoke',
+    revoked: 'Scheduled connector access revoked.',
+    revokeTitle: 'Revoke scheduled connector access?',
+    revokeDescription:
+      'Future scheduled runs will need confirmation or another matching grant for these operations.',
+    revokeFailed: 'Could not revoke scheduled connector access.',
+    dialogTitle: 'Add scheduled connector access',
+    dialogDescription:
+      'Choose one connected account and only the operations the digital human needs. Nothing is selected by default.',
+    account: 'Connected account',
+    accountPlaceholder: 'Choose an account and binding',
+    operations: 'Allowed operations',
+    operationsDescription:
+      'Each selected operation can run without per-call confirmation only while this grant still matches the published version and account.',
+    noOperations: 'This account currently has no operations available for a background grant.',
+    duration: 'Duration in days',
+    durationHint: 'From 1 to 90 days. The default is 7 days.',
+    maxCalls: 'Maximum calls',
+    destinations: 'Exact destination constraints (optional)',
+    destinationsDescription:
+      'Add a field and its exact allowed value, such as account_id and the approved page. A scheduled call must match every row.',
+    addDestination: 'Add constraint',
+    destinationField: 'Destination field',
+    destinationFieldPlaceholder: 'Field, for example account_id',
+    destinationValue: 'Exact destination value',
+    destinationValuePlaceholder: 'Exact allowed value',
+    removeDestination: 'Remove destination constraint',
+    cancel: 'Cancel',
+    errors: {
+      binding: 'Choose a connected account.',
+      operations: 'Select at least one operation. Operations cannot be duplicated.',
+      duration: 'Enter a whole number from 1 to 90 days.',
+      maxInvocations: 'Enter a whole number from 1 to 100,000 calls.',
+      destinations:
+        'Use unique field names and exact values. Wildcards, line breaks, and empty values are not allowed.',
+      request:
+        'The grant was not created. Review the live publication and account, then try again.',
+    },
+  },
+  oauth: {
+    title: 'Connect your platform account',
+    description:
+      'Authorize access on the platform. ZGI saves credentials securely and renews them automatically when the platform supports it. You may need to reconnect when authorization expires or is revoked.',
+    connect: 'Connect account',
+    reconnect: 'Reconnect account',
+    reconnectDescription:
+      'Authorize the same account to keep this connection and its usage locations. A different account or Facebook Page creates a separate connection.',
+    loading: 'Loading…',
+    waiting: 'Complete authorization in the new window. This screen updates automatically.',
+    installApp:
+      'Install ZGI Connect on GitHub and choose the repositories to allow. Then return here to finish connecting.',
+    openInstallation: 'Choose GitHub repositories',
+    completeInstallation: 'I have installed the app — continue',
+    installationFailed:
+      'Could not verify the installation. Check the selected account and repository access, then try again.',
+    selectPage: 'Choose the Facebook Page to connect',
+    noPages: 'No authorized Pages are available. Reconnect and grant access to a Page you manage.',
+    pageFailed: 'Could not save this Page. Retry your selection or refresh the status.',
+    ready: 'Your connection is ready. You can close the authorization window.',
+    changedIdentity:
+      'A different account or Page was authorized. A new connection was created; existing usage locations still use the original connection.',
+    failed: 'Authorization could not be completed. Retry authorization or use manual credentials.',
+    statusFailed: 'Could not load authorization status. Retry to check the result.',
+    blocked: 'Allow popups for this site, then try Connect again.',
+    closed:
+      'The authorization window was closed. Reconnect to start again, or wait for the saved result.',
+    unavailable:
+      'An administrator must configure this platform’s OAuth application before automatic authorization is available. You can use manual credentials below.',
+    manual: 'Use manual credentials',
+    back: 'Back to platform authorization',
+    returnToWindow:
+      'After authorization and any Page selection, return to your original ZGI window. It updates automatically.',
+  },
   operationPolicy: {
     added: 'Will allow: {operations}',
     removed: 'Will stop allowing: {operations}',
@@ -206,6 +300,7 @@ const messages = {
     weixin:
       'Retrieve direct messages explicitly and reply using their conversation context. Manual token setup is not available.',
     unavailable: 'This connection service is currently unavailable. Please try again later.',
+    dingtalkPermission: 'DingTalk refused to create the app: the scanning account has no developer permission in the selected organization. Make sure you picked the organization you manage when scanning and that developer access is enabled on open-dev.dingtalk.com, or enter an existing app\'s AppKey and AppSecret instead.',
     qrUnavailable: 'QR connection is currently unavailable. You can enter credentials manually.',
     qr: 'Connect with QR',
     start: 'Start QR connection',
@@ -325,7 +420,8 @@ const messages = {
     reasonUnsupported: 'The original connection method or provider is no longer supported.',
     reasonAccess: 'The original owner or access restrictions do not permit this operation.',
     reasonSelection: 'This snapshot needs a connection selected for the current account.',
-    reasonUnconfigured: 'This workflow node was saved without a connection. Choose one and save the workflow to finish setup.',
+    reasonUnconfigured:
+      'This workflow node was saved without a connection. Choose one and save the workflow to finish setup.',
     reasonUnavailable: 'The connection or operation is unavailable.',
   },
   title: 'Connectors',
@@ -765,14 +861,16 @@ const messages = {
   picker: {
     authorization: {
       directTitle: 'Authorize direct Connector execution for this target',
-      directDescription: 'Selected operations will not ask again in this target. You can revoke this authorization later.',
+      directDescription:
+        'Selected operations will not ask again in this target. You can revoke this authorization later.',
       directShort: 'Direct execution',
       askShort: 'Confirm each time',
       modeLabel: 'Authorization mode:',
       addToAgentTitle: 'Add connection to this Agent',
       selectedConnection: 'Selected connection: {connection}',
       required: 'Required',
-      agentScopeHint: 'Direct execution applies only to this Agent and this connection. It is saved with the Agent.',
+      agentScopeHint:
+        'Direct execution applies only to this Agent and this connection. It is saved with the Agent.',
       confirmAdd: 'Confirm add',
       selectedTitle: 'Selected connections ({count})',
       cancel: 'Cancel',
@@ -781,11 +879,13 @@ const messages = {
       switchToAsk: 'Require confirmation each time',
       switchToDirect: 'Allow direct execution',
       hostDelegationLabel: 'Allow hosts to use:',
-      hostDelegationHint: 'Applies only to the current published version; high-risk operations may still ask for confirmation.',
+      hostDelegationHint:
+        'Applies only to the current published version; high-risk operations may still ask for confirmation.',
       hostAudienceWorkspace: 'Workspace',
       hostAudienceApi: 'API',
       hostAudienceChannel: 'Channel',
-      hostDelegationUnavailable: 'This connection is not bound to a published version yet. Save the Agent before delegating it.',
+      hostDelegationUnavailable:
+        'This connection is not bound to a published version yet. Save the Agent before delegating it.',
       hostDelegationSaved: 'Host authorization updated.',
       hostDelegationSaveFailed: 'Host authorization was not updated. Refresh and try again.',
     },
@@ -900,10 +1000,14 @@ const messages = {
         in_progress: 'Processing',
       },
       errors: {
-        mailSubmissionRejected: 'The mail server rejected this submission. Check the mail service and try again.',
-        mailRecipientRejected: 'The mail server rejected a recipient. Check the recipients and try again.',
-        mailAuthenticationRejected: 'Email authentication failed. Check the connection credentials and enabled mail services.',
-        unknown: 'The operation result cannot be confirmed yet. Check the provider before retrying.',
+        mailSubmissionRejected:
+          'The mail server rejected this submission. Check the mail service and try again.',
+        mailRecipientRejected:
+          'The mail server rejected a recipient. Check the recipients and try again.',
+        mailAuthenticationRejected:
+          'Email authentication failed. Check the connection credentials and enabled mail services.',
+        unknown:
+          'The operation result cannot be confirmed yet. Check the provider before retrying.',
         generic: 'The Connector operation did not complete. Check the connection and try again.',
       },
     },

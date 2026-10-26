@@ -51,6 +51,7 @@ import {
   connectorSelectionChanged,
   connectorSelectionInvalid,
   digitalHumanResourceKey,
+  isPerUserConnectorSlot,
   selectDigitalHumanConnection,
   updateDigitalHumanOperations,
   type DigitalHumanConnectorSelection,
@@ -191,20 +192,26 @@ export function DigitalHumanConnectorCards({
             value.parent_resource_id === item.parent_resource_id
         );
         const legacy = item.type === 'integration_connection';
+        const perUser = isPerUserConnectorSlot(item);
         const selected = connectorOperationIds(item);
         const available = candidate ? connectorOperationIds(candidate) : [];
         const checking = candidatesLoading || catalogQuery.isLoading || connectionsQuery.isLoading;
-        const unavailable =
-          legacy ||
-          !connector ||
-          !connector.supported_surfaces?.includes('digital_human') ||
-          !connection ||
-          connection.state !== 'ready' ||
-          candidatesError ||
-          !candidate?.available ||
-          selected.length === 0 ||
-          selected.some(operation => !available.includes(operation));
-        const name = connection?.name || item.display_name || t('bindings.connectors.unnamed');
+        const unavailable = perUser
+          ? !connector ||
+            !connector.supported_surfaces?.includes('digital_human') ||
+            selected.length === 0
+          : legacy ||
+            !connector ||
+            !connector.supported_surfaces?.includes('digital_human') ||
+            !connection ||
+            connection.state !== 'ready' ||
+            candidatesError ||
+            !candidate?.available ||
+            selected.length === 0 ||
+            selected.some(operation => !available.includes(operation));
+        const name = perUser
+          ? item.display_name || connector?.name || t('bindings.connectors.unnamed')
+          : connection?.name || item.display_name || t('bindings.connectors.unnamed');
         return (
           <ResourceBindingCard
             key={digitalHumanResourceKey(item)}
@@ -219,13 +226,17 @@ export function DigitalHumanConnectorCards({
             }
             title={name}
             description={
-              connection?.external_display_name
-                ? `${connector?.name || item.parent_resource_id} · ${connection.external_display_name}`
-                : connector?.name || item.parent_resource_id || t('bindings.connectors.legacy')
+              perUser
+                ? t('bindings.connectors.perUserDescription')
+                : connection?.external_display_name
+                  ? `${connector?.name || item.parent_resource_id} · ${connection.external_display_name}`
+                  : connector?.name || item.parent_resource_id || t('bindings.connectors.legacy')
             }
             status={
               legacy ? (
                 <Badge variant="outline">{t('bindings.connectors.needsReplacement')}</Badge>
+              ) : perUser && !unavailable ? (
+                <Badge variant="subtle">{t('bindings.connectors.perUserBadge')}</Badge>
               ) : checking ? (
                 <Badge variant="subtle">{connectorT('picker.loading')}</Badge>
               ) : (

@@ -283,7 +283,8 @@ func TestDigitalHumanResolverIdentitySelectsTheExactBindingInstance(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.OrganizationID != request.OrganizationID || identity.OwnerAccountID != request.OwnerAccountID ||
+	if identity.ConversationID != request.ConversationID ||
+		identity.OrganizationID != request.OrganizationID || identity.OwnerAccountID != request.OwnerAccountID ||
 		identity.ActingPrincipalID != request.ActingPrincipalID || identity.BindingID != target.ID ||
 		identity.ConnectionID != target.ConnectionID || identity.ConnectorID != request.ConnectorID ||
 		identity.OperationID != request.OperationID || identity.Target != request.Target ||
@@ -492,6 +493,7 @@ func (harness *digitalHumanHarness) capabilityRequest(scope core.TargetScope, ve
 
 func (harness *digitalHumanHarness) identityRequest(binding core.TargetBinding, operationID string) connectordispatch.IdentityResolutionRequest {
 	return connectordispatch.IdentityResolutionRequest{
+		ConversationID: uuid.NewString(),
 		OrganizationID: harness.organizationID, OwnerAccountID: harness.ownerID,
 		ActingPrincipalID: harness.ownerID, ConnectorID: binding.ConnectorID,
 		Target: binding.Target, OperationID: core.Identifier(operationID),
@@ -624,4 +626,53 @@ func (spy *digitalHumanConnectionReaderSpy) GetConnection(
 		return core.PersonalConnection{}, core.NewError(core.ErrorCodeNotFound, false, nil)
 	}
 	return *connection, nil
+}
+
+func TestDelegatedDigitalHumanIdentityActsWithOwnerCredentialForRequester(t *testing.T) {
+	harness := newDigitalHumanHarness(t)
+	binding := harness.addBinding(t, core.ScopePublished, uuid.NewString())
+	binding.Constraint.HostDelegation = &core.HostDelegation{GrantedBy: harness.ownerID, Audiences: []core.HostAudience{core.HostAudienceAPI}}
+	harness.bindings.items[len(harness.bindings.items)-1] = binding
+	verifier := &delegatedRunAuthorizerSpy{}
+	harness.resolver.WithDelegatedHostAccess(&delegatedCandidateSpy{bindings: []core.TargetBinding{binding}}, verifier)
+	requester, runID := uuid.New(), uuid.New()
+	request := connectordispatch.IdentityResolutionRequest{
+		OrganizationID: harness.organizationID, OwnerAccountID: harness.ownerID, ActingPrincipalID: harness.ownerID,
+		ConnectorID: binding.ConnectorID, Target: binding.Target, OperationID: harness.operations[0],
+		LogicalOperationID: "logical", CorrelationID: "correlation", Interactive: true,
+		Delegation: &connectordispatch.DelegatedUse{RequesterID: requester, RunID: runID, BindingID: binding.ID, Audience: core.HostAudienceAPI},
+	}
+	identity, err := harness.resolver.ResolveConnectorIdentity(t.Context(), request)
+	if err != nil || identity.OwnerAccountID != harness.ownerID || identity.ActingPrincipalID != harness.ownerID ||
+		identity.DelegatedRequesterID != requester || identity.BindingID != binding.ID || identity.ConnectionID != binding.ConnectionID {
+		t.Fatalf("delegated identity = %#v, %v", identity, err)
+	}
+	if verifier.last.RequesterID != requester || verifier.last.RunID != runID || verifier.last.BindingID != binding.ID {
+		t.Fatalf("the run was not authorized for the requester: %#v", verifier.last)
+	}
+
+	for name, mutate := range map[string]func(*connectordispatch.IdentityResolutionRequest){
+		"other audience": func(r *connectordispatch.IdentityResolutionRequest) { r.Delegation.Audience = core.HostAudienceChannel },
+		"other binding":  func(r *connectordispatch.IdentityResolutionRequest) { r.Delegation.BindingID = uuid.New() },
+		"other owner": func(r *connectordispatch.IdentityResolutionRequest) {
+			r.OwnerAccountID, r.ActingPrincipalID = uuid.New(), uuid.Nil
+		},
+		"requester owner": func(r *connectordispatch.IdentityResolutionRequest) { r.Delegation.RequesterID = harness.ownerID },
+		"missing binding": func(r *connectordispatch.IdentityResolutionRequest) { r.Delegation.BindingID = uuid.Nil },
+	} {
+		denied := request
+		delegation := *request.Delegation
+		denied.Delegation = &delegation
+		mutate(&denied)
+		if denied.ActingPrincipalID == uuid.Nil {
+			denied.ActingPrincipalID = denied.OwnerAccountID
+		}
+		if _, err := harness.resolver.ResolveConnectorIdentity(t.Context(), denied); err == nil {
+			t.Fatalf("%s resolved a delegated identity", name)
+		}
+	}
+	verifier.err = core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	if _, err := harness.resolver.ResolveConnectorIdentity(t.Context(), request); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
+		t.Fatalf("a run the requester does not hold resolved: %v", err)
+	}
 }

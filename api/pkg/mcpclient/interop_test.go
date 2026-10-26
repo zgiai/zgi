@@ -1,17 +1,64 @@
 package mcpclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
+
+// stderrCapturingLauncher keeps the child's stderr so an interop failure
+// reports why the Python server could not start instead of only the error kind.
+type stderrCapturingLauncher struct {
+	mu     sync.Mutex
+	stderr bytes.Buffer
+}
+
+func (l *stderrCapturingLauncher) Launch(ctx context.Context, spec ProcessSpec) (Process, error) {
+	process, err := LocalProcessLauncher{}.Launch(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	return &stderrCapturingProcess{Process: process, stderr: io.NopCloser(io.TeeReader(process.Stderr(), lockedWriter{l}))}, nil
+}
+
+func (l *stderrCapturingLauncher) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.stderr.String()
+}
+
+type lockedWriter struct{ l *stderrCapturingLauncher }
+
+func (w lockedWriter) Write(p []byte) (int, error) {
+	w.l.mu.Lock()
+	defer w.l.mu.Unlock()
+	return w.l.stderr.Write(p)
+}
+
+type stderrCapturingProcess struct {
+	Process
+	stderr io.ReadCloser
+}
+
+func (p *stderrCapturingProcess) Stderr() io.ReadCloser { return p.stderr }
+
+func interopFailure(err error, stderr string) string {
+	cause := err.Error()
+	if inner := errors.Unwrap(err); inner != nil {
+		cause += ": " + inner.Error()
+	}
+	return cause + "\nserver stderr:\n" + stderr
+}
 
 func TestPythonSDKInterop(t *testing.T) {
 	python := os.Getenv("MCP_PYTHON_EXECUTABLE")
@@ -22,7 +69,8 @@ func TestPythonSDKInterop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := NewClient(ServerConfig{ID: "python", Transport: TransportStdio, Process: &ProcessSpec{Command: python, Args: []string{fixture}}}, Options{})
+	launcher := &stderrCapturingLauncher{}
+	client, err := NewClient(ServerConfig{ID: "python", Transport: TransportStdio, Process: &ProcessSpec{Command: python, Args: []string{fixture}}}, Options{ProcessLauncher: launcher})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +78,8 @@ func TestPythonSDKInterop(t *testing.T) {
 	defer cancel()
 	conn, err := client.Connect(ctx)
 	if err != nil {
-		t.Fatal(err)
+		time.Sleep(200 * time.Millisecond) // let the drained stderr land
+		t.Fatal(interopFailure(err, launcher.String()))
 	}
 	defer conn.Close(ctx)
 	if !conn.Info().Capabilities.Tools || !conn.Info().Capabilities.Resources || !conn.Info().Capabilities.Prompts {

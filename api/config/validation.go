@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/mail"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -162,6 +163,18 @@ func validateConsoleAPIURL(cfg *Config) error {
 }
 
 func validateConnectorsConfig(cfg ConnectorsConfig) error {
+	if err := validateSocialWebhookConfig(cfg); err != nil {
+		return err
+	}
+	if err := validateSocialOAuthConfig(cfg); err != nil {
+		return err
+	}
+	if cfg.SocialMCPScript != "" && (!filepath.IsAbs(cfg.SocialMCPScript) || strings.ContainsAny(cfg.SocialMCPScript, "\x00\r\n")) {
+		return fmt.Errorf("CONNECTOR_SOCIAL_MCP_SCRIPT must be an absolute script path")
+	}
+	if strings.ContainsAny(cfg.SocialMCPNode, "\x00\r\n\t ") {
+		return fmt.Errorf("CONNECTOR_SOCIAL_MCP_NODE must be an executable name or path without shell arguments")
+	}
 	if len(cfg.CredentialKeys) == 0 {
 		return fmt.Errorf("%s must configure at least one Connector credential key", envConnectorCredentialKeysJSON)
 	}

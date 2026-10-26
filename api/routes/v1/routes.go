@@ -7,16 +7,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/capabilities/artifacts"
 	"github.com/zgiai/zgi/api/internal/container"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/internal/modules/zgimarket"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
@@ -69,7 +73,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DepartmentService:                serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,
 	})
-	RegisterRuntimeWorkspaceManagementRoutes(v1, db, accountService, serviceContainer.GetTenantService())
+	RegisterRuntimeWorkspaceManagementRoutes(v1, db, accountService, serviceContainer.GetTenantService(), serviceContainer.GetDigitalHumanCredentialCipher())
 
 	// ---------- Explore ----------
 	RegisterExploreRoutes(v1, accountService)
@@ -234,16 +238,21 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		panic(fmt.Sprintf("admit Connector definitions: %v", err))
 	}
 	RegisterConnectorRoutes(v1, ConnectorRouteDeps{
-		Catalog:                 serviceContainer.GetConnectorPluginManager(),
-		Connections:             serviceContainer.GetConnectorConnectionService(),
-		Bindings:                serviceContainer.GetConnectorBindingService(),
-		References:              serviceContainer.GetConnectorReferenceService(),
-		Maintenance:             serviceContainer.GetConnectorMaintenanceService(),
-		Onboarding:              serviceContainer.GetConnectorOnboardingService(),
-		HostKeyProbe:            serviceContainer.GetServerOpsSSHHostKeyProbe(),
-		Preferences:             serviceContainer.GetConnectorChatPreferenceService(),
-		ApplicationErrorCatalog: applicationErrorCatalog,
-		AccountService:          accountService,
+		SocialEvents:               serviceContainer.GetConnectorSocialEventsService(),
+		SocialOAuth:                serviceContainer.GetConnectorSocialOAuthService(),
+		SocialOAuthFrontendURL:     config.Current().Connectors.SocialOAuthFrontendURL,
+		Catalog:                    serviceContainer.GetConnectorPluginManager(),
+		Connections:                serviceContainer.GetConnectorConnectionService(),
+		Bindings:                   serviceContainer.GetConnectorBindingService(),
+		References:                 serviceContainer.GetConnectorReferenceService(),
+		Maintenance:                serviceContainer.GetConnectorMaintenanceService(),
+		Onboarding:                 serviceContainer.GetConnectorOnboardingService(),
+		HostKeyProbe:               serviceContainer.GetServerOpsSSHHostKeyProbe(),
+		Preferences:                serviceContainer.GetConnectorChatPreferenceService(),
+		BackgroundGrants:           serviceContainer.GetConnectorBackgroundAuthorization(),
+		BackgroundGrantPermissions: serviceContainer.GetOrganizationService(),
+		ApplicationErrorCatalog:    applicationErrorCatalog,
+		AccountService:             accountService,
 	})
 
 	// ---------- Agent ----------
@@ -256,7 +265,16 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager(), applicationErrorCatalog)
 
 	// ---------- DigitalHuman ----------
+	// Artifacts outlive the runs that produce them (ADR 0009).
+	artifactService := artifacts.NewService(db, digitalhuman.ToolFileArtifactBlobs{})
+	// A channel's download link to a run file stops with the artifact the
+	// file became, when it is archived or its sharing stopped.
+	tool_file.ChannelDeliveryWithdrawn = func(ctx context.Context, fileID string) bool {
+		withdrawn, err := artifactService.SourceFileWithdrawn(ctx, fileID)
+		return err != nil || withdrawn
+	}
 	digitalHumanRuntime = InitializeDigitalHumanRuntime(DigitalHumanRuntimeDeps{
+		Artifacts:                           artifactService,
 		DB:                                  db,
 		LLMClient:                           serviceContainer.GetLLMClient(),
 		FileService:                         serviceContainer.GetFileService(),
@@ -283,20 +301,51 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	if digitalHumanRuntime.Runtime != nil {
 		approvalResumeHosts.Register(digitalHumanRuntime.Runtime)
 	}
+	inboxService := inbox.NewService(db)
+	notificationChannels, notificationDispatcher := newNotificationChannels(inboxService, db, serviceContainer.GetDigitalHumanCredentialCipher(),
+		serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetTaskManager(), serviceContainer.GetNotificationIMSender())
+	if automationBundle.DigitalHumanTasks != nil {
+		automationBundle.DigitalHumanTasks.SetNotifyChannels(notificationChannels)
+	}
+	if digitalHumanRuntime.Runtime != nil {
+		digitalHumanRuntime.Runtime.SetTaskApprovalNotifier(digitalHumanApprovalInbox{inbox: inboxService})
+	}
 	if automationBundle.DigitalHumanTaskReconciler != nil && digitalHumanRuntime.Runtime != nil {
 		automationBundle.DigitalHumanTaskReconciler.SetResultDeliverer(digitalHumanRuntime.Runtime)
+		automationBundle.DigitalHumanTaskReconciler.SetReportNotifier(reportNotifiers{
+			digitalHumanReportInbox{inbox: inboxService},
+			digitalhuman.NewArtifactReportCapture(digitalHumanRuntime.Runtime, artifactService),
+		})
 	}
+	inboxErrorProjector, err := apptransport.NewProjector(applicationErrorCatalog)
+	if err != nil {
+		panic("inbox routes require application error catalog")
+	}
+	channelHandler := inbox.NewChannelHandler(notificationChannels, notificationDispatcher, inboxErrorProjector)
+	RegisterInboxRoutes(v1, InboxRouteDeps{Service: inboxService, Channels: channelHandler, AccountService: accountService, ApplicationErrorCatalog: applicationErrorCatalog})
 	digitalHumanRuntime.Access = digitalhuman.NewAccessService(db)
 	serviceContainer.SetDigitalHumanChannelReceiverManager(digitalHumanRuntime.Receivers)
 	consoleDigitalHumanService := serviceContainer.GetDigitalHumanService()
+	// Draft saves and publication admit Connector bindings against the same
+	// plugin catalog the runtime uses.
+	consoleDigitalHumanService.SetConnectorCatalog(serviceContainer.GetConnectorPluginManager())
 	if digitalHumanRuntime.MemoryProjectionRepairer != nil {
 		consoleDigitalHumanService.SetMemoryProjectionRepairer(digitalHumanRuntime.MemoryProjectionRepairer)
 	}
+	socialOperationsSetup, socialOperationsSetupErr := serviceContainer.GetSocialOperationsSetupService(automationBundle.DigitalHumanTasks)
+	if socialOperationsSetupErr != nil {
+		panic(fmt.Sprintf("initialize social operations setup: %v", socialOperationsSetupErr))
+	}
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
-		Service: consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
-		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access,
+		SocialOperations: socialOperationsSetup,
+		WorkJournal:      serviceContainer.GetWorkJournalManagement(),
+		Service:          consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
+		Tasks: automationBundle.DigitalHumanTasks, Access: digitalHumanRuntime.Access, Artifacts: artifactService,
+		ArtifactOwners: digitalhuman.NewArtifactOwnerNames(db),
 		AccountService: accountService, OrganizationService: serviceContainer.GetOrganizationService(),
 		ApplicationErrorCatalog: applicationErrorCatalog,
+		PendingTaskChanges:      digitalhuman.NewRepository(db),
+		NotificationChannels:    channelHandler,
 	})
 
 	// ---------- Prompt Library ----------
@@ -370,6 +419,18 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		},
 		AccountService: accountService,
 	})
+	// End users connect their own keys for per-user DigitalHuman Connector
+	// slots through the same verified key setup as members (ADR 0007).
+	if connectionService := serviceContainer.GetConnectorConnectionService(); connectionService != nil {
+		digitalhuman.UseEndUserKeySetup(connectionService)
+	}
+	// Channel replies decide connector confirmations through the same path.
+	if digitalHumanRuntime != nil && digitalHumanRuntime.Runtime != nil {
+		digitalHumanRuntime.Runtime.SetChannelConnectorConfirmer(digitalHumanChannelConnectorConfirmer{
+			service:  serviceContainer.GetConnectorRuntimeConfirmationService(),
+			recorder: connectorRuntimeConfirmationSurfaceRecorder{chatAndAgent: chatService, workflow: workflowService},
+		})
+	}
 	if llmModule != nil && llmModule.LLMModelModule != nil {
 		RegisterImageRuntimeRoutes(v1, ImageRuntimeRouteDeps{
 			DB:                      db,

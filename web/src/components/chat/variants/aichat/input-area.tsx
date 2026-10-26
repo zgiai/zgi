@@ -20,6 +20,7 @@ import {
   type ModelSelectorValue,
 } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import WorkflowApprovalInteractionCard, {
   type WorkflowApprovalInteractionMode,
@@ -29,7 +30,7 @@ import { useApprovalForm, useSubmitApprovalForm } from '@/hooks/workflow/use-app
 import { useUploadConfig } from '@/hooks/use-upload';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
-import { uploadService } from '@/services/upload.service';
+import { isUploadCanceledError, uploadService } from '@/services/upload.service';
 import { isApprovalFormAlreadySubmittedError } from '@/services/approval.service';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { FileItem } from '@/services/types/file';
@@ -37,7 +38,9 @@ import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
 import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
 import {
+  AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
@@ -236,6 +239,8 @@ interface AIChatInputAreaProps {
   enableUpload?: boolean;
   fileUploadPolicy?: FileUploadSelection | null;
   uploadScope?: AIChatUploadScope;
+  // Anonymous visitors see the upload buttons, which ask them to sign in.
+  uploadRequiresLogin?: boolean;
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
   showConnectedApps?: boolean;
@@ -336,6 +341,7 @@ export function AIChatInputArea({
   enableUpload = true,
   fileUploadPolicy,
   uploadScope = { type: 'console' },
+  uploadRequiresLogin = false,
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
   showConnectedApps = false,
@@ -371,6 +377,11 @@ export function AIChatInputArea({
   const isComposingRef = useRef(false);
   const ignoreEnterAfterCompositionRef = useRef(false);
   const compositionEndTimerRef = useRef<number | null>(null);
+  // Upload attempts, keyed by the current attachment id. In-flight uploads can legitimately
+  // run for minutes, and completed-but-unsent drafts stay cancellable until they are claimed.
+  const uploadControllersRef = useRef<
+    Map<string, { controller: AbortController; cancelAttempt?: () => Promise<void> }>
+  >(new Map());
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -471,41 +482,28 @@ export function AIChatInputArea({
   }, [clearCompositionEndGuard]);
 
   const { data: uploadConfig } = useUploadConfig({
-    enabled: enableUpload,
+    // Visitors who have not signed in cannot read the upload config yet.
+    enabled: enableUpload && !uploadRequiresLogin,
     scope: uploadScope.type === 'console' ? undefined : uploadScope,
   });
+  const [loginPromptOpen, setLoginPromptOpen] = useState(false);
   const currentWorkspace = useCurrentWorkspace();
-  const attachmentLimit = uploadConfig?.chat_upload_policy?.number_limit ?? AICHAT_ATTACHMENT_LIMIT;
+  // The application's own policy decides kinds and count; the server's
+  // effective policy fills in when the application did not send one.
+  const attachmentLimit =
+    fileUploadPolicy?.number_limits || uploadConfig?.chat_upload_policy?.number_limit || AICHAT_ATTACHMENT_LIMIT;
   const turnMaxBytes = uploadConfig?.chat_upload_policy?.turn_max_bytes ?? 100 * 1024 * 1024;
+  const policyExtensions = useMemo(
+    () => chatPolicyExtensions(fileUploadPolicy, uploadConfig?.chat_upload_policy?.allowed_extensions),
+    [uploadConfig?.chat_upload_policy?.allowed_extensions, fileUploadPolicy]
+  );
   const allowedExtensions = useMemo(
-    () =>
-      fileUploadPolicy && !fileUploadPolicy.allowed_file_types.includes('document')
-        ? []
-        : filterLowercaseExtensions(
-            uploadConfig?.chat_upload_policy
-              ? uploadConfig.chat_upload_policy.allowed_file_types.includes('document')
-                ? uploadConfig.chat_upload_policy.allowed_extensions.filter(
-                    ext => !IMAGE_EXTENSIONS.includes(ext)
-                  )
-                : []
-              : [...AICHAT_DOCUMENT_EXTENSIONS]
-          ),
-    [uploadConfig?.chat_upload_policy, fileUploadPolicy]
+    () => filterLowercaseExtensions(policyExtensions.filter(ext => !IMAGE_EXTENSIONS.includes(ext))),
+    [policyExtensions]
   );
   const imageExtensions = useMemo(
-    () =>
-      fileUploadPolicy && !fileUploadPolicy.allowed_file_types.includes('image')
-        ? []
-        : filterLowercaseExtensions(
-            uploadConfig?.chat_upload_policy
-              ? uploadConfig.chat_upload_policy.allowed_file_types.includes('image')
-                ? uploadConfig.chat_upload_policy.allowed_extensions.filter(ext =>
-                    IMAGE_EXTENSIONS.includes(ext)
-                  )
-                : []
-              : [...IMAGE_EXTENSIONS]
-          ),
-    [uploadConfig?.chat_upload_policy, fileUploadPolicy]
+    () => filterLowercaseExtensions(policyExtensions.filter(ext => IMAGE_EXTENSIONS.includes(ext))),
+    [policyExtensions]
   );
   const allSelectableExtensions = useMemo(
     () => filterLowercaseExtensions([...allowedExtensions, ...imageExtensions]),
@@ -533,6 +531,15 @@ export function AIChatInputArea({
       turnMaxBytes / 1024 / 1024
     );
   }, [uploadConfig?.image_file_size_limit, uploadConfig?.chat_upload_policy, turnMaxBytes]);
+
+  const audioMaxSizeMB = Math.min(
+    (uploadConfig?.chat_upload_policy?.audio_max_bytes ?? 0) / 1024 / 1024 || uploadConfig?.audio_file_size_limit || 50,
+    turnMaxBytes / 1024 / 1024
+  );
+  const videoMaxSizeMB = Math.min(
+    (uploadConfig?.chat_upload_policy?.video_max_bytes ?? 0) / 1024 / 1024 || uploadConfig?.video_file_size_limit || 100,
+    turnMaxBytes / 1024 / 1024
+  );
 
   const isUploading = attachments.some(attachment => attachment.status === 'uploading');
   const hasUploadError = attachments.some(attachment => attachment.status === 'error');
@@ -785,17 +792,37 @@ export function AIChatInputArea({
           types: formatExtensionsForDisplay(extensions).join(', '),
         });
       }
-      const sizeLimitMB = kind === 'image' ? imageMaxSizeMB : maxSizeMB;
+      const sizeLimitMB =
+        kind === 'image'
+          ? imageMaxSizeMB
+          : AUDIO_EXTENSIONS.includes(extension)
+            ? audioMaxSizeMB
+            : VIDEO_EXTENSIONS.includes(extension)
+              ? videoMaxSizeMB
+              : maxSizeMB;
       if (file.size > sizeLimitMB * 1024 * 1024) {
         return t('consoleChat.attachments.fileTooLarge', { max: sizeLimitMB });
       }
       return null;
     },
-    [allowedExtensions, imageExtensions, imageMaxSizeMB, maxSizeMB, t]
+    [allowedExtensions, audioMaxSizeMB, imageExtensions, imageMaxSizeMB, maxSizeMB, t, videoMaxSizeMB]
   );
 
   const uploadOneFile = useCallback(
     async (file: File, localId: string, kind: AIChatAttachmentUploadKind) => {
+      // A fresh controller per attempt so the request can be aborted when the user
+      // removes the attachment or the composer unmounts.
+      const controller = new AbortController();
+      const attemptID = crypto.randomUUID();
+      // The digital-human webapp upload endpoint has no attempt tracking, so its uploads
+      // can only be aborted locally; never send its end users to a console endpoint.
+      const cancelAttempt =
+        uploadScope.type === 'webapp'
+          ? () => uploadService.cancelWebAppUploadAttempt(uploadScope.webAppId, attemptID)
+          : uploadScope.type === 'digital-human-webapp'
+            ? undefined
+            : () => uploadService.cancelUploadAttempt(attemptID);
+      uploadControllersRef.current.set(localId, { controller, cancelAttempt });
       try {
         const onProgress = (progress: number) =>
           setAttachments(current =>
@@ -805,18 +832,34 @@ export function AIChatInputArea({
           );
         const response =
           uploadScope.type === 'webapp'
-            ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
+            ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, {
+                onProgress,
+                signal: controller.signal,
+                upload_attempt_id: attemptID,
+              })
             : uploadScope.type === 'digital-human-webapp'
               ? await uploadService.uploadDigitalHumanWebAppSingle(uploadScope.webAppId, file, {
                   onProgress,
+                  signal: controller.signal,
                 })
               : await uploadService.uploadSingle(file, {
                   is_temporary: true,
                   source: 'chat',
                   workspace_id: currentWorkspace?.id,
                   onProgress,
+                  signal: controller.signal,
+                  upload_attempt_id: attemptID,
                 });
         const uploadedFile = toAIChatMessageFile(response, kind);
+        const upload = uploadControllersRef.current.get(localId);
+        if (upload?.controller === controller) {
+          // Keep the attempt handle attached to the uploaded attachment until the
+          // message is sent or the user removes it. An upload can finish after the
+          // abort request raced it, and a completed-but-unsent draft still needs a
+          // cancellation signal instead of waiting for the server sweep.
+          uploadControllersRef.current.delete(localId);
+          uploadControllersRef.current.set(uploadedFile.id, upload);
+        }
         setAttachments(current =>
           current.map(attachment =>
             attachment.id === localId
@@ -837,6 +880,16 @@ export function AIChatInputArea({
           )
         );
       } catch (error) {
+        // A cancelled upload has no attachment left to mark as failed: the user removed it,
+        // or the composer unmounted. Trust the controller, which cannot be misread, and
+        // fall back to the error shape for cancellations raised elsewhere.
+        if (controller.signal.aborted || isUploadCanceledError(error)) return;
+        const upload = uploadControllersRef.current.get(localId);
+        if (upload?.controller === controller) {
+          void upload
+            .cancelAttempt?.()
+            .catch(cancelError => console.warn('Failed to cancel failed upload attempt', cancelError));
+        }
         const message =
           error instanceof Error ? error.message : t('consoleChat.attachments.uploadFailed');
         setAttachments(current =>
@@ -851,6 +904,12 @@ export function AIChatInputArea({
               : attachment
           )
         );
+      } finally {
+        // A successful upload is moved to the server file id above; failed or cancelled
+        // attempts still release the local id without touching a newer retry.
+        if (uploadControllersRef.current.get(localId)?.controller === controller) {
+          uploadControllersRef.current.delete(localId);
+        }
       }
     },
     [currentWorkspace?.id, t, uploadScope]
@@ -860,6 +919,10 @@ export function AIChatInputArea({
     (files: File[], fallbackKind?: AIChatAttachmentUploadKind) => {
       if (files.length === 0) return;
       if (!enableUpload) return;
+      if (uploadRequiresLogin) {
+        setLoginPromptOpen(true);
+        return;
+      }
       if (isSending || isUploading) {
         toast.error(t('consoleChat.attachments.uploadUnavailable'));
         return;
@@ -921,6 +984,7 @@ export function AIChatInputArea({
       isUploading,
       t,
       uploadOneFile,
+      uploadRequiresLogin,
       validateFile,
     ]
   );
@@ -935,8 +999,30 @@ export function AIChatInputArea({
   );
 
   const handleRemoveAttachment = useCallback((id: string) => {
+    // Removing an attachment that is still uploading cancels its request instead of
+    // leaving the user waiting on a response nobody wants.
+    const upload = uploadControllersRef.current.get(id);
+    upload?.controller.abort();
+    void upload
+      ?.cancelAttempt?.()
+      .catch(error => console.warn('Failed to cancel upload attempt', error));
+    uploadControllersRef.current.delete(id);
     setAttachments(current => current.filter(attachment => attachment.id !== id));
   }, []);
+
+  // Abandon in-flight uploads when the composer goes away.
+  useEffect(
+    () => () => {
+      uploadControllersRef.current.forEach(upload => {
+        upload.controller.abort();
+        void upload
+          .cancelAttempt?.()
+          .catch(error => console.warn('Failed to cancel upload attempt', error));
+      });
+      uploadControllersRef.current.clear();
+    },
+    []
+  );
 
   const handleRetryAttachment = useCallback(
     (id: string) => {
@@ -945,7 +1031,10 @@ export function AIChatInputArea({
         toast.error(t('consoleChat.attachments.retryUnavailable'));
         return;
       }
-      if (isSending || isUploading) {
+      // Only sending blocks a retry. Another attachment finishing its upload must
+      // not serialize independent retries, otherwise every retry has to wait for
+      // the previous one to settle.
+      if (isSending || attachment.status === 'uploading') {
         toast.error(t('consoleChat.attachments.uploadUnavailable'));
         return;
       }
@@ -970,12 +1059,23 @@ export function AIChatInputArea({
       );
       void uploadOneFile(attachment.sourceFile, id, attachment.kind);
     },
-    [attachments, isSending, isUploading, t, uploadOneFile, validateFile]
+    [attachments, isSending, t, uploadOneFile, validateFile]
   );
 
   const handleImageUpload = useCallback(() => {
+    if (uploadRequiresLogin) {
+      setLoginPromptOpen(true);
+      return;
+    }
     imageInputRef.current?.click();
-  }, []);
+  }, [uploadRequiresLogin]);
+  const handleDocumentUpload = useCallback(() => {
+    if (uploadRequiresLogin) {
+      setLoginPromptOpen(true);
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [uploadRequiresLogin]);
 
   const handleSystemFilesConfirm = useCallback(
     (files: FileItem[]) => {
@@ -1056,6 +1156,12 @@ export function AIChatInputArea({
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || isPreparingSend || isUploading || hasUploadError || voiceInputBusy) return;
+    // Attachments belong to a signed-in visitor; if the session was lost after
+    // attaching, ask them to sign in instead of sending files the server rejects.
+    if (uploadRequiresLogin && attachments.length > 0) {
+      setLoginPromptOpen(true);
+      return;
+    }
     if (attachments.length > attachmentLimit) {
       toast.error(t('consoleChat.attachments.exceedCount', { max: attachmentLimit }));
       return;
@@ -1089,6 +1195,7 @@ export function AIChatInputArea({
     try {
       const sent = await onSend(uploadedFiles, useMemory);
       if (sent !== false) {
+        uploadedFiles.forEach(file => uploadControllersRef.current.delete(file.id));
         setAttachments([]);
       }
     } finally {
@@ -1107,6 +1214,7 @@ export function AIChatInputArea({
     isPreparingSend,
     isUploading,
     onSend,
+    uploadRequiresLogin,
     uploadedFiles,
     useMemory,
     voiceInputBusy,
@@ -1342,6 +1450,18 @@ export function AIChatInputArea({
       <ToolGovernancePendingApprovalBridge
         enabled={enableToolGovernanceApprovals}
         onApprovalChange={setActiveToolGovernanceApproval}
+      />
+      <ConfirmDialog
+        open={loginPromptOpen}
+        onOpenChange={setLoginPromptOpen}
+        title={t('consoleChat.attachments.loginRequiredTitle')}
+        description={t('consoleChat.attachments.loginRequiredDescription')}
+        confirmText={t('consoleChat.attachments.goToLogin')}
+        onConfirm={() => {
+          setLoginPromptOpen(false);
+          const current = `${window.location.pathname}${window.location.search}`;
+          window.location.assign(`/login?redirect=${encodeURIComponent(current)}`);
+        }}
       />
       {enableUpload && !hasBlockingApproval && isDraggingFiles ? (
         <AIChatDragUploadOverlay
@@ -1656,7 +1776,7 @@ export function AIChatInputArea({
                 surface={surface}
                 onModelChange={onModelChange}
                 onModelPropsChange={handleModelPropsChange}
-                onUploadDocument={() => fileInputRef.current?.click()}
+                onUploadDocument={handleDocumentUpload}
                 onUploadImage={handleImageUpload}
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
                 onOpenConnectedApps={onOpenConnectedApps}
@@ -1692,4 +1812,24 @@ export function AIChatInputArea({
       </div>
     </>
   );
+}
+
+/**
+ * The extensions a chat may attach. An application's own selection decides;
+ * without one, the server's effective policy (or the default document and
+ * image lists) applies.
+ */
+function chatPolicyExtensions(policy: FileUploadSelection | null | undefined, serverExtensions?: string[]): string[] {
+  if (!policy) {
+    return serverExtensions?.length ? serverExtensions : [...AICHAT_DOCUMENT_EXTENSIONS, ...IMAGE_EXTENSIONS];
+  }
+  const extensions: string[] = [];
+  for (const kind of policy.allowed_file_types) {
+    if (kind === 'document') extensions.push(...AICHAT_DOCUMENT_EXTENSIONS);
+    if (kind === 'image') extensions.push(...IMAGE_EXTENSIONS);
+    if (kind === 'audio') extensions.push(...AUDIO_EXTENSIONS);
+    if (kind === 'video') extensions.push(...VIDEO_EXTENSIONS);
+    if (kind === 'custom') extensions.push(...(policy.allowed_file_extensions ?? []));
+  }
+  return extensions;
 }

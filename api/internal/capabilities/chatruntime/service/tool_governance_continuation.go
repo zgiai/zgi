@@ -375,7 +375,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		}
 		return result, nil
 	}
-	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceApprovalContinuationMessage(event), prepared.parts.ExecutionMode))
+	prepared.resumeWith(continuationMessageForExecutionMode(toolGovernanceApprovalContinuationMessage(event), prepared.parts.ExecutionMode))
 	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, onEvent); handled {
 		return result, budgetErr
 	}
@@ -618,7 +618,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		// waiting for approval, and a model trusts that over the continuation note that follows.
 		replacePendingMarketToolResult(prepared.LLMRequest, frozen.CorrelationID, toolGovernanceModelVisibleToolResult(event, invocation, executionErr))
 	}
-	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
+	prepared.resumeWith(continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	if frozen.ExecutionOrigin != nil {
 		// A CLI approval resumes one sealed business invocation, not its stopped
 		// script or a new planning loop. Summarization cannot issue more tools.

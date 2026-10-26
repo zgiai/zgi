@@ -20,13 +20,22 @@ export class DigitalHumanRuntimeTransport
   extends AgentRuntimeTransport
   implements AIChatRuntimeTransport
 {
-  constructor(private readonly digitalHumanId: string) {
+  private readonly preview: boolean;
+
+  // `preview` chats with the configuration draft through its own routes, so
+  // its conversations stay apart from real ones.
+  constructor(
+    private readonly digitalHumanId: string,
+    options: { preview?: boolean } = {}
+  ) {
+    const base = `/console/api/digital-humans/${digitalHumanId}${options.preview ? '/preview' : ''}`;
     super({
-      runtimeBasePath: `/console/api/digital-humans/${digitalHumanId}/runtime`,
-      chatPath: `/console/api/digital-humans/${digitalHumanId}/invocations`,
-      supportsRuntimeInput: true,
-      supportsToolGovernanceApproval: true,
+      runtimeBasePath: `${base}/runtime`,
+      chatPath: `${base}/invocations`,
+      supportsRuntimeInput: !options.preview,
+      supportsToolGovernanceApproval: !options.preview,
     });
+    this.preview = Boolean(options.preview);
   }
 
   override async streamChat(
@@ -43,7 +52,7 @@ export class DigitalHumanRuntimeTransport
         conversation_id: payload.conversation_id,
         parent_message_id: payload.parent_id,
         file_ids: payload.file_ids ?? [],
-      });
+      }, this.preview);
       submittedRun = response.data.run;
       if (abortSignal?.aborted) throw abortError();
       const run = await this.waitForMessageLink(submittedRun, abortSignal);
@@ -70,7 +79,7 @@ export class DigitalHumanRuntimeTransport
         isActiveDigitalHumanRunStatus(submittedRun.status)
       ) {
         try {
-          await digitalHumanService.cancelRun(this.digitalHumanId, submittedRun.id);
+          await digitalHumanService.cancelRun(this.digitalHumanId, submittedRun.id, this.preview);
         } catch {
           // The durable run may already have completed or been canceled by the
           // conversation stop endpoint. Either state is safe to reconcile later.
@@ -99,7 +108,7 @@ export class DigitalHumanRuntimeTransport
         throw new Error('Timed out while waiting for the digital human conversation to start.');
       }
       await waitForRunPoll(abortSignal);
-      const response = await digitalHumanService.getRun(this.digitalHumanId, run.id);
+      const response = await digitalHumanService.getRun(this.digitalHumanId, run.id, this.preview);
       run = response.data;
     }
     return run;
@@ -107,9 +116,10 @@ export class DigitalHumanRuntimeTransport
 }
 
 export function createDigitalHumanRuntimeTransport(
-  digitalHumanId: string
+  digitalHumanId: string,
+  options?: { preview?: boolean }
 ): DigitalHumanRuntimeTransport {
-  return new DigitalHumanRuntimeTransport(digitalHumanId);
+  return new DigitalHumanRuntimeTransport(digitalHumanId, options);
 }
 
 function waitForRunPoll(abortSignal?: AbortSignal): Promise<void> {

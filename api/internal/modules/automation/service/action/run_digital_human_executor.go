@@ -32,7 +32,14 @@ type DigitalHumanRunRequest struct {
 	SuccessCriteria       []string
 	DeliveryMode          string
 	TimeoutSeconds        int
+	MaxTaskTokens         int
 	ReplyTo               *invocation.ReplyAddress
+	// ReworkFeedback is the requester's feedback when this run redoes a task
+	// whose report they sent back for rework.
+	ReworkFeedback string
+	// Trigger says what started the task run: the scheduler, a person, or a
+	// retry. People see it as the run's source.
+	Trigger string
 }
 
 type DigitalHumanRunResult struct{ RunID string }
@@ -87,6 +94,20 @@ func (e *RunDigitalHumanExecutor) ExecuteAction(ctx context.Context, req ActionE
 		Name:                  req.Task.Name, Goal: stringValue(req.Task.Goal), SuccessCriteria: append([]string(nil), req.Task.SuccessCriteria...),
 		DeliveryMode:   mapStringValue(req.Task.DeliveryConfig, "mode"),
 		TimeoutSeconds: req.Task.ExecutionTimeoutSeconds, ReplyTo: replyAddress(req.Task.DeliveryConfig),
+		ReworkFeedback: strings.TrimSpace(mapStringValue(req.TaskRun.RuntimeContext, "rework_feedback")),
+		Trigger:        string(req.TaskRun.TriggerSource),
+	}
+	if stringValue(req.Task.SourceRef) == "social_operations" {
+		data, marshalErr := json.Marshal(req.Task.SourceSnapshot["social_operations"])
+		var snapshot struct {
+			Budget struct {
+				MaxTokens int `json:"max_tokens"`
+			} `json:"budget"`
+		}
+		if marshalErr != nil || json.Unmarshal(data, &snapshot) != nil || snapshot.Budget.MaxTokens < 1 || snapshot.Budget.MaxTokens > 100000 {
+			return nil, fmt.Errorf("social operations token budget unavailable")
+		}
+		request.MaxTaskTokens = snapshot.Budget.MaxTokens
 	}
 	result, err := runner.RunDigitalHuman(ctx, request)
 	payload := map[string]any{"task_id": request.TaskID, "task_run_id": request.TaskRunID, "digital_human_id": request.DigitalHumanID}

@@ -194,6 +194,8 @@ func digitalHumanConversationSourceForSurface(surface string) string {
 		return digitalHumanAPIConversationSource
 	case SurfaceChannel:
 		return digitalHumanChannelConversationSource
+	case SurfacePreview:
+		return runtimemodel.ConversationSourcePreview
 	default:
 		return digitalHumanConversationSource
 	}

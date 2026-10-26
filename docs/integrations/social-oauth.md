@@ -1,0 +1,106 @@
+# Built-in social OAuth
+
+This extension implements the approved connector flow: connect, authorize at the platform, return to ZGI, select a Facebook Page if necessary, and save the encrypted credential. It preserves the existing manual-token flow and runtime confirmation policy.
+
+## Design
+
+The API owns OAuth client secrets, exact registered callback URLs, fixed provider endpoints and scopes. X uses Authorization Code with S256 PKCE and offline access. LinkedIn uses its confidential authorization-code flow and refreshes only when a refresh token was issued. Facebook exchanges a short-lived user token for a long-lived token, lists authorized Pages, and stores the selected Page token. Facebook and LinkedIn never simulate unsupported refresh grants.
+
+A persisted, encrypted ten-minute authorization flow binds random one-time state to organization, account, connector, optional reconnect connection, and PKCE verifier. A public API callback consumes state and redirects to a fixed frontend completion route with a flow UUID only. The authenticated completion screen reads safe status and Page choices. No code, token or upstream error is put into the frontend URL. Denial, replay, expiry and cross-owner access fail closed.
+
+Credentials reuse the Connector keyring. OAuth grant metadata and refresh tokens are encrypted separately from the existing connection token. Resolution renews expiring credentials under a database lock before provider dispatch. This also renews idle X connections on their next use. Non-refreshable expired or revoked grants require reauthorization. Transient failures preserve credentials and surface a safe retryable error. A reconnect replaces a connection only after verifying the same external identity; changed identity creates a separate unbound connection.
+
+The connector UI uses the same OAuth panel for creation in Connector Center and embedded pickers. It supports reconnect, Facebook Page selection, success/error status, and manual-token fallback. Platform applications and permission approval remain deployment prerequisites. Next.js is not started as part of implementation validation.
+
+## Implementation and validation plan
+
+1. Implement the isolated `socialoauth` provider/session/grant module and database migration. Start with failing tests for authorization state, exchange, encryption, scope, Page selection, expiry, owner isolation, replay and refresh concurrency.
+2. Wire deployment configuration and a singleton service into the composition root. Add authenticated start/status/select routes plus an unauthenticated state-bound callback. Cover safe redirect and identity boundaries with handler tests.
+3. Connect the OAuth resolver to native execution and maintenance without changing other connector credentials or binding authorization.
+4. Add the shared frontend OAuth panel, completion route and localized messages. Reuse existing API client, dialogs and cache invalidation. Validate TypeScript, lint and focused behavior tests without launching Next.js.
+5. Review implementation against this design and run focused Go, Node and frontend checks. Document exact callback URLs, permissions, expiry behavior, and real-account testing prerequisites. Actual production OAuth verification requires platform client credentials and account authorization.
+
+## Deployment
+
+Install the [social MCP bridge](social-mcp.md) first and run the API migrations before enabling OAuth. Configure the optional provider application in `api/.env.example`: `CONNECTOR_X_OAUTH_*`, `CONNECTOR_LINKEDIN_OAUTH_*`, or `CONNECTOR_FACEBOOK_OAUTH_*`. Each enabled application needs `CLIENT_ID`, `CLIENT_SECRET`, `REDIRECT_URL`, and permitted `SCOPES`. Set `CONNECTOR_SOCIAL_OAUTH_FRONTEND_URL` to the public console origin. Register the exact callback URLs at the platform:
+
+| Provider | Callback path on the API origin |
+| --- | --- |
+| X | `/console/api/connectors/x-social/oauth/callback` |
+| LinkedIn | `/console/api/connectors/linkedin-social/oauth/callback` |
+| Facebook | `/console/api/connectors/facebook-social/oauth/callback` |
+
+Use HTTPS in deployment; loopback HTTP is supported for development. The API and console must share a site so that the initiating browser can receive and return its HttpOnly, SameSite=Lax callback cookie. Keep local hostnames consistent. The configured console origin must also be allowed by the existing API CORS configuration, with credentials permitted for OAuth start. Credentials stay in encrypted database envelopes; reverse proxies must avoid logging callback query strings, authorization headers, and response bodies containing authorization URLs.
+
+X requires user authorization, including `offline.access` for automatic renewal, `dm.read`/`dm.write` for private messages, and `media.write` for uploads. App-only bearer tokens cannot perform this flow. API entitlements still apply.
+
+LinkedIn identity verification uses `/v2/userinfo` and requires `openid profile` plus the Sign In with LinkedIn using OpenID Connect product. LinkedIn company operations require Community Management / organization permissions approved for the application's access tier. Request only approved scopes through `CONNECTOR_LINKEDIN_OAUTH_SCOPES`. Refresh is available only if LinkedIn issues a refresh token to the approved app; otherwise the member must reauthorize when access expires. LinkedIn company messaging remains unavailable in the MCP integration.
+
+Facebook requires Facebook Login and permissions for authorized Pages, publishing, interactions, messaging and Insights. Non-role users generally require the appropriate app review/access level. The adapter exchanges the user token for a long-lived token and obtains the selected Page token from `/me/accounts`. The current adapter conservatively uses the long-lived user authorization expiry as the selected Page credential expiry, even if the Page token could remain valid longer. Facebook does not provide the OAuth refresh-token grant used by X; expired/revoked authorization must be connected again. A long-lived Page credential is not a guarantee against revocation. Set `CONNECTOR_FACEBOOK_OAUTH_API_VERSION` consistently with the platform application (default `v23.0`).
+
+Renewal occurs before an expiring OAuth connection is used, under a database lock. Idle connections are renewed when next used, rather than through a separate scheduler. A manual-token connection has no refresh token and retains its existing behavior. Reauthorization never silently changes the external identity of an existing bound connection.
+
+## Official references
+
+- [X authorization code flow, scopes, expiry and refresh](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code)
+- [LinkedIn authorization code flow](https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow)
+- [LinkedIn partner refresh-token eligibility](https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens)
+- [Facebook long-lived access tokens](https://developers.facebook.com/docs/facebook-login/guides/access-tokens/get-long-lived/)
+- [Meta Page access token example](https://www.postman.com/meta/facebook/request/bqfxwbp/get-access-tokens-of-pages-you-manage)
+
+## Verification
+
+Backend checks (from `api/`):
+
+```sh
+go test -p 1 ./internal/modules/connectors/... ./config
+go test -race ./internal/modules/connectors/socialoauth
+go test ./routes/v1 -run TestSocialOAuth
+go test ./internal/migrations -run TestConnectorSocialOAuthMigrationSchemaAndRollback
+go build ./cmd/server
+```
+
+Frontend checks (from `web/`, without starting a development server):
+
+```sh
+pnpm type-check
+pnpm test:connector-social-oauth
+pnpm test:connector-api-contract
+pnpm test:connector-connection-management
+pnpm test:connector-key-setup-lifecycle
+pnpm test:connector-i18n
+```
+
+The tests use mocked provider responses, real native connection lifecycle persistence for atomic rollback, and SQL assertions for PostgreSQL locking. They cover denial, one-use callback state, initiating-browser cookies, actor boundaries, Page selection races, interrupted flow expiry, encrypted grants, rotated refresh tokens, manual replacement and unchanged binding authorization on renewal. They do not establish platform application approval or replace a real-account authorization test. Before enabling for users, verify connect, reconnect, selected Page identity, access expiry and revoked authorization against the configured platform applications.
+
+## GitHub App authorization
+
+The native `github` connector also supports GitHub App user authorization. Manual personal access tokens remain available and existing PAT connections continue to work. The separate `github-mcp` connector retains PAT setup.
+
+Configure `CONNECTOR_GITHUB_OAUTH_CLIENT_ID`, `CONNECTOR_GITHUB_OAUTH_CLIENT_SECRET`, `CONNECTOR_GITHUB_OAUTH_APP_ID`, `CONNECTOR_GITHUB_OAUTH_APP_SLUG`, and `CONNECTOR_GITHUB_OAUTH_REDIRECT_URL`. Use the same console origin in `CONNECTOR_SOCIAL_OAUTH_FRONTEND_URL`. Register the exact API callback `/console/api/connectors/github/oauth/callback` in the GitHub App settings. Request `offline_access` to obtain expiring user access and refresh tokens. The app must grant repository metadata read access and Issues read/write for issue operations; GitHub enforces the intersection of user permissions and app installations. Request only the permissions required by your use case.
+
+Choose **Connect account** in ZGI and authorize the intended GitHub identity. If the configured app has no active installation accessible to that identity, ZGI shows its GitHub installation link. Select the account and allowed repositories on GitHub, then choose **I've completed installation, continue** in ZGI. An organization installation may need its administrator's approval. Private apps can only be installed on their owning account; an administrator must make the app public before other accounts can install it. Do not change app visibility just to bypass missing administrator access.
+
+Installation completion discovers the configured app through the authorized user's `/user/installations` API; browser-supplied installation identifiers are never accepted. Pending grants expire with the ten-minute authorization flow. User access/refresh tokens are encrypted, isolated by organization and connection owner, and refreshed under the existing connection lock. An expired/revoked refresh grant requires reconnecting. Completed flows retain no access or refresh tokens. Native execution and approval controls stay in effect. This flow uses user access tokens and does not require an application private key or installation access tokens.
+
+References: [GitHub user authorization](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [app visibility](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/making-a-github-app-public-or-private).
+
+## GitHub App installation credentials
+
+The native `github` connector accepts an installation credential document in the existing secret **token** field as an alternative to a personal access token. Choose manual setup and paste a compact, single-line JSON document with these exact fields:
+
+```json
+{"type":"github_app_installation_v1","app_id":"12345","installation_id":67890,"repository_ids":[123456789],"private_key":"-----BEGIN RSA PRIVATE KEY-----\nREPLACE_WITH_PRIVATE_KEY\n-----END RSA PRIVATE KEY-----\n"}
+```
+
+The values above are placeholders. Obtain the numeric App ID, installation ID and repository IDs for your own installed app; use its matching RSA private key. The installation must already authorize every selected repository. `app_id` is a positive decimal string; installation and repository IDs are positive integers. The repository list must be nonempty, unique and contain at most 500 IDs. The entire document must fit in 16 KiB. JSON encodes PEM newlines as `\n`; literal line breaks, duplicate or unknown fields, unsupported credential types, and encrypted or non-RSA keys are rejected. RSA keys must be at least 2048 bits in PKCS#1 or PKCS#8 PEM format. Keep the document and PEM out of source control, logs and global API configuration. The existing connection vault encrypts the complete document; no OAuth Client Secret is required for this mode.
+
+Verification checks the authenticated app, matching installation, suspension status and repository scope. Each verification or invocation mints a fresh installation token restricted to the supplied repository IDs and repository metadata read access. When the installation grants Issues read or write, the temporary token requests only Issues **read**. Returned permissions and expiry are checked before use. ZGI attempts revocation once on completion using a separate five-second timeout, including on operation failure or caller cancellation. Revocation is best effort; if GitHub or the network is unavailable, the restricted token expires at GitHub's returned expiry (at most 65 minutes is accepted). There is no persistent installation token cache.
+
+Installation connections have a distinct `github-app-installation:<app_id>:<installation_id>` identity and an installation label. They advertise repository listing and, only when granted, issue listing, issue detail and comment listing. User profile, repository search and all writes are unavailable in this mode. Issue reads first enumerate the token's installation repositories and require a matching selected repository, including for public repositories. Enumeration uses `/installation/repositories`; `/user` and `/user/repos` are never used. Requests use the fixed GitHub API HTTPS origin with bounded response bodies, no redirects and no retries.
+
+Repository listing applies visibility filtering and sorting before pagination. `sort` supports `created`, `updated`, `pushed` and `full_name`, with ascending or descending direction. The default `affiliation=owner` represents the installation account; user-specific `collaborator` and `organization_member` affiliations fail before provider access. Existing PAT and OAuth connections keep their existing behavior. The separate `github-mcp` connector still requires its own PAT.
+
+An optional live read-only check is available from `api/`. Set `ZGI_GITHUB_APP_CREDENTIAL_FILE` to an existing private JSON file outside the repository and set `ZGI_GITHUB_APP_OWNER` and `ZGI_GITHUB_APP_REPO` to the selected repository coordinates, then run `go test ./internal/modules/connectors/providers/github -run '^TestInstallationLive$' -count=1`. The check verifies the connection, finds the selected repository and lists issues; it never writes GitHub content or prints credentials. Without the file environment variable, the live test is skipped.
+
+References: [GitHub App JWTs](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app), [installation access tokens](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app), [installation repositories and revocation](https://docs.github.com/en/rest/apps/installations).

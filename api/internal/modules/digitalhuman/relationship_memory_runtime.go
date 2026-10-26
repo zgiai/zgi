@@ -117,7 +117,7 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 	}
 	if identity.UserSubject.Kind == usersubject.APIEndUser {
 		issuerID := run.DigitalHumanID
-		ensureRequest.IssuerType = "digital_human_api"
+		ensureRequest.IssuerType = digitalHumanAPIIssuerType
 		ensureRequest.IssuerID = &issuerID
 	}
 	relationship, err := p.service.EnsureRelationship(ctx, ensureRequest)

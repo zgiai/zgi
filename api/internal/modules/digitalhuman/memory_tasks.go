@@ -32,6 +32,11 @@ func NewMemoryExtractionSweepHandler(runner *MemoryExtractionRunner) *MemoryExtr
 	return &MemoryExtractionSweepHandler{runner: runner}
 }
 
+// Handle runs due extraction jobs and archives expired instance memory.
 func (h *MemoryExtractionSweepHandler) Handle(ctx context.Context, _ *asynq.Task) error {
-	return h.runner.ProcessDue(ctx, defaultMemoryExtractionBatch)
+	if err := h.runner.ProcessDue(ctx, defaultMemoryExtractionBatch); err != nil {
+		return err
+	}
+	_, err := h.runner.service.ArchiveExpiredInstanceMemories(ctx)
+	return err
 }

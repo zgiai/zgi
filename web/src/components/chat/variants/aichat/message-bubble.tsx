@@ -3,6 +3,7 @@
 import { ModelIcon } from 'modelicons';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  CalendarClock,
   AlertCircle,
   Bot,
   CheckCircle2,
@@ -14,8 +15,11 @@ import {
   Loader2,
 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
+import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { useOpenTaskReport } from '@/components/digital-human/task-report-drawer';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useFileDetail } from '@/hooks/file/use-file-detail';
@@ -1312,7 +1316,10 @@ export function AIChatMessageBubble({
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
-  const hasUserQuery = Boolean(message.query.trim() || files.length > 0);
+  // A delivered task result is the digital human speaking on its own; its
+  // stored query only labels the turn and was never said by the user.
+  const deliveredTaskResult = Boolean((message.metadata as Record<string, unknown> | undefined)?.digital_human_task_result);
+  const hasUserQuery = !deliveredTaskResult && Boolean(message.query.trim() || files.length > 0);
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
   const visibleGeneratedFiles = generatedFiles;
   const generatedImagePreviewFilesForDisplay = useMemo(
@@ -1321,6 +1328,7 @@ export function AIChatMessageBubble({
   );
   const hasGeneratedImagePreviews = generatedImagePreviewFilesForDisplay.length > 0;
   const answer = displayAnswer.trim();
+  const taskReport = taskReportMetadata(message.metadata?.digital_human_task_report);
   const userInputRequest = message.metadata?.user_input_request;
   const waitingMessage =
     connectorEvent && connectorOwnsWaitingState(message.metadata, timeline)
@@ -1732,6 +1740,8 @@ export function AIChatMessageBubble({
           </div>
         ) : null}
 
+        {taskReport ? <TaskReportMessageHeader report={taskReport} /> : null}
+
         {hasTrailingAnswer ? (
           <div className="prose prose-sm min-w-0 max-w-full overflow-hidden dark:prose-invert">
             <MarkdownViewer
@@ -1822,3 +1832,58 @@ export function AIChatMessageBubble({
     </div>
   );
 }
+
+type TaskReportOutcome = 'done' | 'partial' | 'not_done' | 'failed';
+
+interface TaskReportMessage {
+  taskName: string;
+  outcome: TaskReportOutcome;
+  reportId: string;
+}
+
+// A DigitalHuman task report delivered into the conversation carries its
+// outcome in the message metadata; the answer text holds the report itself.
+function taskReportMetadata(value: unknown): TaskReportMessage | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const outcome = record.outcome;
+  if (outcome !== 'done' && outcome !== 'partial' && outcome !== 'not_done' && outcome !== 'failed') return null;
+  return {
+    taskName: typeof record.task_name === 'string' ? record.task_name : '',
+    outcome,
+    reportId: typeof record.report_id === 'string' ? record.report_id : '',
+  };
+}
+
+const taskReportOutcomeVariant: Record<TaskReportOutcome, 'success' | 'warning' | 'destructive' | 'subtle'> = {
+  done: 'success',
+  partial: 'warning',
+  not_done: 'subtle',
+  failed: 'destructive',
+};
+
+function TaskReportMessageHeader({ report }: { report: TaskReportMessage }) {
+  const t = useT('webapp');
+  const pathname = usePathname();
+  const openReport = useOpenTaskReport();
+  // The console opens the report in its report drawer, where it can be
+  // accepted or sent back; the WebApp keeps reports in its task panel.
+  const reviewable = Boolean(report.reportId && pathname?.startsWith('/console/digital-humans/'));
+  // The message itself is what the task delivered; this line only says which
+  // task it came from, and how it went when that needs attention.
+  return (
+    <div className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <CalendarClock className="size-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{report.taskName || t('consoleChat.taskReport.title')}</span>
+      {report.outcome !== 'done' ? (
+        <Badge variant={taskReportOutcomeVariant[report.outcome]}>{t(`consoleChat.taskReport.outcome.${report.outcome}`)}</Badge>
+      ) : null}
+      {reviewable ? (
+        <Button size="sm" variant="link" className="h-auto p-0 text-xs" onClick={() => openReport(report.reportId)}>
+          {t('consoleChat.taskReport.view')}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+

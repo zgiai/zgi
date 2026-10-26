@@ -1451,6 +1451,7 @@ func (s *agentsService) ensureAgentRuntimeDraftConfig(ctx context.Context, ag *A
 
 func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequest {
 	req.FileUploadPolicy = chatfile.Clone(req.FileUploadPolicy)
+	req.FileUploadPolicy.Normalize()
 	req.ExecutionRuntime = normalizeAgentExecutionRuntimeConfig(req.ExecutionRuntime)
 	req.SystemPrompt = strings.TrimSpace(req.SystemPrompt)
 	req.ModelProvider = strings.TrimSpace(req.ModelProvider)

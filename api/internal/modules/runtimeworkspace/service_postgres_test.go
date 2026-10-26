@@ -18,6 +18,8 @@ func TestCredentialCreationPostgresIdempotentReplayAndExpiry(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set ZGI_MIGRATION_TEST_DSN to run Runtime Workspace credential PostgreSQL integration")
 	}
+	// Candidates only report Agent memory when the fail-closed relationship memory runtime is on.
+	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "true")
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -231,5 +233,23 @@ func TestCredentialCreationPostgresIdempotentReplayAndExpiry(t *testing.T) {
 	now = now.Add(credentialSecretReplayTTL + time.Minute)
 	if _, err := service.CreateCredential(t.Context(), workspaceID, accountID, "production", nil, idempotencyKey); !errors.Is(err, ErrSecretReplayExpired) {
 		t.Fatalf("expired replay error = %v, want ErrSecretReplayExpired", err)
+	}
+	// Active keys are limited; revoked and expired ones do not count.
+	runtimeID, err := service.ResolveRuntimeID(t.Context(), workspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var active int64
+	if err := tx.Model(&Credential{}).Where("runtime_workspace_id = ? AND status = ?", runtimeID, CredentialActive).Count(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := active; i < MaxActiveCredentials; i++ {
+		if err := tx.Create(&Credential{ID: uuid.New(), RuntimeWorkspaceID: runtimeID, KeyPrefix: "zgi_rt", KeyHash: uuid.NewString(), Name: "filler",
+			Status: CredentialActive, CreatedByAccountID: accountID, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := service.CreateCredential(t.Context(), workspaceID, accountID, "one too many", nil, uuid.NewString()+uuid.NewString()); !errors.Is(err, ErrCredentialLimitExceeded) {
+		t.Fatalf("creating past the key limit = %v", err)
 	}
 }

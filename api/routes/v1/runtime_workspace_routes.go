@@ -3,6 +3,7 @@ package v1
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -12,10 +13,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
 )
@@ -23,7 +26,7 @@ import (
 // RegisterRuntimeWorkspaceManagementRoutes registers the internal console
 // management API. These routes are JWT protected and never share the external
 // Runtime Workspace credential middleware.
-func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, workspaceService interfaces.WorkspaceManagementService) {
+func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, workspaceService interfaces.WorkspaceManagementService, webhookCipher runtimeworkspace.WebhookCipher) {
 	if !runtimeworkspace.RuntimeEnabled() {
 		return
 	}
@@ -34,7 +37,9 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 	if err != nil {
 		panic("runtime workspace credential replay protection is unavailable")
 	}
-	service := runtimeworkspace.NewService(db, runtimeworkspace.WithCredentialReplayProtector(replayProtector))
+	service := runtimeworkspace.NewService(db, runtimeworkspace.WithCredentialReplayProtector(replayProtector), runtimeworkspace.WithWebhookCipher(webhookCipher))
+	// End-user erasure and export reach the DigitalHuman data of end users.
+	runtimeworkspace.UseEndUserDataOwner(digitalhuman.NewEndUserData())
 	group := router.Group("/runtime-workspaces")
 	group.Use(middleware.JWTWithOrganizationAndService(accountService))
 	group.GET("", runtimeWorkspaceManagementScope(), runtimeWorkspaceManagerRequiredWithDB(db, workspaceService), func(c *gin.Context) {
@@ -91,6 +96,8 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			Status     *string         `json:"status,omitempty"`
 			PolicyJSON json.RawMessage `json:"policy_json,omitempty"`
 		}
+		// Policies hold limits and plans; a quarter of a megabyte is ample.
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 256<<10)
 		if err := c.ShouldBindJSON(&req); err != nil {
 			response.Fail(c, response.ErrInvalidParam)
 			return
@@ -110,12 +117,16 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		var req struct {
 			Name      string     `json:"name"`
 			ExpiresAt *time.Time `json:"expires_at,omitempty"`
+			// Scopes and AppKeys limit the key (ADR 0012); empty is no limit.
+			Scopes  []string `json:"scopes,omitempty"`
+			AppKeys []string `json:"app_keys,omitempty"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
-		created, err := service.CreateCredential(c.Request.Context(), workspaceID, accountID, req.Name, req.ExpiresAt, c.GetHeader("Idempotency-Key"))
+		created, err := service.CreateScopedCredential(c.Request.Context(), workspaceID, accountID, runtimeworkspace.CredentialInput{
+			Name: req.Name, ExpiresAt: req.ExpiresAt, Scopes: req.Scopes, AppKeys: req.AppKeys}, c.GetHeader("Idempotency-Key"))
 		if err != nil {
 			managementFail(c, err)
 			return
@@ -136,12 +147,24 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			managementFail(c, err)
 			return
 		}
+		// status=active lists usable keys only and counts the others, so a
+		// long history of revoked keys is not loaded.
+		query := db.WithContext(c.Request.Context()).Where("runtime_workspace_id = ?", runtimeID)
+		var inactive int64
+		if c.Query("status") == runtimeworkspace.CredentialActive {
+			if err := db.WithContext(c.Request.Context()).Model(&runtimeworkspace.Credential{}).
+				Where("runtime_workspace_id = ? AND status <> ?", runtimeID, runtimeworkspace.CredentialActive).Count(&inactive).Error; err != nil {
+				managementFail(c, err)
+				return
+			}
+			query = query.Where("status = ?", runtimeworkspace.CredentialActive)
+		}
 		var credentials []runtimeworkspace.Credential
-		if err := db.WithContext(c.Request.Context()).Where("runtime_workspace_id = ?", runtimeID).Order("created_at DESC").Find(&credentials).Error; err != nil {
+		if err := query.Order("created_at DESC").Find(&credentials).Error; err != nil {
 			managementFail(c, err)
 			return
 		}
-		response.Success(c, gin.H{"items": credentials})
+		response.Success(c, gin.H{"items": credentials, "inactive": inactive, "limit": runtimeworkspace.MaxActiveCredentials})
 	})
 	scoped.POST("/credentials/:credential_id/revoke", func(c *gin.Context) {
 		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
@@ -174,13 +197,76 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 			}
 			sourceWorkspaceID = &parsed
 		}
-		candidates, err := service.ListAgentCandidates(c.Request.Context(), workspaceID, accountID, scope, sourceWorkspaceID)
+		// Without limit, every candidate is listed, as older consoles expect.
+		query := runtimeworkspace.CandidateQuery{
+			Search: c.Query("search"), Type: c.Query("type"), ExcludeBound: c.Query("exclude_bound") == "true",
+			Page: managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
+		}
+		if c.Query("limit") != "" {
+			query.Limit = managementPositiveQueryInt(c.Query("limit"), 30, 200)
+		}
+		candidates, err := service.ListAppCandidates(c.Request.Context(), workspaceID, accountID, scope, sourceWorkspaceID, query)
 		if err != nil {
 			managementFail(c, err)
 			return
 		}
 		response.Success(c, candidates)
 	})
+	// /apps pages the bound apps with their usage and caps; /agents keeps
+	// returning the whole selection.
+	scoped.GET("/apps", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		page, err := service.ListBindingsPage(c.Request.Context(), workspaceID, runtimeworkspace.AppListQuery{
+			Search: c.Query("search"), Type: c.Query("type"), State: c.Query("state"),
+			Page:  managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
+			Limit: managementPositiveQueryInt(c.Query("limit"), 20, 200),
+		})
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, page)
+	})
+	changeApps := func(adding bool) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
+			if !ok {
+				return
+			}
+			var req struct {
+				ExpectedRevision *int64 `json:"expected_revision" binding:"required"`
+				Apps             []struct {
+					Type string    `json:"type"`
+					ID   uuid.UUID `json:"id"`
+				} `json:"apps" binding:"max=200"`
+				AppIDs []uuid.UUID `json:"app_ids" binding:"max=1000"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedRevision == nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
+			var add []runtimeworkspace.AppRef
+			var remove []uuid.UUID
+			if adding {
+				for _, app := range req.Apps {
+					add = append(add, runtimeworkspace.AppRef{Type: app.Type, ID: app.ID})
+				}
+			} else {
+				remove = req.AppIDs
+			}
+			apps, err := service.ChangeAppBindings(c.Request.Context(), workspaceID, accountID, *req.ExpectedRevision, add, remove)
+			if err != nil {
+				managementFail(c, err)
+				return
+			}
+			response.Success(c, apps)
+		}
+	}
+	scoped.POST("/apps/add", changeApps(true))
+	scoped.POST("/apps/remove", changeApps(false))
 	scoped.GET("/agents", func(c *gin.Context) {
 		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
 		if !ok {
@@ -221,29 +307,385 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		}
 		response.Success(c, gin.H{"items": events, "page": page, "limit": limit, "total": total, "has_more": int64(page*limit) < total})
 	})
+	scoped.GET("/end-users", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		list, err := service.ListEndUsers(c.Request.Context(), workspaceID, runtimeworkspace.EndUserListQuery{
+			Search: c.Query("search"), Status: c.Query("status"), QuotaState: c.Query("quota_state"), Plan: c.Query("plan"),
+			Sort: c.Query("sort"), Ascending: c.Query("order") == "asc",
+			Page:  managementPositiveQueryInt(c.Query("page"), 1, 1_000_000),
+			Limit: managementPositiveQueryInt(c.Query("limit"), 50, 200),
+		})
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, list)
+	})
+	scoped.GET("/webhook", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		webhook, err := service.GetWebhook(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, webhook)
+	})
+	scoped.PUT("/webhook", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		var input runtimeworkspace.WebhookInput
+		if err := c.ShouldBindJSON(&input); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		saved, err := service.SaveWebhook(c.Request.Context(), workspaceID, input)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		response.Success(c, saved)
+	})
+	scoped.DELETE("/webhook", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		if err := service.DeleteWebhook(c.Request.Context(), workspaceID); err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
+	})
+	scoped.POST("/webhook/rotate-secret", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		secret, err := service.RotateWebhookSecret(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		response.Success(c, gin.H{"secret": secret})
+	})
+	scoped.POST("/webhook/test", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		delivery, err := service.TestWebhook(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, delivery)
+	})
+	scoped.GET("/webhook/deliveries", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		deliveries, err := service.ListWebhookDeliveries(c.Request.Context(), workspaceID,
+			managementPositiveQueryInt(c.Query("page"), 1, 1_000_000), managementPositiveQueryInt(c.Query("limit"), 50, 200))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, deliveries)
+	})
+	scoped.POST("/webhook/deliveries/:delivery_id/retry", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		deliveryID, err := uuid.Parse(c.Param("delivery_id"))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		if err := service.RetryWebhookDelivery(c.Request.Context(), workspaceID, deliveryID); err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
+	})
+	scoped.GET("/end-users/summary", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		summary, err := service.SummarizeEndUsers(c.Request.Context(), workspaceID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, summary)
+	})
+	scoped.GET("/end-users/usage-series", func(c *gin.Context) {
+		workspaceID, _, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		series, err := service.EndUserUsageSeries(c.Request.Context(), workspaceID, nil,
+			managementPositiveQueryInt(c.Query("days"), 30, 90), c.Query("tz"))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, series)
+	})
+	scoped.POST("/end-users/batch", func(c *gin.Context) {
+		workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
+		if !ok {
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		var req struct {
+			SubjectIDs []uuid.UUID `json:"subject_ids"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		patch, err := runtimeworkspace.ParseEndUserPatch(body)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		result, err := service.UpdateEndUsers(c.Request.Context(), workspaceID, req.SubjectIDs,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}, patch)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, result)
+	})
+	endUser := func(handle func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
+			if !ok {
+				return
+			}
+			subjectID, err := uuid.Parse(c.Param("subject_id"))
+			if err != nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
+			handle(c, workspaceID, accountID, subjectID)
+		}
+	}
+	scoped.GET("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		view, err := service.GetEndUser(c.Request.Context(), workspaceID, subjectID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+	// What each bound DigitalHuman keeps for the end user (ADR 0006).
+	scoped.GET("/end-users/:subject_id/digital-humans", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		scope, err := service.EndUserDigitalHumans(c.Request.Context(), workspaceID, subjectID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		apps := make([]digitalhuman.EndUserApp, 0, len(scope.Bindings))
+		for _, binding := range scope.Bindings {
+			apps = append(apps, digitalhuman.EndUserApp{AppKey: binding.PublicAppKey, DigitalHumanID: binding.AgentID})
+		}
+		panels, err := digitalhuman.NewEndUserData().EndUserPanels(c.Request.Context(), db, scope.OrganizationID, scope.SubjectID, apps)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"items": panels})
+	}))
+	scoped.PATCH("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		patch, err := runtimeworkspace.ParseEndUserPatch(body)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		view, err := service.UpdateEndUser(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}, patch)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+	// Exports run as jobs (ADR 0012): queue one, poll it, then download it.
+	scoped.POST("/end-users/:subject_id/export", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		export, err := service.RequestEndUserExport(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID})
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, response.Response{Code: "0", Message: "success", Data: export})
+	}))
+	scoped.GET("/end-users/:subject_id/exports/:export_id", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		exportID, err := uuid.Parse(c.Param("export_id"))
+		if err != nil {
+			managementFail(c, runtimeworkspace.ErrExportNotFound)
+			return
+		}
+		export, err := service.GetEndUserExport(c.Request.Context(), workspaceID, subjectID, exportID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, export)
+	}))
+	scoped.GET("/end-users/:subject_id/exports/:export_id/download", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		exportID, err := uuid.Parse(c.Param("export_id"))
+		if err != nil {
+			managementFail(c, runtimeworkspace.ErrExportNotFound)
+			return
+		}
+		content, err := service.OpenEndUserExport(c.Request.Context(), workspaceID, subjectID, exportID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		defer content.Close()
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Disposition", `attachment; filename="end-user-export-`+exportID.String()+`.json"`)
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Status(http.StatusOK)
+		if _, err := io.Copy(c.Writer, content); err != nil {
+			logger.Warn("runtime workspace end-user export download failed", "error", err)
+		}
+	}))
+	scoped.DELETE("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		if err := service.EraseEndUser(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}); err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
+	}))
+	scoped.GET("/end-users/:subject_id/credits", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		ledger, err := service.ListCredits(c.Request.Context(), workspaceID, subjectID,
+			managementPositiveQueryInt(c.Query("page"), 1, 1_000_000), managementPositiveQueryInt(c.Query("limit"), 50, 200))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, ledger)
+	}))
+	scoped.POST("/end-users/:subject_id/credits", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 16<<10))
+		if err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+		grant, err := runtimeworkspace.ParseCreditGrant(body)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		result, err := service.GrantCredits(c.Request.Context(), workspaceID, subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorAccount, ID: accountID}, grant)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, result)
+	}))
+	scoped.GET("/end-users/:subject_id/entitlement", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		entitlement, err := service.EndUserEntitlement(c.Request.Context(), workspaceID, subjectID)
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, entitlement)
+	}))
+	scoped.GET("/end-users/:subject_id/usage-series", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		series, err := service.EndUserUsageSeries(c.Request.Context(), workspaceID, &subjectID,
+			managementPositiveQueryInt(c.Query("days"), 30, 90), c.Query("tz"))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, series)
+	}))
+	scoped.GET("/end-users/:subject_id/events", endUser(func(c *gin.Context, workspaceID, _, subjectID uuid.UUID) {
+		events, err := service.ListEndUserEvents(c.Request.Context(), workspaceID, subjectID,
+			managementPositiveQueryInt(c.Query("page"), 1, 1_000_000), managementPositiveQueryInt(c.Query("limit"), 50, 200))
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, events)
+	}))
 	scoped.PUT("/agents", func(c *gin.Context) {
 		workspaceID, accountID, ok := managementScope(c, c.Param("workspace_id"))
 		if !ok {
 			return
 		}
 		var req struct {
-			ExpectedRevision *int64    `json:"expected_revision" binding:"required"`
-			AgentIDs         *[]string `json:"agent_ids" binding:"required,max=100,dive,uuid"`
+			ExpectedRevision *int64 `json:"expected_revision" binding:"required"`
+			// The service enforces the bound-app limit across both lists.
+			AgentIDs *[]string `json:"agent_ids" binding:"required,max=1000,dive,uuid"`
+			// DigitalHumanIDs is optional; when it is left out, the bound
+			// DigitalHumans stay as they are, so older clients keep them.
+			DigitalHumanIDs *[]string `json:"digital_human_ids" binding:"omitempty,max=1000,dive,uuid"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedRevision == nil || req.AgentIDs == nil || *req.ExpectedRevision < 0 {
 			response.Fail(c, response.ErrInvalidParam)
 			return
 		}
-		agentIDs := make([]uuid.UUID, 0, len(*req.AgentIDs))
+		refs := make([]runtimeworkspace.AppRef, 0, len(*req.AgentIDs))
 		for _, rawAgentID := range *req.AgentIDs {
 			agentID, err := uuid.Parse(strings.TrimSpace(rawAgentID))
 			if err != nil {
 				response.Fail(c, response.ErrInvalidParam)
 				return
 			}
-			agentIDs = append(agentIDs, agentID)
+			refs = append(refs, runtimeworkspace.AppRef{Type: runtimeworkspace.AppTypeAgent, ID: agentID})
 		}
-		apps, err := service.SyncAgentBindings(c.Request.Context(), workspaceID, accountID, *req.ExpectedRevision, agentIDs)
+		if req.DigitalHumanIDs != nil {
+			for _, rawID := range *req.DigitalHumanIDs {
+				id, err := uuid.Parse(strings.TrimSpace(rawID))
+				if err != nil {
+					response.Fail(c, response.ErrInvalidParam)
+					return
+				}
+				refs = append(refs, runtimeworkspace.AppRef{Type: runtimeworkspace.AppTypeDigitalHuman, ID: id})
+			}
+		} else {
+			current, err := service.ListBindings(c.Request.Context(), workspaceID)
+			if err != nil {
+				managementFail(c, err)
+				return
+			}
+			for _, item := range current.Items {
+				if id, err := uuid.Parse(item.AgentID); err == nil && item.AppType == runtimeworkspace.AppTypeDigitalHuman && item.Status == runtimeworkspace.AgentBindingActive {
+					refs = append(refs, runtimeworkspace.AppRef{Type: runtimeworkspace.AppTypeDigitalHuman, ID: id})
+				}
+			}
+		}
+		apps, err := service.SyncAppBindings(c.Request.Context(), workspaceID, accountID, *req.ExpectedRevision, refs)
 		if err != nil {
 			managementFail(c, err)
 			return
@@ -325,6 +767,28 @@ func managementScope(c *gin.Context, requested string) (uuid.UUID, uuid.UUID, bo
 }
 
 func managementFail(c *gin.Context, err error) {
+	if errors.Is(err, runtimeworkspace.ErrCredentialLimitExceeded) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_credential_limit_exceeded",
+			Message: fmt.Sprintf("External access can have at most %d active access keys; revoke one first", runtimeworkspace.MaxActiveCredentials)})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrAppLimitExceeded) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_app_limit_exceeded",
+			Message: fmt.Sprintf("External access can expose at most %d apps", runtimeworkspace.MaxRuntimeWorkspaceApps())})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrWebhookNotFound) {
+		c.JSON(http.StatusNotFound, response.Response{Code: "runtime_webhook_not_found", Message: "No webhook is set up for this external access"})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrWebhookUnavailable) {
+		c.JSON(http.StatusServiceUnavailable, response.Response{Code: "runtime_webhook_unavailable", Message: "Webhook secrets cannot be protected on this server"})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrCreditConflict) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_credit_conflict", Message: "This external ID was already used for a grant of another amount"})
+		return
+	}
 	if errors.Is(err, runtimeworkspace.ErrBindingRevisionConflict) {
 		c.JSON(http.StatusConflict, response.Response{Code: "runtime_agent_bindings_changed", Message: "The assistant selection was updated by another administrator"})
 		return
@@ -354,7 +818,11 @@ func managementFail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, response.Response{Code: "213003", Message: response.ErrAPIKeyAlreadyExists.Message})
 		return
 	}
-	if errors.Is(err, runtimeworkspace.ErrAppNotFound) {
+	if errors.Is(err, runtimeworkspace.ErrExportNotReady) {
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_export_not_ready", Message: "The export has not finished"})
+		return
+	}
+	if errors.Is(err, runtimeworkspace.ErrAppNotFound) || errors.Is(err, runtimeworkspace.ErrEndUserNotFound) || errors.Is(err, runtimeworkspace.ErrExportNotFound) {
 		response.Fail(c, response.ErrNotFound)
 		return
 	}

@@ -11,6 +11,7 @@ import (
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
@@ -58,7 +59,11 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 	{
 		// Public APIs that don't require authentication
 		RegisterPublicRoutes(externalV1)
-		RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.DigitalHumanTasks, deps.FileService, deps.ApplicationErrorCatalog)
+		var notifications *inbox.Service
+		if deps.DB != nil {
+			notifications = inbox.NewService(deps.DB)
+		}
+		digitalHumans := RegisterDigitalHumanExternalRoutes(externalV1, deps.DigitalHumanRuntime, deps.DigitalHumanAccess, deps.DigitalHumanTasks, deps.FileService, deps.ApplicationErrorCatalog, notifications)
 
 		// APIs that require API key authentication
 		RegisterAPIKeyRoutes(
@@ -81,6 +86,7 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.WorkflowEngineFactory,
 			deps.SkillManifestResolver,
 			deps.ConnectorDispatcher, deps.ConnectorAgentRuntime, deps.ConnectorConfirmationStore, deps.ConnectorCatalog,
+			APIKeyRouteExtras{DigitalHuman: digitalHumans},
 		)
 	}
 

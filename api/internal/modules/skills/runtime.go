@@ -71,9 +71,12 @@ type ExecutionContext struct {
 	// bridge. It cannot be supplied through Skill arguments or runtime JSON.
 	PlatformInteractiveApproval bool `json:"-"`
 	// ScriptModel is server-owned and never serialized into tool arguments.
-	ScriptModel              *ScriptModelChannel `json:"-"`
-	scriptModelPath          string
-	PresentationLocale       string           `json:"-"`
+	ScriptModel        *ScriptModelChannel `json:"-"`
+	scriptModelPath    string
+	PresentationLocale string `json:"-"`
+	// Timezone is the caller's IANA timezone, which the time Skill uses when
+	// the model names none.
+	Timezone                 string           `json:"-"`
 	ConnectorTargetScope     core.TargetScope `json:"-"`
 	ConnectorTargetVersionID string           `json:"-"`
 	// ConnectorTargetType selects the DigitalHuman host boundary. It is empty
@@ -82,14 +85,17 @@ type ExecutionContext struct {
 	ConnectorTargetType  core.TargetType `json:"-"`
 	ConnectorInteractive bool            `json:"-"`
 	// ConnectorRunID identifies the DigitalHuman run a confirmation belongs to.
-	ConnectorRunID    string `json:"-"`
-	OrganizationID    string
-	UserID            string
-	ConversationID    string
-	AppID             string
-	MessageID         string
-	InvokeFrom        tools.ToolInvokeFrom
-	RuntimeParameters map[string]interface{}
+	ConnectorRunID string `json:"-"`
+	// ConnectorHostAudience is the delegation audience of the caller's
+	// surface; it proves the use of a binding another account delegated.
+	ConnectorHostAudience core.HostAudience `json:"-"`
+	OrganizationID        string
+	UserID                string
+	ConversationID        string
+	AppID                 string
+	MessageID             string
+	InvokeFrom            tools.ToolInvokeFrom
+	RuntimeParameters     map[string]interface{}
 	// ExternalUserID is the server-derived external caller identity. It is
 	// distinct from UserID, which remains the internal account/API-key identity.
 	ExternalUserID             string                                           `json:"-"`
@@ -343,19 +349,27 @@ func (r *Runtime) ValidateCatalog(ctx context.Context) error {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	// Report every invalid skill: stopping at the first one hid the state of
+	// every skill sorted after it.
+	var errs []error
 	for _, id := range ids {
 		doc, err := r.loadSkillDocumentFromLocation(locations[id])
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
-		if err := r.validateSkillTools(ctx, doc); err != nil {
-			return err
+		// Runtime-managed skills receive their tools from the runtime that
+		// enables them, such as DigitalHuman memory, not from the tool manager.
+		if !SystemSkillExposureProfile(id).RuntimeManaged {
+			if err := r.validateSkillTools(ctx, doc); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		if err := r.validateSkillReferences(doc); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func LoadCustomSkillDocument(root string) (SkillDocument, error) {
@@ -624,6 +638,9 @@ func (r *Runtime) CallSkillTool(
 		return &ToolInvocationResult{Trace: trace}, enrichErr
 	}
 	executionArguments = enrichedArguments
+	if doc.Metadata.ID == SkillTime {
+		executionArguments = withTimeSkillDefaults(toolDef.Name, executionArguments, execCtx.Timezone)
+	}
 	if err := validateSkillToolArguments(doc.Metadata.ID, toolDef, executionArguments); err != nil {
 		traceArguments := summarizeToolArguments(toolDef, executionArguments)
 		if len(toolDef.InputSchema) > 0 {
@@ -820,6 +837,20 @@ func resolveConnectorToolIdentity(
 	if err := target.Validate(); err != nil {
 		return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
 	}
+	// A Tool projected from a binding another account delegated to this host
+	// acts with that owner's credential. The requester and run travel as a
+	// delegation proof that the resolver re-checks.
+	var delegation *connectordispatch.DelegatedUse
+	if rawOwner := strings.TrimSpace(toolDef.ConnectorOwnerAccountID); rawOwner != "" && rawOwner != ownerID.String() {
+		bindingOwner, ownerErr := uuid.Parse(rawOwner)
+		bindingID, bindingErr := uuid.Parse(strings.TrimSpace(toolDef.ConnectorBindingID))
+		if ownerErr != nil || bindingErr != nil || bindingOwner == uuid.Nil || bindingID == uuid.Nil || execCtx.ConnectorHostAudience == "" {
+			return nil, core.NewError(core.ErrorCodeInvalidInput, false, nil)
+		}
+		runID, _ := uuid.Parse(strings.TrimSpace(execCtx.ConnectorRunID))
+		delegation = &connectordispatch.DelegatedUse{RequesterID: ownerID, RunID: runID, BindingID: bindingID, Audience: execCtx.ConnectorHostAudience}
+		ownerID = bindingOwner
+	}
 
 	// These coordinates only authorize the current binding. The host must
 	// persist an action instance before this identity can reach dispatch.
@@ -833,6 +864,7 @@ func resolveConnectorToolIdentity(
 		OrganizationID: organizationID, OwnerAccountID: ownerID, ActingPrincipalID: ownerID,
 		ConnectorID: connectorID, Target: target, OperationID: operationID,
 		LogicalOperationID: logicalOperationID, CorrelationID: correlationID, Interactive: interactive,
+		Delegation: delegation,
 	}
 	identity, err := execCtx.ConnectorIdentityResolver.ResolveConnectorIdentity(ctx, request)
 	if err != nil {
@@ -842,7 +874,9 @@ func resolveConnectorToolIdentity(
 		identity.ActingPrincipalID != request.ActingPrincipalID || identity.ConnectorID != request.ConnectorID ||
 		identity.Target != request.Target || identity.OperationID != request.OperationID ||
 		identity.LogicalOperationID != request.LogicalOperationID || identity.CorrelationID != request.CorrelationID ||
-		identity.Interactive != request.Interactive || identity.BindingID == uuid.Nil || identity.ConnectionID == uuid.Nil {
+		identity.Interactive != request.Interactive || identity.BindingID == uuid.Nil || identity.ConnectionID == uuid.Nil ||
+		(delegation == nil) != (identity.DelegatedRequesterID == uuid.Nil) ||
+		(delegation != nil && (identity.DelegatedRequesterID != delegation.RequesterID || identity.BindingID != delegation.BindingID)) {
 		return nil, core.NewError(core.ErrorCodeAccessDenied, false, nil)
 	}
 	return &identity, nil

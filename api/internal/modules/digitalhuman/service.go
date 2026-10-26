@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/pkg/apperror"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"gorm.io/datatypes"
 )
 
@@ -49,6 +50,14 @@ type Service struct {
 	}
 	projectionRepairer DigitalHumanMemoryProjectionRepairer
 	now                func() time.Time
+}
+
+// SetConnectorCatalog lets draft saves and publication admit Connector
+// bindings; without it every Connector selection is rejected.
+func (s *Service) SetConnectorCatalog(connectorCatalog ConnectorCatalog) {
+	if s != nil && s.repo != nil {
+		s.repo.SetConnectorCatalog(connectorCatalog)
+	}
 }
 
 // SetIconResolver enables Agent-compatible image icon URLs without coupling the domain to file storage.
@@ -109,8 +118,15 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		Status: StatusDraft, AutonomyLevel: request.AutonomyLevel, Visibility: request.Visibility,
 		Revision: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
+	// New digital humans start with uploads off, like Agents; one created
+	// before this keeps its saved policy.
+	uploadPolicy := chatfile.Clone(request.FileUploadPolicy)
+	if uploadPolicy == nil {
+		uploadPolicy = &chatfile.Policy{AllowedFileTypes: []string{}}
+	}
+	uploadPolicy.Normalize()
 	draft := &Version{
-		FileUploadPolicy: chatfile.Clone(request.FileUploadPolicy),
+		FileUploadPolicy: uploadPolicy,
 		ID:               draftID, DigitalHumanID: definitionID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		State: VersionStateDraft, IdentityName: request.IdentityName, Persona: request.Persona, Goals: goals, Rules: rules, DefaultModel: request.DefaultModel,
 		MemoryPolicy: memoryPolicy, TriggerPolicy: triggerPolicy, PresentationPolicy: presentationPolicy, IdentitySnapshot: datatypes.JSON([]byte(`{}`)),
@@ -644,10 +660,12 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		changed = true
 	}
 	if request.FileUploadPolicy != nil {
+		request.FileUploadPolicy.Normalize()
 		if request.FileUploadPolicy.Validate() != nil {
 			return ErrInvalidRequest
 		}
 		draft.FileUploadPolicy = chatfile.Clone(request.FileUploadPolicy)
+		draft.FileUploadPolicy.Normalize()
 		changed = true
 	}
 	if !changed {
@@ -932,10 +950,14 @@ func applicationError(err error, operation string) error {
 		code = AppCodeRunNotFound
 	case errors.Is(err, ErrRunConflict):
 		code = AppCodeRunConflict
+	case errors.Is(err, ErrEndUserSuspended):
+		code = AppCodeEndUserSuspended
 	case errors.Is(err, ErrConversationNotFound):
 		code = AppCodeConversationNotFound
 	case errors.Is(err, ErrConsoleFileNotAccessible):
 		code = AppCodeConsoleFileNotAccessible
+	case errors.Is(err, ErrWebAppFileRequiresLogin):
+		code = AppCodeWebAppFileRequiresLogin
 	case errors.Is(err, ErrMemoryNotFound):
 		code = AppCodeMemoryNotFound
 	case errors.Is(err, ErrMemoryConflict):
@@ -952,6 +974,8 @@ func applicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict):
 		code = AppCodeTaskConflict
+	case errors.Is(err, ErrTaskVisibilityForbidden), errors.Is(err, ErrTaskReadOnly):
+		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected
 	case errors.Is(err, ErrChannelInstallationNotFound):
@@ -993,6 +1017,8 @@ func taskApplicationError(err error, operation string) error {
 		code = AppCodeTaskNotFound
 	case errors.Is(err, ErrTaskConflict), errors.Is(err, ErrRevisionConflict):
 		code = AppCodeTaskConflict
+	case errors.Is(err, ErrTaskVisibilityForbidden), errors.Is(err, ErrTaskReadOnly):
+		code = appcatalog.CodePermissionDenied
 	case errors.Is(err, ErrTaskPolicyRejected):
 		code = AppCodeTaskPolicyRejected
 	default:

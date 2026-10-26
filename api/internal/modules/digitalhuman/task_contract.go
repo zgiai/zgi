@@ -64,9 +64,57 @@ type TaskAccessContext struct {
 	WorkspaceID    uuid.UUID
 	DigitalHumanID uuid.UUID
 	Principal      invocation.PrincipalRef
-	Owner          TaskOwnerRef
-	Surface        string
-	CurrentTaskID  *uuid.UUID
+	// Owner is the requester namespace. Mutations stay limited to it unless
+	// the viewer is a task center manager.
+	Owner         TaskOwnerRef
+	Surface       string
+	CurrentTaskID *uuid.UUID
+	// Viewer selects the read visibility rules (ADR 0005). The zero value keeps
+	// the legacy owner-namespace reads.
+	Viewer TaskViewer
+}
+
+// TaskViewMode identifies which visibility rules apply to a reader.
+type TaskViewMode string
+
+const (
+	// TaskViewTaskCenter is the console task center.
+	TaskViewTaskCenter TaskViewMode = "task_center"
+	// TaskViewMember is a workspace member in a console conversation or the
+	// personal task view.
+	TaskViewMember TaskViewMode = "member"
+	// TaskViewChannel is one external channel conversation.
+	TaskViewChannel TaskViewMode = "channel"
+	// TaskViewExternal is an external API or public WebApp end user.
+	TaskViewExternal TaskViewMode = "external"
+)
+
+// TaskViewer describes the reader of a task namespace.
+type TaskViewer struct {
+	Mode TaskViewMode
+	// Manager is set only for task center users holding the DigitalHuman
+	// update permission. Managers read and change every task.
+	Manager bool
+}
+
+// TaskManagerContextKey carries the task center manager decision from the
+// route permission check to the task handler.
+const TaskManagerContextKey = "digital_human_task_manager"
+
+// TaskOccupancy is a task the reader cannot see, reduced to the fields a
+// DigitalHuman needs to reason about its workload. It never carries the
+// task's name, goal, requester, or result.
+type TaskOccupancy struct {
+	NextRunAt       *time.Time     `json:"next_run_at,omitempty"`
+	WorkStatus      TaskWorkStatus `json:"work_status"`
+	LifecycleStatus string         `json:"lifecycle_status"`
+	Priority        TaskPriority   `json:"priority"`
+}
+
+// TaskOccupancyReader is implemented by task services that can summarize
+// hidden open work for the runtime task tools.
+type TaskOccupancyReader interface {
+	ListTaskOccupancy(context.Context, TaskAccessContext, int) ([]TaskOccupancy, error)
 }
 
 // TaskWorkStatus is the operator-visible state of a DigitalHuman-owned task.
@@ -91,6 +139,45 @@ const (
 	TaskPriorityHigh   TaskPriority = "high"
 	TaskPriorityUrgent TaskPriority = "urgent"
 )
+
+// TaskReportReview says which of a task's reports wait for someone to review
+// them. Reports that do not are closed when they arrive, so a reminder or a
+// recurring digest never piles up for review.
+type TaskReportReview string
+
+const (
+	// TaskReportReviewNone closes every report except a failed run.
+	TaskReportReviewNone TaskReportReview = "none"
+	// TaskReportReviewExceptions, the default, waits only for a report that
+	// did not fully finish.
+	TaskReportReviewExceptions TaskReportReview = "exceptions"
+	// TaskReportReviewRequired waits for every report, until it is reviewed
+	// or TaskReportReviewWindow passes.
+	TaskReportReviewRequired TaskReportReview = "required"
+)
+
+// TaskReportReviewWindow is how long a report that must be reviewed waits
+// before it is closed unreviewed.
+const TaskReportReviewWindow = 72 * time.Hour
+
+// Valid reports whether the review is a known one; empty is the default.
+func (r TaskReportReview) Valid() bool {
+	return r == "" || r == TaskReportReviewNone || r == TaskReportReviewExceptions || r == TaskReportReviewRequired
+}
+
+// TaskReportDigest groups a scheduled task's reports on external channels.
+type TaskReportDigest string
+
+const (
+	TaskReportDigestNone   TaskReportDigest = ""
+	TaskReportDigestDaily  TaskReportDigest = "daily"
+	TaskReportDigestWeekly TaskReportDigest = "weekly"
+)
+
+// Valid reports whether the digest is a known one.
+func (d TaskReportDigest) Valid() bool {
+	return d == TaskReportDigestNone || d == TaskReportDigestDaily || d == TaskReportDigestWeekly
+}
 
 // TaskScheduleType identifies whether and how a task is automatically run.
 type TaskScheduleType string
@@ -147,11 +234,66 @@ type TaskSchedulePreview struct {
 	NextRunAt *time.Time   `json:"next_run_at,omitempty"`
 }
 
-// Task is the product-facing projection of a subject-owned automation task.
+// TaskVisibility decides who besides the task center may read a task. The
+// DigitalHuman owns every task; the owner fields identify its requester.
+type TaskVisibility string
+
+const (
+	TaskVisibilityRequester    TaskVisibility = "requester"
+	TaskVisibilityConversation TaskVisibility = "conversation"
+	TaskVisibilityWorkspace    TaskVisibility = "workspace"
+	TaskVisibilityRestricted   TaskVisibility = "restricted"
+)
+
+// Valid reports whether v is a supported visibility.
+func (v TaskVisibility) Valid() bool {
+	switch v {
+	case TaskVisibilityRequester, TaskVisibilityConversation, TaskVisibilityWorkspace, TaskVisibilityRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
+// TaskVisibilityOptions lists the visibilities a task of this owner kind can
+// take: kept to its requester, or shared with the team. A shared task's
+// requester is its creator, so `restricted` is its requester-only option.
+func TaskVisibilityOptions(kind TaskOwnerKind) []TaskVisibility {
+	switch kind {
+	case TaskOwnerUserSubject:
+		return []TaskVisibility{TaskVisibilityRequester, TaskVisibilityWorkspace}
+	case TaskOwnerConversation:
+		return []TaskVisibility{TaskVisibilityConversation, TaskVisibilityWorkspace}
+	default:
+		return []TaskVisibility{TaskVisibilityWorkspace, TaskVisibilityRestricted}
+	}
+}
+
+// Widens reports whether changing visibility from v to next lets more people
+// read the task.
+func (v TaskVisibility) Widens(next TaskVisibility) bool {
+	return v != TaskVisibilityWorkspace && next == TaskVisibilityWorkspace
+}
+
+// DefaultTaskVisibility is the visibility of a task created in an owner
+// namespace, and of rows written by builds that predate visibility.
+func DefaultTaskVisibility(kind TaskOwnerKind) TaskVisibility {
+	switch kind {
+	case TaskOwnerUserSubject:
+		return TaskVisibilityRequester
+	case TaskOwnerConversation:
+		return TaskVisibilityConversation
+	default:
+		return TaskVisibilityWorkspace
+	}
+}
+
+// Task is the product-facing projection of a DigitalHuman-owned task.
 type Task struct {
 	ID               uuid.UUID            `json:"id"`
 	DigitalHumanID   uuid.UUID            `json:"digital_human_id"`
 	OwnerKind        TaskOwnerKind        `json:"owner_kind"`
+	Visibility       TaskVisibility       `json:"visibility"`
 	Name             string               `json:"name"`
 	Goal             string               `json:"goal"`
 	SuccessCriteria  []string             `json:"success_criteria"`
@@ -175,16 +317,129 @@ type Task struct {
 	SourceConversationType  string                   `json:"source_conversation_type,omitempty"`
 	Revision                int64                    `json:"revision"`
 	ProposalExpiresAt       *time.Time               `json:"proposal_expires_at,omitempty"`
-	CreatedAt               time.Time                `json:"created_at"`
-	UpdatedAt               time.Time                `json:"updated_at"`
+	ConfirmedAt             *time.Time               `json:"confirmed_at,omitempty"`
+	// LatestReport is the newest final report of the task, if any.
+	LatestReport *TaskReportSummary `json:"latest_report,omitempty"`
+	// CanChange tells the reader whether it may change this task. A visible
+	// workspace task requested by someone else is read-only.
+	CanChange bool `json:"can_change"`
+	// PendingChange is set in the personal task view when a proposed change
+	// to this task waits for the reader's approval in their own conversation.
+	PendingChange *TaskPendingChange `json:"pending_change,omitempty"`
+	// VisibilityOptions lists the visibilities this reader may set. It is
+	// empty unless the reader is a task center manager and task visibility is
+	// enabled. On a task someone else requested it holds only narrower
+	// options, because widening would share that requester's work.
+	VisibilityOptions []TaskVisibility `json:"visibility_options,omitempty"`
+	// NotifyChannelIDs are the team channels this task's reports are also
+	// sent to. Only a task visible to its workspace may have them.
+	NotifyChannelIDs []uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// NotifyChannelAccess says how this reader may change NotifyChannelIDs:
+	// the requester manages them, a task center manager may only remove.
+	NotifyChannelAccess TaskNotifyChannelAccess `json:"notify_channel_access,omitempty"`
+	// ReportDigest holds a scheduled task's reports to external channels for
+	// a daily or weekly digest; empty sends each one (ADR 0008 stage 4).
+	ReportDigest TaskReportDigest `json:"report_digest,omitempty"`
+	// ReportReview says which reports wait for review.
+	ReportReview TaskReportReview `json:"report_review"`
+	// ClientReference is the integrator's identifier given at creation.
+	ClientReference string `json:"client_reference,omitempty"`
+	// Requester is who asked for the task. Only the console task center
+	// shows it.
+	Requester *TaskRequester `json:"requester,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+}
+
+// TaskRequesterKind says who asked for a task.
+type TaskRequesterKind string
+
+const (
+	// TaskRequesterMember is a workspace member, including a manager who
+	// created the task in the task center.
+	TaskRequesterMember TaskRequesterKind = "member"
+	// TaskRequesterAPIUser is an end user of the DigitalHuman API.
+	TaskRequesterAPIUser TaskRequesterKind = "api_user"
+	// TaskRequesterChannel is a conversation in a connected channel.
+	TaskRequesterChannel TaskRequesterKind = "channel"
+)
+
+// TaskRequester is who asked for a task. ID is empty for channel
+// conversations. An API end user's name is the label an operator gave their
+// instance, because the API's user identifier is not kept.
+type TaskRequester struct {
+	Kind  TaskRequesterKind `json:"kind"`
+	ID    string            `json:"id,omitempty"`
+	Name  string            `json:"name,omitempty"`
+	Email string            `json:"email,omitempty"`
+}
+
+// TaskRequesterFacet is one requester the task center can filter by.
+type TaskRequesterFacet struct {
+	TaskRequester
+	Count int64 `json:"count"`
+}
+
+// TaskRequesterQuery searches the people who asked for visible tasks: by
+// name, email, an API end user's label, an ID prefix, or a task's client
+// reference.
+type TaskRequesterQuery struct {
+	Query    string
+	Kind     TaskRequesterKind
+	Page     int
+	PageSize int
+}
+
+// TaskRequesterPage is one page of requesters, most recently active first.
+type TaskRequesterPage struct {
+	Items    []TaskRequesterFacet `json:"items"`
+	Total    int64                `json:"total"`
+	Page     int                  `json:"page"`
+	PageSize int                  `json:"page_size"`
+	HasMore  bool                 `json:"has_more"`
+}
+
+// TaskRequesterDirectory lets the task center find requesters and name API
+// end users, whose own identifiers are not kept.
+type TaskRequesterDirectory interface {
+	ListTaskRequesters(context.Context, TaskAccessContext, TaskRequesterQuery) (*TaskRequesterPage, error)
+	LabelTaskRequester(context.Context, TaskAccessContext, uuid.UUID, string) (*TaskRequester, error)
+}
+
+// TaskNotifyChannelAccess is how a reader may change a task's team channels.
+type TaskNotifyChannelAccess string
+
+const (
+	// TaskNotifyChannelsManage lets the requester add and remove channels.
+	TaskNotifyChannelsManage TaskNotifyChannelAccess = "manage"
+	// TaskNotifyChannelsRemove lets a manager stop a task from reporting to a
+	// channel without choosing new destinations for someone else's work.
+	TaskNotifyChannelsRemove TaskNotifyChannelAccess = "remove"
+)
+
+// MaxTaskNotifyChannels bounds the team channels one task reports to.
+const MaxTaskNotifyChannels = 5
+
+// TaskNotifyChannels checks that team notification channels exist. It is
+// implemented by the notification channels and injected into the task service.
+type TaskNotifyChannels interface {
+	ActiveWorkspaceChannels(ctx context.Context, organizationID, workspaceID uuid.UUID, ids []uuid.UUID) (bool, error)
 }
 
 // TaskListQuery contains bounded task filters.
 type TaskListQuery struct {
-	Statuses          []TaskWorkStatus
+	Statuses []TaskWorkStatus
+	// IncludeUnreviewed also lists tasks outside Statuses whose final report
+	// still waits for review, so finished work is not hidden before it is read.
+	IncludeUnreviewed bool
 	Priorities        []TaskPriority
 	ScheduleType      TaskScheduleType
 	Source            string
+	// RequesterKinds and RequesterID narrow the task center to who asked.
+	RequesterKinds []TaskRequesterKind
+	RequesterID    string
+	// ClientReference lists the tasks an integrator tagged with this value.
+	ClientReference   string
 	Query             string
 	UpdatedAfter      *time.Time
 	UpdatedBefore     *time.Time
@@ -216,6 +471,15 @@ type CreateTaskRequest struct {
 	DeliveryMode            TaskDeliveryMode `json:"delivery_mode,omitempty"`
 	ExecutionTimeoutSeconds int              `json:"execution_timeout_seconds,omitempty"`
 	MaxAttempts             int              `json:"max_attempts,omitempty"`
+	// NotifyChannelIDs are team channels that also receive the task's reports.
+	NotifyChannelIDs []uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ReportDigest is the digest of a scheduled task's reports, if any.
+	ReportDigest TaskReportDigest `json:"report_digest,omitempty"`
+	// ReportReview says which reports wait for review; empty is the default.
+	ReportReview TaskReportReview `json:"report_review,omitempty"`
+	// ClientReference is the integrator's own identifier for the task, echoed
+	// back in reports, notifications, and webhooks.
+	ClientReference string `json:"client_reference,omitempty"`
 }
 
 // UpdateTaskRequest updates a task using optimistic concurrency.
@@ -233,6 +497,16 @@ type UpdateTaskRequest struct {
 	LifecycleStatus         *string `json:"lifecycle_status,omitempty"`
 	ExecutionTimeoutSeconds *int    `json:"execution_timeout_seconds,omitempty"`
 	MaxAttempts             *int    `json:"max_attempts,omitempty"`
+	// Visibility may be changed only by a task center manager.
+	Visibility *TaskVisibility `json:"visibility,omitempty"`
+	// NotifyChannelIDs replaces the team channels that receive the reports.
+	NotifyChannelIDs *[]uuid.UUID `json:"notify_channel_ids,omitempty"`
+	// ReportDigest replaces the digest; empty sends each report.
+	ReportDigest *TaskReportDigest `json:"report_digest,omitempty"`
+	// ReportReview replaces which reports wait for review.
+	ReportReview *TaskReportReview `json:"report_review,omitempty"`
+	// ClientReference replaces the integrator's identifier; empty clears it.
+	ClientReference *string `json:"client_reference,omitempty"`
 }
 
 // TaskAction identifies an explicit lifecycle operation.
@@ -301,6 +575,47 @@ type TaskActivityListResult struct {
 	HasMore  bool            `json:"has_more"`
 }
 
+// SocialOperationsTaskScope is the immutable authority scope captured when a
+// trusted setup service creates an SOP task. It is server-only metadata and is
+// never populated from CreateTaskRequest or model tool arguments.
+type SocialOperationsTaskScope struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	WorkspaceID    uuid.UUID `json:"workspace_id"`
+	OwnerID        uuid.UUID `json:"owner_id"`
+	EmployeeID     uuid.UUID `json:"employee_id"`
+}
+
+type SocialOperationsTaskBudget struct {
+	MaxPages            int `json:"max_pages"`
+	MaxRecords          int `json:"max_records"`
+	MaxConnectorCalls   int `json:"max_connector_calls"`
+	MaxTokens           int `json:"max_tokens"`
+	MaxSafeReadAttempts int `json:"max_safe_read_attempts"`
+}
+
+type SocialOperationsRecordTarget struct {
+	Kind string `json:"kind"`
+	Key  string `json:"key"`
+}
+
+// SocialOperationsTaskMetadata binds an Automation task to one exact,
+// validated SOP configuration and published employee version.
+type SocialOperationsTaskMetadata struct {
+	ResearchConnectorID     string                         `json:"research_connector_id"`
+	ResearchConnectionID    uuid.UUID                      `json:"research_connection_id"`
+	Scope                   SocialOperationsTaskScope      `json:"scope"`
+	EmployeeVersionID       uuid.UUID                      `json:"employee_version_id"`
+	ConfigurationRevision   int64                          `json:"configuration_revision"`
+	ConfigurationRecordID   uuid.UUID                      `json:"configuration_record_id"`
+	ConfigurationArtifactID uuid.UUID                      `json:"configuration_artifact_id"`
+	TaskKey                 string                         `json:"task_key"`
+	Stages                  []string                       `json:"stages"`
+	Budget                  SocialOperationsTaskBudget     `json:"budget"`
+	ConsumesRecordKinds     []string                       `json:"consumes_record_kinds"`
+	ProducesRecordKinds     []string                       `json:"produces_record_kinds"`
+	UpdatesRecords          []SocialOperationsRecordTarget `json:"updates_records"`
+}
+
 // TaskMutationContext describes the trusted server-side source of a task
 // mutation. HTTP and runtime adapters construct it; model arguments cannot.
 type TaskMutationContext struct {
@@ -313,6 +628,21 @@ type TaskMutationContext struct {
 	SourceConversationType string
 	ReplyTo                *invocation.ReplyAddress
 	Proposed               bool
+	SocialOperations       *SocialOperationsTaskMetadata
+	// Undoable marks a change the requester asked for that applied without
+	// an approval: what the task was before is kept so it can be undone
+	// within TaskUndoWindow.
+	Undoable bool
+}
+
+// TaskUndoWindow is how long a change applied without approval can be undone.
+const TaskUndoWindow = 24 * time.Hour
+
+// TaskUndoService undoes the latest change made to a task, when that change
+// applied without approval and is still within TaskUndoWindow. Undoing a
+// task's creation cancels it.
+type TaskUndoService interface {
+	UndoTaskChange(ctx context.Context, access TaskAccessContext, taskID uuid.UUID, mutation TaskMutationContext) (*Task, error)
 }
 
 // TaskResultDeliveryRequest is the durable, user-visible result projection
@@ -331,9 +661,61 @@ type TaskResultDeliveryRequest struct {
 	TaskID          uuid.UUID
 	TaskRunID       uuid.UUID
 	ConversationID  uuid.UUID
-	Source          string
-	TaskName        string
-	Answer          string
+	// ReplyTo is the channel conversation of a channel task, used when there
+	// is no ConversationID: the report joins that conversation's history so
+	// a follow-up there knows what it is about. The channel itself already
+	// received the result.
+	ReplyTo  *invocation.ReplyAddress
+	Source   string
+	TaskName string
+	Answer   string
+	// Report is the run's final report. When present it is delivered as a
+	// report card instead of the plain answer, including for failed runs.
+	Report *TaskReportDelivery
+}
+
+// TaskReportDelivery is the part of a final report shown in a conversation.
+type TaskReportDelivery struct {
+	ID      uuid.UUID
+	Outcome TaskReportOutcome
+	Summary string
+	Body    string
+	Issues  string
+}
+
+// TaskReportNotice tells a task's requester that a final report exists.
+type TaskReportNotice struct {
+	OrganizationID uuid.UUID
+	WorkspaceID    uuid.UUID
+	DigitalHumanID uuid.UUID
+	TaskID         uuid.UUID
+	TaskName       string
+	// ClientReference is the task's integrator identifier, if any.
+	ClientReference string
+	ReportID        uuid.UUID
+	Outcome         TaskReportOutcome
+	Summary         string
+	// RecipientKind is the requester's user subject kind (account or
+	// api_end_user); RecipientID is that subject.
+	RecipientKind string
+	RecipientID   uuid.UUID
+	// ChannelIDs are the task's team channels that also receive the report.
+	ChannelIDs []uuid.UUID
+	// Digest holds the report for the requester's digest on external
+	// channels; empty sends it at once.
+	Digest TaskReportDigest
+	// RunID is the run that produced the report, and FileIDs the run files it
+	// chose to carry (empty means all of them).
+	RunID   *uuid.UUID
+	FileIDs []uuid.UUID
+	// Shared reports whether the team can see the task.
+	Shared bool
+}
+
+// TaskReportNotifier is implemented by the in-app inbox and injected into the
+// scheduler reconciler.
+type TaskReportNotifier interface {
+	NotifyTaskReport(context.Context, TaskReportNotice) error
 }
 
 // TaskResultDeliverer is implemented by the DigitalHuman runtime and injected

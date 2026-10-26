@@ -1,0 +1,372 @@
+package digitalhumantask
+
+import (
+	"errors"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+)
+
+type visibilityFixture struct {
+	service                    *Service
+	taskCenter, manager        digitalhuman.TaskAccessContext
+	memberA, memberB, external digitalhuman.TaskAccessContext
+	channel                    digitalhuman.TaskAccessContext
+	shared, privateA, privateB *digitalhuman.Task
+	conversation               *digitalhuman.Task
+}
+
+func newVisibilityFixture(t *testing.T) visibilityFixture {
+	t.Helper()
+	service, _, sharedAccess, _ := newTaskService(t)
+	return newVisibilityFixtureFor(t, service, sharedAccess, uuid.New(), uuid.New())
+}
+
+// newVisibilityFixtureFor creates one task in each requester namespace.
+func newVisibilityFixtureFor(t *testing.T, service *Service, sharedAccess digitalhuman.TaskAccessContext, accountA, accountB uuid.UUID) visibilityFixture {
+	t.Helper()
+	member := func(account uuid.UUID) digitalhuman.TaskAccessContext {
+		access := sharedAccess
+		access.Principal.ID = account.String()
+		access.Owner = digitalhuman.UserTaskOwner(usersubject.AccountSubject(account))
+		access.Viewer = digitalhuman.TaskViewer{Mode: digitalhuman.TaskViewMember}
+		return access
+	}
+	fixture := visibilityFixture{service: service, memberA: member(accountA), memberB: member(accountB)}
+	fixture.taskCenter = sharedAccess
+	fixture.taskCenter.Viewer = digitalhuman.TaskViewer{Mode: digitalhuman.TaskViewTaskCenter}
+	fixture.manager = fixture.taskCenter
+	fixture.manager.Viewer.Manager = true
+	fixture.external = fixture.memberA
+	fixture.external.Surface = digitalhuman.SurfaceWebApp
+	fixture.external.Viewer = digitalhuman.TaskViewer{Mode: digitalhuman.TaskViewExternal}
+	fixture.channel = sharedAccess
+	fixture.channel.Owner = digitalhuman.ConversationTaskOwner(uuid.New())
+	fixture.channel.Surface = digitalhuman.SurfaceChannel
+	fixture.channel.Viewer = digitalhuman.TaskViewer{Mode: digitalhuman.TaskViewChannel}
+
+	runAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	create := func(access digitalhuman.TaskAccessContext, name string) *digitalhuman.Task {
+		t.Helper()
+		task, err := service.CreateTask(t.Context(), access, digitalhuman.CreateTaskRequest{
+			Name: name, Goal: name + " goal", Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"},
+		}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New(), Source: "console"})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		return task
+	}
+	fixture.shared = create(fixture.taskCenter, "shared")
+	fixture.privateA = create(fixture.memberA, "private A")
+	fixture.privateB = create(fixture.memberB, "private B")
+	fixture.conversation = create(fixture.channel, "conversation")
+	return fixture
+}
+
+func listNames(t *testing.T, service *Service, access digitalhuman.TaskAccessContext) map[string]bool {
+	t.Helper()
+	result, err := service.ListTasks(t.Context(), access, digitalhuman.TaskListQuery{})
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	names := make(map[string]bool, len(result.Items))
+	for _, item := range result.Items {
+		names[item.Name] = true
+	}
+	if int64(len(names)) != result.Total {
+		t.Fatalf("total %d does not match %d items", result.Total, len(names))
+	}
+	return names
+}
+
+func assertNames(t *testing.T, label string, got map[string]bool, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s sees %v, want %v", label, got, want)
+	}
+	for _, name := range want {
+		if !got[name] {
+			t.Fatalf("%s sees %v, want %v", label, got, want)
+		}
+	}
+}
+
+func TestTaskVisibilityDefaultsFromOwnerAndRecordsConfirmation(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	for task, want := range map[*digitalhuman.Task]digitalhuman.TaskVisibility{
+		fixture.shared: digitalhuman.TaskVisibilityWorkspace, fixture.privateA: digitalhuman.TaskVisibilityRequester,
+		fixture.conversation: digitalhuman.TaskVisibilityConversation,
+	} {
+		if task.Visibility != want {
+			t.Fatalf("%s visibility = %q, want %q", task.Name, task.Visibility, want)
+		}
+	}
+
+	runAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	proposal, err := fixture.service.CreateTask(t.Context(), fixture.memberA, digitalhuman.CreateTaskRequest{
+		Name: "proposal", Goal: "approve me", Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"},
+	}, digitalhuman.TaskMutationContext{ActorType: "digital_human", ActorRef: fixture.memberA.DigitalHumanID.String(), OperationID: uuid.New(), Proposed: true})
+	if err != nil || proposal.ConfirmedAt != nil {
+		t.Fatalf("proposal = %#v, error = %v", proposal, err)
+	}
+	confirmed, err := fixture.service.ApplyTaskAction(t.Context(), fixture.memberA, proposal.ID, digitalhuman.TaskActionConfirm,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: proposal.Revision},
+		digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: fixture.memberA.Principal.ID, OperationID: uuid.New()})
+	if err != nil || confirmed.ConfirmedAt == nil {
+		t.Fatalf("confirmed = %#v, error = %v", confirmed, err)
+	}
+	var row automationmodel.AutomationTask
+	if err := fixture.service.db.Where("id = ?", proposal.ID.String()).First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pointerValue(row.ConfirmedByType) != "account" || pointerValue(row.ConfirmedByRef) != fixture.memberA.Principal.ID {
+		t.Fatalf("confirmed by = %v/%v", row.ConfirmedByType, row.ConfirmedByRef)
+	}
+}
+
+func TestTaskVisibilityReadRulesAndMutationScope(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	service := fixture.service
+
+	assertNames(t, "task center", listNames(t, service, fixture.taskCenter), "shared")
+	assertNames(t, "task center manager", listNames(t, service, fixture.manager), "shared", "private A", "private B", "conversation")
+	assertNames(t, "member A", listNames(t, service, fixture.memberA), "shared", "private A")
+	assertNames(t, "member B", listNames(t, service, fixture.memberB), "shared", "private B")
+	assertNames(t, "channel", listNames(t, service, fixture.channel), "conversation")
+	assertNames(t, "external", listNames(t, service, fixture.external), "private A")
+
+	if _, err := service.GetTask(t.Context(), fixture.memberA, fixture.privateB.ID); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("member A GetTask(private B) error = %v", err)
+	}
+	if _, err := service.GetTask(t.Context(), fixture.memberA, fixture.shared.ID); err != nil {
+		t.Fatalf("member A GetTask(shared) error = %v", err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), fixture.memberA, fixture.shared.ID, digitalhuman.TaskActionPause,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.shared.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskReadOnly) {
+		t.Fatalf("member A pause(shared) error = %v, want read-only", err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), fixture.taskCenter, fixture.privateB.ID, digitalhuman.TaskActionPause,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.privateB.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("non-manager pause(private B) error = %v, want not found", err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), fixture.manager, fixture.privateB.ID, digitalhuman.TaskActionPause,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.privateB.Revision}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: fixture.manager.Principal.ID, OperationID: uuid.New()}); err != nil {
+		t.Fatalf("manager pause(private B) error = %v", err)
+	}
+
+	// A task center user who neither requested the task nor manages tasks
+	// cannot change who sees it.
+	restricted := digitalhuman.TaskVisibilityRestricted
+	bystander := fixture.taskCenter
+	bystander.Principal.ID = uuid.NewString()
+	if _, err := service.UpdateTask(t.Context(), bystander, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &restricted}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskPolicyRejected) && !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("non-manager visibility update error = %v", err)
+	}
+	invalid := digitalhuman.TaskVisibility("everyone")
+	if _, err := service.UpdateTask(t.Context(), fixture.manager, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &invalid}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrInvalidRequest) {
+		t.Fatalf("invalid visibility update error = %v", err)
+	}
+	updated, err := service.UpdateTask(t.Context(), fixture.manager, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &restricted}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: fixture.manager.Principal.ID, OperationID: uuid.New()})
+	if err != nil || updated.Visibility != digitalhuman.TaskVisibilityRestricted {
+		t.Fatalf("manager visibility update = %#v, %v", updated, err)
+	}
+	assertNames(t, "member A after restriction", listNames(t, service, fixture.memberA), "private A")
+	// The task center viewer created the shared task, so it remains its requester.
+	assertNames(t, "task center creator after restriction", listNames(t, service, fixture.taskCenter), "shared")
+	otherViewer := fixture.taskCenter
+	otherViewer.Principal.ID = uuid.NewString()
+	assertNames(t, "other task center user after restriction", listNames(t, service, otherViewer))
+	assertNames(t, "manager after restriction", listNames(t, service, fixture.manager), "shared", "private A", "private B", "conversation")
+}
+
+func TestTaskOccupancyRedactsHiddenOpenWork(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	runAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	if _, err := fixture.service.CreateTask(t.Context(), fixture.memberB, digitalhuman.CreateTaskRequest{
+		Name: "unapproved", Goal: "proposal", Schedule: digitalhuman.TaskSchedule{Type: digitalhuman.TaskScheduleOnce, RunAt: &runAt, Timezone: "UTC"},
+	}, digitalhuman.TaskMutationContext{ActorType: "digital_human", ActorRef: fixture.memberB.DigitalHumanID.String(), OperationID: uuid.New(), Proposed: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	occupancy, err := fixture.service.ListTaskOccupancy(t.Context(), fixture.memberA, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Member A sees shared and private A; private B and the channel task are
+	// committed hidden work. The unapproved proposal is not workload yet.
+	if len(occupancy) != 2 {
+		t.Fatalf("member A occupancy = %#v, want two hidden tasks", occupancy)
+	}
+	for _, item := range occupancy {
+		if item.NextRunAt == nil || item.WorkStatus != digitalhuman.TaskWorkStatusPending || item.Priority == "" {
+			t.Fatalf("occupancy item = %#v", item)
+		}
+	}
+	// A row written by a build without visibility support must stay counted.
+	if err := fixture.service.db.Exec("UPDATE automation_tasks SET visibility = NULL WHERE id = ?", fixture.privateB.ID.String()).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacy, err := fixture.service.ListTaskOccupancy(t.Context(), fixture.memberA, 0); err != nil || len(legacy) != 2 {
+		t.Fatalf("member A occupancy over a legacy row = %#v, %v", legacy, err)
+	}
+	channel, err := fixture.service.ListTaskOccupancy(t.Context(), fixture.channel, 0)
+	if err != nil || len(channel) != 3 {
+		t.Fatalf("channel occupancy = %#v, %v; want shared, private A and private B", channel, err)
+	}
+	for name, access := range map[string]digitalhuman.TaskAccessContext{"external": fixture.external, "manager": fixture.manager} {
+		if items, err := fixture.service.ListTaskOccupancy(t.Context(), access, 0); err != nil || items != nil {
+			t.Fatalf("%s occupancy = %#v, %v; want none", name, items, err)
+		}
+	}
+}
+
+func TestVisibleTasksReportWhetherTheReaderCanChangeThem(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	check := func(label string, access digitalhuman.TaskAccessContext, want map[string]bool) {
+		t.Helper()
+		result, err := fixture.service.ListTasks(t.Context(), access, digitalhuman.TaskListQuery{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range result.Items {
+			if expected, ok := want[item.Name]; !ok || item.CanChange != expected {
+				t.Fatalf("%s: %s can_change = %v, want %v", label, item.Name, item.CanChange, expected)
+			}
+		}
+	}
+	check("member A", fixture.memberA, map[string]bool{"shared": false, "private A": true})
+	check("task center", fixture.taskCenter, map[string]bool{"shared": true})
+	check("manager", fixture.manager, map[string]bool{"shared": true, "private A": true, "private B": true, "conversation": true})
+	shared, err := fixture.service.GetTask(t.Context(), fixture.memberA, fixture.shared.ID)
+	if err != nil || shared.CanChange {
+		t.Fatalf("member A GetTask(shared) = %#v, %v", shared, err)
+	}
+}
+
+func TestTaskVisibilityChoicesLetRequestersShareAndManagersOnlyNarrow(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	service := fixture.service
+	choices := func(access digitalhuman.TaskAccessContext, taskID uuid.UUID) []digitalhuman.TaskVisibility {
+		t.Helper()
+		task, err := service.GetTask(t.Context(), access, taskID)
+		if err != nil {
+			t.Fatalf("GetTask(%s): %v", taskID, err)
+		}
+		return task.VisibilityOptions
+	}
+	setVisibility := func(access digitalhuman.TaskAccessContext, taskID uuid.UUID, visibility digitalhuman.TaskVisibility) error {
+		t.Helper()
+		task, err := service.GetTask(t.Context(), access, taskID)
+		if err != nil {
+			t.Fatalf("GetTask(%s): %v", taskID, err)
+		}
+		_, err = service.UpdateTask(t.Context(), access, taskID, digitalhuman.UpdateTaskRequest{ExpectedRevision: task.Revision, Visibility: &visibility},
+			digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: access.Principal.ID, OperationID: uuid.New()})
+		return err
+	}
+	same := func(got []digitalhuman.TaskVisibility, want ...digitalhuman.TaskVisibility) bool {
+		return slices.Equal(got, want)
+	}
+	otherManager := fixture.manager
+	otherManager.Principal.ID = uuid.NewString()
+
+	// The requester of a private task shares it with the team and withdraws it.
+	if got := choices(fixture.memberA, fixture.privateA.ID); !same(got, digitalhuman.TaskVisibilityRequester, digitalhuman.TaskVisibilityWorkspace) {
+		t.Fatalf("requester choices = %v", got)
+	}
+	if err := setVisibility(fixture.memberA, fixture.privateA.ID, digitalhuman.TaskVisibilityWorkspace); err != nil {
+		t.Fatalf("requester shares their task: %v", err)
+	}
+	// A manager may narrow someone else's task but not widen it again.
+	if got := choices(fixture.manager, fixture.privateA.ID); !same(got, digitalhuman.TaskVisibilityRequester, digitalhuman.TaskVisibilityWorkspace) {
+		t.Fatalf("manager choices on a shared private task = %v", got)
+	}
+	if err := setVisibility(fixture.manager, fixture.privateA.ID, digitalhuman.TaskVisibilityRequester); err != nil {
+		t.Fatalf("manager narrows: %v", err)
+	}
+	if got := choices(fixture.manager, fixture.privateA.ID); !same(got, digitalhuman.TaskVisibilityRequester) {
+		t.Fatalf("manager choices after narrowing = %v", got)
+	}
+	if err := setVisibility(fixture.manager, fixture.privateA.ID, digitalhuman.TaskVisibilityWorkspace); !errors.Is(err, digitalhuman.ErrTaskVisibilityForbidden) {
+		t.Fatalf("manager widens someone else's task: %v", err)
+	}
+	if err := setVisibility(fixture.memberA, fixture.privateA.ID, digitalhuman.TaskVisibilityWorkspace); err != nil {
+		t.Fatalf("requester shares again after a manager narrowed: %v", err)
+	}
+	// A shared task's creator chooses freely; another manager only narrows it.
+	if got := choices(fixture.manager, fixture.shared.ID); !same(got, digitalhuman.TaskVisibilityWorkspace, digitalhuman.TaskVisibilityRestricted) {
+		t.Fatalf("creator choices = %v", got)
+	}
+	if err := setVisibility(otherManager, fixture.shared.ID, digitalhuman.TaskVisibilityRestricted); err != nil {
+		t.Fatalf("another manager narrows a shared task: %v", err)
+	}
+	if got := choices(otherManager, fixture.shared.ID); !same(got, digitalhuman.TaskVisibilityRestricted) {
+		t.Fatalf("other manager choices on a narrowed task = %v", got)
+	}
+	// Other members, external end users, and unsupported options get nothing.
+	if got := choices(fixture.memberB, fixture.privateA.ID); got != nil {
+		t.Fatalf("member B choices on member A's task = %v", got)
+	}
+	if got := choices(fixture.external, fixture.privateA.ID); got != nil {
+		t.Fatalf("external end user choices = %v", got)
+	}
+	if err := setVisibility(fixture.memberA, fixture.privateA.ID, digitalhuman.TaskVisibilityRestricted); !errors.Is(err, digitalhuman.ErrInvalidRequest) {
+		t.Fatalf("unsupported visibility for a private task: %v", err)
+	}
+}
+
+func TestTaskCenterNonManagerChangesOnlySharedTasksTheyCreated(t *testing.T) {
+	fixture := newVisibilityFixture(t)
+	service := fixture.service
+	// Another workspace member with only the Run permission in the task center.
+	runner := fixture.taskCenter
+	runner.Principal.ID = uuid.NewString()
+
+	shared, err := service.GetTask(t.Context(), runner, fixture.shared.ID)
+	if err != nil || shared.CanChange {
+		t.Fatalf("runner GetTask(shared) = %#v, %v; want read-only", shared, err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), runner, fixture.shared.ID, digitalhuman.TaskActionCancel,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: fixture.shared.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskReadOnly) {
+		t.Fatalf("runner cancel(shared by another account) error = %v, want read-only", err)
+	}
+	priority := digitalhuman.TaskPriorityHigh
+	if _, err := service.UpdateTask(t.Context(), runner, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Priority: &priority},
+		digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskReadOnly) {
+		t.Fatalf("runner update(shared by another account) error = %v, want read-only", err)
+	}
+	if _, err := service.UpdateTask(t.Context(), runner, fixture.privateA.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.privateA.Revision, Priority: &priority},
+		digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("runner update(another member's private task) error = %v, want not found", err)
+	}
+
+	restricted := digitalhuman.TaskVisibilityRestricted
+	updated, err := service.UpdateTask(t.Context(), fixture.manager, fixture.shared.ID, digitalhuman.UpdateTaskRequest{ExpectedRevision: fixture.shared.Revision, Visibility: &restricted},
+		digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: fixture.manager.Principal.ID, OperationID: uuid.New()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.GetTask(t.Context(), runner, fixture.shared.ID); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("runner GetTask(restricted) error = %v, want not found", err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), runner, fixture.shared.ID, digitalhuman.TaskActionCancel,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: updated.Revision}, digitalhuman.TaskMutationContext{OperationID: uuid.New()}); !errors.Is(err, digitalhuman.ErrTaskNotFound) {
+		t.Fatalf("runner cancel(restricted) error = %v, want not found", err)
+	}
+
+	// The creator of a shared task remains its requester, even after restriction.
+	creator := fixture.taskCenter
+	own, err := service.GetTask(t.Context(), creator, fixture.shared.ID)
+	if err != nil || !own.CanChange {
+		t.Fatalf("creator GetTask(restricted) = %#v, %v", own, err)
+	}
+	if _, err := service.ApplyTaskAction(t.Context(), creator, fixture.shared.ID, digitalhuman.TaskActionPause,
+		digitalhuman.ApplyTaskActionRequest{ExpectedRevision: updated.Revision}, digitalhuman.TaskMutationContext{ActorType: "account", ActorRef: creator.Principal.ID, OperationID: uuid.New()}); err != nil {
+		t.Fatalf("creator pause(restricted) error = %v", err)
+	}
+}

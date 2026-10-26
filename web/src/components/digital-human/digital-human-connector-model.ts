@@ -56,6 +56,33 @@ export function digitalHumanResourceKey(item: DigitalHumanResourceBindingInput) 
   );
 }
 
+/**
+ * A per-user slot (ADR 0007) runs with each requester's own connection, so it
+ * names no connection: resource_id is the slot key.
+ */
+export function isPerUserConnectorSlot(item: { metadata?: Record<string, unknown> }) {
+  return item.metadata?.credential_mode === 'per_user';
+}
+
+/** Turns a selected connection into a per-user slot of the same connector. */
+export function toPerUserConnectorSlot(
+  item: DigitalHumanResourceBindingInput,
+  connectorName: string
+): DigitalHumanResourceBindingInput {
+  return {
+    type: 'connector',
+    resource_id: crypto.randomUUID(),
+    parent_resource_id: item.parent_resource_id,
+    display_name: connectorName || item.display_name,
+    access_mode: 'execute',
+    resource_revision: 'connector:per-user',
+    metadata: {
+      allowed_operation_ids: connectorOperationIds(item),
+      credential_mode: 'per_user',
+    },
+  };
+}
+
 export function connectorOperationIds(item: { metadata: Record<string, unknown> }): string[] {
   const value = item.metadata.allowed_operation_ids;
   return Array.isArray(value)
@@ -253,6 +280,8 @@ export function connectorSelectionInvalid(
     const original = session.baseline.items.find(value => value.id === item.id);
     if (original && sameDigitalHumanBinding(digitalHumanBindingInput(original), item)) return false;
     if (item.type !== 'connector') return true;
+    // The server checks a per-user slot against the connector itself.
+    if (isPerUserConnectorSlot(item)) return connectorOperationIds(item).length === 0;
     const candidate = candidates.find(
       value =>
         value.resource_id === item.resource_id &&

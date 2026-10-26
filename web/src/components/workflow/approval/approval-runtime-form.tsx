@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ClipboardList, Loader2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, ChevronDown, ClipboardList, Loader2 } from 'lucide-react';
 
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Button } from '@/components/ui/button';
@@ -86,16 +86,29 @@ export function ApprovalRuntimeForm({
   );
   const [inputs, setInputs] = React.useState<Record<string, string>>({});
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  // A task proposal is reviewed first; the change request box only opens when
+  // the user asks for changes, so it does not compete with the decision.
+  const [revising, setRevising] = React.useState(false);
+  const renderedFields = isDigitalHumanTaskApproval && !revising ? [] : visibleFields;
 
+  // Callers may rebuild an equal form object on every render. Reset the
+  // entered values only when a different form or field set arrives, so typing
+  // is not wiped and the change request box does not close on its own.
+  const latestForm = React.useRef(form);
+  latestForm.current = form;
+  const latestFields = React.useRef(visibleFields);
+  latestFields.current = visibleFields;
+  const fieldKeys = visibleFields.map(field => field.key).join('\u0000');
   React.useEffect(() => {
-    const defaults = form.resolved_default_values || {};
+    const defaults = latestForm.current.resolved_default_values || {};
     const next: Record<string, string> = {};
-    for (const field of visibleFields) {
+    for (const field of latestFields.current) {
       next[field.key] = stringifyDefault(defaults[field.key]);
     }
     setInputs(next);
     setErrors({});
-  }, [form, visibleFields]);
+    setRevising(false);
+  }, [form.id, fieldKeys]);
 
   const submit = React.useCallback(
     async (action: ApprovalRuntimeAction) => {
@@ -141,23 +154,19 @@ export function ApprovalRuntimeForm({
         </div>
       )}
 
-      <div className="rounded-lg border bg-background p-3 sm:p-4">
-        {isDigitalHumanTaskApproval && taskApproval ? (
-          <DigitalHumanTaskApprovalDetails
-            presentation={taskApproval}
-            locale={locale}
-            webT={webT}
-          />
-        ) : (
+      {isDigitalHumanTaskApproval && taskApproval ? (
+        <DigitalHumanTaskApprovalDetails presentation={taskApproval} locale={locale} webT={webT} />
+      ) : (
+        <div className="rounded-lg border bg-background p-3 sm:p-4">
           <MarkdownViewer
             content={content || ''}
             className="md-viewer break-words whitespace-pre-wrap"
           />
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="space-y-4">
-        {visibleFields.map(field => (
+        {renderedFields.map(field => (
           <div key={field.key} className="space-y-1.5">
             <Label htmlFor={`approval-${form.id}-${field.key}`} className="text-sm font-medium">
               {isDigitalHumanTaskApproval && field.key === 'name'
@@ -177,12 +186,17 @@ export function ApprovalRuntimeForm({
                   setInputs(current => ({ ...current, [field.key]: event.target.value }))
                 }
                 aria-invalid={Boolean(errors[field.key])}
+                autoFocus={isDigitalHumanTaskApproval && field.key === 'supplement'}
                 placeholder={
                   isDigitalHumanTaskApproval && field.key === 'supplement'
                     ? webT('consoleChat.taskApproval.supplementPlaceholder')
                     : undefined
                 }
-                className="min-h-[120px]"
+                className={
+                  isDigitalHumanTaskApproval && field.key === 'supplement'
+                    ? 'min-h-[88px]'
+                    : 'min-h-[120px]'
+                }
               />
             ) : (
               <Input
@@ -196,6 +210,10 @@ export function ApprovalRuntimeForm({
             )}
             {errors[field.key] ? (
               <p className="text-xs text-destructive">{errors[field.key]}</p>
+            ) : isDigitalHumanTaskApproval && field.key === 'supplement' ? (
+              <p className="text-xs leading-5 text-muted-foreground">
+                {webT('consoleChat.taskApproval.supplementHint')}
+              </p>
             ) : null}
           </div>
         ))}
@@ -203,30 +221,113 @@ export function ApprovalRuntimeForm({
 
       <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
         {secondaryAction ? <div className="shrink-0">{secondaryAction}</div> : <span />}
-        <div className="flex flex-wrap justify-end gap-2">
-          {(form.actions || []).map(action => (
-            <Button
-              key={action.id}
-              type="button"
-              variant={action.style === 'secondary' ? 'outline' : 'default'}
-              className={getActionClassName(action)}
-              disabled={isSubmitting}
-              onClick={() => submit(action)}
-            >
-              {isSubmitting && submittedAction === action.id ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : null}
-              {isDigitalHumanTaskApproval && action.id === 'approve'
-                ? taskApprovalApproveLabel(taskOperation, webT)
-                : isDigitalHumanTaskApproval && action.id === 'revise'
-                  ? webT('consoleChat.taskApproval.revise')
-                  : isDigitalHumanTaskApproval && action.id === 'decline'
-                    ? webT('consoleChat.taskApproval.decline')
-                    : action.label || action.id}
-            </Button>
-          ))}
-        </div>
+        {isDigitalHumanTaskApproval ? (
+          <TaskApprovalActions
+            actions={form.actions || []}
+            operation={taskOperation}
+            revising={revising}
+            isSubmitting={isSubmitting}
+            submittedAction={submittedAction}
+            onRevise={() => setRevising(true)}
+            onBack={() => {
+              setRevising(false);
+              setErrors({});
+            }}
+            onSubmit={submit}
+            webT={webT}
+          />
+        ) : (
+          <div className="flex flex-wrap justify-end gap-2">
+            {(form.actions || []).map(action => (
+              <Button
+                key={action.id}
+                type="button"
+                variant={action.style === 'secondary' ? 'outline' : 'default'}
+                className={getActionClassName(action)}
+                disabled={isSubmitting}
+                onClick={() => submit(action)}
+              >
+                {isSubmitting && submittedAction === action.id ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : null}
+                {action.label || action.id}
+              </Button>
+            ))}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function TaskApprovalActions({
+  actions,
+  operation,
+  revising,
+  isSubmitting,
+  submittedAction,
+  onRevise,
+  onBack,
+  onSubmit,
+  webT,
+}: {
+  actions: ApprovalRuntimeAction[];
+  operation: string;
+  revising: boolean;
+  isSubmitting: boolean;
+  submittedAction?: string | null;
+  onRevise: () => void;
+  onBack: () => void;
+  onSubmit: (action: ApprovalRuntimeAction) => void | Promise<void>;
+  webT: ReturnType<typeof useT<'webapp'>>;
+}) {
+  const approve = actions.find(action => action.id === 'approve');
+  const revise = actions.find(action => action.id === 'revise');
+  const decline = actions.find(action => action.id === 'decline');
+  const spinner = (action: ApprovalRuntimeAction) =>
+    isSubmitting && submittedAction === action.id ? (
+      <Loader2 className="size-4 animate-spin" />
+    ) : null;
+
+  if (revising && revise) {
+    return (
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button type="button" variant="ghost" disabled={isSubmitting} onClick={onBack}>
+          {webT('consoleChat.taskApproval.backToReview')}
+        </Button>
+        <Button type="button" disabled={isSubmitting} onClick={() => onSubmit(revise)}>
+          {spinner(revise)}
+          {webT('consoleChat.taskApproval.regenerate')}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      {decline ? (
+        <Button
+          type="button"
+          variant="ghost"
+          className="text-muted-foreground hover:text-foreground"
+          disabled={isSubmitting}
+          onClick={() => onSubmit(decline)}
+        >
+          {spinner(decline)}
+          {webT('consoleChat.taskApproval.decline')}
+        </Button>
+      ) : null}
+      {revise ? (
+        <Button type="button" variant="outline" disabled={isSubmitting} onClick={onRevise}>
+          {webT('consoleChat.taskApproval.requestChanges')}
+        </Button>
+      ) : null}
+      {approve ? (
+        <Button type="button" disabled={isSubmitting} onClick={() => onSubmit(approve)}>
+          {spinner(approve)}
+          {taskApprovalApproveLabel(operation, webT)}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -248,12 +349,8 @@ function TaskApprovalHeader({
     webT('consoleChat.taskApproval.unnamedTask');
 
   return (
-    <div
-      role="region"
-      aria-label={title}
-      className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-3 sm:px-4"
-    >
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning-foreground">
+    <div role="region" aria-label={title} className="flex items-start gap-3">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning-foreground">
         <ClipboardList className="size-4" aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
@@ -265,12 +362,9 @@ function TaskApprovalHeader({
             {taskApprovalOperationLabel(operation, webT)}
           </span>
         </div>
-        <h2 className="mt-1.5 break-words text-base font-semibold leading-6 text-foreground sm:text-lg">
+        <h2 className="mt-1 break-words text-base font-semibold leading-6 text-foreground">
           {taskName}
         </h2>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {taskApprovalDescription(operation, webT)}
-        </p>
       </div>
     </div>
   );
@@ -367,93 +461,175 @@ function DigitalHumanTaskApprovalDetails({
   locale?: string;
   webT: ReturnType<typeof useT<'webapp'>>;
 }) {
+  const [showUnchanged, setShowUnchanged] = React.useState(false);
   const changes = presentation.changes ?? [];
+  const before = presentation.task_before ?? null;
   const after = presentation.task_after ?? null;
-  const detailRows = [
-    'name',
-    'goal',
-    'schedule',
-    'priority',
-    'delivery_mode',
-    'success_criteria',
-    'work_status',
-    'lifecycle_status',
-    'next_run_at',
-  ]
-    .filter(key => after && key in after)
+  const timezone = taskApprovalScheduleTimezone(after);
+  const format = (key: string, value: unknown) =>
+    formatTaskApprovalValue(key, value, locale, webT, timezone);
+  const changedKeys = new Set(changes.map(change => change.field));
+  // The task name is the card heading, and the work/lifecycle states are
+  // internal bookkeeping; neither helps the approver decide.
+  const detailRows = taskApprovalDetailKeys
+    .filter(key => after && key in after && !changedKeys.has(key))
     .map(key => ({
       key,
       label: taskApprovalFieldLabel(key, webT),
-      value: formatTaskApprovalValue(key, after?.[key], locale, webT),
+      value: format(key, after?.[key]),
     }));
-  const changedKeys = new Set(changes.map(change => change.field));
-  const remainingRows = detailRows.filter(row => !changedKeys.has(row.key));
+  const scheduleChanged = changedKeys.has('schedule');
+  const nextRunRecalculated =
+    scheduleChanged &&
+    Boolean(before && 'next_run_at' in before) &&
+    !(after && 'next_run_at' in after);
+  const relatedFieldsStale =
+    scheduleChanged &&
+    !changedKeys.has('goal') &&
+    !changedKeys.has('success_criteria') &&
+    Boolean(readTaskString(after, 'goal') || readTaskString(after, 'success_criteria'));
+  const hasChanges = changes.length > 0;
 
   return (
     <div className="space-y-3">
-      {changes.length > 0 ? (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {webT('consoleChat.taskApproval.changes')}
-            </div>
-            <span className="text-xs text-muted-foreground">
-              {webT('consoleChat.taskApproval.changeCount', { count: changes.length })}
-            </span>
-          </div>
-          <div className="divide-y rounded-md border">
-            {changes.map(change => (
-              <div
-                key={change.field}
-                className="grid gap-2 px-3 py-2.5 text-xs sm:grid-cols-[7rem_minmax(0,1fr)_auto_minmax(0,1fr)]"
-              >
-                <span className="font-medium text-foreground">{change.label || change.field}</span>
-                <div className="min-w-0 rounded bg-destructive/5 px-2 py-1 text-muted-foreground">
-                  <span className="block text-[10px] uppercase text-muted-foreground/70">
-                    {webT('consoleChat.taskApproval.before')}
-                  </span>
-                  <span className="block break-words line-through decoration-destructive/40">
-                    {formatTaskApprovalValue(change.field, change.before, locale, webT)}
-                  </span>
-                </div>
-                <span className="hidden items-center justify-center text-muted-foreground sm:flex">
-                  →
-                </span>
-                <div className="min-w-0 rounded bg-primary/5 px-2 py-1 text-foreground">
-                  <span className="block text-[10px] uppercase text-muted-foreground/70">
-                    {webT('consoleChat.taskApproval.after')}
-                  </span>
-                  <span className="block break-words font-medium">
-                    {formatTaskApprovalValue(change.field, change.after, locale, webT)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {(changes.length > 0 ? remainingRows : detailRows).length > 0 ? (
-        <div className="space-y-2 rounded-md border bg-muted/20 p-3">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {changes.length > 0
-              ? webT('consoleChat.taskApproval.afterDetails')
-              : webT('consoleChat.taskApproval.details')}
-          </div>
-          {(changes.length > 0 ? remainingRows : detailRows).map(row => (
-            <div key={row.key} className="grid gap-1 text-sm sm:grid-cols-[7rem_minmax(0,1fr)]">
-              <span className="text-muted-foreground">{row.label}</span>
-              <span className="break-words font-medium text-foreground">{row.value}</span>
-            </div>
+      {hasChanges ? (
+        <dl className="divide-y rounded-lg border">
+          {changes.map(change => (
+            <TaskApprovalRow key={change.field} label={taskApprovalChangeLabel(change, webT)}>
+              <span className="text-muted-foreground line-through decoration-muted-foreground/50">
+                {format(change.field, change.before)}
+              </span>
+              <ArrowRight
+                className="mx-1.5 inline size-3.5 align-[-2px] text-muted-foreground"
+                aria-hidden="true"
+              />
+              <span className="font-medium text-foreground">
+                {format(change.field, change.after)}
+              </span>
+            </TaskApprovalRow>
           ))}
-        </div>
+          {nextRunRecalculated ? (
+            <TaskApprovalRow label={taskApprovalFieldLabel('next_run_at', webT)}>
+              <span className="text-muted-foreground">
+                {webT('consoleChat.taskApproval.nextRunRecalculated')}
+              </span>
+            </TaskApprovalRow>
+          ) : null}
+        </dl>
       ) : null}
-      {presentation.supplement_allowed ? (
-        <p className="text-xs leading-5 text-muted-foreground">
-          {webT('consoleChat.taskApproval.supplementHint')}
+      {relatedFieldsStale ? (
+        <p className="flex items-start gap-2 rounded-md bg-warning/10 px-3 py-2 text-xs leading-5 text-warning-foreground">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          {webT('consoleChat.taskApproval.relatedFieldsHint')}
         </p>
+      ) : null}
+      {detailRows.length > 0 ? (
+        hasChanges ? (
+          <div>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              aria-expanded={showUnchanged}
+              onClick={() => setShowUnchanged(value => !value)}
+            >
+              <ChevronDown
+                className={cn('size-3.5 transition-transform', showUnchanged && 'rotate-180')}
+                aria-hidden="true"
+              />
+              {showUnchanged
+                ? webT('consoleChat.taskApproval.hideUnchanged')
+                : webT('consoleChat.taskApproval.showUnchanged', { count: detailRows.length })}
+            </button>
+            {showUnchanged ? (
+              <dl className="mt-2 divide-y rounded-lg border bg-muted/20">
+                {detailRows.map(row => (
+                  <TaskApprovalRow key={row.key} label={row.label} muted>
+                    {row.value}
+                  </TaskApprovalRow>
+                ))}
+              </dl>
+            ) : null}
+          </div>
+        ) : (
+          <dl className="divide-y rounded-lg border">
+            {detailRows.map(row => (
+              <TaskApprovalRow key={row.key} label={row.label}>
+                <span className="font-medium text-foreground">{row.value}</span>
+              </TaskApprovalRow>
+            ))}
+          </dl>
+        )
       ) : null}
     </div>
   );
+}
+
+const taskApprovalDetailKeys = [
+  'goal',
+  'schedule',
+  'next_run_at',
+  'priority',
+  'delivery_mode',
+  'success_criteria',
+];
+
+function TaskApprovalRow({
+  label,
+  muted = false,
+  children,
+}: {
+  label: string;
+  muted?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid gap-1 px-3 py-2 text-sm sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-3">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={cn('min-w-0 break-words', muted ? 'text-foreground/80' : 'text-foreground')}>
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+function taskApprovalChangeLabel(
+  change: { field: string; label?: string },
+  t: ReturnType<typeof useT<'webapp'>>
+): string {
+  // The server label is a legacy single-locale fallback; prefer the
+  // localized label for every field the UI knows about.
+  const label = taskApprovalFieldLabel(change.field, t);
+  return label !== change.field ? label : change.label || change.field;
+}
+
+function taskApprovalScheduleTimezone(task: Record<string, unknown> | null): string | undefined {
+  const schedule = task?.schedule;
+  if (!schedule || typeof schedule !== 'object') return undefined;
+  const timezone = (schedule as Record<string, unknown>).timezone;
+  return typeof timezone === 'string' && timezone.trim() ? timezone.trim() : undefined;
+}
+
+function formatTaskDateTime(value: string, locale: string | undefined, timezone?: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
+  if (timezone) {
+    try {
+      // dateStyle/timeStyle cannot be combined with timeZoneName.
+      return date.toLocaleString(locale, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: timezone,
+        timeZoneName: 'short',
+      });
+    } catch {
+      // Fall back to the viewer's zone when the task zone is unknown here.
+    }
+  }
+  return date.toLocaleString(locale, options);
 }
 
 function taskApprovalFieldLabel(key: string, t: ReturnType<typeof useT<'webapp'>>): string {
@@ -475,7 +651,8 @@ function formatTaskApprovalValue(
   key: string,
   value: unknown,
   locale: string | undefined,
-  t: ReturnType<typeof useT<'webapp'>>
+  t: ReturnType<typeof useT<'webapp'>>,
+  timezone?: string
 ): string {
   if (value === null || typeof value === 'undefined' || value === '') {
     return t('consoleChat.taskApproval.emptyValue');
@@ -486,7 +663,9 @@ function formatTaskApprovalValue(
     if (type === 'manual') return t('consoleChat.taskApproval.manual');
     if (type === 'once') {
       const runAt =
-        typeof schedule.run_at === 'string' ? new Date(schedule.run_at).toLocaleString(locale) : '';
+        typeof schedule.run_at === 'string'
+          ? formatTaskDateTime(schedule.run_at, locale, taskApprovalScheduleTimezone({ schedule }))
+          : '';
       return runAt
         ? t('consoleChat.taskApproval.onceAt', { time: runAt })
         : t('consoleChat.taskApproval.once');
@@ -535,8 +714,7 @@ function formatTaskApprovalValue(
     return labels[String(value)] ?? String(value);
   }
   if (key === 'next_run_at' && typeof value === 'string') {
-    const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) return date.toLocaleString(locale);
+    return formatTaskDateTime(value, locale, timezone);
   }
   if (Array.isArray(value)) return value.join('、');
   if (typeof value === 'object') return JSON.stringify(value);

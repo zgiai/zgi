@@ -2015,6 +2015,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		MessageID:          prepared.Message.ID.String(),
 		InvokeFrom:         invokeFrom,
 		RuntimeParameters:  runtimeParameters,
+		Timezone:           strings.TrimSpace(prepared.RunConfig.UserTimezone),
 	}
 	if s == nil {
 		return executionContext
@@ -2025,6 +2026,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		executionContext.ConnectorIdentityResolver = s.connectorAgentRuntime
 		executionContext.ConnectorTargetScope = connectorcore.TargetScope(prepared.RunConfig.ConnectorTargetScope)
 		executionContext.ConnectorTargetVersionID = prepared.RunConfig.ConnectorTargetVersionID
+		executionContext.ConnectorHostAudience = hostAudienceForSource(prepared.Caller.Source)
 	}
 	// ConnectorTargetType is server-owned and empty for Chat, Agent and Workflow
 	// callers, whose Connector target is derived from InvokeFrom.

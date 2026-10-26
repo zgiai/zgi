@@ -6,7 +6,10 @@ import { Plus, PlugZap, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { toast } from 'sonner';
+import { ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS } from '@/lib/config';
+import { connectorCatalogItems, useConnectorCatalog } from '@/hooks/connectors/use-connectors';
 import {
   useDigitalHumanDraftBindings,
   useDigitalHumanBindingCandidates,
@@ -36,13 +39,17 @@ import {
 import {
   beginConnectorSelection,
   digitalHumanBindingInput,
+  digitalHumanResourceKey,
+  isPerUserConnectorSlot,
   observeConnectorDraft,
+  toPerUserConnectorSlot,
   type DigitalHumanConnectorSelection,
 } from './digital-human-connector-model';
 import {
   useZgiMarketSelectedCount,
   ZgiMarketSelectedServers,
 } from '@/components/zgi-market/zgi-market-selected-servers';
+import { DigitalHumanBackgroundGrants } from './digital-human-background-grants';
 
 interface DigitalHumanConnectorSectionProps {
   id: string;
@@ -76,7 +83,7 @@ function ScopedConnectorSection({
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
   const query = useDigitalHumanDraftBindings(id, !preview);
-  const detailQuery = useDigitalHuman(id, !preview);
+  const detailQuery = useDigitalHuman(id);
   const publishedVersionId = detailQuery.data?.data.published?.id;
   const publishedTarget = publishedVersionId
     ? {
@@ -102,7 +109,8 @@ function ScopedConnectorSection({
     items.length > 0
   );
   const mutations = useDigitalHumanMutations(id);
-  const canUpdate = useAccountPermissions().hasPermission('digital_human.update') && !readOnly;
+  const canUpdatePermission = useAccountPermissions().hasPermission('digital_human.update');
+  const canUpdate = canUpdatePermission && !readOnly;
   const marketServerCount = useZgiMarketSelectedCount('digital_human', id);
   const [selection, setSelection] = useState<DigitalHumanConnectorSelection>();
   const [initialReplacement, setInitialReplacement] = useState<DigitalHumanResourceBindingInput>();
@@ -189,6 +197,41 @@ function ScopedConnectorSection({
       changeSelection({ ...current, status: conflict ? 'conflict' : 'failed' });
     }
   };
+  const catalogQuery = useConnectorCatalog(
+    undefined,
+    ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS && items.length > 0
+  );
+  const catalog = connectorCatalogItems(catalogQuery.data?.data);
+  const [modeSaving, setModeSaving] = useState(false);
+  // A per-user slot acts as each requester with their own connection. Moving a
+  // connection to per-user saves at once; moving back picks a connection.
+  const makePerUser = async (item: DigitalHumanResourceBindingInput) => {
+    if (!canUpdate || modeSaving || currentRef.current) return;
+    setModeSaving(true);
+    try {
+      const result = await query.refetch();
+      const draft = result.data?.data;
+      if (!draft) return;
+      const name = catalog.find(value => value.id === item.parent_resource_id)?.name ?? '';
+      await mutations.replaceBindings.mutateAsync({
+        digitalHumanId: id,
+        expectedDraftLockVersion: draft.draft_lock_version,
+        expectedDraftVersionId: draft.draft_version_id,
+        items: draft.items
+          .map(digitalHumanBindingInput)
+          .map(value =>
+            digitalHumanResourceKey(value) === digitalHumanResourceKey(item)
+              ? toPerUserConnectorSlot(value, name)
+              : value
+          ),
+      });
+      toast.success(t('bindings.connectors.modeSaved'));
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      if (mountedRef.current) setModeSaving(false);
+    }
+  };
   const reload = async () => {
     const current = currentRef.current;
     if (!current || current.status === 'saving') return;
@@ -213,7 +256,9 @@ function ScopedConnectorSection({
             <PlugZap className="size-4" />
           </span>
           <h3 className="font-medium">{connectorT('title')}</h3>
-          <Badge variant="subtle">{t('bindings.selectedCount', { count: items.length + marketServerCount })}</Badge>
+          <Badge variant="subtle">
+            {t('bindings.selectedCount', { count: items.length + marketServerCount })}
+          </Badge>
         </div>
         <Button
           type="button"
@@ -278,6 +323,39 @@ function ScopedConnectorSection({
                 canUpdate ? (item, trigger) => void open(undefined, item.id, trigger) : undefined
               }
             />
+            {ENABLE_DIGITAL_HUMAN_PER_USER_CONNECTORS && canUpdate && !preview
+              ? items.map(item => (
+                  <div
+                    key={`mode:${digitalHumanResourceKey(item)}`}
+                    className="mt-3 flex min-w-0 flex-col items-start gap-1.5 text-xs"
+                  >
+                    <span className="max-w-full truncate text-muted-foreground">
+                      {t('bindings.connectors.modeLabel', { name: item.display_name ?? '' })}
+                    </span>
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      value={isPerUserConnectorSlot(item) ? 'per_user' : 'shared'}
+                      disabled={modeSaving || opening || mutations.replaceBindings.isPending}
+                      onValueChange={value => {
+                        if (value === 'per_user' && !isPerUserConnectorSlot(item)) {
+                          void makePerUser(item);
+                        } else if (value === 'shared' && isPerUserConnectorSlot(item)) {
+                          void open(undefined, item.id);
+                        }
+                      }}
+                    >
+                      <ToggleGroupItem value="shared" className="px-2 text-xs">
+                        {t('bindings.connectors.modeShared')}
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="per_user" className="px-2 text-xs">
+                        {t('bindings.connectors.modePerUser')}
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  </div>
+                ))
+              : null}
             {items.map(item => {
               const publishedBinding = publishedBindings.find(
                 binding =>
@@ -285,7 +363,9 @@ function ScopedConnectorSection({
                   binding.connector_id === item.parent_resource_id
               );
               if (!publishedBinding) return null;
-              const audiences = new Set<ConnectorHostAudience>(publishedBinding.host_audiences ?? []);
+              const audiences = new Set<ConnectorHostAudience>(
+                publishedBinding.host_audiences ?? []
+              );
               const options: Array<{ value: ConnectorHostAudience; label: string }> = [
                 {
                   value: 'workspace',
@@ -298,7 +378,10 @@ function ScopedConnectorSection({
                 },
               ];
               return (
-                <div key={`${item.parent_resource_id}:${item.resource_id}`} className="mt-4 flex flex-wrap gap-3">
+                <div
+                  key={`${item.parent_resource_id}:${item.resource_id}`}
+                  className="mt-4 flex flex-wrap gap-3"
+                >
                   {options.map(option => (
                     <label key={option.value} className="flex items-center gap-2 text-xs">
                       <Checkbox
@@ -314,9 +397,7 @@ function ScopedConnectorSection({
                               revision: publishedBinding.revision,
                               audiences: Array.from(next),
                             });
-                            toast.success(
-                              connectorT('picker.authorization.hostDelegationSaved')
-                            );
+                            toast.success(connectorT('picker.authorization.hostDelegationSaved'));
                           } catch (error) {
                             toast.error(
                               getErrorMessage(error) ||
@@ -351,6 +432,15 @@ function ScopedConnectorSection({
             ) : null}
           </>
         )}
+        {publishedVersionId ? (
+          <DigitalHumanBackgroundGrants
+            employeeId={id}
+            versionId={publishedVersionId}
+            bindings={publishedBindings}
+            canView={canUpdatePermission}
+            canCreate={canUpdate}
+          />
+        ) : null}
       </div>
       {selection ? (
         <DigitalHumanConnectorDialog

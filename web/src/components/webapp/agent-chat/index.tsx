@@ -69,8 +69,9 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const agentConfig = config.agent_config;
   const memoryEnabled = Boolean(agentConfig?.agent_memory_enabled);
   const supportsVision = Boolean(agentConfig?.supports_vision);
+  // File uploads ask for sign-in only when a file is attached.
   const requiresLogin =
-    Boolean(agentConfig?.login_required ?? (memoryEnabled || agentConfig?.file_upload_enabled)) &&
+    Boolean(agentConfig?.login_required ?? memoryEnabled) &&
     isAuthInitialized && !isAuthLoading && !isAuthenticated;
   const canUseFiles = Boolean(agentConfig?.file_upload_enabled && isAuthenticated);
   const homeTitle = agentConfig?.home_title || t('agentChat.defaultHomeTitle');
@@ -270,7 +271,8 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       requireModel={false}
       supportsVisionOverride={supportsVision}
       showMemoryToggle={false}
-        enableUpload={canUseFiles}
+        enableUpload={Boolean(agentConfig?.file_upload_enabled)}
+        uploadRequiresLogin={!isAuthenticated}
         fileUploadPolicy={agentConfig?.file_upload_policy}
       uploadScope={uploadScope}
       showFileLibraryPicker={canUseFiles}

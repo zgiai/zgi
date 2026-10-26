@@ -25,7 +25,7 @@ func TestAuthoritativeMemoryResultKeepsActiveMemoriesAndDropsUnknownOrInactiveHi
 		{SegmentID: inactiveID.String(), Score: 0.7},
 		{SegmentID: uuid.New().String(), Score: 1.0},
 	}}
-	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories)
+	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories, nil, 0)
 	if result.ResultCount != 2 || len(result.Items) != 2 || result.Items[0].ID != allowedID || result.Items[1].ID != legacyBusinessID {
 		t.Fatalf("result = %#v, want both active memories regardless of class or scope", result)
 	}
@@ -122,5 +122,65 @@ func TestMemoryProjectionStableDocumentID(t *testing.T) {
 	}
 	if stableProjectionUUID("document", id) == stableProjectionUUID("document", uuid.New()) {
 		t.Fatal("different DigitalHuman ids share projection document id")
+	}
+}
+
+func TestAuthoritativeMemoryResultFiltersByReadScopeAndTrims(t *testing.T) {
+	readScope := memoryReadScope{workspaceID: "workspace", channelID: "channel-a"}
+	selfA, selfB, ownChannel, otherChannel, customer := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	memories := map[uuid.UUID]*DigitalHumanMemory{
+		otherChannel: {ID: otherChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-b", Status: MemoryStatusActive, Content: "other"},
+		customer:     {ID: customer, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeCustomer, ScopeID: "c", Status: MemoryStatusActive, Content: "customer"},
+		ownChannel:   {ID: ownChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-a", Status: MemoryStatusActive, Content: "own"},
+		selfA:        {ID: selfA, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self a"},
+		selfB:        {ID: selfB, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self b"},
+	}
+	response := &datasetservice.KnowledgeRetrieveResponse{Resources: []datasetservice.KnowledgeRetrieverResource{
+		{SegmentID: otherChannel.String(), Score: 0.99},
+		{SegmentID: customer.String(), Score: 0.98},
+		{SegmentID: ownChannel.String(), Score: 0.9},
+		{SegmentID: selfA.String(), Score: 0.8},
+		{SegmentID: selfB.String(), Score: 0.7},
+	}}
+	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories, &readScope, 2)
+	if result.ResultCount != 2 || result.Items[0].ID != ownChannel || result.Items[1].ID != selfA {
+		t.Fatalf("result = %#v, want own channel then first self memory", result.Items)
+	}
+	if result.TopScore == nil || *result.TopScore != 0.9 {
+		t.Fatalf("top score = %v, want the first readable hit", result.TopScore)
+	}
+}
+
+func TestScopedRecallFindsOwnInstanceMemoriesBehindOtherInstances(t *testing.T) {
+	readScope := memoryReadScope{instanceID: "instance-a"}
+	memories := map[uuid.UUID]*DigitalHumanMemory{}
+	response := &datasetservice.KnowledgeRetrieveResponse{}
+	// Other instances fill the whole shared recall.
+	for range memoryScopedRecallTopK {
+		id := uuid.New()
+		memories[id] = &DigitalHumanMemory{ID: id, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-b", Status: MemoryStatusActive, Content: "other"}
+		response.Resources = append(response.Resources, datasetservice.KnowledgeRetrieverResource{SegmentID: id.String(), Score: 0.9})
+	}
+	own, ownWeaker, inactive := uuid.New(), uuid.New(), uuid.New()
+	memories[own] = &DigitalHumanMemory{ID: own, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-a", Status: MemoryStatusActive, Content: "own"}
+	memories[ownWeaker] = &DigitalHumanMemory{ID: ownWeaker, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-a", Status: MemoryStatusActive, Content: "own weaker"}
+	memories[inactive] = &DigitalHumanMemory{ID: inactive, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-a", Status: MemoryStatusArchived, Content: "gone"}
+
+	result := (&DigitalHumanMemoryProjectionProvider{}).authoritativeResult(response, memories, &readScope, 5)
+	if result.ResultCount != 0 {
+		t.Fatalf("the shared recall returned %d readable memories", result.ResultCount)
+	}
+	rows := []map[string]interface{}{
+		{"memory_id": ownWeaker.String(), "_additional": map[string]interface{}{"distance": 0.4}},
+		{"memory_id": inactive.String(), "_additional": map[string]interface{}{"distance": 0.1}},
+		{"memory_id": own.String(), "_additional": map[string]interface{}{"distance": 0.2}},
+		{"memory_id": own.String(), "_additional": map[string]interface{}{"distance": 0.2}},
+	}
+	mergeScopedRecall(result, rows, memories, &readScope, 5)
+	if result.ResultCount != 2 || result.Items[0].ID != own || result.Items[1].ID != ownWeaker || result.Status != datasetservice.KnowledgeRetrieveStatusSuccess {
+		t.Fatalf("scoped recall = %#v", result.Items)
+	}
+	if result.Context != "[memory 1] own\n\n[memory 2] own weaker" || result.TopScore == nil || *result.TopScore != 0.8 {
+		t.Fatalf("scoped recall context = %q, top score %v", result.Context, result.TopScore)
 	}
 }

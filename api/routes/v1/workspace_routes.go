@@ -3,6 +3,7 @@ package v1
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspaceHandler "github.com/zgiai/zgi/api/internal/modules/workspace/handler"
 	workspaceRepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
@@ -93,7 +94,7 @@ func registerWorkspaceAssetMoveRoutes(router *gin.RouterGroup, deps WorkspaceRou
 		deps.DB,
 		deps.AuthorizationService,
 		agentbindings.NewRepository(deps.DB),
-	)
+	).RegisterAssetMover(digitalhuman.NewWorkspaceMover())
 	assetMoveHandler := workspaceHandler.NewWorkspaceAssetMoveHandler(deps.AccountService, assetMoveService)
 
 	assetMoveHandler.RegisterRoutes(router)

@@ -32,6 +32,12 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 	snapshotRef := resourcebindings.SnapshotRef{
 		Subject: resolved.Snapshot.Subject, Phase: resourcebindings.PhasePublished, VersionID: &resolved.Snapshot.DigitalHumanVersion,
 	}
+	preview := resolved.Snapshot.Phase == string(resourcebindings.PhaseDraft)
+	connectorScope, connectorVersion := "published", resolved.Snapshot.DigitalHumanVersion.String()
+	if preview {
+		snapshotRef.Phase = resourcebindings.PhaseDraft
+		connectorScope, connectorVersion = "draft", ""
+	}
 	config := chatruntime.RunConfig{
 		FileUploadEnabled: new(fileUploadEnabled(&Version{FileUploadPolicy: resolved.Snapshot.FileUploadPolicy})),
 		FileUploadPolicy:  chatfile.Clone(resolved.Snapshot.FileUploadPolicy),
@@ -41,7 +47,9 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,
 		UseMemory:          false, AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
 		BindingReader: a.bindingReader, BindingSnapshot: snapshotRef,
-		ConnectorTargetScope: "published", ConnectorTargetVersionID: resolved.Snapshot.DigitalHumanVersion.String(),
+		ConnectorTargetScope: connectorScope, ConnectorTargetVersionID: connectorVersion,
+		// A preview must not act in connected systems.
+		ConnectorToolsDisabled: preview,
 	}
 	databaseByID := make(map[string]*chatruntime.AgentDatabaseBinding)
 	for _, binding := range resolved.Snapshot.Bindings {

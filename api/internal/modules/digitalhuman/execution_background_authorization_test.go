@@ -95,6 +95,13 @@ func TestBackgroundAuthorizationRechecksLivePublicationRouteAndTask(t *testing.T
 			if err := s.AuthorizeBackgroundLinuxExecution(t.Context(), run, event); err == nil {
 				t.Fatal("revoked account continued")
 			}
+			// The administrator created during setup stays pending yet signs in.
+			if err := s.db.Exec(`UPDATE accounts SET status='pending'`).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AuthorizeBackgroundLinuxExecution(t.Context(), run, event); err != nil {
+				t.Fatalf("pending account: %v", err)
+			}
 			if err := s.db.Exec(`UPDATE accounts SET status='active'`).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -140,6 +147,38 @@ func TestBackgroundAuthorizationRechecksLivePublicationRouteAndTask(t *testing.T
 				t.Fatal("disabled publication continued")
 			}
 		})
+	}
+}
+
+func TestBackgroundConnectorAuthorizationDoesNotRequireLinuxRuntime(t *testing.T) {
+	s, run, event := backgroundAuthorizationFixture(t, SurfaceTask)
+	if err := s.db.Model(&Version{}).Where("id = ?", run.DigitalHumanVersionID).Update("execution_runtime", nil).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AuthorizeBackgroundConnectorExecution(t.Context(), run, event); err != nil {
+		t.Fatalf("connector authorization inherited Linux requirement: %v", err)
+	}
+	if err := s.AuthorizeBackgroundLinuxExecution(t.Context(), run, event); err == nil {
+		t.Fatal("Linux execution accepted a publication without Linux enabled")
+	}
+}
+
+func TestBackgroundConnectorAuthorizationRejectsSupersededPublication(t *testing.T) {
+	s, run, event := backgroundAuthorizationFixture(t, SurfaceTask)
+	var current Version
+	if err := s.db.Where("id = ?", run.DigitalHumanVersionID).Take(&current).Error; err != nil {
+		t.Fatal(err)
+	}
+	current.ID = uuid.New()
+	current.VersionNumber++
+	if err := s.db.Create(&current).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Model(&Definition{}).Where("id = ?", run.DigitalHumanID).Update("published_version_id", current.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AuthorizeBackgroundConnectorExecution(t.Context(), run, event); err == nil {
+		t.Fatal("superseded published version retained background authority")
 	}
 }
 

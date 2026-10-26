@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/errors/failureprojection"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -186,9 +187,10 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 		return nil, err
 	}
 	if action == "revise" {
-		// A revision is not a task mutation. The previous proposal is closed as
-		// ineffective and the feedback is returned to the Agent Loop as the
-		// user's next instruction so the model must produce a fresh proposal.
+		// A reply other than approve or decline is not a task mutation. The
+		// proposal is not applied and the reply goes back to the Agent Loop:
+		// a change to the proposal is proposed again, and anything else is
+		// answered without holding the conversation for the proposal.
 		continuationRequest.Status = "rejected"
 		continuationRequest.Outputs = map[string]interface{}{
 			"status":         "proposal_rejected",
@@ -198,7 +200,7 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 			"result_summary": "用户未批准上一版任务变更，未应用请求的变更。",
 			"user_feedback":  feedback,
 		}
-		continuationRequest.ContinuationInstruction = "The user did not approve the previous digital-human task proposal. Treat that task tool call as completed without applying the requested change. The previous proposal may have been discarded, but you must not claim that the requested change was applied. Use the user's feedback below to revise the task parameters, call the digital-human task tool again, and present the new proposal for approval. Do not apply the new proposal directly and do not answer as if the task change succeeded. User feedback: " + feedback
+		continuationRequest.ContinuationInstruction = "The user replied to the pending digital-human task proposal with something other than approving or declining it, so the requested change was not applied; never claim it was. If the reply changes the proposal, revise the task parameters and call the digital-human task tool again; the tool decides whether the revised change applies at once or waits for approval again. If the reply is about something else, answer it normally and do not call the task tool for the proposal again: a proposed task stays in the task list for a day, and the user can still confirm it later. User reply: " + feedback
 		continuationRequest.AllowToolReinvoke = true
 	} else {
 		continuationRequest.Outputs["result_summary"] = answer
@@ -209,6 +211,7 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 			continuationRequest.ContinuationInstruction = "The user declined the digital-human task operation. Treat this as the completed result of the task tool call; the task change was not applied. Continue the same Agent turn and generate a concise final response without claiming success."
 		}
 	}
+	s.resolvePendingTaskToolResult(ctx, continuation.MessageID, taskID, action, firstNonEmptyString(continuationRequest.Outputs["result_summary"]))
 	approvalPayload := map[string]interface{}{"action": action, "status": "submitted", "submitted_at": time.Now().UTC().Format(time.RFC3339)}
 	if action == "revise" {
 		approvalPayload["status"] = "rejected"
@@ -284,6 +287,63 @@ func (s *service) RunDigitalHumanTaskApprovalContinuation(
 	result.Metadata = metadata
 	result.Status = runtimemodel.MessageStatusCompleted
 	return result, nil
+}
+
+// resolvePendingTaskToolResult rewrites the effective form of the task tool
+// result that paused the turn. That result described a pending proposal and
+// carried the task as it was before the change, so later turns read it as the
+// current state and contradicted the approved outcome. The proposal itself
+// stays in the approval events and the task activity log.
+func (s *service) resolvePendingTaskToolResult(ctx context.Context, messageID uuid.UUID, taskID, decision, summary string) {
+	if s == nil || s.repos == nil || s.repos.TranscriptEntry == nil || messageID == uuid.Nil || strings.TrimSpace(taskID) == "" {
+		return
+	}
+	entries, err := s.repos.TranscriptEntry.ListPreviewsByMessage(ctx, messageID)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to load the paused task tool result", "message_id", messageID.String(), err)
+		return
+	}
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
+		if entry == nil || entry.Kind != runtimemodel.TranscriptEntryKindTool || !pendingTaskToolResultFor(entry.Preview, taskID) {
+			continue
+		}
+		content, err := json.Marshal(map[string]interface{}{"data": map[string]interface{}{
+			"status":         "approval_resolved",
+			"decision":       decision,
+			"applied":        decision == "approve",
+			"task_id":        taskID,
+			"result_summary": summary,
+		}})
+		if err != nil {
+			return
+		}
+		preview := copyStringAnyMap(entry.Preview)
+		preview["content"] = string(content)
+		encoded, err := json.Marshal(preview)
+		if err != nil {
+			return
+		}
+		if err := s.repos.TranscriptEntry.UpdatePreview(ctx, entry.ID, preview, len(encoded)); err != nil {
+			logger.WarnContext(ctx, "failed to resolve the paused task tool result", "message_id", messageID.String(), "entry_id", entry.ID.String(), err)
+		}
+		return
+	}
+}
+
+func pendingTaskToolResultFor(preview map[string]interface{}, taskID string) bool {
+	var result struct {
+		Data struct {
+			ApprovalRequired bool `json:"approval_required"`
+			Task             struct {
+				ID string `json:"id"`
+			} `json:"task"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(messageContentText(preview["content"])), &result) != nil {
+		return false
+	}
+	return result.Data.ApprovalRequired && strings.EqualFold(strings.TrimSpace(result.Data.Task.ID), strings.TrimSpace(taskID))
 }
 
 func secureContinuationTokenEqual(expected, actual string) bool {
@@ -1385,8 +1445,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
-	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode))
-	return &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation:     conversation,
 		Message:          message,
 		LLMRequest:       llmRequest,
@@ -1399,7 +1458,9 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		parts:            parts,
 		contextBudget:    contextResult,
 		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
-	}, nil
+	}
+	prepared.resumeWith(continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode))
+	return prepared, nil
 }
 
 func workflowTaskContinuationMessage(continuation *WorkflowApprovalContinuation, req WorkflowContinuationSummaryRequest) adapter.Message {

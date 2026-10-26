@@ -66,9 +66,14 @@ func TestDigitalHumanApprovalDecisionEnforcesPlatformBoundary(t *testing.T) {
 			risk:   RiskUnclassified, want: digitalHumanApprovalShared,
 		},
 		{
-			name:   "trusted low fails closed",
+			name:   "trusted low runs without confirmation",
 			target: validDigitalHumanTarget(), risk: RiskTrustedLow,
-			interactive: true, want: digitalHumanApprovalFailClosed,
+			interactive: true, want: digitalHumanApprovalTrustedLow,
+		},
+		{
+			name:   "non-interactive trusted low runs without confirmation",
+			target: validDigitalHumanTarget(), risk: RiskTrustedLow,
+			want: digitalHumanApprovalTrustedLow,
 		},
 		{
 			name:   "trusted low with a matching confirmation still fails closed",
@@ -398,21 +403,18 @@ func TestDigitalHumanServicePathNonInteractiveHighBlocked(t *testing.T) {
 	}
 }
 
-func TestDigitalHumanServicePathTrustedLowDeniedBeforeDispatch(t *testing.T) {
-	request := digitalHumanServerOpsRequest(serverops.ActionSystemSnapshot, nil, true)
+func TestDigitalHumanServicePathTrustedLowRunsWithoutConfirmation(t *testing.T) {
+	request := digitalHumanServerOpsRequest(serverops.ActionSystemSnapshot, nil, false)
 	harness := newDigitalHumanServerOpsHarness(t, request)
 	harness.risk.classification = RiskTrustedLow
 
 	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
-	if !core.IsErrorCode(err, core.ErrorCodeAccessDenied) || result.State != ExecutionStateBlocked {
+	if err != nil || result.State != ExecutionStateCompleted || result.Confirmation != nil {
 		t.Fatalf("trusted-low InvokeConnector() = %#v, %v", result, err)
 	}
-	if harness.credentials.calls != 0 || harness.provider.calls != 0 || len(harness.audit.outcomes) != 0 {
-		t.Fatalf("trusted-low denial reached credentials/provider/outcomes = %d/%d/%d",
+	if harness.credentials.calls != 1 || harness.provider.calls != 1 || len(harness.audit.outcomes) != 1 {
+		t.Fatalf("trusted-low run reached credentials/provider/outcomes = %d/%d/%d",
 			harness.credentials.calls, harness.provider.calls, len(harness.audit.outcomes))
-	}
-	if len(harness.audit.decisions) != 1 || harness.audit.decisions[0].Status != core.DecisionStatusDenied {
-		t.Fatalf("trusted-low decisions = %#v", harness.audit.decisions)
 	}
 }
 

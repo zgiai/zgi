@@ -2,9 +2,13 @@ package onboarding
 
 import (
 	"context"
-	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 type DingTalkAdapter struct{ protocolHTTP }
@@ -21,6 +25,7 @@ func (a *DingTalkAdapter) Advance(ctx context.Context, f Flow, s ProtocolSecret)
 	const base = "https://oapi.dingtalk.com/app/registration/"
 	var response struct {
 		ErrCode      *int   `json:"errcode"`
+		ErrMsg       string `json:"errmsg"`
 		Nonce        string `json:"nonce"`
 		DeviceCode   string `json:"device_code"`
 		UserCode     string `json:"user_code"`
@@ -53,7 +58,11 @@ func (a *DingTalkAdapter) Advance(ctx context.Context, f Flow, s ProtocolSecret)
 		return ProtocolResult{}, err
 	}
 	if response.ErrCode == nil || *response.ErrCode != 0 {
-		return ProtocolResult{}, registrationError(core.ErrorCodeProviderUnavailable)
+		code := -1
+		if response.ErrCode != nil {
+			code = *response.ErrCode
+		}
+		return ProtocolResult{}, dingTalkRegistrationRefused(f.Step, code, response.ErrMsg, response.Status)
 	}
 	switch f.Step {
 	case "init":
@@ -86,7 +95,8 @@ func (a *DingTalkAdapter) Advance(ctx context.Context, f Flow, s ProtocolSecret)
 		return ProtocolResult{Step: "poll", Secret: ProtocolSecret{DeviceCode: response.DeviceCode, QRPayload: response.URL, UserCode: response.UserCode}, Interval: time.Duration(interval) * time.Second, TTL: time.Duration(ttl) * time.Second, ExpirySource: "provider_or_local_limit"}, nil
 	case "poll":
 		switch response.Status {
-		case "WAITING":
+		// SCANNED: the user scanned the code and has yet to confirm on the phone.
+		case "WAITING", "SCANNED":
 			return pendingResult(f, s), nil
 		case "EXPIRED":
 			return ProtocolResult{}, registrationError(core.ErrorCodeFlowExpired)
@@ -97,7 +107,44 @@ func (a *DingTalkAdapter) Advance(ctx context.Context, f Flow, s ProtocolSecret)
 				return ProtocolResult{}, registrationError(core.ErrorCodeInvalidAppCredentials)
 			}
 			return ProtocolResult{Values: map[string]string{"client_id": response.ClientID, "client_secret": response.ClientSecret}}, nil
+		default:
+			// A status this adapter does not know is not a refusal: keep
+			// waiting, so the flow ends by success, refusal, or expiry.
+			logger.Warn("DingTalk app registration returned an unknown status", "status", boundedDingTalkText(response.Status))
+			return pendingResult(f, s), nil
 		}
 	}
 	return ProtocolResult{}, registrationError(core.ErrorCodeProviderUnavailable)
+}
+
+// dingTalkRegistrationRefused records why DingTalk refused a registration
+// step, which only its code, message, and status tell, and fails it. A
+// refusal for missing permission, such as a scanner without DingTalk
+// developer permission, is access denied so the console can say what to do.
+// The message and status carry no credential.
+func dingTalkRegistrationRefused(step string, code int, message, status string) error {
+	message, status = boundedDingTalkText(message), boundedDingTalkText(status)
+	logger.Warn("DingTalk app registration was refused", "step", step, "errcode", code, "errmsg", message, "status", status)
+	if dingTalkPermissionRefusal(message, status) {
+		return registrationError(core.ErrorCodeAccessDenied)
+	}
+	return registrationError(core.ErrorCodeProviderUnavailable)
+}
+
+func dingTalkPermissionRefusal(message, status string) bool {
+	text := strings.ToLower(message + " " + status)
+	for _, marker := range []string{"权限", "管理员", "permission", "forbidden", "denied", "deny", "reject", "unauthorized", "no_auth", "noauth"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func boundedDingTalkText(value string) string {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > 200 {
+		value = string([]rune(value)[:200])
+	}
+	return value
 }

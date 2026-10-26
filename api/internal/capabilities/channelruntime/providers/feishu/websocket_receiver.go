@@ -11,6 +11,7 @@ import (
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkevent "github.com/larksuite/oapi-sdk-go/v3/event"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 	"github.com/zgiai/zgi/api/internal/capabilities/channelruntime"
@@ -84,6 +85,10 @@ func (receiver *WebSocketReceiver) Run(ctx context.Context, request channelrunti
 	events := dispatcher.NewEventDispatcher("", "").OnP2MessageReceiveV1(
 		func(eventCtx context.Context, event *larkim.P2MessageReceiveV1) error {
 			return receiver.handleEvent(eventCtx, identity, appID, event, handle)
+		},
+	).OnP2CardActionTrigger(
+		func(eventCtx context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
+			return receiver.handleCardAction(eventCtx, identity, appID, event, handle)
 		},
 	)
 	options := []larkws.ClientOption{

@@ -3,6 +3,7 @@ package external
 import (
 	"context"
 	"errors"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -34,6 +36,9 @@ type RuntimeWorkspaceRouteDeps struct {
 	DB           *gorm.DB
 	FileService  interfaces.FileService
 	AgentHandler *agents.AgentsHandler
+	// DigitalHuman serves bound DigitalHumans; without it they answer not
+	// found (ADR 0010).
+	DigitalHuman *digitalhuman.ExternalHandler
 }
 
 func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspaceRouteDeps) {
@@ -44,11 +49,40 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		panic("runtime workspace routes require db, file service, and agent handler")
 	}
 	service := runtimeworkspace.NewService(deps.DB)
+	// Every DigitalHuman access service, including those built for
+	// background execution, trusts the callers of bound Runtime Workspaces.
+	digitalhuman.UseRuntimeWorkspaceAccess(func(db *gorm.DB) digitalhuman.RuntimeWorkspaceAccess { return runtimeworkspace.NewService(db) })
+	// Every chat runtime meters and stops Runtime Workspace end users by the
+	// same points quotas (ADR 0010).
+	runtimeservice.UseEndUserQuotaGuard(runtimeworkspace.NewQuotaGuard(deps.DB))
+	runtimeworkspace.UseEndUserDataOwner(digitalhuman.NewEndUserData())
+	dh := deps.DigitalHuman
+	app := func(agent, digitalHuman gin.HandlerFunc) gin.HandlerFunc {
+		return runtimeAppRoute(dh, agent, digitalHuman)
+	}
+	var dhRoute func(name string) gin.HandlerFunc
+	if dh != nil {
+		dhRoute = func(name string) gin.HandlerFunc { return dh.RuntimeWorkspaceHandler(name) }
+	} else {
+		dhRoute = func(string) gin.HandlerFunc { return nil }
+	}
 	group := router.Group("/connect/v1")
-	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceRequestLease(service), runtimeWorkspaceAudit(service), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service))
+	group.Use(runtimeWorkspaceCredentialAuth(service), runtimeWorkspaceRequestLease(service), runtimeWorkspaceAudit(service), runtimeWorkspaceCredentialScope(), runtimeWorkspaceRateLimit(), runtimeWorkspaceSubjectAuth(service), runtimeWorkspaceEndUserRateLimit())
 	group.GET("/apps", func(c *gin.Context) {
 		principal, ok := runtimePrincipal(c)
 		if !ok {
+			return
+		}
+		// page and limit page the apps; without them every app is listed.
+		if c.Query("page") != "" || c.Query("limit") != "" {
+			page, _ := strconv.Atoi(c.Query("page"))
+			limit, _ := strconv.Atoi(c.Query("limit"))
+			apps, err := service.ListAppsPage(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), page, limit, principal.Credential)
+			if err != nil {
+				runtimeFail(c, err)
+				return
+			}
+			response.Success(c, apps)
 			return
 		}
 		apps, err := service.ListApps(c.Request.Context(), principal.RuntimeWorkspace.LogicalID())
@@ -56,9 +90,165 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 			runtimeFail(c, err)
 			return
 		}
-		response.Success(c, gin.H{"items": apps})
+		response.Success(c, gin.H{"items": principal.Credential.AppsAllowed(apps)})
 	})
 
+	group.GET("/plans", func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok {
+			return
+		}
+		plans := runtimeworkspace.EndUserQuota(principal.RuntimeWorkspace.PolicyJSON).Plans
+		if plans == nil {
+			plans = []runtimeworkspace.EndUserPlan{}
+		}
+		response.Success(c, gin.H{"items": plans})
+	})
+
+	// The integrating server manages its end users by the IDs it sends
+	// (ADR 0010). An end user exists once they have made a request, or once
+	// the server changes them (ADR 0011), so a plan bought before the first
+	// chat applies to it.
+	endUser := func(handle func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			principal, ok := runtimePrincipal(c)
+			if !ok {
+				return
+			}
+			subjectID, err := runtimeworkspace.EndUserSubject(principal.RuntimeWorkspace.LogicalID(), c.Param("user"))
+			if err != nil {
+				runtimeFail(c, err)
+				return
+			}
+			handle(c, principal, subjectID)
+		}
+	}
+	group.GET("/end-users/:user", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		view, err := service.GetEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+	group.PATCH("/end-users/:user", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
+		if err != nil {
+			runtimeFail(c, runtimeworkspace.ErrInvalidEndUser)
+			return
+		}
+		patch, err := runtimeworkspace.ParseEndUserPatch(body)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		if err := service.EnsureEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, c.Param("user")); err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		view, err := service.UpdateEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID}, patch)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, view)
+	}))
+	group.GET("/end-users/:user/entitlement", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		entitlement, err := service.EndUserEntitlement(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, entitlement)
+	}))
+	group.GET("/end-users/:user/credits", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		page, _ := strconv.Atoi(c.Query("page"))
+		limit, _ := strconv.Atoi(c.Query("limit"))
+		ledger, err := service.ListCredits(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, page, limit)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, ledger)
+	}))
+	group.POST("/end-users/:user/credits", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 16<<10))
+		if err != nil {
+			runtimeFail(c, runtimeworkspace.ErrInvalidEndUser)
+			return
+		}
+		grant, err := runtimeworkspace.ParseCreditGrant(body)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		if err := service.EnsureEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, c.Param("user")); err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		result, err := service.GrantCredits(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID}, grant)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, result)
+	}))
+	// Exports run as jobs (ADR 0012): the request queues one and returns
+	// it with 202; poll it, then download the JSON once it has succeeded.
+	group.POST("/end-users/:user/export", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		export, err := service.RequestEndUserExport(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID})
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, response.Response{Code: "0", Message: "success", Data: export})
+	}))
+	exportID := func(c *gin.Context) (uuid.UUID, bool) {
+		id, err := uuid.Parse(c.Param("export_id"))
+		if err != nil {
+			runtimeFail(c, runtimeworkspace.ErrExportNotFound)
+			return uuid.Nil, false
+		}
+		return id, true
+	}
+	group.GET("/end-users/:user/exports/:export_id", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		id, ok := exportID(c)
+		if !ok {
+			return
+		}
+		export, err := service.GetEndUserExport(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, id)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, export)
+	}))
+	group.GET("/end-users/:user/exports/:export_id/download", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		id, ok := exportID(c)
+		if !ok {
+			return
+		}
+		content, err := service.OpenEndUserExport(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID, id)
+		if err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		defer content.Close()
+		writeEndUserExportDownload(c, id, content)
+	}))
+	group.DELETE("/end-users/:user", endUser(func(c *gin.Context, principal *runtimeworkspace.Principal, subjectID uuid.UUID) {
+		if err := service.EraseEndUser(c.Request.Context(), principal.RuntimeWorkspace.LogicalID(), subjectID,
+			runtimeworkspace.EndUserActor{Kind: runtimeworkspace.EndUserActorCredential, ID: principal.Credential.ID}); err != nil {
+			runtimeFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"result": "success"})
+	}))
+
+	registerRuntimeEndUserConnections(group, service, deps.DB)
 	appGroup := group.Group("/apps/:app_key")
 	appGroup.GET("", func(c *gin.Context) {
 		principal, ok := runtimePrincipal(c)
@@ -72,30 +262,58 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 		}
 		response.Success(c, app)
 	})
-	appGroup.GET("/config", deps.AgentHandler.GetAPIKeyAgentRuntimeConfig)
-	appGroup.GET("/parameters", runtimeAppParameters(service, deps.FileService))
-	appGroup.POST("/chat", deps.AgentHandler.ChatAPIKeyAgent)
-	appGroup.GET("/conversations", deps.AgentHandler.ListAPIKeyAgentRuntimeConversations)
-	appGroup.GET("/conversations/search", deps.AgentHandler.SearchAPIKeyAgentRuntimeConversations)
-	appGroup.POST("/conversations", deps.AgentHandler.CreateAPIKeyAgentRuntimeConversation)
-	appGroup.GET("/conversations/:conversation_id", deps.AgentHandler.GetAPIKeyAgentRuntimeConversation)
-	appGroup.PATCH("/conversations/:conversation_id", deps.AgentHandler.UpdateAPIKeyAgentRuntimeConversation)
-	appGroup.DELETE("/conversations/:conversation_id", deps.AgentHandler.DeleteAPIKeyAgentRuntimeConversation)
-	appGroup.GET("/conversations/:conversation_id/messages", deps.AgentHandler.ListAPIKeyAgentRuntimeMessages)
-	appGroup.GET("/conversations/:conversation_id/events", deps.AgentHandler.StreamAPIKeyAgentRuntimeEvents)
-	appGroup.POST("/conversations/:conversation_id/stop", deps.AgentHandler.StopAPIKeyAgentRuntimeConversation)
-	appGroup.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", deps.AgentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation)
-	appGroup.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", deps.AgentHandler.ContinueAPIKeyAgentRuntimeUserInput)
-	appGroup.POST("/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", deps.AgentHandler.ContinueAPIKeyAgentRuntimeTokenBudget)
-	appGroup.POST("/messages/:message_id/regenerate", deps.AgentHandler.RegenerateAPIKeyAgentRuntimeMessage)
-	appGroup.GET("/memory", deps.AgentHandler.GetAPIKeyAgentMemory)
-	appGroup.GET("/memory/export", deps.AgentHandler.ExportAPIKeyAgentMemory)
-	appGroup.PUT("/memory/:key", deps.AgentHandler.PutAPIKeyAgentMemory)
-	appGroup.DELETE("/memory/:key", deps.AgentHandler.DeleteAPIKeyAgentMemoryValue)
-	appGroup.DELETE("/memory", deps.AgentHandler.DeleteAllAPIKeyAgentMemory)
-	appGroup.POST("/memory/operations/:operation_id/undo", deps.AgentHandler.UndoAPIKeyAgentMemoryOperation)
-	appGroup.GET("/memory/settings", deps.AgentHandler.GetAPIKeyAgentMemorySettings)
-	appGroup.PATCH("/memory/settings", deps.AgentHandler.PatchAPIKeyAgentMemorySettings)
+	// Each app route serves the bound app's own operation: an Agent's or a
+	// DigitalHuman's (ADR 0010). Operations one type lacks answer not found.
+	appGroup.GET("/config", app(deps.AgentHandler.GetAPIKeyAgentRuntimeConfig, dhRoute("config")))
+	appGroup.GET("/parameters", app(runtimeAppParameters(service, deps.FileService), dhRoute("config")))
+	appGroup.POST("/chat", app(deps.AgentHandler.ChatAPIKeyAgent, dhRoute("chat")))
+	appGroup.GET("/conversations", app(deps.AgentHandler.ListAPIKeyAgentRuntimeConversations, dhRoute("conversations.list")))
+	appGroup.GET("/conversations/search", app(deps.AgentHandler.SearchAPIKeyAgentRuntimeConversations, dhRoute("conversations.search")))
+	appGroup.POST("/conversations", app(deps.AgentHandler.CreateAPIKeyAgentRuntimeConversation, nil))
+	appGroup.GET("/conversations/:conversation_id", app(deps.AgentHandler.GetAPIKeyAgentRuntimeConversation, dhRoute("conversations.get")))
+	appGroup.PATCH("/conversations/:conversation_id", app(deps.AgentHandler.UpdateAPIKeyAgentRuntimeConversation, dhRoute("conversations.update")))
+	appGroup.DELETE("/conversations/:conversation_id", app(deps.AgentHandler.DeleteAPIKeyAgentRuntimeConversation, dhRoute("conversations.delete")))
+	appGroup.GET("/conversations/:conversation_id/messages", app(deps.AgentHandler.ListAPIKeyAgentRuntimeMessages, dhRoute("conversations.messages")))
+	appGroup.GET("/conversations/:conversation_id/events", app(deps.AgentHandler.StreamAPIKeyAgentRuntimeEvents, nil))
+	appGroup.POST("/conversations/:conversation_id/stop", app(deps.AgentHandler.StopAPIKeyAgentRuntimeConversation, nil))
+	appGroup.GET("/conversations/:conversation_id/files/:file_id", app(nil, dhRoute("conversations.file")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/workflow-continuation", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeWorkflowContinuation, dhRoute("continue.workflow")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeUserInput, dhRoute("continue.user_input")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", app(nil, dhRoute("continue.tool_governance")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/connector-confirmation", app(nil, dhRoute("continue.connector_confirmation")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", app(deps.AgentHandler.ContinueAPIKeyAgentRuntimeTokenBudget, dhRoute("continue.token_budget")))
+	appGroup.POST("/conversations/:conversation_id/messages/:message_id/regenerate", app(nil, dhRoute("regenerate")))
+	appGroup.POST("/messages/:message_id/regenerate", app(deps.AgentHandler.RegenerateAPIKeyAgentRuntimeMessage, nil))
+	appGroup.GET("/runs/:run_id", app(nil, dhRoute("runs.get")))
+	appGroup.GET("/runs/:run_id/events", app(nil, dhRoute("runs.events")))
+	appGroup.POST("/runs/:run_id/stop", app(nil, dhRoute("runs.stop")))
+	appGroup.POST("/runs/:run_id/runtime-input", app(nil, dhRoute("runs.runtime_input")))
+	appGroup.GET("/tasks", app(nil, dhRoute("tasks.list")))
+	appGroup.POST("/tasks", app(nil, dhRoute("tasks.create")))
+	appGroup.POST("/tasks/schedule-preview", app(nil, dhRoute("tasks.schedule_preview")))
+	appGroup.GET("/tasks/:task_id", app(nil, dhRoute("tasks.get")))
+	appGroup.PATCH("/tasks/:task_id", app(nil, dhRoute("tasks.update")))
+	appGroup.POST("/tasks/:task_id/actions/:action", app(nil, dhRoute("tasks.action")))
+	appGroup.GET("/tasks/:task_id/runs", app(nil, dhRoute("tasks.runs")))
+	appGroup.GET("/tasks/:task_id/activities", app(nil, dhRoute("tasks.activities")))
+	appGroup.GET("/reports", app(nil, dhRoute("reports.list")))
+	appGroup.GET("/reports/:report_id", app(nil, dhRoute("reports.get")))
+	appGroup.POST("/reports/:report_id/review", app(nil, dhRoute("reports.review")))
+	appGroup.GET("/reports/:report_id/files/:file_id", app(nil, dhRoute("reports.file")))
+	appGroup.GET("/notifications", app(nil, dhRoute("notifications.list")))
+	appGroup.POST("/notifications/read", app(nil, dhRoute("notifications.read")))
+	appGroup.GET("/notifications/unread-count", app(nil, dhRoute("notifications.unread_count")))
+	appGroup.POST("/notifications/read-all", app(nil, dhRoute("notifications.read_all")))
+	appGroup.GET("/memory", app(deps.AgentHandler.GetAPIKeyAgentMemory, dhRoute("memory.get")))
+	appGroup.GET("/memory/export", app(deps.AgentHandler.ExportAPIKeyAgentMemory, nil))
+	appGroup.PUT("/memory/:key", app(deps.AgentHandler.PutAPIKeyAgentMemory, nil))
+	appGroup.DELETE("/memory/:key", app(deps.AgentHandler.DeleteAPIKeyAgentMemoryValue, nil))
+	appGroup.DELETE("/memory/items/:key", app(nil, dhRoute("memory.delete_item")))
+	appGroup.POST("/memory/clear", app(nil, dhRoute("memory.clear")))
+	appGroup.DELETE("/memory", app(deps.AgentHandler.DeleteAllAPIKeyAgentMemory, nil))
+	appGroup.POST("/memory/operations/:operation_id/undo", app(deps.AgentHandler.UndoAPIKeyAgentMemoryOperation, nil))
+	appGroup.GET("/memory/settings", app(deps.AgentHandler.GetAPIKeyAgentMemorySettings, nil))
+	appGroup.PATCH("/memory/settings", app(deps.AgentHandler.PatchAPIKeyAgentMemorySettings, nil))
 
 	fileGroup := group.Group("/files")
 	fileGroup.POST("", runtimeUploadFile(deps.DB, deps.FileService))
@@ -267,9 +485,47 @@ func runtimeWorkspaceSubjectAuth(service *runtimeworkspace.Service) gin.HandlerF
 		// because Runtime Subjects are intentionally not members.
 		c.Set("runtime_file_authorizer", service)
 		if principal.Agent != nil {
-			c.Set("agent_id", principal.Agent.AgentID.String())
+			switch principal.Agent.AppType {
+			case runtimeworkspace.AppTypeDigitalHuman:
+				c.Set(runtimeAppTypeContextKey, runtimeworkspace.AppTypeDigitalHuman)
+				c.Set(digitalhuman.RuntimeDigitalHumanIDContextKey, principal.Agent.AgentID.String())
+			case runtimeworkspace.AppTypeAgent, "":
+				c.Set(runtimeAppTypeContextKey, runtimeworkspace.AppTypeAgent)
+				c.Set("agent_id", principal.Agent.AgentID.String())
+			}
 		}
 		c.Next()
+	}
+}
+
+const runtimeAppTypeContextKey = "runtime_app_type"
+
+// runtimeAppRoute serves an app route with the handler of the bound app's
+// type: an Agent's or a DigitalHuman's. A type without a handler for the
+// route, or an app of any other type, answers that the app has no such
+// operation; nothing falls back to the Agent handler (ADR 0012).
+func runtimeAppRoute(digitalHumans *digitalhuman.ExternalHandler, agent, digitalHuman gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.GetString(runtimeAppTypeContextKey) {
+		case runtimeworkspace.AppTypeDigitalHuman:
+			if digitalHumans == nil || digitalHuman == nil {
+				runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+				return
+			}
+			if !digitalHumans.PrepareRuntimeWorkspaceCaller(c) {
+				return
+			}
+			digitalHuman(c)
+		case runtimeworkspace.AppTypeAgent, "":
+			// Untyped is a route whose app predates app types: an Agent.
+			if agent == nil {
+				runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+				return
+			}
+			agent(c)
+		default:
+			runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+		}
 	}
 }
 
@@ -318,8 +574,10 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 			return
 		}
 		var agentID uuid.UUID
+		appType := ""
 		if runtimePrincipal.Agent != nil {
 			agentID = runtimePrincipal.Agent.AgentID
+			appType = runtimePrincipal.Agent.AppType
 		}
 		details := map[string]any{
 			"external_user_id_hash": runtimeExternalUserHash(runtimePrincipal.ExternalUserID),
@@ -341,6 +599,7 @@ func runtimeWorkspaceAudit(service *runtimeworkspace.Service) gin.HandlerFunc {
 			CredentialID:       runtimePrincipal.Credential.ID,
 			SubjectID:          runtimePrincipal.SubjectID,
 			AgentID:            agentID,
+			AppType:            appType,
 			Method:             c.Request.Method,
 			Route:              route,
 			StatusCode:         c.Writer.Status(),
@@ -393,6 +652,98 @@ func runtimeWorkspaceRateLimit() gin.HandlerFunc {
 	}
 }
 
+// runtimeWorkspaceEndUserRateLimit limits each end user on top of the
+// workspace limit (ADR 0012). Requests without an end user, such as the
+// integrating server managing end users, are not counted. Like the workspace
+// limit it fails open when Redis is unavailable.
+func runtimeWorkspaceEndUserRateLimit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok || principal.SubjectID == uuid.Nil {
+			c.Next()
+			return
+		}
+		limit := runtimeworkspace.RuntimeEndUserRequestsPerMinute(principal.RuntimeWorkspace.PolicyJSON)
+		if limit <= 0 {
+			c.Next()
+			return
+		}
+		key := principal.RuntimeWorkspace.LogicalID().String() + ":user:" + principal.SubjectID.String()
+		decision, err := runtimeworkspace.AllowRateLimitedRequest(c.Request.Context(), redisPkg.GetClient(), key, limit, time.Now())
+		c.Header("X-RateLimit-End-User-Limit", strconv.Itoa(decision.Limit))
+		c.Header("X-RateLimit-End-User-Remaining", strconv.Itoa(decision.Remaining))
+		if errors.Is(err, runtimeworkspace.ErrRateLimited) {
+			retryAfter := int(decision.RetryAfter / time.Second)
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+			runtimeFail(c, runtimeworkspace.ErrEndUserRateLimited)
+			c.Abort()
+			return
+		}
+		if err != nil {
+			logger.Warn("runtime workspace end-user rate limit unavailable", "error", err)
+		}
+		c.Next()
+	}
+}
+
+// writeEndUserExportDownload streams an export's JSON as an attachment.
+func writeEndUserExportDownload(c *gin.Context, exportID uuid.UUID, content io.Reader) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Disposition", `attachment; filename="end-user-export-`+exportID.String()+`.json"`)
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Status(http.StatusOK)
+	if _, err := io.Copy(c.Writer, content); err != nil {
+		logger.Warn("runtime workspace end-user export download failed", "error", err)
+	}
+}
+
+// runtimeCredentialScope is the scope a /connect/v1 route needs (ADR 0012):
+// end-user management reads and changes, or calls as end users. "" lets any
+// scope through.
+func runtimeCredentialScope(method, fullPath string) string {
+	path := fullPath
+	if index := strings.Index(fullPath, "/connect/v1"); index >= 0 {
+		path = fullPath[index+len("/connect/v1"):]
+	}
+	switch {
+	case path == "/plans":
+		return ""
+	case strings.HasPrefix(path, "/end-users/"):
+		if method == http.MethodGet && !strings.Contains(path, "/exports/") {
+			return runtimeworkspace.CredentialScopeEndUsersRead
+		}
+		return runtimeworkspace.CredentialScopeEndUsersManage
+	default:
+		return runtimeworkspace.CredentialScopeRuntime
+	}
+}
+
+// runtimeWorkspaceCredentialScope refuses calls outside the key's scopes, and
+// apps outside its apps as not found, so they cannot be discovered.
+func runtimeWorkspaceCredentialScope() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal, ok := runtimePrincipal(c)
+		if !ok {
+			c.Abort()
+			return
+		}
+		if scope := runtimeCredentialScope(c.Request.Method, c.FullPath()); scope != "" && !principal.Credential.Allows(scope) {
+			runtimeFail(c, runtimeworkspace.ErrCredentialScopeDenied)
+			c.Abort()
+			return
+		}
+		if appKey := strings.TrimSpace(c.Param("app_key")); appKey != "" && !principal.Credential.AllowsApp(appKey) {
+			runtimeFail(c, runtimeworkspace.ErrAppNotFound)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func runtimeWorkspaceRateLimitKey(principal *runtimeworkspace.Principal) string {
 	if principal == nil || principal.RuntimeWorkspace == nil {
 		return ""
@@ -406,10 +757,22 @@ func runtimeFail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, runtimeworkspace.ErrRateLimited):
 		response.Fail(c, response.ErrRateLimitExceeded)
+	case errors.Is(err, runtimeworkspace.ErrEndUserRateLimited):
+		c.JSON(http.StatusTooManyRequests, response.Response{Code: "runtime_end_user_rate_limited", Message: "This end user sent too many requests; retry after the Retry-After seconds"})
+	case errors.Is(err, runtimeworkspace.ErrCredentialScopeDenied):
+		c.JSON(http.StatusForbidden, response.Response{Code: "runtime_credential_scope_denied", Message: "This access key is not allowed to call this endpoint"})
+	case errors.Is(err, runtimeworkspace.ErrExportNotFound):
+		response.Fail(c, response.ErrNotFound)
+	case errors.Is(err, runtimeworkspace.ErrExportNotReady):
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_export_not_ready", Message: "The export has not finished"})
 	case errors.Is(err, runtimeworkspace.ErrUnauthorized), errors.Is(err, runtimeworkspace.ErrSubjectRequired):
 		response.Fail(c, response.ErrUnauthorized)
-	case errors.Is(err, runtimeworkspace.ErrAppNotFound), errors.Is(err, runtimeworkspace.ErrFileNotFound):
+	case errors.Is(err, runtimeworkspace.ErrAppNotFound), errors.Is(err, runtimeworkspace.ErrFileNotFound), errors.Is(err, runtimeworkspace.ErrEndUserNotFound):
 		response.Fail(c, response.ErrNotFound)
+	case errors.Is(err, runtimeworkspace.ErrInvalidWorkspace):
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, runtimeworkspace.ErrCreditConflict):
+		c.JSON(http.StatusConflict, response.Response{Code: "runtime_credit_conflict", Message: "This external ID was already used for a grant of another amount"})
 	case errors.Is(err, runtimeworkspace.ErrAppDisabled), errors.Is(err, runtimeworkspace.ErrWorkspaceDisabled):
 		response.Fail(c, response.ErrPermissionDenied)
 	default:

@@ -2,7 +2,6 @@ package digitalhuman
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -116,37 +115,12 @@ func TestChannelMessagePreviewIsBoundedAndWhitespaceNormalized(t *testing.T) {
 	}
 }
 
-func TestChannelWebhookSkipsAcknowledgementWhenDisabled(t *testing.T) {
-	service, _, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
-	runtime.channelPolicy = &ChannelResponsePolicy{
-		IntermediateMessagesEnabled: true,
-		AcknowledgementEnabled:      false,
-	}
-	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
-	adapter.message = &channelruntime.InboundMessage{
-		Provider: "feishu", ProviderEventID: "event-no-ack", ProviderMessageID: "message-no-ack",
-		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
-		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "请处理",
-		OccurredAt: time.Now().UTC(),
-	}
-	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
-	if err != nil || !result.Accepted {
-		t.Fatalf("HandleWebhook() = %#v, %v", result, err)
-	}
-	if requests := service.transient.(*channelTransientDispatcherStub).requests; len(requests) != 0 {
-		t.Fatalf("transient acknowledgement requests = %#v, want none", requests)
-	}
-	if runtime.lastEvent.ReplyTo == nil || runtime.lastEvent.ReplyTo.RecipientID != "" {
-		t.Fatalf("direct reply target = %#v, want no redundant mention", runtime.lastEvent.ReplyTo)
-	}
-}
-
 func TestChannelWebhookUsesProviderProcessingMarkerUntilRunCompletes(t *testing.T) {
 	service, store, _, adapter, scope, digitalHumanID := newChannelTestService(t)
 	adapter.processingMarker = true
 	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
 	adapter.message = &channelruntime.InboundMessage{
-		Provider: "feishu", ProviderEventID: "event-marker", ProviderMessageID: "om-marker",
+		Provider: "feishu", ProviderEventID: "event-marker", ProviderMessageID: "om-marker", ProviderConversationID: "oc-marker",
 		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
 		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "请处理",
 		OccurredAt: time.Now().UTC(),
@@ -164,8 +138,8 @@ func TestChannelWebhookUsesProviderProcessingMarkerUntilRunCompletes(t *testing.
 	if err := service.DispatchProcessingMarkers(t.Context(), 1); err != nil {
 		t.Fatalf("add processing marker: %v", err)
 	}
-	if adapter.markerAddCalls != 1 {
-		t.Fatalf("marker add calls = %d, want 1", adapter.markerAddCalls)
+	if adapter.markerAddCalls != 1 || adapter.lastMarker.InboundMessageID != "om-marker" || adapter.lastMarker.InboundConversationID != "oc-marker" {
+		t.Fatalf("marker add calls = %d, request %#v", adapter.markerAddCalls, adapter.lastMarker)
 	}
 	store.terminalMarkerRuns[*result.RunID] = true
 	if err := service.DispatchProcessingMarkers(t.Context(), 1); err != nil {
@@ -177,6 +151,35 @@ func TestChannelWebhookUsesProviderProcessingMarkerUntilRunCompletes(t *testing.
 	for _, marker := range store.markers {
 		if marker.Status != channelruntime.ProcessingMarkerRemoved {
 			t.Fatalf("marker status = %s, want removed", marker.Status)
+		}
+	}
+}
+
+func TestChannelWebhookAcknowledgesWithTextWhenTheMarkerIsRefused(t *testing.T) {
+	service, store, _, adapter, scope, digitalHumanID := newChannelTestService(t)
+	adapter.processingMarker = true
+	adapter.markerAddErr = providertransport.NewError(providertransport.ErrorCodeAccessDenied, "no emotion permission", nil)
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-refused", ProviderMessageID: "om-refused",
+		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
+		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "请处理",
+		OccurredAt: time.Now().UTC(),
+	}
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
+	if err != nil || result == nil || result.RunID == nil {
+		t.Fatalf("HandleWebhook() = %#v, %v", result, err)
+	}
+	if err := service.DispatchProcessingMarkers(t.Context(), 1); err != nil {
+		t.Fatalf("add processing marker: %v", err)
+	}
+	requests := service.transient.(*channelTransientDispatcherStub).requests
+	if len(requests) != 1 || requests[0].Kind != channelruntime.DeliveryKindAcknowledgement || requests[0].RunID != *result.RunID {
+		t.Fatalf("text acknowledgements = %#v, want one after the refusal", requests)
+	}
+	for _, marker := range store.markers {
+		if marker.Status != channelruntime.ProcessingMarkerFailed {
+			t.Fatalf("refused marker status = %s, want failed", marker.Status)
 		}
 	}
 }
@@ -277,6 +280,23 @@ func TestChannelWebhookStaleGroupMentionIsAuditedWithoutInvocation(t *testing.T)
 	}
 	if requests := service.transient.(*channelTransientDispatcherStub).requests; len(requests) != 0 {
 		t.Fatalf("stale acknowledgement requests = %#v, want none", requests)
+	}
+}
+
+func TestChannelInstallationOfTheSameConnectionIsCreatedOnce(t *testing.T) {
+	service, store, _, _, scope, digitalHumanID := newChannelTestService(t)
+	request := CreateChannelInstallationRequest{Provider: "feishu", ConnectionID: uuid.New(), Name: "Feishu"}
+	first, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, request)
+	if err != nil || second.ID != first.ID || len(store.installations) != 1 {
+		t.Fatalf("second CreateInstallation() = %#v, %v; installations %d", second, err, len(store.installations))
+	}
+	request.ConnectionID = uuid.New()
+	if other, err := service.CreateInstallation(t.Context(), scope, digitalHumanID, request); err != nil || other.ID == first.ID {
+		t.Fatalf("another Connection = %#v, %v", other, err)
 	}
 }
 
@@ -1345,7 +1365,6 @@ type channelRuntimeStub struct {
 	lastQuery            string
 	lastConversationID   *uuid.UUID
 	remainingFailures    int
-	channelPolicy        *ChannelResponsePolicy
 	runtimeInputAccepted bool
 	lastRuntimeInput     string
 	lastRuntimeRequest   ChannelRuntimeInputRequest
@@ -1375,14 +1394,7 @@ func (runtime *channelRuntimeStub) SubmitInvocation(_ context.Context, _ Scope, 
 	if runtime.runID == uuid.Nil {
 		runtime.runID = uuid.New()
 	}
-	run := &Run{ID: runtime.runID}
-	if runtime.channelPolicy != nil {
-		encoded, _ := json.Marshal(struct {
-			ChannelResponsePolicy *ChannelResponsePolicy `json:"channel_response_policy"`
-		}{ChannelResponsePolicy: runtime.channelPolicy})
-		run.ExecutionSnapshot = encoded
-	}
-	return run, true, nil
+	return &Run{ID: runtime.runID}, true, nil
 }
 
 func (runtime *channelRuntimeStub) SubmitChannelRuntimeInput(_ context.Context, _ Scope, _ uuid.UUID, _ uuid.UUID, request ChannelRuntimeInputRequest) (bool, error) {
@@ -1438,8 +1450,10 @@ type channelAdapterStub struct {
 	capabilityChecks  []channelruntime.ConversationCapabilityCheck
 	capabilityCalls   int
 	processingMarker  bool
+	markerAddErr      error
 	markerAddCalls    int
 	markerRemoveCalls int
+	lastMarker        channelruntime.ProcessingMarkerRequest
 }
 
 func (adapter *channelAdapterStub) Provider() string {
@@ -1455,8 +1469,12 @@ func (adapter *channelAdapterStub) Capabilities() channelruntime.ProviderCapabil
 	}
 }
 
-func (adapter *channelAdapterStub) AddProcessingMarker(context.Context, channelruntime.ProcessingMarkerRequest) (*channelruntime.ProcessingMarkerReceipt, error) {
+func (adapter *channelAdapterStub) AddProcessingMarker(_ context.Context, request channelruntime.ProcessingMarkerRequest) (*channelruntime.ProcessingMarkerReceipt, error) {
 	adapter.markerAddCalls++
+	adapter.lastMarker = request
+	if adapter.markerAddErr != nil {
+		return nil, adapter.markerAddErr
+	}
 	return &channelruntime.ProcessingMarkerReceipt{ProviderMarkerID: "reaction-1", ProviderRequestID: "request-1"}, nil
 }
 
@@ -1865,4 +1883,19 @@ func cloneInstallation(value *channelruntime.Installation) *channelruntime.Insta
 	}
 	cloned.DefaultSubjectID = cloneUUIDPointer(value.DefaultSubjectID)
 	return &cloned
+}
+
+func TestATapOnAPromptThatNoLongerWaitsIsDropped(t *testing.T) {
+	service, _, runtime, adapter, scope, digitalHumanID := newChannelTestService(t)
+	installation, binding := createChannelTestRoute(t, service, scope, digitalHumanID, channelruntime.ConversationTypeDirect)
+	adapter.message = &channelruntime.InboundMessage{
+		Provider: "feishu", ProviderEventID: "event-tap", ProviderMessageID: "card_action:event-tap",
+		ExternalTenantID: "tenant-1", ExternalConversationID: binding.Mapping.ExternalConversationID,
+		ConversationType: channelruntime.ConversationTypeDirect, SenderExternalID: "ou_sender", Text: "确认",
+		WakeReason: channelruntime.WakeReasonDirectMessage, OccurredAt: time.Now().UTC(), ActionWait: "wait-old",
+	}
+	result, err := service.HandleWebhook(t.Context(), "feishu", installation.ID, channelruntime.WebhookRequest{Body: []byte(`{"safe":true}`)})
+	if err != nil || result == nil || !result.Ignored || runtime.calls != 0 {
+		t.Fatalf("stale tap = %#v, %v; runs %d", result, err, runtime.calls)
+	}
 }

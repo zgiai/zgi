@@ -114,6 +114,9 @@ func (resolver *DigitalHumanResolver) ResolveConnectorIdentity(
 		!request.OperationID.Valid() || request.LogicalOperationID == "" || request.CorrelationID == "" {
 		return connectordispatch.Identity{}, core.NewError(core.ErrorCodeInvalidInput, false, nil)
 	}
+	if request.Delegation != nil {
+		return resolver.base.resolveDelegatedIdentity(ctx, request, resolver.candidates, resolver.authorizer, catalog.SurfaceDigitalHuman, digitalHumanTargetInstance)
+	}
 	snapshot, err := resolver.ResolveDigitalHumanCapabilities(ctx, DigitalHumanCapabilityRequest{
 		OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
 		DigitalHumanID: request.Target.ID, Scope: request.Target.Scope, VersionID: request.Target.VersionID,
@@ -130,6 +133,7 @@ func (resolver *DigitalHumanResolver) ResolveConnectorIdentity(
 				continue
 			}
 			return connectordispatch.Identity{
+				ConversationID: request.ConversationID,
 				OrganizationID: request.OrganizationID, OwnerAccountID: request.OwnerAccountID,
 				ActingPrincipalID: request.ActingPrincipalID, BindingID: capability.BindingID,
 				ConnectionID: capability.ConnectionID, ConnectorID: capability.ConnectorID,

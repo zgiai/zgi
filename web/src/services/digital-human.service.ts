@@ -2,6 +2,14 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from './types/common';
 import type {
   CreateDigitalHumanRequest,
+  DigitalHumanArtifact,
+  DigitalHumanArtifactList,
+  DigitalHumanArtifactOwnerKind,
+  DigitalHumanArtifactOwnerPage,
+  DigitalHumanArtifactParams,
+  DigitalHumanArtifactShare,
+  DigitalHumanArtifactShareLifetime,
+  DigitalHumanArtifactVersion,
   CreateDigitalHumanPersonaTemplateRequest,
   DigitalHumanDetail,
   DigitalHumanChannelDelivery,
@@ -23,6 +31,7 @@ import type {
   DigitalHumanMemoryRepairResult,
   DigitalHumanMemoryState,
   DigitalHumanMemoryProposalRequest,
+  DigitalHumanMemoryRescopeRequest,
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidateList,
   DraftResourceBindings,
@@ -42,8 +51,14 @@ import type {
   UpdateDigitalHumanTaskRequest,
   DigitalHumanTask,
   DigitalHumanTaskList,
+  DigitalHumanTaskRequester,
+  DigitalHumanTaskRequesterPage,
   DigitalHumanTaskRun,
   DigitalHumanTaskActivity,
+  DigitalHumanTaskReport,
+  DigitalHumanTaskReportList,
+  DigitalHumanTaskReportParams,
+  ReviewDigitalHumanTaskReportRequest,
   DigitalHumanTaskPage,
   DigitalHumanTaskSchedulePreview,
   DigitalHumanTaskSchedulePreviewRequest,
@@ -52,10 +67,55 @@ import type {
   DigitalHumanAPIKeyCreated,
   DigitalHumanAPIKeyList,
 } from './types/digital-human';
+import type {
+  SaveSocialOperationsConfigurationRequest,
+  SetupSocialOperationsRequest,
+  SocialOperationsConfigurationResponse,
+  SocialOperationsImageUploadResponse,
+  SocialOperationsVerifiedAccountsResponse,
+  SocialOperationsPreflightReport,
+  SocialOperationsProvisioningResult,
+} from './types/social-operations';
+
+import type {
+  WorkJournalRecord,
+  WorkJournalOperation,
+  WorkJournalOperationState,
+  WorkJournalPage,
+  WorkJournalHistory,
+  WorkJournalListParams,
+} from './types/work-journal';
+
+/** A per-user Connector slot as the signed-in member sees it (ADR 0007). */
+export interface DigitalHumanMemberConnectorSlot {
+  slot_key: string;
+  connector_id: string;
+  name: string;
+  operation_ids: string[];
+  state: 'connected' | 'needs_connection' | 'reconnect_required';
+  connection_id?: string;
+  options: Array<{ connection_id: string; name: string; account?: string }>;
+}
 
 class DigitalHumanService extends BaseService {
   constructor() {
     super({ basePath: '/console/api', endpoint: 'main' });
+  }
+
+  listMemberConnectorSlots(
+    id: string
+  ): Promise<ApiResponseData<{ items: DigitalHumanMemberConnectorSlot[] }>> {
+    return this.request('get', `/digital-humans/${id}/runtime/connector-slots`);
+  }
+
+  selectMemberConnectorSlot(id: string, slotKey: string, connectionId: string) {
+    return this.request('patch', `/digital-humans/${id}/runtime/connector-slots/${encodeURIComponent(slotKey)}`, {
+      connection_id: connectionId,
+    });
+  }
+
+  clearMemberConnectorSlot(id: string, slotKey: string) {
+    return this.request('delete', `/digital-humans/${id}/runtime/connector-slots/${encodeURIComponent(slotKey)}`);
   }
 
   downloadBackgroundFile(id: string, runId: string, fileId: string, signal?: AbortSignal) {
@@ -92,6 +152,90 @@ class DigitalHumanService extends BaseService {
 
   get(id: string): Promise<ApiResponseData<DigitalHumanDetail>> {
     return this.request('get', `/digital-humans/${id}`);
+  }
+
+  listWorkJournalRecords(
+    id: string,
+    params?: WorkJournalListParams & { kind?: string }
+  ): Promise<ApiResponseData<WorkJournalPage<WorkJournalRecord>>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/records`, undefined, { params });
+  }
+
+  getWorkJournalRecord(
+    id: string,
+    recordId: string
+  ): Promise<ApiResponseData<{ record: WorkJournalRecord }>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/records/${recordId}`);
+  }
+
+  getWorkJournalRecordHistory(
+    id: string,
+    recordId: string,
+    params?: { after_revision?: number; limit?: number }
+  ): Promise<ApiResponseData<WorkJournalHistory>> {
+    return this.request(
+      'get',
+      `/digital-humans/${id}/work-journal/records/${recordId}/history`,
+      undefined,
+      { params }
+    );
+  }
+
+  listWorkJournalOperations(
+    id: string,
+    params?: WorkJournalListParams & { state?: WorkJournalOperationState }
+  ): Promise<ApiResponseData<WorkJournalPage<WorkJournalOperation>>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/operations`, undefined, {
+      params,
+    });
+  }
+
+  getWorkJournalOperation(
+    id: string,
+    operationId: string
+  ): Promise<ApiResponseData<{ operation: WorkJournalOperation }>> {
+    return this.request('get', `/digital-humans/${id}/work-journal/operations/${operationId}`);
+  }
+
+  getSocialOperationsConfiguration(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsConfigurationResponse>> {
+    return this.request('get', `/digital-humans/${id}/social-operations/configuration`);
+  }
+
+  getSocialOperationsAccounts(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsVerifiedAccountsResponse>> {
+    return this.request('get', `/digital-humans/${id}/social-operations/accounts`);
+  }
+
+  saveSocialOperationsConfiguration(
+    id: string,
+    data: SaveSocialOperationsConfigurationRequest
+  ): Promise<ApiResponseData<SocialOperationsConfigurationResponse>> {
+    return this.request('put', `/digital-humans/${id}/social-operations/configuration`, data);
+  }
+
+  preflightSocialOperations(
+    id: string
+  ): Promise<ApiResponseData<SocialOperationsPreflightReport>> {
+    return this.request('post', `/digital-humans/${id}/social-operations/preflight`, {});
+  }
+
+  setupSocialOperations(
+    id: string,
+    data: SetupSocialOperationsRequest
+  ): Promise<ApiResponseData<SocialOperationsProvisioningResult>> {
+    return this.request('post', `/digital-humans/${id}/social-operations/setup`, data);
+  }
+
+  uploadSocialOperationsImage(
+    id: string,
+    file: File
+  ): Promise<ApiResponseData<SocialOperationsImageUploadResponse>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request('post', `/digital-humans/${id}/social-operations/assets/images`, formData);
   }
 
   update(
@@ -266,30 +410,32 @@ class DigitalHumanService extends BaseService {
     return this.request('put', `/digital-humans/${id}/draft/bindings`, body);
   }
 
+  // `preview` runs the configuration draft instead of the published version.
   submitInvocation(
     id: string,
-    data: ManualDigitalHumanInvocationRequest
+    data: ManualDigitalHumanInvocationRequest,
+    preview = false
   ): Promise<ApiResponseData<ManualDigitalHumanInvocationResponse>> {
-    return this.request('post', `/digital-humans/${id}/invocations`, data);
+    return this.request('post', `/digital-humans/${id}${preview ? '/preview' : ''}/invocations`, data);
   }
 
   listRuns(
     id: string,
-    params?: { page?: number; page_size?: number }
+    params?: { page?: number; page_size?: number; 'requester_kind[]'?: string[]; requester_id?: string }
   ): Promise<ApiResponseData<DigitalHumanRunList>> {
     return this.request('get', `/digital-humans/${id}/runs`, undefined, { params });
   }
 
-  getRun(id: string, runId: string): Promise<ApiResponseData<DigitalHumanRun>> {
-    return this.request('get', `/digital-humans/${id}/runs/${runId}`);
+  getRun(id: string, runId: string, preview = false): Promise<ApiResponseData<DigitalHumanRun>> {
+    return this.request('get', `/digital-humans/${id}${preview ? '/preview' : ''}/runs/${runId}`);
   }
 
   getRunRuntimeLog(id: string, runId: string): Promise<ApiResponseData<DigitalHumanRunRuntimeLog>> {
     return this.request('get', `/digital-humans/${id}/runs/${runId}/runtime-log`);
   }
 
-  cancelRun(id: string, runId: string): Promise<ApiResponseData<{ run: DigitalHumanRun }>> {
-    return this.request('post', `/digital-humans/${id}/runs/${runId}/cancel`, {});
+  cancelRun(id: string, runId: string, preview = false): Promise<ApiResponseData<{ run: DigitalHumanRun }>> {
+    return this.request('post', `/digital-humans/${id}${preview ? '/preview' : ''}/runs/${runId}/cancel`, {});
   }
 
   listMemories(
@@ -304,6 +450,14 @@ class DigitalHumanService extends BaseService {
     data: DigitalHumanMemoryProposalRequest
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
     return this.request('post', `/digital-humans/${id}/memory/proposals`, data);
+  }
+
+  rescopeMemory(
+    id: string,
+    memoryId: string,
+    data: DigitalHumanMemoryRescopeRequest
+  ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
+    return this.request('post', `/digital-humans/${id}/memory/${memoryId}/rescope`, data);
   }
 
   undoMemory(
@@ -459,9 +613,25 @@ class DigitalHumanService extends BaseService {
       schedule_type?: string;
       run_finished_after?: string;
       run_finished_before?: string;
+      include_unreviewed?: boolean;
+      requester_kind?: string[];
+      requester_id?: string;
     }
   ): Promise<ApiResponseData<DigitalHumanTaskList>> {
     return this.request('get', `/digital-humans/${id}/tasks`, undefined, { params });
+  }
+
+  /** Searches who asked for tasks in the task center, most recently active first. */
+  listTaskRequesters(
+    id: string,
+    params?: { query?: string; kind?: string; page?: number; page_size?: number }
+  ): Promise<ApiResponseData<DigitalHumanTaskRequesterPage>> {
+    return this.request('get', `/digital-humans/${id}/tasks/requesters`, undefined, { params });
+  }
+
+  /** Names an API end user in the task center. */
+  labelTaskRequester(id: string, requesterId: string, label: string): Promise<ApiResponseData<DigitalHumanTaskRequester>> {
+    return this.request('patch', `/digital-humans/${id}/tasks/requesters/${requesterId}`, { label });
   }
 
   listMyTasks(
@@ -546,6 +716,85 @@ class DigitalHumanService extends BaseService {
     page = 1
   ): Promise<ApiResponseData<DigitalHumanTaskPage<DigitalHumanTaskActivity>>> {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}/activities`, undefined, { params: { page } });
+  }
+
+  // Task reports: `mine` reads the caller's own tasks; otherwise the task center.
+  listTaskReports(
+    id: string,
+    params: DigitalHumanTaskReportParams = {},
+    mine = false
+  ): Promise<ApiResponseData<DigitalHumanTaskReportList>> {
+    return this.request('get', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}`, undefined, { params });
+  }
+
+  getTaskReport(id: string, reportId: string, mine = false): Promise<ApiResponseData<DigitalHumanTaskReport>> {
+    return this.request('get', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}`);
+  }
+
+  reviewTaskReport(
+    id: string,
+    reportId: string,
+    request: ReviewDigitalHumanTaskReportRequest,
+    mine = false
+  ): Promise<ApiResponseData<DigitalHumanTaskReport>> {
+    return this.request('post', `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}/review`, request);
+  }
+
+  listArtifacts(id: string, params: DigitalHumanArtifactParams = {}): Promise<ApiResponseData<DigitalHumanArtifactList>> {
+    return this.request('get', `/digital-humans/${id}/artifacts`, undefined, { params });
+  }
+
+  listArtifactOwners(
+    id: string,
+    params: { query?: string; kind?: DigitalHumanArtifactOwnerKind; archived?: 'archived' | 'all'; page?: number; page_size?: number } = {}
+  ): Promise<ApiResponseData<DigitalHumanArtifactOwnerPage>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/owners`, undefined, { params });
+  }
+
+  getArtifact(id: string, artifactId: string): Promise<ApiResponseData<DigitalHumanArtifact>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}`);
+  }
+
+  setArtifactArchived(id: string, artifactId: string, archived: boolean): Promise<ApiResponseData<DigitalHumanArtifact>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/${archived ? 'archive' : 'restore'}`);
+  }
+
+  setArtifactSharing(id: string, artifactId: string, enabled: boolean): Promise<ApiResponseData<DigitalHumanArtifact>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/sharing`, { enabled });
+  }
+
+  listArtifactShares(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactShare[] }>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}/shares`);
+  }
+
+  createArtifactShare(
+    id: string,
+    artifactId: string,
+    request: { version?: number; expires_in?: DigitalHumanArtifactShareLifetime }
+  ): Promise<ApiResponseData<DigitalHumanArtifactShare & { token: string }>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/shares`, request);
+  }
+
+  revokeArtifactShare(id: string, artifactId: string, shareId: string): Promise<ApiResponseData<{ revoked: boolean }>> {
+    return this.request('post', `/digital-humans/${id}/artifacts/${artifactId}/shares/${shareId}/revoke`);
+  }
+
+  listArtifactVersions(id: string, artifactId: string): Promise<ApiResponseData<{ items: DigitalHumanArtifactVersion[] }>> {
+    return this.request('get', `/digital-humans/${id}/artifacts/${artifactId}/versions`);
+  }
+
+  // Number 0 reads the current version.
+  readArtifactContent(id: string, artifactId: string, number: number, signal?: AbortSignal) {
+    return this.request<Blob>('get', `/digital-humans/${id}/artifacts/${artifactId}/versions/${number}/content`, undefined, { responseType: 'blob', signal });
+  }
+
+  downloadTaskReportFile(id: string, reportId: string, fileId: string, mine = false, signal?: AbortSignal) {
+    return this.request<Blob>(
+      'get',
+      `/digital-humans/${id}/${mine ? 'my-task-reports' : 'task-reports'}/${reportId}/files/${fileId}`,
+      undefined,
+      { responseType: 'blob', signal }
+    );
   }
 }
 

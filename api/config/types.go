@@ -546,11 +546,28 @@ type ToolingConfig struct {
 	DryRun bool `json:"dry_run"`
 }
 
+// SocialOAuthProviderConfig holds deployment-owned OAuth application settings.
+type SocialOAuthProviderConfig struct {
+	AppID        string   `json:"-"`
+	AppSlug      string   `json:"-"`
+	ClientID     string   `json:"-"`
+	ClientSecret string   `json:"-"`
+	RedirectURL  string   `json:"-"`
+	Scopes       []string `json:"-"`
+	APIVersion   string   `json:"-"`
+}
+
 // ConnectorsConfig configures the always-available Personal Connector runtime. It
 // deliberately does not inherit the legacy external-integrations enable flag
 // or credential keyring.
 type ConnectorsConfig struct {
-	CredentialActiveKeyID string            `json:"credential_active_key_id"`
-	CredentialKeys        map[string]string `json:"-"`
-	PluginDirectories     []string          `json:"-"`
+	SocialWebhookFacebookAppSecret   string                               `json:"-"`
+	SocialWebhookFacebookVerifyToken string                               `json:"-"`
+	SocialOAuthFrontendURL           string                               `json:"-"`
+	SocialOAuthProviders             map[string]SocialOAuthProviderConfig `json:"-"`
+	SocialMCPNode                    string                               `json:"-"`
+	SocialMCPScript                  string                               `json:"-"`
+	CredentialActiveKeyID            string                               `json:"credential_active_key_id"`
+	CredentialKeys                   map[string]string                    `json:"-"`
+	PluginDirectories                []string                             `json:"-"`
 }

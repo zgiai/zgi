@@ -44,6 +44,7 @@ type HandlerService interface {
 	ListMemories(context.Context, Scope, uuid.UUID, MemoryListQuery) (*MemoryListResult, error)
 	UpdateMemoryState(context.Context, Scope, uuid.UUID, UpdateMemoryStateRequest) (*MemoryState, error)
 	ApplyMemoryProposal(context.Context, Scope, uuid.UUID, MemoryProposalRequest) (*MemoryMutationResult, error)
+	RescopeMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryRescopeRequest) (*MemoryMutationResult, error)
 	UndoMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryUndoRequest) (*MemoryMutationResult, error)
 	RepairMemoryProjection(context.Context, Scope, uuid.UUID) (*MemoryProjectionRepairResult, error)
 }
@@ -86,6 +87,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/:id/memory", h.ListMemories)
 	group.PATCH("/:id/memory/state", h.UpdateMemoryState)
 	group.POST("/:id/memory/proposals", h.ApplyMemoryProposal)
+	group.POST("/:id/memory/:memory_id/rescope", h.RescopeMemory)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
 
@@ -145,6 +147,29 @@ func (h *Handler) ApplyMemoryProposal(c *gin.Context) {
 		return
 	}
 	result, err := h.service.ApplyMemoryProposal(c.Request.Context(), scope, id, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// RescopeMemory moves one memory to another class or business scope.
+func (h *Handler) RescopeMemory(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	memoryID, err := uuid.Parse(strings.TrimSpace(c.Param("memory_id")))
+	if err != nil || memoryID == uuid.Nil {
+		h.writeError(c, applicationError(ErrInvalidRequest, "digital_human.memory.rescope"))
+		return
+	}
+	var request MemoryRescopeRequest
+	if !h.decode(c, &request) {
+		return
+	}
+	result, err := h.service.RescopeMemory(c.Request.Context(), scope, id, memoryID, request)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -568,8 +593,15 @@ func (h *Handler) scope(c *gin.Context) (Scope, bool) {
 		h.writeError(c, apperror.New(appcatalog.CodeAuthenticationRequired, apperror.WithOperation("digital_human.scope")))
 		return Scope{}, false
 	}
-	return Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}, true
+	scope := Scope{OrganizationID: organizationID, WorkspaceID: workspaceID, ActorID: actorID}
+	if c.GetBool(previewSurfaceContextKey) {
+		scope.Surface = SurfacePreview
+	}
+	return scope, true
 }
+
+// previewSurfaceContextKey marks requests on the configuration preview routes.
+const previewSurfaceContextKey = "digital_human_preview_surface"
 
 func (h *Handler) decode(c *gin.Context, target any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxDigitalHumanRequestBytes)

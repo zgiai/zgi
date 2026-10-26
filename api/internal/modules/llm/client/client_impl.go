@@ -591,6 +591,12 @@ func (c *llmClientImpl) buildGatewayAppContext(appCtx *AppContext) (*gateway.App
 		modelUseCase := strings.TrimSpace(appCtx.ModelUseCase)
 		gatewayCtx.ModelUseCase = &modelUseCase
 	}
+	if subjectID, err := uuid.Parse(strings.TrimSpace(appCtx.EndUserSubjectID)); err == nil && subjectID != uuid.Nil {
+		gatewayCtx.EndUserSubjectID = &subjectID
+		if runtimeWorkspaceID, err := uuid.Parse(strings.TrimSpace(appCtx.RuntimeWorkspaceID)); err == nil && runtimeWorkspaceID != uuid.Nil {
+			gatewayCtx.RuntimeWorkspaceID = &runtimeWorkspaceID
+		}
+	}
 
 	return gatewayCtx, nil
 }

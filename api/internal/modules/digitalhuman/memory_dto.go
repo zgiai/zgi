@@ -10,6 +10,8 @@ import (
 type MemorySourceContext struct {
 	PrivateConversation       bool `json:"private_conversation"`
 	PromotedByAuthorizedActor bool `json:"promoted_by_authorized_actor"`
+	// SourceTrust is set only by the runtime for audit; clients cannot supply it.
+	SourceTrust SourceTrust `json:"-"`
 }
 
 type MemoryProposalRequest struct {
@@ -32,6 +34,9 @@ type MemoryProposalRequest struct {
 	SourceContext              MemorySourceContext            `json:"source_context"`
 	AdminApproved              bool                           `json:"admin_approved"`
 	OccurredAt                 time.Time                      `json:"occurred_at"`
+	// rescope is set only by RescopeMemory. It lets the supersede move a
+	// memory to another class or scope; clients cannot set it.
+	rescope bool
 }
 
 type MemoryListQuery struct {

@@ -41,6 +41,7 @@ import { supportsAppSetup } from '@/components/connectors/setup/app-setup-state'
 import { supportsMessagingContract } from '@/components/connectors/setup/messaging-setup-state';
 import { supportsMailSetup } from '@/components/connectors/setup/mail-setup-state';
 import { ConnectorMailInformation } from './connector-mail-information';
+import { supportsSocialOAuth } from '@/components/connectors/setup/social-oauth-state';
 import { ConnectorTaxonomyBadges } from '../connector-taxonomy-badges';
 
 interface ConnectorDetailPageProps {
@@ -173,7 +174,11 @@ export function ConnectorDetailPage({
                   </Collapsible>
                 )}
                 <ConnectorCapabilityList capabilities={connector.capabilities} />
-                {supportsMailSetup(connector) ? (
+                {supportsSocialOAuth(connector) ? (
+                  <p className="rounded-xl border p-4 text-sm text-muted-foreground">
+                    {t('oauth.description')}
+                  </p>
+                ) : supportsMailSetup(connector) ? (
                   <ConnectorMailInformation provider={connector.id} />
                 ) : supportsAppSetup(connector) ? (
                   <ConnectorAppPermissions connector={connector} />

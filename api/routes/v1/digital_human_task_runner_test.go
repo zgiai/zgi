@@ -10,6 +10,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -135,6 +137,30 @@ func TestDigitalHumanTaskPreflightRejectsRevokedWorkspaceAccess(t *testing.T) {
 	}
 }
 
+func TestDigitalHumanTaskPreflightAllowsPendingAccountOwner(t *testing.T) {
+	db, mock := taskRunnerMockDB(t)
+	runner := &digitalHumanAutomationRunner{db: db}
+	organizationID, workspaceID, digitalHumanID, accountID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "digital_humans"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "user_subjects"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	// The administrator created during setup stays pending yet signs in, so
+	// its private tasks must run like the tasks it creates in the task center.
+	mock.ExpectQuery(`SELECT count\(\*\) FROM workspace_members AS members .*accounts.status IN \(\$5,\$6\)`).
+		WithArgs(workspaceID, accountID, organizationID, workspacemodel.WorkspaceStatusNormal, authmodel.AccountStatusActive, authmodel.AccountStatusPending).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	err := runner.preflight(t.Context(), organizationID, workspaceID, digitalHumanID,
+		digitalhuman.UserTaskOwner(usersubject.AccountSubject(accountID)),
+		automationaction.DigitalHumanRunRequest{OriginSurface: digitalhuman.SurfaceConsole},
+	)
+	if err != nil {
+		t.Fatalf("preflight error = %v, want a pending owner's task to be executable", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDigitalHumanTaskPreflightAllowsAccountOwnerOnWebApp(t *testing.T) {
 	db, mock := taskRunnerMockDB(t)
 	runner := &digitalHumanAutomationRunner{db: db}
@@ -239,4 +265,17 @@ func taskRunnerMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 		t.Fatal(err)
 	}
 	return db, mock
+}
+
+func TestScheduledTaskEventContextCarriesVerifiedChannelOwner(t *testing.T) {
+	conversationID := uuid.New()
+	req := automationaction.DigitalHumanRunRequest{TaskID: "task", OriginSurface: digitalhuman.SurfaceChannel, DeliveryMode: "task_only"}
+	channel := scheduledTaskEventContext(req, digitalhuman.ConversationTaskOwner(conversationID))
+	if channel[digitalhuman.TaskOwnerConversationContextKey] != conversationID.String() {
+		t.Fatalf("channel task context = %#v", channel)
+	}
+	console := scheduledTaskEventContext(req, digitalhuman.SharedTaskOwner())
+	if _, ok := console[digitalhuman.TaskOwnerConversationContextKey]; ok {
+		t.Fatalf("shared task context carries a channel owner: %#v", console)
+	}
 }

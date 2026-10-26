@@ -320,16 +320,12 @@ export function ConnectionManagementPage({
               {t('mail.currentUsage', { usage: t(`mail.${connectionMailUsage(connection)}`) })}
             </p>
           )}
-          {(isApp || isMail) && connector && (
-            <>
-              <ConnectorCapabilityList capabilities={connection.capabilities} />
-              {isApp && !isMessaging && (
-                <ConnectorAppPermissions
-                  connector={connector}
-                  evidence={connection.provider_evidence}
-                />
-              )}
-            </>
+          <ConnectorCapabilityList capabilities={connection.capabilities} />
+          {isApp && !isMessaging && connector && (
+            <ConnectorAppPermissions
+              connector={connector}
+              evidence={connection.provider_evidence}
+            />
           )}
 
           <Button variant="ghost" className="text-destructive" onClick={() => setRemovalOpen(true)}>

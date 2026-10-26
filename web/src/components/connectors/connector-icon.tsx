@@ -6,7 +6,7 @@ import { Icons } from '@/components/ui/icons';
 import { FeishuIcon } from './feishu-icon';
 import { DingTalkIcon, WeComIcon, WeixinIcon } from './messaging-icons';
 import { connectorBrand, safeConnectorIconSource } from './connector-icon-model';
-import { Database, Plug, Mail } from 'lucide-react';
+import { Database, Plug, Mail, Linkedin, Facebook } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ConnectorClassification } from '@/services/types/connector';
 
@@ -50,7 +50,15 @@ export function ConnectorIcon({
   const brand = connectorBrand(connectorId, icon);
   const source = safeConnectorIconSource(icon);
   const mark =
-    connectorId === 'mail' ? (
+    brand === 'x' ? (
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={contentClassName}>
+        <path d="M18.9 2H22l-6.8 7.8L23.2 22h-6.3L12 14.6 5.5 22H2.3l7.2-8.3L1.8 2h6.5l4.5 6.7L18.9 2Zm-1.1 18h1.7L7.4 3.9H5.6L17.8 20Z" />
+      </svg>
+    ) : brand === 'linkedin' ? (
+      <Linkedin aria-hidden="true" className={contentClassName} />
+    ) : brand === 'facebook' ? (
+      <Facebook aria-hidden="true" className={contentClassName} />
+    ) : connectorId === 'mail' ? (
       <Mail aria-hidden="true" className={contentClassName} />
     ) : brand === 'exa' ? (
       <Exa aria-hidden="true" className={contentClassName} />

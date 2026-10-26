@@ -166,3 +166,18 @@ func TestExecutionSnapshotPinsRuntimeConfigAndRetainsLegacyDigest(t *testing.T) 
 		t.Fatal("published setting mutation changed sealed snapshot")
 	}
 }
+
+// New digital humans start with uploads off, so their WebApp does not take
+// files until someone turns uploads on.
+func TestNewDigitalHumanStartsWithUploadsOff(t *testing.T) {
+	service, _ := newTestService(t)
+	scope := testScope()
+	detail, err := service.Create(t.Context(), scope, CreateRequest{Name: "Quiet draft"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := service.Get(t.Context(), scope, detail.Definition.ID)
+	if err != nil || reloaded.Draft.FileUploadPolicy == nil || fileUploadEnabled(reloaded.Draft) {
+		t.Fatalf("new draft upload policy = %+v, err %v", reloaded.Draft.FileUploadPolicy, err)
+	}
+}

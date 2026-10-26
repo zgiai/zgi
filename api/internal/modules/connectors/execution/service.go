@@ -161,18 +161,19 @@ type ExecutionResult struct {
 
 // Service executes only a durably pinned Connector-native operation.
 type Service struct {
-	resultProjector  *apptransport.Projector
-	catalog          DefinitionCatalog
-	bindings         BindingReader
-	connections      ConnectionReader
-	targetAuthorizer TargetAuthorizer
-	risk             RiskResolver
-	credentials      CredentialResolver
-	audit            DecisionOutcomeRecorder
-	provider         NativeProviderInvoker
-	now              func() time.Time
-	newID            func() uuid.UUID
-	providerTimeout  time.Duration
+	backgroundAuthorizer BackgroundAuthorizer
+	resultProjector      *apptransport.Projector
+	catalog              DefinitionCatalog
+	bindings             BindingReader
+	connections          ConnectionReader
+	targetAuthorizer     TargetAuthorizer
+	risk                 RiskResolver
+	credentials          CredentialResolver
+	audit                DecisionOutcomeRecorder
+	provider             NativeProviderInvoker
+	now                  func() time.Time
+	newID                func() uuid.UUID
+	providerTimeout      time.Duration
 }
 
 func NewService(
@@ -345,19 +346,31 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		return ExecutionResult{}, connectorError(core.ErrorCodeInvalidInput, false)
 	}
 
-	// DigitalHuman is governed by an explicit platform-owned decision that is
-	// stricter than the shared Chat/Agent/Workflow path. It is evaluated before
-	// session grants so a reusable grant can never preauthorize a DigitalHuman
-	// invocation, and before credentials so a trusted-low classification can
-	// never reach a provider.
+	// DigitalHuman keeps its per-call confirmation default. Only the injected
+	// server boundary can consume a bounded owner-issued task grant; session
+	// grants, caller flags and a low-risk classification alone cannot authorize
+	// unattended provider access.
 	digitalHuman := digitalHumanApproval(request.Target, risk, request.Interactive, confirmation, pinned.Receipt)
+	// When the host installs bounded task authorization, unattended reads
+	// must pass it too; trusted-low risk does not override that authority.
+	if digitalHuman == digitalHumanApprovalTrustedLow && !request.Interactive && service.backgroundAuthorizer != nil {
+		digitalHuman = digitalHumanApprovalNonInteractiveBlocked
+	}
+	backgroundAuthorized := false
+	if digitalHuman == digitalHumanApprovalNonInteractiveBlocked ||
+		(digitalHuman == digitalHumanApprovalFailClosed && risk == RiskTrustedLow && !request.Interactive && confirmation == nil) {
+		backgroundAuthorized, err = service.authorizeBackground(ctx, pinned, binding, connection, acceptedOperation)
+		if err != nil {
+			return ExecutionResult{}, preserveError(err, core.ErrorCodeAccessDenied)
+		}
+	}
 	if digitalHuman.governs() {
 		// Rules 1 and 3: neither a reusable session grant nor a caller-supplied
 		// preauthorization flag is authority for a DigitalHuman invocation.
 		request.Preauthorized = false
 		pinned.Request.Preauthorized = false
 	}
-	if digitalHuman == digitalHumanApprovalFailClosed {
+	if digitalHuman == digitalHumanApprovalFailClosed && !backgroundAuthorized {
 		decisionID, decisionErr := service.recordExecutionDecision(ctx, pinned, risk, core.DecisionStatusDenied, false)
 		result := ExecutionResult{State: ExecutionStateBlocked, DecisionID: decisionID}
 		if decisionErr != nil {
@@ -365,7 +378,7 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		}
 		return result, connectorError(core.ErrorCodeAccessDenied, false)
 	}
-	if digitalHuman == digitalHumanApprovalNonInteractiveBlocked {
+	if digitalHuman == digitalHumanApprovalNonInteractiveBlocked && !backgroundAuthorized {
 		decisionID, decisionErr := service.recordExecutionDecision(ctx, pinned, risk, core.DecisionStatusBlocked, false)
 		result := ExecutionResult{State: ExecutionStateBlocked, DecisionID: decisionID}
 		if decisionErr != nil {
@@ -381,8 +394,8 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		binding.Constraint.DirectlyAuthorized() &&
 		binding.Constraint.Allows(request.OwnerAccountID, request.OperationID, request.Target, service.now().UTC()) &&
 		bindingAuthorizationFresh(binding.Constraint, connection, acceptedOperation.ContractDigest)
-	preauthorized := confirmation == nil && digitalHuman.sessionGrantPreauthorizes() &&
-		(sessionGrantMatched || bindingDirectAuthorization)
+	preauthorized := backgroundAuthorized || (confirmation == nil && digitalHuman.sessionGrantPreauthorizes() &&
+		(sessionGrantMatched || bindingDirectAuthorization))
 	request.Preauthorized = preauthorized
 	pinned.Request.Preauthorized = preauthorized
 	if risk != RiskTrustedLow && !preauthorized {
@@ -536,11 +549,11 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	}
 }
 
-	// bindingAuthorizationFresh invalidates a persisted direct choice when the
-	// connection was reconnected, rotated, its operation policy revision
-	// changed, or the admitted operation contract changed. A direct row without
-	// a complete snapshot is treated as ask_each_time rather than inheriting
-	// compatibility authority.
+// bindingAuthorizationFresh invalidates a persisted direct choice when the
+// connection was reconnected, rotated, its operation policy revision
+// changed, or the admitted operation contract changed. A direct row without
+// a complete snapshot is treated as ask_each_time rather than inheriting
+// compatibility authority.
 func bindingAuthorizationFresh(constraint *core.AccessConstraint, connection core.PersonalConnection, contractDigest string) bool {
 	if constraint == nil || !constraint.DirectlyAuthorized() {
 		return false
