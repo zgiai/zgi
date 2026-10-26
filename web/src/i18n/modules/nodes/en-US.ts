@@ -1941,6 +1941,8 @@ const messages = {
       endRecommendedAtLeastOne: 'Adding at least one End node is recommended',
       nodeNoOutgoing: 'Node "{title}" has no outgoing connection',
       nodeNoIncoming: 'Node "{title}" has no incoming connection',
+      endUnreachable: 'The end node cannot be reached from the start node; check the connections',
+      endUnreachableFrom: 'Node "{title}" has no incoming connection, so the run cannot reach the end node',
       nodeImproperlyConnected: 'Node "{title}" may be improperly connected',
       circularDependencyDetected: 'Circular dependency detected',
       runnableNoOutput:

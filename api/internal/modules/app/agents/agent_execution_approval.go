@@ -27,7 +27,7 @@ func CatalogDefinitions() []appcatalog.Definition {
 			appcatalog.LocaleEnglishUS:         "This Agent execution environment is not approved or available.",
 			appcatalog.LocaleChineseSimplified: "该 Agent 执行环境尚未获批或当前不可用。",
 		},
-	}}, executionruntime.JobErrorDefinitions()...)
+	}}, append(conversationWaitingDefinitions(), executionruntime.JobErrorDefinitions()...)...)
 }
 
 // Keep the Agent error and stored configuration contract at this boundary.

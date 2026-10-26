@@ -665,7 +665,8 @@ func (r *PostgresSQLOperationRepository) ListByDataSourceIDWithFilters(ctx conte
 
 	// Build query with filters
 	query := `
-		SELECT id, organization_id, data_source_id, table_id, table_name, data_source_name, sql_statement, operation_type, start_time, end_time, status, created_by, created_at
+		SELECT id, organization_id, data_source_id, table_id, table_name, data_source_name, sql_statement, operation_type, start_time, end_time, status, created_by, created_at,
+			client_type, workflow_run_id, node_id, row_count, duration_ms
 		FROM data_source_sql_operations
 		WHERE data_source_id = ?
 	`
@@ -703,6 +704,16 @@ func (r *PostgresSQLOperationRepository) ListByDataSourceIDWithFilters(ctx conte
 		args = append(args, *filters.CreatedAtLTE)
 	}
 
+	if filters.WorkflowRunID != nil {
+		query += " AND workflow_run_id = ?"
+		args = append(args, *filters.WorkflowRunID)
+	}
+
+	if filters.NodeID != nil {
+		query += " AND node_id = ?"
+		args = append(args, *filters.NodeID)
+	}
+
 	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
@@ -729,6 +740,11 @@ func (r *PostgresSQLOperationRepository) ListByDataSourceIDWithFilters(ctx conte
 			&log.Status,
 			&log.CreatedBy,
 			&log.CreatedAt,
+			&log.ClientType,
+			&log.WorkflowRunID,
+			&log.NodeID,
+			&log.RowCount,
+			&log.DurationMS,
 		)
 		if err != nil {
 			return nil, err
@@ -779,6 +795,16 @@ func (r *PostgresSQLOperationRepository) CountByDataSourceIDWithFilters(ctx cont
 	if filters.CreatedAtLTE != nil {
 		query += " AND created_at <= ?"
 		args = append(args, *filters.CreatedAtLTE)
+	}
+
+	if filters.WorkflowRunID != nil {
+		query += " AND workflow_run_id = ?"
+		args = append(args, *filters.WorkflowRunID)
+	}
+
+	if filters.NodeID != nil {
+		query += " AND node_id = ?"
+		args = append(args, *filters.NodeID)
 	}
 
 	var count int64

@@ -369,6 +369,7 @@ Before an SSE stream starts, errors have a matching HTTP status and JSON body:
 - `403`: permission denied
 - `404`: Agent, publication, conversation, or message not found in this caller scope
 - `409`: a mutable resource revision conflicted
+- `409` with `code: "agent_conversation_waiting"`: the latest message in the conversation is `waiting_approval`, `waiting_question`, `waiting_client_action`, or `waiting_budget`, so a new chat turn cannot start. `data.message_id` and `data.status` name that message; for a question, `data.request_id` is the pending request. Continue the message as described in the continuation paths above instead of sending another chat POST
 - `413` / `415`: uploaded file is too large / unsupported
 - `429`: rate or upstream limit; retry with exponential backoff
 - `500`: internal error; log the response code and request id, not the API Key
