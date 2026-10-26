@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -146,106 +145,7 @@ func (p *DigitalHumanMemoryProjectionProvider) Retrieve(ctx context.Context, req
 		return p.fallbackToRecentMemories(ctx, req.Run, readScope, "vector recall failed", err)
 	}
 	result := p.authoritativeResult(response, memories, readScope, topK)
-	// Memories of other instances and channels can fill the shared recall
-	// before this run's own; then recall within the run's scopes directly.
-	if result.ResultCount < topK && len(response.Resources) >= recallTopK {
-		p.recallWithinScopes(ctx, scope, dataset, query, memories, readScope, topK, result)
-	}
 	return result, nil
-}
-
-// scopedVectorSearch is a vector store that can search the objects with one
-// property value.
-type scopedVectorSearch interface {
-	SearchVectorsWhereEqual(ctx context.Context, className, property, value string, vector []float64, limit int, returnFields []string) ([]map[string]interface{}, error)
-}
-
-// scopedRecallLimit is how many vector hits one scope's own recall reads.
-const scopedRecallLimit = 50
-
-// recallWithinScopes adds to result the best matches among the memories of
-// the run's own instance and channel, which a recall over every scope can
-// miss. It is best effort: on any error result stays as it is.
-func (p *DigitalHumanMemoryProjectionProvider) recallWithinScopes(ctx context.Context, scope memoryProjectionScope, dataset *datasetmodel.Dataset, query string, memories map[uuid.UUID]*DigitalHumanMemory, readScope *memoryReadScope, limit int, result *DigitalHumanMemoryRetrievalResult) {
-	search, ok := p.vectorDB.(scopedVectorSearch)
-	if !ok || readScope == nil {
-		return
-	}
-	scopeIDs := []string{}
-	for _, id := range []string{readScope.instanceID, readScope.channelID} {
-		if id != "" {
-			scopeIDs = append(scopeIDs, id)
-		}
-	}
-	if len(scopeIDs) == 0 {
-		return
-	}
-	resolved, err := p.resolveProjectionEmbedding(ctx, scope)
-	if err != nil {
-		return
-	}
-	embeddingService, err := datasetindexing.NewGatewayEmbeddingService(p.llmClient, dataset.CreatedBy, dataset.ID, "dataset", resolved.Model, dataset.WorkspaceID)
-	if err != nil {
-		return
-	}
-	vector, err := embeddingService.EmbedText(ctx, query)
-	if err != nil {
-		return
-	}
-	var rows []map[string]interface{}
-	className := datasetmodel.GenCollectionNameByID(dataset.ID)
-	for _, scopeID := range scopeIDs {
-		found, err := search.SearchVectorsWhereEqual(ctx, className, "scope_id", scopeID, vector, scopedRecallLimit, []string{"memory_id"})
-		if err != nil {
-			logger.WarnContext(ctx, "digital human scoped memory recall failed", "digital_human_id", scope.DigitalHumanID.String(), err)
-			continue
-		}
-		rows = append(rows, found...)
-	}
-	mergeScopedRecall(result, rows, memories, readScope, limit)
-}
-
-// mergeScopedRecall fills result up to limit with the readable memories of
-// vector hits from a scope's own recall, best first, skipping those already
-// in it.
-func mergeScopedRecall(result *DigitalHumanMemoryRetrievalResult, rows []map[string]interface{}, memories map[uuid.UUID]*DigitalHumanMemory, readScope *memoryReadScope, limit int) {
-	type hit struct {
-		memory *DigitalHumanMemory
-		score  float64
-	}
-	var hits []hit
-	for _, row := range rows {
-		memoryID, err := uuid.Parse(fmt.Sprint(row["memory_id"]))
-		if err != nil {
-			continue
-		}
-		memory := memories[memoryID]
-		if memory == nil || memory.Status != MemoryStatusActive || readScope == nil || !readScope.allows(memory) {
-			continue
-		}
-		score := 0.0
-		if additional, ok := row["_additional"].(map[string]interface{}); ok {
-			if distance, ok := additional["distance"].(float64); ok {
-				score = 1 - distance
-			}
-		}
-		hits = append(hits, hit{memory: memory, score: score})
-	}
-	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
-	seen := make(map[uuid.UUID]bool, len(result.Items))
-	for _, memory := range result.Items {
-		seen[memory.ID] = true
-	}
-	for _, candidate := range hits {
-		if result.ResultCount >= limit {
-			break
-		}
-		if seen[candidate.memory.ID] {
-			continue
-		}
-		seen[candidate.memory.ID] = true
-		appendRecalledMemory(result, candidate.memory, candidate.score, "semantic")
-	}
 }
 
 // appendRecalledMemory adds one memory to a recall result, numbered after
@@ -460,8 +360,8 @@ func (p *DigitalHumanMemoryProjectionProvider) syncProjection(ctx context.Contex
 			if err := p.vectorDB.StoreVector(ctx, memory.ID.String(), className, map[string]interface{}{
 				"text": memory.Content, "doc_id": indexNodeID, "document_id": document.ID, "dataset_id": dataset.ID, "doc_hash": memory.ContentDigest,
 				"digital_human_id": scope.DigitalHumanID.String(), "memory_id": memory.ID.String(), "memory_revision": memory.Revision,
-				"content_digest": memory.ContentDigest, "memory_epoch": memory.MemoryEpoch, "memory_class": string(memory.MemoryClass), "memory_type": string(memory.MemoryType),
-				"scope_type": string(memory.ScopeType), "scope_id": memory.ScopeID, "visibility": string(memory.Visibility), "status": string(memory.Status),
+				"content_digest": memory.ContentDigest, "memory_epoch": memory.MemoryEpoch, "memory_type": string(memory.MemoryType),
+				"visibility": string(memory.Visibility), "status": string(memory.Status),
 			}, vector); err != nil {
 				return nil, fmt.Errorf("store DigitalHuman memory vector %s: %w", memory.ID, err)
 			}

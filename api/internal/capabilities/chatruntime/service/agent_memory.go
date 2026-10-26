@@ -308,9 +308,10 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 	}
 	proactiveAllowed := parts.AgentMemoryAutoExtractionEnabled && relationshipAutoCaptureAllowed && globalAgentMemoryAutoExtractionEnabled()
 	blocks := relationshipmemory.MemoryBlocksEnabled()
+	archiveAvailable := blocks && relationshipmemory.RuntimeEnabled() && s.repos != nil && s.repos.DB != nil
 	var definitions []adapter.Tool
 	if blocks {
-		definitions = agentmemoryruntime.FileTools(state.EnabledSlots, proactiveAllowed)
+		definitions = agentmemoryruntime.FileTools(state.EnabledSlots, proactiveAllowed, archiveAvailable)
 	} else {
 		definitions = agentmemoryruntime.Tools(state.EnabledSlots, proactiveAllowed)
 	}
@@ -353,6 +354,12 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: currentTurnUserText(parts),
 			ProactiveAllowed: proactiveAllowed, RecentUserMessages: parts.AgentMemoryRecentUserMessages, CallID: call.ID,
 		}
+		if archiveAvailable {
+			userScope, userID := parts.AgentMemoryUserScope, request.UserID
+			request.Archive = func(ctx context.Context, content, sourceKey string) error {
+				return relationshipmemory.NewAgentAdapter(s.repos.DB).ArchiveText(ctx, workspaceID, agentID, userScope, userID, content, sourceKey, sourceKey, request.MutationMetadata)
+			}
+		}
 		var result agentmemoryruntime.MutationResult
 		if blocks {
 			result = agentmemoryruntime.ExecuteEdits(mutationCtx, request, call.Function.Arguments)
@@ -384,9 +391,17 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		})
 		return skillloop.RuntimeToolResult{Status: "success", Arguments: result.Arguments, Result: result.Result}
 	}
-	tools := make([]skillloop.RuntimeTool, 0, len(definitions))
+	tools := make([]skillloop.RuntimeTool, 0, len(definitions)+1)
 	for _, definition := range definitions {
 		tools = append(tools, skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillAgentMemory, Handler: handler})
+	}
+	if blocks {
+		if search, ok := s.agentConversationSearchTool(prepared, agentID, state.UserScope); ok {
+			tools = append(tools, search)
+		}
+		if archive, ok := s.agentArchiveSearchTool(prepared, agentID, state.UserScope); ok {
+			tools = append(tools, archive)
+		}
 	}
 	return tools
 }

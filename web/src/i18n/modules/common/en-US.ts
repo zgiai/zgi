@@ -588,6 +588,45 @@ const messages = {
       legacy: 'Earlier memory',
     },
   },
+  memoryItems: {
+    search: 'Search memory',
+    empty: 'No memory yet.',
+    noMatch: 'No memory matches this search.',
+    save: 'Save',
+    delete: 'Delete',
+    undo: 'Undo',
+  },
+  memoryNotes: {
+    title: 'Notes about you',
+    description:
+      'What the DigitalHuman keeps track of in its work with you, such as promises and open questions. It keeps these notes: you can read and delete them, but not edit them.',
+    empty: 'No notes yet.',
+    unavailable: 'Notes are not available right now.',
+    delete: 'Delete',
+    deleted: 'Note deleted.',
+    deleteFailed: 'Could not delete the note.',
+    deleteConfirmTitle: 'Delete this note?',
+    deleteConfirmDescription: 'The DigitalHuman will no longer remember it. The deletion appears in the history.',
+    cancel: 'Cancel',
+  },
+  memoryArchive: {
+    title: 'Archive',
+    description:
+      'Older memory moved out of full memory files. The assistant searches it when it needs to.',
+    empty: 'Nothing archived yet.',
+    unavailable: 'The archive is not available for this memory.',
+    from: 'From {key}',
+    edit: 'Edit',
+    save: 'Save',
+    saved: 'Archive entry saved.',
+    saveFailed: 'Could not save the archive entry.',
+    delete: 'Delete',
+    deleted: 'Archive entry deleted.',
+    deleteFailed: 'Could not delete the archive entry.',
+    deleteConfirmTitle: 'Delete this archive entry?',
+    deleteConfirmDescription: 'The assistant will no longer find it. The deletion appears in the history.',
+    cancel: 'Cancel',
+  },
 };
 
 export default messages;

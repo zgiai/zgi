@@ -509,8 +509,15 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 			// intentionally advances the epoch to invalidate other in-flight jobs,
 			// but must not invalidate later operations in this same atomic batch.
 			metadata.ExpectedMemoryEpoch = nil
-			metadata.SourceMessageID = operation.SourceMessageID
-			metadata.SourceCompletedAt = operation.SourceCompletedAt
+			// An operation's own source wins; without one, the batch's source
+			// (the turn that wrote it) is kept, so later passes can tell how
+			// recent the file is.
+			if operation.SourceMessageID != nil {
+				metadata.SourceMessageID = operation.SourceMessageID
+			}
+			if operation.SourceCompletedAt != nil {
+				metadata.SourceCompletedAt = operation.SourceCompletedAt
+			}
 			metadata.EvidenceFromUserInput = metadata.EvidenceFromUserInput || operation.SourceMessageID != nil
 			metadata.Evidence, metadata.Reason = operation.Evidence, operation.Reason
 			if operation.Action == agentmemory.MutationActionClear {
@@ -832,6 +839,65 @@ func (a *AgentAdapter) agentExtractionJob(ctx context.Context, job *UserMemoryEx
 		ErrorCode: job.ErrorCode, ScheduledAt: job.ScheduledAt, ForceAt: job.ForceAt,
 		StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
 	}, nil
+}
+
+// ArchiveText keeps text in an Agent user's archive (ADR 0014), for
+// consolidation moving overflow out of a full file.
+func (a *AgentAdapter) ArchiveText(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, content, tags, sourceKey string, meta agentmemory.MutationMetadata) error {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return err
+	}
+	metadata := relationshipMetadata(meta, uuid.Nil)
+	metadata.Reason = "moved out of a full file"
+	if _, err := a.service.AddArchiveEntry(ctx, relationship.ID, ArchiveRequest{Content: content, Tags: tags, SourceKey: sourceKey, Metadata: metadata}); err != nil {
+		return mapAgentMemoryError(err)
+	}
+	return nil
+}
+
+// ForgottenLines returns what an Agent user removed from their memory. A user
+// without relationship memory has forgotten nothing here.
+func (a *AgentAdapter) ForgottenLines(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]string, error) {
+	if !RuntimeEnabled() {
+		return nil, nil
+	}
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.service.ForgottenLines(ctx, relationship.ID)
+}
+
+// SearchArchive finds an Agent user's archive entries for a query.
+func (a *AgentAdapter) SearchArchive(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, query string, limit int) ([]UserMemoryArchiveEntry, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	return a.service.SearchArchive(ctx, relationship.ID, query, limit)
+}
+
+// Archive lists an Agent user's archive, newest first.
+func (a *AgentAdapter) Archive(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]UserMemoryArchiveEntry, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := a.service.ArchiveEntries(ctx, relationship.ID, 0)
+	if err != nil {
+		return nil, mapAgentMemoryError(err)
+	}
+	return entries, nil
+}
+
+// DeleteArchiveEntry removes one entry from an Agent user's archive.
+func (a *AgentAdapter) DeleteArchiveEntry(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, entryID uuid.UUID) error {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return err
+	}
+	return mapAgentMemoryError(a.service.DeleteArchiveEntry(ctx, relationship.ID, entryID, agentManagementMetadata(userScope, userID)))
 }
 
 // History returns the memory history of one Agent user.

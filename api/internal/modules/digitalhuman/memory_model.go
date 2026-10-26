@@ -16,11 +16,24 @@ const (
 	MemoryStatusArchived    MemoryStatus = "archived"
 )
 
+// MemoryVisibility says who may see a DigitalHuman memory (ADR 0015): every
+// run, or every run except an external end user's.
 type MemoryVisibility string
 
 const (
-	MemoryVisibilityWorkspace  MemoryVisibility = "workspace"
-	MemoryVisibilityRestricted MemoryVisibility = "restricted"
+	MemoryVisibilityEveryone MemoryVisibility = "everyone"
+	MemoryVisibilityInternal MemoryVisibility = "internal"
+)
+
+// MemoryOrigin is who a memory came from (ADR 0015), so operators can review
+// and undo what one source taught the DigitalHuman.
+type MemoryOrigin string
+
+const (
+	MemoryOriginOperator MemoryOrigin = "operator"
+	MemoryOriginMember   MemoryOrigin = "member"
+	MemoryOriginChannel  MemoryOrigin = "channel"
+	MemoryOriginEndUser  MemoryOrigin = "end_user"
 )
 
 // MemoryState is the subject-wide stale-write fence. No actor identifier is
@@ -44,33 +57,39 @@ type MemoryState struct {
 func (MemoryState) TableName() string { return "digital_human_memory_states" }
 
 type DigitalHumanMemory struct {
-	ID                uuid.UUID                     `gorm:"type:uuid;primaryKey" json:"id"`
-	OrganizationID    uuid.UUID                     `gorm:"type:uuid;not null" json:"organization_id"`
-	WorkspaceID       uuid.UUID                     `gorm:"type:uuid;not null" json:"workspace_id"`
-	DigitalHumanID    uuid.UUID                     `gorm:"type:uuid;not null" json:"digital_human_id"`
-	MemoryKey         string                        `gorm:"type:varchar(160);not null" json:"memory_key"`
-	MemoryClass       memoryruntime.MemoryClass     `gorm:"type:varchar(16);not null" json:"memory_class"`
-	MemoryType        memoryruntime.MemoryType      `gorm:"type:varchar(24);not null" json:"memory_type"`
-	ScopeType         memoryruntime.MemoryScopeType `gorm:"type:varchar(24);not null" json:"scope_type,omitempty"`
-	ScopeID           string                        `gorm:"type:varchar(255);not null" json:"scope_id,omitempty"`
-	Content           string                        `gorm:"type:text;not null" json:"content"`
-	ContentDigest     string                        `gorm:"type:varchar(71);not null" json:"content_digest"`
-	Visibility        MemoryVisibility              `gorm:"type:varchar(16);not null" json:"visibility"`
-	Status            MemoryStatus                  `gorm:"type:varchar(16);not null" json:"status"`
-	Confidence        float64                       `gorm:"not null" json:"confidence"`
-	Revision          int64                         `gorm:"not null" json:"revision"`
-	ConfigRevision    string                        `gorm:"type:varchar(71);not null" json:"config_revision"`
-	MemoryEpoch       int64                         `gorm:"not null" json:"memory_epoch"`
-	Evidence          datatypes.JSON                `gorm:"type:jsonb;not null" json:"evidence"`
-	SourcePrincipalID string                        `gorm:"type:varchar(255);not null" json:"source_principal_id,omitempty"`
-	LastOperationID   uuid.UUID                     `gorm:"type:uuid;not null" json:"last_operation_id"`
-	SupersedesID      *uuid.UUID                    `gorm:"type:uuid" json:"supersedes_id,omitempty"`
-	ValidFrom         *time.Time                    `json:"valid_from,omitempty"`
-	ValidTo           *time.Time                    `json:"valid_to,omitempty"`
-	CreatedAt         time.Time                     `gorm:"not null" json:"created_at"`
-	UpdatedAt         time.Time                     `gorm:"not null" json:"updated_at"`
-	UndoableUntil     *time.Time                    `gorm:"-" json:"undoable_until,omitempty"`
-	UndoConsumed      bool                          `gorm:"-" json:"undo_consumed"`
+	ID                uuid.UUID                `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID    uuid.UUID                `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID       uuid.UUID                `gorm:"type:uuid;not null" json:"workspace_id"`
+	DigitalHumanID    uuid.UUID                `gorm:"type:uuid;not null" json:"digital_human_id"`
+	MemoryKey         string                   `gorm:"type:varchar(160);not null" json:"memory_key"`
+	MemoryType        memoryruntime.MemoryType `gorm:"type:varchar(24);not null" json:"memory_type"`
+	Content           string                   `gorm:"type:text;not null" json:"content"`
+	ContentDigest     string                   `gorm:"type:varchar(71);not null" json:"content_digest"`
+	Visibility        MemoryVisibility         `gorm:"type:varchar(16);not null" json:"visibility"`
+	Origin            MemoryOrigin             `gorm:"type:varchar(16);not null;default:operator" json:"origin"`
+	OriginChannelID   string                   `gorm:"type:varchar(255);not null;default:''" json:"origin_channel_id,omitempty"`
+	Status            MemoryStatus             `gorm:"type:varchar(16);not null" json:"status"`
+	Confidence        float64                  `gorm:"not null" json:"confidence"`
+	Revision          int64                    `gorm:"not null" json:"revision"`
+	ConfigRevision    string                   `gorm:"type:varchar(71);not null" json:"config_revision"`
+	MemoryEpoch       int64                    `gorm:"not null" json:"memory_epoch"`
+	Evidence          datatypes.JSON           `gorm:"type:jsonb;not null" json:"evidence"`
+	SourcePrincipalID string                   `gorm:"type:varchar(255);not null" json:"source_principal_id,omitempty"`
+	LastOperationID   uuid.UUID                `gorm:"type:uuid;not null" json:"last_operation_id"`
+	SupersedesID      *uuid.UUID               `gorm:"type:uuid" json:"supersedes_id,omitempty"`
+	ValidFrom         *time.Time               `json:"valid_from,omitempty"`
+	ValidTo           *time.Time               `json:"valid_to,omitempty"`
+	CreatedAt         time.Time                `gorm:"not null" json:"created_at"`
+	UpdatedAt         time.Time                `gorm:"not null" json:"updated_at"`
+	UndoableUntil     *time.Time               `gorm:"-" json:"undoable_until,omitempty"`
+	UndoConsumed      bool                     `gorm:"-" json:"undo_consumed"`
+	// Path is the entry's file path in the model's view (ADR 0014), filled
+	// in for the console.
+	Path string `gorm:"-" json:"path,omitempty"`
+	// NoteInstanceID marks one of the DigitalHuman's notes on an end user,
+	// read from that person's relationship memory (ADR 0015). Such an entry
+	// is never stored in this table.
+	NoteInstanceID string `gorm:"-" json:"-"`
 }
 
 func (DigitalHumanMemory) TableName() string { return "digital_human_memories" }

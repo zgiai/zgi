@@ -10,15 +10,14 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func TestRenderDigitalHumanMemoryContextCarriesScopeAndRevision(t *testing.T) {
+func TestRenderDigitalHumanMemoryContextDoesNotPreloadMemories(t *testing.T) {
 	t.Parallel()
 	memoryID := uuid.New()
 	content := renderDigitalHumanMemoryContext([]*DigitalHumanMemory{{
 		ID:        memoryID,
-		MemoryKey: "launch-date", MemoryClass: memoryruntime.MemoryClassBusiness, MemoryType: memoryruntime.MemoryTypeFact,
-		ScopeType: memoryruntime.MemoryScopeProject, ScopeID: "project-7", Revision: 4, Content: "Launch is September 8.",
+		MemoryKey: "launch-date", MemoryType: memoryruntime.MemoryTypeFact, Revision: 4, Content: "Launch is September 8.",
 	}}, true, true)
-	for _, unexpected := range []string{"id=" + memoryID.String(), "key=launch-date", "scope=project:project-7", "revision=4", "Launch is September 8"} {
+	for _, unexpected := range []string{"id=" + memoryID.String(), "key=launch-date", "revision=4", "Launch is September 8"} {
 		if strings.Contains(content, unexpected) {
 			t.Errorf("context unexpectedly preloaded %q: %s", unexpected, content)
 		}

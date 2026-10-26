@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { toast } from 'sonner';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
@@ -21,7 +21,9 @@ import type {
   DigitalHumanBindingType,
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryProposalRequest,
-  DigitalHumanMemoryRescopeRequest,
+  DigitalHumanMemoryVisibilityRequest,
+  DigitalHumanMemoryBulkRequest,
+  DigitalHumanMemoryList,
   DigitalHumanResourceBindingInput,
   DraftResourceBindings,
   ManualDigitalHumanInvocationRequest,
@@ -255,6 +257,21 @@ export function useDigitalHumanMemories(
   });
 }
 
+// Pages through a DigitalHuman's memories for the console list, which may be
+// long; the first page carries the state and facets.
+export function useDigitalHumanMemoryPages(id: string, params: DigitalHumanMemoryListParams = {}) {
+  return useInfiniteQuery<ApiResponseData<DigitalHumanMemoryList>>({
+    queryKey: [...DIGITAL_HUMAN_KEYS.memories(id, params), 'pages'],
+    queryFn: ({ pageParam }) =>
+      digitalHumanService.listMemories(id, { ...params, page: pageParam as number }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.data?.has_more ? allPages.length + 1 : undefined,
+    enabled: Boolean(id),
+    staleTime: 10_000,
+  });
+}
+
 export function useDigitalHumanMutations(id?: string) {
   const t = useT('digitalHumans');
   const queryClient = useQueryClient();
@@ -462,7 +479,21 @@ export function useDigitalHumanMutations(id?: string) {
       }),
     onError: error => mutationError(error, t('memory.errors.mutate')),
   });
-  const rescopeMemory = useMutation({
+  const applyMemoryBulk = useMutation({
+    mutationFn: ({
+      digitalHumanId,
+      request,
+    }: {
+      digitalHumanId: string;
+      request: DigitalHumanMemoryBulkRequest;
+    }) => digitalHumanService.applyMemoryBulk(digitalHumanId, request),
+    onSuccess: (_, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: DIGITAL_HUMAN_KEYS.memories(variables.digitalHumanId),
+      }),
+    onError: error => mutationError(error, t('memory.errors.mutate')),
+  });
+  const setMemoryVisibility = useMutation({
     mutationFn: ({
       digitalHumanId,
       memoryId,
@@ -470,8 +501,8 @@ export function useDigitalHumanMutations(id?: string) {
     }: {
       digitalHumanId: string;
       memoryId: string;
-      request: DigitalHumanMemoryRescopeRequest;
-    }) => digitalHumanService.rescopeMemory(digitalHumanId, memoryId, request),
+      request: DigitalHumanMemoryVisibilityRequest;
+    }) => digitalHumanService.setMemoryVisibility(digitalHumanId, memoryId, request),
     onSuccess: (_, variables) =>
       queryClient.invalidateQueries({
         queryKey: DIGITAL_HUMAN_KEYS.memories(variables.digitalHumanId),
@@ -539,7 +570,8 @@ export function useDigitalHumanMutations(id?: string) {
     invoke,
     cancelRun,
     applyMemoryProposal,
-    rescopeMemory,
+    setMemoryVisibility,
+    applyMemoryBulk,
     undoMemory,
     updateMemoryState,
     repairMemory,

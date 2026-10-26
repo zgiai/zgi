@@ -35,6 +35,7 @@ const messages = {
     digitalHuman: 'DigitalHuman',
     active: 'Active',
     archived: 'Archived',
+    tabs: { memory: 'Memory' },
     items: 'items',
     loadFailed: 'Memories could not be loaded',
     retry: 'Retry',

@@ -55,6 +55,7 @@ export interface RuntimeEndUserDigitalHuman {
     memory_key: string;
     memory_type: string;
     content: string;
+    revision: number;
     updated_at: string;
   }>;
   task_count: number;

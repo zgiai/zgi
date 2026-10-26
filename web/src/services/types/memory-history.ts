@@ -27,6 +27,26 @@ export interface MemoryHistoryCommit {
   versions: MemoryHistoryVersion[];
 }
 
+// Memory archive (ADR 0014): older memory moved out of full files.
+export interface MemoryArchiveEntry {
+  id: string;
+  content: string;
+  tags?: string;
+  source_key?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+// A DigitalHuman's note on the user (ADR 0014 /user/notes/), read-only.
+export interface MemoryNote {
+  key: string;
+  revision: number;
+  path: string;
+  tags?: string;
+  content: string;
+  updated_at: string;
+}
+
 export interface MemoryHistoryPage {
   commits: MemoryHistoryCommit[];
   next_before?: string;

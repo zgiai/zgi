@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
-	"gorm.io/gorm"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 )
 
-// Instance memory (ADR 0006) keeps the DigitalHuman's working memory of one
-// end-user relationship in a business scope of type instance. Capacity and
-// expiry are optional and off unless their environment settings are given.
+// Instance memory (ADR 0006) is the DigitalHuman's notes on one external end
+// user, kept in that person's relationship memory under notes/ (ADR 0015).
+// Capacity and expiry are optional and off unless their environment settings
+// are given.
 
 const memoryAdmissionReasonInstanceFull = "instance_memory_full"
 
@@ -57,33 +57,6 @@ func runInstanceScopeID(run *Run) (uuid.UUID, bool) {
 	return *run.EndUserInstanceID, true
 }
 
-// checkInstanceMemoryCapacity rejects a new key in a full instance scope. An
-// update to an existing key is always allowed, so the model can make room.
-func checkInstanceMemoryCapacity(ctx context.Context, tx *GormRepository, scope Scope, digitalHumanID uuid.UUID, request MemoryProposalRequest) error {
-	limit := instanceMemoryMaxEntries()
-	if limit == 0 || request.Action != memoryruntime.MutationActionUpsert || request.Scope == nil || request.Scope.Type != memoryruntime.MemoryScopeInstance {
-		return nil
-	}
-	base := tx.db.WithContext(ctx).Model(&DigitalHumanMemory{}).
-		Where("organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND memory_class = ? AND scope_type = ? AND scope_id = ? AND status = ?",
-			scope.OrganizationID, scope.WorkspaceID, digitalHumanID, memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, request.Scope.ID, MemoryStatusActive)
-	var existing int64
-	if err := base.Session(&gorm.Session{}).Where("LOWER(memory_key) = ?", memoryIdentity(request.Key)).Count(&existing).Error; err != nil {
-		return err
-	}
-	if existing > 0 {
-		return nil
-	}
-	var count int64
-	if err := base.Session(&gorm.Session{}).Count(&count).Error; err != nil {
-		return err
-	}
-	if count >= limit {
-		return errInstanceMemoryFull
-	}
-	return nil
-}
-
 // ArchiveExpiredInstanceMemories archives instance memory entries that have
 // not been written within the configured expiry. It is a no-op without one.
 func (s *Service) ArchiveExpiredInstanceMemories(ctx context.Context) (int64, error) {
@@ -91,9 +64,8 @@ func (s *Service) ArchiveExpiredInstanceMemories(ctx context.Context) (int64, er
 	if s == nil || s.repo == nil || ttl == 0 {
 		return 0, nil
 	}
-	now := s.now()
-	result := s.repo.db.WithContext(ctx).Model(&DigitalHumanMemory{}).
-		Where("memory_class = ? AND scope_type = ? AND status = ? AND updated_at < ?", memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, MemoryStatusActive, now.Add(-ttl)).
-		Updates(map[string]any{"status": MemoryStatusArchived, "updated_at": now})
-	return result.RowsAffected, result.Error
+	// Notes now live in relationship memory (ADR 0015); an expired one moves
+	// into the person's archive, where it can still be found.
+	moved, err := relationshipmemory.NewService(s.repo.db).ExpireNotes(ctx, s.now().Add(-ttl), noteExpiryBatch)
+	return int64(moved), err
 }

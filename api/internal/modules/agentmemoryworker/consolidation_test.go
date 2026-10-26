@@ -3,6 +3,7 @@ package agentmemoryworker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -92,5 +93,49 @@ func TestConsolidationLeavesProtectedFilesAndCarriesInstructions(t *testing.T) {
 	system, _ := request.Messages[0].Content.(string)
 	if !strings.Contains(system, "<memory_instructions>\nKeep the customer's plan tier.\n</memory_instructions>") || !strings.Contains(system, `"access":"context only"`) {
 		t.Fatalf("consolidation prompt lacks instructions or file access:\n%s", system)
+	}
+}
+
+func TestConsolidationArchiveMovesTextOutWithoutEvidence(t *testing.T) {
+	turnID := uuid.New()
+	turns := []completedTurn{{ID: turnID, Query: "今天聊点别的。"}}
+	slots := []agentmemory.RuntimeSlot{
+		{Key: "profile", MaxChars: 200, Enabled: true},
+		{Key: "persona", MaxChars: 200, Enabled: true, ReadOnly: true},
+	}
+	current := map[string]agentmemory.SlotValueResponse{
+		"profile": {SlotResponse: agentmemory.SlotResponse{Key: "profile"}, Content: "住在杭州。\n2019 年在京都旅行。", Revision: 3},
+		"persona": {SlotResponse: agentmemory.SlotResponse{Key: "persona"}, Content: "x", Revision: 1},
+	}
+	key, content, source, reason := applyConsolidationEdit(consolidationEdit{Command: "archive", Path: "/user/profile.md", OldText: "2019 年在京都旅行。"}, slots, current, map[string]string{}, turns, map[string]struct{}{})
+	if reason != "" || key != "profile" || content != "住在杭州。" || source == nil || source.ID != turnID {
+		t.Fatalf("archive = %q, %q, %v, %q", key, content, source, reason)
+	}
+	for name, edit := range map[string]consolidationEdit{
+		"whole file":  {Command: "archive", Path: "/user/profile.md", OldText: "住在杭州。\n2019 年在京都旅行。"},
+		"not present": {Command: "archive", Path: "/user/profile.md", OldText: "上海"},
+		"read-only":   {Command: "archive", Path: "/user/persona.md", OldText: "x"},
+	} {
+		if _, _, _, reason := applyConsolidationEdit(edit, slots, current, map[string]string{}, turns, map[string]struct{}{}); reason == "" {
+			t.Fatalf("%s archive was accepted", name)
+		}
+	}
+}
+
+func TestConsolidationYieldsToANewerConversation(t *testing.T) {
+	conversationID := uuid.New()
+	turn := &completedTurn{CompletedAt: time.Unix(1_000, 0)}
+	forgotLater := agentmemory.SlotValueResponse{SourceConversationID: uuid.NewString(), SourceCompletedAt: 1_100}
+	if !supersededByLaterConversation(forgotLater, conversationID, turn) {
+		t.Fatal("an edit from an older turn overrode a newer conversation's change")
+	}
+	sameConversation := forgotLater
+	sameConversation.SourceConversationID = conversationID.String()
+	earlier := forgotLater
+	earlier.SourceCompletedAt = 900
+	for name, value := range map[string]agentmemory.SlotValueResponse{"same conversation": sameConversation, "earlier change": earlier, "never written": {}} {
+		if supersededByLaterConversation(value, conversationID, turn) {
+			t.Fatalf("%s: edit was wrongly superseded", name)
+		}
 	}
 }

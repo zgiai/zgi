@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	"gorm.io/datatypes"
@@ -75,6 +76,15 @@ type DigitalHumanMemoryProjectionRepairer interface {
 type MemoryRuntimePreparation struct {
 	SystemPromptAddendum string
 	Tools                []skillloop.RuntimeTool
+	// fileEditors are the directories this run may change with memory_edit
+	// (ADR 0014). The composite provider builds the one tool over them.
+	fileEditors []memoryFileEditor
+	// archiveSearch finds the user's archive entries; the composite provider
+	// adds them to memory_search results.
+	archiveSearch func(ctx context.Context, query string, limit int) ([]relationshipmemory.UserMemoryArchiveEntry, error)
+	// forgottenLines lists what the person removed from their memory; the
+	// composite provider withholds conversation search turns that repeat it.
+	forgottenLines func(ctx context.Context) ([]string, error)
 }
 
 // MemoryRuntimeProvider keeps DigitalHuman memory out of the generic
@@ -143,19 +153,33 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	// borrows the installer's permission.
 	promotionAuthorized := RunSourceTrust(run) == SourceTrustAuthorizedOperator
 	toolEnabled := memoryToolAvailable(run, state.AutoExtractionEnabled)
+	files := memoryFilesEnabled()
 	preparation := &MemoryRuntimePreparation{
-		SystemPromptAddendum: renderDigitalHumanMemoryContext(nil, toolEnabled, state.AutoExtractionEnabled),
+		SystemPromptAddendum: renderDigitalHumanMemoryGuidance(toolEnabled, state.AutoExtractionEnabled, files),
 	}
-	if _, ok := runInstanceScopeID(run); ok && toolEnabled {
+	if files && toolEnabled {
+		if editor := p.fileEditor(run, event, state, promotionAuthorized); editor != nil {
+			preparation.fileEditors = append(preparation.fileEditors, editor)
+		}
+	} else if _, ok := runInstanceScopeID(run); ok && toolEnabled {
 		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation belong to this end user's relationship only. They cannot change the DigitalHuman's own self memory or what other users see. If memory is full, update or clear an entry that no longer matters instead of adding one."
 	}
-	if toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
-		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation stay scoped to this conversation. They cannot change the DigitalHuman's own self memory or memory used in other conversations."
+	if !files && toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
+		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation are internal: they are shared with everyone inside the team, in every channel and the console, and external users never see them. Memory that external users see can be changed only by an operator."
 	}
-	if p.retriever != nil {
+	if files {
+		if section := p.prepareMemoryFiles(ctx, run, event); section != "" {
+			preparation.SystemPromptAddendum += "\n\n" + section
+		}
+		preparation.Tools = append(preparation.Tools, p.memoryFileTools(run, event)...)
+		if search, ok := p.conversationSearchTool(run, event); ok {
+			preparation.Tools = append(preparation.Tools, search)
+			preparation.SystemPromptAddendum += "\n\nWhen the user refers to something discussed in an earlier conversation that your memory files do not cover, search for it with conversation_search before saying you do not know."
+		}
+	} else if p.retriever != nil {
 		preparation.Tools = append(preparation.Tools, p.memoryRetrievalTool(run, event))
 	}
-	if toolEnabled {
+	if toolEnabled && !files {
 		preparation.Tools = append(preparation.Tools, p.memoryMutationTool(run, event, state, promotionAuthorized))
 	}
 	return preparation, nil
@@ -178,12 +202,25 @@ func (p *DefaultMemoryRuntimeProvider) Finalize(ctx context.Context, run *Run, p
 }
 
 func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, proactiveAllowed bool) string {
+	_ = items
+	return renderDigitalHumanMemoryGuidance(toolEnabled, proactiveAllowed, false)
+}
+
+// renderDigitalHumanMemoryGuidance is the memory policy of a run. With files
+// (ADR 0014) memory is recalled into the context and read with memory_view
+// and memory_search instead of retrieve_digital_human_memory.
+func renderDigitalHumanMemoryGuidance(toolEnabled, proactiveAllowed, files bool) string {
+	recall := "Long-term memory is not preloaded. When the current question may depend on durable context, call retrieve_digital_human_memory with a concise query before answering."
+	lookup := "Retrieval returns the memory_id, memory_key and revision of every match. Correct or clear an existing memory only with its returned key and revision, create a new memory with expected_revision 0, and replace an existing memory only by passing its returned memory_id as supersedes_id."
+	if files {
+		recall = memoryFilesGuidance
+		lookup = "Change memory files only with memory_edit, as described below."
+	}
 	sections := []string{
 		"Long-term memory belongs to this DigitalHuman, not to the current user.",
 		"Treat memory as fallible context: respect its scope and revision, and prefer current tool evidence when facts conflict.",
-		"Long-term memory is not preloaded. When the current question may depend on durable context, call retrieve_digital_human_memory with a concise query before answering.",
+		recall,
 	}
-	_ = items
 	if toolEnabled {
 		modePolicy := "Proactive memory maintenance is disabled. Use explicit mode only when the current user directly establishes, corrects, or asks to forget durable DigitalHuman working context."
 		if proactiveAllowed {
@@ -191,7 +228,7 @@ func renderDigitalHumanMemoryContext(items []*DigitalHumanMemory, toolEnabled, p
 		}
 		sections = append(sections,
 			"Decide at runtime whether a memory change is warranted from the meaning and context of the conversation, not from trigger words. If no safe durable update is needed, do not call the memory tool.",
-			"Retrieval returns the memory_id, memory_key and revision of every match. Correct or clear an existing memory only with its returned key and revision, create a new memory with expected_revision 0, and replace an existing memory only by passing its returned memory_id as supersedes_id.",
+			lookup,
 			modePolicy,
 			"Every memory operation must include an exact non-empty quote from the current user message as transient evidence. Never use assistant text, tool output, inferred behavior, hypotheticals, temporary details, or third-party facts as evidence.",
 		)
@@ -227,7 +264,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryRetrievalTool(run *Run, event invoc
 		if err != nil {
 			return skillloop.RuntimeToolResult{Status: "error", Error: err, Recoverable: true}
 		}
-		result, err := p.retriever.Retrieve(ctx, DigitalHumanMemoryRetrievalRequest{
+		result, err := p.retrieve(ctx, DigitalHumanMemoryRetrievalRequest{
 			Run: run, Event: event, Query: args.Query, TopK: args.TopK, RetrievalMode: args.RetrievalMode,
 		})
 		if err != nil {
@@ -293,8 +330,8 @@ func decodeMemoryRetrievalToolArguments(raw string) (memoryRetrievalToolArgument
 }
 
 // memoryMutationTool exposes the single converged memory write surface. The
-// tool never accepts memory_class or scope fields: the run's trust level
-// decides the class and scope (ADR 0004).
+// tool never accepts visibility or target fields: the run's trust level
+// decides whether a write lands in /me/ or in the person's notes (ADR 0015).
 func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 	run *Run,
 	event invocation.Event,
@@ -333,51 +370,72 @@ func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 		if err != nil {
 			return memoryToolFailure("invalid_arguments", true)
 		}
-		operationID := memoryToolOperationID(run.ID, call)
-		memoryClass, memoryScope := memoryruntime.MemoryClassSelf, (*memoryruntime.MemoryScopeRef)(nil)
-		mode := memoryWriteExplicit
-		if args.Mode == digitalHumanMemoryModeProactive {
-			mode = memoryWriteProactive
-		}
-		admission := admitMemoryWrite(run, event, mode, state.AutoExtractionEnabled)
-		if admission.Allowed {
-			memoryClass, memoryScope = admission.Class, admission.Scope
-		}
-		request := MemoryProposalRequest{
-			OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: memoryClass, Scope: memoryScope, MemoryType: args.MemoryType,
-			Content: args.Content, ExpectedRevision: args.ExpectedRevision, SupersedesID: args.SupersedesID,
-			ExpectedSupersededRevision: args.ExpectedSupersededRevision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-			Visibility: admission.visibility(), Confidence: args.Confidence, RunID: &run.ID,
-			Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
-			SourceContext: MemorySourceContext{
-				PrivateConversation:       event.Origin.Kind == invocation.OriginManual,
-				PromotedByAuthorizedActor: promotionAuthorized,
-			},
-			OccurredAt: p.now(),
-		}
-		request.SourceContext.SourceTrust = admission.Trust
-		if !admission.Allowed {
-			p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, admission.err())
-			return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
-		}
-		if err := validateMemoryToolDecision(args, run.Query, state.AutoExtractionEnabled); err != nil {
-			p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, err)
-			return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
-		}
-		result, err := p.service.ApplyAutonomousMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request)
-		if err != nil {
-			return memoryToolFailure(memoryPublicErrorCode(err), false)
-		}
-		return skillloop.RuntimeToolResult{
-			Status: "success",
-			Arguments: map[string]any{
-				"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "memory_class": memoryClass,
-				"memory_type": args.MemoryType, "supersedes_id": args.SupersedesID,
-			},
-			Result: map[string]any{"status": "committed", "operation_id": result.Event.OperationID.String(), "memory_id": result.Memory.ID.String(), "revision": result.Memory.Revision, "replayed": result.Replayed},
-		}
+		return p.commitMemoryToolArguments(ctx, run, event, state, promotionAuthorized, memoryToolOperationID(run.ID, call), args, false)
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanMemory, Handler: handler}
+}
+
+// commitMemoryToolArguments admits and applies one model-proposed memory
+// change: the run's trust decides class and scope, the decision is checked,
+// and the change is committed with its fences, audit event, and undo record.
+// evidenceChecked lets a caller that has already verified the user quote
+// (memory_edit) skip the exact-substring check.
+func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
+	ctx context.Context,
+	run *Run,
+	event invocation.Event,
+	state *MemoryState,
+	promotionAuthorized bool,
+	operationID uuid.UUID,
+	args memoryToolArguments,
+	evidenceChecked bool,
+) skillloop.RuntimeToolResult {
+	mode := memoryWriteExplicit
+	if args.Mode == digitalHumanMemoryModeProactive {
+		mode = memoryWriteProactive
+	}
+	admission := admitMemoryWrite(run, event, mode, state.AutoExtractionEnabled)
+	request := MemoryProposalRequest{
+		OperationID: operationID, Key: args.Key, Action: args.Action, MemoryType: args.MemoryType,
+		Content: args.Content, ExpectedRevision: args.ExpectedRevision, SupersedesID: args.SupersedesID,
+		ExpectedSupersededRevision: args.ExpectedSupersededRevision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
+		Confidence: args.Confidence, RunID: &run.ID,
+		Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
+		SourceContext: MemorySourceContext{
+			PrivateConversation:       event.Origin.Kind == invocation.OriginManual,
+			PromotedByAuthorizedActor: promotionAuthorized,
+		},
+		OccurredAt: p.now(),
+	}
+	request.SourceContext.SourceTrust = admission.Trust
+	admission.stamp(&request)
+	if mode == memoryWriteProactive {
+		request.noteSourceKind = relationshipmemory.SourceAutomatic
+	}
+	if !admission.Allowed {
+		p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, admission.err())
+		return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
+	}
+	decisionErr := validateMemoryToolDecision(args, run.Query, state.AutoExtractionEnabled)
+	if evidenceChecked {
+		decisionErr = validateMemoryToolMode(args, state.AutoExtractionEnabled)
+	}
+	if decisionErr != nil {
+		p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, decisionErr)
+		return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
+	}
+	result, err := p.service.ApplyAutonomousMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request)
+	if err != nil {
+		return memoryToolFailure(memoryPublicErrorCode(err), false)
+	}
+	return skillloop.RuntimeToolResult{
+		Status: "success",
+		Arguments: map[string]any{
+			"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "note": admission.NoteInstanceID != "",
+			"memory_type": args.MemoryType, "supersedes_id": args.SupersedesID,
+		},
+		Result: map[string]any{"status": "committed", "operation_id": result.Event.OperationID.String(), "memory_id": result.Memory.ID.String(), "revision": result.Memory.Revision, "replayed": result.Replayed},
+	}
 }
 
 type memoryToolArguments struct {
@@ -416,6 +474,12 @@ func validateMemoryToolDecision(args memoryToolArguments, latestUserMessage stri
 	if latestUserMessage == "" || args.Evidence == "" || !strings.Contains(latestUserMessage, args.Evidence) {
 		return ErrMemoryPolicyRejected
 	}
+	return validateMemoryToolMode(args, proactiveAllowed)
+}
+
+// validateMemoryToolMode checks the write mode: explicit always, proactive
+// only when automatic memory is on and only for an upsert.
+func validateMemoryToolMode(args memoryToolArguments, proactiveAllowed bool) error {
 	switch args.Mode {
 	case digitalHumanMemoryModeExplicit:
 		return nil

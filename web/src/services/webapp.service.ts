@@ -14,7 +14,7 @@ import type {
   WebAppAgentMemoryValue,
 } from './types/webapp';
 import type { AIChatModelPrecheckResponse } from './types/aichat';
-import type { MemoryHistoryPage } from './types/memory-history';
+import type { MemoryArchiveEntry, MemoryHistoryPage } from './types/memory-history';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
 import {
   getWebAppErrorCode,
@@ -199,6 +199,23 @@ export class WebAppService {
     return webappHttp.get<WebAppApiResponseData<MemoryHistoryPage>>(
       `/console/api/webapps/${webAppId}/memory/history`,
       { params }
+    );
+  }
+
+  static async getAgentMemoryArchive(
+    webAppId: string
+  ): Promise<WebAppApiResponseData<{ entries: MemoryArchiveEntry[] }>> {
+    return webappHttp.get<WebAppApiResponseData<{ entries: MemoryArchiveEntry[] }>>(
+      `/console/api/webapps/${webAppId}/memory/archive`
+    );
+  }
+
+  static async deleteAgentMemoryArchiveEntry(
+    webAppId: string,
+    entryId: string
+  ): Promise<WebAppApiResponseData<{ entry_id: string }>> {
+    return webappHttp.delete<WebAppApiResponseData<{ entry_id: string }>>(
+      `/console/api/webapps/${webAppId}/memory/archive/${encodeURIComponent(entryId)}`
     );
   }
 

@@ -1,6 +1,7 @@
 package agentmemoryruntime
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -117,5 +118,45 @@ func TestMemoryViewReturnsWholeNumberedFiles(t *testing.T) {
 	}
 	if missing := ExecuteView(request, `{"path":"/user/nope.md"}`); missing["status"] != "failed" {
 		t.Fatalf("unknown file view = %+v", missing)
+	}
+}
+
+func TestMemoryEditArchivesOldTextToMakeRoom(t *testing.T) {
+	service := &fakeMemoryService{}
+	old := strings.Repeat("旧备注。", 47)
+	request := editRequest(service, blockValue("profile", "", "坐长途航班喜欢靠过道。\n"+old))
+	type archived struct{ content, key string }
+	var kept []archived
+	request.Archive = func(_ context.Context, content, sourceKey string) error {
+		kept = append(kept, archived{content, sourceKey})
+		return nil
+	}
+	full := ExecuteEdits(t.Context(), request, edits(t,
+		map[string]interface{}{"command": "insert", "path": "/user/profile.md", "text": "我搬到杭州了。", "evidence": "我搬到杭州了", "mode": "explicit"}))
+	if full.Error == nil || !strings.Contains(full.Result["edits"].([]EditOutcome)[0].Reason, "archive") {
+		t.Fatalf("insert into a full file = %+v", full.Result)
+	}
+	result := ExecuteEdits(t.Context(), request, edits(t,
+		map[string]interface{}{"command": "archive", "path": "/user/profile.md", "old_text": old, "evidence": "", "mode": "explicit"},
+		map[string]interface{}{"command": "insert", "path": "/user/profile.md", "text": "住在杭州。", "evidence": "我搬到杭州了", "mode": "explicit"},
+		map[string]interface{}{"command": "archive", "path": "/user/profile.md", "old_text": "坐长途航班喜欢靠过道。\n住在杭州。", "evidence": "", "mode": "explicit"}))
+	if result.Error != nil {
+		t.Fatalf("archive then insert failed: %v (%+v)", result.Error, result.Result)
+	}
+	outcomes := result.Result["edits"].([]EditOutcome)
+	if outcomes[0].Status != "accepted" || outcomes[1].Status != "accepted" || !strings.Contains(outcomes[2].Reason, "cannot empty") {
+		t.Fatalf("outcomes = %+v", outcomes)
+	}
+	if len(kept) != 1 || kept[0].content != old || kept[0].key != "profile" {
+		t.Fatalf("archived = %+v", kept)
+	}
+	if written := service.request.Operations[0]; written.Content != "坐长途航班喜欢靠过道。\n住在杭州。" || !strings.Contains(written.Reason, "archive") {
+		t.Fatalf("written = %+v", written)
+	}
+
+	request.Archive = nil
+	if rejected := ExecuteEdits(t.Context(), request, edits(t,
+		map[string]interface{}{"command": "archive", "path": "/user/profile.md", "old_text": old, "evidence": "", "mode": "explicit"})); rejected.Error == nil {
+		t.Fatal("archive was accepted without an archive")
 	}
 }

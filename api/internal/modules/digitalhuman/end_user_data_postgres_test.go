@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,19 +96,19 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 		exec(`INSERT INTO digital_human_runs (id, organization_id, workspace_id, digital_human_id, digital_human_version_id, idempotency_key, invocation_event, run_spec, run_spec_revision, execution_snapshot, execution_snapshot_revision, execution_trace, query, status, conversation_id, user_subject_kind, user_subject_id, surface, end_user_instance_id, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, '{}', '{}', 'sha256:x', '{}', 'sha256:x', '{}', 'What is two plus two', 'succeeded', ?, 'api_end_user', ?, 'digital_human_api', ?, now(), now())`,
 			runID, organizationID, workspaceID, digitalHumanID, detail.Published.ID, "erase-"+runID.String(), conversationID, subjectID, instanceID)
-		propose := func(memoryScope *memoryruntime.MemoryScopeRef, class memoryruntime.MemoryClass, key, content string) {
+		propose := func(noteInstanceID, key, content string) {
 			t.Helper()
 			if _, err := service.ApplyMemoryProposal(ctx, scope, digitalHumanID, MemoryProposalRequest{
-				OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: class, MemoryType: memoryruntime.MemoryTypeFact,
-				Scope: memoryScope, Content: content, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch, RunID: &runID,
-				Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "note"}}, Visibility: MemoryVisibilityWorkspace,
+				OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryType: memoryruntime.MemoryTypeFact,
+				noteInstanceID: noteInstanceID, Content: content, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch, RunID: &runID,
+				Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "note"}}, Visibility: MemoryVisibilityEveryone,
 				Confidence: 1, OccurredAt: time.Now().UTC(),
 			}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		propose(&memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: instanceID.String()}, memoryruntime.MemoryClassBusiness, "pet-"+user, user+" has a cat.")
-		propose(nil, memoryruntime.MemoryClassSelf, "lesson-"+user, "Answer arithmetic briefly.")
+		propose(instanceID.String(), "pet-"+user, user+" has a cat.")
+		propose("", "lesson-"+user, "Answer arithmetic briefly.")
 		taskID := uuid.New()
 		exec(`INSERT INTO automation_tasks (id, organization_id, workspace_id, name, task_kind, subject_type, subject_id, owner_kind, owner_subject_kind, owner_subject_id, origin_surface, status, schedule_type, timezone, schedule_config, source_type, created_by, updated_by, created_at, updated_at)
 			VALUES (?, ?, ?, 'Daily', 'digital_human', 'digital_human', ?, 'user_subject', 'api_end_user', ?, 'digital_human_api', 'active', 'manual', 'UTC', '{}', 'manual', ?, ?, now(), now())`,
@@ -138,8 +139,13 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 		_ = json.Unmarshal(encoded, &dh)
 	}
 	if len(export.Conversations) != 1 || len(export.Conversations[0].Messages) != 1 || export.Conversations[0].Messages[0].Answer != "Four." ||
-		dh == nil || len(dh.Instances) != 1 || len(dh.Memory) != 1 || len(dh.Runs) != 1 || len(dh.Tasks) != 1 || len(dh.Notifications) != 1+extraNotifications {
+		dh == nil || len(dh.Instances) != 1 || len(dh.Runs) != 1 || len(dh.Tasks) != 1 || len(dh.Notifications) != 1+extraNotifications {
 		t.Fatalf("alice export = %+v / %+v", export, dh)
+	}
+	// The DigitalHuman's notes on alice are part of her relationship memory
+	// (ADR 0015), so the export carries them there.
+	if encoded, _ := json.Marshal(export.Memory); !strings.Contains(string(encoded), `"notes/pet-alice"`) {
+		t.Fatalf("alice's notes are missing from her memory export: %s", encoded)
 	}
 
 	panels, err := NewEndUserData().EndUserPanels(ctx, tx, organizationID, alice, []EndUserApp{{AppKey: "app_dh", DigitalHumanID: digitalHumanID}, {AppKey: "app_unused", DigitalHumanID: uuid.New()}})
@@ -156,11 +162,11 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 		t.Fatalf("erasing alice's instance was audited %d times: %v", erasedEvents, err)
 	}
 	for name, n := range map[string]int64{
-		"conversations":   count("SELECT count(*) FROM chat_runtime_conversations WHERE account_id = ?", alice),
-		"runs":            count("SELECT count(*) FROM digital_human_runs WHERE user_subject_id = ?", alice),
-		"instance memory": count("SELECT count(*) FROM digital_human_memories WHERE scope_type = 'instance' AND scope_id = ?", aliceInstance.String()),
-		"tasks":           count("SELECT count(*) FROM automation_tasks WHERE owner_subject_id = ?", alice),
-		"notifications":   count("SELECT count(*) FROM inbox_notifications WHERE recipient_id = ?", alice),
+		"conversations": count("SELECT count(*) FROM chat_runtime_conversations WHERE account_id = ?", alice),
+		"runs":          count("SELECT count(*) FROM digital_human_runs WHERE user_subject_id = ?", alice),
+		"notes":         count("SELECT count(*) FROM user_memory_items item JOIN user_memory_relationships relationship ON relationship.id = item.relationship_id WHERE relationship.subject_id = ?", alice),
+		"tasks":         count("SELECT count(*) FROM automation_tasks WHERE owner_subject_id = ?", alice),
+		"notifications": count("SELECT count(*) FROM inbox_notifications WHERE recipient_id = ?", alice),
 	} {
 		if n != 0 {
 			t.Fatalf("alice kept %d %s", n, name)

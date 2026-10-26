@@ -110,6 +110,9 @@ type MutationRequest struct {
 	// from another's in the same turn.
 	RecentUserMessages []string
 	CallID             string
+	// Archive keeps text moved out of a full file in the user's archive
+	// (ADR 0014); nil when the memory store has no archive.
+	Archive func(ctx context.Context, content, sourceKey string) error
 }
 
 type MutationResult struct {

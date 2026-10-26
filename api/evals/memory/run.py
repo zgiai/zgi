@@ -160,6 +160,10 @@ class Client:
         values = data.get("values") or []
         return {v.get("key"): str(v.get("content") or v.get("value") or "") for v in values if (v.get("content") or v.get("value"))}
 
+    def archive(self, user):
+        data = self.external("GET", "/agents/memory/archive?user=" + urllib.parse.quote(user)) or {}
+        return [str(entry.get("content") or "") for entry in data.get("entries") or []]
+
     def enable_auto_capture(self, user):
         query = "?user=" + urllib.parse.quote(user)
         settings = self.external("GET", "/agents/memory/settings" + query) or {}
@@ -202,9 +206,14 @@ def contains(text, needle):
     return needle.lower() in text.lower()
 
 
-def score(scenario, memory, answer, other_memory):
+def score(scenario, memory, answer, other_memory, archive=None):
     memory_text = "\n".join(memory.values())
     expect, checks = scenario.get("expect", {}), []
+    if expect.get("archive_nonempty"):
+        checks.append(("archive has entries", bool(archive)))
+    if expect.get("archive_any"):
+        archive_text = "\n".join(archive or [])
+        checks.append(("archive has any of " + "/".join(expect["archive_any"]), any(contains(archive_text, n) for n in expect["archive_any"])))
     for needle in expect.get("memory_all", []):
         checks.append(("memory has " + needle, contains(memory_text, needle)))
     if expect.get("memory_any"):
@@ -212,6 +221,8 @@ def score(scenario, memory, answer, other_memory):
     for key, needles in expect.get("memory_in", {}).items():
         for needle in needles:
             checks.append((f"{key} has {needle}", contains(memory.get(key, ""), needle)))
+    for key, needles in expect.get("memory_in_any", {}).items():
+        checks.append((f"{key} has any of " + "/".join(needles), any(contains(memory.get(key, ""), n) for n in needles)))
     for needle, limit in expect.get("memory_max_occurrences", {}).items():
         count = memory_text.lower().count(needle.lower())
         checks.append((f"memory mentions {needle} at most {limit} times ({count})", count <= limit))
@@ -254,12 +265,14 @@ def run_scenario(client, scenario, run_index, wait_after_session, auto):
         if wait_after_session:
             time.sleep(wait_after_session)
     memory = client.memory(user)
+    expect = scenario.get("expect", {})
+    archive = client.archive(user) if expect.get("archive_nonempty") or expect.get("archive_any") or expect.get("archive_observe") else None
     probe_user = user + "-other" if scenario.get("probe_as_other_user") else user
     if probe_user != user and auto:
         client.enable_auto_capture(probe_user)
     probe = client.chat(probe_user, scenario["probe"])
     other_memory = client.memory(probe_user) if probe_user != user else None
-    checks = score(scenario, memory, probe["answer"], other_memory)
+    checks = score(scenario, memory, probe["answer"], other_memory, archive)
     return {
         "scenario": scenario["id"],
         "category": scenario.get("category"),
@@ -268,6 +281,7 @@ def run_scenario(client, scenario, run_index, wait_after_session, auto):
         "requires_auto": bool(scenario.get("requires_auto")),
         "observe": bool(scenario.get("observe")),
         "memory": memory,
+        "archive": archive,
         "turns": turns,
         "probe": probe,
         "checks": [{"check": name, "passed": passed} for name, passed in checks],

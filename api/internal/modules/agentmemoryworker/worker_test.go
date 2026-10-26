@@ -2,6 +2,7 @@ package agentmemoryworker
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -84,13 +85,32 @@ func TestFitTurnBudgetKeepsNewestCompleteTurns(t *testing.T) {
 func TestFitTurnBudgetCountsCurrentMemoryAndSlotPayload(t *testing.T) {
 	runner := NewRunner(nil, nil, nil)
 	turns := []completedTurn{{Query: "I prefer concise replies", ModelName: "test"}}
-	values := []agentmemory.SlotValueResponse{{Content: strings.Repeat("existing memory ", 12000)}}
+	values := []agentmemory.SlotValueResponse{{Content: strings.Repeat("existing memory ", 40000)}}
 	selected, err := runner.fitTurnBudget(turns, []agentmemory.RuntimeSlot{{Key: "profile", Enabled: true}}, values, runner.extractionChatRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(selected) != 0 {
 		t.Fatalf("selected turns = %#v, want no request that exceeds the full input budget", selected)
+	}
+}
+
+func TestFitTurnBudgetGivesTurnsRoomBesideFullFiles(t *testing.T) {
+	runner := NewRunner(nil, nil, nil)
+	turns := []completedTurn{{Query: "我最近点咖啡只点燕麦奶拿铁了。", ModelName: "test"}}
+	slots := make([]agentmemory.RuntimeSlot, 0, 10)
+	values := make([]agentmemory.SlotValueResponse, 0, 10)
+	for index := range 10 {
+		key := fmt.Sprintf("block_%d", index)
+		slots = append(slots, agentmemory.RuntimeSlot{Key: key, Enabled: true, MaxChars: 5000})
+		values = append(values, agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: key}, Content: strings.Repeat("历史备注，没有特别事项。", 400)})
+	}
+	selected, err := runner.fitTurnBudget(turns, slots, values, runner.extractionChatRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 {
+		t.Fatalf("selected turns = %#v, want the turn kept beside full files", selected)
 	}
 }
 

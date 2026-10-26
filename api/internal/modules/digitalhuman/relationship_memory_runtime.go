@@ -54,6 +54,23 @@ func (p *CompositeMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, 
 			result.SystemPromptAddendum += addendum
 		}
 		result.Tools = append(result.Tools, prepared.Tools...)
+		result.fileEditors = append(result.fileEditors, prepared.fileEditors...)
+		if prepared.archiveSearch != nil {
+			result.archiveSearch = prepared.archiveSearch
+		}
+		if prepared.forgottenLines != nil {
+			result.forgottenLines = prepared.forgottenLines
+		}
+	}
+	if result.archiveSearch != nil {
+		result.Tools = withArchiveResults(result.Tools, result.archiveSearch)
+	}
+	if result.forgottenLines != nil {
+		result.Tools = withoutForgottenTurns(result.Tools, result.forgottenLines)
+	}
+	if len(result.fileEditors) > 0 {
+		result.SystemPromptAddendum += "\n\n" + memoryEditGuidance(result.fileEditors)
+		result.Tools = append(result.Tools, newMemoryEditTool(run, result.fileEditors))
 	}
 	return result, nil
 }
@@ -132,12 +149,28 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 		ConfigRevision:     resolved.Snapshot.Revision,
 		RenderBudgetChars:  4000,
 	}
-	contextBlock, _, err := p.service.RenderContext(ctx, relationship.ID, contract)
+	contextBlock, items, err := p.service.RenderContext(ctx, relationship.ID, contract)
 	if err != nil {
 		return nil, err
 	}
+	writable := relationship.Status == relationshipmemory.RelationshipActive && relationship.MemoryEnabled
+	if memoryFilesEnabled() {
+		// The user's items are /user/ files, changed with memory_edit (ADR 0014).
+		preparation := &MemoryRuntimePreparation{SystemPromptAddendum: renderUserMemoryFilesGuidance(items, relationship.AutoCaptureEnabled && contract.AutoCaptureAllowed)}
+		if writable {
+			preparation.fileEditors = []memoryFileEditor{&relationshipFileEditor{service: p.service, run: run, relationship: relationship, contract: contract}}
+		}
+		relationshipID := relationship.ID
+		preparation.archiveSearch = func(ctx context.Context, query string, limit int) ([]relationshipmemory.UserMemoryArchiveEntry, error) {
+			return p.service.SearchArchive(ctx, relationshipID, query, limit)
+		}
+		preparation.forgottenLines = func(ctx context.Context) ([]string, error) {
+			return p.service.ForgottenLines(ctx, relationshipID)
+		}
+		return preparation, nil
+	}
 	preparation := &MemoryRuntimePreparation{SystemPromptAddendum: renderUserRelationshipMemoryGuidance(contextBlock, relationship.AutoCaptureEnabled && contract.AutoCaptureAllowed)}
-	if relationship.Status == relationshipmemory.RelationshipActive && relationship.MemoryEnabled {
+	if writable {
 		preparation.Tools = []skillloop.RuntimeTool{p.mutationTool(run, relationship, contract)}
 	}
 	return preparation, nil
@@ -177,6 +210,23 @@ func renderUserRelationshipMemoryGuidance(contextBlock string, proactiveAllowed 
 	sections = append(sections, mode,
 		"Never store project, customer, channel, credential, third-party, or document-body data here. Never claim an update succeeded unless the relationship-memory tool reports committed.")
 	return strings.Join(sections, "\n\n")
+}
+
+// renderUserMemoryFilesGuidance is the file view of the user's own memory.
+func renderUserMemoryFilesGuidance(items []relationshipmemory.UserMemoryItem, proactiveAllowed bool) string {
+	sections := []string{
+		"Files under /user/ are the person's own memory: facts about them that they own. They are separate from your memory and your notes, and nothing is ever copied between the two.",
+	}
+	if len(items) > 0 {
+		sections = append(sections, renderUserMemoryFiles(items))
+	} else {
+		sections = append(sections, "The person has no files under /user/ yet.")
+	}
+	mode := "Change /user/ files only when the person directly asks you to remember, correct, or forget something about themselves."
+	if proactiveAllowed {
+		mode = "You may also add to /user/ a stable fact or preference the person states about themselves, without being asked."
+	}
+	return strings.Join(append(sections, mode, "Never store project, customer, channel, credential, third-party, or document data under /user/."), "\n\n")
 }
 
 type relationshipMemoryToolArguments struct {

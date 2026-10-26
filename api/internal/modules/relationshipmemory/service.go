@@ -413,10 +413,12 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 		}
 		if !exists && relationship.ConsumerType == ConsumerDigitalHuman {
 			var count int64
-			if err := tx.Model(&UserMemoryItem{}).Where("relationship_id = ?", relationshipID).Count(&count).Error; err != nil {
+			// Notes are the DigitalHuman's, not the person's, and have their own
+			// limit (ADR 0015).
+			if err := tx.Model(&UserMemoryItem{}).Where("relationship_id = ? AND memory_key NOT LIKE ?", relationshipID, NoteKeyPrefix+"%").Count(&count).Error; err != nil {
 				return err
 			}
-			if count >= digitalHumanItemLimit {
+			if !IsNoteKey(req.Key) && count >= digitalHumanItemLimit {
 				return ErrCapacityExceeded
 			}
 		}
@@ -508,6 +510,16 @@ func validateMutation(req PutItemRequest) error {
 	}
 	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > contentLimit {
 		return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
+	}
+	if IsNoteKey(req.Key) {
+		// A DigitalHuman's note is tagged like its own memory (ADR 0015).
+		if _, ok := noteCategories[req.Category]; !ok || !ValidNoteName(NoteName(req.Key)) {
+			return fmt.Errorf("%w: invalid note", ErrPolicyRejected)
+		}
+		if agentmemory.ContainsSensitiveContent(req.Content) {
+			return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+		}
+		return nil
 	}
 	if req.Contract.DefinitionMode == "slots" {
 		for _, definition := range req.Contract.Definitions {
@@ -701,6 +713,19 @@ func (s *Service) ClearItems(ctx context.Context, relationshipID uuid.UUID, meta
 				return err
 			}
 		}
+		// Clearing all memory clears the archive too.
+		var archived []UserMemoryArchiveEntry
+		if err := tx.Where("relationship_id = ?", relationshipID).Find(&archived).Error; err != nil {
+			return err
+		}
+		for index := range archived {
+			if err := s.recordArchiveVersion(ctx, tx, &relationship, meta, VersionClear, &archived[index], nil); err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("relationship_id = ?", relationshipID).Delete(&UserMemoryArchiveEntry{}).Error; err != nil {
+			return err
+		}
 		if err := s.purgeVersionContent(tx, relationshipID); err != nil {
 			return err
 		}
@@ -885,9 +910,10 @@ func (s *Service) Undo(ctx context.Context, relationshipID, operationID uuid.UUI
 }
 
 type ExportResponse struct {
-	Relationship UserMemoryRelationship `json:"relationship"`
-	ExportedAt   time.Time              `json:"exported_at"`
-	Items        []UserMemoryItem       `json:"items"`
+	Relationship UserMemoryRelationship   `json:"relationship"`
+	ExportedAt   time.Time                `json:"exported_at"`
+	Items        []UserMemoryItem         `json:"items"`
+	Archive      []UserMemoryArchiveEntry `json:"archive"`
 }
 
 func (s *Service) Export(ctx context.Context, relationshipID uuid.UUID) (*ExportResponse, error) {
@@ -906,7 +932,11 @@ func (s *Service) Export(ctx context.Context, relationshipID uuid.UUID) (*Export
 		}
 		items[index].ContentPayload = decoded
 	}
-	return &ExportResponse{Relationship: relationship, ExportedAt: s.now().UTC(), Items: items}, nil
+	archive, err := s.ArchiveEntries(ctx, relationshipID, maxArchiveEntries)
+	if err != nil {
+		return nil, err
+	}
+	return &ExportResponse{Relationship: relationship, ExportedAt: s.now().UTC(), Items: items, Archive: archive}, nil
 }
 
 func (s *Service) RenderContext(ctx context.Context, relationshipID uuid.UUID, contract ConsumerMemoryContract) (string, []UserMemoryItem, error) {

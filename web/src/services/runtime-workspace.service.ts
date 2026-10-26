@@ -421,6 +421,38 @@ class RuntimeWorkspaceService extends BaseService {
     return response.data?.items ?? [];
   }
 
+  /** Removes one of a DigitalHuman's notes on the end user (ADR 0015). */
+  async deleteEndUserNote(
+    workspaceId: string,
+    subjectId: string,
+    digitalHumanId: string,
+    key: string,
+    expectedRevision: number
+  ): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'delete',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/digital-humans/${encodeURIComponent(digitalHumanId)}/notes/${encodeURIComponent(key)}?expected_revision=${expectedRevision}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+  }
+
+  /** Makes a note the DigitalHuman's own memory, internal only (ADR 0015). */
+  async promoteEndUserNote(
+    workspaceId: string,
+    subjectId: string,
+    digitalHumanId: string,
+    key: string,
+    expectedRevision: number
+  ): Promise<void> {
+    await this.request<ApiResponseData<unknown>>(
+      'post',
+      `/runtime-workspaces/${encodeURIComponent(workspaceId)}/end-users/${encodeURIComponent(subjectId)}/digital-humans/${encodeURIComponent(digitalHumanId)}/notes/${encodeURIComponent(key)}/promote?expected_revision=${expectedRevision}`,
+      undefined,
+      { headers: this.workspaceHeaders(workspaceId) }
+    );
+  }
+
   /** Queues an export, or returns the one already queued or running. */
   async requestEndUserExport(
     workspaceId: string,

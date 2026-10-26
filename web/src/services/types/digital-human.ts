@@ -438,7 +438,6 @@ export interface ManualDigitalHumanInvocationResponse {
   created: boolean;
 }
 
-export type DigitalHumanMemoryClass = 'self' | 'business';
 export type DigitalHumanMemoryType =
   | 'identity'
   | 'experience'
@@ -446,13 +445,10 @@ export type DigitalHumanMemoryType =
   | 'fact'
   | 'open_loop'
   | 'reflection';
-export type DigitalHumanMemoryScopeType =
-  | 'workspace'
-  | 'project'
-  | 'customer'
-  | 'campaign'
-  | 'channel'
-  | 'instance';
+/** Who may see a DigitalHuman's own memory (ADR 0015). */
+export type DigitalHumanMemoryVisibility = 'everyone' | 'internal';
+/** Who a memory came from (ADR 0015). */
+export type DigitalHumanMemoryOrigin = 'operator' | 'member' | 'channel' | 'end_user';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {
@@ -465,13 +461,14 @@ export interface DigitalHumanMemory {
   id: string;
   digital_human_id: string;
   memory_key: string;
-  memory_class: DigitalHumanMemoryClass;
+  /** File path in the model's view (ADR 0014). */
+  path?: string;
   memory_type: DigitalHumanMemoryType;
-  scope_type?: DigitalHumanMemoryScopeType | '';
-  scope_id?: string;
   content: string;
   content_digest: string;
-  visibility: 'workspace' | 'restricted';
+  visibility: DigitalHumanMemoryVisibility;
+  origin?: DigitalHumanMemoryOrigin;
+  origin_channel_id?: string;
   status: DigitalHumanMemoryStatus;
   confidence: number;
   revision: number;
@@ -502,37 +499,58 @@ export interface DigitalHumanMemoryList {
   page_size: number;
   has_more: boolean;
   state: DigitalHumanMemoryState;
+  /** Counts of the listed status, whatever the other filters (ADR 0015). */
+  facets?: DigitalHumanMemoryFacets;
+}
+
+export interface DigitalHumanMemoryFacets {
+  types: Partial<Record<DigitalHumanMemoryType, number>>;
+  visibility: Partial<Record<DigitalHumanMemoryVisibility, number>>;
+  origins: Partial<Record<DigitalHumanMemoryOrigin, number>>;
+  /** Channel conversations that taught the DigitalHuman, most entries first. */
+  channels: { id: string; count: number }[];
+}
+
+// Changes the visibility of, or invalidates, several memories at once. Each
+// memory changes in its own recorded, undoable mutation.
+export interface DigitalHumanMemoryBulkRequest {
+  operation_id: string;
+  action: 'set_visibility' | 'invalidate';
+  visibility?: DigitalHumanMemoryVisibility;
+  memory_ids: string[];
+}
+
+export interface DigitalHumanMemoryBulkResult {
+  updated: number;
+  skipped: { memory_id: string; reason: string }[];
 }
 
 export interface DigitalHumanMemoryListParams {
   page?: number;
   page_size?: number;
   search?: string;
-  memory_class?: DigitalHumanMemoryClass;
   memory_type?: DigitalHumanMemoryType;
-  scope_type?: DigitalHumanMemoryScopeType;
-  scope_id?: string;
   status?: DigitalHumanMemoryStatus;
   source?: string;
+  visibility?: DigitalHumanMemoryVisibility;
+  origin?: DigitalHumanMemoryOrigin;
+  origin_channel_id?: string;
 }
 
-// Moves one memory between self memory and workspace business memory.
-export interface DigitalHumanMemoryRescopeRequest {
+// Makes one of the DigitalHuman's own memories visible to everyone or internal only.
+export interface DigitalHumanMemoryVisibilityRequest {
   operation_id: string;
   expected_revision: number;
   config_revision: string;
   memory_epoch: number;
-  memory_class: 'self' | 'business';
-  scope?: { type: 'workspace'; id: string };
+  visibility: DigitalHumanMemoryVisibility;
 }
 
 export interface DigitalHumanMemoryProposalRequest {
   operation_id: string;
   key: string;
   action: 'upsert' | 'clear';
-  memory_class: DigitalHumanMemoryClass;
   memory_type: DigitalHumanMemoryType;
-  scope?: { type: DigitalHumanMemoryScopeType; id: string };
   content?: string;
   expected_revision: number;
   supersedes_id?: string;
@@ -540,7 +558,7 @@ export interface DigitalHumanMemoryProposalRequest {
   config_revision: string;
   memory_epoch: number;
   evidence?: DigitalHumanMemoryEvidence[];
-  visibility?: 'workspace' | 'restricted';
+  visibility?: DigitalHumanMemoryVisibility;
   confidence?: number;
   source_context: {
     private_conversation: boolean;

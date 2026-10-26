@@ -636,6 +636,43 @@ paths:
           $ref: '#/components/responses/MemoryRevertEnvelope'
         default:
           $ref: '#/components/responses/Error'
+  /agents/memory/archive:
+    get:
+      tags: [Memory]
+      summary: List the memory archive
+      operationId: listAgentMemoryArchive
+      description: >-
+        Lists the user's memory archive, newest first: older memory moved out of full memory files, which the Agent
+        searches when its files do not answer a question about the user. The archive keeps up to 500 entries and drops
+        the oldest beyond that. It is cleared with all memory and included in the export. Needs the relationship memory
+        store.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryArchiveEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory/archive/{entry_id}:
+    delete:
+      tags: [Memory]
+      summary: Delete a memory archive entry
+      operationId: deleteAgentMemoryArchiveEntry
+      description: Removes one entry from the user's memory archive. Allowed while memory is off.
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          description: An entry id from the archive.
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryArchiveDeleteEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
 components:
   securitySchemes:
     bearerAuth:
@@ -815,6 +852,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MemoryRevertEnvelope'
+    MemoryArchiveEnvelope:
+      description: Memory archive
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryArchiveEnvelope'
+    MemoryArchiveDeleteEnvelope:
+      description: Deleted archive entry
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryArchiveDeleteEnvelope'
     Error:
       description: Error response. The HTTP status reflects the error class.
       content:
@@ -1994,6 +2043,40 @@ components:
                   type: array
                   items: {$ref: '#/components/schemas/MemoryHistoryCommit'}
                 next_before: {type: string, format: date-time}
+    MemoryArchiveEntry:
+      type: object
+      required: [id, content, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        content: {type: string, description: The archived text.}
+        tags: {type: string, description: Kind of memory the text came from.}
+        source_key: {type: string, description: The memory slot the text was moved out of.}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    MemoryArchiveEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  items: {$ref: '#/components/schemas/MemoryArchiveEntry'}
+    MemoryArchiveDeleteEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [entry_id]
+              properties:
+                entry_id: {type: string, format: uuid}
     MemoryRevertEnvelope:
       allOf:
         - $ref: '#/components/schemas/SuccessEnvelope'

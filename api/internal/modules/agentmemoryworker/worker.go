@@ -18,8 +18,12 @@ import (
 )
 
 const (
-	maxExtractionTurns          = 6
-	maxExtractionInputTokens    = 8000
+	maxExtractionTurns = 6
+	// Earlier turns get their own budget on top of the memory files and the
+	// newest turn, so full files do not crowd out the conversation; the whole
+	// request stays capped.
+	maxExtractionTurnTokens     = 8000
+	maxExtractionInputTokens    = 96000
 	maxExtractionCASRetries     = 3
 	maxExtractionJobAttempts    = 5
 	maxExtractionOutputTokens   = 1200
@@ -325,6 +329,14 @@ func (r *Runner) loadCompletedTurns(ctx context.Context, job *agentmemory.AgentM
 type chatRequestBuilder func([]completedTurn, []agentmemory.RuntimeSlot, []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error)
 
 func (r *Runner) fitTurnBudget(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse, build chatRequestBuilder) ([]completedTurn, error) {
+	if len(turns) == 0 {
+		return nil, nil
+	}
+	newest, err := build(turns[len(turns)-1:], slots, values)
+	if err != nil {
+		return nil, err
+	}
+	limit := min(r.estimator.EstimateChatRequest(newest).Tokens+maxExtractionTurnTokens, maxExtractionInputTokens)
 	selected := make([]completedTurn, 0, len(turns))
 	for i := len(turns) - 1; i >= 0; i-- {
 		candidate := make([]completedTurn, 0, len(selected)+1)
@@ -334,7 +346,7 @@ func (r *Runner) fitTurnBudget(turns []completedTurn, slots []agentmemory.Runtim
 		if err != nil {
 			return nil, err
 		}
-		if r.estimator.EstimateChatRequest(request).Tokens > maxExtractionInputTokens {
+		if r.estimator.EstimateChatRequest(request).Tokens > limit {
 			break
 		}
 		selected = candidate

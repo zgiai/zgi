@@ -314,6 +314,9 @@ func RegisterRuntimeWorkspaceRoutes(router *gin.RouterGroup, deps RuntimeWorkspa
 	appGroup.POST("/memory/operations/:operation_id/undo", app(deps.AgentHandler.UndoAPIKeyAgentMemoryOperation, nil))
 	appGroup.GET("/memory/history", app(deps.AgentHandler.GetAPIKeyAgentMemoryHistory, nil))
 	appGroup.POST("/memory/history/:version_id/revert", app(deps.AgentHandler.RevertAPIKeyAgentMemoryVersion, nil))
+	appGroup.GET("/memory/archive", app(deps.AgentHandler.GetAPIKeyAgentMemoryArchive, dhRoute("memory.archive")))
+	appGroup.DELETE("/memory/archive/:entry_id", app(deps.AgentHandler.DeleteAPIKeyAgentMemoryArchiveEntry, dhRoute("memory.archive.delete")))
+	appGroup.DELETE("/memory/notes/:key", app(nil, dhRoute("memory.note.delete")))
 	appGroup.GET("/memory/settings", app(deps.AgentHandler.GetAPIKeyAgentMemorySettings, nil))
 	appGroup.PATCH("/memory/settings", app(deps.AgentHandler.PatchAPIKeyAgentMemorySettings, nil))
 

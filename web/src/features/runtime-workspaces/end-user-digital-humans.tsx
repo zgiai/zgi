@@ -1,9 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Bot } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowUpRight, Bot, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RUNTIME_WORKSPACE_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
@@ -62,14 +65,69 @@ export function EndUserDigitalHumans({
   return (
     <div className="space-y-4">
       {items.map(panel => (
-        <DigitalHumanPanel key={panel.digital_human_id} panel={panel} />
+        <DigitalHumanPanel
+          key={panel.digital_human_id}
+          panel={panel}
+          runtimeWorkspaceId={runtimeWorkspaceId}
+          subjectId={subjectId}
+        />
       ))}
     </div>
   );
 }
 
-function DigitalHumanPanel({ panel }: { panel: RuntimeEndUserDigitalHuman }) {
+function DigitalHumanPanel({
+  panel,
+  runtimeWorkspaceId,
+  subjectId,
+}: {
+  panel: RuntimeEndUserDigitalHuman;
+  runtimeWorkspaceId: string;
+  subjectId: string;
+}) {
   const t = useT('workspace');
+  const queryClient = useQueryClient();
+  // An operator removes a note, or promotes it into the DigitalHuman's own
+  // memory as internal (ADR 0015).
+  const noteAction = useMutation({
+    mutationFn: ({
+      action,
+      key,
+      revision,
+    }: {
+      action: 'delete' | 'promote';
+      key: string;
+      revision: number;
+    }) =>
+      action === 'delete'
+        ? runtimeWorkspaceService.deleteEndUserNote(
+            runtimeWorkspaceId,
+            subjectId,
+            panel.digital_human_id,
+            key,
+            revision
+          )
+        : runtimeWorkspaceService.promoteEndUserNote(
+            runtimeWorkspaceId,
+            subjectId,
+            panel.digital_human_id,
+            key,
+            revision
+          ),
+    onSuccess: (_, variables) => {
+      toast.success(
+        t(
+          variables.action === 'delete'
+            ? 'runtime.endUserDH.noteDeleted'
+            : 'runtime.endUserDH.notePromoted'
+        )
+      );
+      void queryClient.invalidateQueries({
+        queryKey: RUNTIME_WORKSPACE_KEYS.endUserDigitalHumans(runtimeWorkspaceId, subjectId),
+      });
+    },
+    onError: () => toast.error(t('runtime.endUserDH.noteActionFailed')),
+  });
   return (
     <section className="space-y-4 rounded-lg border p-4">
       <div className="flex items-start justify-between gap-3">
@@ -115,9 +173,59 @@ function DigitalHumanPanel({ panel }: { panel: RuntimeEndUserDigitalHuman }) {
               <li key={memory.id} className="rounded-md bg-muted/40 px-3 py-2 text-xs">
                 <div className="flex items-center justify-between gap-2 text-muted-foreground">
                   <code className="truncate">{memory.memory_key}</code>
-                  <span className="shrink-0">{formatTime(memory.updated_at)}</span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <span>{formatTime(memory.updated_at)}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      title={t('runtime.endUserDH.promoteHint')}
+                      disabled={noteAction.isPending}
+                      onClick={() =>
+                        noteAction.mutate({
+                          action: 'promote',
+                          key: memory.memory_key,
+                          revision: memory.revision,
+                        })
+                      }
+                    >
+                      <ArrowUpRight className="size-3" />
+                      {t('runtime.endUserDH.promote')}
+                    </Button>
+                    <ConfirmDialog
+                      variant="warning"
+                      title={t('runtime.endUserDH.deleteNoteTitle')}
+                      description={t('runtime.endUserDH.deleteNoteDescription')}
+                      confirmText={t('runtime.endUserDH.deleteNote')}
+                      cancelText={t('runtime.endUserDH.cancel')}
+                      loading={noteAction.isPending}
+                      onConfirm={() =>
+                        noteAction.mutate({
+                          action: 'delete',
+                          key: memory.memory_key,
+                          revision: memory.revision,
+                        })
+                      }
+                      trigger={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          aria-label={t('runtime.endUserDH.deleteNote')}
+                          disabled={noteAction.isPending}
+                        >
+                          <Trash2 className="size-3" />
+                        </Button>
+                      }
+                    />
+                  </div>
                 </div>
-                <p className="mt-1 whitespace-pre-wrap break-words">{memory.content}</p>
+                <p
+                  className="mt-1 line-clamp-3 whitespace-pre-wrap break-words"
+                  title={memory.content}
+                >
+                  {memory.content}
+                </p>
               </li>
             ))}
           </ul>
