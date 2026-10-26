@@ -19,7 +19,6 @@ import type {
   AgentBindingHealth,
   AgentWorkflowBindingCandidatesResponse,
   UpdateAgentRuntimeConfigRequest,
-  AgentMemorySlotConfig,
   AgentMemoryValuesResponse,
   UpdateAgentMemoryValueRequest,
   AgentMemoryValue,
@@ -305,35 +304,13 @@ class AgentService extends BaseService {
     );
   }
 
-  getAgentMemorySlots(
-    agentId: string
-  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
-    return this.request('get', `/agents/${agentId}/memory/blocks`, undefined, {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  updateAgentMemorySlots(
-    agentId: string,
-    slots: AgentMemorySlotConfig[]
-  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
-    return this.request(
-      'put',
-      `/agents/${agentId}/memory/blocks`,
-      { slots },
-      {
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  }
-
   updateAgentMemoryConfig(
     agentId: string,
     payload: {
       enabled: boolean;
       auto_extraction_enabled: boolean;
-      slots: AgentMemorySlotConfig[];
       config_revision?: string;
+      instructions?: string;
     }
   ): Promise<ApiResponseData<AgentMemoryConfigResponse>> {
     return this.request('put', `/agents/${agentId}/memory/config`, payload, {

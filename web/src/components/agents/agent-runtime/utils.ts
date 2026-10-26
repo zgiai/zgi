@@ -1,18 +1,6 @@
-import type {
-  AgentMemorySlotConfig,
-  UpdateAgentRuntimeConfigRequest,
-} from '@/services/types/agent';
+import type { UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
 import { ICON_BG } from '@/lib/config';
 import type { DbTable } from '@/services/types/db';
-
-export type AgentMemorySlotValidationError =
-  | 'required'
-  | 'pattern'
-  | 'duplicate'
-  | 'too_many'
-  | null;
-
-const AGENT_MEMORY_SLOT_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 export function toModelParams(
   params: Record<string, unknown> | undefined
@@ -64,41 +52,10 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
   });
 }
 
-// Agent memory block limits (ADR 0013); the backend enforces the same.
+// The memory instructions limit; the backend enforces the same.
 export const AGENT_MEMORY_LIMITS = {
-  maxBlocks: 10,
-  maxDescriptionChars: 1000,
-  minChars: 100,
-  maxChars: 5000,
-  defaultChars: 2000,
   maxInstructionsChars: 2000,
 } as const;
-
-export function clampAgentMemoryMaxChars(value: number | undefined): number {
-  if (!value || !Number.isFinite(value)) return AGENT_MEMORY_LIMITS.defaultChars;
-  return Math.min(
-    AGENT_MEMORY_LIMITS.maxChars,
-    Math.max(AGENT_MEMORY_LIMITS.minChars, Math.round(value))
-  );
-}
-
-export function validateAgentMemorySlots(
-  slots: AgentMemorySlotConfig[]
-): AgentMemorySlotValidationError[] {
-  const normalizedKeys = slots.map(slot => slot.key.trim().toLowerCase());
-  const keyCounts = normalizedKeys.reduce<Record<string, number>>((acc, key) => {
-    if (key) acc[key] = (acc[key] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  return normalizedKeys.map(key => {
-    if (slots.length > AGENT_MEMORY_LIMITS.maxBlocks) return 'too_many';
-    if (!key) return 'required';
-    if (!AGENT_MEMORY_SLOT_KEY_PATTERN.test(key)) return 'pattern';
-    if ((keyCounts[key] ?? 0) > 1) return 'duplicate';
-    return null;
-  });
-}
 
 export function pickAgentInitials(name?: string): string {
   const trimmed = name?.trim();

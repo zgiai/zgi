@@ -24,51 +24,6 @@ const (
 	agentMemoryRevisionConflictMessage    = "Agent memory has changed. Refresh and try again."
 )
 
-func (s *agentsService) ListAgentMemorySlots(ctx context.Context, agentID, accountID string) ([]dto.AgentMemorySlotConfig, error) {
-	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
-	if err != nil {
-		return nil, err
-	}
-	return s.agentMemorySlotsForDraft(ctx, ag.ID), nil
-}
-
-func (s *agentsService) ReplaceAgentMemorySlots(ctx context.Context, agentID, accountID string, slots []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
-	if err != nil {
-		return nil, err
-	}
-	if s.db == nil || s.agentMemoryService == nil {
-		return nil, fmt.Errorf("database and agent memory service are required")
-	}
-	actorID, err := uuid.Parse(accountID)
-	if err != nil {
-		return nil, fmt.Errorf("account id is invalid")
-	}
-	var result []dto.AgentMemorySlotConfig
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current AgentsConfig
-		query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
-		if cfg != nil && cfg.ID != uuid.Nil {
-			query = query.Where("id = ?", cfg.ID)
-		} else {
-			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC")
-		}
-		if err := query.Take(&current).Error; err != nil {
-			return err
-		}
-		memorySvc := agentmemory.NewService(tx)
-		updated, err := memorySvc.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(slots, true))
-		if err != nil {
-			return err
-		}
-		result = agentMemorySlotConfigsFromResponses(updated)
-		config := agentConfigResponse(ag.ID.String(), &current)
-		revision := agentMemoryConfigRevision(config.AgentMemoryEnabled, config.AgentMemoryAutoExtractionEnabled, result)
-		return memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision)
-	})
-	return result, err
-}
-
 func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, accountID string) (*dto.AgentMemoryValuesResponse, error) {
 	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
@@ -173,33 +128,10 @@ func (s *agentsService) agentMemorySlotsForDraft(ctx context.Context, agentID uu
 	return slots
 }
 
-func (s *agentsService) loadAgentMemorySlotsForDraft(ctx context.Context, agentID uuid.UUID) ([]dto.AgentMemorySlotConfig, error) {
-	if s.agentMemoryService == nil || agentID == uuid.Nil {
-		return []dto.AgentMemorySlotConfig{}, nil
-	}
-	slots, err := s.agentMemoryService.ListSlots(ctx, agentID)
-	if err != nil {
-		return nil, fmt.Errorf("list agent memory slots: %w", err)
-	}
-	return agentMemorySlotConfigsFromResponses(slots), nil
-}
-
-func enabledAgentMemorySlots(slots []dto.AgentMemorySlotConfig) []dto.AgentMemorySlotConfig {
-	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
-	for _, slot := range slots {
-		if slot.Enabled {
-			out = append(out, slot)
-		}
-	}
-	return out
-}
-
-func agentMemorySlotConfigsFromResponses(slots []agentmemory.SlotResponse) []dto.AgentMemorySlotConfig {
-	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
-	for _, slot := range slots {
-		out = append(out, agentMemorySlotConfigFromResponse(slot))
-	}
-	return normalizeAgentMemorySlotConfigs(out)
+// loadAgentMemorySlotsForDraft returns no blocks: Agents no longer configure
+// them (ADR 0017).
+func (s *agentsService) loadAgentMemorySlotsForDraft(context.Context, uuid.UUID) ([]dto.AgentMemorySlotConfig, error) {
+	return []dto.AgentMemorySlotConfig{}, nil
 }
 
 func agentMemoryValueConfigsFromResponses(values []agentmemory.SlotValueResponse) []dto.AgentMemoryValueResponse {
@@ -251,57 +183,6 @@ func agentMemorySlotConfigFromResponse(slot agentmemory.SlotResponse) dto.AgentM
 		CreatedAtDisplay: slot.CreatedAtDisplay,
 		UpdatedAtDisplay: slot.UpdatedAtDisplay,
 	}
-}
-
-func agentMemoryReplaceRequestFromConfig(slots []dto.AgentMemorySlotConfig, preserveIDs bool) agentmemory.ReplaceSlotsRequest {
-	req := agentmemory.ReplaceSlotsRequest{Slots: make([]agentmemory.SlotUpsertRequest, 0, len(slots))}
-	for i, slot := range slots {
-		enabled := slot.Enabled
-		id := ""
-		if preserveIDs {
-			id = strings.TrimSpace(slot.ID)
-		}
-		req.Slots = append(req.Slots, agentmemory.SlotUpsertRequest{
-			ID:          id,
-			Key:         strings.TrimSpace(slot.Key),
-			Name:        strings.TrimSpace(slot.Name),
-			Description: strings.TrimSpace(slot.Description),
-			MaxChars:    slot.MaxChars,
-			Enabled:     &enabled,
-			SortOrder:   firstNonZeroInt(slot.SortOrder, i),
-			ReadOnly:    slot.ReadOnly,
-			AutoWrite:   agentMemoryAutoWrite(slot.AutoWrite),
-		})
-	}
-	return req
-}
-
-func agentMemorySnapshotSlots(slots []dto.AgentMemorySlotConfig) []dto.AgentMemorySlotConfig {
-	out := make([]dto.AgentMemorySlotConfig, 0, len(slots))
-	for _, slot := range slots {
-		key := strings.TrimSpace(slot.Key)
-		if key == "" {
-			continue
-		}
-		out = append(out, dto.AgentMemorySlotConfig{
-			Key:         key,
-			Name:        truncateRunes(strings.TrimSpace(slot.Name), 80),
-			Description: strings.TrimSpace(slot.Description),
-			MaxChars:    slot.MaxChars,
-			Enabled:     slot.Enabled,
-			SortOrder:   slot.SortOrder,
-			ReadOnly:    slot.ReadOnly,
-			AutoWrite:   agentMemoryAutoWrite(slot.AutoWrite),
-		})
-	}
-	return normalizeAgentMemorySlotConfigs(out)
-}
-
-func firstNonZeroInt(value, fallback int) int {
-	if value != 0 {
-		return value
-	}
-	return fallback
 }
 
 func truncateRunes(value string, limit int) string {
@@ -409,12 +290,8 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 			return err
 		}
 		memorySvc := agentmemory.NewService(tx)
-		currentSlots, err := memorySvc.ListSlots(ctx, ag.ID)
-		if err != nil {
-			return err
-		}
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
-		currentRevision := agentMemoryConfigRevision(currentConfig.AgentMemoryEnabled, currentConfig.AgentMemoryAutoExtractionEnabled, agentMemorySlotConfigsFromResponses(currentSlots))
+		currentRevision := agentMemoryConfigRevision(currentConfig.AgentMemoryEnabled, currentConfig.AgentMemoryAutoExtractionEnabled, nil)
 		if expected := strings.TrimSpace(req.ConfigRevision); expected != "" && expected != currentRevision {
 			return &agentBindingAPIError{Code: agentMemoryConfigRevisionConflictCode, Message: "agent memory configuration has changed", Data: map[string]interface{}{"config_revision": currentRevision}}
 		}
@@ -434,13 +311,8 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
 			return err
 		}
-		updatedSlots, err := memorySvc.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(req.Slots, true))
-		if err != nil {
-			return err
-		}
-		slots := agentMemorySlotConfigsFromResponses(updatedSlots)
-		result = &dto.AgentMemoryConfigResponse{Enabled: req.Enabled, AutoExtractionEnabled: req.AutoExtractionEnabled, Slots: slots,
-			ConfigRevision: agentMemoryConfigRevision(req.Enabled, req.AutoExtractionEnabled, slots), Instructions: configReq.AgentMemoryInstructions}
+		result = &dto.AgentMemoryConfigResponse{Enabled: req.Enabled, AutoExtractionEnabled: req.AutoExtractionEnabled, Slots: []dto.AgentMemorySlotConfig{},
+			ConfigRevision: agentMemoryConfigRevision(req.Enabled, req.AutoExtractionEnabled, nil), Instructions: configReq.AgentMemoryInstructions}
 		if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, result.ConfigRevision); err != nil {
 			return err
 		}
@@ -460,13 +332,6 @@ func (s *agentsService) PreviewAgentMemory(ctx context.Context, agentID, account
 	if err != nil {
 		return nil, err
 	}
-	slots := draft.Config.AgentMemorySlots
-	if req.Slots != nil {
-		if len(*req.Slots) > maxAgentMemorySlots {
-			return nil, fmt.Errorf("%w: at most %d memory blocks", agentmemory.ErrInvalidInput, maxAgentMemorySlots)
-		}
-		slots = normalizeAgentMemorySlotConfigs(*req.Slots)
-	}
 	instructions := draft.Config.AgentMemoryInstructions
 	if req.Instructions != nil {
 		if utf8.RuneCountInString(strings.TrimSpace(*req.Instructions)) > maxAgentMemoryInstructionsChars {
@@ -474,22 +339,12 @@ func (s *agentsService) PreviewAgentMemory(ctx context.Context, agentID, account
 		}
 		instructions = normalizeAgentMemoryInstructions(*req.Instructions)
 	}
-	runtimeSlots := make([]agentmemory.RuntimeSlot, 0, len(slots))
-	for _, slot := range enabledAgentMemorySlots(slots) {
-		runtimeSlots = append(runtimeSlots, agentmemory.RuntimeSlot{
-			Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: true,
-			SortOrder: slot.SortOrder, ReadOnly: slot.ReadOnly, ManualOnly: !*agentMemoryAutoWrite(slot.AutoWrite),
-		})
-	}
-	if len(runtimeSlots) == 0 {
-		return nil, fmt.Errorf("%w: memory preview needs at least one enabled block", agentmemory.ErrInvalidInput)
-	}
 	turns := make([]agentmemoryworker.PreviewTurn, 0, len(req.Turns))
 	for _, turn := range req.Turns {
 		turns = append(turns, agentmemoryworker.PreviewTurn{User: turn.User, Assistant: turn.Assistant})
 	}
 	result, err := agentmemoryworker.Preview(ctx, s.llmClient, agentmemoryworker.PreviewRequest{
-		Slots: runtimeSlots, Instructions: instructions, Turns: turns, Current: req.Current,
+		Instructions: instructions, Turns: turns, Current: req.Current,
 		Provider: draft.Config.ModelProvider, Model: draft.Config.Model,
 		AppContext: &llmclient.AppContext{
 			OrganizationID: organizationID, WorkspaceID: draft.WorkspaceID, BillingSubjectType: llmclient.BillingSubjectTypeOrganization,

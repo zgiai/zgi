@@ -623,20 +623,6 @@ func TestAgentsService_AgentMemoryEndpointsRequireManagePermission(t *testing.T)
 		call func(*agentsService) error
 	}{
 		{
-			name: "list slots",
-			call: func(service *agentsService) error {
-				_, err := service.ListAgentMemorySlots(ctx, agentID.String(), accountID)
-				return err
-			},
-		},
-		{
-			name: "replace slots",
-			call: func(service *agentsService) error {
-				_, err := service.ReplaceAgentMemorySlots(ctx, agentID.String(), accountID, []dto.AgentMemorySlotConfig{{Key: "profile", Enabled: true}})
-				return err
-			},
-		},
-		{
 			name: "list values",
 			call: func(service *agentsService) error {
 				_, err := service.ListAgentMemoryValues(ctx, agentID.String(), accountID)
@@ -698,7 +684,7 @@ func TestAgentsService_AgentMemoryEndpointsAllowManagePermissionWithoutEditorRol
 		enterpriseService: orgService,
 	}
 
-	_, err := service.ListAgentMemorySlots(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999")
+	_, _, err := service.loadAuthorizedAgentRuntimeDraft(ctx, agentID.String(), "99999999-9999-9999-9999-999999999999", false)
 	require.NoError(t, err)
 	require.True(t, orgService.checkCalled)
 	require.Equal(t, agentRuntimeConfigManagePermissionCodes("AGENT"), orgService.lastPermissions)

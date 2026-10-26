@@ -1,6 +1,7 @@
 package relationshipmemory
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -8,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/migrations"
-	"github.com/zgiai/zgi/api/internal/modules/memoryblock"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -76,11 +76,9 @@ func TestMemoryHistoryPostgresRestoresDeletionsPurgesReasonsAndHonorsBlockLimits
 		}
 	}
 
-	// An Agent block configured for 5000 characters accepts content past 2000.
+	// Agent memory files (ADR 0017) take any valid name and are bounded
+	// only by the user's total.
 	agentID := uuid.New()
-	if err := memoryblock.SyncAgentSlots(ctx, tx, agentID, []memoryblock.AgentSlot{{Key: "notes", Name: "Notes", MaxChars: 5000, Enabled: true}}); err != nil {
-		t.Fatal(err)
-	}
 	agent, err := service.EnsureRelationship(ctx, EnsureRelationshipRequest{
 		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), Subject: usersubject.AccountSubject(uuid.New()),
 		ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: "Assistant",
@@ -88,13 +86,21 @@ func TestMemoryHistoryPostgresRestoresDeletionsPurgesReasonsAndHonorsBlockLimits
 	if err != nil {
 		t.Fatal(err)
 	}
-	slots := ConsumerMemoryContract{Enabled: true, DefinitionMode: "slots", RenderBudgetChars: 8000,
-		Definitions: []MemoryDefinition{{Key: "notes", Enabled: true, MaxChars: 5000}}}
-	if _, err := service.PutItem(ctx, agent.ID, PutItemRequest{Key: "notes", Content: strings.Repeat("a", 2500), Contract: slots, Metadata: explicit}); err != nil {
-		t.Fatalf("2500 characters in a 5000-character block: %v", err)
+	files := ConsumerMemoryContract{Enabled: true, DefinitionMode: "files", RenderBudgetChars: 8000}
+	if _, err := service.PutItem(ctx, agent.ID, PutItemRequest{Key: "notes", Content: strings.Repeat("a", 6000), Contract: files, Metadata: explicit}); err != nil {
+		t.Fatalf("6000 characters in one file: %v", err)
 	}
-	if _, err := service.PutItem(ctx, agent.ID, PutItemRequest{Key: "notes", Content: strings.Repeat("a", 5001), ExpectedRevision: 1, Contract: slots, Metadata: explicit}); err == nil {
-		t.Fatal("content past the block limit was saved")
+	if _, err := service.PutItem(ctx, agent.ID, PutItemRequest{Key: "travel_plans", Content: strings.Repeat("b", 3000), Contract: files, Metadata: explicit}); err != nil {
+		t.Fatalf("a second file within the total: %v", err)
+	}
+	if _, err := service.PutItem(ctx, agent.ID, PutItemRequest{Key: "hobbies", Content: strings.Repeat("c", 1500), Contract: files, Metadata: explicit}); !errors.Is(err, ErrCapacityExceeded) {
+		t.Fatalf("a file past the total = %v, want ErrCapacityExceeded", err)
+	}
+	if _, err := service.PutItem(ctx, agent.ID, PutItemRequest{Key: "notes", Content: strings.Repeat("a", 7500), ExpectedRevision: 1, Contract: files, Metadata: explicit}); err == nil {
+		t.Fatal("rewriting a file past the total was saved")
+	}
+	if _, err := service.PutItem(ctx, agent.ID, PutItemRequest{Key: "Bad Name", Content: "x", Contract: files, Metadata: explicit}); err == nil {
+		t.Fatal("an invalid file name was saved")
 	}
 	// Digital Human items keep the fixed limit.
 	if _, err := service.PutItem(ctx, human.ID, PutItemRequest{Key: "long", Category: "profile", Content: strings.Repeat("a", 2500), Contract: dynamic, Metadata: explicit}); err == nil {

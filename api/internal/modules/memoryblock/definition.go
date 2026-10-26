@@ -7,13 +7,11 @@ package memoryblock
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const (
@@ -47,64 +45,6 @@ type Definition struct {
 }
 
 func (Definition) TableName() string { return "memory_block_definitions" }
-
-// AgentSlot is the part of an Agent memory slot a definition mirrors.
-type AgentSlot struct {
-	Key         string
-	Name        string
-	Description string
-	MaxChars    int
-	Enabled     bool
-	SortOrder   int
-	ReadOnly    bool
-	AutoWrite   bool
-}
-
-// SyncAgentSlots makes an Agent's definitions match its current slots: each
-// slot's definition is created or refreshed under its key, and definitions of
-// removed slots are marked deleted. Call it in the transaction that changes
-// the slots. Agent slots are person-partition files the user owns. Automatic
-// writes also need the Agent-level setting.
-func SyncAgentSlots(ctx context.Context, tx *gorm.DB, agentID uuid.UUID, slots []AgentSlot) error {
-	if tx == nil || agentID == uuid.Nil {
-		return errors.New("sync memory block definitions: missing transaction or agent")
-	}
-	now := time.Now().UTC()
-	labels := make([]string, 0, len(slots))
-	for _, slot := range slots {
-		labels = append(labels, slot.Key)
-		updates := map[string]any{
-			"name": slot.Name, "description": slot.Description, "limit_chars": slot.MaxChars,
-			"enabled": slot.Enabled, "sort_order": slot.SortOrder, "read_only": slot.ReadOnly, "auto_write": slot.AutoWrite,
-			"deleted_at": nil, "updated_at": now,
-		}
-		row := map[string]any{
-			"id": uuid.New(), "consumer_type": ConsumerAgent, "consumer_id": agentID, "label": slot.Key,
-			"partition": PartitionPerson, "owner": OwnerUser, "created_at": now,
-		}
-		for column, value := range updates {
-			row[column] = value
-		}
-		// A map insert keeps false booleans; a struct insert would replace them
-		// with the column defaults (enabled and auto_write default to true).
-		err := tx.WithContext(ctx).Model(&Definition{}).Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "consumer_type"}, {Name: "consumer_id"}, {Name: "label"}},
-			DoUpdates: clause.Assignments(updates),
-		}).Create(row).Error
-		if err != nil {
-			return fmt.Errorf("sync memory block definition %s: %w", slot.Key, err)
-		}
-	}
-	removed := tx.WithContext(ctx).Model(&Definition{}).
-		Where("consumer_type = ? AND consumer_id = ? AND deleted_at IS NULL", ConsumerAgent, agentID)
-	if len(labels) > 0 {
-		removed = removed.Where("label NOT IN ?", labels)
-	}
-	if err := removed.Updates(map[string]any{"deleted_at": now, "updated_at": now}).Error; err != nil {
-		return fmt.Errorf("mark removed memory block definitions: %w", err)
-	}
-	return nil
-}
 
 // DefinitionID returns the ID of a consumer's definition for label, deleted or
 // not, or nil when there is none.

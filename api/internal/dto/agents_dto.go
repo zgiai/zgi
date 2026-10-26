@@ -592,10 +592,9 @@ type AgentMemoryValuesResponse struct {
 }
 
 type AgentMemoryConfigRequest struct {
-	Enabled               bool                    `json:"enabled"`
-	AutoExtractionEnabled bool                    `json:"auto_extraction_enabled"`
-	Slots                 []AgentMemorySlotConfig `json:"slots"`
-	ConfigRevision        string                  `json:"config_revision,omitempty"`
+	Enabled               bool   `json:"enabled"`
+	AutoExtractionEnabled bool   `json:"auto_extraction_enabled"`
+	ConfigRevision        string `json:"config_revision,omitempty"`
 	// Instructions replaces the memory instructions when present.
 	Instructions *string `json:"instructions,omitempty"`
 }
@@ -611,10 +610,9 @@ type AgentMemoryConfigResponse struct {
 // AgentMemoryPreviewRequest asks what a memory configuration would save from
 // a sample conversation. Slots and Instructions default to the draft.
 type AgentMemoryPreviewRequest struct {
-	Slots        *[]AgentMemorySlotConfig `json:"slots,omitempty"`
 	Instructions *string                  `json:"instructions,omitempty"`
 	Turns        []AgentMemoryPreviewTurn `json:"turns"`
-	// Current is the memory before the conversation, by block key.
+	// Current is the memory before the conversation, by file name.
 	Current map[string]string `json:"current,omitempty"`
 }
 

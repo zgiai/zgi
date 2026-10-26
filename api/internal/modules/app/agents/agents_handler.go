@@ -820,44 +820,6 @@ func (h *AgentsHandler) ListAgentDatabaseTableBindingCandidates(c *gin.Context) 
 	response.Success(c, result)
 }
 
-func (h *AgentsHandler) ListAgentMemorySlots(c *gin.Context) {
-	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
-	if err != nil {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-	result, err := h.appService.ListAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String())
-	if err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	response.Success(c, gin.H{"slots": result})
-}
-
-func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
-	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
-	if err != nil {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
-		return
-	}
-	var req struct {
-		Slots []dto.AgentMemorySlotConfig `json:"slots" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-	result, err := h.appService.ReplaceAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String(), req.Slots)
-	if err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	response.Success(c, gin.H{"slots": result})
-}
-
 func (h *AgentsHandler) UpdateAgentMemoryConfig(c *gin.Context) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {

@@ -494,15 +494,6 @@ export interface AgentMemoryConfigResponse {
   instructions?: string;
 }
 
-export interface AgentMemoryTemplateBlock {
-  key: string;
-  name: string;
-  description: string;
-  max_chars: number;
-  read_only: boolean;
-  auto_write: boolean;
-}
-
 export interface AgentMemoryPreviewTurn {
   user: string;
   assistant?: string;
@@ -518,7 +509,6 @@ export interface AgentMemoryTemplate {
   name: string;
   description: string;
   instructions: string;
-  blocks: AgentMemoryTemplateBlock[];
   samples: AgentMemoryTemplateSample[];
 }
 
@@ -527,7 +517,6 @@ export interface AgentMemoryTemplatesResponse {
 }
 
 export interface AgentMemoryPreviewRequest {
-  slots?: AgentMemorySlotConfig[];
   instructions?: string;
   turns: AgentMemoryPreviewTurn[];
   current?: Record<string, string>;

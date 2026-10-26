@@ -1226,10 +1226,10 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 
 | Event           | Purpose and trigger                                                           | Client action                                    | Event-specific value |
 | --------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ | -------------------- |
-| `memory_create` | An Agent Memory slot receives its first value                                 | Refresh that slot and optionally offer undo      | `action=create`      |
-| `memory_update` | An existing slot is replaced or automatically updated                         | Use the new `revision` to invalidate local cache | `action=update`      |
-| `memory_delete` | One slot value is deleted                                                     | Clear that slot in the UI                        | `action=delete`      |
-| `memory_clear`  | Writable Agent Memory slots for the current external user are cleared in bulk | Refresh the complete Agent Memory view           | `action=clear`       |
+| `memory_create` | A memory file is created                                                      | Refresh that file and optionally offer undo      | `action=create`      |
+| `memory_update` | An existing file is replaced or automatically updated                         | Use the new `revision` to invalidate local cache | `action=update`      |
+| `memory_delete` | One memory file is deleted                                                    | Clear that file in the UI                        | `action=delete`      |
+| `memory_clear`  | All of the current external user's memory files are cleared in bulk           | Refresh the complete Agent Memory view           | `action=clear`       |
 
 <Properties>
   <Property name="memory_scope" type="agent" propKey="memory_scope">
@@ -1243,7 +1243,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     The mutation action and overall execution status.
   </Property>
   <Property name="key / display_name" type="string?" propKey="key">
-    The published slot key and display name. A bulk clear may omit a single key.
+    The memory file name. A bulk clear may omit a single key.
   </Property>
   <Property name="mutation_status / source_kind" type="string?" propKey="mutation_status">
     The detailed mutation result and source, such as explicit management or automatic extraction.
@@ -1252,7 +1252,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     When present, it can be passed to the Memory undo endpoint.
   </Property>
   <Property name="revision" type="integer?" propKey="revision">
-    The slot revision after the mutation, used for concurrency control and cache invalidation.
+    The file revision after the mutation, used for concurrency control and cache invalidation.
   </Property>
   <Property name="undoable_until" type="date-time?" propKey="undoable_until">
     The undo deadline. Hide or disable undo after this time.
@@ -1907,7 +1907,7 @@ sample,42
 
 ## Agent Memory
 
-Every Memory endpoint requires `X-External-User-ID` and can only address slots declared by the latest published Agent configuration. Use the same id as chat so conversation and long-term Memory ownership stay aligned.
+Every Memory endpoint requires `X-External-User-ID` and can only address that user's own memory files. Use the same id as chat so conversation and long-term Memory ownership stay aligned.
 
 <Heading
   url="/api/v1/agents/memory"
@@ -1931,8 +1931,8 @@ Every Memory endpoint requires `X-External-User-ID` and can only address slots d
       <Property name='agent_id' type='uuid' propKey='agent_id'>Published Agent id.</Property>
       <Property name='user_scope / user_id' type='string' propKey='user_scope'>`end_user` and ZGI's derived internal user UUID; this is not the raw external id.</Property>
       <Property name='exported_at' type='integer' propKey='exported_at'>Unix timestamp in seconds.</Property>
-      <Property name='values[]' type='array' propKey='values'>Visible published Memory slots.</Property>
-      <Property name='values[].key / name / description' type='string' propKey='key'>Slot identity and presentation.</Property>
+      <Property name='values[]' type='array' propKey='values'>The user's memory files. The Agent names and organizes them itself.</Property>
+      <Property name='values[].key / name / description' type='string' propKey='key'>File name and presentation; `key` is the file name.</Property>
       <Property name='values[].content / max_chars / revision' type='string / integer' propKey='content'>Stored content, limit, and optimistic-lock revision.</Property>
       <Property name='values[].source_kind / last_operation_id / undoable_until' type='string / integer' propKey='source_kind'>Mutation provenance and optional undo metadata.</Property>
       <Property name='values[].created_at / updated_at' type='integer' propKey='created_at'>Unix timestamps in seconds; ISO and display variants can also be present.</Property>
@@ -2016,26 +2016,26 @@ Every Memory endpoint requires `X-External-User-ID` and can only address slots d
 <Heading
   url="/api/v1/agents/memory/{key}"
   method="PUT"
-  title="Set Memory Slot"
+  title="Set Memory File"
   name="#Set-Agent-Memory"
 />
 
 <Row>
   <Col>
-    Writes one enabled slot declared by the published Agent. Agent Memory must be enabled.
+    Writes one memory file; a new `key` creates the file. Agent Memory must be enabled.
 
     ### Path, Headers, and Body
 
     <Properties>
-      <Property name='key' type='string' propKey='key'>Required published slot key.</Property>
+      <Property name='key' type='string' propKey='key'>Required file name.</Property>
       <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and Memory owner.</Property>
-      <Property name='content' type='string' propKey='content'>Required content within the slot's `max_chars` limit.</Property>
+      <Property name='content' type='string' propKey='content'>Required content. All of the user's memory files together hold at most 10,000 characters.</Property>
       <Property name='expected_revision' type='integer' propKey='expected_revision'>Optional optimistic concurrency check. A stale revision is rejected.</Property>
     </Properties>
 
     ### Response
 
-    `data` is the updated slot value, including its new `revision`, `source_kind`, `last_operation_id`, and possible `undoable_until`.
+    `data` is the updated file, including its new `revision`, `source_kind`, `last_operation_id`, and possible `undoable_until`.
 
   </Col>
 
@@ -2068,25 +2068,25 @@ Every Memory endpoint requires `X-External-User-ID` and can only address slots d
 <Heading
   url="/api/v1/agents/memory/{key}"
   method="DELETE"
-  title="Clear Memory Slot"
+  title="Delete Memory File"
   name="#Clear-Agent-Memory-Slot"
 />
 
 <Row>
   <Col>
-    Clears one visible published slot for the current external user.
+    Deletes one memory file of the current external user.
 
     ### Path, Query, and Headers
 
     <Properties>
-      <Property name='key' type='string' propKey='key'>Required published slot key.</Property>
+      <Property name='key' type='string' propKey='key'>Required file name: lowercase letters, digits, and underscores, starting with a letter.</Property>
       <Property name='expected_revision' type='integer' propKey='expected_revision'>Optional optimistic concurrency check.</Property>
       <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API Key and Memory owner.</Property>
     </Properties>
 
     ### Response
 
-    `data` is the cleared slot value. `content` is empty and `revision` reflects the clear operation.
+    `data` is the deleted file. `content` is empty and `revision` reflects the clear operation.
 
   </Col>
 
@@ -2123,7 +2123,7 @@ Every Memory endpoint requires `X-External-User-ID` and can only address slots d
 
 <Row>
   <Col>
-    Clears all writable Memory values for the current external user. This does not alter the Agent's slot definitions.
+    Clears all writable Memory values for the current external user.
 
     ### Request Headers
 
@@ -2184,7 +2184,7 @@ Every Memory endpoint requires `X-External-User-ID` and can only address slots d
 
     <Properties>
       <Property name='operation_id' type='uuid' propKey='operation_id'>The undone operation.</Property>
-      <Property name='value' type='object' propKey='value'>Restored slot value; omitted when the restored state has no value.</Property>
+      <Property name='value' type='object' propKey='value'>Restored file; omitted when the restored state has no value.</Property>
     </Properties>
 
   </Col>
@@ -2288,13 +2288,13 @@ These two read-only endpoints are retained for clients that share integrations w
 
 <Row>
   <Col>
-    Returns the changes to the external user's memory, newest first. Each commit lists the slots it changed, the content before and after, the user's words it was based on, and why. Requires user relationship memory on the deployment.
+    Returns the changes to the external user's memory, newest first. Each commit lists the files it changed, the content before and after, the user's words it was based on, and why. Requires user relationship memory on the deployment.
 
     ### Query and headers
 
     <Properties>
       <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API key and memory owner.</Property>
-      <Property name='key' type='string' propKey='key'>Optional. Only the history of one slot.</Property>
+      <Property name='key' type='string' propKey='key'>Optional. Only the history of one file.</Property>
       <Property name='limit' type='integer' propKey='limit'>Optional. Commits per page; default 20, at most 50.</Property>
       <Property name='before' type='string' propKey='before'>Optional RFC 3339 time. Pass the previous page's `next_before` to continue.</Property>
     </Properties>
@@ -2338,7 +2338,7 @@ These two read-only endpoints are retained for clients that share integrations w
 
 <Row>
   <Col>
-    Restores a slot to its content before this change; the restore is recorded as a new change. Only a version with `revertible` set to `true` can be reverted: it is the slot's latest change and its content is still kept. Agent Memory must be on.
+    Restores a file to its content before this change; the restore is recorded as a new change. Only a version with `revertible` set to `true` can be reverted: it is the file's latest change and its content is still kept. Agent Memory must be on.
 
     ### Path and headers
 
@@ -2349,7 +2349,7 @@ These two read-only endpoints are retained for clients that share integrations w
 
     ### Response
 
-    `data.item` is the slot value after the revert. A conflict error is returned when a later change has replaced the slot.
+    `data.item` is the file after the revert. A conflict error is returned when a later change has replaced the file.
 
   </Col>
 
@@ -2386,7 +2386,7 @@ These two read-only endpoints are retained for clients that share integrations w
 
 <Row>
   <Col>
-    Returns the external user's memory archive. Older content moved out of slots when memory is tidied goes here, and the Agent can still search it.
+    Returns the external user's memory archive. Older content moved out of files when memory is tidied goes here, and the Agent can still search it.
 
     ### Headers
 
@@ -2396,7 +2396,7 @@ These two read-only endpoints are retained for clients that share integrations w
 
     ### Response
 
-    Each `data.entries[]` item has `id`, `tags`, `source_key` (the slot it came from), `source_kind`, `content`, `created_at`, and `updated_at`.
+    Each `data.entries[]` item has `id`, `tags`, `source_key` (the file it came from), `source_kind`, `content`, `created_at`, and `updated_at`.
 
   </Col>
 
@@ -2653,7 +2653,7 @@ Before an SSE stream starts, every endpoint returns errors as JSON with the matc
 - `400`: malformed JSON, invalid ids or enum values, missing external user, stale Memory revision, or a legacy `user` mismatch.
 - `401`: missing, invalid, inactive, expired, or revoked API Key.
 - `403`: authenticated caller is not allowed to perform the operation.
-- `404`: no published Agent, conversation/message not owned by this user, unknown Memory slot, or expired/already-resolved continuation.
+- `404`: no published Agent, conversation/message not owned by this user, unknown memory file, or expired/already-resolved continuation.
 - `409`: conflicting runtime state or optimistic-concurrency conflict when surfaced separately.
 - `500`: internal service error. Do not expose upstream/internal details to end users.
 

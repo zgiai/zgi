@@ -5,12 +5,12 @@ A replayable scenario suite for Agent memory. It drives an Agent through the ext
 ## Files
 
 - `scenarios.json`: the scenarios. Each one has sessions (separate conversations), a probe question asked in a new conversation, and expectations:
-  - `memory_all`, `memory_none`, `memory_in` (per partition or slot), `memory_in_any`: checks on the saved memory;
+  - `memory_all`, `memory_none`, `memory_in`, `memory_in_any`: checks on the saved memory. Agents name their memory files themselves (ADR 0017), so `run.py` checks `memory_in` against all files; `dh.py` checks it per group;
   - `answer_all`, `answer_any`, `answer_none`, `answer_regex`, `answer_max_cjk`: checks on the probe answer;
   - `other_memory_empty`: checks isolation;
   - `archive_nonempty`, `archive_any`: checks on the user's memory archive (Agents, `run.py`); `archive_observe` only records it in the results.
   `requires_auto` marks scenarios that only automatic capture is expected to pass; `observe` marks product decisions that are reported but not scored.
-- `run.py`: creates an Agent with the general-assistant slots, publishes it, creates an API key, runs every scenario as its own API end user, and writes `results.json` and `report.md`.
+- `run.py`: creates an Agent with the general-assistant memory instructions, publishes it, creates an API key, runs every scenario as its own API end user, and writes `results.json` and `report.md`.
 - `dh_scenarios.json` and `dh.py`: the DigitalHuman scenarios (ADR 0014) and their driver.
   - `dh.py` creates a DigitalHuman, writes the `me_preload` facts as an operator, publishes it with API access, and runs each scenario as its own API end user. Scoring and reports are the same as for Agents.
   - A `me_preload` entry may set `visibility` to `internal` (ADR 0015): an external end user must never see it.

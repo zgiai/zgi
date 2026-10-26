@@ -789,7 +789,6 @@ func applyAgentMemoryToolsPolicy(parts *chatRequestParts) {
 		return
 	}
 	parts.AgentMemoryToolsEnabled = parts.AgentMemoryEnabled &&
-		len(enabledAgentMemorySlots(parts.AgentMemorySlots)) > 0 &&
 		globalAgentMemoryInlineToolsEnabled() &&
 		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
 }

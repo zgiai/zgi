@@ -13,17 +13,13 @@ func TestConsolidationEditsAreCheckedOneByOne(t *testing.T) {
 	turnID := uuid.New()
 	turns := []completedTurn{{ID: turnID, Query: "我喜欢乌龙茶。对，就那个方案。", Answer: "建议方案：每天步行 8000 步。", ModelProvider: "deepseek", ModelName: "deepseek-v4-flash"}}
 	turnIDs := map[string]struct{}{turnID.String(): {}}
-	slots := []agentmemory.RuntimeSlot{
-		{Key: "preferences", Description: "How the user likes things.", MaxChars: 60, Enabled: true},
-		{Key: "profile", Description: "Stable facts.", MaxChars: 200, Enabled: true},
-	}
 	current := map[string]agentmemory.SlotValueResponse{
 		"preferences": {SlotResponse: agentmemory.SlotResponse{Key: "preferences"}, Content: "喜欢乌龙茶。\n喜欢乌龙茶。", Revision: 2},
 		"profile":     {SlotResponse: agentmemory.SlotResponse{Key: "profile"}, Content: "住在杭州。", Revision: 1, SourceKind: agentmemory.SourceKindExplicit, SourceMessageID: turnID.String()},
 	}
 	working := map[string]string{}
 	check := func(edit consolidationEdit) (string, string, string) {
-		key, content, _, reason := applyConsolidationEdit(edit, slots, current, working, turns, turnIDs)
+		key, content, _, reason := applyConsolidationEdit(edit, current, working, turns, turnIDs)
 		if reason == "" {
 			working[key] = content
 		}
@@ -41,8 +37,8 @@ func TestConsolidationEditsAreCheckedOneByOne(t *testing.T) {
 	for name, edit := range map[string]consolidationEdit{
 		"already saved":          {Command: "insert", Path: "/user/preferences.md", Text: "喜欢乌龙茶。", Evidence: "我喜欢乌龙茶"},
 		"assistant-only quote":   {Command: "insert", Path: "/user/profile.md", Text: "步行 8000 步", Evidence: "建议方案"},
-		"unknown file":           {Command: "insert", Path: "/user/other.md", Text: "x", Evidence: "我喜欢乌龙茶"},
-		"over the limit":         {Command: "insert", Path: "/user/preferences.md", Text: "一段很长很长的偏好描述，一定会让这个文件超过它的字数上限，所以应该被跳过而不是写入，再多写一些字让它足够长。", Evidence: "我喜欢乌龙茶"},
+		"invalid file name":      {Command: "insert", Path: "/user/Other File.md", Text: "x", Evidence: "我喜欢乌龙茶"},
+		"over the total limit":   {Command: "insert", Path: "/user/notes.md", Text: "我喜欢乌龙茶" + strings.Repeat("。", agentmemory.MaxMemoryChars), Evidence: "我喜欢乌龙茶"},
 		"explicit file rewrite":  {Command: "rewrite", Path: "/user/profile.md", Content: "住在苏州。", Evidence: "我喜欢乌龙茶"},
 		"ambiguous str_replace":  {Command: "str_replace", Path: "/user/profile.md", OldText: "不存在", NewText: "x", Evidence: "我喜欢乌龙茶"},
 		"secret in the new text": {Command: "insert", Path: "/user/profile.md", Text: "密码是 abc123", Evidence: "我喜欢乌龙茶"},
@@ -50,6 +46,10 @@ func TestConsolidationEditsAreCheckedOneByOne(t *testing.T) {
 		if _, _, reason := check(edit); reason == "" {
 			t.Fatalf("%s edit was accepted", name)
 		}
+	}
+	// A new topic gets a new file the model names.
+	if key, content, reason := check(consolidationEdit{Command: "insert", Path: "/user/drinks.md", Text: "喜欢乌龙茶。", Evidence: "我喜欢乌龙茶"}); reason != "" || key != "drinks" || content != "喜欢乌龙茶。" {
+		t.Fatalf("new file = %q %q, %q", key, content, reason)
 	}
 	// A plain correction of the explicit file is still allowed.
 	if _, content, reason := check(consolidationEdit{Command: "str_replace", Path: "/user/profile.md", OldText: "杭州", NewText: "杭州西湖区", Evidence: "我喜欢乌龙茶"}); reason != "" || content != "住在杭州西湖区。" {
@@ -72,51 +72,37 @@ func TestConsolidationModelFollowsTheDeploymentSetting(t *testing.T) {
 	}
 }
 
-func TestConsolidationLeavesProtectedFilesAndCarriesInstructions(t *testing.T) {
-	turnID := uuid.New()
-	turns := []completedTurn{{ID: turnID, Query: "我住在杭州。", ModelProvider: "deepseek", ModelName: "deepseek-v4-flash"}}
-	slots := []agentmemory.RuntimeSlot{
-		{Key: "persona", Description: "Set by the builder.", MaxChars: 200, Enabled: true, ReadOnly: true},
-		{Key: "contact", Description: "Callback number.", MaxChars: 200, Enabled: true, ManualOnly: true},
-		{Key: "profile", Description: "Stable facts.", MaxChars: 200, Enabled: true},
-	}
-	for _, path := range []string{"/user/persona.md", "/user/contact.md"} {
-		edit := consolidationEdit{Command: "insert", Path: path, Text: "住在杭州", Evidence: "我住在杭州"}
-		if _, _, _, reason := applyConsolidationEdit(edit, slots, map[string]agentmemory.SlotValueResponse{}, map[string]string{}, turns, map[string]struct{}{turnID.String(): {}}); reason == "" {
-			t.Fatalf("background edit of %s was accepted", path)
-		}
-	}
-	request, err := (&Runner{}).consolidationChatRequest(turns, slots, nil, "Keep the customer's plan tier.")
+func TestConsolidationPromptShowsFilesAndInstructions(t *testing.T) {
+	turns := []completedTurn{{ID: uuid.New(), Query: "我住在杭州。", ModelProvider: "deepseek", ModelName: "deepseek-v4-flash"}}
+	values := []agentmemory.SlotValueResponse{{SlotResponse: agentmemory.SlotResponse{Key: "profile"}, Content: "住在上海。"}}
+	request, err := (&Runner{}).consolidationChatRequest(turns, agentmemory.FileSlots(values), values, "Keep the customer's plan tier.")
 	if err != nil {
 		t.Fatal(err)
 	}
 	system, _ := request.Messages[0].Content.(string)
-	if !strings.Contains(system, "<memory_instructions>\nKeep the customer's plan tier.\n</memory_instructions>") || !strings.Contains(system, `"access":"context only"`) {
-		t.Fatalf("consolidation prompt lacks instructions or file access:\n%s", system)
+	for _, want := range []string{"<memory_instructions>\nKeep the customer's plan tier.\n</memory_instructions>", `"path":"/user/profile.md"`, `"limit_chars":10000`, "You name and organize the files"} {
+		if !strings.Contains(system, want) {
+			t.Fatalf("consolidation prompt lacks %q:\n%s", want, system)
+		}
 	}
 }
 
 func TestConsolidationArchiveMovesTextOutWithoutEvidence(t *testing.T) {
 	turnID := uuid.New()
 	turns := []completedTurn{{ID: turnID, Query: "今天聊点别的。"}}
-	slots := []agentmemory.RuntimeSlot{
-		{Key: "profile", MaxChars: 200, Enabled: true},
-		{Key: "persona", MaxChars: 200, Enabled: true, ReadOnly: true},
-	}
 	current := map[string]agentmemory.SlotValueResponse{
 		"profile": {SlotResponse: agentmemory.SlotResponse{Key: "profile"}, Content: "住在杭州。\n2019 年在京都旅行。", Revision: 3},
-		"persona": {SlotResponse: agentmemory.SlotResponse{Key: "persona"}, Content: "x", Revision: 1},
 	}
-	key, content, source, reason := applyConsolidationEdit(consolidationEdit{Command: "archive", Path: "/user/profile.md", OldText: "2019 年在京都旅行。"}, slots, current, map[string]string{}, turns, map[string]struct{}{})
+	key, content, source, reason := applyConsolidationEdit(consolidationEdit{Command: "archive", Path: "/user/profile.md", OldText: "2019 年在京都旅行。"}, current, map[string]string{}, turns, map[string]struct{}{})
 	if reason != "" || key != "profile" || content != "住在杭州。" || source == nil || source.ID != turnID {
 		t.Fatalf("archive = %q, %q, %v, %q", key, content, source, reason)
 	}
 	for name, edit := range map[string]consolidationEdit{
-		"whole file":  {Command: "archive", Path: "/user/profile.md", OldText: "住在杭州。\n2019 年在京都旅行。"},
-		"not present": {Command: "archive", Path: "/user/profile.md", OldText: "上海"},
-		"read-only":   {Command: "archive", Path: "/user/persona.md", OldText: "x"},
+		"whole file":   {Command: "archive", Path: "/user/profile.md", OldText: "住在杭州。\n2019 年在京都旅行。"},
+		"not present":  {Command: "archive", Path: "/user/profile.md", OldText: "上海"},
+		"missing file": {Command: "archive", Path: "/user/persona.md", OldText: "x"},
 	} {
-		if _, _, _, reason := applyConsolidationEdit(edit, slots, current, map[string]string{}, turns, map[string]struct{}{}); reason == "" {
+		if _, _, _, reason := applyConsolidationEdit(edit, current, map[string]string{}, turns, map[string]struct{}{}); reason == "" {
 			t.Fatalf("%s archive was accepted", name)
 		}
 	}

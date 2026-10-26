@@ -1,8 +1,9 @@
 """Runs the memory scenario suite against a ZGI deployment and scores it.
 
 The suite drives an Agent through its external API, one API end user per
-scenario, so the same scenarios can be replayed against the current slot
-memory and against later memory designs. It uses only the Python standard
+scenario, so the same scenarios can be replayed against later memory designs.
+The Agent organizes its memory files itself (ADR 0017), so checks look at all
+of a user's files rather than at named ones. It uses only the Python standard
 library.
 
 Credentials come from the environment (ZGI_E2E_EMAIL, ZGI_E2E_PASSWORD), or
@@ -28,13 +29,12 @@ import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# The general-assistant template, so results are comparable to what builders get today.
-SLOTS = [
-    {"key": "profile", "name": "Profile", "description": "Stable facts about the user: name, role, location, family, health constraints.", "max_chars": 2000},
-    {"key": "preferences", "name": "Preferences", "description": "How the user likes answers and things they like or avoid.", "max_chars": 2000},
-    {"key": "standing_instructions", "name": "Standing instructions", "description": "Instructions the user wants followed in every conversation.", "max_chars": 2000},
-    {"key": "project_context", "name": "Project context", "description": "Ongoing work, goals, and plans the user is pursuing.", "max_chars": 2000},
-]
+# The general-assistant template's instructions, so results are comparable to
+# what builders get today.
+INSTRUCTIONS = (
+    "This is a general assistant. Remember what makes later answers fit this user: who they are, how they like answers, "
+    "rules they want you to keep, and what they are working on over time. Skip small talk, one-off questions, and today's plans."
+)
 
 
 def load_env_file(path):
@@ -175,8 +175,7 @@ def setup_agent(client, workspace_id, label, auto):
     name = f"memory-eval-{label}-{datetime.datetime.now():%Y%m%d%H%M%S}"
     agent = client.console("POST", "/agents", {"name": name, "icon_type": "emoji", "icon": "🧠", "agent_type": "AGENT", "description": "Memory evaluation agent", "workspace_id": workspace_id})
     agent_id = agent["id"]
-    slots = [dict(slot, enabled=True, sort_order=index) for index, slot in enumerate(SLOTS)]
-    client.console("PUT", f"/agents/{agent_id}/memory/config", {"enabled": True, "auto_extraction_enabled": auto, "slots": slots})
+    client.console("PUT", f"/agents/{agent_id}/memory/config", {"enabled": True, "auto_extraction_enabled": auto, "instructions": INSTRUCTIONS})
     client.console("POST", f"/agents/{agent_id}/publish", {})
     key = client.console("POST", f"/agents/{agent_id}/api-keys", {"name": "memory-eval"})
     client.api_key = key.get("api_key") or key.get("key")
@@ -218,11 +217,12 @@ def score(scenario, memory, answer, other_memory, archive=None):
         checks.append(("memory has " + needle, contains(memory_text, needle)))
     if expect.get("memory_any"):
         checks.append(("memory has any of " + "/".join(expect["memory_any"]), any(contains(memory_text, n) for n in expect["memory_any"])))
-    for key, needles in expect.get("memory_in", {}).items():
+    # Files are named by the model, so a check once tied to a block looks at all files.
+    for _, needles in expect.get("memory_in", {}).items():
         for needle in needles:
-            checks.append((f"{key} has {needle}", contains(memory.get(key, ""), needle)))
-    for key, needles in expect.get("memory_in_any", {}).items():
-        checks.append((f"{key} has any of " + "/".join(needles), any(contains(memory.get(key, ""), n) for n in needles)))
+            checks.append((f"memory has {needle}", contains(memory_text, needle)))
+    for _, needles in expect.get("memory_in_any", {}).items():
+        checks.append(("memory has any of " + "/".join(needles), any(contains(memory_text, n) for n in needles)))
     for needle, limit in expect.get("memory_max_occurrences", {}).items():
         count = memory_text.lower().count(needle.lower())
         checks.append((f"memory mentions {needle} at most {limit} times ({count})", count <= limit))

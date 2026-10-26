@@ -20,9 +20,7 @@ export {
   buildAgentRuntimeSignature,
   pickAgentInitials,
   toModelParams,
-  validateAgentMemorySlots,
 } from './utils';
-export type { AgentMemorySlotValidationError } from './utils';
 export type {
   AgentConfigSection,
   AgentPublishedVersionListItem,

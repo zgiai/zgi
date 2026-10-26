@@ -296,17 +296,11 @@ func (r *Runner) fitTurnBudget(turns []completedTurn, slots []agentmemory.Runtim
 }
 
 func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn) (bool, error) {
-	runtimeSlots, err := extractionJobRuntimeSlots(job)
+	values, err := r.memory.ReadUserMemory(ctx, job.WorkspaceID, job.AgentID, nil, job.UserScope, job.UserID)
 	if err != nil {
 		return false, err
 	}
-	if len(runtimeSlots) == 0 {
-		return false, nil
-	}
-	values, err := r.memory.ReadUserMemory(ctx, job.WorkspaceID, job.AgentID, runtimeSlots, job.UserScope, job.UserID)
-	if err != nil {
-		return false, err
-	}
+	runtimeSlots := agentmemory.FileSlots(values)
 	instructions := r.memoryInstructions(ctx, job)
 	build := func(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error) {
 		return r.consolidationChatRequest(turns, slots, values, instructions)
@@ -319,33 +313,6 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 		return false, nil
 	}
 	return r.consolidateAndApply(ctx, job, scope, turns, runtimeSlots, values, instructions)
-}
-
-func extractionJobRuntimeSlots(job *agentmemory.AgentMemoryExtractionJob) ([]agentmemory.RuntimeSlot, error) {
-	if job == nil || len(job.RuntimeSlots) == 0 {
-		return nil, fmt.Errorf("memory extraction job is missing its slot snapshot")
-	}
-	var stored []agentmemory.RuntimeSlot
-	if err := json.Unmarshal(job.RuntimeSlots, &stored); err != nil {
-		return nil, fmt.Errorf("decode memory extraction slot snapshot: %w", err)
-	}
-	runtimeSlots := make([]agentmemory.RuntimeSlot, 0, len(stored))
-	seen := make(map[string]struct{}, len(stored))
-	for _, slot := range stored {
-		slot.Key = strings.ToLower(strings.TrimSpace(slot.Key))
-		if !slot.Enabled || slot.Key == "" || slot.MaxChars <= 0 {
-			continue
-		}
-		if _, ok := seen[slot.Key]; ok {
-			continue
-		}
-		seen[slot.Key] = struct{}{}
-		runtimeSlots = append(runtimeSlots, slot)
-	}
-	if len(runtimeSlots) == 0 {
-		return nil, fmt.Errorf("memory extraction job has no enabled slot snapshot")
-	}
-	return runtimeSlots, nil
 }
 
 func stripJSONFence(value string) string {

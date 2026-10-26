@@ -43,7 +43,6 @@ import type {
   AgentConnectorBinding,
   AgentDatabaseBinding,
   AgentExecutionRuntimeConfig,
-  AgentMemorySlotConfig,
   AgentRuntimeConfig,
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
@@ -63,9 +62,7 @@ import type {
 import {
   AGENT_MEMORY_LIMITS,
   buildAgentRuntimeSignature,
-  clampAgentMemoryMaxChars,
   toModelParams,
-  validateAgentMemorySlots,
 } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
@@ -345,7 +342,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [agentMemoryEnabled, setAgentMemoryEnabled] = useState(false);
   const [agentMemoryAutoExtractionEnabled, setAgentMemoryAutoExtractionEnabled] = useState(false);
   const [agentMemoryConfigRevision, setAgentMemoryConfigRevision] = useState('');
-  const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
   const [agentMemoryInstructions, setAgentMemoryInstructions] = useState('');
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
   const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(null);
@@ -522,12 +518,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       }),
     [locale, normalizedSelectedSkillIds, selectableSkills, t]
   );
-  const agentMemorySlotValidationErrors = useMemo(
-    () => validateAgentMemorySlots(agentMemorySlots),
-    [agentMemorySlots]
-  );
-  const hasAgentMemorySlotErrors =
-    agentMemoryEnabled && agentMemorySlotValidationErrors.some(Boolean);
   const systemPromptEffectiveLength = useMemo(
     () => getTemplateAwareCharacterCount(systemPrompt, { templateBlocksEnabled: true }),
     [systemPrompt]
@@ -557,16 +547,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       use_memory: false,
       agent_memory_enabled: agentMemoryEnabled,
       agent_memory_auto_extraction_enabled: agentMemoryAutoExtractionEnabled,
-      agent_memory_slots: agentMemorySlots
-        .slice(0, AGENT_MEMORY_LIMITS.maxBlocks)
-        .map((slot, index) => ({
-          ...slot,
-          description: slot.description.slice(0, AGENT_MEMORY_LIMITS.maxDescriptionChars),
-          max_chars: clampAgentMemoryMaxChars(slot.max_chars),
-          read_only: slot.read_only ?? false,
-          auto_write: slot.auto_write ?? true,
-          sort_order: index,
-        })),
       agent_memory_instructions: agentMemoryInstructions.slice(
         0,
         AGENT_MEMORY_LIMITS.maxInstructionsChars
@@ -597,7 +577,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       executionRuntime,
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
-      agentMemorySlots,
       agentMemoryInstructions,
       homeTitle,
       openingStatement,
@@ -639,7 +618,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     setSelectedSkillIds(payload.enabled_skill_ids);
     setAgentMemoryEnabled(payload.agent_memory_enabled ?? false);
     setAgentMemoryAutoExtractionEnabled(payload.agent_memory_auto_extraction_enabled ?? false);
-    setAgentMemorySlots(payload.agent_memory_slots ?? []);
     setAgentMemoryInstructions(payload.agent_memory_instructions ?? '');
     setFileUploadEnabled(payload.file_upload_enabled);
     setFileUploadPolicy(payload.file_upload_policy ?? null);
@@ -678,7 +656,6 @@ export function useAgentRuntimePageModel(agentId: string) {
         runtimeConfig.agent_memory_auto_extraction_enabled ??
         fallback?.agent_memory_auto_extraction_enabled ??
         false,
-      agent_memory_slots: runtimeConfig.agent_memory_slots ?? fallback?.agent_memory_slots ?? [],
       agent_memory_config_revision:
         runtimeConfig.agent_memory_config_revision ?? fallback?.agent_memory_config_revision,
       agent_memory_instructions:
@@ -741,10 +718,6 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   const saveRuntimePayload = useCallback(
     async (payload: UpdateAgentRuntimeConfigRequest) => {
-      const payloadMemorySlotErrors = validateAgentMemorySlots(
-        payload.agent_memory_slots ?? []
-      ).some(Boolean);
-      if (payloadMemorySlotErrors) throw new Error('Invalid Agent memory block configuration');
       let configPayload: UpdateAgentRuntimeConfigRequest = {
         ...payload,
         agent_memory_config_revision: agentMemoryConfigRevision || undefined,
@@ -800,7 +773,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       const savedPayload = {
         ...configPayload,
         binding_revision: response.data.binding_revision ?? configPayload.binding_revision,
-        agent_memory_slots: response.data.agent_memory_slots ?? payload.agent_memory_slots,
         agent_memory_config_revision:
           response.data.agent_memory_config_revision ?? configPayload.agent_memory_config_revision,
       };
@@ -814,7 +786,6 @@ export function useAgentRuntimePageModel(agentId: string) {
           agent_memory_auto_extraction_enabled:
             response.data.agent_memory_auto_extraction_enabled ??
             payload.agent_memory_auto_extraction_enabled,
-          agent_memory_slots: savedPayload.agent_memory_slots,
           agent_memory_config_revision: savedPayload.agent_memory_config_revision,
           agent_memory_instructions: savedPayload.agent_memory_instructions,
         },
@@ -849,7 +820,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       canConfigureAgentRuntime &&
       Boolean(modelValue.provider && modelValue.model) &&
       !isAgentModelUnavailable &&
-      !hasAgentMemorySlotErrors &&
       !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
@@ -860,7 +830,6 @@ export function useAgentRuntimePageModel(agentId: string) {
         applySavedBindingMetadata(result.savedPayload, result.bindingHealth);
       }
       setIsAbnormalSkillCleanupPending(false);
-      setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
     },
     onSaveSuperseded: (result, submittedPayload, latestPayload) => {
       lastServerPayloadRef.current = result.savedPayload;
@@ -1226,10 +1195,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
-      return;
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return;
@@ -1253,7 +1218,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     }
   }, [
     canConfigureAgentRuntime,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
@@ -1346,10 +1310,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforePublish'));
-      return;
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return;
@@ -1364,7 +1324,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     setPublishVersionDialogOpen(true);
   }, [
     canPublishAgent,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     t,
@@ -1384,10 +1343,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return Promise.resolve(false);
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
-      return Promise.resolve(false);
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return Promise.resolve(false);
@@ -1401,7 +1356,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     return saveNow({ silent: false, force: true });
   }, [
     canConfigureAgentRuntime,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
@@ -1419,7 +1373,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         setPreviewSheetOpen(true);
         return;
       }
-      if (hasAgentMemorySlotErrors || isAgentModelUnavailable || isSystemPromptTooLong) {
+      if (isAgentModelUnavailable || isSystemPromptTooLong) {
         if (isAgentModelUnavailable) {
           toast.error(t('toasts.modelUnavailable'));
         }
@@ -1433,7 +1387,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     [
       canConfigureAgentRuntime,
-      hasAgentMemorySlotErrors,
       isAgentModelUnavailable,
       isSystemPromptTooLong,
       isVersionPreviewing,
@@ -1450,10 +1403,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (isVersionPreviewing) {
       return true;
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
-      return false;
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return false;
@@ -1467,7 +1416,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     return saveNow({ silent: false, force: true });
   }, [
     canConfigureAgentRuntime,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     isVersionPreviewing,
@@ -1633,8 +1581,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       },
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
-      agentMemorySlots,
-      agentMemorySlotValidationErrors,
       agentMemoryInstructions,
       defaultHomeTitle,
       defaultInputPlaceholder,
@@ -1722,10 +1668,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => {
         if (isRuntimeConfigReadOnly) return;
         setAgentMemoryAutoExtractionEnabled(value);
-      },
-      onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => {
-        if (isRuntimeConfigReadOnly) return;
-        setAgentMemorySlots(value);
       },
       onChangeAgentMemoryInstructions: (value: string) => {
         if (isRuntimeConfigReadOnly) return;

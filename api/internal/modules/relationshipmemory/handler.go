@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/datatypes"
@@ -481,26 +480,19 @@ func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail)
 		Where("workspace_id = ? AND agent_id = ? AND deleted_at IS NULL", detail.WorkspaceID, detail.ConsumerID).
 		Order("created_at DESC").Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ConsumerMemoryContract{DefinitionMode: "slots"}, nil
+		return ConsumerMemoryContract{DefinitionMode: "files"}, nil
 	}
 	if err != nil {
 		return ConsumerMemoryContract{}, err
 	}
 	var snapshot struct {
-		Enabled            bool                          `json:"agent_memory_enabled"`
-		AutoCaptureAllowed bool                          `json:"agent_memory_auto_extraction_enabled"`
-		Slots              []agentmemory.AgentMemorySlot `json:"agent_memory_slots"`
+		Enabled            bool `json:"agent_memory_enabled"`
+		AutoCaptureAllowed bool `json:"agent_memory_auto_extraction_enabled"`
 	}
 	if err := json.Unmarshal(row.ConfigSnapshot, &snapshot); err != nil {
 		return ConsumerMemoryContract{}, fmt.Errorf("%w: invalid published Agent memory configuration", ErrPolicyRejected)
 	}
-	definitions := make([]MemoryDefinition, 0, len(snapshot.Slots))
-	for _, slot := range snapshot.Slots {
-		if slot.Enabled {
-			definitions = append(definitions, MemoryDefinition{Key: slot.Key, DisplayName: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: true})
-		}
-	}
-	return ConsumerMemoryContract{Enabled: snapshot.Enabled, DefinitionMode: "slots", Definitions: definitions, AutoCaptureAllowed: snapshot.AutoCaptureAllowed, RenderBudgetChars: defaultRenderBudget}, nil
+	return ConsumerMemoryContract{Enabled: snapshot.Enabled, DefinitionMode: "files", AutoCaptureAllowed: snapshot.AutoCaptureAllowed, RenderBudgetChars: defaultRenderBudget}, nil
 }
 
 func relationshipRequestScope(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {

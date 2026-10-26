@@ -13,7 +13,6 @@ import type {
   AgentConnectorBinding,
   AgentExecutionRuntimeConfig,
   AgentExecutionRuntimeCapability,
-  AgentMemorySlotConfig,
   AgentBindingHealth,
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
@@ -30,7 +29,6 @@ import { AgentRuntimeSkillSection } from './sections/skill-section';
 import { AgentRuntimeWorkflowSection } from './sections/workflow-section';
 import { AgentRuntimeConnectorSection } from './sections/connector-section';
 import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from './types';
-import type { AgentMemorySlotValidationError } from './utils';
 
 interface AgentRuntimeOrchestrationPanelProps {
   agentId: string;
@@ -67,8 +65,6 @@ interface AgentRuntimeOrchestrationPanelProps {
   agentMemoryEnabled: boolean;
   agentMemoryAutoExtractionEnabled: boolean;
   agentMemoryInstructions: string;
-  agentMemorySlots: AgentMemorySlotConfig[];
-  agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
   openingGuideBrand?: OpeningGuideBrand;
@@ -102,7 +98,6 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemoryInstructions: (value: string) => void;
-  onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => void;
 }
 
 export function AgentRuntimeOrchestrationPanel({
@@ -140,8 +135,6 @@ export function AgentRuntimeOrchestrationPanel({
   agentMemoryEnabled,
   agentMemoryAutoExtractionEnabled,
   agentMemoryInstructions,
-  agentMemorySlots,
-  agentMemorySlotValidationErrors,
   defaultHomeTitle,
   defaultInputPlaceholder,
   openingGuideBrand,
@@ -173,7 +166,6 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeAgentMemoryEnabled,
   onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemoryInstructions,
-  onChangeAgentMemorySlots,
 }: AgentRuntimeOrchestrationPanelProps) {
   const t = useT('agents.agentRuntime');
 
@@ -309,14 +301,11 @@ export function AgentRuntimeOrchestrationPanel({
             open={openSections.memory}
             agentMemoryEnabled={agentMemoryEnabled}
             agentMemoryAutoExtractionEnabled={agentMemoryAutoExtractionEnabled}
-            agentMemorySlots={agentMemorySlots}
-            agentMemorySlotValidationErrors={agentMemorySlotValidationErrors}
             agentMemoryInstructions={agentMemoryInstructions}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeAgentMemoryEnabled={onChangeAgentMemoryEnabled}
             onChangeAgentMemoryAutoExtractionEnabled={onChangeAgentMemoryAutoExtractionEnabled}
-            onChangeAgentMemorySlots={onChangeAgentMemorySlots}
             onChangeAgentMemoryInstructions={onChangeAgentMemoryInstructions}
           />
 

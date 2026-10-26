@@ -33,31 +33,17 @@ func TestMemoryHistoryPostgresRecordsEveryChangeAndFollowsTheRelationship(t *tes
 	ctx := t.Context()
 	agentID := uuid.New()
 
-	// Definitions mirror the slots and keep their IDs when a slot leaves and returns.
-	slots := []memoryblock.AgentSlot{{Key: "profile", Name: "Profile", MaxChars: 2000, Enabled: true}, {Key: "preferences", Name: "Preferences", MaxChars: 2000, Enabled: true, SortOrder: 1}}
-	if err := memoryblock.SyncAgentSlots(ctx, tx, agentID, slots); err != nil {
-		t.Fatal(err)
+	// Values of an Agent created before ADR 0017 point at their block definitions.
+	for _, label := range []string{"profile", "preferences"} {
+		if err := tx.Create(&memoryblock.Definition{ID: uuid.New(), ConsumerType: memoryblock.ConsumerAgent, ConsumerID: agentID, Label: label,
+			LimitChars: 2000, Partition: memoryblock.PartitionPerson, Owner: memoryblock.OwnerUser, Enabled: true, AutoWrite: true}).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 	profileDefinition, err := memoryblock.DefinitionID(ctx, tx, memoryblock.ConsumerAgent, agentID, "profile")
 	if err != nil || profileDefinition == nil {
 		t.Fatalf("profile definition = %v, %v", profileDefinition, err)
 	}
-	preferencesDefinition, _ := memoryblock.DefinitionID(ctx, tx, memoryblock.ConsumerAgent, agentID, "preferences")
-	if err := memoryblock.SyncAgentSlots(ctx, tx, agentID, slots[:1]); err != nil {
-		t.Fatal(err)
-	}
-	var removed memoryblock.Definition
-	if err := tx.First(&removed, "id = ?", *preferencesDefinition).Error; err != nil || removed.DeletedAt == nil {
-		t.Fatalf("removed slot's definition = %+v, %v", removed, err)
-	}
-	if err := memoryblock.SyncAgentSlots(ctx, tx, agentID, slots); err != nil {
-		t.Fatal(err)
-	}
-	returned, _ := memoryblock.DefinitionID(ctx, tx, memoryblock.ConsumerAgent, agentID, "preferences")
-	if returned == nil || *returned != *preferencesDefinition {
-		t.Fatalf("returning slot got definition %v, want %v", returned, *preferencesDefinition)
-	}
-
 	service := NewService(tx)
 	relationship, err := service.EnsureRelationship(ctx, EnsureRelationshipRequest{
 		OrganizationID: uuid.New(), WorkspaceID: uuid.New(), Subject: usersubject.AccountSubject(uuid.New()),

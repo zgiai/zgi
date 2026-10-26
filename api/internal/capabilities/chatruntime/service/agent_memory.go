@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
@@ -20,26 +19,12 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-// minMemoryBlocksContextChars is the least room memory blocks (ADR 0013)
-// get; they get as much as all blocks can hold, within 10% of the model's
-// input, so a model with room never sees a block cut.
-const minMemoryBlocksContextChars = 8000
-
-// memoryBlocksContextChars is the room all enabled blocks need when full:
-// their limits plus the file framing and descriptions around them.
-func memoryBlocksContextChars(slots []AgentMemorySlotConfig) int {
-	total := 600
-	for _, slot := range slots {
-		total += slot.MaxChars + utf8.RuneCountInString(slot.Description) + 160
-	}
-	if total < minMemoryBlocksContextChars {
-		return minMemoryBlocksContextChars
-	}
-	return total
-}
+// memoryFilesContextChars is the room the user's memory files need when
+// full (ADR 0017): their total limit plus the file markup.
+const memoryFilesContextChars = agentmemory.MaxMemoryChars + 2000
 
 func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string, modelInputLimit int) (string, map[string]interface{}, error) {
-	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
+	if parts == nil || !parts.AgentMemoryEnabled {
 		return systemPrompt, nil, nil
 	}
 	identity := agentRelationshipMemoryIdentity(scope, parts)
@@ -70,7 +55,7 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 	if budgetTokens <= 0 {
 		return systemPrompt, nil, nil
 	}
-	maxChars := memoryBlocksContextChars(enabledAgentMemorySlots(parts.AgentMemorySlots))
+	maxChars := memoryFilesContextChars
 	budgetChars := budgetTokens * 4
 	if budgetChars > maxChars {
 		budgetChars = maxChars
@@ -247,7 +232,7 @@ func agentMemoryRuntimeAvailable(prepared *PreparedChat, memoryService AgentMemo
 		return false
 	}
 	parts := prepared.parts
-	if !parts.AgentMemoryEnabled || !parts.AgentMemoryToolsEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
+	if !parts.AgentMemoryEnabled || !parts.AgentMemoryToolsEnabled {
 		return false
 	}
 	if prepared.Scope.AgentResourceWorkspaceID() == nil || *prepared.Scope.AgentResourceWorkspaceID() == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
@@ -291,7 +276,7 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 	}
 	proactiveAllowed := parts.AgentMemoryAutoExtractionEnabled && relationshipAutoCaptureAllowed && globalAgentMemoryAutoExtractionEnabled()
 	archiveAvailable := s.repos != nil && s.repos.DB != nil
-	definitions := agentmemoryruntime.FileTools(state.EnabledSlots, proactiveAllowed, archiveAvailable)
+	definitions := agentmemoryruntime.FileTools(proactiveAllowed, archiveAvailable)
 	if len(definitions) == 0 {
 		return nil
 	}
@@ -498,7 +483,7 @@ func agentMemorySlotDisplayName(parts *chatRequestParts, key string) string {
 }
 
 func agentMemoryUnavailableSystemMessage(parts *chatRequestParts) *adapter.Message {
-	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 || parts.AgentMemoryToolsEnabled {
+	if parts == nil || !parts.AgentMemoryEnabled || parts.AgentMemoryToolsEnabled {
 		return nil
 	}
 	message := adapter.Message{Role: "system", Content: strings.Join([]string{

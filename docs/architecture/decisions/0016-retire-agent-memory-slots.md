@@ -4,6 +4,7 @@
 - Date: 2026-10-26
 - Builds on: ADR 0013, ADR 0014, ADR 0015
 - Amends: ADR 0013 (rollout switches; phase 4 "legacy tables and APIs are retired" happens now for Agents)
+- Amended by: ADR 0017 (Agents no longer configure blocks; sections 3 and 4 below are superseded)
 
 ## Context
 

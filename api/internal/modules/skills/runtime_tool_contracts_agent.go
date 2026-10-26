@@ -119,6 +119,7 @@ func agentManagementUpdateConfigContract() SkillToolArgumentContract {
 				"add_enabled_skill_ids":        stringArrayOrCSVSchema("Optional skill IDs to add while preserving current enabled skills."),
 				"remove_enabled_skill_ids":     stringArrayOrCSVSchema("Optional skill IDs to remove while preserving other enabled skills."),
 				"agent_memory_enabled":         booleanSchema("Optional Agent memory switch."),
+				"agent_memory_instructions":    stringValueSchema("Optional replacement memory instructions: what the Agent should remember about each user and what it should not. Empty clears them."),
 				"file_upload_enabled":          booleanSchema("Optional file upload switch."),
 				"home_title":                   stringValueSchema("Optional Agent home title."),
 				"opening_statement":            stringValueSchema("Optional Markdown landing guide shown before the first message."),
@@ -146,22 +147,6 @@ func agentManagementUpdateConfigContract() SkillToolArgumentContract {
 			"file_upload_enabled":   true,
 			"add_enabled_skill_ids": []string{"file-generator"},
 		},
-	}
-}
-
-func agentManagementReplaceMemoryBlocksContract() SkillToolArgumentContract {
-	return SkillToolArgumentContract{
-		SkillID:     SkillAgentManagement,
-		ToolName:    "replace_agent_memory_blocks",
-		Description: "Replace the complete draft Agent memory block list for one resolved AGENT asset.",
-		Schema: objectSchema(
-			map[string]interface{}{
-				"agent_id":            stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
-				"agent_memory_blocks": stringValueSchema("Required JSON array replacing all memory blocks. Use [] to clear blocks."),
-			},
-			[]string{"agent_id", "agent_memory_blocks"},
-		),
-		Example: map[string]interface{}{"agent_id": "agent-id", "agent_memory_blocks": "[]"},
 	}
 }
 

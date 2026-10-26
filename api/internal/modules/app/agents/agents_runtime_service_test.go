@@ -375,23 +375,6 @@ func workflowGraphWithStartInput(variable string) string {
 	return `{"nodes":[{"data":{"type":"start","variables":[{"variable":"` + variable + `","label":"` + variable + `","type":"string","required":true}]}}]}`
 }
 
-func TestAgentMemoryReplaceRequestPreservesInvalidRowsForValidation(t *testing.T) {
-	req := agentMemoryReplaceRequestFromConfig([]dto.AgentMemorySlotConfig{
-		{Key: "profile", Enabled: true},
-		{Key: "", Enabled: true},
-		{Key: "profile", Enabled: true},
-	}, true)
-	if len(req.Slots) != 3 {
-		t.Fatalf("len(req.Slots) = %d, want 3", len(req.Slots))
-	}
-	if req.Slots[1].Key != "" {
-		t.Fatalf("empty key row was changed to %q", req.Slots[1].Key)
-	}
-	if req.Slots[2].Key != "profile" {
-		t.Fatalf("duplicate key row was changed to %q", req.Slots[2].Key)
-	}
-}
-
 func TestAgentMemoryRuntimeSlotsPreserveDisplayName(t *testing.T) {
 	slots := agentMemoryRuntimeSlots([]dto.AgentMemorySlotConfig{
 		{Key: "project_context", Name: "项目背景", Description: "Long-running project context", MaxChars: 500, Enabled: true},
@@ -399,55 +382,6 @@ func TestAgentMemoryRuntimeSlotsPreserveDisplayName(t *testing.T) {
 
 	if len(slots) != 1 || slots[0].Key != "project_context" || slots[0].Name != "项目背景" {
 		t.Fatalf("runtime slots = %#v, want display name preserved", slots)
-	}
-}
-
-func TestAgentMemoryReplaceRequestCanDropHistoricalIDsForRollback(t *testing.T) {
-	req := agentMemoryReplaceRequestFromConfig([]dto.AgentMemorySlotConfig{
-		{ID: "stale-slot-id", Key: "profile", Name: "用户资料", Enabled: true},
-	}, false)
-	if len(req.Slots) != 1 {
-		t.Fatalf("len(req.Slots) = %d, want 1", len(req.Slots))
-	}
-	if req.Slots[0].ID != "" {
-		t.Fatalf("rollback request preserved historical id %q", req.Slots[0].ID)
-	}
-	if req.Slots[0].Key != "profile" {
-		t.Fatalf("rollback request key = %q, want profile", req.Slots[0].Key)
-	}
-	if req.Slots[0].Name != "用户资料" {
-		t.Fatalf("rollback request name = %q, want 用户资料", req.Slots[0].Name)
-	}
-}
-
-func TestAgentMemorySnapshotSlotsDoNotPersistVolatileIDs(t *testing.T) {
-	slots := agentMemorySnapshotSlots([]dto.AgentMemorySlotConfig{
-		{
-			ID:          "draft-slot-id",
-			Key:         "profile",
-			Name:        "用户资料",
-			Description: "User profile",
-			MaxChars:    4000,
-			Enabled:     true,
-			SortOrder:   3,
-			CreatedAt:   123,
-			UpdatedAt:   456,
-		},
-	})
-	if len(slots) != 1 {
-		t.Fatalf("len(slots) = %d, want 1", len(slots))
-	}
-	if slots[0].ID != "" {
-		t.Fatalf("snapshot preserved slot id %q", slots[0].ID)
-	}
-	if slots[0].CreatedAt != 0 || slots[0].UpdatedAt != 0 {
-		t.Fatalf("snapshot preserved timestamps created=%d updated=%d", slots[0].CreatedAt, slots[0].UpdatedAt)
-	}
-	if slots[0].MaxChars != 4000 {
-		t.Fatalf("snapshot max chars = %d, want the configured 4000", slots[0].MaxChars)
-	}
-	if slots[0].Name != "用户资料" {
-		t.Fatalf("snapshot name = %q, want 用户资料", slots[0].Name)
 	}
 }
 

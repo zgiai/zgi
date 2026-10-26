@@ -24,18 +24,6 @@ func (r *Repository) WithTransaction(ctx context.Context, fn func(store) error) 
 	})
 }
 
-func (r *Repository) SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error {
-	mirrored := make([]memoryblock.AgentSlot, 0, len(slots))
-	for _, slot := range slots {
-		if slot != nil {
-			mirrored = append(mirrored, memoryblock.AgentSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description,
-				MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder,
-				ReadOnly: slot.ReadOnly, AutoWrite: !slot.ManualOnly})
-		}
-	}
-	return memoryblock.SyncAgentSlots(ctx, r.db, agentID, mirrored)
-}
-
 func (r *Repository) ResolveAgentWorkspace(ctx context.Context, agentID uuid.UUID) (uuid.UUID, error) {
 	var row struct {
 		WorkspaceID uuid.UUID `gorm:"column:tenant_id"`

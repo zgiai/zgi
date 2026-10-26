@@ -85,13 +85,13 @@ func TestMemoryEditAppliesEachEditOnItsOwnAndWritesOneValuePerFile(t *testing.T)
 func TestMemoryEditRejectsEverythingAsOneValidationError(t *testing.T) {
 	service := &fakeMemoryService{}
 	result := ExecuteEdits(t.Context(), editRequest(service), edits(t,
-		map[string]interface{}{"command": "insert", "path": "/user/missing.md", "text": "x", "evidence": "就选 B", "mode": "explicit"}))
+		map[string]interface{}{"command": "insert", "path": "/user/Bad Name.md", "text": "x", "evidence": "就选 B", "mode": "explicit"}))
 	if result.Error == nil || !ValidationError(result.Error) || service.calls != 0 {
 		t.Fatalf("all-rejected call = %+v, writes %d", result, service.calls)
 	}
 }
 
-func TestMemoryEditKeepsContactDetailsOnlyWhereTheDescriptionAllowsThem(t *testing.T) {
+func TestMemoryEditRejectsContactDetailsAndIdentifiers(t *testing.T) {
 	service := &fakeMemoryService{}
 	request := editRequest(service)
 	request.LatestUserMessage = "请记住我的回电号码是 13800001111，身份证号 110101199003071234。"
@@ -101,7 +101,7 @@ func TestMemoryEditKeepsContactDetailsOnlyWhereTheDescriptionAllowsThem(t *testi
 		map[string]interface{}{"command": "insert", "path": "/user/contact.md", "text": "身份证号 110101199003071234", "evidence": "身份证号 110101199003071234", "mode": "explicit"},
 	))
 	outcomes := result.Result["edits"].([]EditOutcome)
-	if outcomes[0].Status != "accepted" || outcomes[1].Status != "rejected" || outcomes[2].Status != "rejected" {
+	if outcomes[0].Status != "rejected" || outcomes[1].Status != "rejected" || outcomes[2].Status != "rejected" {
 		t.Fatalf("contact outcomes = %+v", outcomes)
 	}
 }
@@ -113,7 +113,7 @@ func TestMemoryViewReturnsWholeNumberedFiles(t *testing.T) {
 	if view["status"] != "success" || len(files) != 1 || files[0]["content"] != "1\t第一行\n2\t第二行" {
 		t.Fatalf("view = %+v", view)
 	}
-	if listing := ExecuteView(request, `{}`); len(listing["files"].([]map[string]interface{})) != 2 {
+	if listing := ExecuteView(request, `{}`); len(listing["files"].([]map[string]interface{})) != 1 || listing["used_chars"] != 7 {
 		t.Fatalf("listing = %+v", listing)
 	}
 	if missing := ExecuteView(request, `{"path":"/user/nope.md"}`); missing["status"] != "failed" {
@@ -123,7 +123,8 @@ func TestMemoryViewReturnsWholeNumberedFiles(t *testing.T) {
 
 func TestMemoryEditArchivesOldTextToMakeRoom(t *testing.T) {
 	service := &fakeMemoryService{}
-	old := strings.Repeat("旧备注。", 47)
+	// The file fills the user's whole memory.
+	old := strings.Repeat("旧", agentmemory.MaxMemoryChars-12)
 	request := editRequest(service, blockValue("profile", "", "坐长途航班喜欢靠过道。\n"+old))
 	type archived struct{ content, key string }
 	var kept []archived

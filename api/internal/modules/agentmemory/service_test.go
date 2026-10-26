@@ -20,8 +20,6 @@ type fakeStore struct {
 	jobs        map[uuid.UUID]*AgentMemoryExtractionJob
 	subjects    map[string]*AgentMemorySubjectState
 	agents      map[string]*AgentMemoryAgentState
-
-	syncedDefinitions int
 }
 
 func newFakeStore(workspaceID uuid.UUID) *fakeStore {
@@ -88,27 +86,6 @@ func (f *fakeStore) ResolveAgentWorkspace(ctx context.Context, agentID uuid.UUID
 func (f *fakeStore) LockAgent(ctx context.Context, agentID uuid.UUID) error {
 	if agentID == uuid.Nil {
 		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
-func (f *fakeStore) SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error {
-	f.syncedDefinitions = len(slots)
-	idByKey := map[string]uuid.UUID{}
-	for id, slot := range f.slots {
-		if slot.AgentID == agentID {
-			idByKey[slot.Key] = id
-			delete(f.slots, id)
-		}
-	}
-	for _, slot := range slots {
-		next := *slot
-		next.WorkspaceID, next.AgentID = f.workspaceID, agentID
-		next.ID = uuid.New()
-		if id, ok := idByKey[slot.Key]; ok {
-			next.ID = id
-		}
-		f.slots[next.ID] = &next
 	}
 	return nil
 }
@@ -601,10 +578,6 @@ func TestAgentConfigRevisionCancelsOlderJobsWithoutAdvancingSubjectEpoch(t *test
 	store := newFakeStore(uuid.New())
 	svc := &Service{repo: store}
 	agentID, userID := uuid.New(), uuid.New()
-	actorID := uuid.New()
-	if _, err := svc.ReplaceSlots(context.Background(), agentID, actorID, ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}, {Key: "preferences"}}}); err != nil {
-		t.Fatal(err)
-	}
 	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopeDraft, "draft-v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -614,156 +587,12 @@ func TestAgentConfigRevisionCancelsOlderJobsWithoutAdvancingSubjectEpoch(t *test
 	}
 	jobID := uuid.New()
 	store.jobs[jobID] = &AgentMemoryExtractionJob{ID: jobID, WorkspaceID: store.workspaceID, AgentID: agentID, UserScope: UserScopeAccount, UserID: userID, Status: ExtractionJobPending, MemoryEpoch: state.MemoryEpoch, ConfigScope: ConfigScopeDraft, ConfigRevision: "draft-v1"}
-	profileID := uuid.Nil
-	for _, slot := range store.slots {
-		if slot.AgentID == agentID && slot.Key == "profile" {
-			profileID = slot.ID
-			break
-		}
-	}
-	if profileID == uuid.Nil {
-		t.Fatal("profile slot was not created")
-	}
-	if _, err := svc.ReplaceSlots(context.Background(), agentID, actorID, ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{ID: profileID.String(), Key: "profile"}}}); err != nil {
-		t.Fatal(err)
-	}
 	if err := svc.SetAgentConfigRevision(context.Background(), store.workspaceID, agentID, ConfigScopeDraft, "draft-v2"); err != nil {
 		t.Fatal(err)
 	}
 	updatedState := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
 	if updatedState.MemoryEpoch != state.MemoryEpoch || store.jobs[jobID].Status != ExtractionJobCancelled {
 		t.Fatalf("subject/job = %#v/%#v, want unchanged epoch and cancelled job", updatedState, store.jobs[jobID])
-	}
-}
-
-func TestReplaceSlotsValidatesDuplicateKeys(t *testing.T) {
-	svc := &Service{repo: newFakeStore(uuid.New())}
-	agentID := uuid.New()
-	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{
-		{Key: "profile"},
-		{Key: "profile"},
-	}})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("ReplaceSlots error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestReplaceSlotsRejectsInvalidRowsWithoutDisablingExistingSlots(t *testing.T) {
-	store := newFakeStore(uuid.New())
-	svc := &Service{repo: store}
-	agentID := uuid.New()
-	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots initial error = %v", err)
-	}
-	if len(slots) != 1 || !slots[0].Enabled {
-		t.Fatalf("initial slots = %#v, want one enabled slot", slots)
-	}
-
-	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: ""}}})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("ReplaceSlots invalid error = %v, want ErrInvalidInput", err)
-	}
-	remaining, err := svc.ListSlots(context.Background(), agentID)
-	if err != nil {
-		t.Fatalf("ListSlots error = %v", err)
-	}
-	if len(remaining) != 1 || remaining[0].Key != "profile" || !remaining[0].Enabled {
-		t.Fatalf("remaining slots = %#v, want profile still enabled", remaining)
-	}
-}
-
-func TestReplaceSlotsRejectsKeyRenameByID(t *testing.T) {
-	store := newFakeStore(uuid.New())
-	svc := &Service{repo: store}
-	agentID := uuid.New()
-	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots initial error = %v", err)
-	}
-
-	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
-		ID:  slots[0].ID,
-		Key: "profile_new",
-	}}})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("ReplaceSlots rename error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestReplaceSlotsDeletesOmittedSlots(t *testing.T) {
-	store := newFakeStore(uuid.New())
-	svc := &Service{repo: store}
-	agentID := uuid.New()
-	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}, {Key: "preference"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots initial error = %v", err)
-	}
-
-	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots delete error = %v", err)
-	}
-	if len(slots) != 1 || slots[0].Key != "profile" {
-		t.Fatalf("slots = %#v, want only profile", slots)
-	}
-	if _, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "preference"}}}); err != nil {
-		t.Fatalf("ReplaceSlots recreate deleted key error = %v", err)
-	}
-}
-
-func TestReplaceSlotsLimitsSlotCountAndDescriptionLength(t *testing.T) {
-	svc := &Service{repo: newFakeStore(uuid.New())}
-	agentID := uuid.New()
-	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{
-		{Key: "memory_1"}, {Key: "memory_2"}, {Key: "memory_3"}, {Key: "memory_4"}, {Key: "memory_5"}, {Key: "memory_6"},
-		{Key: "memory_7"}, {Key: "memory_8"}, {Key: "memory_9"}, {Key: "memory_10"}, {Key: "memory_11"},
-	}})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("ReplaceSlots too many error = %v, want ErrInvalidInput", err)
-	}
-	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
-		Key:         "profile",
-		Description: strings.Repeat("x", 1001),
-	}}})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("ReplaceSlots long description error = %v, want ErrInvalidInput", err)
-	}
-	_, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
-		Key:  "profile",
-		Name: strings.Repeat("名", 81),
-	}}})
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("ReplaceSlots long name error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestReplaceSlotsPersistsOptionalName(t *testing.T) {
-	store := newFakeStore(uuid.New())
-	svc := &Service{repo: store}
-	agentID := uuid.New()
-
-	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
-		Key:  "profile",
-		Name: "用户资料",
-	}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots create error = %v", err)
-	}
-	if len(slots) != 1 || slots[0].Name != "用户资料" {
-		t.Fatalf("created slots = %#v, want localized name", slots)
-	}
-
-	slots, err = svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{
-		ID:   slots[0].ID,
-		Key:  "profile",
-		Name: "User profile",
-	}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots update error = %v", err)
-	}
-	if len(slots) != 1 || slots[0].Name != "User profile" {
-		t.Fatalf("updated slots = %#v, want edited name", slots)
 	}
 }
 
@@ -791,10 +620,9 @@ func TestReadUserMemoryIsolatedByAgentAndUser(t *testing.T) {
 	userA := uuid.New()
 	userB := uuid.New()
 
-	slots, err := svc.ReplaceSlots(context.Background(), agentA, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots error = %v", err)
-	}
+	slotID := uuid.New()
+	store.slots[slotID] = &AgentMemorySlot{ID: slotID, WorkspaceID: workspaceID, AgentID: agentA, Key: "profile", MaxChars: 2000, Enabled: true}
+	slots := []SlotResponse{slotResponse(store.slots[slotID])}
 	store.slots[uuid.New()] = &AgentMemorySlot{ID: uuid.New(), WorkspaceID: workspaceID, AgentID: agentB, Key: "profile", MaxChars: 1000, Enabled: true}
 	store.values[valueKey(workspaceID, agentA, "profile", UserScopeAccount, userA)] = &AgentMemoryValue{
 		ID: uuid.New(), WorkspaceID: workspaceID, AgentID: agentA, SlotKey: "profile", UserScope: UserScopeAccount, UserID: userA, Content: "agent A user A",
@@ -817,12 +645,10 @@ func TestUpdateValueRejectsContentOverSlotLimit(t *testing.T) {
 	svc := &Service{repo: store}
 	agentID := uuid.New()
 	userID := uuid.New()
-	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots error = %v", err)
-	}
+	slotID := uuid.New()
+	store.slots[slotID] = &AgentMemorySlot{ID: slotID, WorkspaceID: store.workspaceID, AgentID: agentID, Key: "profile", MaxChars: 2000, Enabled: true}
 
-	_, err = svc.UpdateValue(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "profile", MaxChars: 5, Enabled: true}}, UserScopeAccount, userID, UpdateValueRequest{
+	_, err := svc.UpdateValue(context.Background(), store.workspaceID, agentID, []RuntimeSlot{{Key: "profile", MaxChars: 5, Enabled: true}}, UserScopeAccount, userID, UpdateValueRequest{
 		Key:     "profile",
 		Content: strings.Repeat("x", 2001),
 	}, MutationMetadata{})
@@ -836,10 +662,8 @@ func TestClearValueDoesNotPersistContentInAuditEvent(t *testing.T) {
 	svc := &Service{repo: store}
 	agentID := uuid.New()
 	userID := uuid.New()
-	slots, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots error = %v", err)
-	}
+	slots := seedSlots(store, agentID, "profile")
+	var err error
 	runtimeSlots := []RuntimeSlot{{Key: slots[0].Key, MaxChars: slots[0].MaxChars, Enabled: true}}
 	_, err = svc.UpdateValue(context.Background(), store.workspaceID, agentID, runtimeSlots, UserScopeAccount, userID, UpdateValueRequest{
 		Key:     "profile",
@@ -888,33 +712,6 @@ func TestClearMissingValueRemovesUndoAndAdvancesCutoff(t *testing.T) {
 	state := store.subjects[subjectKey(store.workspaceID, agentID, UserScopeAccount, userID)]
 	if state == nil || state.MemoryEpoch != 1 || state.ExtractionCutoffAt == nil {
 		t.Fatalf("subject state = %#v", state)
-	}
-}
-
-func TestClearValuesNotInKeysClearsRemovedMemoryValues(t *testing.T) {
-	store := newFakeStore(uuid.New())
-	svc := &Service{repo: store}
-	agentID := uuid.New()
-	userID := uuid.New()
-	_, err := svc.ReplaceSlots(context.Background(), agentID, uuid.New(), ReplaceSlotsRequest{Slots: []SlotUpsertRequest{{Key: "profile"}, {Key: "preference"}}})
-	if err != nil {
-		t.Fatalf("ReplaceSlots error = %v", err)
-	}
-	store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)] = &AgentMemoryValue{
-		ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "profile", UserScope: UserScopeAccount, UserID: userID, Content: "keep me",
-	}
-	store.values[valueKey(store.workspaceID, agentID, "preference", UserScopeAccount, userID)] = &AgentMemoryValue{
-		ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, SlotKey: "preference", UserScope: UserScopeAccount, UserID: userID, Content: "clear me",
-	}
-
-	if err := svc.ClearValuesNotInKeys(context.Background(), agentID, []string{"profile"}); err != nil {
-		t.Fatalf("ClearValuesNotInKeys error = %v", err)
-	}
-	if got := store.values[valueKey(store.workspaceID, agentID, "profile", UserScopeAccount, userID)].Content; got != "keep me" {
-		t.Fatalf("profile content = %q, want keep me", got)
-	}
-	if _, ok := store.values[valueKey(store.workspaceID, agentID, "preference", UserScopeAccount, userID)]; ok {
-		t.Fatal("preference value still exists after permanent clear")
 	}
 }
 
@@ -1108,4 +905,16 @@ func TestRuntimeFenceRejectsStaleConfigurationWithoutTouchingSubjectEpoch(t *tes
 	if state == nil || state.MemoryEpoch != epoch || len(store.values) != 0 {
 		t.Fatalf("subject/value state = %#v/%#v", state, store.values)
 	}
+}
+
+// seedSlots stores slots for an Agent in the fake store, as the legacy slot
+// table held them.
+func seedSlots(store *fakeStore, agentID uuid.UUID, keys ...string) []SlotResponse {
+	out := make([]SlotResponse, 0, len(keys))
+	for index, key := range keys {
+		slot := &AgentMemorySlot{ID: uuid.New(), WorkspaceID: store.workspaceID, AgentID: agentID, Key: key, MaxChars: 2000, Enabled: true, SortOrder: index}
+		store.slots[slot.ID] = slot
+		out = append(out, slotResponse(slot))
+	}
+	return out
 }

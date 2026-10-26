@@ -58,7 +58,6 @@ type store interface {
 	ResolveAgentWorkspace(ctx context.Context, agentID uuid.UUID) (uuid.UUID, error)
 	LockAgent(ctx context.Context, agentID uuid.UUID) error
 	ListSlots(ctx context.Context, workspaceID, agentID uuid.UUID, enabledOnly bool) ([]*AgentMemorySlot, error)
-	SyncBlockDefinitions(ctx context.Context, agentID uuid.UUID, slots []*AgentMemorySlot) error
 	ListValuesForAgent(ctx context.Context, workspaceID, agentID uuid.UUID) ([]*AgentMemoryValue, error)
 	ListValuesForUser(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]*AgentMemoryValue, error)
 	GetValueScoped(ctx context.Context, workspaceID, agentID uuid.UUID, slotKey string, userScope string, userID uuid.UUID) (*AgentMemoryValue, error)
@@ -171,75 +170,6 @@ func (s *Service) ListSlots(ctx context.Context, agentID uuid.UUID) ([]SlotRespo
 		return nil, fmt.Errorf("list agent memory slots: %w", err)
 	}
 	return slotResponses(slots), nil
-}
-
-func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, req ReplaceSlotsRequest) ([]SlotResponse, error) {
-	if agentID == uuid.Nil {
-		return nil, ErrUnauthorized
-	}
-	if len(req.Slots) > maxSlotsPerAgent {
-		return nil, fmt.Errorf("%w: too many memory slots", ErrInvalidInput)
-	}
-
-	normalized := make([]normalizedSlotInput, 0, len(req.Slots))
-	seen := map[string]struct{}{}
-	for i, item := range req.Slots {
-		slot, err := normalizeSlotInput(item, i)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := seen[slot.key]; ok {
-			return nil, fmt.Errorf("%w: duplicate memory key %s", ErrInvalidInput, slot.key)
-		}
-		seen[slot.key] = struct{}{}
-		normalized = append(normalized, slot)
-	}
-
-	var response []SlotResponse
-	if err := s.repo.WithTransaction(ctx, func(tx store) error {
-		if err := tx.LockAgent(ctx, agentID); err != nil {
-			return mapRepoError(err, "lock agent")
-		}
-		workspaceID, err := tx.ResolveAgentWorkspace(ctx, agentID)
-		if err != nil {
-			return mapRepoError(err, "resolve agent workspace")
-		}
-		existing, err := tx.ListSlots(ctx, workspaceID, agentID, false)
-		if err != nil {
-			return fmt.Errorf("list existing agent memory blocks: %w", err)
-		}
-		keyByID := make(map[uuid.UUID]string, len(existing))
-		for _, slot := range existing {
-			if slot != nil {
-				keyByID[slot.ID] = slot.Key
-			}
-		}
-		next := make([]*AgentMemorySlot, 0, len(normalized))
-		for _, input := range normalized {
-			// An ID no block has (one from agent_memory_slots, before ADR
-			// 0016) is matched by key instead.
-			if key, ok := keyByID[input.id]; ok && input.id != uuid.Nil && key != input.key {
-				return fmt.Errorf("%w: memory key cannot be changed after creation", ErrInvalidInput)
-			}
-			next = append(next, &AgentMemorySlot{
-				WorkspaceID: workspaceID, AgentID: agentID, Key: input.key, Name: input.name, Description: input.description,
-				MaxChars: input.maxChars, Enabled: input.enabled, SortOrder: input.sortOrder,
-				ReadOnly: input.readOnly, ManualOnly: input.manualOnly, CreatedBy: actorID, UpdatedBy: actorID,
-			})
-		}
-		if err := tx.SyncBlockDefinitions(ctx, agentID, next); err != nil {
-			return err
-		}
-		slots, err := tx.ListSlots(ctx, workspaceID, agentID, false)
-		if err != nil {
-			return fmt.Errorf("list updated agent memory blocks: %w", err)
-		}
-		response = slotResponses(slots)
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return response, nil
 }
 
 func (s *Service) ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []RuntimeSlot, userScope string, userID uuid.UUID) ([]SlotValueResponse, error) {
@@ -699,49 +629,6 @@ func invalidateSubjectJobs(ctx context.Context, tx store, state *AgentMemorySubj
 	return tx.UpdateSubjectEpoch(ctx, state, state.MemoryEpoch+1)
 }
 
-func (s *Service) ClearValuesNotInKeys(ctx context.Context, agentID uuid.UUID, keepKeys []string) error {
-	workspaceID, err := s.resolveAgentWorkspace(ctx, agentID)
-	if err != nil {
-		return err
-	}
-	keep := map[string]struct{}{}
-	for _, key := range keepKeys {
-		normalized, err := normalizeKey(key)
-		if err == nil {
-			keep[normalized] = struct{}{}
-		}
-	}
-	return s.repo.WithTransaction(ctx, func(tx store) error {
-		values, err := tx.ListValuesForAgent(ctx, workspaceID, agentID)
-		if err != nil {
-			return fmt.Errorf("list agent memory values: %w", err)
-		}
-		meta := organizerMetadata()
-		for _, before := range values {
-			if before == nil {
-				continue
-			}
-			if _, ok := keep[before.SlotKey]; ok {
-				continue
-			}
-			locked, err := tx.GetValueScopedForUpdate(ctx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID)
-			if err != nil {
-				return err
-			}
-			if err := tx.DeleteValueCAS(ctx, locked, locked.Revision); err != nil {
-				return fmt.Errorf("clear removed agent memory value: %w", err)
-			}
-			if err := tx.DeleteUndoForSlot(ctx, before.WorkspaceID, before.AgentID, before.UserScope, before.UserID, before.SlotKey); err != nil {
-				return err
-			}
-			if err := recordValueEvent(ctx, tx, before.WorkspaceID, before.AgentID, before.SlotKey, before.UserScope, before.UserID, EventActionValueClear, meta, before, nil); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 func (s *Service) RenderContext(ctx context.Context, workspaceID, agentID uuid.UUID, slots []RuntimeSlot, userScope string, userID uuid.UUID, budget int) (string, error) {
 	if budget <= 0 {
 		budget = defaultRenderBudget
@@ -793,67 +680,6 @@ func (s *Service) configuredSlotByKey(ctx context.Context, workspaceID, agentID 
 		}
 	}
 	return RuntimeSlot{}, fmt.Errorf("%w: memory key %s is not configured for this agent", ErrInvalidInput, normalizedKey)
-}
-
-type normalizedSlotInput struct {
-	id          uuid.UUID
-	key         string
-	name        string
-	description string
-	maxChars    int
-	enabled     bool
-	sortOrder   int
-	readOnly    bool
-	manualOnly  bool
-}
-
-func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, error) {
-	key, err := normalizeKey(req.Key)
-	if err != nil {
-		return normalizedSlotInput{}, err
-	}
-	id := uuid.Nil
-	if trimmedID := strings.TrimSpace(req.ID); trimmedID != "" {
-		parsedID, err := uuid.Parse(trimmedID)
-		if err != nil {
-			return normalizedSlotInput{}, fmt.Errorf("%w: memory id is invalid", ErrInvalidInput)
-		}
-		id = parsedID
-	}
-	name := strings.TrimSpace(req.Name)
-	if len([]rune(name)) > maxSlotNameChars {
-		return normalizedSlotInput{}, fmt.Errorf("%w: name is too long for %s", ErrInvalidInput, key)
-	}
-	description := strings.TrimSpace(req.Description)
-	if len([]rune(description)) > maxSlotDescriptionChars {
-		return normalizedSlotInput{}, fmt.Errorf("%w: description is too long for %s", ErrInvalidInput, key)
-	}
-	maxChars := req.MaxChars
-	if maxChars <= 0 {
-		maxChars = defaultSlotMaxChars
-	}
-	if maxChars > maxSlotMaxChars {
-		return normalizedSlotInput{}, fmt.Errorf("%w: max_chars exceeds %d for %s", ErrInvalidInput, maxSlotMaxChars, key)
-	}
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
-	sortOrder := req.SortOrder
-	if sortOrder == 0 {
-		sortOrder = index
-	}
-	return normalizedSlotInput{
-		id:          id,
-		key:         key,
-		name:        name,
-		description: description,
-		maxChars:    maxChars,
-		enabled:     enabled,
-		sortOrder:   sortOrder,
-		readOnly:    req.ReadOnly,
-		manualOnly:  req.AutoWrite != nil && !*req.AutoWrite,
-	}, nil
 }
 
 func normalizeKey(raw string) (string, error) {

@@ -1,7 +1,6 @@
 package agentmemoryworker
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,20 +9,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
-
-func TestExtractionJobUsesStoredRuntimeSlotSnapshot(t *testing.T) {
-	raw, err := json.Marshal([]agentmemory.RuntimeSlot{{Key: "published_profile", Name: "Published profile", Enabled: true, MaxChars: 500}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	slots, err := extractionJobRuntimeSlots(&agentmemory.AgentMemoryExtractionJob{RuntimeSlots: raw})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(slots) != 1 || slots[0].Key != "published_profile" || slots[0].Name != "Published profile" {
-		t.Fatalf("runtime slots = %#v", slots)
-	}
-}
 
 func consolidationBuilder(runner *Runner) chatRequestBuilder {
 	return func(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error) {

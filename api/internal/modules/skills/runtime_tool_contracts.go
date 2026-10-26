@@ -530,7 +530,6 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillAgentManagement + "/delete_agents":                          agentManagementDeleteAgentsContract(),
 		SkillAgentManagement + "/get_agent_config":                       agentManagementAgentIDContract("get_agent_config", "Read the current draft runtime configuration for one resolved AGENT asset."),
 		SkillAgentManagement + "/update_agent_config":                    agentManagementUpdateConfigContract(),
-		SkillAgentManagement + "/replace_agent_memory_blocks":            agentManagementReplaceMemoryBlocksContract(),
 		SkillAgentManagement + "/list_agent_skill_candidates":            agentManagementBindingCandidateContract("list_agent_skill_candidates", "List user-selectable, Agent-bindable skills for one resolved AGENT asset."),
 		SkillAgentManagement + "/list_agent_knowledge_candidates":        agentManagementBindingCandidateContract("list_agent_knowledge_candidates", "List knowledge bases that can be bound to the resolved Agent."),
 		SkillAgentManagement + "/list_agent_database_candidates":         agentManagementBindingCandidateContract("list_agent_database_candidates", "List databases that can be bound to the resolved Agent."),

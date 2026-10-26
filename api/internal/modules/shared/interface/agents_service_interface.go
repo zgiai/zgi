@@ -28,8 +28,6 @@ type AgentsService interface {
 	ListAgentDatabaseCandidates(ctx context.Context, agentID, accountID string, req dto.AgentDatabaseCandidatesRequest) (*dto.AgentDatabaseCandidatesResponse, error)
 	ListAgentDatabaseTables(ctx context.Context, agentID, accountID string, req dto.AgentDatabaseTablesRequest) (*dto.AgentDatabaseTablesResponse, error)
 	ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string, req dto.AgentWorkflowBindingCandidatesRequest) (*dto.AgentWorkflowBindingCandidatesResponse, error)
-	ListAgentMemorySlots(ctx context.Context, agentID, accountID string) ([]dto.AgentMemorySlotConfig, error)
-	ReplaceAgentMemorySlots(ctx context.Context, agentID, accountID string, slots []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error)
 	UpdateAgentMemoryConfig(ctx context.Context, agentID, accountID string, req dto.AgentMemoryConfigRequest) (*dto.AgentMemoryConfigResponse, error)
 	// PreviewAgentMemory returns an *agentmemoryworker.PreviewResult.
 	PreviewAgentMemory(ctx context.Context, agentID, accountID, organizationID string, req dto.AgentMemoryPreviewRequest) (interface{}, error)

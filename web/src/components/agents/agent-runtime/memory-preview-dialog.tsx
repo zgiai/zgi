@@ -26,7 +26,6 @@ import agentService from '@/services/agent.service';
 import type {
   AgentMemoryPreviewResult,
   AgentMemoryPreviewTurn,
-  AgentMemorySlotConfig,
   AgentMemoryTemplate,
 } from '@/services/types/agent';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -37,7 +36,6 @@ interface AgentMemoryPreviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agentId: string;
-  slots: AgentMemorySlotConfig[];
   instructions: string;
   templates: AgentMemoryTemplate[];
 }
@@ -48,7 +46,6 @@ export function AgentMemoryPreviewDialog({
   open,
   onOpenChange,
   agentId,
-  slots,
   instructions,
   templates,
 }: AgentMemoryPreviewDialogProps) {
@@ -65,7 +62,6 @@ export function AgentMemoryPreviewDialog({
   const preview = useMutation({
     mutationFn: async () => {
       const response = await agentService.previewAgentMemory(agentId, {
-        slots,
         instructions,
         turns: turns
           .map(turn => ({ user: turn.user.trim(), assistant: turn.assistant?.trim() || undefined }))
@@ -74,7 +70,7 @@ export function AgentMemoryPreviewDialog({
       return response.data as AgentMemoryPreviewResult;
     },
   });
-  const canRun = turns.some(turn => turn.user.trim()) && slots.some(slot => slot.enabled);
+  const canRun = turns.some(turn => turn.user.trim());
 
   const updateTurn = (index: number, patch: Partial<AgentMemoryPreviewTurn>) =>
     setTurns(current => current.map((turn, i) => (i === index ? { ...turn, ...patch } : turn)));

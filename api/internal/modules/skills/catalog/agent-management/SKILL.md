@@ -14,7 +14,6 @@ tools:
   - delete_agents
   - get_agent_config
   - update_agent_config
-  - replace_agent_memory_blocks
   - list_agent_skill_candidates
   - list_agent_knowledge_candidates
   - list_agent_database_candidates
@@ -126,26 +125,6 @@ tool_governance:
     idempotency_required: false
   update_agent_config:
     tool_id: agent.update_config
-    skill_id: agent-management
-    domain: agents
-    effect: update
-    asset_type: agent
-    risk_level: medium
-    requires_asset_resolution: true
-    reversible: true
-    bulk_sensitive: false
-    external_side_effect: false
-    permission_scopes:
-      - agent:manage
-    default_approval_policy: auto_by_permission_tier
-    allowed_permission_tiers:
-      - basic
-      - advanced
-      - full
-    audit_required: true
-    idempotency_required: false
-  replace_agent_memory_blocks:
-    tool_id: agent.replace_memory_blocks
     skill_id: agent-management
     domain: agents
     effect: update
@@ -375,7 +354,7 @@ Use this skill for governed Agent asset operations in the contextual console ass
     - Reproduce source material verbatim only when the user explicitly requests exact full inclusion. Access to a source file, artifact, or editable target does not imply permission to copy the source in full.
     - Before calling the mutation tool, verify that the proposed final prompt matches the user's requested transformation, scope, and level of detail. Revise it before execution when it does not.
 11. To replace the Agent model, choose one item from `list_available_models` and pass that item's `provider` as `model_provider` and `model` as `model` to `update_agent_config`.
-12. Use `replace_agent_memory_blocks` to replace the full Agent memory block list. If the user asks to enable memory and create blocks, call `update_agent_config` with `agent_memory_enabled: true`, then call `replace_agent_memory_blocks`.
+12. Agent memory has no configured types: the Agent organizes its memory files itself. To enable memory, call `update_agent_config` with `agent_memory_enabled: true`; to say what the Agent should remember, set `agent_memory_instructions` in the same call.
 13. Use `list_agent_skill_candidates` before replacing Agent skill bindings unless the requested skills are already exact visible/page-context candidates. Pass the user's named Skill as `query` when available. Only bind skill IDs returned by that tool or already visible in current Agent context. If the requested Skill is not returned, stop that Skill binding change without requesting approval, and explain that no matching Skill candidate was found.
 14. Use `update_agent_config` with `add_enabled_skill_ids` or `remove_enabled_skill_ids` when adding or removing specific Agent skills. Use `enabled_skill_ids` only when the user asks to replace or clear the full skill list. Preserve existing skills not mentioned by the user.
 15. Use the candidate list tools before replacing Agent knowledge, database, or workflow bindings unless the requested resources are already exact visible/page-context candidates. Candidate tools are scoped by the backend to the resolved Agent's workspace; do not provide or infer a workspace ID. Select resources by visible name; do not invent skill IDs, dataset IDs, data source IDs, table IDs, workflow IDs, or binding IDs.
@@ -402,7 +381,7 @@ Use capability semantics to decide what configuration or binding actually proves
 - **Persona or behavior**: powered by `system_prompt`. This changes how the Agent should behave, but it does not add tools, file generation, databases, knowledge, workflow access, or memory by itself.
 - **File upload capability**: powered by `file_upload_enabled`. This lets users upload files into the Agent chat surface; it does not let the Agent generate files or manage File Management assets.
 - **Skill-backed capability**: powered by `enabled_skill_ids`. For requests such as “make this Agent able to generate files/charts/images or use a tool,” resolve a matching Skill with `list_agent_skill_candidates`, bind the returned Skill ID with `update_agent_config.add_enabled_skill_ids`, and verify `get_agent_config.enabled_skill_ids`.
-- **Memory capability**: powered by `agent_memory_enabled` and, when the user asks for concrete memory blocks, `replace_agent_memory_blocks`. A prompt saying “remember things” is not persistent memory.
+- **Memory capability**: powered by `agent_memory_enabled`, guided by `agent_memory_instructions`. A prompt saying “remember things” is not persistent memory.
 - **Knowledge access**: powered by `knowledge_dataset_ids`. Resolve exact knowledge candidates when needed, bind or unbind with the matching `add_knowledge_dataset_ids` / `remove_knowledge_dataset_ids`, then verify `get_agent_config`.
 - **Database table access**: powered by `database_bindings`. Resolve database and table candidates with the candidate tools, copy returned binding objects into `add_database_bindings` / `remove_database_bindings`, then verify `get_agent_config`.
 - **Workflow access**: powered by `workflow_bindings`. Resolve workflow binding candidates, use `add_workflow_bindings` / `remove_workflow_bindings`, then verify `get_agent_config`.
@@ -502,11 +481,6 @@ For read-only questions such as “can this Agent generate files?” or “does 
 
 The result includes `models[].provider`, `models[].model`, `models[].model_name`, `models[].use_cases`, optional `models[].match`, and key capability flags. Use exactly those returned `provider` and `model` values together when calling `update_agent_config`.
 
-`replace_agent_memory_blocks` accepts:
-
-- `agent_id`: required resolved Agent ID.
-- `agent_memory_blocks`: required JSON array replacing the complete block list. Each item supports `key`, `name`, `description`, `max_chars`, `enabled`, `read_only`, `auto_write`, and optional `sort_order`; use `[]` to clear all blocks. Preserve existing blocks unless the user asked to replace or remove them.
-
 `list_agent_skill_candidates` accepts:
 
 - `agent_id`: required resolved Agent ID.
@@ -551,7 +525,7 @@ The result includes `models[].provider`, `models[].model`, `models[].model_name`
 ## Success Evidence
 
 - `create_agent` succeeds only when the tool result includes an `agent_id` and the created Agent name or detail href.
-- `update_agent_identity` and `replace_agent_memory_blocks` succeed only when the tool result confirms the requested `agent_id` and the changed fields or returned draft state.
+- `update_agent_identity` succeeds only when the tool result confirms the requested `agent_id` and the changed fields or returned draft state.
 - `update_agent_config` succeeds only for fields listed in `updated_fields` for the requested `agent_id`. For binding changes, use `config_changes`/`binding_changes` as the authoritative action summary; do not claim omitted fields were changed, even if they were part of the user's original request.
 - `delete_agent` succeeds only when the tool result confirms deletion for the requested `agent_id`.
 - `delete_agents` succeeds as a batch only according to `operation_group.item_results`: report exactly how many targets succeeded and failed, and name failed targets when present. Do not treat one succeeded item as proof that the whole batch finished.

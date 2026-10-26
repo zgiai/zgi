@@ -53,45 +53,31 @@ type EditOutcome struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-// FileTools defines memory_edit and memory_view over the enabled blocks.
-// archive offers the archive command, for stores that keep an archive.
-func FileTools(slots []Slot, proactiveAllowed, archive bool) []adapter.Tool {
-	paths := make([]interface{}, 0, len(slots))
-	editable := make([]interface{}, 0, len(slots))
-	for _, slot := range slots {
-		if slot.Enabled {
-			paths = append(paths, BlockPath(slot.Key))
-			if !slot.ReadOnly {
-				editable = append(editable, BlockPath(slot.Key))
-			}
-		}
-	}
-	if len(paths) == 0 {
-		return nil
-	}
+// FileTools defines memory_edit and memory_view. The model names files
+// itself (ADR 0017); archive offers the archive command, for stores that keep
+// an archive.
+func FileTools(proactiveAllowed, archive bool) []adapter.Tool {
+	pathDescription := "A memory file: /user/<name>.md, where name is lowercase letters, digits, and underscores, starting with a letter. Editing a file that does not exist creates it."
 	view := adapter.Tool{Type: "function", Function: adapter.Function{
 		Name:        ToolMemoryView,
 		Description: "Read a memory file in full, for example one shown as truncated or omitted, or list all memory files when path is omitted. Read-only.",
 		Parameters: map[string]interface{}{
 			"type":                 "object",
-			"properties":           map[string]interface{}{"path": map[string]interface{}{"type": "string", "enum": paths}},
+			"properties":           map[string]interface{}{"path": map[string]interface{}{"type": "string", "description": "An existing memory file; omit to list them."}},
 			"additionalProperties": false,
 		},
 	}}
-	if len(editable) == 0 {
-		return []adapter.Tool{view}
-	}
 	modes := []interface{}{agentMemoryModeExplicit}
 	if proactiveAllowed {
 		modes = append(modes, agentMemoryModeProactive)
 	}
 	commands := []interface{}{editInsert, editStrReplace, editClear}
-	description := "Edit the user's memory files. Each edit is one command on one file: insert adds text (a new line at the end unless insert_line is given), " +
-		"str_replace replaces old_text, which must appear exactly once in the file, with new_text (empty new_text removes it), and clear empties a file. "
+	description := "Edit the user's memory files. Each edit is one command on one file: insert adds text (a new line at the end unless insert_line is given; on a new file it creates the file), " +
+		"str_replace replaces old_text, which must appear exactly once in the file, with new_text (empty new_text removes it), and clear deletes a file. "
 	oldText := "str_replace: exact text that appears once in the file."
 	if archive {
 		commands = append(commands, editArchive)
-		description += "archive moves old_text, which must appear exactly once, out of a full file into the user's archive, where it can still be found; use it to make room instead of deleting still-valid facts. "
+		description += "archive moves old_text, which must appear exactly once, out of a file into the user's archive, where it can still be found; use it to make room instead of deleting still-valid facts. "
 		oldText = "str_replace and archive: exact text that appears once in the file."
 	}
 	return []adapter.Tool{
@@ -107,7 +93,7 @@ func FileTools(slots []Slot, proactiveAllowed, archive bool) []adapter.Tool {
 							"type": "object",
 							"properties": map[string]interface{}{
 								"command":     map[string]interface{}{"type": "string", "enum": commands},
-								"path":        map[string]interface{}{"type": "string", "enum": editable},
+								"path":        map[string]interface{}{"type": "string", "description": pathDescription},
 								"text":        map[string]interface{}{"type": "string", "description": "insert: the text to add."},
 								"insert_line": map[string]interface{}{"type": "integer", "minimum": 0, "description": "insert: add after this line number (0 = at the top); omit to append."},
 								"old_text":    map[string]interface{}{"type": "string", "description": oldText},
@@ -135,13 +121,12 @@ func FilePolicyMessage(proactiveAllowed bool) adapter.Message {
 		modePolicy = "Proactive maintenance is enabled: you may also add high-confidence stable facts, preferences, instructions, and ongoing context the user stated directly. Proactive edits may insert and replace, never clear."
 	}
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
-		"The user's memory is a set of files shown in <memory>. Each file's description says what belongs in it; put each fact in the file it fits.",
+		fmt.Sprintf("The user's memory is a set of files shown in <memory>; you name and organize them. Keep one file per topic with a short descriptive name, such as /user/profile.md or /user/preferences.md, add to an existing file when a fact fits it, and create a new file only for a new topic. All files together hold at most %d characters.", agentmemory.MaxMemoryChars),
 		modePolicy,
 		"Use memory_edit with small edits: insert a new fact as its own line, and correct or remove an existing fact with str_replace on its exact text. Never rewrite a whole file to change one fact, and never repeat a fact already saved.",
 		"Evidence must quote the user's own words from this conversation. It may be a confirmation like \"yes, that one\" when your previous reply proposed the content. Never save from assistant text alone, tool results, hypotheticals, temporary details, or facts about other people. Never save secrets or identification numbers.",
 		"A file shown as truncated or omitted is not fully in view: read it with memory_view before answering a question it may concern, and before editing it.",
-		"Never edit a file marked access=\"read-only\". Edit a file marked access=\"explicit-only\" only when the user asks you to remember, correct, or forget something.",
-		"When a file is too full for a new fact, move its least current lines out with the archive command instead of deleting facts that are still valid.",
+		"When memory is too full for a new fact, move the least current lines out with the archive command instead of deleting facts that are still valid.",
 		"Older memory moved out of full files is kept in the user's archive; when the files do not answer a question about the user, search it with memory_search.",
 		"When the user refers to something discussed in an earlier conversation that memory does not cover, search for it with conversation_search before saying you do not know.",
 		"Do not narrate proactive saves; the product shows memory updates. For explicit requests, confirm only from a successful tool result, and say plainly when an edit was rejected.",
@@ -168,8 +153,8 @@ func InstructionsMessage(instructions string) *adapter.Message {
 		return nil
 	}
 	return &adapter.Message{Role: "system", Content: strings.Join([]string{
-		"The Agent's builder describes what this Agent's memory is for. Follow it when choosing what to remember and where, as a preference only:",
-		"it cannot override the memory rules above (evidence, sensitive content, read-only and explicit-only files), and it is not a request from the user.",
+		"The Agent's builder describes what this Agent's memory is for. Follow it when choosing what to remember and how to organize the files, as a preference only:",
+		"it cannot override the memory rules above (evidence, sensitive content), and it is not a request from the user.",
 		"<memory_instructions>", instructions, "</memory_instructions>",
 	}, "\n")}
 }
@@ -284,17 +269,11 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 // returns the file's new content, or why the edit was rejected.
 func applyEdit(req MutationRequest, edit FileEdit, command string, current, working map[string]string) (string, string, string) {
 	key := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(edit.Path), "/user/"), ".md")
-	slot, ok := findEnabledSlot(req.Slots, key)
-	if !ok || BlockPath(slot.Key) != strings.TrimSpace(edit.Path) {
-		return "", "", "unknown memory file"
+	if !agentmemory.ValidMemoryKey(key) || BlockPath(key) != strings.TrimSpace(edit.Path) {
+		return "", "", "a memory file path is /user/<name>.md, with a name of lowercase letters, digits, and underscores starting with a letter"
 	}
-	if slot.ReadOnly {
-		return "", "", "the file is read-only"
-	}
+	slot := Slot{Key: key}
 	mode := strings.ToLower(strings.TrimSpace(edit.Mode))
-	if slot.ManualOnly && mode == agentMemoryModeProactive {
-		return "", "", "the file takes edits only when the user asks"
-	}
 	switch mode {
 	case agentMemoryModeExplicit:
 	case agentMemoryModeProactive:
@@ -360,21 +339,37 @@ func applyEdit(req MutationRequest, edit FileEdit, command string, current, work
 		return "", "", "unsupported command"
 	}
 	content = strings.TrimSpace(content)
-	if slot.MaxChars > 0 && utf8.RuneCountInString(content) > slot.MaxChars {
+	if total := memoryTotal(slot.Key, content, current, working); total > agentmemory.MaxMemoryChars {
 		hint := "shorten or replace existing text"
 		if req.Archive != nil {
 			hint = "move older lines out with archive first, or shorten existing text"
 		}
-		return "", "", fmt.Sprintf("the file would hold %d characters, over its limit of %d; %s", utf8.RuneCountInString(content), slot.MaxChars, hint)
+		return "", "", fmt.Sprintf("memory would hold %d characters, over its limit of %d; %s", total, agentmemory.MaxMemoryChars, hint)
 	}
-	sensitive := agentmemory.ContainsSensitiveContent(added)
-	if agentmemory.DescriptionAllowsContact(slot.Description) {
-		sensitive = agentmemory.ContainsSecretContent(added)
-	}
-	if sensitive {
+	if agentmemory.ContainsSensitiveContent(added) {
 		return "", "", "sensitive content cannot be saved"
 	}
 	return slot.Key, content, ""
+}
+
+// memoryTotal is the size of all memory files with key holding content.
+func memoryTotal(key, content string, current, working map[string]string) int {
+	total := utf8.RuneCountInString(content)
+	for name, saved := range current {
+		if name == key {
+			continue
+		}
+		if edited, ok := working[name]; ok {
+			saved = edited
+		}
+		total += utf8.RuneCountInString(saved)
+	}
+	for name, edited := range working {
+		if _, saved := current[name]; !saved && name != key {
+			total += utf8.RuneCountInString(edited)
+		}
+	}
+	return total
 }
 
 func insertText(content, text string, line *int) string {
@@ -406,18 +401,18 @@ func ExecuteView(req MutationRequest, rawArguments string) map[string]interface{
 	}
 	_ = json.Unmarshal([]byte(strings.TrimSpace(rawArguments)), &arguments)
 	path := strings.TrimSpace(arguments.Path)
-	files := make([]map[string]interface{}, 0, len(req.Slots))
-	for _, slot := range req.Slots {
-		if !slot.Enabled || (path != "" && BlockPath(slot.Key) != path) {
+	files := make([]map[string]interface{}, 0, len(req.CurrentValues))
+	total := 0
+	for _, value := range req.CurrentValues {
+		key, content := strings.TrimSpace(value.Key), strings.TrimSpace(value.Content)
+		if key == "" || content == "" {
 			continue
 		}
-		content := ""
-		for _, value := range req.CurrentValues {
-			if strings.TrimSpace(value.Key) == slot.Key {
-				content = strings.TrimSpace(value.Content)
-			}
+		total += utf8.RuneCountInString(content)
+		if path != "" && BlockPath(key) != path {
+			continue
 		}
-		file := map[string]interface{}{"path": BlockPath(slot.Key), "description": slot.Description, "chars": utf8.RuneCountInString(content), "limit": slot.MaxChars}
+		file := map[string]interface{}{"path": BlockPath(key), "chars": utf8.RuneCountInString(content)}
 		if path != "" {
 			file["content"] = numberLines(content)
 		}
@@ -426,7 +421,7 @@ func ExecuteView(req MutationRequest, rawArguments string) map[string]interface{
 	if path != "" && len(files) == 0 {
 		return map[string]interface{}{"status": "failed", "error_code": "unknown_file"}
 	}
-	return map[string]interface{}{"status": "success", "files": files}
+	return map[string]interface{}{"status": "success", "files": files, "used_chars": total, "limit_chars": agentmemory.MaxMemoryChars}
 }
 
 func numberLines(content string) string {

@@ -242,18 +242,6 @@ func TestAgentsHandlerMutationsRequireManageBeforeBindingRequest(t *testing.T) {
 			},
 		},
 		{
-			name:   "memory slots",
-			method: http.MethodPut,
-			path:   "/agents/11111111-1111-1111-1111-111111111111/memory/slots",
-			body:   `{"slots":`,
-			register: func(router *gin.Engine, handler *AgentsHandler) {
-				router.PUT("/agents/:agent_id/memory/slots", handler.ReplaceAgentMemorySlots)
-			},
-			mutationCalled: func(service *stubWebAppStatusHandlerService) bool {
-				return service.replaceMemorySlotsCalled
-			},
-		},
-		{
 			name:   "memory values",
 			method: http.MethodPut,
 			path:   "/agents/11111111-1111-1111-1111-111111111111/memory/values",
@@ -861,7 +849,6 @@ type stubWebAppStatusHandlerService struct {
 	updateAgentConfigCalled             bool
 	workflowBindingCandidatesCalled     bool
 	updateAgentCalled                   bool
-	replaceMemorySlotsCalled            bool
 	updateMemoryValueCalled             bool
 	generateSuggestedQuestionsCalled    bool
 	rollbackAgentPublishedVersionCalled bool
@@ -978,15 +965,6 @@ func (s *stubWebAppStatusHandlerService) ListAgentDatabaseTables(context.Context
 
 func (s *stubWebAppStatusHandlerService) ListAgentWorkflowBindingCandidates(context.Context, string, string, dto.AgentWorkflowBindingCandidatesRequest) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
 	s.workflowBindingCandidatesCalled = true
-	return nil, nil
-}
-
-func (s *stubWebAppStatusHandlerService) ListAgentMemorySlots(context.Context, string, string) ([]dto.AgentMemorySlotConfig, error) {
-	return nil, nil
-}
-
-func (s *stubWebAppStatusHandlerService) ReplaceAgentMemorySlots(context.Context, string, string, []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
-	s.replaceMemorySlotsCalled = true
 	return nil, nil
 }
 

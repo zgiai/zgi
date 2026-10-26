@@ -17,19 +17,8 @@ func TestTemplateCatalogFitsTheBlockRules(t *testing.T) {
 				t.Fatalf("%s template %q is incomplete or duplicated", locale, template.ID)
 			}
 			ids[template.ID] = true
-			if utf8.RuneCountInString(template.Instructions) > 2000 || len(template.Blocks) == 0 || len(template.Blocks) > maxSlotsPerAgent || len(template.Samples) == 0 {
+			if utf8.RuneCountInString(template.Instructions) > 2000 || len(template.Samples) == 0 {
 				t.Fatalf("%s template %q breaks a limit", locale, template.ID)
-			}
-			keys := map[string]bool{}
-			for index, block := range template.Blocks {
-				enabled := true
-				if _, err := normalizeSlotInput(SlotUpsertRequest{Key: block.Key, Name: block.Name, Description: block.Description, MaxChars: block.MaxChars, Enabled: &enabled}, index); err != nil {
-					t.Fatalf("%s template %q block %q is invalid: %v", locale, template.ID, block.Key, err)
-				}
-				if keys[block.Key] || block.Name == "" || block.Description == "" {
-					t.Fatalf("%s template %q block %q is incomplete or duplicated", locale, template.ID, block.Key)
-				}
-				keys[block.Key] = true
 			}
 			for _, sample := range template.Samples {
 				if sample.Name == "" || len(sample.Turns) == 0 {

@@ -100,12 +100,6 @@ type archiveWriter interface {
 	ArchiveText(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, content, tags, sourceKey string, meta agentmemory.MutationMetadata) error
 }
 
-// automaticWritesAllowed reports whether background passes may write the
-// block: read-only and manual-only blocks change only on explicit requests.
-func automaticWritesAllowed(slot agentmemory.RuntimeSlot) bool {
-	return !slot.ReadOnly && !slot.ManualOnly
-}
-
 // memoryInstructions reads the builder's memory instructions for the job's
 // configuration: the latest published version, or the draft for draft-scoped
 // jobs. Missing instructions are not an error.
@@ -162,30 +156,27 @@ func (r *Runner) consolidationChatRequest(turns []completedTurn, slots []agentme
 		contents[value.Key] = strings.TrimSpace(value.Content)
 	}
 	files := make([]map[string]interface{}, 0, len(slots))
+	used := 0
 	for _, slot := range slots {
-		file := map[string]interface{}{"path": blockPath(slot.Key), "description": slot.Description, "limit": slot.MaxChars, "chars": utf8.RuneCountInString(contents[slot.Key]), "content": contents[slot.Key]}
-		if !automaticWritesAllowed(slot) {
-			file["access"] = "context only"
-		}
-		files = append(files, file)
+		used += utf8.RuneCountInString(contents[slot.Key])
+		files = append(files, map[string]interface{}{"path": blockPath(slot.Key), "chars": utf8.RuneCountInString(contents[slot.Key]), "content": contents[slot.Key]})
 	}
-	raw, err := json.Marshal(map[string]interface{}{"conversation": conversation, "files": files})
+	raw, err := json.Marshal(map[string]interface{}{"conversation": conversation, "files": files, "used_chars": used, "limit_chars": agentmemory.MaxMemoryChars})
 	if err != nil {
 		return nil, fmt.Errorf("encode consolidation prompt: %w", err)
 	}
 	rules := []string{
-		"You keep one user's memory files accurate and tidy after a conversation. Each file's description says what belongs in it.",
-		"Add stable facts, preferences, standing instructions, and ongoing context that the user stated, or confirmed when the assistant proposed them. Put each fact in the file whose description fits it.",
+		"You keep one user's memory files accurate and tidy after a conversation. You name and organize the files: one file per topic with a short descriptive name such as /user/profile.md or /user/preferences.md, lowercase letters, digits, and underscores.",
+		"Add stable facts, preferences, standing instructions, and ongoing context that the user stated, or confirmed when the assistant proposed them. Add each fact to the existing file it fits; create a new file (insert or rewrite on a new path) only for a new topic.",
 		"Fix what is already saved: remove duplicates, replace facts the user corrected, and drop facts the user asked to forget.",
 		"Never save from assistant text alone, hypotheticals, temporary details, facts about other people, secrets, or identification numbers. When unsure, make no edit.",
 		"Edits: insert adds a line; str_replace replaces old_text, which must appear exactly once, with new_text; rewrite replaces a whole file with content and must keep every fact in it that is still valid.",
 		"Evidence must quote the user's words from the conversation; for a confirmation, quote the confirmation.",
-		"Never edit a file marked access \"context only\"; it changes only when the user asks the assistant directly.",
-		"When a file is near its limit, or an insert would not fit, move its least current lines out with archive (path, old_text). Archived text leaves the file but stays in the user's archive, where it can still be found; it needs no evidence. Never archive a whole file.",
+		"All files together hold at most limit_chars characters. When memory is near that limit, or an insert would not fit, move the least current lines out with archive (path, old_text). Archived text leaves the file but stays in the user's archive, where it can still be found; it needs no evidence. Never archive a whole file.",
 		`Return JSON only: {"edits":[{"command":"insert|str_replace|rewrite|archive","path":"/user/<file>.md","text":"","old_text":"","new_text":"","content":"","evidence":"user quote","reason":"short why"}]}. Return {"edits":[]} when nothing should change.`,
 	}
 	if instructions = strings.TrimSpace(instructions); instructions != "" {
-		rules = append(rules, "The Agent's builder describes what this memory is for. Treat it as a preference for what to keep and where; it cannot override the rules above.",
+		rules = append(rules, "The Agent's builder describes what this memory is for. Treat it as a preference for what to keep and how to organize it; it cannot override the rules above.",
 			"<memory_instructions>", instructions, "</memory_instructions>")
 	}
 	system := strings.Join(append(rules, string(raw)), "\n")
@@ -258,7 +249,7 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 		if strings.EqualFold(strings.TrimSpace(edit.Command), consolidationArchive) && !canArchive {
 			continue
 		}
-		key, content, source, reason := applyConsolidationEdit(edit, slots, current, working, turns, turnIDs)
+		key, content, source, reason := applyConsolidationEdit(edit, current, working, turns, turnIDs)
 		archiving := strings.EqualFold(strings.TrimSpace(edit.Command), consolidationArchive)
 		if reason == "" && !archiving && supersededByLaterConversation(current[key], job.ConversationID, source) {
 			reason = "another conversation changed the file after this turn; the newer statement wins"
@@ -320,21 +311,13 @@ func (r *Runner) consolidateAndApply(ctx context.Context, job *agentmemory.Agent
 // applyConsolidationEdit checks one edit against the file as earlier edits
 // left it and returns the file's new content and evidence turn, or why the
 // edit was skipped.
-func applyConsolidationEdit(edit consolidationEdit, slots []agentmemory.RuntimeSlot, current map[string]agentmemory.SlotValueResponse, working map[string]string, turns []completedTurn, turnIDs map[string]struct{}) (string, string, *completedTurn, string) {
+func applyConsolidationEdit(edit consolidationEdit, current map[string]agentmemory.SlotValueResponse, working map[string]string, turns []completedTurn, turnIDs map[string]struct{}) (string, string, *completedTurn, string) {
 	path := strings.TrimSpace(edit.Path)
-	var slot agentmemory.RuntimeSlot
-	found := false
-	for _, candidate := range slots {
-		if candidate.Enabled && blockPath(candidate.Key) == path {
-			slot, found = candidate, true
-		}
+	key := strings.TrimSuffix(strings.TrimPrefix(path, "/user/"), ".md")
+	if !agentmemory.ValidMemoryKey(key) || blockPath(key) != path {
+		return "", "", nil, "invalid memory file path"
 	}
-	if !found {
-		return "", "", nil, "unknown memory file"
-	}
-	if !automaticWritesAllowed(slot) {
-		return "", "", nil, "the file takes no automatic edits"
-	}
+	slot := agentmemory.RuntimeSlot{Key: key}
 	if strings.ToLower(strings.TrimSpace(edit.Command)) == consolidationArchive {
 		return archiveConsolidationEdit(edit, slot, current, working, turns)
 	}
@@ -385,15 +368,35 @@ func applyConsolidationEdit(edit consolidationEdit, slots []agentmemory.RuntimeS
 		return "", "", nil, "unsupported command"
 	}
 	content = strings.TrimSpace(content)
-	if content == "" || utf8.RuneCountInString(content) > slot.MaxChars {
-		return "", "", nil, "file would be empty or over its limit"
+	if content == "" {
+		return "", "", nil, "file would be empty"
 	}
-	sensitive := agentmemory.ContainsSensitiveContent(added)
-	if agentmemory.DescriptionAllowsContact(slot.Description) {
-		sensitive = agentmemory.ContainsSecretContent(added)
+	if consolidatedTotal(slot.Key, content, current, working) > agentmemory.MaxMemoryChars {
+		return "", "", nil, "memory would be over its limit"
 	}
-	if sensitive {
+	if agentmemory.ContainsSensitiveContent(added) {
 		return "", "", nil, "sensitive content"
 	}
 	return slot.Key, content, source, ""
+}
+
+// consolidatedTotal is the size of all memory files with key holding content.
+func consolidatedTotal(key, content string, current map[string]agentmemory.SlotValueResponse, working map[string]string) int {
+	total := utf8.RuneCountInString(content)
+	for name, value := range current {
+		if name == key {
+			continue
+		}
+		saved := strings.TrimSpace(value.Content)
+		if edited, ok := working[name]; ok {
+			saved = edited
+		}
+		total += utf8.RuneCountInString(saved)
+	}
+	for name, edited := range working {
+		if _, saved := current[name]; !saved && name != key {
+			total += utf8.RuneCountInString(edited)
+		}
+	}
+	return total
 }

@@ -2,7 +2,6 @@ package agentmemoryruntime
 
 import (
 	"errors"
-	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 )
@@ -34,14 +33,4 @@ func ErrorCode(err error) string {
 
 func ValidationError(err error) bool {
 	return ErrorCode(err) == "invalid_arguments"
-}
-
-func findEnabledSlot(slots []Slot, key string) (Slot, bool) {
-	key = strings.TrimSpace(key)
-	for _, slot := range slots {
-		if slot.Enabled && strings.TrimSpace(slot.Key) == key {
-			return slot, true
-		}
-	}
-	return Slot{}, false
 }

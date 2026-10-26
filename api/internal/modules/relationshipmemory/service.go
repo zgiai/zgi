@@ -422,6 +422,11 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 				return ErrCapacityExceeded
 			}
 		}
+		if req.Contract.DefinitionMode == "files" {
+			if err := s.checkFilesTotal(ctx, tx, relationshipID, req.Key, req.Content); err != nil {
+				return err
+			}
+		}
 		nextRevision := currentRevision + 1
 		lastOperationID := operationID
 		definitionID, err := definitionIDFor(ctx, tx, &relationship, req.Key)
@@ -501,6 +506,17 @@ func validateMutation(req PutItemRequest) error {
 	}
 	if (normalizedSourceKind(req.Metadata.SourceKind) == SourceAutomatic || strings.EqualFold(strings.TrimSpace(req.Metadata.ActorType), "model")) && !req.Metadata.EvidenceFromUserInput {
 		return fmt.Errorf("%w: current-user evidence is required", ErrPolicyRejected)
+	}
+	// Agent memory files (ADR 0017) take any valid name; one user's files
+	// together are bounded, which PutItem checks against the stored files.
+	if req.Contract.DefinitionMode == "files" {
+		if !agentmemory.ValidMemoryKey(req.Key) || req.Content == "" || utf8.RuneCountInString(req.Content) > agentmemory.MaxMemoryChars {
+			return fmt.Errorf("%w: invalid file name or content length", ErrPolicyRejected)
+		}
+		if agentmemory.ContainsSensitiveContent(req.Content) {
+			return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+		}
+		return nil
 	}
 	// Agent blocks are bounded by their own limit, up to the largest a block
 	// may be configured with; Digital Human items keep the fixed limit.
@@ -1047,7 +1063,7 @@ func (s *Service) ScheduleExtraction(ctx context.Context, req ScheduleRequest) (
 }
 
 func consumerTypeForContract(contract ConsumerMemoryContract) string {
-	if contract.DefinitionMode == "slots" {
+	if contract.DefinitionMode == "slots" || contract.DefinitionMode == "files" {
 		return ConsumerAgent
 	}
 	if contract.DefinitionMode == "dynamic" {

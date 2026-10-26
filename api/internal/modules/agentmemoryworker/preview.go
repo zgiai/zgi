@@ -3,6 +3,7 @@ package agentmemoryworker
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,10 +25,9 @@ type PreviewTurn struct {
 }
 
 type PreviewRequest struct {
-	Slots        []agentmemory.RuntimeSlot
 	Instructions string
 	Turns        []PreviewTurn
-	// Current is the memory before the conversation, by block key.
+	// Current is the memory before the conversation, by file name.
 	Current map[string]string
 	// Provider and Model choose the model when no consolidation model is
 	// configured for the deployment.
@@ -85,13 +85,11 @@ func Preview(ctx context.Context, client llmclient.LLMClient, req PreviewRequest
 			CompletedAt: now, ModelProvider: req.Provider, ModelName: req.Model,
 		})
 	}
-	values := make([]agentmemory.SlotValueResponse, 0, len(req.Slots))
-	for _, slot := range req.Slots {
-		values = append(values, agentmemory.SlotValueResponse{
-			SlotResponse: agentmemory.SlotResponse{Key: slot.Key, Description: slot.Description, MaxChars: slot.MaxChars, ReadOnly: slot.ReadOnly, AutoWrite: !slot.ManualOnly},
-			Content:      strings.TrimSpace(req.Current[slot.Key]),
-		})
+	values := make([]agentmemory.SlotValueResponse, 0, len(req.Current))
+	for key, content := range req.Current {
+		values = append(values, agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: strings.TrimSpace(key)}, Content: strings.TrimSpace(content)})
 	}
+	slots := agentmemory.FileSlots(values)
 	runner := &Runner{llmClient: client}
 	appContext := req.AppContext
 	if appContext != nil {
@@ -99,7 +97,7 @@ func Preview(ctx context.Context, client llmclient.LLMClient, req PreviewRequest
 		copied.ModelUseCase, copied.SuppressInvocationContent = consolidationUseCase, true
 		appContext = &copied
 	}
-	edits, err := runner.consolidate(ctx, appContext, turns, req.Slots, values, req.Instructions)
+	edits, err := runner.consolidate(ctx, appContext, turns, slots, values, req.Instructions)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +113,7 @@ func Preview(ctx context.Context, client llmclient.LLMClient, req PreviewRequest
 			Command: edit.Command, Path: edit.Path, Text: edit.Text, OldText: edit.OldText, NewText: edit.NewText,
 			Content: edit.Content, Evidence: edit.Evidence, Reason: edit.Reason, Status: "accepted",
 		}
-		key, content, _, rejection := applyConsolidationEdit(edit, req.Slots, current, working, turns, map[string]struct{}{})
+		key, content, _, rejection := applyConsolidationEdit(edit, current, working, turns, map[string]struct{}{})
 		if rejection != "" {
 			outcome.Status, outcome.Rejection = "rejected", rejection
 		} else {
@@ -123,13 +121,23 @@ func Preview(ctx context.Context, client llmclient.LLMClient, req PreviewRequest
 		}
 		result.Edits = append(result.Edits, outcome)
 	}
-	for _, slot := range req.Slots {
-		before := current[slot.Key].Content
-		after, changed := working[slot.Key]
+	keys := make([]string, 0, len(current)+len(working))
+	for key := range current {
+		keys = append(keys, key)
+	}
+	for key := range working {
+		if _, saved := current[key]; !saved {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		before := strings.TrimSpace(current[key].Content)
+		after, changed := working[key]
 		if !changed {
 			after = before
 		}
-		result.Files = append(result.Files, PreviewFile{Key: slot.Key, Path: blockPath(slot.Key), Before: before, After: after})
+		result.Files = append(result.Files, PreviewFile{Key: key, Path: blockPath(key), Before: before, After: after})
 	}
 	return result, nil
 }

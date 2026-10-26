@@ -8,10 +8,9 @@ import (
 )
 
 func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error) {
-	if !req.Enabled || len(enabledSlots(req.Slots)) == 0 {
+	if !req.Enabled {
 		return ContextResult{SystemPrompt: req.SystemPrompt}, nil
 	}
-	slots := enabledSlots(req.Slots)
 	metadata := map[string]interface{}{
 		"agent_memory": map[string]interface{}{
 			"enabled":        true,
@@ -27,7 +26,6 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 		UserScope:          strings.TrimSpace(req.UserScope),
 		ConfigScope:        strings.TrimSpace(req.ConfigScope),
 		ConfigRevision:     strings.TrimSpace(req.ConfigRevision),
-		EnabledSlots:       slots,
 		ContextStatus:      "skipped_scope",
 	}
 	if req.MemoryService == nil || req.WorkspaceID == zeroUUID || req.AgentID == zeroUUID {
@@ -62,7 +60,7 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
 	state.MemoryEpoch = &epoch
-	values, err := req.MemoryService.ReadUserMemory(ctx, req.WorkspaceID, req.AgentID, RuntimeSlots(slots), req.UserScope, req.UserID)
+	values, err := req.MemoryService.ReadUserMemory(ctx, req.WorkspaceID, req.AgentID, nil, req.UserScope, req.UserID)
 	if err != nil {
 		state.ContextStatus = "error"
 		metadata["agent_memory"] = map[string]interface{}{
@@ -74,6 +72,7 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
 	state.SavedValues = append([]agentmemory.SlotValueResponse(nil), values...)
+	state.EnabledSlots = FileSlotsOf(values)
 	state.ContextStatus = "success"
 	rendered, injected := Render(values, req.Budget)
 	metadata["agent_memory"] = map[string]interface{}{
@@ -90,12 +89,12 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 	return ContextResult{SystemPrompt: req.SystemPrompt, Context: rendered, Metadata: metadata, State: state}, nil
 }
 
-func enabledSlots(input []Slot) []Slot {
-	out := make([]Slot, 0, len(input))
-	for _, slot := range input {
-		if slot.Enabled {
-			out = append(out, slot)
-		}
+// FileSlotsOf describes the user's memory files as slots.
+func FileSlotsOf(values []agentmemory.SlotValueResponse) []Slot {
+	files := agentmemory.FileSlots(values)
+	out := make([]Slot, 0, len(files))
+	for _, file := range files {
+		out = append(out, Slot{Key: file.Key, Name: file.Name, MaxChars: file.MaxChars, Enabled: true, SortOrder: file.SortOrder})
 	}
 	return out
 }

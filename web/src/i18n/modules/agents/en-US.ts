@@ -2101,8 +2101,6 @@ const messages = {
       memoryRevisionChanged:
         'Memory settings changed elsewhere. Your draft was kept; refresh and review it before saving again.',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
-      fixMemorySlotsBeforeSave: 'Fix memory block IDs before saving.',
-      fixMemorySlotsBeforePublish: 'Fix memory block IDs before publishing.',
       systemPromptTooLongBeforeSave:
         'Shorten the system prompt to {limit} characters or less before saving.',
       systemPromptTooLongBeforePublish:
@@ -2553,44 +2551,28 @@ const messages = {
     memory: {
       agentTitle: 'Memory',
       agentDescription:
-        'Define what the Agent should remember for each user. Each memory block has a stable ID and an optional display name.',
+        'Let the Agent remember what matters about each user across conversations. It decides what to keep and organizes the memory itself; the instructions below say what this Agent should remember.',
       autoExtractionTitle: 'Organize and update memory automatically',
       autoExtractionDescription:
         'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
-      emptySlots: 'No memory blocks configured yet.',
-      addSlot: 'Add memory block',
-      addCustomSlot: 'Custom block',
-      applyTemplate: 'Apply template',
-      addDialogTitle: 'Add memory block',
-      addDialogDescription:
-        'Set an optional display name, a stable ID, and instructions for this memory block.',
-      addDialogConfirm: 'Add block',
-      addDialogCancel: 'Cancel',
-      maxItemsReached: 'Up to 10 memory blocks',
-      removeSlot: 'Remove memory block',
-      viewValues: 'View memory',
-      nameLabel: 'Block name (optional)',
-      nameHelp:
-        'Helps people identify this block. The block ID is shown when left blank. Up to 80 characters.',
-      keyLabel: 'Block ID',
-      keyHelp: 'Stable identifier used by the Agent. It is locked after the block is saved.',
-      keyLockedHelp:
-        'This block ID has been saved and cannot be changed. Delete it and create a new block to use another ID.',
-      idValue: 'ID: {id}',
-      descriptionLabel: 'Description',
-      descriptionHelp:
-        'Tell the model what this memory type should store, what it should not, and when to update it; an example helps. Up to 1,000 characters.',
-      limitLabel: 'Character limit',
-      readOnlyLabel: 'Read-only',
-      readOnlyHelp: 'The Agent can read it; only you and the user can change it.',
-      autoWriteLabel: 'Automatic writes',
-      autoWriteHelp: 'When off, it changes only when the user asks.',
+      applyTemplate: 'Use a template',
+      templateDialogTitle: 'Memory templates',
+      templateDialogDescription:
+        'Start from memory instructions written for a common scenario, then adjust them.',
+      templatesLoading: 'Loading templates…',
+      templateUse: 'Use these instructions',
+      templateApplied: 'Memory instructions filled in from the template',
+      templateReplaceConfirmTitle: 'Replace the current instructions?',
+      templateReplaceConfirmDescription:
+        'Your current memory instructions will be replaced by the template.',
+      templateReplaceConfirmAction: 'Replace',
+      templateReplaceConfirmCancel: 'Cancel',
       instructionsLabel: 'Memory instructions (optional)',
       instructionsPlaceholder:
         "For example: This is a support assistant. Remember the customer's plan and communication preferences; do not record how a single ticket was handled.",
       instructionsHelp:
-        'Describe what this Agent should remember and what it should not. It guides the model but cannot override evidence, sensitive-content, or other safety rules. Up to 2,000 characters.',
-      templatesLoading: 'Loading templates…',
+        'Describe what this Agent should remember about each user and what it should not. The Agent organizes the memory itself. Instructions cannot override evidence, sensitive-content, or other safety rules. Up to 2,000 characters.',
+      viewValues: 'View memory',
       preview: {
         open: 'Preview',
         title: 'Preview memory',
@@ -2611,40 +2593,6 @@ const messages = {
         evidence: 'Evidence: {evidence}',
         rejection: 'Reason: {reason}',
         empty: '(empty)',
-      },
-      slotKeyPlaceholder: 'memory_key',
-      slotNamePlaceholder: 'For example: Answer preferences',
-      slotDescriptionPlaceholder: 'Describe what this memory block stores',
-      maxChars: 'Maximum characters',
-      maxCharsHelp: 'Limit the content length for this memory block.',
-      templateDialogTitle: 'Memory templates',
-      templateDialogDescription:
-        'Apply a built-in block set, or add individual blocks from a template.',
-      templateMerge: 'Merge template',
-      templateReplace: 'Replace current blocks',
-      templateApplied: 'Memory template applied',
-      templateReplaceApplied: 'Memory template replaced current blocks',
-      templateSlotAdded: 'Memory block added',
-      templateAddSlot: 'Add',
-      templateSlotExists: 'Added',
-      templateTooMany: 'An Agent can have up to 10 memory blocks. Remove one first.',
-      templateSlotCount: '{count} blocks',
-      templateReplaceConfirmTitle: 'Replace memory blocks?',
-      templateReplaceConfirmDescription:
-        'This replaces the current memory blocks with the selected template. The Agent stops using content saved in removed blocks.',
-      templateReplaceConfirmAction: 'Replace',
-      templateReplaceConfirmCancel: 'Cancel',
-      deleteConfirmTitle: 'Delete memory block?',
-      deleteConfirmDescription:
-        'After this Agent is published, it stops reading and writing this block. Content users already saved is kept, and they can still view and delete it.',
-      deleteConfirmAction: 'Delete block',
-      deleteConfirmCancel: 'Cancel',
-      validation: {
-        required: 'Block ID is required.',
-        pattern:
-          'Use lowercase letters, numbers, and underscores. The block ID must start with a letter.',
-        duplicate: 'This block ID is already used.',
-        too_many: 'An Agent can have up to 10 memory blocks.',
       },
     },
     memoryValues: {

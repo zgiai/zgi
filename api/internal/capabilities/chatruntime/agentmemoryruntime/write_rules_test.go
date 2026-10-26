@@ -4,45 +4,40 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 )
 
-func TestMemoryEditFollowsBlockWriteRules(t *testing.T) {
+// The model names memory files itself (ADR 0017): a new name creates a
+// file, a malformed path is rejected, and all files together stay within
+// the total limit.
+func TestMemoryEditCreatesFilesWithinTheTotalLimit(t *testing.T) {
 	service := &fakeMemoryService{}
-	request := editRequest(service)
+	full := blockValue("notes", "", strings.Repeat("x", agentmemory.MaxMemoryChars-10))
+	request := editRequest(service, full)
 	request.ProactiveAllowed = true
-	request.Slots = []Slot{
-		{Key: "profile", Description: "Stable facts.", MaxChars: 200, Enabled: true},
-		{Key: "persona", Description: "Set by the builder.", MaxChars: 200, Enabled: true, ReadOnly: true},
-		{Key: "contact", Description: "Callback number.", MaxChars: 200, Enabled: true, ManualOnly: true},
-	}
 
-	// A read-only file can be viewed but is not offered to memory_edit.
-	tools := FileTools(request.Slots, true, false)
-	raw, _ := json.Marshal(tools[0].Function.Parameters)
-	if strings.Contains(string(raw), "/user/persona.md") {
-		t.Fatalf("memory_edit offers the read-only file: %s", raw)
-	}
-	raw, _ = json.Marshal(tools[1].Function.Parameters)
-	if !strings.Contains(string(raw), "/user/persona.md") {
-		t.Fatalf("memory_view hides the read-only file: %s", raw)
+	raw, _ := json.Marshal(FileTools(true, false)[0].Function.Parameters)
+	if strings.Contains(string(raw), `"enum":["/user/`) {
+		t.Fatalf("memory_edit still limits paths to a list: %s", raw)
 	}
 
 	result := ExecuteEdits(t.Context(), request, edits(t,
-		map[string]interface{}{"command": "insert", "path": "/user/persona.md", "text": "x", "evidence": "我搬到杭州了", "mode": "explicit"},
-		map[string]interface{}{"command": "insert", "path": "/user/contact.md", "text": "住在杭州", "evidence": "我搬到杭州了", "mode": "proactive"},
-		map[string]interface{}{"command": "insert", "path": "/user/contact.md", "text": "搬到杭州", "evidence": "我搬到杭州了", "mode": "explicit"},
-		map[string]interface{}{"command": "insert", "path": "/user/profile.md", "text": "住在杭州", "evidence": "我搬到杭州了", "mode": "proactive"},
+		map[string]interface{}{"command": "insert", "path": "/user/home_city.md", "text": "杭州", "evidence": "我搬到杭州了", "mode": "explicit"},
+		map[string]interface{}{"command": "insert", "path": "/user/Home City.md", "text": "杭州", "evidence": "我搬到杭州了", "mode": "explicit"},
+		map[string]interface{}{"command": "insert", "path": "/user/travel.md", "text": "搬到杭州了，以后常去西湖边走走", "evidence": "我搬到杭州了", "mode": "proactive"},
 	))
 	outcomes := result.Result["edits"].([]EditOutcome)
-	for index, want := range []string{"rejected", "rejected", "accepted", "accepted"} {
+	for index, want := range []string{"accepted", "rejected", "rejected"} {
 		if outcomes[index].Status != want {
 			t.Fatalf("edit %d = %+v, want %s", index, outcomes[index], want)
 		}
 	}
-
-	// With only read-only files, there is nothing for memory_edit to do.
-	if tools := FileTools([]Slot{{Key: "persona", Enabled: true, ReadOnly: true}}, true, false); len(tools) != 1 || tools[0].Function.Name != ToolMemoryView {
-		t.Fatalf("read-only files gave tools %+v", tools)
+	if !strings.Contains(outcomes[2].Reason, "over its limit") {
+		t.Fatalf("over-limit edit reason = %q", outcomes[2].Reason)
+	}
+	if len(service.request.Operations) != 1 || service.request.Operations[0].Key != "home_city" {
+		t.Fatalf("operations = %+v, want one new file home_city", service.request.Operations)
 	}
 }
 

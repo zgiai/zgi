@@ -441,7 +441,6 @@ func TestCreateAgentPublishedVersionRechecksRevisionAfterConfigLock(t *testing.T
 		uuid.NewString(),
 		staleRevision,
 		false,
-		nil,
 	)
 	var bindingErr *agentBindingAPIError
 	if !errors.As(err, &bindingErr) || bindingErr.Code != agentBindingRevisionConflictCode {

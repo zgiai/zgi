@@ -23,18 +23,15 @@ import (
 )
 
 const (
-	ProviderID                   = "agent_management"
-	ToolListAgents               = "list_agents"
-	ToolGetAgent                 = "get_agent"
-	ToolCreateAgent              = "create_agent"
-	ToolUpdateAgentIdentity      = "update_agent_identity"
-	ToolDeleteAgent              = "delete_agent"
-	ToolDeleteAgents             = "delete_agents"
-	ToolGetAgentConfig           = "get_agent_config"
-	ToolUpdateAgentConfig        = "update_agent_config"
-	ToolReplaceAgentMemoryBlocks = "replace_agent_memory_blocks"
-	// ToolReplaceAgentMemorySlots is the name before ADR 0016, still accepted.
-	ToolReplaceAgentMemorySlots              = "replace_agent_memory_slots"
+	ProviderID                               = "agent_management"
+	ToolListAgents                           = "list_agents"
+	ToolGetAgent                             = "get_agent"
+	ToolCreateAgent                          = "create_agent"
+	ToolUpdateAgentIdentity                  = "update_agent_identity"
+	ToolDeleteAgent                          = "delete_agent"
+	ToolDeleteAgents                         = "delete_agents"
+	ToolGetAgentConfig                       = "get_agent_config"
+	ToolUpdateAgentConfig                    = "update_agent_config"
 	ToolListAgentSkillCandidates             = "list_agent_skill_candidates"
 	ToolListAgentKnowledgeCandidates         = "list_agent_knowledge_candidates"
 	ToolListAgentDatabaseCandidates          = "list_agent_database_candidates"
@@ -145,8 +142,6 @@ func NewProvider(agentsService interfaces.AgentsService, workspacePerms Workspac
 	provider.RegisterTool(newDeleteAgentsTool(agentsService))
 	provider.RegisterTool(newGetAgentConfigTool(agentsService))
 	provider.RegisterTool(newUpdateAgentConfigToolWithManagedFiles(agentsService, availableModels, provider.managedFiles, workspacePerms))
-	provider.RegisterTool(newReplaceAgentMemoryBlocksTool(agentsService))
-	provider.RegisterToolAlias(ToolReplaceAgentMemorySlots, ToolReplaceAgentMemoryBlocks)
 	provider.RegisterTool(newListAgentSkillCandidatesTool(agentsService))
 	provider.RegisterTool(newListAgentKnowledgeCandidatesTool(agentsService))
 	provider.RegisterTool(newListAgentDatabaseCandidatesTool(agentsService))
@@ -190,7 +185,6 @@ type resolvedSystemPromptMutation struct {
 	Characters int
 	Request    *dto.AgentSystemPromptPatchRequest
 }
-type replaceAgentMemoryBlocksTool struct{ agentToolBase }
 type listAgentSkillCandidatesTool struct{ agentToolBase }
 type listAgentKnowledgeCandidatesTool struct{ agentToolBase }
 type listAgentDatabaseCandidatesTool struct{ agentToolBase }
@@ -329,6 +323,7 @@ func newUpdateAgentConfigToolWithManagedFiles(agentsService interfaces.AgentsSer
 			objectParameter("model_parameters", "Model parameters", "Optional replacement model parameter object.", false),
 			stringArrayParameter("enabled_skill_ids", "Enabled skill IDs", "Optional full list of enabled user-selectable skill IDs.", false),
 			boolParameter("agent_memory_enabled", "Agent memory enabled", "Optional Agent memory switch.", false),
+			stringParameter("agent_memory_instructions", "Agent memory instructions", "Optional replacement memory instructions: what the Agent should remember about each user and what it should not, up to 2000 characters. The Agent organizes its memory files itself. Use an empty string to clear them.", false),
 			boolParameter("file_upload_enabled", "File upload enabled", "Optional file upload switch.", false),
 			stringParameter("home_title", "Home title", "Optional Agent home title.", false),
 			stringParameter("opening_statement", "Opening statement", "Optional Markdown landing guide shown before the first message.", false),
@@ -350,19 +345,6 @@ func newUpdateAgentConfigToolWithManagedFiles(agentsService interfaces.AgentsSer
 			objectParameter("display_names", "Display names", "Optional evidence-only display names for governance cards and event summaries. Supports skills, knowledge_bases, database_tables, and workflows.", false),
 		},
 	), agentsService, workspacePerms, availableModels), managedFiles: managedFiles}
-}
-
-func newReplaceAgentMemoryBlocksTool(agentsService interfaces.AgentsService) tools.Tool {
-	return &replaceAgentMemoryBlocksTool{agentToolBase: newAgentToolBase(agentToolEntity(
-		ToolReplaceAgentMemoryBlocks,
-		"Replace Agent Memory Blocks",
-		"Replace the complete draft Agent memory block list for one resolved AGENT asset. Use together with update_agent_config when enabling or disabling Agent memory.",
-		"database",
-		[]tools.ToolParameter{
-			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
-			stringParameter("agent_memory_blocks", "Agent memory blocks", "Required JSON array replacing all memory blocks. Each item supports key, name, description, max_chars, enabled, read_only, auto_write, and optional sort_order. Use [] to clear blocks.", true),
-		},
-	), agentsService, nil, nil)}
 }
 
 func newListAgentSkillCandidatesTool(agentsService interfaces.AgentsService) tools.Tool {
@@ -1602,49 +1584,6 @@ func agentModelHintTokenIsGeneric(token string) bool {
 	default:
 		return false
 	}
-}
-
-func (t *replaceAgentMemoryBlocksTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
-	_ = conversationID
-	_ = appID
-	_ = messageID
-	scope, err := t.scope(userID)
-	if err != nil {
-		return nil, err
-	}
-	agentID := t.resolveAgentID(ctx, scope, params)
-	if agentID == "" {
-		return nil, fmt.Errorf("agent_id is required")
-	}
-	slots, ok, err := agentMemorySlotsParam(params, "agent_memory_blocks", "agent_memory_slots", "blocks", "slots")
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("agent_memory_blocks is required")
-	}
-	updated, err := t.agentsService.ReplaceAgentMemorySlots(t.scopedContext(ctx, scope), agentID, scope.AccountID, slots)
-	if err != nil {
-		return nil, err
-	}
-	payload := map[string]interface{}{
-		"status":             "completed",
-		"effect":             "updated",
-		"agent_id":           agentID,
-		"href":               "/console/agents/" + agentID + "/agent",
-		"agent_memory_slots": updated,
-		"config": map[string]interface{}{
-			"agent_memory_slots": updated,
-		},
-		"agent": map[string]interface{}{
-			"id":   agentID,
-			"href": "/console/agents/" + agentID + "/agent",
-		},
-	}
-	if scope.WorkspaceID != "" {
-		payload["workspace_id"] = scope.WorkspaceID
-	}
-	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
 }
 
 func (t *listAgentSkillCandidatesTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
@@ -2981,10 +2920,6 @@ func (t *updateAgentConfigTool) ForkToolRuntime(runtime *tools.ToolRuntime) tool
 	return &updateAgentConfigTool{agentToolBase: t.forkAgentToolBase(runtime), managedFiles: t.managedFiles}
 }
 
-func (t *replaceAgentMemoryBlocksTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
-	return &replaceAgentMemoryBlocksTool{agentToolBase: t.forkAgentToolBase(runtime)}
-}
-
 func (t *listAgentSkillCandidatesTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	return &listAgentSkillCandidatesTool{agentToolBase: t.forkAgentToolBase(runtime)}
 }
@@ -3105,6 +3040,10 @@ func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]
 	if value, ok := boolParam(params, "agent_memory_enabled"); ok {
 		req.AgentMemoryEnabled = value
 		changedFields = append(changedFields, "agent_memory_enabled")
+	}
+	if value, ok := params["agent_memory_instructions"].(string); ok {
+		req.AgentMemoryInstructions = strings.TrimSpace(value)
+		changedFields = append(changedFields, "agent_memory_instructions")
 	}
 	if value, ok := boolParam(params, "file_upload_enabled"); ok {
 		req.FileUpload = value
@@ -3753,6 +3692,8 @@ func agentConfigFieldActuallyChanged(before dto.AgentConfigResponse, after dto.A
 		return !agentConfigStringSetsEqual(before.EnabledSkillIDs, after.EnabledSkillIDs)
 	case "agent_memory_enabled":
 		return before.AgentMemoryEnabled != after.AgentMemoryEnabled
+	case "agent_memory_instructions":
+		return before.AgentMemoryInstructions != after.AgentMemoryInstructions
 	case "file_upload_enabled":
 		return before.FileUpload != after.FileUpload
 	case "home_title":
@@ -3848,6 +3789,7 @@ func agentConfigWrapperKeys() []string {
 		"add_enabled_skill_ids",
 		"remove_enabled_skill_ids",
 		"agent_memory_enabled",
+		"agent_memory_instructions",
 		"file_upload_enabled",
 		"home_title",
 		"opening_statement",

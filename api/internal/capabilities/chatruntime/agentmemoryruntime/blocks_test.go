@@ -19,10 +19,11 @@ func TestMemoryBlocksShowEveryFileAndNeverDropOneSilently(t *testing.T) {
 		blockValue("project_context", "Ongoing work.", "Blood type O."),
 	}
 
-	// Everything fits: every file appears with its path, size, and description, the empty one included.
+	// Everything fits: every file appears with its path and size, and the
+	// memory reports how full it is.
 	rendered, metadata := Render(values, 8000)
-	for _, want := range []string{`<file path="/user/profile.md" owner="user" chars="800/2000">`, `<file path="/user/preferences.md" owner="user" chars="0/2000">`,
-		"<description>How the user likes answers.</description>", "Blood type O.", "untrusted user context"} {
+	for _, want := range []string{`<memory used="1613/10000">`, `<file path="/user/profile.md" owner="user" chars="800">`, `<file path="/user/preferences.md" owner="user" chars="0">`,
+		"Blood type O.", "untrusted user context"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered blocks lack %q:\n%s", want, rendered)
 		}
@@ -36,7 +37,7 @@ func TestMemoryBlocksShowEveryFileAndNeverDropOneSilently(t *testing.T) {
 	if !strings.Contains(rendered, "[truncated: the rest of this file did not fit the context budget]") {
 		t.Fatalf("no truncation marker:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, `<file path="/user/project_context.md" owner="user" chars="13/2000" omitted="context budget" />`) {
+	if !strings.Contains(rendered, `<file path="/user/project_context.md" owner="user" chars="13" omitted="context budget" />`) {
 		t.Fatalf("the file after the cut is not listed:\n%s", rendered)
 	}
 	if len(rendered) > 0 && len([]rune(rendered)) > 2100 {
