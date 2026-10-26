@@ -60,7 +60,7 @@
       "visibility": "internal"
     }
   ],
-  "memory_instructions": "记录客户反馈的产品问题、我们承诺的修复和截止时间。不要记录寒暄、天气、闲聊，也不要记录客户的个人生活细节，比如度假、运动和爱好。",
+  "memory_instructions": "记录客户反馈的产品问题、我们承诺的修复和截止时间，也记录客户提到正在用或用过的竞品及其价格。不要记录寒暄、天气、闲聊，也不要记录客户的个人生活细节，比如度假、运动和爱好。",
   "scenarios": [
     {
       "id": "dh_explicit_user_fact_zh",
@@ -726,6 +726,29 @@
         ]
       },
       "notes": "Run with --auto and --memory-instructions: personal life details are not remembered when the instructions say so."
+    },
+    {
+      "id": "dh_instructions_competitor_zh",
+      "category": "instructions",
+      "difficulty": "hard",
+      "requires_memory_instructions": true,
+      "sessions": [
+        [
+          "我们现在用的是钉钉，每人每月 30 块。你们企业版支持单点登录吗？"
+        ]
+      ],
+      "probe": "我们现在用的是什么产品、多少钱一个人？",
+      "expect": {
+        "memory_in_any": {
+          "notes": [
+            "钉钉"
+          ]
+        },
+        "answer_any": [
+          "钉钉"
+        ]
+      },
+      "notes": "Run with --auto and --memory-instructions: the default proposer has no reason to keep a competitor mentioned in passing; the instructions ask for it, so it should become a note only with them."
     }
   ]
 }
