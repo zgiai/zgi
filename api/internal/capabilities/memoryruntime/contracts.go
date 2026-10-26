@@ -16,17 +16,6 @@ import (
 // ownership, scope, fencing, or evidence invariants.
 var ErrInvalidContract = errors.New("invalid memory runtime contract")
 
-// MemoryClass separates the digital human's identity and experience from its
-// durable business knowledge.
-type MemoryClass string
-
-const (
-	// MemoryClassSelf is identity and experience owned directly by the DigitalHuman.
-	MemoryClassSelf MemoryClass = "self"
-	// MemoryClassBusiness is memory partitioned by an explicit business scope.
-	MemoryClassBusiness MemoryClass = "business"
-)
-
 // MemoryType describes the semantic purpose of one memory item.
 type MemoryType string
 
@@ -43,18 +32,6 @@ const (
 	MemoryTypeOpenLoop MemoryType = "open_loop"
 	// MemoryTypeReflection records synthesized observations about prior work.
 	MemoryTypeReflection MemoryType = "reflection"
-)
-
-// MemoryScopeType identifies a business scope inside the owning digital human.
-type MemoryScopeType string
-
-const (
-	// MemoryScopeWorkspace is the owning workspace's shared business scope.
-	MemoryScopeWorkspace MemoryScopeType = "workspace"
-	// MemoryScopeChannel isolates memory for one communication channel.
-	MemoryScopeChannel MemoryScopeType = "channel"
-	// MemoryScopeInstance isolates memory for one end-user instance.
-	MemoryScopeInstance MemoryScopeType = "instance"
 )
 
 // MutationAction describes the requested state transition.
@@ -110,13 +87,6 @@ func MemorySubjectFromRuntime(subject runtimeidentity.SubjectRef) (MemorySubject
 	}, nil
 }
 
-// MemoryScopeRef partitions business memory within the owning digital human.
-// Self memory has no scope and therefore uses a nil MemoryMutation.Scope.
-type MemoryScopeRef struct {
-	Type MemoryScopeType `json:"type"`
-	ID   string          `json:"id"`
-}
-
 // MemoryFence prevents a stale run from writing after configuration or memory
 // ownership has advanced.
 type MemoryFence struct {
@@ -137,13 +107,11 @@ type MemoryEvidence struct {
 type MemoryMutation struct {
 	OperationID uuid.UUID        `json:"operation_id"`
 	Subject     MemorySubjectRef `json:"subject"`
-	// Key is stable within the owning DigitalHuman, memory class, and optional
-	// business scope. It is never derived from the initiating user.
+	// Key is stable within the owning DigitalHuman (ADR 0015: it has one
+	// memory). It is never derived from the initiating user.
 	Key               string           `json:"key"`
 	Action            MutationAction   `json:"action"`
-	Class             MemoryClass      `json:"memory_class"`
 	Type              MemoryType       `json:"memory_type"`
-	Scope             *MemoryScopeRef  `json:"scope,omitempty"`
 	Content           string           `json:"content,omitempty"`
 	ExpectedRevision  int64            `json:"expected_revision"`
 	Fence             MemoryFence      `json:"fence"`
@@ -164,21 +132,6 @@ func ValidateMemorySubjectRef(subject MemorySubjectRef) (MemorySubjectRef, error
 		return MemorySubjectRef{}, fmt.Errorf("%w: subject.workspace_id is required", ErrInvalidContract)
 	}
 	return subject, nil
-}
-
-// ValidateMemoryScopeRef normalizes and validates a business memory scope.
-func ValidateMemoryScopeRef(scope MemoryScopeRef) (MemoryScopeRef, error) {
-	scope.Type = MemoryScopeType(strings.ToLower(strings.TrimSpace(string(scope.Type))))
-	scope.ID = strings.TrimSpace(scope.ID)
-	switch scope.Type {
-	case MemoryScopeWorkspace, MemoryScopeChannel, MemoryScopeInstance:
-	default:
-		return MemoryScopeRef{}, fmt.Errorf("%w: unsupported scope.type %q", ErrInvalidContract, scope.Type)
-	}
-	if scope.ID == "" {
-		return MemoryScopeRef{}, fmt.Errorf("%w: scope.id is required", ErrInvalidContract)
-	}
-	return scope, nil
 }
 
 // ValidateMemoryFence validates stale-write protection values.
@@ -214,30 +167,9 @@ func ValidateMemoryMutation(mutation MemoryMutation) (MemoryMutation, error) {
 	if mutation.Key == "" || len(mutation.Key) > 160 {
 		return MemoryMutation{}, fmt.Errorf("%w: key is required and must not exceed 160 bytes", ErrInvalidContract)
 	}
-	mutation.Class = MemoryClass(strings.ToLower(strings.TrimSpace(string(mutation.Class))))
-	switch mutation.Class {
-	case MemoryClassSelf:
-		if mutation.Scope != nil {
-			return MemoryMutation{}, fmt.Errorf("%w: self memory cannot have a business scope", ErrInvalidContract)
-		}
-	case MemoryClassBusiness:
-		if mutation.Scope == nil {
-			return MemoryMutation{}, fmt.Errorf("%w: business memory requires a scope", ErrInvalidContract)
-		}
-		scope, scopeErr := ValidateMemoryScopeRef(*mutation.Scope)
-		if scopeErr != nil {
-			return MemoryMutation{}, scopeErr
-		}
-		mutation.Scope = &scope
-	default:
-		return MemoryMutation{}, fmt.Errorf("%w: unsupported memory_class %q", ErrInvalidContract, mutation.Class)
-	}
 	mutation.Type = MemoryType(strings.ToLower(strings.TrimSpace(string(mutation.Type))))
 	if !validMemoryType(mutation.Type) {
 		return MemoryMutation{}, fmt.Errorf("%w: unsupported memory_type %q", ErrInvalidContract, mutation.Type)
-	}
-	if mutation.Type == MemoryTypeIdentity && mutation.Class != MemoryClassSelf {
-		return MemoryMutation{}, fmt.Errorf("%w: identity memory must use self class", ErrInvalidContract)
 	}
 	mutation.Content = strings.TrimSpace(mutation.Content)
 	if mutation.Action == MutationActionUpsert && mutation.Content == "" {

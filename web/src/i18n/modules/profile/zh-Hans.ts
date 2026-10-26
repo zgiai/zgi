@@ -36,6 +36,7 @@ const messages: ProfileMessages = {
     digitalHuman: '数字人',
     active: '使用中',
     archived: '已归档',
+    tabs: { memory: '记忆' },
     items: '条记忆',
     loadFailed: '记忆加载失败',
     retry: '重试',

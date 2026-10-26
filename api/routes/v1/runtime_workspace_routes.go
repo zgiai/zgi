@@ -514,6 +514,48 @@ func RegisterRuntimeWorkspaceManagementRoutes(router *gin.RouterGroup, db *gorm.
 		}
 		response.Success(c, gin.H{"items": panels})
 	}))
+	// The DigitalHuman's notes on the end user (ADR 0015): an operator deletes
+	// one, or promotes it into the DigitalHuman's own memory as internal.
+	note := func(handle func(c *gin.Context, service *digitalhuman.Service, scope digitalhuman.Scope, digitalHumanID, subjectID uuid.UUID, key string, expectedRevision int64)) gin.HandlerFunc {
+		return endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
+			endUserScope, err := service.EndUserDigitalHumans(c.Request.Context(), workspaceID, subjectID)
+			if err != nil {
+				managementFail(c, err)
+				return
+			}
+			digitalHumanID, err := uuid.Parse(c.Param("digital_human_id"))
+			if err != nil {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
+			bound := false
+			for _, binding := range endUserScope.Bindings {
+				bound = bound || binding.AgentID == digitalHumanID
+			}
+			expectedRevision, err := strconv.ParseInt(c.Query("expected_revision"), 10, 64)
+			if !bound || err != nil || expectedRevision < 1 {
+				response.Fail(c, response.ErrInvalidParam)
+				return
+			}
+			scope := digitalhuman.Scope{OrganizationID: endUserScope.OrganizationID, WorkspaceID: workspaceID, ActorID: accountID}
+			handle(c, digitalhuman.NewService(digitalhuman.NewRepository(db)), scope, digitalHumanID, endUserScope.SubjectID, c.Param("key"), expectedRevision)
+		})
+	}
+	scoped.DELETE("/end-users/:subject_id/digital-humans/:digital_human_id/notes/:key", note(func(c *gin.Context, dh *digitalhuman.Service, scope digitalhuman.Scope, digitalHumanID, subjectID uuid.UUID, key string, expectedRevision int64) {
+		if err := dh.DeleteNote(c.Request.Context(), scope, digitalHumanID, subjectID, key, expectedRevision); err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, gin.H{"key": key})
+	}))
+	scoped.POST("/end-users/:subject_id/digital-humans/:digital_human_id/notes/:key/promote", note(func(c *gin.Context, dh *digitalhuman.Service, scope digitalhuman.Scope, digitalHumanID, subjectID uuid.UUID, key string, expectedRevision int64) {
+		result, err := dh.PromoteNote(c.Request.Context(), scope, digitalHumanID, subjectID, key, expectedRevision, uuid.New())
+		if err != nil {
+			managementFail(c, err)
+			return
+		}
+		response.Success(c, result)
+	}))
 	scoped.PATCH("/end-users/:subject_id", endUser(func(c *gin.Context, workspaceID, accountID, subjectID uuid.UUID) {
 		body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
 		if err != nil {

@@ -18,9 +18,7 @@ type MemoryProposalRequest struct {
 	OperationID                uuid.UUID                      `json:"operation_id"`
 	Key                        string                         `json:"key"`
 	Action                     memoryruntime.MutationAction   `json:"action"`
-	MemoryClass                memoryruntime.MemoryClass      `json:"memory_class"`
 	MemoryType                 memoryruntime.MemoryType       `json:"memory_type"`
-	Scope                      *memoryruntime.MemoryScopeRef  `json:"scope,omitempty"`
 	Content                    string                         `json:"content,omitempty"`
 	ExpectedRevision           int64                          `json:"expected_revision"`
 	SupersedesID               *uuid.UUID                     `json:"supersedes_id,omitempty"`
@@ -34,21 +32,31 @@ type MemoryProposalRequest struct {
 	SourceContext              MemorySourceContext            `json:"source_context"`
 	AdminApproved              bool                           `json:"admin_approved"`
 	OccurredAt                 time.Time                      `json:"occurred_at"`
-	// rescope is set only by RescopeMemory. It lets the supersede move a
-	// memory to another class or scope; clients cannot set it.
-	rescope bool
+	// noteInstanceID routes the write to the DigitalHuman's notes on the end
+	// user of this instance (ADR 0015); clients cannot set it.
+	noteInstanceID string
+	// internalOnly is set for writes below operator trust (ADR 0015): they
+	// create internal memories and may change only internal ones.
+	internalOnly    bool
+	origin          MemoryOrigin
+	originChannelID string
+	// noteSourceKind records whether a note write was explicit or automatic
+	// (ADR 0015).
+	noteSourceKind string
 }
 
 type MemoryListQuery struct {
-	Page      int
-	PageSize  int
-	Class     memoryruntime.MemoryClass
-	Type      memoryruntime.MemoryType
-	ScopeType memoryruntime.MemoryScopeType
-	ScopeID   string
-	Status    MemoryStatus
-	Source    string
-	Search    string
+	Page     int
+	PageSize int
+	Type     memoryruntime.MemoryType
+	Status   MemoryStatus
+	Source   string
+	Search   string
+	// Visibility, Origin, and OriginChannelID filter the DigitalHuman's own
+	// memory (ADR 0015).
+	Visibility      MemoryVisibility
+	Origin          MemoryOrigin
+	OriginChannelID string
 }
 
 type MemoryListResult struct {
@@ -58,6 +66,23 @@ type MemoryListResult struct {
 	PageSize int                   `json:"page_size"`
 	HasMore  bool                  `json:"has_more"`
 	State    *MemoryState          `json:"state"`
+	// Facets count the entries of the listed status, whatever the other
+	// filters, by type, visibility, origin, and channel.
+	Facets *MemoryFacets `json:"facets"`
+}
+
+// MemoryFacets count the DigitalHuman's memories by attribute (ADR 0015).
+type MemoryFacets struct {
+	Types      map[string]int64     `json:"types"`
+	Visibility map[string]int64     `json:"visibility"`
+	Origins    map[string]int64     `json:"origins"`
+	Channels   []MemoryChannelFacet `json:"channels"`
+}
+
+// MemoryChannelFacet counts the memories one channel conversation taught.
+type MemoryChannelFacet struct {
+	ID    string `json:"id"`
+	Count int64  `json:"count"`
 }
 
 type MemoryMutationResult struct {

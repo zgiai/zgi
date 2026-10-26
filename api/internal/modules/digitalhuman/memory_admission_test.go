@@ -35,20 +35,23 @@ func TestAdmitMemoryWriteFollowsSourceTrust(t *testing.T) {
 		mode    memoryWriteMode
 		auto    bool
 		allowed bool
-		class   memoryruntime.MemoryClass
-		scope   memoryruntime.MemoryScopeType
 		reason  string
+		// internal and origin are what an admitted write is stamped with.
+		internal bool
+		origin   MemoryOrigin
 	}{
-		{name: "operator explicit", run: trustedRun(SourceTrustAuthorizedOperator, SurfaceConsole), event: manual, mode: memoryWriteExplicit, allowed: true, class: memoryruntime.MemoryClassSelf},
+		{name: "operator explicit", run: trustedRun(SourceTrustAuthorizedOperator, SurfaceConsole), event: manual, mode: memoryWriteExplicit, allowed: true, origin: MemoryOriginOperator},
 		{name: "operator proactive needs auto extraction", run: trustedRun(SourceTrustAuthorizedOperator, SurfaceConsole), event: manual, mode: memoryWriteProactive, reason: memoryAdmissionReasonTrust},
-		{name: "operator proactive", run: trustedRun(SourceTrustAuthorizedOperator, SurfaceConsole), event: manual, mode: memoryWriteProactive, auto: true, allowed: true, class: memoryruntime.MemoryClassSelf},
+		{name: "operator proactive", run: trustedRun(SourceTrustAuthorizedOperator, SurfaceConsole), event: manual, mode: memoryWriteProactive, auto: true, allowed: true, origin: MemoryOriginOperator},
 		{name: "operator background stays excluded", run: trustedRun(SourceTrustAuthorizedOperator, SurfaceConsole), event: manual, mode: memoryWriteBackground, auto: true, reason: memoryAdmissionReasonTrust},
-		{name: "member explicit", run: trustedRun(SourceTrustWorkspaceMember, SurfaceConsole), event: manual, mode: memoryWriteExplicit, auto: true, reason: memoryAdmissionReasonTrust},
+		{name: "member explicit", run: trustedRun(SourceTrustWorkspaceMember, SurfaceConsole), event: manual, mode: memoryWriteExplicit, allowed: true, internal: true, origin: MemoryOriginMember},
+		{name: "member proactive needs auto extraction", run: trustedRun(SourceTrustWorkspaceMember, SurfaceConsole), event: manual, mode: memoryWriteProactive, reason: memoryAdmissionReasonTrust},
+		{name: "member background", run: trustedRun(SourceTrustWorkspaceMember, SurfaceConsole), event: manual, mode: memoryWriteBackground, auto: true, allowed: true, internal: true, origin: MemoryOriginMember},
 		{name: "external explicit", run: trustedRun(SourceTrustExternalEndUser, SurfaceAPI), event: api, mode: memoryWriteExplicit, auto: true, reason: memoryAdmissionReasonTrust},
 		{name: "external background", run: trustedRun(SourceTrustExternalEndUser, SurfaceAPI), event: api, mode: memoryWriteBackground, auto: true, reason: memoryAdmissionReasonTrust},
 		{name: "channel without auto extraction", run: trustedRun(SourceTrustChannelParticipant, SurfaceChannel), event: channelEvent("group"), mode: memoryWriteExplicit, reason: memoryAdmissionReasonTrust},
-		{name: "channel explicit", run: trustedRun(SourceTrustChannelParticipant, SurfaceChannel), event: channelEvent("group"), mode: memoryWriteExplicit, auto: true, allowed: true, class: memoryruntime.MemoryClassBusiness, scope: memoryruntime.MemoryScopeChannel},
-		{name: "channel background", run: trustedRun(SourceTrustChannelParticipant, SurfaceChannel), event: channelEvent("group"), mode: memoryWriteBackground, auto: true, allowed: true, class: memoryruntime.MemoryClassBusiness, scope: memoryruntime.MemoryScopeChannel},
+		{name: "channel explicit", run: trustedRun(SourceTrustChannelParticipant, SurfaceChannel), event: channelEvent("group"), mode: memoryWriteExplicit, auto: true, allowed: true, internal: true, origin: MemoryOriginChannel},
+		{name: "channel background", run: trustedRun(SourceTrustChannelParticipant, SurfaceChannel), event: channelEvent("group"), mode: memoryWriteBackground, auto: true, allowed: true, internal: true, origin: MemoryOriginChannel},
 		{name: "channel without conversation", run: trustedRun(SourceTrustChannelParticipant, SurfaceChannel), event: invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginChannel}}, mode: memoryWriteBackground, auto: true, reason: memoryAdmissionReasonChannelScope},
 	}
 	for _, tc := range cases {
@@ -66,26 +69,25 @@ func TestAdmitMemoryWriteFollowsSourceTrust(t *testing.T) {
 				}
 				return
 			}
-			if got.Class != tc.class {
-				t.Fatalf("class = %s, want %s", got.Class, tc.class)
+			if got.NoteInstanceID != "" || got.InternalOnly != tc.internal || got.Origin != tc.origin {
+				t.Fatalf("admission = %+v, want internal %v origin %s", got, tc.internal, tc.origin)
 			}
-			if tc.scope == "" {
-				if got.Scope != nil {
-					t.Fatalf("unexpected scope %+v", got.Scope)
-				}
-			} else if got.Scope == nil || got.Scope.Type != tc.scope || got.Scope.ID == "" {
-				t.Fatalf("scope = %+v", got.Scope)
+			if tc.origin == MemoryOriginChannel && got.OriginChannelID == "" {
+				t.Fatal("a channel write lost its channel")
 			}
 		})
 	}
 }
 
-func TestChannelMemoryAdmissionScopesEachConversationSeparately(t *testing.T) {
+func TestChannelMemoryAdmissionSharesOneMemoryAndKeepsTheChannel(t *testing.T) {
 	run := trustedRun(SourceTrustChannelParticipant, SurfaceChannel)
 	first := admitMemoryWrite(run, channelEvent("group-a"), memoryWriteExplicit, true)
 	second := admitMemoryWrite(run, channelEvent("group-b"), memoryWriteExplicit, true)
-	if first.Scope == nil || second.Scope == nil || first.Scope.ID == second.Scope.ID {
-		t.Fatalf("conversations share a memory scope: %+v %+v", first.Scope, second.Scope)
+	if first.NoteInstanceID != "" || second.NoteInstanceID != "" || !first.InternalOnly || !second.InternalOnly {
+		t.Fatalf("channels write different memories: %+v %+v", first, second)
+	}
+	if first.OriginChannelID == "" || first.OriginChannelID == second.OriginChannelID {
+		t.Fatalf("the origin does not name the channel: %+v %+v", first, second)
 	}
 }
 
@@ -96,7 +98,7 @@ func TestMemoryToolAvailabilityMirrorsAdmission(t *testing.T) {
 		want  bool
 	}{
 		{SourceTrustAuthorizedOperator, false, true},
-		{SourceTrustWorkspaceMember, true, false},
+		{SourceTrustWorkspaceMember, false, true},
 		{SourceTrustChannelParticipant, false, false},
 		{SourceTrustChannelParticipant, true, true},
 		{SourceTrustExternalEndUser, true, false},
@@ -122,24 +124,17 @@ func TestMemoryReadScopeFiltersMemoriesAndQueries(t *testing.T) {
 	run := trustedRun(SourceTrustChannelParticipant, SurfaceChannel)
 	run.OrganizationID, run.WorkspaceID, run.DigitalHumanID = scope.OrganizationID, scope.WorkspaceID, digitalHumanID
 	event := channelEvent("group-a")
-	ownChannel, _ := runChannelScopeID(run, event)
-	otherChannel, _ := runChannelScopeID(run, channelEvent("group-b"))
-	workspace := scope.WorkspaceID.String()
 
 	rows := map[string]*DigitalHumanMemory{
-		"self":                 {MemoryClass: memoryruntime.MemoryClassSelf},
-		"workspace":            {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeWorkspace, ScopeID: workspace},
-		"workspace-restricted": {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeWorkspace, ScopeID: "other-workspace-key", Visibility: MemoryVisibilityRestricted},
-		"own-channel":          {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: ownChannel.String()},
-		"other-channel":        {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: otherChannel.String()},
-		"project":              {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeType("project"), ScopeID: "project-1"},
+		"everyone": {},
+		"internal": {Visibility: MemoryVisibilityInternal, Origin: MemoryOriginChannel},
 	}
 	now := time.Now().UTC()
 	for key, row := range rows {
 		row.ID, row.OrganizationID, row.WorkspaceID, row.DigitalHumanID = uuid.New(), scope.OrganizationID, scope.WorkspaceID, digitalHumanID
 		row.MemoryKey, row.MemoryType, row.Content, row.Status = key, memoryruntime.MemoryTypeFact, key, MemoryStatusActive
 		if row.Visibility == "" {
-			row.Visibility = MemoryVisibilityWorkspace
+			row.Visibility = MemoryVisibilityEveryone
 		}
 		row.Evidence, row.CreatedAt, row.UpdatedAt = datatypes.JSON(`[]`), now, now
 		if err := repo.db.Create(row).Error; err != nil {
@@ -171,13 +166,17 @@ func TestMemoryReadScopeFiltersMemoriesAndQueries(t *testing.T) {
 			}
 		}
 	}
-	check("channel participant", memoryReadScopeForRun(run, event), "self", "workspace", "own-channel")
+	// Every run inside the team reads all of the DigitalHuman's own memory,
+	// whatever channel it is in; an external end user never sees internal
+	// memory (ADR 0015).
+	check("channel participant", memoryReadScopeForRun(run, event), "everyone", "internal")
+	check("other channel", memoryReadScopeForRun(run, channelEvent("group-b")), "everyone", "internal")
 	operator := trustedRun(SourceTrustAuthorizedOperator, SurfaceConsole)
 	operator.WorkspaceID = scope.WorkspaceID
-	check("console operator", memoryReadScopeForRun(operator, invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginManual}}), "self", "workspace")
+	check("console operator", memoryReadScopeForRun(operator, invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginManual}}), "everyone", "internal")
 	external := trustedRun(SourceTrustExternalEndUser, SurfaceAPI)
 	external.WorkspaceID = scope.WorkspaceID
-	check("external end user", memoryReadScopeForRun(external, invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginAPI}}), "self")
+	check("external end user", memoryReadScopeForRun(external, invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginAPI}}), "everyone")
 
 	all, err := repo.ActiveMemories(t.Context(), scope, digitalHumanID, 50, nil)
 	if err != nil || len(all) != len(rows) {
@@ -185,16 +184,21 @@ func TestMemoryReadScopeFiltersMemoriesAndQueries(t *testing.T) {
 	}
 }
 
-func TestMemoryInWriteTargetMatchesClassAndScope(t *testing.T) {
-	channel := memoryWriteAdmission{Allowed: true, Class: memoryruntime.MemoryClassBusiness, Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeChannel, ID: "a"}}
-	self := memoryWriteAdmission{Allowed: true, Class: memoryruntime.MemoryClassSelf}
-	selfMemory := &DigitalHumanMemory{MemoryClass: memoryruntime.MemoryClassSelf}
-	channelMemory := &DigitalHumanMemory{MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "a"}
-	otherChannel := &DigitalHumanMemory{MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "b"}
-	if !memoryInWriteTarget(selfMemory, self) || memoryInWriteTarget(channelMemory, self) {
-		t.Fatal("self target mismatch")
+func TestMemoryInWriteTargetMatchesNotesAndVisibility(t *testing.T) {
+	instance := memoryWriteAdmission{Allowed: true, NoteInstanceID: "a"}
+	operator := memoryWriteAdmission{Allowed: true}
+	member := memoryWriteAdmission{Allowed: true, InternalOnly: true}
+	everyone := &DigitalHumanMemory{Visibility: MemoryVisibilityEveryone}
+	internal := &DigitalHumanMemory{Visibility: MemoryVisibilityInternal}
+	note := &DigitalHumanMemory{NoteInstanceID: "a"}
+	otherNote := &DigitalHumanMemory{NoteInstanceID: "b"}
+	if !memoryInWriteTarget(everyone, operator) || !memoryInWriteTarget(internal, operator) || memoryInWriteTarget(note, operator) {
+		t.Fatal("operator target mismatch")
 	}
-	if !memoryInWriteTarget(channelMemory, channel) || memoryInWriteTarget(selfMemory, channel) || memoryInWriteTarget(otherChannel, channel) {
-		t.Fatal("channel target mismatch")
+	if memoryInWriteTarget(everyone, member) || !memoryInWriteTarget(internal, member) {
+		t.Fatal("a member may revise only internal memory")
+	}
+	if !memoryInWriteTarget(note, instance) || memoryInWriteTarget(otherNote, instance) || memoryInWriteTarget(internal, instance) {
+		t.Fatal("instance target mismatch")
 	}
 }

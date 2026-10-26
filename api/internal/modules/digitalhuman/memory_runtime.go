@@ -165,7 +165,7 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation belong to this end user's relationship only. They cannot change the DigitalHuman's own self memory or what other users see. If memory is full, update or clear an entry that no longer matters instead of adding one."
 	}
 	if !files && toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
-		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation stay scoped to this conversation. They cannot change the DigitalHuman's own self memory or memory used in other conversations."
+		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation are internal: they are shared with everyone inside the team, in every channel and the console, and external users never see them. Memory that external users see can be changed only by an operator."
 	}
 	if files {
 		if section := p.prepareMemoryFiles(ctx, run, event); section != "" {
@@ -264,7 +264,7 @@ func (p *DefaultMemoryRuntimeProvider) memoryRetrievalTool(run *Run, event invoc
 		if err != nil {
 			return skillloop.RuntimeToolResult{Status: "error", Error: err, Recoverable: true}
 		}
-		result, err := p.retriever.Retrieve(ctx, DigitalHumanMemoryRetrievalRequest{
+		result, err := p.retrieve(ctx, DigitalHumanMemoryRetrievalRequest{
 			Run: run, Event: event, Query: args.Query, TopK: args.TopK, RetrievalMode: args.RetrievalMode,
 		})
 		if err != nil {
@@ -330,8 +330,8 @@ func decodeMemoryRetrievalToolArguments(raw string) (memoryRetrievalToolArgument
 }
 
 // memoryMutationTool exposes the single converged memory write surface. The
-// tool never accepts memory_class or scope fields: the run's trust level
-// decides the class and scope (ADR 0004).
+// tool never accepts visibility or target fields: the run's trust level
+// decides whether a write lands in /me/ or in the person's notes (ADR 0015).
 func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 	run *Run,
 	event invocation.Event,
@@ -390,20 +390,16 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 	args memoryToolArguments,
 	evidenceChecked bool,
 ) skillloop.RuntimeToolResult {
-	memoryClass, memoryScope := memoryruntime.MemoryClassSelf, (*memoryruntime.MemoryScopeRef)(nil)
 	mode := memoryWriteExplicit
 	if args.Mode == digitalHumanMemoryModeProactive {
 		mode = memoryWriteProactive
 	}
 	admission := admitMemoryWrite(run, event, mode, state.AutoExtractionEnabled)
-	if admission.Allowed {
-		memoryClass, memoryScope = admission.Class, admission.Scope
-	}
 	request := MemoryProposalRequest{
-		OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: memoryClass, Scope: memoryScope, MemoryType: args.MemoryType,
+		OperationID: operationID, Key: args.Key, Action: args.Action, MemoryType: args.MemoryType,
 		Content: args.Content, ExpectedRevision: args.ExpectedRevision, SupersedesID: args.SupersedesID,
 		ExpectedSupersededRevision: args.ExpectedSupersededRevision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-		Visibility: admission.visibility(), Confidence: args.Confidence, RunID: &run.ID,
+		Confidence: args.Confidence, RunID: &run.ID,
 		Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
 		SourceContext: MemorySourceContext{
 			PrivateConversation:       event.Origin.Kind == invocation.OriginManual,
@@ -412,6 +408,10 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 		OccurredAt: p.now(),
 	}
 	request.SourceContext.SourceTrust = admission.Trust
+	admission.stamp(&request)
+	if mode == memoryWriteProactive {
+		request.noteSourceKind = relationshipmemory.SourceAutomatic
+	}
 	if !admission.Allowed {
 		p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, admission.err())
 		return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)
@@ -431,7 +431,7 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 	return skillloop.RuntimeToolResult{
 		Status: "success",
 		Arguments: map[string]any{
-			"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "memory_class": memoryClass,
+			"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "note": admission.NoteInstanceID != "",
 			"memory_type": args.MemoryType, "supersedes_id": args.SupersedesID,
 		},
 		Result: map[string]any{"status": "committed", "operation_id": result.Event.OperationID.String(), "memory_id": result.Memory.ID.String(), "revision": result.Memory.Revision, "replayed": result.Replayed},

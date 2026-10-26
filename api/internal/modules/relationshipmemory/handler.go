@@ -47,6 +47,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/relationships/:id/history/:version_id/revert", h.RevertVersion)
 	group.GET("/relationships/:id/archive", h.Archive)
 	group.GET("/relationships/:id/notes", h.Notes)
+	group.DELETE("/relationships/:id/notes/:key", h.DeleteNote)
 	group.PATCH("/relationships/:id/archive/:entry_id", h.UpdateArchiveEntry)
 	group.DELETE("/relationships/:id/archive/:entry_id", h.DeleteArchiveEntry)
 }
@@ -142,6 +143,12 @@ func (h *Handler) PutItem(c *gin.Context) {
 		return
 	}
 	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return
+	}
+	// The DigitalHuman's notes on the person are its own; the person may
+	// delete them but not edit them (ADR 0015).
+	if IsNoteKey(c.Param("key")) {
 		writeMemoryError(c, ErrAccessDenied)
 		return
 	}
@@ -324,7 +331,7 @@ func (h *Handler) Notes(c *gin.Context) {
 		return
 	}
 	notes := []InstanceNote{}
-	if detail.ConsumerType == ConsumerDigitalHuman && DigitalHumanMemoryFilesEnabled() {
+	if detail.ConsumerType == ConsumerDigitalHuman {
 		var err error
 		if notes, err = h.service.InstanceNotes(c.Request.Context(), detail.WorkspaceID, detail.ConsumerID, detail.SubjectID); err != nil {
 			writeMemoryError(c, err)
@@ -332,6 +339,34 @@ func (h *Handler) Notes(c *gin.Context) {
 		}
 	}
 	response.Success(c, gin.H{"notes": notes})
+}
+
+// DeleteNote removes one of the DigitalHuman's notes on the person. The
+// person may delete notes but not edit them (ADR 0015).
+func (h *Handler) DeleteNote(c *gin.Context) {
+	if !relationshipMemoryWritesEnabled(c) {
+		return
+	}
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return
+	}
+	expectedRevision, err := strconv.ParseInt(c.Query("expected_revision"), 10, 64)
+	if err != nil || !ValidNoteName(c.Param("key")) {
+		writeMemoryError(c, ErrPolicyRejected)
+		return
+	}
+	actorID := detail.SubjectID
+	result, err := h.service.DeleteItem(c.Request.Context(), detail.ID, NoteKey(c.Param("key")), expectedRevision, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager})
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 // Archive lists the relationship's archive (ADR 0014), newest first.

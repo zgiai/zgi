@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/migrations"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -35,30 +36,43 @@ func TestInstanceNotesPostgresListOnlyThePersonsActiveNotes(t *testing.T) {
 	exec("INSERT INTO workspaces (id, organization_id, name) VALUES (?, ?, ?)", workspaceID, organizationID, "Instance notes")
 	exec("INSERT INTO digital_humans (id, organization_id, workspace_id, name) VALUES (?, ?, ?, ?)", digitalHumanID, organizationID, workspaceID, "Notes")
 	person, other := uuid.New(), uuid.New()
-	instances := map[uuid.UUID]uuid.UUID{}
+	service := NewService(tx)
+	relationships := map[uuid.UUID]uuid.UUID{}
 	for _, subjectID := range []uuid.UUID{person, other} {
-		instanceID := uuid.New()
-		instances[subjectID] = instanceID
 		exec("INSERT INTO user_subjects (id, kind, issuer_type, issuer_id) VALUES (?, 'api_end_user', 'digital_human_api', ?)", subjectID, digitalHumanID)
-		exec(`INSERT INTO digital_human_end_user_instances (id, organization_id, workspace_id, digital_human_id, subject_kind, subject_id, issuer_type, first_seen_at, last_active_at, created_at, updated_at)
-			VALUES (?, ?, ?, ?, 'api_end_user', ?, 'digital_human_api', now(), now(), now(), now())`, instanceID, organizationID, workspaceID, digitalHumanID, subjectID)
+		issuerID := digitalHumanID
+		relationship, err := service.EnsureRelationship(t.Context(), EnsureRelationshipRequest{
+			OrganizationID: organizationID, WorkspaceID: workspaceID, Subject: usersubject.Ref{Kind: usersubject.APIEndUser, ID: subjectID},
+			IssuerType: "digital_human_api", IssuerID: &issuerID, ConsumerType: ConsumerDigitalHuman, ConsumerID: digitalHumanID,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		relationships[subjectID] = relationship.ID
 	}
-	note := func(subjectID uuid.UUID, key, memoryType, status, content string, age int) {
+	contract := ConsumerMemoryContract{Enabled: true, DefinitionMode: "dynamic", AllowedCategories: []string{"preference"}}
+	put := func(subjectID uuid.UUID, key, category, content string, age int) {
 		t.Helper()
-		exec(`INSERT INTO digital_human_memories (organization_id, workspace_id, digital_human_id, memory_key, memory_class, memory_type, scope_type, scope_id, content, content_digest, config_revision, last_operation_id, status, updated_at)
-			VALUES (?, ?, ?, ?, 'business', ?, 'instance', ?, ?, 'sha256:x', 'config', ?, ?, now() - make_interval(mins => ?))`,
-			organizationID, workspaceID, digitalHumanID, key, memoryType, instances[subjectID].String(), content, uuid.New(), status, age)
+		if _, err := service.PutItem(t.Context(), relationships[subjectID], PutItemRequest{Key: key, Category: category, Content: content, Contract: contract,
+			Metadata: MutationMetadata{ActorType: "operator", SourceKind: SourceManager}}); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+		exec("UPDATE user_memory_items SET updated_at = now() - make_interval(mins => ?) WHERE relationship_id = ? AND memory_key = ?", age, relationships[subjectID], key)
 	}
-	note(person, "quote_due", "open_loop", "active", "Promised a quote by Friday.", 10)
-	note(person, "plan/enterprise", "fact", "active", "Evaluating the Enterprise plan.", 1)
-	note(person, "old_note", "fact", "archived", "Expired.", 20)
-	note(other, "someone_else", "fact", "active", "Another person's note.", 1)
+	put(person, NoteKey("quote_due"), "open_loop", "Promised a quote by Friday.", 10)
+	put(person, NoteKey("plan_enterprise"), "fact", "Evaluating the Enterprise plan.", 1)
+	put(person, "prefers_email", "preference", "Prefers email.", 1)
+	put(other, NoteKey("someone_else"), "fact", "Another person's note.", 1)
+	if _, err := service.PutItem(t.Context(), relationships[person], PutItemRequest{Key: NoteKey("bad"), Category: "preference", Content: "x", Contract: contract,
+		Metadata: MutationMetadata{ActorType: "operator", SourceKind: SourceManager}}); err == nil {
+		t.Fatal("a note was saved with a category of the person's own memory")
+	}
 
 	notes, err := NewService(tx).InstanceNotes(t.Context(), workspaceID, digitalHumanID, person)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(notes) != 2 || notes[0].Path != "/user/notes/plan_enterprise.md" || notes[1].Path != "/user/notes/quote_due.md" || notes[1].Tags != "open_loop" {
+	if len(notes) != 2 || notes[0].Path != "/user/notes/plan_enterprise.md" || notes[1].Path != "/user/notes/quote_due.md" || notes[1].Tags != "open_loop" || notes[1].Key != "quote_due" {
 		t.Fatalf("notes = %+v", notes)
 	}
 	if none, err := NewService(tx).InstanceNotes(t.Context(), workspaceID, uuid.New(), person); err != nil || len(none) != 0 {

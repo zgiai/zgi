@@ -12,11 +12,10 @@ import (
 func TestValidateMemoryProposalPolicyRejectsUnsafeAutonomousWrites(t *testing.T) {
 	t.Parallel()
 	base := MemoryProposalRequest{
-		MemoryClass: memoryruntime.MemoryClassSelf,
-		MemoryType:  memoryruntime.MemoryTypeExperience,
-		Content:     "Prefer concise, evidence-backed summaries.",
-		Visibility:  MemoryVisibilityWorkspace,
-		Confidence:  0.8,
+		MemoryType: memoryruntime.MemoryTypeExperience,
+		Content:    "Prefer concise, evidence-backed summaries.",
+		Visibility: MemoryVisibilityEveryone,
+		Confidence: 0.8,
 	}
 	if err := validateMemoryProposalPolicy(base, true); err != nil {
 		t.Fatalf("safe autonomous proposal error = %v", err)
@@ -56,11 +55,10 @@ func TestValidateMemoryProposalPolicyRejectsUnsafeAutonomousWrites(t *testing.T)
 func TestValidateMemoryProposalPolicyRequiresExplicitIdentityApproval(t *testing.T) {
 	t.Parallel()
 	request := MemoryProposalRequest{
-		MemoryClass: memoryruntime.MemoryClassSelf,
-		MemoryType:  memoryruntime.MemoryTypeIdentity,
-		Content:     "I am responsible for growth research.",
-		Visibility:  MemoryVisibilityWorkspace,
-		Confidence:  1,
+		MemoryType: memoryruntime.MemoryTypeIdentity,
+		Content:    "I am responsible for growth research.",
+		Visibility: MemoryVisibilityEveryone,
+		Confidence: 1,
 	}
 	if err := validateMemoryProposalPolicy(request, false); !errors.Is(err, ErrMemoryPolicyRejected) {
 		t.Fatalf("unapproved identity error = %v", err)

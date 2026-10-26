@@ -38,8 +38,8 @@ type EndUserMemoryItem struct {
 type EndUserMemory struct {
 	MemoryEnabled bool                `json:"memory_enabled"`
 	Items         []EndUserMemoryItem `json:"items"`
-	// Notes are the DigitalHuman's own notes on the user (ADR 0014
-	// /user/notes/), shown read-only when the file view is on.
+	// Notes are the DigitalHuman's notes on the user (ADR 0015 /user/notes/):
+	// the user reads and may delete them.
 	Notes []relationshipmemory.InstanceNote `json:"notes,omitempty"`
 }
 
@@ -51,6 +51,7 @@ func (h *ExternalHandler) registerAPIEndUserRoutes(group *gin.RouterGroup) {
 	group.DELETE("/memory/items/:key", h.DeleteAPIEndUserMemoryItem)
 	group.POST("/memory/clear", h.ClearAPIEndUserMemory)
 	group.GET("/memory/archive", h.GetAPIEndUserMemoryArchive)
+	group.DELETE("/memory/notes/:key", h.DeleteAPIEndUserNote)
 	group.DELETE("/memory/archive/:entry_id", h.DeleteAPIEndUserMemoryArchiveEntry)
 	group.POST("/tasks/schedule-preview", h.PreviewAPITaskSchedule)
 	if _, ok := h.notifications.(EndUserNotificationCounts); ok {
@@ -97,7 +98,7 @@ func (h *ExternalHandler) GetAPIEndUserMemory(c *gin.Context) {
 		return
 	}
 	result := EndUserMemory{Items: []EndUserMemoryItem{}}
-	if memoryFilesEnabled() {
+	{
 		notes, err := service.InstanceNotes(c.Request.Context(), access.WorkspaceID, access.DigitalHumanID, access.Owner.Subject.ID)
 		if err != nil {
 			h.writeApplicationError(c, endUserMemoryError(err), operation)
@@ -116,10 +117,39 @@ func (h *ExternalHandler) GetAPIEndUserMemory(c *gin.Context) {
 	}
 	result.MemoryEnabled = relationship.Status == relationshipmemory.RelationshipActive && relationship.MemoryEnabled
 	for _, item := range export.Items {
+		if relationshipmemory.IsNoteKey(item.MemoryKey) {
+			continue
+		}
 		result.Items = append(result.Items, EndUserMemoryItem{Key: item.MemoryKey, Path: "/user/" + strings.ReplaceAll(item.MemoryKey, "/", "_") + ".md", DisplayName: item.DisplayName, Category: item.Category,
 			Content: item.ContentPayload, Revision: item.Revision, UpdatedAt: item.UpdatedAt})
 	}
 	writeExternalData(c, http.StatusOK, result)
+}
+
+// DeleteAPIEndUserNote removes one of the DigitalHuman's notes on the user.
+// The user may delete notes but not edit them (ADR 0015).
+func (h *ExternalHandler) DeleteAPIEndUserNote(c *gin.Context) {
+	const operation = "digital_human.external.memory.note.delete"
+	service, relationship, access, ok := h.endUserRelationship(c, userFromQuery(c), operation)
+	if !ok {
+		return
+	}
+	revision, err := strconv.ParseInt(strings.TrimSpace(c.Query("expected_revision")), 10, 64)
+	if err != nil || revision <= 0 || !relationshipmemory.ValidNoteName(c.Param("key")) {
+		h.writeApplicationError(c, ErrInvalidRequest, operation)
+		return
+	}
+	if relationship == nil {
+		h.writeApplicationError(c, ErrMemoryNotFound, operation)
+		return
+	}
+	subjectID := access.Owner.Subject.ID
+	if _, err := service.DeleteItem(c.Request.Context(), relationship.ID, relationshipmemory.NoteKey(c.Param("key")), revision,
+		relationshipmemory.MutationMetadata{ActorType: "end_user", ActorID: &subjectID, Source: "digital_human_api", SourceKind: relationshipmemory.SourceManager}); err != nil {
+		h.writeApplicationError(c, endUserMemoryError(err), operation)
+		return
+	}
+	writeExternalData(c, http.StatusOK, gin.H{"key": c.Param("key")})
 }
 
 // GetAPIEndUserMemoryArchive lists the user's memory archive (ADR 0014):

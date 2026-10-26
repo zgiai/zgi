@@ -39,6 +39,8 @@ export interface MemoryArchiveEntry {
 
 // A DigitalHuman's note on the user (ADR 0014 /user/notes/), read-only.
 export interface MemoryNote {
+  key: string;
+  revision: number;
   path: string;
   tags?: string;
   content: string;

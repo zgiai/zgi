@@ -31,7 +31,9 @@ import type {
   DigitalHumanMemoryRepairResult,
   DigitalHumanMemoryState,
   DigitalHumanMemoryProposalRequest,
-  DigitalHumanMemoryRescopeRequest,
+  DigitalHumanMemoryVisibilityRequest,
+  DigitalHumanMemoryBulkRequest,
+  DigitalHumanMemoryBulkResult,
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidateList,
   DraftResourceBindings,
@@ -350,12 +352,19 @@ class DigitalHumanService extends BaseService {
     return this.request('post', `/digital-humans/${id}/memory/proposals`, data);
   }
 
-  rescopeMemory(
+  applyMemoryBulk(
+    id: string,
+    data: DigitalHumanMemoryBulkRequest
+  ): Promise<ApiResponseData<DigitalHumanMemoryBulkResult>> {
+    return this.request('post', `/digital-humans/${id}/memory/bulk`, data);
+  }
+
+  setMemoryVisibility(
     id: string,
     memoryId: string,
-    data: DigitalHumanMemoryRescopeRequest
+    data: DigitalHumanMemoryVisibilityRequest
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
-    return this.request('post', `/digital-humans/${id}/memory/${memoryId}/rescope`, data);
+    return this.request('post', `/digital-humans/${id}/memory/${memoryId}/visibility`, data);
   }
 
   undoMemory(

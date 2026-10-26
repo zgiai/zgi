@@ -3,29 +3,15 @@ package digitalhuman
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
-	datasetmodel "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/runtimeworkspace"
-	"github.com/zgiai/zgi/api/pkg/vectordb"
 	"gorm.io/gorm"
 )
 
 // endUserExportPage is how many records of a kind one export page reads.
 const endUserExportPage = 500
-
-var endUserMemoryVectors atomic.Pointer[vectordb.VectorDB]
-
-// UseEndUserMemoryVectors gives end-user erasure the vector store of the
-// memory projection, so erased instance memories leave it right away rather
-// than at the next projection sync.
-func UseEndUserMemoryVectors(store vectordb.VectorDB) {
-	if store != nil {
-		endUserMemoryVectors.Store(&store)
-	}
-}
 
 // EndUserData erases and exports what DigitalHumans keep for a Runtime
 // Workspace end user: instances and their memory, runs, tasks with their
@@ -49,50 +35,9 @@ func (*EndUserData) EraseEndUser(ctx context.Context, tx *gorm.DB, subjectID uui
 	if err := db.Exec("SELECT set_config('zgi.digital_human_end_user_erase', ?, true)", subjectID.String()).Error; err != nil {
 		return erasure, fmt.Errorf("open DigitalHuman end-user erasure: %w", err)
 	}
-	var instanceIDs []string
-	if err := db.Raw("SELECT id::text FROM digital_human_end_user_instances WHERE subject_id = ?", subjectID).Scan(&instanceIDs).Error; err != nil {
-		return erasure, fmt.Errorf("list end-user instances: %w", err)
-	}
 	var runIDs []uuid.UUID
 	if err := db.Table("digital_human_runs").Where("user_subject_id = ?", subjectID).Pluck("id", &runIDs).Error; err != nil {
 		return erasure, fmt.Errorf("list end-user runs: %w", err)
-	}
-
-	if len(instanceIDs) > 0 {
-		var memories []projectedMemory
-		if err := db.Raw(`
-			SELECT memory.id AS memory_id, state.memory_dataset_id AS dataset_id
-			FROM digital_human_memories memory
-			LEFT JOIN digital_human_memory_states state ON state.digital_human_id = memory.digital_human_id
-			WHERE memory.scope_type = 'instance' AND memory.scope_id IN ?
-		`, instanceIDs).Scan(&memories).Error; err != nil {
-			return erasure, fmt.Errorf("list end-user instance memory: %w", err)
-		}
-		if len(memories) > 0 {
-			memoryIDs := make([]uuid.UUID, 0, len(memories))
-			segmentIDs := make([]string, 0, len(memories))
-			for _, memory := range memories {
-				memoryIDs = append(memoryIDs, memory.MemoryID)
-				segmentIDs = append(segmentIDs, memory.MemoryID.String())
-			}
-			// Projection segments lose their text now; they stay enabled so the
-			// next projection sync also removes any vector left behind.
-			if err := db.Exec("UPDATE document_segments SET content = '', word_count = 0, tokens = 0, index_node_hash = NULL WHERE id IN ?", segmentIDs).Error; err != nil {
-				return erasure, fmt.Errorf("scrub end-user memory projection: %w", err)
-			}
-			for _, statement := range []string{
-				"DELETE FROM digital_human_memory_undo_records WHERE memory_id IN ?",
-				"DELETE FROM digital_human_action_ledger WHERE memory_id IN ?",
-				"DELETE FROM digital_human_memory_events WHERE memory_id IN ?",
-				"UPDATE digital_human_memories SET supersedes_id = NULL WHERE id IN ? AND supersedes_id IS NOT NULL",
-				"DELETE FROM digital_human_memories WHERE id IN ?",
-			} {
-				if err := db.Exec(statement, memoryIDs).Error; err != nil {
-					return erasure, fmt.Errorf("erase end-user instance memory: %w", err)
-				}
-			}
-			erasure.After = func(ctx context.Context) { dropMemoryVectors(ctx, memories) }
-		}
 	}
 
 	if len(runIDs) > 0 {
@@ -163,24 +108,6 @@ func (*EndUserData) EraseEndUser(ctx context.Context, tx *gorm.DB, subjectID uui
 	return erasure, nil
 }
 
-// projectedMemory is an instance memory and the dataset of its projection.
-type projectedMemory struct {
-	MemoryID  uuid.UUID
-	DatasetID *uuid.UUID
-}
-
-func dropMemoryVectors(ctx context.Context, memories []projectedMemory) {
-	store := endUserMemoryVectors.Load()
-	if store == nil {
-		return
-	}
-	for _, memory := range memories {
-		if memory.DatasetID != nil {
-			_ = (*store).DeleteVector(ctx, memory.MemoryID.String(), datasetmodel.GenCollectionNameByID(memory.DatasetID.String()))
-		}
-	}
-}
-
 func validUUIDs(values []string) []uuid.UUID {
 	ids := make([]uuid.UUID, 0, len(values))
 	for _, value := range values {
@@ -194,7 +121,6 @@ func validUUIDs(values []string) []uuid.UUID {
 // EndUserDataExport is what DigitalHumans keep for an end user.
 type EndUserDataExport struct {
 	Instances     []map[string]any `json:"instances"`
-	Memory        []map[string]any `json:"memory"`
 	Runs          []map[string]any `json:"runs"`
 	Tasks         []map[string]any `json:"tasks"`
 	Reports       []map[string]any `json:"reports"`
@@ -209,9 +135,6 @@ var endUserExportSections = []struct {
 	sql  string
 }{
 	{"instances", `SELECT id, digital_human_id, status, first_seen_at, last_active_at FROM digital_human_end_user_instances WHERE subject_id = ? AND status <> 'erased' ORDER BY first_seen_at, id`},
-	{"memory", `SELECT memory.id, memory.digital_human_id, memory.memory_key, memory.memory_type, memory.content, memory.created_at, memory.updated_at
-		FROM digital_human_memories memory JOIN digital_human_end_user_instances instance ON memory.scope_type = 'instance' AND memory.scope_id = instance.id::text
-		WHERE instance.subject_id = ? AND memory.status = 'active' ORDER BY memory.created_at, memory.id`},
 	{"runs", `SELECT id, digital_human_id, conversation_id, query, status, result_summary, created_at, completed_at FROM digital_human_runs WHERE user_subject_id = ? ORDER BY created_at, id`},
 	{"tasks", `SELECT id, subject_id AS digital_human_id, name, goal, status, work_status, schedule_type, schedule_config, created_at FROM automation_tasks WHERE owner_subject_id = ? ORDER BY created_at, id`},
 	{"reports", `SELECT report.id, report.task_id, report.outcome, report.summary, report.body, report.issues, report.files, report.created_at
@@ -251,7 +174,7 @@ func (*EndUserData) ExportEndUserPage(ctx context.Context, db *gorm.DB, subjectI
 // ExportEndUser collects all of an end user's DigitalHuman data at once.
 func (data *EndUserData) ExportEndUser(ctx context.Context, db *gorm.DB, subjectID uuid.UUID) (string, any, error) {
 	export := &EndUserDataExport{}
-	targets := map[string]*[]map[string]any{"instances": &export.Instances, "memory": &export.Memory, "runs": &export.Runs,
+	targets := map[string]*[]map[string]any{"instances": &export.Instances, "runs": &export.Runs,
 		"tasks": &export.Tasks, "reports": &export.Reports, "notifications": &export.Notifications, "artifacts": &export.Artifacts}
 	for _, section := range endUserExportSections {
 		all := []map[string]any{}

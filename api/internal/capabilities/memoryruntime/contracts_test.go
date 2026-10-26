@@ -33,7 +33,7 @@ func TestMemorySubjectFromRuntimeOnlyAcceptsDigitalHuman(t *testing.T) {
 func TestValidateMemoryMutationJSONRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	want, err := ValidateMemoryMutation(validBusinessMutation())
+	want, err := ValidateMemoryMutation(validMutation())
 	if err != nil {
 		t.Fatalf("ValidateMemoryMutation() error = %v", err)
 	}
@@ -69,9 +69,6 @@ func TestValidateMemoryMutationEnforcesOwnershipAndFences(t *testing.T) {
 		{name: "key", mutate: func(mutation *MemoryMutation) { mutation.Key = " " }},
 		{name: "subject", mutate: func(mutation *MemoryMutation) { mutation.Subject.DigitalHumanID = uuid.Nil }},
 		{name: "action", mutate: func(mutation *MemoryMutation) { mutation.Action = "append" }},
-		{name: "business scope", mutate: func(mutation *MemoryMutation) { mutation.Scope = nil }},
-		{name: "scope id", mutate: func(mutation *MemoryMutation) { mutation.Scope.ID = " " }},
-		{name: "identity business", mutate: func(mutation *MemoryMutation) { mutation.Type = MemoryTypeIdentity }},
 		{name: "content", mutate: func(mutation *MemoryMutation) { mutation.Content = "" }},
 		{name: "revision", mutate: func(mutation *MemoryMutation) { mutation.ExpectedRevision = -1 }},
 		{name: "config fence", mutate: func(mutation *MemoryMutation) { mutation.Fence.ConfigRevision = "" }},
@@ -82,7 +79,7 @@ func TestValidateMemoryMutationEnforcesOwnershipAndFences(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutation := validBusinessMutation()
+			mutation := validMutation()
 			tt.mutate(&mutation)
 			if _, err := ValidateMemoryMutation(mutation); !errors.Is(err, ErrInvalidContract) {
 				t.Fatalf("ValidateMemoryMutation() error = %v, want ErrInvalidContract", err)
@@ -91,26 +88,10 @@ func TestValidateMemoryMutationEnforcesOwnershipAndFences(t *testing.T) {
 	}
 }
 
-func TestValidateMemoryMutationSelfMemoryHasNoBusinessScope(t *testing.T) {
-	t.Parallel()
-
-	mutation := validBusinessMutation()
-	mutation.Class = MemoryClassSelf
-	mutation.Type = MemoryTypeIdentity
-	if _, err := ValidateMemoryMutation(mutation); !errors.Is(err, ErrInvalidContract) {
-		t.Fatalf("ValidateMemoryMutation(scoped self) error = %v, want ErrInvalidContract", err)
-	}
-
-	mutation.Scope = nil
-	if _, err := ValidateMemoryMutation(mutation); err != nil {
-		t.Fatalf("ValidateMemoryMutation(self) error = %v", err)
-	}
-}
-
 func TestValidateMemoryMutationClearRequiresEmptyContent(t *testing.T) {
 	t.Parallel()
 
-	mutation := validBusinessMutation()
+	mutation := validMutation()
 	mutation.Action = MutationActionClear
 	if _, err := ValidateMemoryMutation(mutation); !errors.Is(err, ErrInvalidContract) {
 		t.Fatalf("ValidateMemoryMutation(clear with content) error = %v, want ErrInvalidContract", err)
@@ -122,7 +103,7 @@ func TestValidateMemoryMutationClearRequiresEmptyContent(t *testing.T) {
 	}
 }
 
-func validBusinessMutation() MemoryMutation {
+func validMutation() MemoryMutation {
 	return MemoryMutation{
 		OperationID: uuid.MustParse("44444444-4444-4444-4444-444444444444"),
 		Subject: MemorySubjectRef{
@@ -132,9 +113,7 @@ func validBusinessMutation() MemoryMutation {
 		},
 		Key:              "project.launch-date",
 		Action:           MutationActionUpsert,
-		Class:            MemoryClassBusiness,
 		Type:             MemoryTypeFact,
-		Scope:            &MemoryScopeRef{Type: MemoryScopeWorkspace, ID: "33333333-3333-3333-3333-333333333333"},
 		Content:          "The launch date is September 8.",
 		ExpectedRevision: 7,
 		Fence:            MemoryFence{ConfigRevision: "sha256:run-spec", MemoryEpoch: 3},
@@ -152,18 +131,5 @@ func validRuntimeSubject() runtimeidentity.SubjectRef {
 		ID:             uuid.MustParse("11111111-1111-1111-1111-111111111111"),
 		OrganizationID: uuid.MustParse("22222222-2222-2222-2222-222222222222"),
 		WorkspaceID:    uuid.MustParse("33333333-3333-3333-3333-333333333333"),
-	}
-}
-
-func TestValidateMemoryScopeRefRejectsRetiredScopes(t *testing.T) {
-	for _, retired := range []string{"project", "customer", "campaign"} {
-		if _, err := ValidateMemoryScopeRef(MemoryScopeRef{Type: MemoryScopeType(retired), ID: "x"}); !errors.Is(err, ErrInvalidContract) {
-			t.Fatalf("%s scope error = %v", retired, err)
-		}
-	}
-	for _, live := range []MemoryScopeType{MemoryScopeWorkspace, MemoryScopeChannel, MemoryScopeInstance} {
-		if _, err := ValidateMemoryScopeRef(MemoryScopeRef{Type: live, ID: "x"}); err != nil {
-			t.Fatalf("%s scope error = %v", live, err)
-		}
 	}
 }

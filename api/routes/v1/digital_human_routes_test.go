@@ -50,7 +50,8 @@ func TestDigitalHumanPermissionForRequest(t *testing.T) {
 		{http.MethodGet, "/console/api/digital-humans/:id/runs/:run_id", workspacemodel.WorkspacePermissionDigitalHumanLogsView},
 		{http.MethodGet, "/console/api/digital-humans/:id/memory", workspacemodel.WorkspacePermissionDigitalHumanMemoryView},
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/proposals", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
-		{http.MethodPost, "/console/api/digital-humans/:id/memory/:memory_id/rescope", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
+		{http.MethodPost, "/console/api/digital-humans/:id/memory/:memory_id/visibility", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
+		{http.MethodPost, "/console/api/digital-humans/:id/memory/bulk", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPatch, "/console/api/digital-humans/:id/memory/state", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/operations/:operation_id/undo", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
 		{http.MethodPost, "/console/api/digital-humans/:id/memory/repair", workspacemodel.WorkspacePermissionDigitalHumanMemoryManage},
@@ -127,7 +128,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 100; got != want {
+	if got, want := len(routes), 101; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -157,7 +158,8 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"DELETE /console/api/digital-humans/:id/api-keys/:api_key_id":                                                                               false,
 		"GET /console/api/digital-humans/:id/memory":                                                                                                false,
 		"POST /console/api/digital-humans/:id/memory/proposals":                                                                                     false,
-		"POST /console/api/digital-humans/:id/memory/:memory_id/rescope":                                                                            false,
+		"POST /console/api/digital-humans/:id/memory/:memory_id/visibility":                                                                         false,
+		"POST /console/api/digital-humans/:id/memory/bulk":                                                                                          false,
 		"PATCH /console/api/digital-humans/:id/memory/state":                                                                                        false,
 		"POST /console/api/digital-humans/:id/memory/operations/:operation_id/undo":                                                                 false,
 		"POST /console/api/digital-humans/:id/memory/repair":                                                                                        false,
