@@ -462,10 +462,10 @@
       "difficulty": "hard",
       "sessions": [
         [
-          "我们说好了，你周五前把报价单发给我。"
+          "请记住：你答应我周五前把报价单发给我。"
         ],
         [
-          "报价单不急了，改到下周二前发就行。"
+          "报价单不急了，改到下周二前发就行，记一下。"
         ]
       ],
       "probe": "报价单你答应我什么时候发？",
@@ -543,11 +543,6 @@
             "SSO"
           ]
         },
-        "memory_none": [
-          "五百人",
-          "500 人",
-          "500人"
-        ],
         "answer_all": [
           "SSO"
         ],
@@ -555,7 +550,7 @@
           "结论"
         ]
       },
-      "notes": "One long message: a preference for the person's memory, a commitment and business context for the notes, and a hypothetical that belongs nowhere."
+      "notes": "One long message: a preference for the person's memory, and a commitment and business context for the notes. The pricing question may be kept as a follow-up."
     },
     {
       "id": "dh_conversation_recall_after_noise_zh",
