@@ -35,6 +35,8 @@ import run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DIGITAL_HUMAN_SUBJECT_NAMESPACE = "external-digital-human-memory"
+# Operator memory visibility in scenario files, as the proposals API spells it.
+PROPOSAL_VISIBILITY = {"everyone": "workspace", "internal": "restricted"}
 
 
 def api_end_user_subject(workspace_id, digital_human_id, user):
@@ -72,16 +74,17 @@ class DigitalHumanClient:
             self.console("PATCH", f"/digital-humans/{self.digital_human_id}/memory/state",
                          {"expected_memory_epoch": state["memory_epoch"], "auto_extraction_enabled": True})
         for item in me_preload:
-            self.propose_self(item["key"], item["content"], item.get("memory_type", "fact"))
+            self.propose_self(item["key"], item["content"], item.get("memory_type", "fact"), item.get("visibility", "everyone"))
         return {"digital_human_id": self.digital_human_id, "name": name, "model": model}
 
     def memory_state(self):
         return self.console("GET", f"/digital-humans/{self.digital_human_id}/memory?page=1&page_size=1")["state"]
 
-    def propose_self(self, key, content, memory_type):
+    def propose_self(self, key, content, memory_type, visibility):
         state = self.memory_state()
         self.console("POST", f"/digital-humans/{self.digital_human_id}/memory/proposals", {
             "operation_id": str(uuid.uuid4()), "key": key, "action": "upsert", "memory_class": "self", "memory_type": memory_type,
+            "visibility": PROPOSAL_VISIBILITY[visibility],
             "content": content, "expected_revision": 0, "config_revision": state["config_revision"], "memory_epoch": state["memory_epoch"],
             "evidence": [{"type": "manual", "id": f"operator:{uuid.uuid4()}"}],
             "source_context": {"private_conversation": False, "promoted_by_authorized_actor": True},
@@ -149,9 +152,17 @@ class DigitalHumanClient:
               JOIN digital_human_end_user_instances n ON n.id::text = m.scope_id
              WHERE m.digital_human_id = '{dh}' AND m.scope_type = 'instance' AND m.status = 'active' AND n.subject_id = '{subject}'
             UNION ALL
+            SELECT 'archive', m.memory_key, replace(m.content, E'\\n', ' ') FROM digital_human_memories m
+              JOIN digital_human_end_user_instances n ON n.id::text = m.scope_id
+             WHERE m.digital_human_id = '{dh}' AND m.scope_type = 'instance' AND m.status = 'archived' AND n.subject_id = '{subject}'
+            UNION ALL
+            SELECT 'archive', a.source_key, replace(a.content_payload, E'\\n', ' ') FROM user_memory_archive_entries a
+              JOIN user_memory_relationships r ON r.id = a.relationship_id
+             WHERE r.consumer_type = 'digital_human' AND r.consumer_id = '{dh}' AND r.subject_id = '{subject}'
+            UNION ALL
             SELECT 'me', m.memory_key, replace(m.content, E'\\n', ' ') FROM digital_human_memories m
              WHERE m.digital_human_id = '{dh}' AND m.memory_class = 'self' AND m.status = 'active'""")
-        grouped = {"user": [], "notes": [], "me": []}
+        grouped = {"user": [], "notes": [], "archive": [], "me": []}
         for partition, key, content in rows:
             grouped[partition].append(f"{key}: {content}")
         return {partition: "\n".join(lines) for partition, lines in grouped.items() if lines}
@@ -198,6 +209,7 @@ def main():
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--only", nargs="*")
+    parser.add_argument("--note-ttl", action="store_true", help="Include scenarios that need a deployment with a short note TTL")
     parser.add_argument("--db", default="zgi", help="Database the deployment uses, for reading memory")
     parser.add_argument("--container", default="zgi-postgres-1")
     parser.add_argument("--env-file")
@@ -212,6 +224,8 @@ def main():
     with open(os.path.join(HERE, "dh_scenarios.json"), encoding="utf-8") as handle:
         suite = json.load(handle)
     scenarios = suite["scenarios"]
+    if not args.note_ttl:
+        scenarios = [s for s in scenarios if not s.get("requires_note_ttl")]
     if args.only:
         scenarios = [s for s in scenarios if s["id"] in set(args.only)]
 
