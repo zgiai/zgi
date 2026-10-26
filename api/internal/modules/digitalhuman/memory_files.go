@@ -2,6 +2,8 @@ package digitalhuman
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,15 +63,32 @@ func memoryFileDirectory(memory *DigitalHumanMemory) string {
 	return ""
 }
 
-// memoryFilePath projects an entry to its path. A key never contains a
-// directory separator in its path.
+// memoryFilePath projects an entry to its path.
 func memoryFilePath(memory *DigitalHumanMemory) string {
 	directory := memoryFileDirectory(memory)
 	if directory == "" {
 		return ""
 	}
-	return directory + strings.ReplaceAll(strings.TrimSpace(memory.MemoryKey), "/", "_") + ".md"
+	return directory + memoryFileName(memory.MemoryKey) + memoryFileExtension
 }
+
+// memoryFileName projects a key to a file name. A path never contains a
+// directory separator inside a file name, so "/" becomes "_". Such a key also
+// gets a short digest after "~", so "foo/bar" never shares a file with
+// "foo_bar". Files written through memory_edit never contain "/" or "~", so
+// every name maps to one key.
+func memoryFileName(key string) string {
+	key = strings.TrimSpace(key)
+	if !strings.Contains(key, "/") {
+		return key
+	}
+	sum := sha256.Sum256([]byte(key))
+	return strings.ReplaceAll(key, "/", "_") + memoryFileDigestSeparator + hex.EncodeToString(sum[:3])
+}
+
+// memoryFileDigestSeparator starts the digest that keeps the name of a key
+// with "/" apart from other names.
+const memoryFileDigestSeparator = "~"
 
 // memoryFileAttributes carries what the model needs to cite or change a file.
 func memoryFileAttributes(memory *DigitalHumanMemory) string {
@@ -279,9 +298,17 @@ func (p *DefaultMemoryRuntimeProvider) memoryFileTools(run *Run, event invocatio
 			return skillloop.RuntimeToolResult{Status: "error", Arguments: map[string]any{"query": args.Query}, Error: fmt.Errorf("memory search failed"), Recoverable: true}
 		}
 		files := searchMemoryFiles(result.Items, args.Path, args.Limit)
+		readScope := memoryReadScopeForRun(run, event)
+		// Recall ranks every directory together, so the requested directory's
+		// matches can fall outside its top results; its own files then fill
+		// the result by the words they share with the query.
+		if strings.TrimSpace(args.Path) != "" && len(files) < args.Limit {
+			if listed, err := p.service.repo.ActiveMemories(ctx, runScope(run), run.DigitalHumanID, memoryFilesIndexLimit, &readScope); err == nil {
+				files = appendDirectoryMatches(files, listed, args.Query, args.Path, args.Limit)
+			}
+		}
 		p.recordRetrieval(ctx, run, files)
 		modelResult := map[string]any{"query": args.Query, "files": memoryFileSummaries(files), "result_count": len(files)}
-		readScope := memoryReadScopeForRun(run, event)
 		if archived, err := p.service.repo.ArchivedMemories(ctx, runScope(run), run.DigitalHumanID, memoryArchiveSearchWindow, &readScope); err == nil {
 			if matches := searchArchivedMemoryFiles(archived, args.Query, args.Path, args.Limit); len(matches) > 0 {
 				modelResult["archive"] = matches
@@ -367,25 +394,48 @@ func archivedMemoryFilePath(memory *DigitalHumanMemory) string {
 	if directory == "" {
 		return ""
 	}
-	return directory + "archive/" + strings.ReplaceAll(strings.TrimSpace(memory.MemoryKey), "/", "_") + ".md"
+	return directory + "archive/" + memoryFileName(memory.MemoryKey) + memoryFileExtension
 }
 
-// searchArchivedMemoryFiles ranks archived entries by how many of the query's
-// words they share, newest first among equals.
-func searchArchivedMemoryFiles(items []*DigitalHumanMemory, query, path string, limit int) []map[string]any {
+// appendDirectoryMatches fills files up to limit with the entries of the
+// directory at path that share words with the query, best first, skipping
+// those already found.
+func appendDirectoryMatches(files, listed []*DigitalHumanMemory, query, path string, limit int) []*DigitalHumanMemory {
+	found := make(map[string]bool, len(files))
+	for _, memory := range files {
+		found[memory.ID.String()] = true
+	}
+	candidates := make([]*DigitalHumanMemory, 0, len(listed))
+	for _, memory := range listed {
+		if !found[memory.ID.String()] {
+			candidates = append(candidates, memory)
+		}
+	}
+	for _, match := range rankMemoriesByQuery(candidates, query, path, limit-len(files), memoryFilePath) {
+		files = append(files, match.memory)
+	}
+	return files
+}
+
+// rankedMemory is an entry, its path, and how many query words it shares.
+type rankedMemory struct {
+	memory *DigitalHumanMemory
+	path   string
+	score  int
+}
+
+// rankMemoriesByQuery ranks the entries under path by how many of the
+// query's words they share, keeping input order among equals.
+func rankMemoriesByQuery(items []*DigitalHumanMemory, query, path string, limit int, pathOf func(*DigitalHumanMemory) string) []rankedMemory {
 	terms := relationshipmemory.SearchTerms(query)
 	if len(terms) == 0 || limit <= 0 {
 		return nil
 	}
-	type scored struct {
-		memory *DigitalHumanMemory
-		path   string
-		score  int
-	}
-	var matches []scored
+	path = strings.TrimSpace(path)
+	var matches []rankedMemory
 	for _, memory := range items {
-		file := archivedMemoryFilePath(memory)
-		if file == "" || (strings.TrimSpace(path) != "" && !strings.HasPrefix(file, strings.TrimSpace(path))) {
+		file := pathOf(memory)
+		if file == "" || (path != "" && !strings.HasPrefix(file, path)) {
 			continue
 		}
 		text := map[string]bool{}
@@ -399,13 +449,20 @@ func searchArchivedMemoryFiles(items []*DigitalHumanMemory, query, path string, 
 			}
 		}
 		if score > 0 {
-			matches = append(matches, scored{memory: memory, path: file, score: score})
+			matches = append(matches, rankedMemory{memory: memory, path: file, score: score})
 		}
 	}
 	sort.SliceStable(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
 	if len(matches) > limit {
 		matches = matches[:limit]
 	}
+	return matches
+}
+
+// searchArchivedMemoryFiles ranks archived entries by how many of the query's
+// words they share, newest first among equals.
+func searchArchivedMemoryFiles(items []*DigitalHumanMemory, query, path string, limit int) []map[string]any {
+	matches := rankMemoriesByQuery(items, query, path, limit, archivedMemoryFilePath)
 	out := make([]map[string]any, 0, len(matches))
 	for _, match := range matches {
 		out = append(out, map[string]any{"path": match.path, "tags": string(match.memory.MemoryType), "content": strings.TrimSpace(match.memory.Content), "updated_at": match.memory.UpdatedAt.UTC().Format(time.RFC3339)})
