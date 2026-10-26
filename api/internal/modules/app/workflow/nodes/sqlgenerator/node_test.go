@@ -494,6 +494,7 @@ type stubLLMInvoker struct {
 	response string
 	err      error
 	lastReq  *InvokeRequest
+	usage    *llmadapter.Usage
 }
 
 func (s *stubLLMInvoker) Invoke(ctx context.Context, accountID, appID, appType string, req *InvokeRequest) (*InvokeResult, error) {
@@ -504,5 +505,60 @@ func (s *stubLLMInvoker) Invoke(ctx context.Context, accountID, appID, appType s
 	return &InvokeResult{
 		Text:   s.response,
 		Finish: "stop",
+		Usage:  s.usage,
 	}, nil
+}
+
+func TestFailedSQLGenerationStillReportsItsTokens(t *testing.T) {
+	state := entities.NewGraphRuntimeStateWithDefaults()
+	state.VariablePool.Add([]string{"vars", "test"}, "List VIP users")
+	// Every attempt, the repair included, returns something that is not SQL.
+	invoker := &stubLLMInvoker{response: "not json", usage: &llmadapter.Usage{PromptTokens: 20, CompletionTokens: 10, TotalTokens: 30}}
+	node := &Node{
+		NodeStruct: base.NodeStruct{NodeID: "sql-node", NodeType: shared.SQLGenerator, TenantID: "tenant-1", UserID: "user-1", GraphRuntimeState: state},
+		NodeData: NodeData{
+			Model: ModelSection{Provider: "stub-provider", Name: "stub-model", Mode: "chat", Parameters: map[string]any{}},
+			DataSource: DataSourceSection{
+				Source: calldatabase.DataSourceConfig{ID: "ds-1", Name: "main"},
+				Tables: []calldatabase.TableRef{{TableID: 7, Schema: "public", Name: "users", Columns: []string{"id", "email"}}},
+			},
+			Prompt:    PromptSection{User: "User question: {{#vars.test#}}"},
+			Execution: ExecutionConfig{TimeoutSeconds: 5},
+		},
+		llmInvoker: invoker,
+		sqlClient: &sqlGeneratorFakeSQLBase{table: &sql_base.Table{
+			ID: 7, Schema: "public", Name: "users",
+			Columns: []sql_base.Column{{Name: "id", DataType: "bigint"}, {Name: "email", DataType: "text"}},
+		}},
+	}
+	attachText2SQLTestDependencies(node)
+	node.NodeData.ensureDefaults()
+
+	result, err := node.executeRun(context.Background())
+	if err != nil || result.Status != shared.FAILED {
+		t.Fatalf("result = %#v, %v", result, err)
+	}
+	usage, ok := result.Outputs["usage"].(map[string]any)
+	if total, _ := usage["total_tokens"].(int); !ok || total == 0 || total%30 != 0 {
+		t.Fatalf("failed generation usage = %#v", result.Outputs["usage"])
+	}
+}
+
+func TestWorkflowGeneratorAddsUpTheTokensOfEveryAttempt(t *testing.T) {
+	invoker := &stubLLMInvoker{response: `{"sql":"SELECT 1"}`, usage: &llmadapter.Usage{PromptTokens: 145, CompletionTokens: 351, TotalTokens: 496}}
+	usage := &generationUsage{}
+	generator := workflowGenerator{node: &Node{llmInvoker: invoker}, usage: usage}
+	request := text2sql.GenerationRequest{Question: "question", Schema: "TABLE public.customers", Model: text2sql.Model{Name: "model"}}
+	if _, err := generator.Generate(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	// A repair is a second call; a gateway that leaves out the total still counts.
+	invoker.usage = &llmadapter.Usage{PromptTokens: 100, CompletionTokens: 28}
+	request.Repair = &text2sql.RepairRequest{PreviousResponse: "SELECT", Failure: "invalid"}
+	if _, err := generator.Generate(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got := usage.output(); got["prompt_tokens"] != 245 || got["completion_tokens"] != 379 || got["total_tokens"] != 624 {
+		t.Fatalf("usage = %#v", got)
+	}
 }

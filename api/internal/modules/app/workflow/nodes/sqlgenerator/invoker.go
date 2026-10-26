@@ -3,6 +3,8 @@ package sqlgenerator
 import (
 	"context"
 	"fmt"
+
+	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 // PromptMessage is a minimized role/content structure.
@@ -25,6 +27,8 @@ type InvokeResult struct {
 	Text       string
 	Finish     string
 	RawChoices any // for debugging when needed
+	// Usage is the tokens the call used, when the gateway reports them.
+	Usage *llmadapter.Usage
 }
 
 // LLMInvoker isolates ChatCompletion calls.

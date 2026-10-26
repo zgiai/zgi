@@ -1886,6 +1886,8 @@ const messages: NodesMessages = {
       endRecommendedAtLeastOne: '建议添加一个“结束”节点以输出流程结果',
       nodeNoOutgoing: '节点“{title}”不存在出口连接',
       nodeNoIncoming: '节点“{title}”不存在入口连接',
+      endUnreachable: '从开始节点无法到达结束节点，请检查连线',
+      endUnreachableFrom: '节点“{title}”没有入口连接，流程无法到达结束节点',
       nodeImproperlyConnected: '节点“{title}”可能未正确连接',
       circularDependencyDetected: '存在循环依赖的节点',
       runnableNoOutput:

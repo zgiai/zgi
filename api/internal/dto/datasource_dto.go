@@ -408,6 +408,13 @@ type SQLOperationResponse struct {
 	CreatedBy      string    `json:"created_by"`
 	CreatedByName  *string   `json:"created_by_name,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+	// ClientType, WorkflowRunID and NodeID say what ran the statement, so a
+	// workflow run's SQL can be found by its run ID.
+	ClientType    string  `json:"client_type,omitempty"`
+	WorkflowRunID *string `json:"workflow_run_id,omitempty"`
+	NodeID        *string `json:"node_id,omitempty"`
+	RowCount      *int64  `json:"row_count,omitempty"`
+	DurationMS    *int64  `json:"duration_ms,omitempty"`
 }
 
 // ListSQLOperationsRequest represents the request for listing SQL operations
@@ -420,6 +427,8 @@ type ListSQLOperationsRequest struct {
 	Status        *string    `form:"status"`
 	StartTime     *time.Time `form:"start_time"`
 	EndTime       *time.Time `form:"end_time"`
+	WorkflowRunID *string    `form:"workflow_run_id"`
+	NodeID        *string    `form:"node_id"`
 }
 
 // SQLOperationFilter represents the filter criteria for SQL operations
@@ -430,6 +439,8 @@ type SQLOperationFilter struct {
 	Status        *string
 	CreatedAtGTE  *time.Time
 	CreatedAtLTE  *time.Time
+	WorkflowRunID *string
+	NodeID        *string
 }
 
 type SQLAuditFilter struct {
@@ -530,6 +541,11 @@ func ConvertSQLOperationModelToResponse(op *model.DataSourceSQLOperation) *SQLOp
 		GuardAction:    op.GuardAction,
 		CreatedBy:      op.CreatedBy,
 		CreatedAt:      op.CreatedAt,
+		ClientType:     op.ClientType,
+		WorkflowRunID:  op.WorkflowRunID,
+		NodeID:         op.NodeID,
+		RowCount:       op.RowCount,
+		DurationMS:     op.DurationMS,
 	}
 }
 

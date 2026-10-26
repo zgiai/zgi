@@ -276,6 +276,15 @@ func (s *service) resolveWorkspaceID(ctx context.Context, scope Scope) (*uuid.UU
 	return s.repos.Access.GetCurrentWorkspaceID(ctx, scope.AccountID)
 }
 
+func conversationWaiting(cause error, message *runtimemodel.Message) error {
+	waiting := &ConversationWaitingError{Cause: cause, MessageID: message.ID, Status: string(message.Status)}
+	if message.Status == runtimemodel.MessageStatusWaitingQuestion {
+		request := governanceMapFromAny(message.Metadata["user_input_request"])
+		waiting.RequestID = strings.TrimSpace(stringFromAny(request["request_id"]))
+	}
+	return waiting
+}
+
 func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, allowRuntimeInputFollowUp bool) error {
 	if conversation != nil &&
 		conversation.RuntimeStatus == runtimemodel.ConversationRuntimeStatusStreaming &&
@@ -305,16 +314,16 @@ func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Sco
 			return mapRepoError(err)
 		}
 		if leafMessage.Status == runtimemodel.MessageStatusWaitingApproval {
-			return ErrConversationWaitingApproval
+			return conversationWaiting(ErrConversationWaitingApproval, leafMessage)
 		}
 		if leafMessage.Status == runtimemodel.MessageStatusWaitingQuestion {
-			return ErrConversationWaitingQuestion
+			return conversationWaiting(ErrConversationWaitingQuestion, leafMessage)
 		}
 		if leafMessage.Status == runtimemodel.MessageStatusWaitingClientAction {
-			return ErrConversationWaitingAction
+			return conversationWaiting(ErrConversationWaitingAction, leafMessage)
 		}
 		if leafMessage.Status == runtimemodel.MessageStatusWaitingBudget {
-			return ErrConversationWaitingBudget
+			return conversationWaiting(ErrConversationWaitingBudget, leafMessage)
 		}
 	}
 	if !allowRuntimeInputFollowUp {

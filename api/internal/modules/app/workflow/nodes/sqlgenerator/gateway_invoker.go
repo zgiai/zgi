@@ -76,6 +76,7 @@ func (g *gatewayLLMInvoker) Invoke(ctx context.Context, accountID, appID, appTyp
 		Text:       text,
 		Finish:     finish,
 		RawChoices: resp.Choices,
+		Usage:      resp.Usage,
 	}, nil
 }
 

@@ -72,8 +72,9 @@ func channelTaskCreateQuestion(name string, task map[string]interface{}, now tim
 	when := channelTaskScheduleWords(task["schedule"], now)
 	goal := strings.TrimRight(strings.TrimSpace(stringValue(task["goal"])), "。.!！")
 	lines := []string{}
-	// A short goal without a time of its own reads as one question: 要我今天
-	// 下午 3:43 提醒丁康源点外卖吗？ Anything else names the task first.
+	// A short goal without a time of its own reads as one question, such as
+	// "Shall I remind Ding to order lunch at 3:43 pm today?". Anything else
+	// names the task first.
 	if when != "" && goal != "" && utf8.RuneCountInString(goal) <= 40 && !strings.ContainsAny(goal, "0123456789") {
 		lines = append(lines, "要我"+beforeWord(when)+goal+"吗？")
 	} else {
@@ -134,8 +135,9 @@ func channelTaskFieldName(change map[string]interface{}) string {
 	return stringValue(change["field"])
 }
 
-// beforeWord spaces a time that ends in a digit from the word after it:
-// 下午 3:43 提醒, but 下午 3 点提醒.
+// beforeWord spaces a time that ends in a digit from the word after it, and
+// leaves a time that ends in the hour word joined to it, as Chinese is
+// written.
 func beforeWord(text string) string {
 	if strings.IndexAny(text[len(text)-min(len(text), 1):], "0123456789") == 0 {
 		return text + " "
@@ -272,8 +274,9 @@ func channelTaskTimeWords(value interface{}, timezone string, now time.Time) str
 	return humanMoment(parsed, now, loadRunLocation(timezone)) + timezoneNote(timezone)
 }
 
-// channelTaskScheduleWords says when a task runs: 今天下午 3:43, 每个工作日
-// 早上 9 点, or the cron expression itself when it has no common reading.
+// channelTaskScheduleWords says when a task runs in everyday Chinese, such as
+// "today at 3:43 pm" or "every weekday at 9 am", or gives the cron expression
+// itself when it has no common reading.
 func channelTaskScheduleWords(value interface{}, now time.Time) string {
 	schedule, _ := value.(map[string]interface{})
 	timezone := strings.TrimSpace(stringValue(schedule["timezone"]))
@@ -345,7 +348,8 @@ func describeCron(expression string) string {
 	return ""
 }
 
-// humanClock says a time of day: 早上 9 点, 下午 3:43, 中午 12 点.
+// humanClock says a time of day in Chinese with its period of the day, such
+// as morning 9 o'clock, afternoon 3:43, or noon 12 o'clock.
 func humanClock(hour, minute int) string {
 	period := "晚上"
 	switch {
@@ -370,8 +374,9 @@ func humanClock(hour, minute int) string {
 	return fmt.Sprintf("%s %d:%02d", period, display, minute)
 }
 
-// humanMoment says a moment relative to now: 今天下午 3:43, 明天早上 9 点,
-// 10 月 30 日（周五）下午 5 点, with the year only when it is not this one.
+// humanMoment says a moment relative to now in Chinese, such as today at
+// 3:43 pm, tomorrow at 9 am, or Friday 30 October at 5 pm, with the year only
+// when it is not this one.
 func humanMoment(at, now time.Time, location *time.Location) string {
 	at, now = at.In(location), now.In(location)
 	day := func(t time.Time) time.Time { return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, location) }
