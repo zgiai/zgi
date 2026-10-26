@@ -661,6 +661,7 @@
       "category": "archive",
       "difficulty": "hard",
       "requires_note_ttl": true,
+      "min_wait_after_session": 150,
       "sessions": [
         [
           "请记住：你答应我把发票抬头改成“杭州蓝山科技有限公司”。"

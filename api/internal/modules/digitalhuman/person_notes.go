@@ -254,6 +254,8 @@ func (s *Service) PromoteNote(ctx context.Context, scope Scope, digitalHumanID, 
 		OperationID: operationID, Key: key, Action: memoryruntime.MutationActionUpsert,
 		MemoryType: memoryruntime.MemoryType(note.Category), Content: note.ContentPayload,
 		ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch, Visibility: MemoryVisibilityInternal,
+		// The promoted entry keeps where it came from: an end user's run.
+		origin:     MemoryOriginEndUser,
 		Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "operator-promote-note:" + operationID.String()}},
 		Confidence: 1, SourceContext: MemorySourceContext{PromotedByAuthorizedActor: true}, AdminApproved: true, OccurredAt: s.now(),
 	}, false)

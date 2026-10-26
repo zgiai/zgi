@@ -145,4 +145,18 @@ func TestPersonNotesPostgresLiveInTheRelationshipMemory(t *testing.T) {
 	if err != nil || len(archived) != 1 || archived[0].SourceKey != relationshipmemory.NoteKey("quote_due") {
 		t.Fatalf("archive = %+v, %v", archived, err)
 	}
+
+	// A promoted note becomes an internal entry of the DigitalHuman's own
+	// memory that still says it came from an end user, and leaves the notes.
+	if _, err := note(instance, "renewal_terms", "Renewals keep the launch discount.", 0, memoryruntime.MutationActionUpsert); err != nil {
+		t.Fatalf("write note to promote: %v", err)
+	}
+	promoted, err := service.PromoteNote(ctx, scope, digitalHumanID, subject, "renewal_terms", 1, uuid.New())
+	if err != nil || promoted.Memory == nil || promoted.Memory.NoteInstanceID != "" || promoted.Memory.Visibility != MemoryVisibilityInternal ||
+		promoted.Memory.Origin != MemoryOriginEndUser || promoted.Memory.Content != "Renewals keep the launch discount." {
+		t.Fatalf("promoted note = %#v, %v", promoted, err)
+	}
+	if left, err := relationships.Item(ctx, relationship.ID, relationshipmemory.NoteKey("renewal_terms")); err != nil || left != nil {
+		t.Fatalf("the promoted note stayed in the notes: %#v, %v", left, err)
+	}
 }

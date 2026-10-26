@@ -161,6 +161,9 @@ class DigitalHumanClient:
 
 def run_scenario(dh, scenario, run_index, wait_after_session):
     user = f"eval-{scenario['id']}-{run_index}-{uuid.uuid4().hex[:8]}"
+    # A scenario may need a longer wait than the run's, such as one that
+    # waits for a note to expire and the archive sweep to move it.
+    wait_after_session = max(wait_after_session or 0, scenario.get("min_wait_after_session", 0))
     turns = []
     for session in scenario["sessions"]:
         conversation = None
