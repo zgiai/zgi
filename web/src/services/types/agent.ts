@@ -514,6 +514,8 @@ export interface AgentMemoryTemplate {
 
 export interface AgentMemoryTemplatesResponse {
   catalog: { version: number; templates: AgentMemoryTemplate[] };
+  /** False when the deployment turns automatic memory off for every Agent. */
+  automatic_extraction_available?: boolean;
 }
 
 export interface AgentMemoryPreviewRequest {

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { FlaskConical, Sparkles } from 'lucide-react';
+import { Eye, FlaskConical, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -37,6 +37,7 @@ interface AgentRuntimeMemorySectionProps {
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemoryInstructions: (value: string) => void;
+  onOpenMemoryValues: () => void;
 }
 
 // Agent memory has no configured types (ADR 0017): the builder describes what
@@ -53,6 +54,7 @@ export function AgentRuntimeMemorySection({
   onChangeAgentMemoryEnabled,
   onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemoryInstructions,
+  onOpenMemoryValues,
 }: AgentRuntimeMemorySectionProps) {
   const t = useT('agents.agentRuntime');
   const { locale } = useLocale();
@@ -66,6 +68,7 @@ export function AgentRuntimeMemorySection({
     staleTime: 10 * 60 * 1000,
   });
   const memoryTemplates = templatesQuery.data?.data?.catalog.templates ?? [];
+  const automaticAvailable = templatesQuery.data?.data?.automatic_extraction_available !== false;
 
   const applyTemplate = (template: AgentMemoryTemplate) => {
     if (readOnly) return;
@@ -160,10 +163,13 @@ export function AgentRuntimeMemorySection({
           <div className="space-y-3 rounded-md border p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-medium">{t('memory.agentTitle')}</div>
+                <div id="agent-memory-enabled" className="text-sm font-medium">
+                  {t('memory.agentTitle')}
+                </div>
                 <div className="text-xs text-muted-foreground">{t('memory.agentDescription')}</div>
               </div>
               <Switch
+                aria-labelledby="agent-memory-enabled"
                 checked={agentMemoryEnabled}
                 disabled={readOnly}
                 onCheckedChange={onChangeAgentMemoryEnabled}
@@ -171,18 +177,28 @@ export function AgentRuntimeMemorySection({
             </div>
             {agentMemoryEnabled && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
-                  <div>
-                    <div className="text-xs font-medium">{t('memory.autoExtractionTitle')}</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {t('memory.autoExtractionDescription')}
+                <div className="space-y-2 rounded-md bg-muted/30 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div id="agent-memory-auto" className="text-xs font-medium">
+                        {t('memory.autoExtractionTitle')}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {t('memory.autoExtractionDescription')}
+                      </div>
                     </div>
+                    <Switch
+                      aria-labelledby="agent-memory-auto"
+                      checked={agentMemoryAutoExtractionEnabled}
+                      disabled={readOnly}
+                      onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
+                    />
                   </div>
-                  <Switch
-                    checked={agentMemoryAutoExtractionEnabled}
-                    disabled={readOnly}
-                    onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
-                  />
+                  {!automaticAvailable && (
+                    <div className="text-[11px] text-amber-700 dark:text-amber-400">
+                      {t('memory.autoUnavailable')}
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center justify-between gap-2">
@@ -216,6 +232,7 @@ export function AgentRuntimeMemorySection({
                     maxLength={AGENT_MEMORY_LIMITS.maxInstructionsChars}
                     showCharacterCount
                     className="min-h-28"
+                    aria-label={t('memory.instructionsLabel')}
                     placeholder={t('memory.instructionsPlaceholder')}
                     disabled={readOnly}
                     onChange={event =>
@@ -225,8 +242,17 @@ export function AgentRuntimeMemorySection({
                     }
                   />
                   <div className="text-[11px] text-muted-foreground">
-                    {t('memory.instructionsHelp')}
+                    {agentMemoryInstructions.trim()
+                      ? t('memory.instructionsHelp')
+                      : t('memory.instructionsEmpty')}
                   </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
+                  <div className="text-[11px] text-muted-foreground">{t('memory.manageHint')}</div>
+                  <Button type="button" variant="outline" size="xs" onClick={onOpenMemoryValues}>
+                    <Eye className="size-3" />
+                    {t('memory.viewValues')}
+                  </Button>
                 </div>
               </div>
             )}

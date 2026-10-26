@@ -27,6 +27,7 @@ import (
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	fileprocessservice "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -843,8 +844,8 @@ func (h *AgentsHandler) UpdateAgentMemoryConfig(c *gin.Context) {
 }
 
 // GetAgentMemoryTemplates returns the memory template catalog (ADR 0013) in
-// the caller's language, and whether this deployment runs memory blocks, which
-// decides which editor controls take effect.
+// the caller's language, and whether this deployment allows automatic memory,
+// so the builder can say when the Agent's own switch has no effect.
 func (h *AgentsHandler) GetAgentMemoryTemplates(c *gin.Context) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
@@ -858,7 +859,10 @@ func (h *AgentsHandler) GetAgentMemoryTemplates(c *gin.Context) {
 	if locale == "" {
 		locale = c.GetHeader("Accept-Language")
 	}
-	response.Success(c, gin.H{"catalog": agentmemory.Templates(locale)})
+	response.Success(c, gin.H{
+		"catalog":                        agentmemory.Templates(locale),
+		"automatic_extraction_available": relationshipmemory.AutomaticExtractionEnabled(),
+	})
 }
 
 // PreviewAgentMemory shows what a memory configuration would save from a

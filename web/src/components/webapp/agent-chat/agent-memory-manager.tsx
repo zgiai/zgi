@@ -1,11 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Download, Loader2, Trash2 } from 'lucide-react';
+import { Brain, Download, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
-import { MemoryItemList } from '@/components/memory/memory-item-list';
+import {
+  agentMemoryAddTargets,
+  agentMemoryMeta,
+  agentMemoryTitle,
+  agentMemoryUndoable,
+} from '@/components/memory/agent-memory-topics';
+import { MemoryBoard } from '@/components/memory/memory-board';
+import { joinFacts, splitFacts } from '@/components/memory/memory-topics';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -13,10 +20,16 @@ import {
   DialogBody,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useT } from '@/i18n';
 import WebAppService from '@/services/webapp.service';
@@ -43,6 +56,7 @@ function downloadJSON(filename: string, value: unknown) {
 
 export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManagerProps) {
   const t = useT('webapp.agentChat.memory');
+  const tItems = useT('common.memoryItems');
   const tHistory = useT('common.memoryHistory');
   const tArchive = useT('common.memoryArchive');
   const [open, setOpen] = useState(false);
@@ -50,7 +64,6 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
   const [values, setValues] = useState<WebAppAgentMemoryValue[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState('');
-  const [deleteKey, setDeleteKey] = useState<string | null>(null);
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const isLoadingRef = useRef(false);
   const loadedWebAppIdRef = useRef('');
@@ -89,36 +102,54 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
   const valuesByKey = useMemo(() => new Map(values.map(value => [value.key, value])), [values]);
   const hasSavedValues = values.some(value => Boolean(value.content.trim()));
 
-  const save = async (value: WebAppAgentMemoryValue, content: string) => {
-    if (!content || content === value.content) return;
-    setBusyKey(value.key);
+  // The board reports success with its own toast; failures are shown here
+  // and rethrown so the board keeps the edit open.
+  const save = async (key: string, content: string) => {
+    const value = valuesByKey.get(key);
+    setBusyKey(key);
     try {
-      await WebAppService.updateAgentMemory(webAppId, value.key, content, value.revision);
-      toast.success(t('saved'));
+      await WebAppService.updateAgentMemory(webAppId, key, content, value?.revision ?? 0);
       await load();
     } catch (error) {
       toast.error(getErrorMessage(error) || t('saveFailed'));
       await load();
+      throw error;
     } finally {
       setBusyKey('');
     }
   };
 
-  const remove = async () => {
-    if (!deleteKey) return;
-    const value = valuesByKey.get(deleteKey);
+  const remove = async (key: string) => {
+    const value = valuesByKey.get(key);
     if (!value) return;
-    setBusyKey(deleteKey);
+    setBusyKey(key);
     try {
-      await WebAppService.deleteAgentMemory(webAppId, deleteKey, value.revision);
-      toast.success(t('deleted'));
-      setDeleteKey(null);
+      const response = await WebAppService.deleteAgentMemory(webAppId, key, value.revision);
       await load();
+      const operationId = response.data?.last_operation_id;
+      const until = response.data?.undoable_until;
+      if (operationId && until && until > Date.now() / 1000) {
+        return { undo: () => undoOperation(operationId) };
+      }
+      return undefined;
     } catch (error) {
       toast.error(getErrorMessage(error) || t('deleteFailed'));
       await load();
+      throw error;
     } finally {
       setBusyKey('');
+    }
+  };
+
+  const undoOperation = async (operationId: string) => {
+    try {
+      await WebAppService.undoAgentMemoryOperation(webAppId, operationId);
+      toast.success(t('undone'));
+    } catch (error) {
+      toast.error(getErrorMessage(error) || t('undoFailed'));
+      throw error;
+    } finally {
+      await load();
     }
   };
 
@@ -131,21 +162,6 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
       await load();
     } catch (error) {
       toast.error(getErrorMessage(error) || t('deleteFailed'));
-    } finally {
-      setBusyKey('');
-    }
-  };
-
-  const undo = async (value: WebAppAgentMemoryValue) => {
-    if (!value.last_operation_id) return;
-    setBusyKey(value.key);
-    try {
-      await WebAppService.undoAgentMemoryOperation(webAppId, value.last_operation_id);
-      toast.success(t('undone'));
-      await load();
-    } catch (error) {
-      toast.error(getErrorMessage(error) || t('undoFailed'));
-      await load();
     } finally {
       setBusyKey('');
     }
@@ -228,80 +244,68 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
                     <Loader2 className="size-5 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
-                  <MemoryItemList
+                  <MemoryBoard
                     canEdit={memoryEnabled}
-                    busy={Boolean(busyKey)}
                     empty={t('empty')}
-                    items={values.map(value => ({
-                      id: value.key,
-                      label: value.name || value.key,
-                      badges: [value.key],
-                      content: value.content,
-                      maxChars: value.max_chars,
-                      meta: t('metadata', {
-                        source: value.source_kind
-                          ? t(`sources.${value.source_kind}`)
-                          : t('notSaved'),
-                        revision: value.revision,
-                        time: value.updated_at
-                          ? new Date(value.updated_at * 1000).toLocaleString()
-                          : t('notSaved'),
-                      }),
-                      undoable:
-                        value.source_kind === 'automatic' &&
-                        Boolean(value.last_operation_id) &&
-                        Boolean(value.undoable_until && value.undoable_until > Date.now() / 1000),
-                    }))}
-                    onSave={(row, content) => {
-                      const value = valuesByKey.get(row.id);
-                      return value ? save(value, content) : Promise.resolve();
-                    }}
-                    onUndo={row => {
-                      const value = valuesByKey.get(row.id);
-                      if (value) void undo(value);
-                    }}
-                    onDelete={row => {
-                      if (valuesByKey.get(row.id)?.content) setDeleteKey(row.id);
-                    }}
+                    topics={values
+                      .filter(value => value.content.trim())
+                      .map(value => ({
+                        key: value.key,
+                        title: agentMemoryTitle(value, tItems),
+                        content: value.content,
+                        meta: agentMemoryMeta(value, tItems),
+                        undoAutomatic:
+                          agentMemoryUndoable(value) && value.last_operation_id
+                            ? () => undoOperation(value.last_operation_id as string)
+                            : undefined,
+                      }))}
+                    onSave={save}
+                    onDeleteTopic={remove}
+                    addTargets={agentMemoryAddTargets(values, tItems)}
+                    onAdd={(key, fact) =>
+                      save(
+                        key,
+                        joinFacts([...splitFacts(valuesByKey.get(key)?.content ?? ''), fact])
+                      )
+                    }
+                    menu={
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            isIcon
+                            aria-label={t('moreActions')}
+                            disabled={Boolean(busyKey)}
+                          >
+                            <MoreHorizontal className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => void exportValues()}>
+                            <Download />
+                            {t('export')}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            disabled={!hasSavedValues}
+                            onSelect={() => setDeleteAllOpen(true)}
+                          >
+                            <Trash2 />
+                            {t('deleteAll')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    }
                   />
                 )}
               </TabsContent>
             </Tabs>
           </DialogBody>
-          <DialogFooter className="justify-between">
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={!hasSavedValues || Boolean(busyKey)}
-              onClick={() => setDeleteAllOpen(true)}
-            >
-              <Trash2 className="mr-1.5 size-4" />
-              {t('deleteAll')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={Boolean(busyKey)}
-              onClick={() => void exportValues()}
-            >
-              <Download className="mr-1.5 size-4" />
-              {t('export')}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog
-        open={Boolean(deleteKey)}
-        onOpenChange={next => !next && setDeleteKey(null)}
-        title={t('deleteConfirmTitle')}
-        description={t('deleteConfirmDescription')}
-        confirmText={t('delete')}
-        cancelText={t('cancel')}
-        variant="danger"
-        loading={Boolean(deleteKey && busyKey === deleteKey)}
-        onConfirm={() => void remove()}
-      />
       <ConfirmDialog
         open={deleteAllOpen}
         onOpenChange={setDeleteAllOpen}

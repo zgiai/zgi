@@ -2549,9 +2549,11 @@ const messages = {
       unavailable: 'The Linux environment is not available for this organization.',
     },
     memory: {
-      agentTitle: 'Memory',
+      agentTitle: 'Remember each user',
       agentDescription:
         'Let the Agent remember what matters about each user across conversations. It decides what to keep and organizes the memory itself; the instructions below say what this Agent should remember.',
+      autoUnavailable:
+        'Automatic memory is turned off for this deployment, so this switch has no effect for now. The Agent still remembers when a user asks it to.',
       autoExtractionTitle: 'Organize and update memory automatically',
       autoExtractionDescription:
         'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
@@ -2572,7 +2574,11 @@ const messages = {
         "For example: This is a support assistant. Remember the customer's plan and communication preferences; do not record how a single ticket was handled.",
       instructionsHelp:
         'Describe what this Agent should remember about each user and what it should not. The Agent organizes the memory itself. Instructions cannot override evidence, sensitive-content, or other safety rules. Up to 2,000 characters.',
-      viewValues: 'View memory',
+      instructionsEmpty:
+        'Without instructions, the Agent uses general rules to decide what about each user is worth remembering.',
+      manageHint:
+        'Users can view, change, or delete their own memory under “My memory” in the app.',
+      viewValues: 'View my test memory',
       preview: {
         open: 'Preview',
         title: 'Preview memory',
@@ -2598,31 +2604,13 @@ const messages = {
     memoryValues: {
       title: 'Agent memory',
       description:
-        'View and edit your own memory values for draft debugging. Only configured memory blocks can be changed.',
-      scopeAccount: 'Account user',
-      scopeEndUser: 'End user',
-      userIdPlaceholder: 'User ID',
-      userRequired: 'Enter a user ID first.',
-      load: 'Load',
+        'What this Agent remembers about you from your debug chats. You can change or delete any of it.',
       loading: 'Loading memory...',
       empty: 'No memory has been written for this user yet.',
-      noDescription: 'No description',
-      updatedAt: 'Updated: {time}',
-      contentPlaceholder: 'Enter memory content',
-      overLimit: 'Content exceeds this memory block limit.',
-      save: 'Save',
-      clear: 'Clear',
       close: 'Close',
-      saveSuccess: 'Memory saved',
       saveFailed: 'Failed to save memory',
-      clearSuccess: 'Memory cleared',
       clearFailed: 'Failed to clear memory',
       loadFailed: 'Failed to load memory',
-      clearConfirmTitle: 'Clear this memory?',
-      clearConfirmDescription:
-        'The current content will be forgotten for this user. The event log will not keep the original content.',
-      clearConfirmAction: 'Clear memory',
-      clearConfirmCancel: 'Cancel',
     },
     preview: {
       title: 'Debug',

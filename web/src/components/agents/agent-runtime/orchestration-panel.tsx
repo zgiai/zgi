@@ -98,6 +98,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onChangeAgentMemoryEnabled: (value: boolean) => void;
   onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => void;
   onChangeAgentMemoryInstructions: (value: string) => void;
+  onOpenMemoryValues: () => void;
 }
 
 export function AgentRuntimeOrchestrationPanel({
@@ -166,6 +167,7 @@ export function AgentRuntimeOrchestrationPanel({
   onChangeAgentMemoryEnabled,
   onChangeAgentMemoryAutoExtractionEnabled,
   onChangeAgentMemoryInstructions,
+  onOpenMemoryValues,
 }: AgentRuntimeOrchestrationPanelProps) {
   const t = useT('agents.agentRuntime');
 
@@ -307,6 +309,7 @@ export function AgentRuntimeOrchestrationPanel({
             onChangeAgentMemoryEnabled={onChangeAgentMemoryEnabled}
             onChangeAgentMemoryAutoExtractionEnabled={onChangeAgentMemoryAutoExtractionEnabled}
             onChangeAgentMemoryInstructions={onChangeAgentMemoryInstructions}
+            onOpenMemoryValues={onOpenMemoryValues}
           />
 
           <Separator className="h-px" />

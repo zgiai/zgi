@@ -1095,7 +1095,7 @@ const messages = {
     manageMemory: 'Manage personal memory',
     homeTitle: 'Start a conversation with {name}',
     homeDescription:
-      'Conversations, files, relationship memory, and private tasks are stored separately for your account.',
+      'Conversations, files, memory, and private tasks are stored separately for your account.',
     publishTitle: 'Publish before starting a conversation',
     openSettings: 'Open identity settings',
     placeholder: 'Ask this digital human to use one of its published capabilities…',
@@ -2432,7 +2432,7 @@ const messages = {
     unavailableDescription: 'The page may be closed, unpublished, or temporarily unavailable.',
     loginRequiredTitle: 'Sign in to continue',
     loginRequiredDescription:
-      'This digital human uses your personal relationship memory, so chat is available only after you sign in.',
+      'This digital human remembers things about you, so chat is available only after you sign in.',
     login: 'Sign in',
     signedIn: 'Signed in',
     retry: 'Retry',
