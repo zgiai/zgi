@@ -111,13 +111,18 @@ func (s *Service) History(ctx context.Context, relationshipID uuid.UUID, req His
 	if err != nil {
 		return nil, err
 	}
+	var relationship UserMemoryRelationship
+	if err := db.Select("id", "consumer_type").First(&relationship, "id = ?", relationshipID).Error; err != nil {
+		return nil, fmt.Errorf("read memory relationship: %w", err)
+	}
 	byCommit := map[uuid.UUID][]HistoryVersion{}
 	for _, version := range versions {
 		view, err := s.historyVersion(ctx, version)
 		if err != nil {
 			return nil, err
 		}
-		view.Revertible = latest[version.MemoryKey] == version.ID && version.ContentPurgedAt == nil && versionIsCurrent(version, current)
+		view.Revertible = latest[version.MemoryKey] == version.ID && version.ContentPurgedAt == nil && versionIsCurrent(version, current) &&
+			versionRestorable(version, current, relationship.ConsumerType == ConsumerDigitalHuman)
 		byCommit[version.CommitID] = append(byCommit[version.CommitID], view)
 	}
 	for _, commit := range commits {
@@ -152,6 +157,9 @@ func (s *Service) RevertVersion(ctx context.Context, relationshipID, versionID u
 	if latest[version.MemoryKey] != version.ID || !versionIsCurrent(version, current) {
 		return nil, ErrRevisionConflict
 	}
+	if !versionRestorable(version, current, contract.DefinitionMode == "dynamic") {
+		return nil, ErrUndoUnavailable
+	}
 	view, err := s.historyVersion(ctx, version)
 	if err != nil {
 		return nil, err
@@ -168,8 +176,8 @@ func (s *Service) RevertVersion(ctx context.Context, relationshipID, versionID u
 		}
 		return nil, nil
 	}
-	expected := int64(0)
-	displayName, category := "", ""
+	// A deleted value comes back with the name and category it had.
+	expected, displayName, category := int64(0), version.BeforeDisplayName, version.BeforeCategory
 	if exists {
 		expected, displayName, category = item.Revision, item.DisplayName, item.Category
 	}
@@ -177,6 +185,16 @@ func (s *Service) RevertVersion(ctx context.Context, relationshipID, versionID u
 		Key: version.MemoryKey, DisplayName: displayName, Category: category, Content: view.Before,
 		ExpectedRevision: expected, Contract: contract, Metadata: metadata,
 	})
+}
+
+// versionRestorable reports whether reverting version can write its value
+// back. A deleted Digital Human memory needs its category, which history
+// recorded before it kept categories cannot supply.
+func versionRestorable(version MemoryFileVersion, current map[string]UserMemoryItem, needsCategory bool) bool {
+	if _, exists := current[version.MemoryKey]; exists || version.BeforeRevision == nil || !needsCategory {
+		return true
+	}
+	return version.BeforeCategory != ""
 }
 
 // latestVersions returns, per file, the ID of its newest version and its
