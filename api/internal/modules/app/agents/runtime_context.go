@@ -696,16 +696,22 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 	}
 }
 
+// runtimeErrorProjector projects public runtime errors. Handlers built without
+// a catalog, like the external API's, use the one published at bootstrap.
+func (h *AgentsHandler) runtimeErrorProjector() *apptransport.Projector {
+	if h != nil && h.appErrorProjector != nil {
+		return h.appErrorProjector
+	}
+	if catalog := runtimeservice.ApplicationErrorCatalog(); catalog != nil {
+		projector, _ := apptransport.NewProjector(catalog)
+		return projector
+	}
+	return nil
+}
+
 func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 	if apperror.IsCode(err, AppCodeAgentExecutionRuntimeUnavailable) || runtimeservice.IsEndUserAdmissionError(err) {
-		projector := h.appErrorProjector
-		if projector == nil {
-			// Handlers built without a catalog, like the external API's, use
-			// the one published at bootstrap.
-			if catalog := runtimeservice.ApplicationErrorCatalog(); catalog != nil {
-				projector, _ = apptransport.NewProjector(catalog)
-			}
-		}
+		projector := h.runtimeErrorProjector()
 		if projector == nil {
 			response.Fail(c, response.ErrInvalidParam)
 			return
@@ -741,7 +747,8 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
 		errors.Is(err, runtimeservice.ErrConversationWaitingBudget):
 		if externalInvocation {
-			c.JSON(http.StatusConflict, agentConversationWaitingPayload(err))
+			locale, _ := appcatalog.ParseLocale(c.GetHeader("Accept-Language"))
+			c.JSON(http.StatusConflict, agentConversationWaitingPayload(err, conversationWaitingMessage(h.runtimeErrorProjector(), err, locale)))
 		} else {
 			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		}
@@ -985,8 +992,9 @@ func runtimeSearchResultResponse(result *runtimeservice.SearchResult) runtimedto
 
 // agentConversationWaitingPayload tells an external caller which message to
 // continue: answer its question or approval through the matching continuation
-// endpoint instead of starting a new turn.
-func agentConversationWaitingPayload(err error) gin.H {
+// endpoint instead of starting a new turn. message is the localized public
+// text; the internal error text is never sent.
+func agentConversationWaitingPayload(err error, message string) gin.H {
 	data := gin.H{}
 	var waiting *runtimeservice.ConversationWaitingError
 	if errors.As(err, &waiting) && waiting != nil {
@@ -996,5 +1004,5 @@ func agentConversationWaitingPayload(err error) gin.H {
 			data["request_id"] = waiting.RequestID
 		}
 	}
-	return gin.H{"code": agentConversationWaitingCode, "message": err.Error(), "data": data}
+	return gin.H{"code": agentConversationWaitingCode, "message": message, "data": data}
 }
