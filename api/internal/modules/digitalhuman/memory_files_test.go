@@ -19,7 +19,8 @@ func TestMemoryFilePathsSayWhoTheMemoryIsAbout(t *testing.T) {
 	for want, memory := range map[string]*DigitalHumanMemory{
 		"/me/return_policy.md":     fileMemory("", memoryruntime.MemoryTypeFact, "return_policy", "x"),
 		"/user/notes/quote_due.md": fileMemory("instance-1", memoryruntime.MemoryTypeOpenLoop, "quote_due", "x"),
-		"/me/a_b.md":               fileMemory("", memoryruntime.MemoryTypeFact, "a/b", "x"),
+		"/me/a_b~c14cdd.md":        fileMemory("", memoryruntime.MemoryTypeFact, "a/b", "x"),
+		"/me/a_b.md":               fileMemory("", memoryruntime.MemoryTypeFact, "a_b", "x"),
 	} {
 		if got := memoryFilePath(memory); got != want {
 			t.Fatalf("path of %q/%s = %q, want %q", memory.NoteInstanceID, memory.MemoryKey, got, want)
@@ -132,5 +133,22 @@ func TestMemorySearchFindsArchivedEntriesUnderArchive(t *testing.T) {
 	}
 	if found := searchArchivedMemoryFiles([]*DigitalHumanMemory{retired}, "报价单", "/user/", 5); len(found) != 0 {
 		t.Fatalf("a /user/ search returned the DigitalHuman's own archive: %+v", found)
+	}
+}
+
+func TestMemorySearchInADirectoryFillsFromItsOwnFiles(t *testing.T) {
+	recalled := fileMemory("", memoryruntime.MemoryTypeFact, "return_policy", "退货政策：45 天内可退。")
+	unrelated := fileMemory("", memoryruntime.MemoryTypeFact, "office", "办公室在三楼。")
+	note := fileMemory("instance-1", memoryruntime.MemoryTypeOpenLoop, "quote_due", "答应周五前发报价单。")
+	other := fileMemory("", memoryruntime.MemoryTypeFact, "invoice", "报价单和发票一起寄出。")
+	// Recall found only /me/ files; the person's own note matches the query.
+	files := searchMemoryFiles([]*DigitalHumanMemory{recalled}, "/user/notes/", 5)
+	files = appendDirectoryMatches(files, []*DigitalHumanMemory{recalled, unrelated, note, other}, "报价单什么时候发", "/user/notes/", 5)
+	if len(files) != 1 || files[0] != note {
+		t.Fatalf("directory search = %+v", files)
+	}
+	files = appendDirectoryMatches([]*DigitalHumanMemory{other}, []*DigitalHumanMemory{other, unrelated}, "报价单", "/me/", 5)
+	if len(files) != 1 {
+		t.Fatalf("a file already found was added again: %d", len(files))
 	}
 }

@@ -264,6 +264,9 @@ func (e *digitalHumanFileEditor) apply(ctx context.Context, operationID uuid.UUI
 		if existing != nil {
 			return "the file already exists; use insert or str_replace", nil
 		}
+		if strings.Contains(key, memoryFileDigestSeparator) {
+			return "file names may not contain " + memoryFileDigestSeparator, nil
+		}
 		memoryType := memoryruntime.MemoryType(strings.ToLower(strings.TrimSpace(edit.Tags)))
 		if memoryType == "" {
 			memoryType = memoryruntime.MemoryTypeFact
@@ -279,7 +282,8 @@ func (e *digitalHumanFileEditor) apply(ctx context.Context, operationID uuid.UUI
 		if existing == nil {
 			return "no such file; use create", nil
 		}
-		args.MemoryType, args.ExpectedRevision = existing.MemoryType, existing.Revision
+		// The file's own key: a key with "/" is shown under another name.
+		args.Key, args.MemoryType, args.ExpectedRevision = existing.MemoryKey, existing.MemoryType, existing.Revision
 		if existing.MemoryType == memoryruntime.MemoryTypeIdentity {
 			return "the file is read-only", nil
 		}
