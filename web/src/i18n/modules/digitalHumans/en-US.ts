@@ -2063,6 +2063,30 @@ const messages = {
       removed: 'Removed',
     },
   },
+  memoryInstructions: {
+    title: 'Memory instructions',
+    description:
+      'Tell the digital human what its memory is for: what to keep, what to ignore, and how to phrase it. These are preferences; rules on evidence, sensitive content, and who may see memory still apply.',
+    placeholder:
+      'For example: Keep customer complaints and the fixes we promised, with the date. Ignore small talk and one-off questions.',
+    count: '{count}/{max} characters',
+    preview: {
+      open: 'Preview',
+      title: 'Preview memory',
+      description:
+        'Paste a sample conversation to see what the digital human would remember with these instructions. Nothing is saved.',
+      turn: 'Turn {index}',
+      removeTurn: 'Remove turn',
+      userPlaceholder: 'What the person says',
+      assistantPlaceholder: 'What the digital human replies (optional)',
+      addTurn: 'Add turn',
+      run: 'Run preview',
+      noProposals: 'Nothing would be remembered from this conversation.',
+      accepted: 'Would be kept',
+      rejected: 'Would be refused',
+      reason: 'Refused by the memory policy: {reason}',
+    },
+  },
   memory: {
     title: 'Long-term memory',
     description:

@@ -55,12 +55,15 @@ class DigitalHumanClient:
             raise RuntimeError(f"{method} {path} failed: {status} {str(payload)[:300]}")
         return payload.get("data")
 
-    def setup(self, label, model, auto, me_preload):
+    def setup(self, label, model, auto, me_preload, memory_instructions=""):
         name = f"memory-eval-dh-{label}-{datetime.datetime.now():%Y%m%d%H%M%S}"
-        created = self.console("POST", "/digital-humans", {
+        body = {
             "name": name, "autonomy_level": "supervised", "visibility": "workspace", "default_model": model, "rules": [],
             "persona": "你是一家软件公司的客户助理，帮客户解答问题、跟进需求。回答简洁。",
-        })
+        }
+        if memory_instructions:
+            body["memory_policy"] = {"instructions": memory_instructions}
+        created = self.console("POST", "/digital-humans", body)
         definition, draft = created["definition"], created["draft"]
         self.digital_human_id = definition["id"]
         self.console("POST", f"/digital-humans/{self.digital_human_id}/publish",
@@ -204,6 +207,8 @@ def main():
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--note-ttl", action="store_true", help="Include scenarios that need a deployment with a short note TTL")
+    parser.add_argument("--memory-instructions", choices=["suite", "none"],
+                        help="Include the memory-instruction scenarios, with the suite's instructions or none as a control")
     parser.add_argument("--db", default="zgi", help="Database the deployment uses, for reading memory")
     parser.add_argument("--container", default="zgi-postgres-1")
     parser.add_argument("--env-file")
@@ -220,6 +225,9 @@ def main():
     scenarios = suite["scenarios"]
     if not args.note_ttl:
         scenarios = [s for s in scenarios if not s.get("requires_note_ttl")]
+    if not args.memory_instructions:
+        scenarios = [s for s in scenarios if not s.get("requires_memory_instructions")]
+    memory_instructions = suite.get("memory_instructions", "") if args.memory_instructions == "suite" else ""
     if args.only:
         scenarios = [s for s in scenarios if s["id"] in set(args.only)]
 
@@ -227,7 +235,7 @@ def main():
     client.login(email, password)
     dh = DigitalHumanClient(client, args.workspace_id, args.db, args.container)
     started = datetime.datetime.now()
-    meta_dh = dh.setup(args.label, args.model, args.auto, suite.get("me_preload", []))
+    meta_dh = dh.setup(args.label, args.model, args.auto, suite.get("me_preload", []), memory_instructions)
     print(f"digital human {meta_dh['name']} ({meta_dh['digital_human_id']}), {len(scenarios)} scenarios x {args.repeat}", flush=True)
 
     results = []

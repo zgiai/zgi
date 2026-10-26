@@ -46,6 +46,7 @@ type HandlerService interface {
 	ApplyMemoryProposal(context.Context, Scope, uuid.UUID, MemoryProposalRequest) (*MemoryMutationResult, error)
 	SetMemoryVisibility(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryVisibilityRequest) (*MemoryMutationResult, error)
 	ApplyMemoryBulk(context.Context, Scope, uuid.UUID, MemoryBulkRequest) (*MemoryBulkResult, error)
+	PreviewMemory(context.Context, Scope, uuid.UUID, MemoryPreviewRequest) (*MemoryPreviewResult, error)
 	UndoMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryUndoRequest) (*MemoryMutationResult, error)
 	RepairMemoryProjection(context.Context, Scope, uuid.UUID) (*MemoryProjectionRepairResult, error)
 }
@@ -90,6 +91,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:id/memory/proposals", h.ApplyMemoryProposal)
 	group.POST("/:id/memory/:memory_id/visibility", h.SetMemoryVisibility)
 	group.POST("/:id/memory/bulk", h.ApplyMemoryBulk)
+	group.POST("/:id/memory/preview", h.PreviewMemory)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
 
@@ -190,6 +192,25 @@ func (h *Handler) ApplyMemoryBulk(c *gin.Context) {
 		return
 	}
 	result, err := h.service.ApplyMemoryBulk(c.Request.Context(), scope, id, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// PreviewMemory shows which memory a sample conversation would produce under
+// the draft's or the given memory instructions. It writes nothing.
+func (h *Handler) PreviewMemory(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var request MemoryPreviewRequest
+	if !h.decode(c, &request) {
+		return
+	}
+	result, err := h.service.PreviewMemory(c.Request.Context(), scope, id, request)
 	if err != nil {
 		h.writeError(c, err)
 		return

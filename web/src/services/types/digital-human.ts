@@ -520,6 +520,30 @@ export interface DigitalHumanMemoryBulkRequest {
   memory_ids: string[];
 }
 
+export interface DigitalHumanMemoryPreviewTurn {
+  user: string;
+  assistant: string;
+}
+
+// Asks which memory a sample conversation would produce. Instructions default
+// to the draft's.
+export interface DigitalHumanMemoryPreviewRequest {
+  instructions?: string;
+  turns: DigitalHumanMemoryPreviewTurn[];
+}
+
+export interface DigitalHumanMemoryPreviewResult {
+  instructions: string;
+  proposals: Array<{
+    key: string;
+    memory_type: DigitalHumanMemoryType;
+    content: string;
+    confidence?: number;
+    accepted: boolean;
+    reason?: string;
+  }>;
+}
+
 export interface DigitalHumanMemoryBulkResult {
   updated: number;
   skipped: Array<{ memory_id: string; reason: string }>;

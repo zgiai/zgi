@@ -60,6 +60,7 @@
       "visibility": "internal"
     }
   ],
+  "memory_instructions": "记录客户反馈的产品问题、我们承诺的修复和截止时间。不要记录寒暄、天气、闲聊，也不要记录客户的个人生活细节，比如度假、运动和爱好。",
   "scenarios": [
     {
       "id": "dh_explicit_user_fact_zh",
@@ -679,6 +680,52 @@
         ]
       },
       "notes": "Run with a short ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_TTL and --note-ttl: the note expires before the probe and must be found again in the archive."
+    },
+    {
+      "id": "dh_instructions_keep_issue_zh",
+      "category": "instructions",
+      "difficulty": "hard",
+      "requires_memory_instructions": true,
+      "sessions": [
+        [
+          "今天天气真好，我刚跑完步。对了，你们的导出按钮又失败了，我们这周五要用，能在周五前修好吗？"
+        ]
+      ],
+      "probe": "我上次反馈的那个问题现在怎么样了？",
+      "expect": {
+        "memory_in_any": {
+          "notes": [
+            "导出"
+          ]
+        },
+        "memory_none": [
+          "跑步",
+          "天气"
+        ],
+        "answer_any": [
+          "导出"
+        ]
+      },
+      "notes": "Run with --auto and --memory-instructions: an issue mentioned in passing is kept as a note, the small talk around it is not."
+    },
+    {
+      "id": "dh_instructions_ignore_personal_zh",
+      "category": "instructions",
+      "difficulty": "hard",
+      "requires_memory_instructions": true,
+      "sessions": [
+        [
+          "下周我要去三亚度假，最近还在学吉他。顺便问一下，企业版支持单点登录吗？"
+        ]
+      ],
+      "probe": "你还记得我跟你说过什么吗？",
+      "expect": {
+        "memory_none": [
+          "三亚",
+          "吉他"
+        ]
+      },
+      "notes": "Run with --auto and --memory-instructions: personal life details are not remembered when the instructions say so."
     }
   ]
 }

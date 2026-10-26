@@ -1939,6 +1939,28 @@ const messages: DigitalHumansMessages = {
       removed: '已移除',
     },
   },
+  memoryInstructions: {
+    title: '记忆说明',
+    description:
+      '告诉数字人它的记忆用来做什么：记什么、忽略什么、怎么写。这些是偏好；关于证据、敏感内容和可见范围的规则仍然生效。',
+    placeholder: '例如：记录客户的投诉和我们承诺的修复及日期。忽略寒暄和一次性的问题。',
+    count: '{count}/{max} 字',
+    preview: {
+      open: '预览',
+      title: '预览记忆',
+      description: '粘贴一段示例对话，看看按这些说明数字人会记住什么。不会保存任何内容。',
+      turn: '第 {index} 轮',
+      removeTurn: '删除这一轮',
+      userPlaceholder: '对方说的话',
+      assistantPlaceholder: '数字人的回复（可选）',
+      addTurn: '添加一轮',
+      run: '运行预览',
+      noProposals: '这段对话不会留下记忆。',
+      accepted: '会被记住',
+      rejected: '会被拒绝',
+      reason: '被记忆规则拒绝：{reason}',
+    },
+  },
   memory: {
     title: '长期记忆',
     description: '记忆直接归属于这个数字人，并在获得授权的会话和发起人之间共享。',

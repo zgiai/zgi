@@ -99,7 +99,15 @@ Memory pages are reworked for many entries:
 - **Runtime Workspace end-user panel:** each end user's notes for each DigitalHuman, with delete and promote.
 - **Profile page and WebApp "My Memory"** (one relationship at a time): tabs for Memory, Notes (DigitalHumans only), Archive, and History, instead of one long page. Items are compact rows with inline edit and search.
 
-### 5. What does not change
+### 5. Memory instructions
+
+Operators customize a DigitalHuman's memory the way builders customize an Agent's (ADR 0013): with guidance, never with the safety layer.
+
+- **Store.** `memory_instructions` is one free-text field of up to 2,000 characters, kept as `instructions` in the version's `memory_policy`. It is published, versioned, and restored with the rest of the configuration, and needs no migration.
+- **Use.** The text goes into a reserved section below the fixed rules in two places: the in-conversation memory guidance of runs that may write memory, and the background extraction prompt. It is framed as the operator's preference for what to keep, what to ignore, and where it belongs. It cannot override the rules on evidence, sensitive content, trust admission, or visibility.
+- **Preview.** `POST /digital-humans/:id/memory/preview` runs the background proposer over a pasted sample conversation, with the draft's model and either the saved instructions or unsaved ones. It reports each proposal and whether the memory policy would accept it, and writes nothing.
+
+### 6. What does not change
 
 - Agents: phase 1 and 2 behaviour.
 - The relationship store's rules for the person's own items (keys outside `notes/`).
@@ -119,6 +127,7 @@ Memory pages are reworked for many entries:
 4. **Scope removal and migration**, with the rewritten unreleased migrations and the amendments to ADR 0004, 0006, and 0014.
 5. **Memory pages** (§4).
 6. **Evaluation rerun** of the DigitalHuman and Agent suites, compared with phase 2.
+7. **Memory instructions** (§5): the field, its use in runs and extraction, the preview, the configuration editor, and evaluation scenarios that run with and without instructions.
 
 ## Consequences
 

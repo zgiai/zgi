@@ -33,6 +33,8 @@ import type {
   DigitalHumanMemoryProposalRequest,
   DigitalHumanMemoryVisibilityRequest,
   DigitalHumanMemoryBulkRequest,
+  DigitalHumanMemoryPreviewRequest,
+  DigitalHumanMemoryPreviewResult,
   DigitalHumanMemoryBulkResult,
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidateList,
@@ -350,6 +352,13 @@ class DigitalHumanService extends BaseService {
     data: DigitalHumanMemoryProposalRequest
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
     return this.request('post', `/digital-humans/${id}/memory/proposals`, data);
+  }
+
+  previewMemory(
+    id: string,
+    data: DigitalHumanMemoryPreviewRequest
+  ): Promise<ApiResponseData<DigitalHumanMemoryPreviewResult>> {
+    return this.request('post', `/digital-humans/${id}/memory/preview`, data);
   }
 
   applyMemoryBulk(

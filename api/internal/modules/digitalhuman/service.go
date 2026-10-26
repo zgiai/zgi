@@ -49,7 +49,9 @@ type Service struct {
 		GetFileURL(context.Context, string) (string, error)
 	}
 	projectionRepairer DigitalHumanMemoryProjectionRepairer
-	now                func() time.Time
+	// previewExtractor runs the memory preview; it is optional.
+	previewExtractor MemoryExtractor
+	now              func() time.Time
 }
 
 // SetConnectorCatalog lets draft saves and publication admit Connector
@@ -94,6 +96,9 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	}
 	rules, err := marshalRules(request.Rules)
 	if err != nil {
+		return nil, applicationError(err, "digital_human.create")
+	}
+	if err := validateMemoryPolicy(request.MemoryPolicy); err != nil {
 		return nil, applicationError(err, "digital_human.create")
 	}
 	memoryPolicy, err := marshalPolicy(request.MemoryPolicy)
@@ -632,6 +637,9 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		changed = true
 	}
 	if request.MemoryPolicy != nil {
+		if err := validateMemoryPolicy(*request.MemoryPolicy); err != nil {
+			return err
+		}
 		encoded, err := marshalPolicy(*request.MemoryPolicy)
 		if err != nil {
 			return err

@@ -54,6 +54,9 @@ type MemoryExtractionInput struct {
 	Event           invocation.Event
 	Source          MemoryExtractionSource
 	CurrentMemories []*DigitalHumanMemory
+	// Instructions are the operator's memory instructions for the run's
+	// version.
+	Instructions string
 }
 
 // MemoryExtractionDraft is an untrusted model proposal. The regular memory
@@ -238,6 +241,7 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 	drafts, err := r.extractor.Extract(ctx, MemoryExtractionInput{
 		Job: job, Run: run, Event: event, Source: source,
 		CurrentMemories: append([]*DigitalHumanMemory(nil), current...),
+		Instructions:    r.service.runMemoryInstructions(ctx, run),
 	})
 	if err != nil {
 		fail(memoryExtractionErrorCode(err))
@@ -429,7 +433,7 @@ func memoryExtractionPrompt(input MemoryExtractionInput) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("encode DigitalHuman memory extraction prompt: %w", err)
 	}
-	return strings.Join([]string{
+	rules := []string{
 		"You are a conservative background memory proposer for one DigitalHuman.",
 		"Propose only durable work experience, decisions, open loops, reflections, or evidence-backed facts.",
 		"Treat an explicit durable working directive, such as a future role, recurring responsibility, or default behavior, as a decision. It does not change the published identity, persona, or rules.",
@@ -438,8 +442,11 @@ func memoryExtractionPrompt(input MemoryExtractionInput) (string, error) {
 		"To replace an active memory with a new semantic key, copy its id and revision from current_memory into supersedes_id and expected_superseded_revision. Never invent a memory id.",
 		"Use concise redacted summaries. Do not propose clear/delete operations. Use none when uncertain or when current memory already captures the same fact.",
 		`Return JSON only: {"proposals":[{"key":"stable-semantic-key","memory_type":"experience|decision|fact|open_loop|reflection","content":"concise durable summary","confidence":0.0,"supersedes_id":"optional UUID copied from current_memory","expected_superseded_revision":0}]}`,
-		string(raw),
-	}, "\n"), nil
+	}
+	if section := renderMemoryInstructions(input.Instructions); section != "" {
+		rules = append(rules, section)
+	}
+	return strings.Join(append(rules, string(raw)), "\n"), nil
 }
 
 func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error) {

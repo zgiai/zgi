@@ -157,6 +157,11 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	preparation := &MemoryRuntimePreparation{
 		SystemPromptAddendum: renderDigitalHumanMemoryGuidance(toolEnabled, state.AutoExtractionEnabled, files),
 	}
+	if toolEnabled {
+		if section := renderMemoryInstructions(p.service.runMemoryInstructions(ctx, run)); section != "" {
+			preparation.SystemPromptAddendum += "\n\n" + section
+		}
+	}
 	if files && toolEnabled {
 		if editor := p.fileEditor(run, event, state, promotionAuthorized); editor != nil {
 			preparation.fileEditors = append(preparation.fileEditors, editor)
