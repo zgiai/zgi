@@ -47,23 +47,16 @@ func memoryFilesEnabled() bool {
 
 // memoryFileDirectory is the directory an entry is shown under.
 func memoryFileDirectory(memory *DigitalHumanMemory) string {
-	if memory.MemoryClass == memoryruntime.MemoryClassSelf {
-		return "/me/"
-	}
-	if memory.ScopeType == memoryruntime.MemoryScopeInstance {
+	if memory.NoteInstanceID != "" {
 		return "/user/notes/"
 	}
-	return ""
+	return "/me/"
 }
 
 // memoryFilePath projects an entry to its path. A key never contains a
 // directory separator in its path.
 func memoryFilePath(memory *DigitalHumanMemory) string {
-	directory := memoryFileDirectory(memory)
-	if directory == "" {
-		return ""
-	}
-	return directory + strings.ReplaceAll(strings.TrimSpace(memory.MemoryKey), "/", "_") + ".md"
+	return memoryFileDirectory(memory) + strings.ReplaceAll(strings.TrimSpace(memory.MemoryKey), "/", "_") + ".md"
 }
 
 // memoryFileAttributes carries what the model needs to cite or change a file.
@@ -73,8 +66,8 @@ func memoryFileAttributes(memory *DigitalHumanMemory, operator bool) string {
 		fmt.Sprintf("path=%q", memoryFilePath(memory)),
 		`owner="digital_human"`,
 	}
-	everyone := memory.MemoryClass == memoryruntime.MemoryClassSelf && memory.Visibility == MemoryVisibilityEveryone
-	if memory.MemoryClass == memoryruntime.MemoryClassSelf {
+	everyone := memory.NoteInstanceID == "" && memory.Visibility == MemoryVisibilityEveryone
+	if memory.NoteInstanceID == "" {
 		audience := "members"
 		if everyone {
 			audience = "everyone"
@@ -364,11 +357,7 @@ func searchMemoryFiles(items []*DigitalHumanMemory, path string, limit int) []*D
 // archivedMemoryFilePath shows an archived entry under its directory's
 // archive/ folder; archived entries appear only in memory_search.
 func archivedMemoryFilePath(memory *DigitalHumanMemory) string {
-	directory := memoryFileDirectory(memory)
-	if directory == "" {
-		return ""
-	}
-	return directory + "archive/" + strings.ReplaceAll(strings.TrimSpace(memory.MemoryKey), "/", "_") + ".md"
+	return memoryFileDirectory(memory) + "archive/" + strings.ReplaceAll(strings.TrimSpace(memory.MemoryKey), "/", "_") + ".md"
 }
 
 // searchArchivedMemoryFiles ranks archived entries by how many of the query's
@@ -386,7 +375,7 @@ func searchArchivedMemoryFiles(items []*DigitalHumanMemory, query, path string, 
 	var matches []scored
 	for _, memory := range items {
 		file := archivedMemoryFilePath(memory)
-		if file == "" || (strings.TrimSpace(path) != "" && !strings.HasPrefix(file, strings.TrimSpace(path))) {
+		if strings.TrimSpace(path) != "" && !strings.HasPrefix(file, strings.TrimSpace(path)) {
 			continue
 		}
 		text := map[string]bool{}

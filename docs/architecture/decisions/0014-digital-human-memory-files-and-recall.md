@@ -4,6 +4,7 @@
 - Date: 2026-10-25
 - Builds on: ADR 0013 (phase 1 shipped for Agents), ADR 0002, ADR 0004, ADR 0006
 - Amends: ADR 0004 (scopes and trust levels) and ADR 0006 (where instance memory sits in the model's view). Ownership and storage in ADR 0002, ADR 0004, and ADR 0006 do not change.
+- Amended by: ADR 0015 (`/me/team/` and `/conversation/` fold into `/me/`; `/user/notes/` is stored in relationship memory)
 
 ## Context
 
@@ -149,3 +150,17 @@ The archive is memory that is kept and searchable but not listed in the index.
 - Channel search spans every group conversation of the DigitalHuman (§4); direct chats are excluded.
 - `/me/team/` stays operator-managed and read-only to the model. Member writes are not opened. Whether workspace memory is kept long term is revisited with production usage data in step 6. *(Step 6, 2026-10-25: deferred. Production usage data is not available yet, so workspace memory stays as it is.)*
 - Recall starts at 5 files within 6,000 characters and is tuned by the evaluation.
+
+## Amendment (2026-10-26, ADR 0015)
+
+The file view has three directories:
+
+| Directory | Store | Read by |
+|---|---|---|
+| `/me/` | `digital_human_memories` | every run; an external end user's run reads only entries visible to `everyone` |
+| `/user/notes/` | the person's relationship memory, keys under `notes/` | that person's runs |
+| `/user/` | the person's relationship memory, other keys | that person's runs |
+
+- `/me/team/` and `/conversation/` are gone. Their entries are `internal` entries of `/me/`, and each file shows its audience (`everyone` or `members`) and origin.
+- The scope cleanup of §6 is done by ADR 0015's migration `202610261200000000_digital_human_memory_without_scopes`, which replaces the earlier scope migration.
+- The archive of `/me/` (§5) is unchanged. Expired notes go to the person's archive and are searched with it.

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -71,18 +70,11 @@ func (r *GormRepository) SetMemoryDatasetID(ctx context.Context, state *MemorySt
 	return nil
 }
 
-func (r *GormRepository) MemoryByKeyForUpdate(
-	ctx context.Context,
-	scope Scope,
-	digitalHumanID uuid.UUID,
-	class memoryruntime.MemoryClass,
-	scopeType memoryruntime.MemoryScopeType,
-	scopeID, key string,
-) (*DigitalHumanMemory, error) {
+func (r *GormRepository) MemoryByKeyForUpdate(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, key string) (*DigitalHumanMemory, error) {
 	var memory DigitalHumanMemory
 	err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND memory_class = ? AND scope_type = ? AND scope_id = ? AND memory_key = ?",
-		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, class, scopeType, scopeID, key,
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND memory_key = ?",
+		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, key,
 	).Take(&memory).Error
 	if err != nil {
 		return nil, err
@@ -140,17 +132,8 @@ func (r *GormRepository) ListMemories(ctx context.Context, scope Scope, digitalH
 	db := r.db.WithContext(ctx).Model(&DigitalHumanMemory{}).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ?", scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
 	)
-	if query.Class != "" {
-		db = db.Where("memory_class = ?", query.Class)
-	}
 	if query.Type != "" {
 		db = db.Where("memory_type = ?", query.Type)
-	}
-	if query.ScopeType != "" {
-		db = db.Where("scope_type = ?", query.ScopeType)
-	}
-	if query.ScopeID != "" {
-		db = db.Where("scope_id = ?", query.ScopeID)
 	}
 	if query.Status != "" {
 		db = db.Where("status = ?", query.Status)
@@ -239,8 +222,9 @@ func applyMemoryUndoStatus(items []*DigitalHumanMemory, records []MemoryUndoReco
 }
 
 // ActiveMemories returns active memories for the DigitalHuman. Without a read
-// scope every class and business scope is returned, so legacy business rows
-// stay visible; with one, recall follows the run's source trust (ADR 0004).
+// scope every entry is returned; with one, recall follows the run's source
+// trust: internal entries are hidden from external end users, whose own notes
+// are appended (ADR 0015).
 func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int, readScope *memoryReadScope) ([]*DigitalHumanMemory, error) {
 	db := r.db.WithContext(ctx).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND status = ?",
@@ -267,7 +251,7 @@ func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digita
 }
 
 // ArchivedMemories returns the newest archived entries the run may read
-// (ADR 0014 consumer-owned archive), such as instance notes past their TTL.
+// (ADR 0014 consumer-owned archive), such as entries consolidation retired.
 func (r *GormRepository) ArchivedMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int, readScope *memoryReadScope) ([]*DigitalHumanMemory, error) {
 	db := r.db.WithContext(ctx).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND status = ?",

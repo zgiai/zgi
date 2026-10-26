@@ -2091,15 +2091,11 @@ const messages = {
     retry: 'Retry',
     searchPlaceholder: 'Search key or memory summary',
     sourcePlaceholder: 'Filter by source principal',
-    scopeIdPlaceholder: 'Filter by business scope ID',
     clearFilters: 'Clear filters',
     showAdvancedFilters: 'Advanced filters',
     hideAdvancedFilters: 'Hide advanced filters',
-    allClasses: 'All classes',
     allTypes: 'All types',
     allStatuses: 'All statuses',
-    allScopes: 'All scopes',
-    class: { self: 'Self', business: 'Business' },
     type: {
       identity: 'Identity',
       experience: 'Experience',
@@ -2109,10 +2105,6 @@ const messages = {
       reflection: 'Reflection',
     },
     status: { active: 'Active', invalidated: 'Invalidated', archived: 'Archived' },
-    scope: {
-      self: 'Self',
-      instance: 'End user',
-    },
     visibility: {
       all: 'Any visibility',
       everyone: 'Everyone',
@@ -2151,11 +2143,6 @@ const messages = {
     undoUnavailable: 'Undo is no longer available',
     invalidated: 'Memory invalidated.',
     undone: 'Memory change undone.',
-    rescope: {
-      toSelf: "Promote to the DigitalHuman's memory",
-      done: 'Memory moved.',
-      hint: "The end user's note becomes the DigitalHuman's own memory, internal only until you show it to everyone.",
-    },
     details: 'View evidence',
     close: 'Close',
     errors: {

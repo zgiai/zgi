@@ -105,7 +105,7 @@ func TestDigitalHumanMemoryTrustPostgresChannelScopeAndRecall(t *testing.T) {
 	propose := func(run *Run, key string, admitted memoryWriteAdmission, visibility MemoryVisibility, expectedRevision int64) (*MemoryMutationResult, error) {
 		t.Helper()
 		request := MemoryProposalRequest{
-			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: admitted.Class, Scope: admitted.Scope,
+			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert,
 			MemoryType: memoryruntime.MemoryTypeDecision, Content: key + " content", ExpectedRevision: expectedRevision,
 			ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
@@ -126,7 +126,7 @@ func TestDigitalHumanMemoryTrustPostgresChannelScopeAndRecall(t *testing.T) {
 	// A channel teaches the DigitalHuman's own memory, internal and marked
 	// with its channel (ADR 0015).
 	channelMemory := write(channelRun, "group-a-standup", admission, "")
-	if channelMemory.MemoryClass != memoryruntime.MemoryClassSelf || channelMemory.ScopeType != "" || channelMemory.Visibility != MemoryVisibilityInternal ||
+	if channelMemory.NoteInstanceID != "" || channelMemory.Visibility != MemoryVisibilityInternal ||
 		channelMemory.Origin != MemoryOriginChannel || channelMemory.OriginChannelID != admission.OriginChannelID {
 		t.Fatalf("channel memory = %#v", channelMemory)
 	}

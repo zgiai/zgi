@@ -62,10 +62,10 @@ func TestDigitalHumanMemoryVisibilityPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write := func(key string, memoryType memoryruntime.MemoryType, class memoryruntime.MemoryClass, memoryScope *memoryruntime.MemoryScopeRef) *DigitalHumanMemory {
+	write := func(key string, memoryType memoryruntime.MemoryType) *DigitalHumanMemory {
 		t.Helper()
 		result, err := service.ApplyMemoryProposal(t.Context(), scope, digitalHumanID, MemoryProposalRequest{
-			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: class, Scope: memoryScope,
+			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert,
 			MemoryType: memoryType, Content: key + " content", ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "operator:" + key}},
 			Confidence: 1, OccurredAt: fixedNow, AdminApproved: true,
@@ -78,7 +78,7 @@ func TestDigitalHumanMemoryVisibilityPostgres(t *testing.T) {
 	}
 	// An operator switches who may see a memory; each switch is a recorded,
 	// undoable change.
-	public := write("price-list", memoryruntime.MemoryTypeFact, memoryruntime.MemoryClassSelf, nil)
+	public := write("price-list", memoryruntime.MemoryTypeFact)
 	if public.Visibility != MemoryVisibilityEveryone || public.Origin != MemoryOriginOperator {
 		t.Fatalf("operator memory = %#v", public)
 	}

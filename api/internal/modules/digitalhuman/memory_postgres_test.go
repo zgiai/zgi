@@ -149,7 +149,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	operationID := uuid.New()
 	proposal := MemoryProposalRequest{
 		OperationID: operationID, Key: "launch-date", Action: memoryruntime.MutationActionUpsert,
-		MemoryClass: memoryruntime.MemoryClassSelf, MemoryType: memoryruntime.MemoryTypeFact,
+		MemoryType:       memoryruntime.MemoryTypeFact,
 		Content:          "The approved launch date is September 8.",
 		ExpectedRevision: 0, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 		Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "approval:launch-date"}},
@@ -485,7 +485,7 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 	items, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)
 	// A channel teaches the DigitalHuman's own memory, internal and marked
 	// with the channel it came from (ADR 0015).
-	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 || items[0].MemoryClass != memoryruntime.MemoryClassSelf ||
+	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 ||
 		items[0].Visibility != MemoryVisibilityInternal || items[0].Origin != MemoryOriginChannel || items[0].OriginChannelID != channelConversationID.String() {
 		t.Fatalf("extracted memory = %#v, err %v", items, err)
 	}

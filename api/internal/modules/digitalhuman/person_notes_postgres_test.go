@@ -70,8 +70,7 @@ func TestPersonNotesPostgresLiveInTheRelationshipMemory(t *testing.T) {
 	note := func(instanceID uuid.UUID, key, content string, expected int64, action memoryruntime.MutationAction) (*MemoryMutationResult, error) {
 		t.Helper()
 		return service.ApplyAutonomousMemoryProposal(ctx, scope, digitalHumanID, MemoryProposalRequest{
-			OperationID: uuid.New(), Key: key, Action: action, MemoryClass: memoryruntime.MemoryClassBusiness,
-			Scope:      &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: instanceID.String()},
+			OperationID: uuid.New(), Key: key, Action: action, noteInstanceID: instanceID.String(),
 			MemoryType: memoryruntime.MemoryTypeOpenLoop, Content: content, ExpectedRevision: expected,
 			ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "note"}},
@@ -82,11 +81,11 @@ func TestPersonNotesPostgresLiveInTheRelationshipMemory(t *testing.T) {
 	// A note is written to the person's relationship memory, not the
 	// DigitalHuman's own memory.
 	created, err := note(instance, "quote_due", "Promised the quote by Friday.", 0, memoryruntime.MutationActionUpsert)
-	if err != nil || created.Memory.Revision != 1 || created.Memory.ScopeType != memoryruntime.MemoryScopeInstance {
+	if err != nil || created.Memory.Revision != 1 || created.Memory.NoteInstanceID != instance.String() {
 		t.Fatalf("note = %#v, %v", created, err)
 	}
 	var ownRows int64
-	tx.Raw("SELECT count(*) FROM digital_human_memories WHERE digital_human_id = ? AND scope_type = 'instance'", digitalHumanID).Scan(&ownRows)
+	tx.Raw("SELECT count(*) FROM digital_human_memories WHERE digital_human_id = ?", digitalHumanID).Scan(&ownRows)
 	if ownRows != 0 {
 		t.Fatalf("a note was written to the DigitalHuman's own memory: %d rows", ownRows)
 	}

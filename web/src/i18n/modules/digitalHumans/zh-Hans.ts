@@ -1963,15 +1963,11 @@ const messages: DigitalHumansMessages = {
     retry: '重试',
     searchPlaceholder: '搜索记忆键或摘要',
     sourcePlaceholder: '按来源主体筛选',
-    scopeIdPlaceholder: '按业务范围 ID 筛选',
     clearFilters: '清除筛选',
     showAdvancedFilters: '高级筛选',
     hideAdvancedFilters: '收起高级筛选',
-    allClasses: '全部类别',
     allTypes: '全部类型',
     allStatuses: '全部状态',
-    allScopes: '全部范围',
-    class: { self: '自我记忆', business: '业务记忆' },
     type: {
       identity: '身份认知',
       experience: '经验',
@@ -1981,10 +1977,6 @@ const messages: DigitalHumansMessages = {
       reflection: '反思',
     },
     status: { active: '有效', invalidated: '已失效', archived: '已归档' },
-    scope: {
-      self: '数字人自身',
-      instance: '终端用户',
-    },
     visibility: {
       all: '全部可见性',
       everyone: '所有人可见',
@@ -2022,11 +2014,6 @@ const messages: DigitalHumansMessages = {
     undoUnavailable: '该变更已不可撤销',
     invalidated: '记忆已失效。',
     undone: '已撤销记忆变更。',
-    rescope: {
-      toSelf: '提升为数字人记忆',
-      done: '记忆已移动。',
-      hint: '终端用户的笔记会成为数字人自身的记忆，默认仅内部可见，确认后再对所有人可见。',
-    },
     details: '查看证据',
     close: '关闭',
     errors: {

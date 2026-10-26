@@ -44,7 +44,7 @@ func TestMemoryExtractionPromptContainsReferencesWithoutArtifactBodies(t *testin
 		Run:    &Run{ID: uuid.New()},
 		Source: MemoryExtractionSource{Query: "review launch", Answer: "launch is September 8"},
 		CurrentMemories: []*DigitalHumanMemory{{
-			ID: memoryID, MemoryKey: "launch-v1", MemoryClass: memoryruntime.MemoryClassSelf,
+			ID: memoryID, MemoryKey: "launch-v1",
 			MemoryType: memoryruntime.MemoryTypeFact, Content: "launch is September 8", Revision: 4,
 		}},
 	}

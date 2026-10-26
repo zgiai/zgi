@@ -367,7 +367,7 @@ func (r *MemoryExtractionRunner) applyDrafts(
 		}
 		request := MemoryProposalRequest{
 			OperationID: operationID, Key: draft.Key, Action: memoryruntime.MutationActionUpsert,
-			MemoryClass: target.Class, Scope: target.Scope, MemoryType: draft.MemoryType, Content: draft.Content,
+			MemoryType: draft.MemoryType, Content: draft.Content,
 			ExpectedRevision: expectedRevision, ConfigRevision: job.ConfigRevision, MemoryEpoch: job.MemoryEpoch,
 			SupersedesID: draft.SupersedesID, ExpectedSupersededRevision: draft.ExpectedSupersededRevision,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
@@ -478,16 +478,10 @@ func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error
 // memoryInWriteTarget reports whether an existing memory lives in the class
 // and scope a write admission targets.
 func memoryInWriteTarget(memory *DigitalHumanMemory, target memoryWriteAdmission) bool {
-	if memory.MemoryClass != target.Class {
-		return false
+	if target.NoteInstanceID != "" || memory.NoteInstanceID != "" {
+		return memory.NoteInstanceID == target.NoteInstanceID
 	}
-	if target.InternalOnly && memory.Visibility != MemoryVisibilityInternal {
-		return false
-	}
-	if target.Scope == nil {
-		return memory.ScopeType == "" && memory.ScopeID == ""
-	}
-	return memory.ScopeType == target.Scope.Type && memory.ScopeID == target.Scope.ID
+	return !target.InternalOnly || memory.Visibility == MemoryVisibilityInternal
 }
 
 // memoryIdentity keys converged self memory by its semantic key alone; class

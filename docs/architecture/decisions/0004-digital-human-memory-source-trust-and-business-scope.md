@@ -5,6 +5,7 @@
 - Accepted: 2026-10-21
 - Amends: ADR 0002
 - Amended by: ADR 0014 (business scopes are workspace, channel, and instance; trust levels group into three tiers)
+- Amended by: ADR 0015 (business scopes are removed; memory has a visibility and an origin instead)
 
 ## Context
 
@@ -81,10 +82,7 @@ Business memory has three scopes: `workspace`, `channel`, and `instance` (ADR 00
 
 The `project`, `customer`, and `campaign` scopes are retired. The runtime never resolved them.
 
-- **Moved rows.** Migration `202610251400000000_retire_unused_memory_scopes` moves any existing rows in those scopes to their workspace's `workspace` scope:
-  - each move bumps the revision and records an audit event with reason code `scope_retired_to_workspace`;
-  - a key already used in the workspace scope gets a suffix naming the old scope.
-- **Rows of deleted DigitalHumans.** These rows cannot be updated, so they stay where they are. The narrower check constraint is then added `NOT VALID`, and it still holds every new or changed row.
+- **Moved rows.** ADR 0015 removes the remaining scopes as well; its migration `202610261200000000_digital_human_memory_without_scopes` moves rows in the retired scopes into the DigitalHuman's own memory together with the others.
 - **API and console.** The enums and the operator proposals API no longer accept the retired scopes. The console no longer offers them.
 
 ### Trust tiers
@@ -99,3 +97,21 @@ ADR 0013 groups the four trust levels into three tiers:
 
 The table in this ADR still decides what each level may write. ADR 0014 shows the same rules as directories (`/me/`, `/conversation/`, `/user/notes/`, and the user's own `/user/`), and grants no new write permission.
 
+## Amendment (2026-10-26, ADR 0015)
+
+Business scopes are removed. A DigitalHuman used directly, in the console or in channels, has one memory of its own; an external end user's run keeps notes on that person in the person's relationship memory.
+
+- **Visibility instead of scope.** Each entry of the DigitalHuman's memory is visible to `everyone` or `internal` only. An external end user's run never reads `internal` entries.
+- **Origin.** Each entry records where it came from: `operator`, `member`, `channel` (with the channel conversation), or `end_user`.
+- **Writes by trust level.** The levels in this ADR still decide who may write:
+
+  | Trust level | Writes | Visibility |
+  |---|---|---|
+  | `authorized_operator` | the DigitalHuman's memory | `everyone` by default, or `internal` |
+  | `workspace_member` | the DigitalHuman's memory | `internal` |
+  | `channel_participant` | the DigitalHuman's memory | `internal` |
+  | `external_end_user` | notes on that person, in relationship memory | — |
+
+- **Guard.** A run below `authorized_operator` cannot change an `everyone` entry. Only an operator changes what external users see.
+- **Server-resolved targets.** As before, the model never names a scope or visibility; the run's trust level decides where a write lands.
+- **Migration.** `202610261200000000_digital_human_memory_without_scopes` folds every scoped row into the DigitalHuman's memory as `internal`, or into the person's relationship memory as a note, with an audit event for each fold.

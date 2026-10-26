@@ -81,7 +81,7 @@ class DigitalHumanClient:
     def propose_self(self, key, content, memory_type, visibility):
         state = self.memory_state()
         self.console("POST", f"/digital-humans/{self.digital_human_id}/memory/proposals", {
-            "operation_id": str(uuid.uuid4()), "key": key, "action": "upsert", "memory_class": "self", "memory_type": memory_type,
+            "operation_id": str(uuid.uuid4()), "key": key, "action": "upsert", "memory_type": memory_type,
             "visibility": visibility,
             "content": content, "expected_revision": 0, "config_revision": state["config_revision"], "memory_epoch": state["memory_epoch"],
             "evidence": [{"type": "manual", "id": f"operator:{uuid.uuid4()}"}],
@@ -152,7 +152,7 @@ class DigitalHumanClient:
              WHERE r.consumer_type = 'digital_human' AND r.consumer_id = '{dh}' AND r.subject_id = '{subject}'
             UNION ALL
             SELECT 'me', m.memory_key, replace(m.content, E'\\n', ' ') FROM digital_human_memories m
-             WHERE m.digital_human_id = '{dh}' AND m.memory_class = 'self' AND m.status = 'active'""")
+             WHERE m.digital_human_id = '{dh}' AND m.status = 'active'""")
         grouped = {"user": [], "notes": [], "archive": [], "me": []}
         for partition, key, content in rows:
             grouped[partition].append(f"{key}: {content}")

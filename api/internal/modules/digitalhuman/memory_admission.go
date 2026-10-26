@@ -2,10 +2,8 @@ package digitalhuman
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
-	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 )
 
 // memoryWriteMode distinguishes how a memory change was produced. Background
@@ -47,8 +45,9 @@ type memoryWriteAdmission struct {
 	Allowed bool
 	Reason  string
 	Trust   SourceTrust
-	Class   memoryruntime.MemoryClass
-	Scope   *memoryruntime.MemoryScopeRef
+	// NoteInstanceID targets the DigitalHuman's notes on the end user of
+	// this instance instead of its own memory (ADR 0015).
+	NoteInstanceID string
 	// InternalOnly limits the write to internal memories: everyone inside
 	// the team shares them, and external end users never see them.
 	InternalOnly    bool
@@ -60,7 +59,8 @@ type memoryWriteAdmission struct {
 // admission.
 func (a memoryWriteAdmission) stamp(request *MemoryProposalRequest) {
 	request.internalOnly, request.origin, request.originChannelID = a.InternalOnly, a.Origin, a.OriginChannelID
-	if a.InternalOnly || a.Scope != nil {
+	request.noteInstanceID = a.NoteInstanceID
+	if a.InternalOnly || a.NoteInstanceID != "" {
 		request.Visibility = MemoryVisibilityInternal
 	}
 }
@@ -71,13 +71,13 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 	switch trust {
 	case SourceTrustAuthorizedOperator:
 		if mode == memoryWriteExplicit || (mode == memoryWriteProactive && autoExtraction) {
-			return memoryWriteAdmission{Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassSelf, Origin: MemoryOriginOperator}
+			return memoryWriteAdmission{Allowed: true, Trust: trust, Origin: MemoryOriginOperator}
 		}
 	case SourceTrustWorkspaceMember:
 		// Members share the DigitalHuman's memory inside the team: explicitly
 		// at any time, otherwise when automatic extraction is on.
 		if mode == memoryWriteExplicit || autoExtraction {
-			return memoryWriteAdmission{Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassSelf, InternalOnly: true, Origin: MemoryOriginMember}
+			return memoryWriteAdmission{Allowed: true, Trust: trust, InternalOnly: true, Origin: MemoryOriginMember}
 		}
 	case SourceTrustChannelParticipant:
 		if !autoExtraction {
@@ -87,10 +87,7 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 		if !ok {
 			return memoryWriteAdmission{Reason: memoryAdmissionReasonChannelScope, Trust: trust}
 		}
-		return memoryWriteAdmission{
-			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassSelf, InternalOnly: true,
-			Origin: MemoryOriginChannel, OriginChannelID: channelID.String(),
-		}
+		return memoryWriteAdmission{Allowed: true, Trust: trust, InternalOnly: true, Origin: MemoryOriginChannel, OriginChannelID: channelID.String()}
 	case SourceTrustExternalEndUser:
 		// An end user writes only their own instance's memory: explicitly at
 		// any time, and proactively or in the background when automatic
@@ -99,10 +96,7 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 		if !ok || (mode != memoryWriteExplicit && !autoExtraction) {
 			return rejected
 		}
-		return memoryWriteAdmission{
-			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassBusiness, Origin: MemoryOriginEndUser,
-			Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: instanceID.String()},
-		}
+		return memoryWriteAdmission{Allowed: true, Trust: trust, Origin: MemoryOriginEndUser, NoteInstanceID: instanceID.String()}
 	}
 	return rejected
 }
@@ -139,11 +133,9 @@ func memoryToolAvailable(run *Run, autoExtraction bool) bool {
 // user (ADR 0015), and the run's own instance notes.
 type memoryReadScope struct {
 	// external hides internal memories.
-	external   bool
+	external bool
+	// instanceID loads the DigitalHuman's notes on this end user.
 	instanceID string
-	// instanceSince hides instance memory unwritten since then, when
-	// instance memory expires.
-	instanceSince *time.Time
 }
 
 func memoryReadScopeForRun(run *Run, event invocation.Event) memoryReadScope {
@@ -154,10 +146,6 @@ func memoryReadScopeForRun(run *Run, event invocation.Event) memoryReadScope {
 	scope.external = RunSourceTrust(run) == SourceTrustExternalEndUser
 	if instanceID, ok := runInstanceScopeID(run); ok {
 		scope.instanceID = instanceID.String()
-		if ttl := instanceMemoryTTL(); ttl > 0 {
-			since := time.Now().Add(-ttl)
-			scope.instanceSince = &since
-		}
 	}
 	return scope
 }
@@ -166,34 +154,18 @@ func (s memoryReadScope) allows(memory *DigitalHumanMemory) bool {
 	if memory == nil {
 		return false
 	}
-	if memory.MemoryClass == memoryruntime.MemoryClassSelf {
-		return !s.external || memory.Visibility == MemoryVisibilityEveryone
+	if memory.NoteInstanceID != "" {
+		return s.instanceID != "" && memory.NoteInstanceID == s.instanceID
 	}
-	switch memory.ScopeType {
-	case memoryruntime.MemoryScopeInstance:
-		return s.instanceID != "" && memory.ScopeID == s.instanceID && (s.instanceSince == nil || !memory.UpdatedAt.Before(*s.instanceSince))
-	default:
-		return false
-	}
+	return !s.external || memory.Visibility == MemoryVisibilityEveryone
 }
 
 // sqlPredicate expresses allows for repository queries over
-// digital_human_memories.
+// digital_human_memories, which hold only the DigitalHuman's own memory;
+// notes are read from relationship memory.
 func (s memoryReadScope) sqlPredicate() (string, []any) {
-	clause := "(memory_class = ?"
-	args := []any{memoryruntime.MemoryClassSelf}
 	if s.external {
-		clause = "((memory_class = ? AND visibility = ?)"
-		args = append(args, MemoryVisibilityEveryone)
+		return "visibility = ?", []any{MemoryVisibilityEveryone}
 	}
-	if s.instanceID != "" {
-		clause += " OR (memory_class = ? AND scope_type = ? AND scope_id = ?"
-		args = append(args, memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, s.instanceID)
-		if s.instanceSince != nil {
-			clause += " AND updated_at >= ?"
-			args = append(args, *s.instanceSince)
-		}
-		clause += ")"
-	}
-	return clause + ")", args
+	return "TRUE", nil
 }

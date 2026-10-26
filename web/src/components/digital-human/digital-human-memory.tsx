@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-human-object-link';
 import {
   AlertCircle,
-  ArrowRightLeft,
   BrainCircuit,
   Clock3,
   ExternalLink,
@@ -52,9 +51,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
   DigitalHumanMemory as DigitalHumanMemoryRecord,
-  DigitalHumanMemoryClass,
   DigitalHumanMemoryListParams,
-  DigitalHumanMemoryScopeType,
   DigitalHumanMemoryStatus,
   DigitalHumanMemoryVisibility,
   DigitalHumanMemoryType,
@@ -69,7 +66,6 @@ const memoryTypes: DigitalHumanMemoryType[] = [
   'open_loop',
   'reflection',
 ];
-const scopeTypes: DigitalHumanMemoryScopeType[] = ['instance'];
 const visibilities: DigitalHumanMemoryVisibility[] = ['everyone', 'internal'];
 
 export function DigitalHumanMemory({ id }: { id: string }) {
@@ -77,13 +73,10 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const permissions = useAccountPermissions();
   const canManage = permissions.hasPermission('digital_human.memory.manage');
   const [search, setSearch] = useState('');
-  const [memoryClass, setMemoryClass] = useState<typeof all | DigitalHumanMemoryClass>(all);
   const [memoryType, setMemoryType] = useState<typeof all | DigitalHumanMemoryType>(all);
   // Invalidated memories no longer shape behavior; they are hidden unless
   // the reader asks for them.
   const [status, setStatus] = useState<typeof all | DigitalHumanMemoryStatus>('active');
-  const [scopeType, setScopeType] = useState<typeof all | DigitalHumanMemoryScopeType>(all);
-  const [scopeId, setScopeId] = useState('');
   const [visibility, setVisibility] = useState<typeof all | DigitalHumanMemoryVisibility>(all);
   const [source, setSource] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -94,37 +87,28 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       page: 1,
       page_size: 100,
       search: search.trim() || undefined,
-      memory_class: memoryClass === all ? undefined : memoryClass,
       memory_type: memoryType === all ? undefined : memoryType,
       status: status === all ? undefined : status,
-      scope_type: scopeType === all ? undefined : scopeType,
-      scope_id: scopeId.trim() || undefined,
       source: source.trim() || undefined,
       visibility: visibility === all ? undefined : visibility,
     }),
-    [memoryClass, memoryType, scopeId, scopeType, search, source, status, visibility]
+    [memoryType, search, source, status, visibility]
   );
   const query = useDigitalHumanMemories(id, params);
   const mutations = useDigitalHumanMutations(id);
   const data = query.data?.data;
   const hasFilters = Boolean(
     search.trim() ||
-      memoryClass !== all ||
       memoryType !== all ||
       status !== 'active' ||
-      scopeType !== all ||
-      scopeId.trim() ||
       source.trim() ||
       visibility !== all
   );
 
   const clearFilters = () => {
     setSearch('');
-    setMemoryClass(all);
     setMemoryType(all);
     setStatus('active');
-    setScopeType(all);
-    setScopeId('');
     setSource('');
     setVisibility(all);
   };
@@ -149,12 +133,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
         operation_id: crypto.randomUUID(),
         key: memory.memory_key,
         action: 'clear',
-        memory_class: memory.memory_class,
         memory_type: memory.memory_type,
-        scope:
-          memory.memory_class === 'business' && memory.scope_type && memory.scope_id
-            ? { type: memory.scope_type, id: memory.scope_id }
-            : undefined,
         expected_revision: memory.revision,
         config_revision: state.config_revision,
         memory_epoch: state.memory_epoch,
@@ -168,29 +147,6 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       },
     });
     toast.success(t('memory.invalidated'));
-    setSelected(null);
-  };
-
-  const rescope = async (memory: DigitalHumanMemoryRecord) => {
-    const state = data?.state;
-    if (!state) return;
-    try {
-      await mutations.rescopeMemory.mutateAsync({
-        digitalHumanId: id,
-        memoryId: memory.id,
-        request: {
-          operation_id: crypto.randomUUID(),
-          expected_revision: memory.revision,
-          config_revision: state.config_revision,
-          memory_epoch: state.memory_epoch,
-          memory_class: 'self',
-        },
-      });
-    } catch {
-      // The mutation already reports the error.
-      return;
-    }
-    toast.success(t('memory.rescope.done'));
     setSelected(null);
   };
 
@@ -339,22 +295,13 @@ export function DigitalHumanMemory({ id }: { id: string }) {
 
       <section className="overflow-hidden rounded-xl border bg-background">
         <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-b p-4">
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_repeat(3,minmax(160px,0.45fr))_auto]">
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_repeat(2,minmax(160px,0.45fr))_auto]">
             <Input
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder={t('memory.searchPlaceholder')}
               leftIcon={<Search />}
             />
-            <MemorySelect
-              value={memoryClass}
-              onValueChange={value => setMemoryClass(value as typeof memoryClass)}
-              placeholder={t('memory.allClasses')}
-            >
-              <SelectItem value={all}>{t('memory.allClasses')}</SelectItem>
-              <SelectItem value="self">{t('memory.class.self')}</SelectItem>
-              <SelectItem value="business">{t('memory.class.business')}</SelectItem>
-            </MemorySelect>
             <MemorySelect
               value={memoryType}
               onValueChange={value => setMemoryType(value as typeof memoryType)}
@@ -385,16 +332,11 @@ export function DigitalHumanMemory({ id }: { id: string }) {
             </CollapsibleTrigger>
           </div>
           <CollapsibleContent>
-            <div className="mt-3 grid gap-2 rounded-lg bg-muted/30 p-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_minmax(180px,1fr)_auto]">
+            <div className="mt-3 grid gap-2 rounded-lg bg-muted/30 p-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto]">
               <Input
                 value={source}
                 onChange={event => setSource(event.target.value)}
                 placeholder={t('memory.sourcePlaceholder')}
-              />
-              <Input
-                value={scopeId}
-                onChange={event => setScopeId(event.target.value)}
-                placeholder={t('memory.scopeIdPlaceholder')}
               />
               <MemorySelect
                 value={visibility}
@@ -405,18 +347,6 @@ export function DigitalHumanMemory({ id }: { id: string }) {
                 {visibilities.map(value => (
                   <SelectItem key={value} value={value}>
                     {t(`memory.visibility.${value}`)}
-                  </SelectItem>
-                ))}
-              </MemorySelect>
-              <MemorySelect
-                value={scopeType}
-                onValueChange={value => setScopeType(value as typeof scopeType)}
-                placeholder={t('memory.allScopes')}
-              >
-                <SelectItem value={all}>{t('memory.allScopes')}</SelectItem>
-                {scopeTypes.map(type => (
-                  <SelectItem key={type} value={type}>
-                    {t(`memory.scope.${type}`)}
                   </SelectItem>
                 ))}
               </MemorySelect>
@@ -444,13 +374,10 @@ export function DigitalHumanMemory({ id }: { id: string }) {
         canManage={canManage}
         onOpenChange={open => !open && setSelected(null)}
         onInvalidate={invalidate}
-        onRescope={rescope}
         onSetVisibility={changeVisibility}
         onUndo={undo}
         invalidating={
-          mutations.applyMemoryProposal.isPending ||
-          mutations.rescopeMemory.isPending ||
-          mutations.setMemoryVisibility.isPending
+          mutations.applyMemoryProposal.isPending || mutations.setMemoryVisibility.isPending
         }
         undoing={mutations.undoMemory.isPending}
       />
@@ -542,9 +469,6 @@ function MemoryBody({
         >
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={memory.memory_class === 'self' ? 'info' : 'secondary'}>
-                {t(`memory.class.${memory.memory_class}`)}
-              </Badge>
               <Badge variant="outline">{t(`memory.type.${memory.memory_type}`)}</Badge>
               <MemoryStatusBadge status={memory.status} />
               <MemoryVisibilityBadge memory={memory} />
@@ -564,7 +488,7 @@ function MemoryBody({
             </p>
           </div>
           <div className="text-xs text-muted-foreground">
-            <div className="font-medium text-foreground">{t(memoryScopeKey(memory))}</div>
+            <div className="font-medium text-foreground">{t(memoryOriginKey(memory))}</div>
             <div className="mt-1">
               {t(`memory.confidenceLevel.${memory.confidence >= 0.8 ? 'high' : memory.confidence >= 0.5 ? 'medium' : 'low'}`)}
             </div>
@@ -592,7 +516,6 @@ function MemoryDetail({
   canManage,
   onOpenChange,
   onInvalidate,
-  onRescope,
   onSetVisibility,
   onUndo,
   invalidating,
@@ -603,7 +526,6 @@ function MemoryDetail({
   canManage: boolean;
   onOpenChange: (open: boolean) => void;
   onInvalidate: (memory: DigitalHumanMemoryRecord) => Promise<void>;
-  onRescope: (memory: DigitalHumanMemoryRecord) => Promise<void>;
   onSetVisibility: (
     memory: DigitalHumanMemoryRecord,
     visibility: DigitalHumanMemoryVisibility
@@ -630,7 +552,7 @@ function MemoryDetail({
             <MemoryVisibilityBadge memory={memory} />
           </div>
           <SheetDescription>
-            {t(memoryScopeKey(memory))} · {t(`memory.type.${memory.memory_type}`)}
+            {t(memoryOriginKey(memory))} · {t(`memory.type.${memory.memory_type}`)}
             {memory.path ? <code className="ml-2 text-xs">{memory.path}</code> : null}
           </SheetDescription>
         </SheetHeader>
@@ -707,21 +629,7 @@ function MemoryDetail({
                       )}
                       {undoing ? t('memory.undoing') : t('memory.undo')}
                     </Button>
-                    {memory.status === 'active' && memory.memory_class === 'business' ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={invalidating || undoing}
-                        title={t('memory.rescope.hint')}
-                        onClick={() => void onRescope(memory)}
-                      >
-                        <ArrowRightLeft className="size-4" />
-                        {t('memory.rescope.toSelf')}
-                      </Button>
-                    ) : null}
-                    {memory.status === 'active' &&
-                    memory.memory_class === 'self' &&
-                    memory.memory_type !== 'identity' ? (
+                    {memory.status === 'active' && memory.memory_type !== 'identity' ? (
                       <Button
                         variant="outline"
                         size="sm"
@@ -821,11 +729,10 @@ function MemoryStatusBadge({ status }: { status: DigitalHumanMemoryStatus }) {
   );
 }
 
-// Shows who may see one of the DigitalHuman's own memories and where it came
-// from (ADR 0015). End-user notes carry neither.
+// Shows who may see one of the DigitalHuman's memories and where it came
+// from (ADR 0015).
 function MemoryVisibilityBadge({ memory }: { memory: DigitalHumanMemoryRecord }) {
   const t = useT('digitalHumans');
-  if (memory.memory_class !== 'self') return null;
   const internal = memory.visibility === 'internal';
   return (
     <>
@@ -839,10 +746,8 @@ function MemoryVisibilityBadge({ memory }: { memory: DigitalHumanMemoryRecord })
   );
 }
 
-function memoryScopeKey(memory: DigitalHumanMemoryRecord) {
-  return memory.memory_class === 'self'
-    ? ('memory.scope.self' as const)
-    : ('memory.scope.instance' as const);
+function memoryOriginKey(memory: DigitalHumanMemoryRecord) {
+  return `memory.origin.${memory.origin ?? 'operator'}` as const;
 }
 
 function formatDate(value: string) {

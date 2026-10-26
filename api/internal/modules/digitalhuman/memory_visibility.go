@@ -40,7 +40,7 @@ func (s *Service) SetMemoryVisibility(ctx context.Context, scope Scope, digitalH
 		}
 		return nil, applicationError(err, operation)
 	}
-	if current.MemoryClass != memoryruntime.MemoryClassSelf || current.Status != MemoryStatusActive || current.Revision != request.ExpectedRevision {
+	if current.Status != MemoryStatusActive || current.Revision != request.ExpectedRevision {
 		return nil, applicationError(ErrMemoryConflict, operation)
 	}
 	var evidence []memoryruntime.MemoryEvidence
@@ -48,7 +48,7 @@ func (s *Service) SetMemoryVisibility(ctx context.Context, scope Scope, digitalH
 	evidence = append(evidence, memoryruntime.MemoryEvidence{Type: memoryruntime.EvidenceTypeManual, ID: "operator-visibility:" + request.OperationID.String()})
 	return s.applyMemoryProposal(ctx, scope, digitalHumanID, MemoryProposalRequest{
 		OperationID: request.OperationID, Key: current.MemoryKey, Action: memoryruntime.MutationActionUpsert,
-		MemoryClass: memoryruntime.MemoryClassSelf, MemoryType: current.MemoryType, Content: current.Content,
+		MemoryType: current.MemoryType, Content: current.Content,
 		ExpectedRevision: current.Revision, ConfigRevision: request.ConfigRevision, MemoryEpoch: request.MemoryEpoch,
 		Evidence: evidence, Visibility: request.Visibility, Confidence: current.Confidence,
 		SourceContext: MemorySourceContext{PromotedByAuthorizedActor: true}, AdminApproved: true,

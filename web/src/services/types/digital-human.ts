@@ -438,7 +438,6 @@ export interface ManualDigitalHumanInvocationResponse {
   created: boolean;
 }
 
-export type DigitalHumanMemoryClass = 'self' | 'business';
 export type DigitalHumanMemoryType =
   | 'identity'
   | 'experience'
@@ -446,7 +445,6 @@ export type DigitalHumanMemoryType =
   | 'fact'
   | 'open_loop'
   | 'reflection';
-export type DigitalHumanMemoryScopeType = 'instance';
 /** Who may see a DigitalHuman's own memory (ADR 0015). */
 export type DigitalHumanMemoryVisibility = 'everyone' | 'internal';
 /** Who a memory came from (ADR 0015). */
@@ -465,10 +463,7 @@ export interface DigitalHumanMemory {
   memory_key: string;
   /** File path in the model's view (ADR 0014). */
   path?: string;
-  memory_class: DigitalHumanMemoryClass;
   memory_type: DigitalHumanMemoryType;
-  scope_type?: DigitalHumanMemoryScopeType | '';
-  scope_id?: string;
   content: string;
   content_digest: string;
   visibility: DigitalHumanMemoryVisibility;
@@ -510,24 +505,12 @@ export interface DigitalHumanMemoryListParams {
   page?: number;
   page_size?: number;
   search?: string;
-  memory_class?: DigitalHumanMemoryClass;
   memory_type?: DigitalHumanMemoryType;
-  scope_type?: DigitalHumanMemoryScopeType;
-  scope_id?: string;
   status?: DigitalHumanMemoryStatus;
   source?: string;
   visibility?: DigitalHumanMemoryVisibility;
   origin?: DigitalHumanMemoryOrigin;
   origin_channel_id?: string;
-}
-
-// Promotes an end user's note into the DigitalHuman's own memory.
-export interface DigitalHumanMemoryRescopeRequest {
-  operation_id: string;
-  expected_revision: number;
-  config_revision: string;
-  memory_epoch: number;
-  memory_class: 'self';
 }
 
 // Makes one of the DigitalHuman's own memories visible to everyone or internal only.
@@ -543,9 +526,7 @@ export interface DigitalHumanMemoryProposalRequest {
   operation_id: string;
   key: string;
   action: 'upsert' | 'clear';
-  memory_class: DigitalHumanMemoryClass;
   memory_type: DigitalHumanMemoryType;
-  scope?: { type: DigitalHumanMemoryScopeType; id: string };
   content?: string;
   expected_revision: number;
   supersedes_id?: string;

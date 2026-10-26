@@ -21,7 +21,6 @@ import type {
   DigitalHumanBindingType,
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryProposalRequest,
-  DigitalHumanMemoryRescopeRequest,
   DigitalHumanMemoryVisibilityRequest,
   DigitalHumanResourceBindingInput,
   DraftResourceBindings,
@@ -463,22 +462,6 @@ export function useDigitalHumanMutations(id?: string) {
       }),
     onError: error => mutationError(error, t('memory.errors.mutate')),
   });
-  const rescopeMemory = useMutation({
-    mutationFn: ({
-      digitalHumanId,
-      memoryId,
-      request,
-    }: {
-      digitalHumanId: string;
-      memoryId: string;
-      request: DigitalHumanMemoryRescopeRequest;
-    }) => digitalHumanService.rescopeMemory(digitalHumanId, memoryId, request),
-    onSuccess: (_, variables) =>
-      queryClient.invalidateQueries({
-        queryKey: DIGITAL_HUMAN_KEYS.memories(variables.digitalHumanId),
-      }),
-    onError: error => mutationError(error, t('memory.errors.mutate')),
-  });
   const setMemoryVisibility = useMutation({
     mutationFn: ({
       digitalHumanId,
@@ -556,7 +539,6 @@ export function useDigitalHumanMutations(id?: string) {
     invoke,
     cancelRun,
     applyMemoryProposal,
-    rescopeMemory,
     setMemoryVisibility,
     undoMemory,
     updateMemoryState,

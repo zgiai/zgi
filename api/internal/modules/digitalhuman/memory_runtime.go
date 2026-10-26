@@ -330,8 +330,8 @@ func decodeMemoryRetrievalToolArguments(raw string) (memoryRetrievalToolArgument
 }
 
 // memoryMutationTool exposes the single converged memory write surface. The
-// tool never accepts memory_class or scope fields: the run's trust level
-// decides the class and scope (ADR 0004).
+// tool never accepts visibility or target fields: the run's trust level
+// decides whether a write lands in /me/ or in the person's notes (ADR 0015).
 func (p *DefaultMemoryRuntimeProvider) memoryMutationTool(
 	run *Run,
 	event invocation.Event,
@@ -390,17 +390,13 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 	args memoryToolArguments,
 	evidenceChecked bool,
 ) skillloop.RuntimeToolResult {
-	memoryClass, memoryScope := memoryruntime.MemoryClassSelf, (*memoryruntime.MemoryScopeRef)(nil)
 	mode := memoryWriteExplicit
 	if args.Mode == digitalHumanMemoryModeProactive {
 		mode = memoryWriteProactive
 	}
 	admission := admitMemoryWrite(run, event, mode, state.AutoExtractionEnabled)
-	if admission.Allowed {
-		memoryClass, memoryScope = admission.Class, admission.Scope
-	}
 	request := MemoryProposalRequest{
-		OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: memoryClass, Scope: memoryScope, MemoryType: args.MemoryType,
+		OperationID: operationID, Key: args.Key, Action: args.Action, MemoryType: args.MemoryType,
 		Content: args.Content, ExpectedRevision: args.ExpectedRevision, SupersedesID: args.SupersedesID,
 		ExpectedSupersededRevision: args.ExpectedSupersededRevision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 		Confidence: args.Confidence, RunID: &run.ID,
@@ -435,7 +431,7 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 	return skillloop.RuntimeToolResult{
 		Status: "success",
 		Arguments: map[string]any{
-			"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "memory_class": memoryClass,
+			"action": args.Action, "mode": args.Mode, "key": strings.TrimSpace(args.Key), "note": admission.NoteInstanceID != "",
 			"memory_type": args.MemoryType, "supersedes_id": args.SupersedesID,
 		},
 		Result: map[string]any{"status": "committed", "operation_id": result.Event.OperationID.String(), "memory_id": result.Memory.ID.String(), "revision": result.Memory.Revision, "replayed": result.Replayed},

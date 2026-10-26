@@ -216,14 +216,12 @@ func (p *DefaultMemoryRuntimeProvider) fileEditor(run *Run, event invocation.Eve
 	}
 	editor := &digitalHumanFileEditor{provider: p, run: run, event: event, state: state, promotionAuthorized: promotionAuthorized}
 	switch {
-	case admission.Class == memoryruntime.MemoryClassSelf && admission.InternalOnly:
-		editor.dir, editor.about = "/me/", "your own durable knowledge, experience, and decisions, shared with everyone inside the team. What you save here is internal: external users never see it. Files marked read_only are shown to external users and only an operator can change them"
-	case admission.Class == memoryruntime.MemoryClassSelf:
-		editor.dir, editor.about = "/me/", "your own durable knowledge, experience, and decisions, which every conversation can read"
-	case admission.Scope != nil && admission.Scope.Type == memoryruntime.MemoryScopeInstance:
+	case admission.NoteInstanceID != "":
 		editor.dir, editor.about = "/user/notes/", "your notes on your work with this person: commitments you made, open loops, and their business context, plans, budgets, and decisions"
+	case admission.InternalOnly:
+		editor.dir, editor.about = "/me/", "your own durable knowledge, experience, and decisions, shared with everyone inside the team. What you save here is internal: external users never see it. Files marked read_only are shown to external users and only an operator can change them"
 	default:
-		return nil
+		editor.dir, editor.about = "/me/", "your own durable knowledge, experience, and decisions, which every conversation can read"
 	}
 	return editor
 }

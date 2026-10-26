@@ -9,31 +9,32 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 )
 
-func fileMemory(class memoryruntime.MemoryClass, scope memoryruntime.MemoryScopeType, memoryType memoryruntime.MemoryType, key, content string) *DigitalHumanMemory {
-	return &DigitalHumanMemory{ID: uuid.New(), MemoryClass: class, ScopeType: scope, MemoryType: memoryType, MemoryKey: key, Content: content, Revision: 2, Visibility: MemoryVisibilityEveryone}
+// fileMemory builds an entry of /me/, or a note on a person when
+// noteInstanceID is set.
+func fileMemory(noteInstanceID string, memoryType memoryruntime.MemoryType, key, content string) *DigitalHumanMemory {
+	return &DigitalHumanMemory{ID: uuid.New(), NoteInstanceID: noteInstanceID, MemoryType: memoryType, MemoryKey: key, Content: content, Revision: 2, Visibility: MemoryVisibilityEveryone}
 }
 
 func TestMemoryFilePathsSayWhoTheMemoryIsAbout(t *testing.T) {
 	for want, memory := range map[string]*DigitalHumanMemory{
-		"/me/return_policy.md":     fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "return_policy", "x"),
-		"/user/notes/quote_due.md": fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeOpenLoop, "quote_due", "x"),
-		"/me/a_b.md":               fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "a/b", "x"),
-		"":                         fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeType("project"), memoryruntime.MemoryTypeFact, "never_resolved", "x"),
+		"/me/return_policy.md":     fileMemory("", memoryruntime.MemoryTypeFact, "return_policy", "x"),
+		"/user/notes/quote_due.md": fileMemory("instance-1", memoryruntime.MemoryTypeOpenLoop, "quote_due", "x"),
+		"/me/a_b.md":               fileMemory("", memoryruntime.MemoryTypeFact, "a/b", "x"),
 	} {
 		if got := memoryFilePath(memory); got != want {
-			t.Fatalf("path of %s/%s/%s = %q, want %q", memory.MemoryClass, memory.ScopeType, memory.MemoryKey, got, want)
+			t.Fatalf("path of %q/%s = %q, want %q", memory.NoteInstanceID, memory.MemoryKey, got, want)
 		}
 	}
-	identity := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeIdentity, "persona", "x")
+	identity := fileMemory("", memoryruntime.MemoryTypeIdentity, "persona", "x")
 	if attributes := memoryFileAttributes(identity, true); !strings.Contains(attributes, `read_only="true"`) || !strings.Contains(attributes, `audience="everyone"`) || !strings.Contains(attributes, `revision="2"`) {
 		t.Fatalf("identity attributes = %s", attributes)
 	}
 }
 
 func TestMemoryFileAttributesShowVisibilityOriginAndWhoMayEdit(t *testing.T) {
-	public := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "return_policy", "x")
+	public := fileMemory("", memoryruntime.MemoryTypeFact, "return_policy", "x")
 	public.Origin = MemoryOriginOperator
-	internal := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "launch_plan", "x")
+	internal := fileMemory("", memoryruntime.MemoryTypeFact, "launch_plan", "x")
 	internal.Visibility, internal.Origin = MemoryVisibilityInternal, MemoryOriginChannel
 	if got := memoryFileAttributes(public, true); !strings.Contains(got, `audience="everyone"`) || !strings.Contains(got, `origin="operator"`) || strings.Contains(got, "read_only") {
 		t.Fatalf("operator view of public memory = %s", got)
@@ -47,10 +48,10 @@ func TestMemoryFileAttributesShowVisibilityOriginAndWhoMayEdit(t *testing.T) {
 }
 
 func TestMemoryFilesRenderRecalledFilesThenAnIndexWithinBudget(t *testing.T) {
-	recalled := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "return_policy", "退货政策：45 天内可退。")
+	recalled := fileMemory("", memoryruntime.MemoryTypeFact, "return_policy", "退货政策：45 天内可退。")
 	listed := []*DigitalHumanMemory{recalled}
 	for i := 0; i < 80; i++ {
-		listed = append(listed, fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "fact_"+string(rune('a'+i%26))+strings.Repeat("x", i), "第一行内容"+strings.Repeat("长", 120)+"\n第二行"))
+		listed = append(listed, fileMemory("", memoryruntime.MemoryTypeFact, "fact_"+string(rune('a'+i%26))+strings.Repeat("x", i), "第一行内容"+strings.Repeat("长", 120)+"\n第二行"))
 	}
 	rendered := renderMemoryFiles([]*DigitalHumanMemory{recalled}, listed, 3000, false, true)
 	if utf8.RuneCountInString(rendered) > 3000 {
@@ -67,7 +68,7 @@ func TestMemoryFilesRenderRecalledFilesThenAnIndexWithinBudget(t *testing.T) {
 	}
 
 	// A recalled file that does not fit is cut with a marker, never dropped silently.
-	long := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "handbook", strings.Repeat("规", 5000))
+	long := fileMemory("", memoryruntime.MemoryTypeFact, "handbook", strings.Repeat("规", 5000))
 	rendered = renderMemoryFiles([]*DigitalHumanMemory{long}, nil, 2000, true, true)
 	if utf8.RuneCountInString(rendered) > 2000 || !strings.Contains(rendered, "[truncated; read the whole file with memory_view]") || !strings.Contains(rendered, "most recently updated") {
 		t.Fatalf("long recalled file:\n%s", rendered)
@@ -75,8 +76,8 @@ func TestMemoryFilesRenderRecalledFilesThenAnIndexWithinBudget(t *testing.T) {
 }
 
 func TestMemoryViewListsDirectoriesAndReadsOneFile(t *testing.T) {
-	policy := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "return_policy", "第一行\n第二行")
-	note := fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeOpenLoop, "quote_due", "周五前发报价单")
+	policy := fileMemory("", memoryruntime.MemoryTypeFact, "return_policy", "第一行\n第二行")
+	note := fileMemory("instance-1", memoryruntime.MemoryTypeOpenLoop, "quote_due", "周五前发报价单")
 	listing := viewMemoryFiles([]*DigitalHumanMemory{policy, note}, "")
 	directories := listing["directories"].([]map[string]any)
 	if len(directories) != 2 || directories[0]["directory"] != "/me/" || directories[1]["directory"] != "/user/notes/" {
@@ -96,9 +97,9 @@ func TestMemoryViewListsDirectoriesAndReadsOneFile(t *testing.T) {
 
 func TestMemorySearchKeepsMatchesInsideTheRequestedDirectory(t *testing.T) {
 	items := []*DigitalHumanMemory{
-		fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "a", "x"),
-		fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeFact, "b", "x"),
-		fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "c", "x"),
+		fileMemory("", memoryruntime.MemoryTypeFact, "a", "x"),
+		fileMemory("instance-1", memoryruntime.MemoryTypeFact, "b", "x"),
+		fileMemory("", memoryruntime.MemoryTypeFact, "c", "x"),
 	}
 	if got := searchMemoryFiles(items, "/me/", 5); len(got) != 2 || got[0].MemoryKey != "a" || got[1].MemoryKey != "c" {
 		t.Fatalf("search in /me/ = %d files", len(got))
@@ -123,13 +124,13 @@ func TestMemoryFilesGuidanceReplacesRetrievalOnlyWhenEnabled(t *testing.T) {
 }
 
 func TestMemorySearchFindsArchivedEntriesUnderArchive(t *testing.T) {
-	expired := fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeOpenLoop, "quote_due", "答应周五前把报价单发过去。")
-	other := fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeFact, "office", "办公室在三楼。")
-	found := searchArchivedMemoryFiles([]*DigitalHumanMemory{other, expired}, "报价单什么时候发", "", 5)
-	if len(found) != 1 || found[0]["path"] != "/user/notes/archive/quote_due.md" || found[0]["tags"] != "open_loop" {
+	retired := fileMemory("", memoryruntime.MemoryTypeDecision, "quote_policy", "报价单须在周五前发出。")
+	other := fileMemory("", memoryruntime.MemoryTypeFact, "office", "办公室在三楼。")
+	found := searchArchivedMemoryFiles([]*DigitalHumanMemory{other, retired}, "报价单什么时候发", "", 5)
+	if len(found) != 1 || found[0]["path"] != "/me/archive/quote_policy.md" || found[0]["tags"] != "decision" {
 		t.Fatalf("archive matches = %+v", found)
 	}
-	if found := searchArchivedMemoryFiles([]*DigitalHumanMemory{expired}, "报价单", "/me/", 5); len(found) != 0 {
-		t.Fatalf("a /me/ search returned the person's archived notes: %+v", found)
+	if found := searchArchivedMemoryFiles([]*DigitalHumanMemory{retired}, "报价单", "/user/", 5); len(found) != 0 {
+		t.Fatalf("a /user/ search returned the DigitalHuman's own archive: %+v", found)
 	}
 }

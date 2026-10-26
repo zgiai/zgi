@@ -105,8 +105,7 @@ func (r *GormRepository) instanceNotes(ctx context.Context, scope Scope, digital
 func noteMemory(item relationshipmemory.UserMemoryItem, scope Scope, digitalHumanID uuid.UUID, instanceID string) *DigitalHumanMemory {
 	return &DigitalHumanMemory{
 		ID: item.ID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
-		MemoryKey: relationshipmemory.NoteName(item.MemoryKey), MemoryClass: memoryruntime.MemoryClassBusiness,
-		MemoryType: memoryruntime.MemoryType(item.Category), ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: instanceID,
+		MemoryKey: relationshipmemory.NoteName(item.MemoryKey), MemoryType: memoryruntime.MemoryType(item.Category), NoteInstanceID: instanceID,
 		Content: item.ContentPayload, ContentDigest: memoryContentDigest(item.ContentPayload), Visibility: MemoryVisibilityInternal,
 		Origin: MemoryOriginEndUser, Status: MemoryStatusActive, Confidence: 1, Revision: item.Revision,
 		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
@@ -117,7 +116,7 @@ func noteMemory(item relationshipmemory.UserMemoryItem, scope Scope, digitalHuma
 // A new note beyond the instance capacity is rejected, as instance memory
 // was.
 func (s *Service) applyInstanceNote(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, request MemoryProposalRequest) (*MemoryMutationResult, error) {
-	instanceID, err := uuid.Parse(request.Scope.ID)
+	instanceID, err := uuid.Parse(request.noteInstanceID)
 	if err != nil || request.SupersedesID != nil || !relationshipmemory.ValidNoteName(request.Key) {
 		return nil, ErrMemoryPolicyRejected
 	}
@@ -143,8 +142,7 @@ func (s *Service) applyInstanceNote(ctx context.Context, scope Scope, digitalHum
 		if _, err := service.DeleteItem(ctx, relationship.ID, key, request.ExpectedRevision, metadata); err != nil {
 			return nil, noteError(err)
 		}
-		result.Memory = &DigitalHumanMemory{MemoryKey: request.Key, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance,
-			ScopeID: request.Scope.ID, Status: MemoryStatusInvalidated}
+		result.Memory = &DigitalHumanMemory{MemoryKey: request.Key, NoteInstanceID: request.noteInstanceID, Status: MemoryStatusInvalidated}
 		return result, nil
 	}
 	if limit := instanceMemoryMaxEntries(); limit > 0 && request.ExpectedRevision == 0 {
@@ -165,7 +163,7 @@ func (s *Service) applyInstanceNote(ctx context.Context, scope Scope, digitalHum
 		return nil, noteError(err)
 	}
 	item.ContentPayload = request.Content
-	result.Memory = noteMemory(*item, scope, digitalHumanID, request.Scope.ID)
+	result.Memory = noteMemory(*item, scope, digitalHumanID, request.noteInstanceID)
 	return result, nil
 }
 
@@ -253,7 +251,7 @@ func (s *Service) PromoteNote(ctx context.Context, scope Scope, digitalHumanID, 
 		return nil, applicationError(err, operation)
 	}
 	result, err := s.applyMemoryProposal(ctx, scope, digitalHumanID, MemoryProposalRequest{
-		OperationID: operationID, Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: memoryruntime.MemoryClassSelf,
+		OperationID: operationID, Key: key, Action: memoryruntime.MutationActionUpsert,
 		MemoryType: memoryruntime.MemoryType(note.Category), Content: note.ContentPayload,
 		ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch, Visibility: MemoryVisibilityInternal,
 		Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "operator-promote-note:" + operationID.String()}},
