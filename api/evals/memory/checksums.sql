@@ -5,7 +5,7 @@
 -- user, revision, and source, so any lost, changed, or misattributed value
 -- changes the fingerprint. Relationship rows also carry their state.
 
--- Relationship store (ZGI_RELATIONSHIP_MEMORY_ENABLED=true).
+-- Relationship store.
 SELECT 'relationship' AS store,
        r.consumer_id AS agent_id,
        count(DISTINCT r.id) AS relationships,
@@ -22,7 +22,7 @@ GROUP BY r.consumer_id
 
 UNION ALL
 
--- Legacy slot store (ZGI_RELATIONSHIP_MEMORY_ENABLED=false).
+-- Legacy slot store, read-only since ADR 0016; moved by schema migration.
 SELECT 'legacy',
        v.agent_id,
        count(DISTINCT (v.user_scope, v.user_id)),

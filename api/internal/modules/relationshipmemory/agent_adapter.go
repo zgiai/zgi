@@ -67,9 +67,6 @@ func (a *AgentAdapter) UpdateSettings(ctx context.Context, workspaceID, agentID 
 }
 
 func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*UserMemoryRelationship, error) {
-	if !RuntimeEnabled() {
-		return nil, agentmemory.ErrUnauthorized
-	}
 	if workspaceID == uuid.Nil || agentID == uuid.Nil || userID == uuid.Nil {
 		return nil, agentmemory.ErrUnauthorized
 	}
@@ -859,9 +856,6 @@ func (a *AgentAdapter) ArchiveText(ctx context.Context, workspaceID, agentID uui
 // ForgottenLines returns what an Agent user removed from their memory. A user
 // without relationship memory has forgotten nothing here.
 func (a *AgentAdapter) ForgottenLines(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]string, error) {
-	if !RuntimeEnabled() {
-		return nil, nil
-	}
 	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
 	if err != nil {
 		return nil, err

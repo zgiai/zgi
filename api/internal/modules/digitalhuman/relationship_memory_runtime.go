@@ -99,7 +99,7 @@ func NewRelationshipMemoryRuntimeProvider(db *gorm.DB) *RelationshipMemoryRuntim
 }
 
 func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, resolved *ResolvedExecution, event invocation.Event) (*MemoryRuntimePreparation, error) {
-	if run == nil || resolved == nil || !resolved.Snapshot.UseUserMemory || !relationshipmemory.RuntimeEnabled() {
+	if run == nil || resolved == nil || !resolved.Snapshot.UseUserMemory {
 		return nil, nil
 	}
 	identity := relationshipmemory.InvocationIdentity{

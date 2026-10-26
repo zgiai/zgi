@@ -6,7 +6,6 @@ import (
 )
 
 func TestRuntimeAgentCapabilitiesDoesNotExposeDeferredResources(t *testing.T) {
-	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "true")
 	capabilities := runtimeAgentCapabilities(runtimePublishedPresentation{
 		FileUploadEnabled:   true,
 		SupportsVision:      true,

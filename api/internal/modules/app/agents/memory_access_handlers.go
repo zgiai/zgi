@@ -213,10 +213,6 @@ func (h *AgentsHandler) webAppMemoryAccess(c *gin.Context) (memoryAccessScope, b
 
 func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, bool) {
 	_, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal")
-	if runtimeWorkspaceRequest && !relationshipmemory.RuntimeEnabled() {
-		response.Fail(c, response.ErrPermissionDenied)
-		return memoryAccessScope{}, false
-	}
 	agentID, err := uuid.Parse(strings.TrimSpace(c.GetString("agent_id")))
 	if err != nil || agentID == uuid.Nil {
 		response.Fail(c, response.ErrInvalidParam)
@@ -321,9 +317,6 @@ type agentUserMemoryService interface {
 }
 
 func (h *AgentsHandler) memoryService() agentUserMemoryService {
-	if !relationshipmemory.RuntimeEnabled() {
-		return agentmemory.NewService(h.db)
-	}
 	return relationshipmemory.NewAgentAdapter(h.db)
 }
 
@@ -440,10 +433,6 @@ func (h *AgentsHandler) undoDirectMemory(c *gin.Context, access memoryAccessScop
 // getDirectMemoryHistory lists the user's memory changes (ADR 0013). History
 // is kept by the relationship store only.
 func (h *AgentsHandler) getDirectMemoryHistory(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	request, ok := relationshipmemory.HistoryRequestFromQuery(c)
 	if !ok {
 		response.Fail(c, response.ErrInvalidParam)
@@ -459,10 +448,6 @@ func (h *AgentsHandler) getDirectMemoryHistory(c *gin.Context, access memoryAcce
 
 // revertDirectMemoryVersion undoes the latest change to one memory file.
 func (h *AgentsHandler) revertDirectMemoryVersion(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	if !access.writesEnabled {
 		response.FailWithMessage(c, response.ErrInvalidParam, "Agent Memory is disabled")
 		return
@@ -482,10 +467,6 @@ func (h *AgentsHandler) revertDirectMemoryVersion(c *gin.Context, access memoryA
 
 // getDirectMemoryArchive lists the user's memory archive (ADR 0014).
 func (h *AgentsHandler) getDirectMemoryArchive(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	entries, err := relationshipmemory.NewAgentAdapter(h.db).Archive(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID)
 	if err != nil {
 		h.failRuntime(c, err)
@@ -497,10 +478,6 @@ func (h *AgentsHandler) getDirectMemoryArchive(c *gin.Context, access memoryAcce
 // deleteDirectMemoryArchiveEntry removes one entry from the user's archive.
 // Deleting is allowed while memory is off, so users can always remove data.
 func (h *AgentsHandler) deleteDirectMemoryArchiveEntry(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	entryID, err := uuid.Parse(strings.TrimSpace(c.Param("entry_id")))
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)
@@ -520,10 +497,6 @@ type directMemorySettingsRequest struct {
 }
 
 func (h *AgentsHandler) getDirectMemorySettings(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	settings, err := relationshipmemory.NewAgentAdapter(h.db).GetSettings(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID)
 	if err != nil {
 		h.failRuntime(c, err)
@@ -533,10 +506,6 @@ func (h *AgentsHandler) getDirectMemorySettings(c *gin.Context, access memoryAcc
 }
 
 func (h *AgentsHandler) patchDirectMemorySettings(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	var req directMemorySettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)

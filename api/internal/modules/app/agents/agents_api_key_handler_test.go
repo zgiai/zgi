@@ -780,21 +780,7 @@ func (s *apiKeyChatRuntimeService) RunPreparedStream(_ context.Context, _ *runti
 	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted, Metadata: map[string]interface{}{"usage": map[string]interface{}{"total_tokens": 42}}}, nil
 }
 
-func TestRuntimeWorkspaceMemoryFailsClosedWithoutRelationshipMemory(t *testing.T) {
-	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "")
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/connect/v1/apps/app-key/memory", nil)
-	c.Set("runtime_workspace_principal", &runtimeworkspace.Principal{})
-	NewAgentsHandler(nil, nil, nil, nil, nil).GetAPIKeyAgentMemory(c)
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusForbidden, w.Body.String())
-	}
-}
-
 func TestRuntimeWorkspaceRunConfigKeepsPublishedCapabilities(t *testing.T) {
-	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "")
 	config := runtimeWorkspaceRunConfig(runtimeservice.RunConfig{
 		RuntimeToolFactory: func(*runtimeservice.PreparedChat) []skillloop.RuntimeTool {
 			panic("Runtime Workspace must not invoke Linux factory")
@@ -826,18 +812,6 @@ func TestRuntimeWorkspaceRunConfigKeepsPublishedCapabilities(t *testing.T) {
 	if config.RuntimeToolFactory != nil {
 		t.Fatal("Runtime Workspace retained Linux factory")
 	}
-	if config.AgentMemoryEnabled || config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 0 {
-		t.Fatalf("memory remained enabled while relationship memory was disabled: %#v", config)
-	}
-}
-
-func TestRuntimeWorkspaceRunConfigKeepsRelationshipMemory(t *testing.T) {
-	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "true")
-	config := runtimeWorkspaceRunConfig(runtimeservice.RunConfig{
-		AgentMemoryEnabled:               true,
-		AgentMemoryAutoExtractionEnabled: true,
-		AgentMemorySlots:                 []runtimeservice.AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
-	})
 	if !config.AgentMemoryEnabled || !config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 1 {
 		t.Fatalf("relationship memory config = %#v, want enabled memory", config)
 	}

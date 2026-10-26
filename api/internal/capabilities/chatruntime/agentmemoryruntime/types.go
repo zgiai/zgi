@@ -8,13 +8,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 )
 
-const (
-	ToolMutate = "mutate_user_relationship_memory"
-
-	legacyToolUpdate = "update_agent_memory"
-	legacyToolClear  = "clear_agent_memory"
-)
-
 var ErrInvalidInput = errors.New("invalid input")
 
 var zeroUUID = uuid.Nil
@@ -47,18 +40,6 @@ type State struct {
 	ContextError                 string
 }
 
-type ToolOperation struct {
-	Action   string `json:"action"`
-	Key      string `json:"key"`
-	Content  string `json:"content,omitempty"`
-	Evidence string `json:"evidence"`
-	Mode     string `json:"mode"`
-}
-
-type ToolArguments struct {
-	Operations []ToolOperation `json:"operations"`
-}
-
 type MemoryService interface {
 	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
@@ -83,8 +64,6 @@ type ContextRequest struct {
 	ConfigScope    string
 	ConfigRevision string
 	Budget         int
-	// Blocks renders memory as files (ADR 0013) instead of the legacy list.
-	Blocks bool
 }
 
 type ContextResult struct {

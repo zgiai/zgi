@@ -524,7 +524,6 @@ export interface AgentMemoryTemplate {
 
 export interface AgentMemoryTemplatesResponse {
   catalog: { version: number; templates: AgentMemoryTemplate[] };
-  blocks_enabled: boolean;
 }
 
 export interface AgentMemoryPreviewRequest {

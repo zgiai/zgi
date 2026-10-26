@@ -14,7 +14,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemoryworker"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -82,7 +81,7 @@ func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, acco
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
 	}
-	if s.relationshipMemory != nil && relationshipmemory.RuntimeEnabled() {
+	if s.relationshipMemory != nil {
 		slots, slotErr := s.publishedRelationshipMemorySlots(ctx, ag.ID)
 		if slotErr != nil {
 			return nil, slotErr
@@ -97,15 +96,7 @@ func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, acco
 		}
 		return &dto.AgentMemoryValuesResponse{UserScope: agentmemory.UserScopeAccount, UserID: targetUserID.String(), Values: agentMemoryValueConfigsFromResponses(exported.Values)}, nil
 	}
-	values, err := s.agentMemoryService.ListOrganizerValues(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID)
-	if err != nil {
-		return nil, err
-	}
-	return &dto.AgentMemoryValuesResponse{
-		UserScope: agentmemory.UserScopeAccount,
-		UserID:    targetUserID.String(),
-		Values:    agentMemoryValueConfigsFromResponses(values),
-	}, nil
+	return nil, fmt.Errorf("agent memory service is not configured")
 }
 
 func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, accountID string, req dto.UpdateAgentMemoryValueRequest) (*dto.AgentMemoryValueResponse, error) {
@@ -120,7 +111,7 @@ func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, acc
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
 	}
-	if s.relationshipMemory != nil && relationshipmemory.RuntimeEnabled() {
+	if s.relationshipMemory != nil {
 		slots, slotErr := s.publishedRelationshipMemorySlots(ctx, ag.ID)
 		if slotErr != nil {
 			return nil, slotErr
@@ -132,16 +123,7 @@ func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, acc
 		resp := agentMemoryValueConfigFromResponse(*value)
 		return &resp, nil
 	}
-	value, err := s.agentMemoryService.UpdateOrganizerValue(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID, agentmemory.UpdateValueRequest{
-		Key:              req.Key,
-		Content:          req.Content,
-		ExpectedRevision: req.ExpectedRevision,
-	})
-	if err != nil {
-		return nil, err
-	}
-	resp := agentMemoryValueConfigFromResponse(*value)
-	return &resp, nil
+	return nil, fmt.Errorf("agent memory service is not configured")
 }
 
 func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, accountID, key string) (*dto.AgentMemoryValueResponse, error) {
@@ -156,7 +138,7 @@ func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, acco
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
 	}
-	if s.relationshipMemory != nil && relationshipmemory.RuntimeEnabled() {
+	if s.relationshipMemory != nil {
 		slots, slotErr := s.publishedRelationshipMemorySlots(ctx, ag.ID)
 		if slotErr != nil {
 			return nil, slotErr
@@ -168,12 +150,7 @@ func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, acco
 		resp := agentMemoryValueConfigFromResponse(*value)
 		return &resp, nil
 	}
-	value, err := s.agentMemoryService.ClearOrganizerValue(ctx, ag.ID, agentmemory.UserScopeAccount, targetUserID, key)
-	if err != nil {
-		return nil, err
-	}
-	resp := agentMemoryValueConfigFromResponse(*value)
-	return &resp, nil
+	return nil, fmt.Errorf("agent memory service is not configured")
 }
 
 func (s *agentsService) publishedRelationshipMemorySlots(ctx context.Context, agentID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {
@@ -318,17 +295,6 @@ func agentMemorySnapshotSlots(slots []dto.AgentMemorySlotConfig) []dto.AgentMemo
 		})
 	}
 	return normalizeAgentMemorySlotConfigs(out)
-}
-
-func agentMemoryKeys(slots []dto.AgentMemorySlotConfig) []string {
-	keys := make([]string, 0, len(slots))
-	for _, slot := range slots {
-		key := strings.TrimSpace(slot.Key)
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-	return keys
 }
 
 func firstNonZeroInt(value, fallback int) int {

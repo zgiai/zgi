@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -620,7 +621,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 				mutationStatus = "updated"
 			}
 		}
-		invocation := newSkillInvocation("memory_mutation", skills.SkillAgentMemory, agentMemoryToolMutate, payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
+		invocation := newSkillInvocation("memory_mutation", skills.SkillAgentMemory, agentmemoryruntime.ToolMemoryEdit, payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
 			"memory_scope":    payloadString(payload, "memory_scope"),
 			"action":          action,
 			"key":             payloadString(payload, "key"),

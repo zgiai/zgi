@@ -27,7 +27,6 @@ import (
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	fileprocessservice "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -897,10 +896,7 @@ func (h *AgentsHandler) GetAgentMemoryTemplates(c *gin.Context) {
 	if locale == "" {
 		locale = c.GetHeader("Accept-Language")
 	}
-	response.Success(c, gin.H{
-		"catalog":        agentmemory.Templates(locale),
-		"blocks_enabled": relationshipmemory.MemoryBlocksEnabled(),
-	})
+	response.Success(c, gin.H{"catalog": agentmemory.Templates(locale)})
 }
 
 // PreviewAgentMemory shows what a memory configuration would save from a

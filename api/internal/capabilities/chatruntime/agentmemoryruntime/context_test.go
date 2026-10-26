@@ -3,9 +3,7 @@ package agentmemoryruntime
 import (
 	"context"
 	"reflect"
-	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -26,20 +24,6 @@ func TestBuildContextCapturesEpochBeforeReadingValues(t *testing.T) {
 	}
 	if !reflect.DeepEqual(memory.calls, []string{"epoch", "values"}) {
 		t.Fatalf("memory calls = %#v, want epoch before values", memory.calls)
-	}
-}
-
-func TestRenderContextUsesDelimitedRuneBoundedDataBlock(t *testing.T) {
-	values := []agentmemory.SlotValueResponse{{SlotResponse: agentmemory.SlotResponse{Key: "preference"}, Content: strings.Repeat("简", 200), Revision: 3}}
-	rendered, metadata := RenderContextWithMetadata(values, 380)
-	if !strings.HasPrefix(rendered, "<user_relationship_memory>") || !strings.HasSuffix(rendered, "</user_relationship_memory>") {
-		t.Fatalf("rendered context is not delimited: %q", rendered)
-	}
-	if got := utf8.RuneCountInString(rendered); got > 380 {
-		t.Fatalf("rendered context has %d runes, want <= 380", got)
-	}
-	if len(metadata) != 1 || metadata[0]["truncated"] != true {
-		t.Fatalf("metadata = %#v", metadata)
 	}
 }
 

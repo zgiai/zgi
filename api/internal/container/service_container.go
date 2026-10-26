@@ -16,7 +16,6 @@ import (
 	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -63,6 +62,7 @@ import (
 	pluginrunner_service "github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
 	promptsmodule "github.com/zgiai/zgi/api/internal/modules/prompts"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/shared/adapters"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	system_repo "github.com/zgiai/zgi/api/internal/modules/system/repository"
@@ -290,7 +290,7 @@ type ServiceContainer struct {
 
 	// Account memory
 	memoryService      *memory.Service
-	agentMemoryService *agentmemory.Service
+	agentMemoryService *relationshipmemory.AgentAdapter
 
 	// Knowledge retrieval for builtin knowledge tools
 	knowledgeRetrievalService *dataset_service.KnowledgeRetrievalService
@@ -1517,9 +1517,9 @@ func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.Knowl
 	return c.knowledgeRetrievalService
 }
 
-func (c *ServiceContainer) GetAgentMemoryService() *agentmemory.Service {
+func (c *ServiceContainer) GetAgentMemoryService() *relationshipmemory.AgentAdapter {
 	if c.agentMemoryService == nil {
-		c.agentMemoryService = agentmemory.NewService(c.db)
+		c.agentMemoryService = relationshipmemory.NewAgentAdapter(c.db)
 	}
 	return c.agentMemoryService
 }

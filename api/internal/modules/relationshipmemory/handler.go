@@ -89,9 +89,6 @@ type updateSettingsPayload struct {
 }
 
 func (h *Handler) UpdateSettings(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -135,9 +132,6 @@ type putItemPayload struct {
 }
 
 func (h *Handler) PutItem(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -172,9 +166,6 @@ func (h *Handler) PutItem(c *gin.Context) {
 }
 
 func (h *Handler) DeleteItem(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -198,9 +189,6 @@ func (h *Handler) DeleteItem(c *gin.Context) {
 }
 
 func (h *Handler) ClearItems(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -218,9 +206,6 @@ func (h *Handler) ClearItems(c *gin.Context) {
 }
 
 func (h *Handler) DeleteRelationship(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -247,9 +232,6 @@ func (h *Handler) Export(c *gin.Context) {
 }
 
 func (h *Handler) Undo(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -293,9 +275,6 @@ func (h *Handler) History(c *gin.Context) {
 
 // RevertVersion undoes the latest change to one memory file.
 func (h *Handler) RevertVersion(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -344,9 +323,6 @@ func (h *Handler) Notes(c *gin.Context) {
 // DeleteNote removes one of the DigitalHuman's notes on the person. The
 // person may delete notes but not edit them (ADR 0015).
 func (h *Handler) DeleteNote(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -422,9 +398,6 @@ func (h *Handler) DeleteArchiveEntry(c *gin.Context) {
 }
 
 func (h *Handler) manageArchiveEntry(c *gin.Context) (*RelationshipDetail, uuid.UUID, bool) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return nil, uuid.Nil, false
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return nil, uuid.Nil, false
@@ -546,14 +519,6 @@ func queryInt(c *gin.Context, key string, fallback int) int {
 		return fallback
 	}
 	return value
-}
-
-func relationshipMemoryWritesEnabled(c *gin.Context) bool {
-	if RuntimeEnabled() {
-		return true
-	}
-	writeMemoryError(c, fmt.Errorf("%w: relationship memory runtime is disabled", ErrPolicyRejected))
-	return false
 }
 
 func writeMemoryError(c *gin.Context, err error) {

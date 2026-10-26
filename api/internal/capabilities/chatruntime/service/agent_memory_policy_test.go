@@ -89,13 +89,13 @@ func TestAgentMemoryRuntimeToolMutatesOneAtomicBatch(t *testing.T) {
 	}
 	svc := &service{agentMemoryService: memory}
 	timeline := newProcessTimelineRecorder(context.Background(), context.Background(), svc, prepared, nil)
-	tools := svc.agentMemoryRuntimeTools(context.Background(), prepared, timeline)
-	if len(tools) != 1 || tools[0].Definition.Function.Name != agentmemoryruntime.ToolMutate {
-		t.Fatalf("runtime tools = %#v", tools)
+	tool, ok := agentMemoryEditTool(svc.agentMemoryRuntimeTools(context.Background(), prepared, timeline))
+	if !ok {
+		t.Fatal("runtime tools do not include memory_edit")
 	}
-	result := tools[0].Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{
-		Name:      agentmemoryruntime.ToolMutate,
-		Arguments: `{"operations":[{"action":"upsert","key":"preferences","content":"Prefers concise replies.","evidence":"I prefer concise replies","mode":"explicit"}]}`,
+	result := tool.Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{
+		Name:      agentmemoryruntime.ToolMemoryEdit,
+		Arguments: `{"edits":[{"command":"insert","path":"/user/preferences.md","text":"Prefers concise replies.","evidence":"I prefer concise replies","mode":"explicit"}]}`,
 	}})
 	if result.Error != nil || memory.mutateCalls != 1 || len(memory.lastMutation.Operations) != 1 {
 		t.Fatalf("result=%#v mutateCalls=%d mutation=%#v", result, memory.mutateCalls, memory.lastMutation)
@@ -136,15 +136,27 @@ func TestAgentMemoryRuntimeToolAllowsOneValidationCorrection(t *testing.T) {
 		},
 	}
 	memory := &fakeAgentMemoryContextService{}
-	tool := (&service{agentMemoryService: memory}).agentMemoryRuntimeTools(context.Background(), prepared, nil)[0]
-	invalid := tool.Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{Name: agentmemoryruntime.ToolMutate, Arguments: `{"operations":[]}`}})
+	tool, ok := agentMemoryEditTool((&service{agentMemoryService: memory}).agentMemoryRuntimeTools(context.Background(), prepared, nil))
+	if !ok {
+		t.Fatal("runtime tools do not include memory_edit")
+	}
+	invalid := tool.Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{Name: agentmemoryruntime.ToolMemoryEdit, Arguments: `{"edits":[]}`}})
 	if !invalid.Recoverable || invalid.Error == nil {
 		t.Fatalf("invalid result = %#v", invalid)
 	}
-	retry := tool.Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{Name: agentmemoryruntime.ToolMutate, Arguments: `{"operations":[{"action":"upsert","key":"preferences","content":"Concise replies.","evidence":"concise replies","mode":"explicit"}]}`}})
+	retry := tool.Handler(context.Background(), adapter.ToolCall{Function: adapter.FunctionCall{Name: agentmemoryruntime.ToolMemoryEdit, Arguments: `{"edits":[{"command":"insert","path":"/user/preferences.md","text":"Concise replies.","evidence":"concise replies","mode":"explicit"}]}`}})
 	if retry.Error != nil || memory.mutateCalls != 1 {
 		t.Fatalf("retry result=%#v calls=%d", retry, memory.mutateCalls)
 	}
+}
+
+func agentMemoryEditTool(tools []skillloop.RuntimeTool) (skillloop.RuntimeTool, bool) {
+	for _, tool := range tools {
+		if tool.Definition.Function.Name == agentmemoryruntime.ToolMemoryEdit {
+			return tool, true
+		}
+	}
+	return skillloop.RuntimeTool{}, false
 }
 
 func TestAgentMemorySuppressesModelInvocationBodies(t *testing.T) {

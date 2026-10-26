@@ -1055,13 +1055,6 @@ func (s *agentsService) createAgentPublishedVersion(
 		if err := memoryService.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopePublished, publishedMemoryRevision); err != nil {
 			return fmt.Errorf("advance published agent memory configuration: %w", err)
 		}
-		keepMemorySlots := currentMemorySlots
-		if currentConfig.AgentMemoryEnabled {
-			keepMemorySlots = snapshotMemorySlots
-		}
-		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(keepMemorySlots)); err != nil {
-			return fmt.Errorf("clear removed agent memory values: %w", err)
-		}
 		return nil
 	})
 }

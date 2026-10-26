@@ -1,6 +1,6 @@
 # Memory evaluation
 
-A replayable scenario suite for Agent memory. It drives an Agent through the external API and scores what was remembered and whether later answers use it. The same scenarios are meant to run against the current slot memory and against the unified memory of ADR 0013, so results can be compared.
+A replayable scenario suite for Agent memory. It drives an Agent through the external API and scores what was remembered and whether later answers use it. Runs with and without automatic capture, or with different models, can be compared.
 
 ## Files
 
@@ -29,15 +29,14 @@ python run.py --workspace-id <id> --label auto-capture --auto --wait-after-sessi
 python seed.py --workspace-id <id> --label relationship --env-file ../../../.env.test.local
 ```
 
-The deployment's memory switches decide which runtime is measured:
+The automatic-write switch decides which runtime is measured:
 
-| Configuration | `ZGI_RELATIONSHIP_MEMORY_ENABLED` | `ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED` | `--auto` |
-|---|---|---|---|
-| Legacy slot store | `false` | `false` | no |
-| Explicit writes only | `true` | `false` | no |
-| Automatic capture | `true` | `true` | yes, with `--wait-after-session` long enough for background extraction (about 90s) |
+| Configuration | `ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED` | `--auto` |
+|---|---|---|
+| Explicit writes only | `false` | no |
+| Automatic capture | `true` | yes, with `--wait-after-session` long enough for background consolidation (about 90s) |
 
-DigitalHuman runs need `ZGI_RELATIONSHIP_MEMORY_ENABLED=true` for the `user` group; `--auto` turns on the DigitalHuman's automatic extraction:
+For DigitalHumans, `--auto` turns on the DigitalHuman's automatic extraction:
 
 ```bash
 python dh.py --workspace-id <id> --label dh-explicit --db <database> --repeat 3 --env-file ../../../.env.test.local

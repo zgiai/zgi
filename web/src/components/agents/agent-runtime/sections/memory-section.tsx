@@ -86,9 +86,6 @@ export function AgentRuntimeMemorySection({
     staleTime: 10 * 60 * 1000,
   });
   const memoryTemplates = templatesQuery.data?.data?.catalog.templates ?? [];
-  // Automatic memory and the preview run on memory blocks (ADR 0013); without
-  // them the switch stays hidden, as it was before blocks existed.
-  const blocksEnabled = templatesQuery.data?.data?.blocks_enabled ?? false;
 
   const usedAgentMemorySlotKeys = new Set(
     agentMemorySlots.map(slot => slot.key.trim().toLowerCase()).filter(Boolean)
@@ -430,21 +427,19 @@ export function AgentRuntimeMemorySection({
             </div>
             {agentMemoryEnabled && (
               <div className="space-y-2">
-                {blocksEnabled ? (
-                  <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
-                    <div>
-                      <div className="text-xs font-medium">{t('memory.autoExtractionTitle')}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {t('memory.autoExtractionDescription')}
-                      </div>
+                <div className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
+                  <div>
+                    <div className="text-xs font-medium">{t('memory.autoExtractionTitle')}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {t('memory.autoExtractionDescription')}
                     </div>
-                    <Switch
-                      checked={agentMemoryAutoExtractionEnabled}
-                      disabled={readOnly}
-                      onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
-                    />
                   </div>
-                ) : null}
+                  <Switch
+                    checked={agentMemoryAutoExtractionEnabled}
+                    disabled={readOnly}
+                    onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
+                  />
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -468,18 +463,16 @@ export function AgentRuntimeMemorySection({
                       ? t('memory.maxItemsReached')
                       : t('memory.addCustomSlot')}
                   </Button>
-                  {blocksEnabled && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPreviewOpen(true)}
-                      disabled={!agentMemorySlots.some(slot => slot.enabled)}
-                    >
-                      <FlaskConical className="size-4" />
-                      {t('memory.preview.open')}
-                    </Button>
-                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPreviewOpen(true)}
+                    disabled={!agentMemorySlots.some(slot => slot.enabled)}
+                  >
+                    <FlaskConical className="size-4" />
+                    {t('memory.preview.open')}
+                  </Button>
                 </div>
                 <div className="space-y-1">
                   <div className="text-xs font-medium text-muted-foreground">
@@ -646,7 +639,7 @@ export function AgentRuntimeMemorySection({
                               }
                             />
                           </div>
-                          {blocksEnabled && agentMemoryAutoExtractionEnabled ? (
+                          {agentMemoryAutoExtractionEnabled ? (
                             <div className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2">
                               <div>
                                 <div className="text-xs font-medium">

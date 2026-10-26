@@ -20,7 +20,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/resourcebindings"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin/consolenavigation"
@@ -145,14 +144,8 @@ func (s *service) runPreparedToolLoop(
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
 	if len(runtimeTools) > 0 {
 		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
-		if relationshipmemory.MemoryBlocksEnabled() {
-			if hasAgentMemoryRuntimeTool(runtimeTools) {
-				additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.FilePolicyMessage(proactiveAllowed))
-			}
-		} else {
-			additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
-		}
 		if hasAgentMemoryRuntimeTool(runtimeTools) {
+			additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.FilePolicyMessage(proactiveAllowed))
 			if instructions := agentmemoryruntime.InstructionsMessage(prepared.parts.AgentMemoryInstructions); instructions != nil {
 				additionalSystemMessages = append(additionalSystemMessages, *instructions)
 			}

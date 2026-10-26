@@ -74,10 +74,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 
 	agentMemoryService := agentmemory.NewService(db)
 	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
-	var runtimeAgentMemory any = agentMemoryService
-	if relationshipmemory.RuntimeEnabled() {
-		runtimeAgentMemory = userRelationshipMemory
-	}
+	var runtimeAgentMemory any = userRelationshipMemory
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,

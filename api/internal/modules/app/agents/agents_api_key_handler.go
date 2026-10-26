@@ -13,7 +13,6 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/util"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -78,9 +77,6 @@ func (h *AgentsHandler) GetAPIKeyAgentRuntimeConfig(c *gin.Context) {
 		return
 	}
 	memoryEnabled := published.Config.AgentMemoryEnabled
-	if _, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal"); runtimeWorkspaceRequest {
-		memoryEnabled = memoryEnabled && relationshipmemory.RuntimeEnabled()
-	}
 	response.Success(c, apiKeyAgentRuntimeConfigResponse{
 		FileUploadPolicy:     chatfile.Clone(published.Config.FileUploadPolicy),
 		AgentID:              published.AgentID,
@@ -585,11 +581,6 @@ func runtimeWorkspaceRunConfig(config runtimeservice.RunConfig) runtimeservice.R
 	// Runtime Workspace credentials are not an execution entry. Never carry a
 	// caller-scoped Linux/CLI factory through this compatibility projection.
 	config.RuntimeToolFactory = nil
-	if !relationshipmemory.RuntimeEnabled() {
-		config.AgentMemoryEnabled = false
-		config.AgentMemoryAutoExtractionEnabled = false
-		config.AgentMemorySlots = nil
-	}
 	return config
 }
 

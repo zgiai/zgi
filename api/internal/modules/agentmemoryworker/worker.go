@@ -49,13 +49,7 @@ type extractionMemoryService interface {
 	DeleteTerminalExtractionJobs(context.Context, time.Time, int) (int64, error)
 	ReadUserMemory(context.Context, uuid.UUID, uuid.UUID, []agentmemory.RuntimeSlot, string, uuid.UUID) ([]agentmemory.SlotValueResponse, error)
 	MutateValues(context.Context, uuid.UUID, uuid.UUID, []agentmemory.RuntimeSlot, string, uuid.UUID, agentmemory.MutateValuesRequest, agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
-}
-
-type relationshipExtractionBounds interface {
 	ExtractionBounds(context.Context, *agentmemory.AgentMemoryExtractionJob, time.Time) (*time.Time, *time.Time, error)
-}
-
-type relationshipMemoryCleaner interface {
 	CleanupExpiredRelationshipMemory(context.Context, time.Time, time.Duration) error
 }
 
@@ -94,29 +88,7 @@ func (r *Runner) cleanupExpired(ctx context.Context) error {
 		return nil
 	}
 	now := time.Now()
-	if cleaner, ok := r.memory.(relationshipMemoryCleaner); ok {
-		if err := cleaner.CleanupExpiredRelationshipMemory(ctx, now, auditRetention); err != nil {
-			return err
-		}
-	} else if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			WITH batch AS (
-				SELECT id FROM agent_memory_events
-				WHERE before_snapshot IS NOT NULL OR after_snapshot IS NOT NULL
-				ORDER BY created_at ASC
-				LIMIT 500
-			)
-			UPDATE agent_memory_events AS events
-			SET before_snapshot = NULL, after_snapshot = NULL
-			FROM batch WHERE events.id = batch.id
-		`).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("expires_at <= ?", now).Delete(&agentmemory.AgentMemoryUndoRecord{}).Error; err != nil {
-			return err
-		}
-		return tx.Where("created_at < ?", now.Add(-auditRetention)).Delete(&agentmemory.AgentMemoryEvent{}).Error
-	}); err != nil {
+	if err := r.memory.CleanupExpiredRelationshipMemory(ctx, now, auditRetention); err != nil {
 		return err
 	}
 	if _, err := r.memory.DeleteTerminalExtractionJobs(ctx, now.Add(-extractionJobRetention), extractionCleanupBatchSize); err != nil {
@@ -268,40 +240,9 @@ func (r *Runner) loadCompletedTurns(ctx context.Context, job *agentmemory.AgentM
 		Where("id = ? AND conversation_id = ? AND status = ? AND deleted_at IS NULL", job.MessageWatermarkID, job.ConversationID, "completed").Take(&watermark).Error; err != nil {
 		return nil, scope, err
 	}
-	var lowerBound, previousCreatedAt *time.Time
-	if provider, ok := r.memory.(relationshipExtractionBounds); ok {
-		var boundsErr error
-		lowerBound, previousCreatedAt, boundsErr = provider.ExtractionBounds(ctx, job, watermark.CreatedAt)
-		if boundsErr != nil {
-			return nil, scope, boundsErr
-		}
-	} else {
-		var subject agentmemory.AgentMemorySubjectState
-		if err := r.db.WithContext(ctx).
-			Where("workspace_id = ? AND agent_id = ? AND user_scope = ? AND user_id = ?", job.WorkspaceID, job.AgentID, job.UserScope, job.UserID).
-			Take(&subject).Error; err != nil {
-			return nil, scope, err
-		}
-		if subject.MemoryEpoch != job.MemoryEpoch {
-			return nil, scope, agentmemory.ErrConflict
-		}
-		var previous struct{ CreatedAt *time.Time }
-		if err := r.db.WithContext(ctx).Table("agent_memory_extraction_jobs AS jobs").
-			Select("MAX(messages.created_at) AS created_at").
-			Joins("JOIN chat_runtime_messages AS messages ON messages.id = jobs.message_watermark_id").
-			Where("jobs.id <> ? AND jobs.workspace_id = ? AND jobs.agent_id = ? AND jobs.user_scope = ? AND jobs.user_id = ? AND jobs.conversation_id = ? AND jobs.memory_epoch = ? AND jobs.status = ? AND messages.created_at < ?",
-				job.ID, job.WorkspaceID, job.AgentID, job.UserScope, job.UserID, job.ConversationID, job.MemoryEpoch, agentmemory.ExtractionJobCompleted, watermark.CreatedAt).
-			Scan(&previous).Error; err != nil {
-			return nil, scope, err
-		}
-		lowerBound = subject.ExtractionCutoffAt
-		// During a rolling deploy, an older node may increment memory_epoch
-		// without the additive cutoff column. The update time is a safe fence.
-		if lowerBound == nil && subject.MemoryEpoch > 0 && !subject.UpdatedAt.IsZero() {
-			value := subject.UpdatedAt
-			lowerBound = &value
-		}
-		previousCreatedAt = previous.CreatedAt
+	lowerBound, previousCreatedAt, err := r.memory.ExtractionBounds(ctx, job, watermark.CreatedAt)
+	if err != nil {
+		return nil, scope, err
 	}
 	if previousCreatedAt != nil && (lowerBound == nil || previousCreatedAt.After(*lowerBound)) {
 		value := *previousCreatedAt
@@ -354,14 +295,6 @@ func (r *Runner) fitTurnBudget(turns []completedTurn, slots []agentmemory.Runtim
 	return selected, nil
 }
 
-type automaticOperation struct {
-	Action     string   `json:"action"`
-	Key        string   `json:"key"`
-	Content    string   `json:"content"`
-	Evidence   string   `json:"evidence"`
-	Confidence *float64 `json:"confidence,omitempty"`
-}
-
 func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn) (bool, error) {
 	runtimeSlots, err := extractionJobRuntimeSlots(job)
 	if err != nil {
@@ -374,13 +307,9 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 	if err != nil {
 		return false, err
 	}
-	build := r.extractionChatRequest
-	instructions := ""
-	if relationshipmemory.MemoryBlocksEnabled() {
-		instructions = r.memoryInstructions(ctx, job)
-		build = func(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error) {
-			return r.consolidationChatRequest(turns, slots, values, instructions)
-		}
+	instructions := r.memoryInstructions(ctx, job)
+	build := func(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error) {
+		return r.consolidationChatRequest(turns, slots, values, instructions)
 	}
 	turns, err = r.fitTurnBudget(turns, runtimeSlots, values, build)
 	if err != nil {
@@ -389,80 +318,7 @@ func (r *Runner) extractAndApply(ctx context.Context, job *agentmemory.AgentMemo
 	if len(turns) == 0 {
 		return false, nil
 	}
-	if relationshipmemory.MemoryBlocksEnabled() {
-		return r.consolidateAndApply(ctx, job, scope, turns, runtimeSlots, values, instructions)
-	}
-	operations, err := r.decide(ctx, job, scope, turns, runtimeSlots, values)
-	if err != nil {
-		return false, err
-	}
-	current := map[string]agentmemory.SlotValueResponse{}
-	for _, value := range values {
-		current[value.Key] = value
-	}
-	type validatedOperation struct {
-		operation automaticOperation
-		slot      agentmemory.RuntimeSlot
-		source    completedTurn
-	}
-	validated := make([]validatedOperation, 0, len(operations))
-	turnIDs := make(map[string]struct{}, len(turns))
-	for _, turn := range turns {
-		turnIDs[turn.ID.String()] = struct{}{}
-	}
-	for _, operation := range operations {
-		if operation.Action == "none" {
-			continue
-		}
-		slot, ok := automaticSlot(runtimeSlots, operation.Key)
-		if !ok {
-			return false, fmt.Errorf("invalid automatic slot")
-		}
-		evidenceTurn, ok := evidenceSourceTurn(operation.Evidence, turns)
-		if !ok {
-			return false, fmt.Errorf("invalid automatic evidence")
-		}
-		content := strings.TrimSpace(operation.Content)
-		if content == "" || len([]rune(content)) > slot.MaxChars || agentmemory.ContainsSensitiveContent(content) {
-			return false, fmt.Errorf("invalid automatic content")
-		}
-		if value, exists := current[slot.Key]; exists {
-			_, fromThisBatch := turnIDs[value.SourceMessageID]
-			if fromThisBatch && (value.SourceKind == agentmemory.SourceKindExplicit || value.ExtractorVersion == "inline-agent-memory-v1") {
-				continue
-			}
-		}
-		operation.Content = content
-		validated = append(validated, validatedOperation{operation: operation, slot: slot, source: *evidenceTurn})
-	}
-	mutations := make([]agentmemory.ValueMutation, 0, len(validated))
-	for _, candidate := range validated {
-		operation, slot := candidate.operation, candidate.slot
-		expected := current[slot.Key].Revision
-		operationID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(job.ID.String()+":"+slot.Key))
-		sourceMessageID := candidate.source.ID
-		sourceCompletedAt := candidate.source.CompletedAt
-		mutations = append(mutations, agentmemory.ValueMutation{
-			Action: agentmemory.MutationActionUpsert, Key: slot.Key, Content: operation.Content,
-			Mode: agentmemory.MutationModeProactive, ExpectedRevision: expected, OperationID: operationID,
-			SourceMessageID: &sourceMessageID, SourceCompletedAt: &sourceCompletedAt,
-		})
-	}
-	if len(mutations) == 0 {
-		return false, nil
-	}
-	_, err = r.memory.MutateValues(ctx, job.WorkspaceID, job.AgentID, runtimeSlots, job.UserScope, job.UserID, agentmemory.MutateValuesRequest{Operations: mutations}, agentmemory.MutationMetadata{
-		ActorType: agentmemory.EventActorModel, Source: agentmemory.EventSourceAgent,
-		SourceConversationID: &job.ConversationID, ExtractorVersion: job.ExtractorVersion, MemoryEpoch: &job.MemoryEpoch,
-		ConfigScope: job.ConfigScope, ConfigRevision: job.ConfigRevision,
-	})
-	if errors.Is(err, agentmemory.ErrConflict) || (err != nil && errors.Is(errors.Unwrap(err), agentmemory.ErrConflict)) {
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return false, nil
+	return r.consolidateAndApply(ctx, job, scope, turns, runtimeSlots, values, instructions)
 }
 
 func extractionJobRuntimeSlots(job *agentmemory.AgentMemoryExtractionJob) ([]agentmemory.RuntimeSlot, error) {
@@ -492,112 +348,6 @@ func extractionJobRuntimeSlots(job *agentmemory.AgentMemoryExtractionJob) ([]age
 	return runtimeSlots, nil
 }
 
-func (r *Runner) decide(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, scope extractionScope, turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) ([]automaticOperation, error) {
-	request, err := r.extractionChatRequest(turns, slots, values)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := r.llmClient.AppChat(ctx, &llmclient.AppContext{
-		OrganizationID: scope.OrganizationID.String(), WorkspaceID: scope.WorkspaceID.String(), BillingSubjectType: llmclient.BillingSubjectTypeOrganization,
-		AppID: job.AgentID.String(), AppType: "agent", AccountID: scope.AccountID.String(), SessionID: job.ConversationID.String(), ConversationID: job.ConversationID.String(), ModelUseCase: "agent-memory-extraction", SuppressInvocationContent: true,
-	}, request)
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil || len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("empty extraction response")
-	}
-	content, _ := resp.Choices[0].Message.Content.(string)
-	return parseAutomaticOperations(content)
-}
-
-func (r *Runner) extractionChatRequest(turns []completedTurn, slots []agentmemory.RuntimeSlot, values []agentmemory.SlotValueResponse) (*adapter.ChatRequest, error) {
-	if len(turns) == 0 {
-		return nil, fmt.Errorf("no completed turns available for extraction")
-	}
-	userMessages := make([]map[string]string, 0, len(turns))
-	for _, turn := range turns {
-		userMessages = append(userMessages, map[string]string{"message_id": turn.ID.String(), "content": turn.Query})
-	}
-	payload := map[string]interface{}{"user_messages": userMessages, "slots": slots, "current_values": values}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("encode extraction prompt: %w", err)
-	}
-	system := strings.Join([]string{
-		"You are a conservative background Agent-memory extractor.",
-		"Only save stable facts, preferences, long-lived instructions, or explicit corrections directly stated by the user in user_messages.",
-		"Never infer from assistant text, tools, behavior patterns, hypotheticals, temporary situations, third-party facts, or ambiguous ownership.",
-		"Never output clear. Only enabled slots are present. Evidence must be an exact quote from one user message.",
-		`Return JSON only: {"operations":[{"action":"upsert|none","key":"slot key","content":"complete merged value","evidence":"exact user quote","confidence":0.0}]}`,
-		"Confidence is telemetry only. When uncertain use none.", string(raw),
-	}, "\n")
-	provider, model := turns[len(turns)-1].ModelProvider, turns[len(turns)-1].ModelName
-	temperature, maxTokens := 0.0, maxExtractionOutputTokens
-	return &adapter.ChatRequest{
-		Provider: provider,
-		Model:    model,
-		Messages: []adapter.Message{
-			{Role: "system", Content: system},
-			{Role: "user", Content: "Extract durable user memory now. Return JSON only."},
-		},
-		Temperature:    &temperature,
-		MaxTokens:      &maxTokens,
-		ResponseFormat: &adapter.ResponseFormat{Type: "json_object"},
-	}, nil
-}
-
-func parseAutomaticOperations(content string) ([]automaticOperation, error) {
-	content = stripJSONFence(content)
-	var output struct {
-		Operations []automaticOperation `json:"operations"`
-	}
-	if err := json.Unmarshal([]byte(content), &output); err != nil {
-		return nil, err
-	}
-	seen := map[string]struct{}{}
-	for i := range output.Operations {
-		op := &output.Operations[i]
-		switch strings.ToLower(strings.TrimSpace(op.Action)) {
-		case "upsert", "update":
-			op.Action = "upsert"
-		case "none", "":
-			op.Action = "none"
-		default:
-			return nil, fmt.Errorf("unsupported automatic action")
-		}
-		op.Key, op.Content, op.Evidence = strings.TrimSpace(op.Key), strings.TrimSpace(op.Content), strings.TrimSpace(op.Evidence)
-		if op.Action == "none" {
-			continue
-		}
-		if _, exists := seen[op.Key]; exists {
-			return nil, fmt.Errorf("duplicate automatic slot")
-		}
-		seen[op.Key] = struct{}{}
-	}
-	return output.Operations, nil
-}
-
-func automaticSlot(slots []agentmemory.RuntimeSlot, key string) (agentmemory.RuntimeSlot, bool) {
-	for _, slot := range slots {
-		if slot.Enabled && automaticWritesAllowed(slot) && slot.Key == strings.TrimSpace(key) {
-			return slot, true
-		}
-	}
-	return agentmemory.RuntimeSlot{}, false
-}
-func evidenceSourceTurn(evidence string, turns []completedTurn) (*completedTurn, bool) {
-	evidence = strings.TrimSpace(evidence)
-	if evidence == "" {
-		return nil, false
-	}
-	for i := len(turns) - 1; i >= 0; i-- {
-		if strings.Contains(turns[i].Query, evidence) {
-			return &turns[i], true
-		}
-	}
-	return nil, false
-}
 func stripJSONFence(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "```json")

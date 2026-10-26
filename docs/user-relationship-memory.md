@@ -25,11 +25,10 @@ The external Agent memory API keeps its existing `user` query parameter and adds
 
 ## Rollout
 
-Both switches are fail-closed in the example environment files:
+Relationship memory is always on (ADR 0016). Schema migrations move any Agent memory still in the legacy Agent tables into it; the legacy tables keep their rows but are no longer written.
+
+Automatic writes stay behind a fail-closed switch in the example environment files:
 
 ```text
-ZGI_RELATIONSHIP_MEMORY_ENABLED=false
 ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED=false
 ```
-
-Run the schema migration and validate the backfill before enabling the runtime switch in a test environment. The legacy Agent tables remain available as read-only rollback data after cutover. While the runtime switch is disabled, profile-management writes are rejected so the legacy and relationship-memory stores cannot silently diverge.

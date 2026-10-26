@@ -20,7 +20,7 @@ func TestMemoryBlocksShowEveryFileAndNeverDropOneSilently(t *testing.T) {
 	}
 
 	// Everything fits: every file appears with its path, size, and description, the empty one included.
-	rendered, metadata := RenderBlocks(values, 8000)
+	rendered, metadata := Render(values, 8000)
 	for _, want := range []string{`<file path="/user/profile.md" owner="user" chars="800/2000">`, `<file path="/user/preferences.md" owner="user" chars="0/2000">`,
 		"<description>How the user likes answers.</description>", "Blood type O.", "untrusted user context"} {
 		if !strings.Contains(rendered, want) {
@@ -32,7 +32,7 @@ func TestMemoryBlocksShowEveryFileAndNeverDropOneSilently(t *testing.T) {
 	}
 
 	// Too little room: the file that does not fit is cut visibly and the rest are listed, not dropped.
-	rendered, metadata = RenderBlocks(values, 2100)
+	rendered, metadata = Render(values, 2100)
 	if !strings.Contains(rendered, "[truncated: the rest of this file did not fit the context budget]") {
 		t.Fatalf("no truncation marker:\n%s", rendered)
 	}
@@ -44,10 +44,5 @@ func TestMemoryBlocksShowEveryFileAndNeverDropOneSilently(t *testing.T) {
 	}
 	if last := metadata[len(metadata)-1]; last["key"] != "project_context" || last["omitted"] != true {
 		t.Fatalf("metadata does not report the omitted file: %v", metadata)
-	}
-
-	// The legacy renderer is unchanged.
-	if legacy, _ := Render(values, 8000, false); !strings.HasPrefix(legacy, "<user_relationship_memory>") {
-		t.Fatalf("legacy render changed: %.80s", legacy)
 	}
 }
