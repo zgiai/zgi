@@ -1,75 +1,51 @@
-package relationshipmemory
+package migrations
 
 import (
-	"context"
-	"errors"
-	"fmt"
-
+	mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 	"gorm.io/gorm"
 )
 
-// errLegacySyncPlanned rolls a planned sync back after it has been counted.
-var errLegacySyncPlanned = errors.New("legacy memory sync planned")
-
-// LegacySyncReport counts what bringing legacy Agent memory into the
-// relationship store did, or would do.
-type LegacySyncReport struct {
-	Applied              bool  `json:"applied"`
-	SubjectsCreated      int64 `json:"subjects_created"`
-	RelationshipsCreated int64 `json:"relationships_created"`
-	RelationshipsFenced  int64 `json:"relationships_fenced"`
-	ValuesInserted       int64 `json:"values_inserted"`
-	ValuesUpdated        int64 `json:"values_updated"`
-	ValuesDeleted        int64 `json:"values_deleted"`
+// ADR 0016 retires the Agent memory slot system: Agents always use memory
+// blocks on the relationship store. This migration brings whatever is still
+// only in the legacy Agent value store (written while
+// ZGI_RELATIONSHIP_MEMORY_ENABLED was off) into the relationship store, so
+// no operator step is needed. It replaces the memory-sync-legacy command and
+// runs the same statements, frozen here:
+//
+//   - subjects and relationships are created for every legacy value;
+//   - each relationship keeps the higher memory epoch and the later
+//     extraction cutoff, so jobs queued before a legacy deletion stay fenced;
+//   - a value in both stores keeps the newer of the two, and a legacy value
+//     missing from the relationship store is added with its block definition;
+//   - a relationship value the legacy store no longer has is deleted only when
+//     the legacy store cleared that user's memory after it was written.
+//
+// It is idempotent: on a deployment that already used the relationship store
+// it changes nothing. The legacy tables keep their rows; no runtime path
+// writes them any more.
+func init() {
+	registerSchemaMigration("202610261300000000_agent_memory_into_relationship_store", upAgentMemoryIntoRelationshipStore, downAgentMemoryIntoRelationshipStore)
 }
 
-// SyncLegacyAgentMemory brings Agent memory written to the legacy slot store
-// (while ZGI_RELATIONSHIP_MEMORY_ENABLED was off) into the relationship store
-// that memory blocks build on. It runs once before memory blocks are switched
-// on and is safe to repeat:
-//
-//   - a legacy value missing from the relationship store is added;
-//   - a value in both stores keeps the newer of the two;
-//   - a relationship-store value the legacy store no longer has is deleted only
-//     when the legacy store cleared that user's memory after it was written;
-//   - each relationship keeps the higher memory epoch and the later extraction
-//     cutoff, so jobs queued before a legacy deletion stay fenced.
-//
-// Without apply, the sync runs in a transaction that is rolled back, so the
-// report shows what applying it would change.
-func SyncLegacyAgentMemory(ctx context.Context, db *gorm.DB, apply bool) (*LegacySyncReport, error) {
-	report := &LegacySyncReport{Applied: apply}
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		steps := []struct {
-			count     *int64
-			statement string
-		}{
-			{&report.SubjectsCreated, legacySyncSubjects},
-			{&report.RelationshipsCreated, legacySyncRelationships},
-			{&report.RelationshipsFenced, legacySyncFences},
-			{&report.ValuesUpdated, legacySyncUpdates},
-			{&report.ValuesInserted, legacySyncInserts},
-			{&report.ValuesDeleted, legacySyncDeletes},
-		}
-		for _, step := range steps {
-			result := tx.Exec(step.statement)
-			if result.Error != nil {
-				return fmt.Errorf("sync legacy agent memory: %w", result.Error)
+func upAgentMemoryIntoRelationshipStore(schema *mschema.Builder) error {
+	return schema.DataFix("move legacy Agent memory into the relationship store", func(db *gorm.DB) error {
+		for _, statement := range []string{
+			agentMemoryMoveSubjects, agentMemoryMoveRelationships, agentMemoryMoveFences,
+			agentMemoryMoveUpdates, agentMemoryMoveInserts, agentMemoryMoveDeletes,
+		} {
+			if err := db.Exec(statement).Error; err != nil {
+				return err
 			}
-			*step.count = result.RowsAffected
-		}
-		if !apply {
-			return errLegacySyncPlanned
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, errLegacySyncPlanned) {
-		return nil, err
-	}
-	return report, nil
 }
 
-const legacySyncSubjects = `
+// The move is not reversed: the legacy rows are still there, and the
+// relationship store keeps what it received.
+func downAgentMemoryIntoRelationshipStore(*mschema.Builder) error { return nil }
+
+const agentMemoryMoveSubjects = `
 INSERT INTO public.user_subjects (id, kind, account_id, issuer_type, issuer_id, created_at, updated_at)
 SELECT DISTINCT ON (value.user_id) value.user_id,
 	CASE WHEN value.user_scope = 'account' THEN 'account' ELSE 'api_end_user' END,
@@ -80,7 +56,7 @@ SELECT DISTINCT ON (value.user_id) value.user_id,
 FROM public.agent_memory_values value
 ON CONFLICT (id) DO NOTHING`
 
-const legacySyncRelationships = `
+const agentMemoryMoveRelationships = `
 WITH pairs AS (
 	SELECT DISTINCT workspace_id, agent_id, user_id FROM public.agent_memory_values
 ), published_config AS (
@@ -107,7 +83,7 @@ LEFT JOIN published_config config ON config.agent_id = pair.agent_id
 WHERE w.organization_id IS NOT NULL
 ON CONFLICT (workspace_id, subject_id, consumer_type, consumer_id) DO NOTHING`
 
-const legacySyncFences = `
+const agentMemoryMoveFences = `
 UPDATE public.user_memory_relationships relationship
 SET memory_epoch = GREATEST(relationship.memory_epoch, state.memory_epoch),
 	extraction_cutoff_at = CASE
@@ -120,9 +96,9 @@ WHERE relationship.consumer_type = 'agent' AND relationship.consumer_id = state.
 	AND (state.memory_epoch > relationship.memory_epoch
 		OR (state.extraction_cutoff_at IS NOT NULL AND (relationship.extraction_cutoff_at IS NULL OR state.extraction_cutoff_at > relationship.extraction_cutoff_at)))`
 
-// legacyValuesWithRelationship pairs each legacy value with its relationship
+// agentMemoryMoveLegacyValues pairs each legacy value with its relationship
 // and, when its slot still exists, its block definition.
-const legacyValuesWithRelationship = `
+const agentMemoryMoveLegacyValues = `
 SELECT value.*, relationship.id AS relationship_id, slot.name AS slot_name, definition.id AS definition_id
 FROM public.agent_memory_values value
 JOIN public.user_memory_relationships relationship
@@ -133,8 +109,8 @@ LEFT JOIN public.agent_memory_slots slot
 LEFT JOIN public.memory_block_definitions definition
 	ON definition.consumer_type = 'agent' AND definition.consumer_id = value.agent_id AND definition.label = value.slot_key`
 
-const legacySyncUpdates = `
-WITH legacy AS (` + legacyValuesWithRelationship + `)
+const agentMemoryMoveUpdates = `
+WITH legacy AS (` + agentMemoryMoveLegacyValues + `)
 UPDATE public.user_memory_items item
 SET content_payload = legacy.content, content_encoding = 'plain', content_key_id = NULL,
 	revision = GREATEST(item.revision, legacy.revision) + 1, source_kind = legacy.source_kind,
@@ -146,8 +122,8 @@ FROM legacy
 WHERE item.relationship_id = legacy.relationship_id AND item.memory_key = legacy.slot_key
 	AND legacy.updated_at > item.updated_at AND item.content_payload IS DISTINCT FROM legacy.content`
 
-const legacySyncInserts = `
-WITH legacy AS (` + legacyValuesWithRelationship + `)
+const agentMemoryMoveInserts = `
+WITH legacy AS (` + agentMemoryMoveLegacyValues + `)
 INSERT INTO public.user_memory_items (
 	id, relationship_id, memory_key, display_name, category, content_payload, content_encoding, revision,
 	source_kind, source_conversation_id, source_message_id, source_completed_at, extractor_version,
@@ -160,7 +136,7 @@ SELECT gen_random_uuid(), legacy.relationship_id, legacy.slot_key, COALESCE(lega
 FROM legacy
 ON CONFLICT (relationship_id, memory_key) DO NOTHING`
 
-const legacySyncDeletes = `
+const agentMemoryMoveDeletes = `
 DELETE FROM public.user_memory_items item
 USING public.user_memory_relationships relationship, public.agent_memory_subject_states state
 WHERE item.relationship_id = relationship.id AND relationship.consumer_type = 'agent'
