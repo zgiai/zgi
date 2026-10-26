@@ -2223,6 +2223,195 @@ sample,42
 ---
 
 <Heading
+  url="/api/v1/agents/memory/history"
+  method="GET"
+  title="读取 Memory 变更历史"
+  name="#Get-Agent-Memory-History"
+/>
+
+<Row>
+  <Col>
+    返回当前外部用户 Memory 的变更记录，新的在前。每条提交列出改动的槽位、改动前后的内容、依据的用户原话和原因。需要部署开启用户关系记忆。
+
+    ### Query 与请求头
+
+    <Properties>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+      <Property name='key' type='string' propKey='key'>可选，只看某个槽位的历史。</Property>
+      <Property name='limit' type='integer' propKey='limit'>可选，每页提交数，默认 20，最大 50。</Property>
+      <Property name='before' type='string' propKey='before'>可选，RFC 3339 时间；传上一页的 `next_before` 继续翻页。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data.commits[]` 每项含 `source_kind`、`actor_type`、`created_at` 和 `versions[]`；`versions[]` 含 `key`、`action`、`before`、`after`、`evidence`、`reason`、`content_purged` 与 `revertible`。还有更多记录时返回 `next_before`。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/memory/history?limit=20' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"commits":[{"id":"6f1d2c3b-8a7e-4b9c-9d0e-1f2a3b4c5d6e","source_kind":"automatic","actor_type":"model","source":"agent_runtime","conversation_id":"bd1f2a1a-6d5c-4a8e-9f1b-2c3d4e5f6a7b","created_at":"2026-10-26T08:00:00Z","versions":[{"id":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","key":"profile","action":"update","before_revision":2,"after_revision":3,"before":"Prefers short answers.","after":"Prefers short answers in English.","evidence":"please answer in English","reason":"user asked for English","content_purged":false,"revertible":true}]}],"next_before":"2026-10-26T07:59:59Z"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/history/{version_id}/revert"
+  method="POST"
+  title="回滚一次 Memory 变更"
+  name="#Revert-Agent-Memory-Version"
+/>
+
+<Row>
+  <Col>
+    把某个槽位恢复到这次变更之前的内容，恢复本身会作为一次新的变更记入历史。只有 `revertible` 为 `true` 的版本可以回滚：它是该槽位最近一次变更，且内容仍然保留。Agent Memory 必须开启。
+
+    ### 路径与请求头
+
+    <Properties>
+      <Property name='version_id' type='string' propKey='version_id'>必填，历史中 `versions[].id`。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data.item` 是回滚后的槽位值；槽位已被后续变更覆盖时返回冲突错误。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request POST '{apibase}/agents/memory/history/9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d/revert' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"version_id":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","item":{"key":"profile","content":"Prefers short answers.","revision":4,"source_kind":"manager"}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/archive"
+  method="GET"
+  title="读取 Memory 归档"
+  name="#Get-Agent-Memory-Archive"
+/>
+
+<Row>
+  <Col>
+    返回当前外部用户的 Memory 归档。整理 Memory 时移出槽位的旧内容会进入归档，Agent 需要时仍可检索。
+
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data.entries[]` 每项含 `id`、`tags`、`source_key`（来自哪个槽位）、`source_kind`、`content`、`created_at` 与 `updated_at`。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/memory/archive' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"entries":[{"id":"3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f","relationship_id":"7e8f9a0b-1c2d-4e3f-9a4b-5c6d7e8f9a0b","tags":"preference","source_key":"profile","source_kind":"automatic","content":"Used to prefer tea over coffee.","created_at":"2026-10-20T08:00:00Z","updated_at":"2026-10-20T08:00:00Z"}]}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/archive/{entry_id}"
+  method="DELETE"
+  title="删除一条 Memory 归档"
+  name="#Delete-Agent-Memory-Archive-Entry"
+/>
+
+<Row>
+  <Col>
+    永久删除一条归档内容。即使 Agent Memory 已关闭也可以删除，用户随时可以清理自己的数据。
+
+    ### 路径与请求头
+
+    <Properties>
+      <Property name='entry_id' type='string' propKey='entry_id'>必填，归档中 `entries[].id`。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/memory/archive/3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"entry_id":"3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
   url="/api/v1/parameters"
   method="GET"
   title="读取已发布输入与上传限制"

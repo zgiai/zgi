@@ -2280,6 +2280,195 @@ These two read-only endpoints are retained for clients that share integrations w
 ---
 
 <Heading
+  url="/api/v1/agents/memory/history"
+  method="GET"
+  title="Get Agent Memory history"
+  name="#Get-Agent-Memory-History"
+/>
+
+<Row>
+  <Col>
+    Returns the changes to the external user's memory, newest first. Each commit lists the slots it changed, the content before and after, the user's words it was based on, and why. Requires user relationship memory on the deployment.
+
+    ### Query and headers
+
+    <Properties>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API key and memory owner.</Property>
+      <Property name='key' type='string' propKey='key'>Optional. Only the history of one slot.</Property>
+      <Property name='limit' type='integer' propKey='limit'>Optional. Commits per page; default 20, at most 50.</Property>
+      <Property name='before' type='string' propKey='before'>Optional RFC 3339 time. Pass the previous page's `next_before` to continue.</Property>
+    </Properties>
+
+    ### Response
+
+    Each `data.commits[]` item has `source_kind`, `actor_type`, `created_at`, and `versions[]`; each version has `key`, `action`, `before`, `after`, `evidence`, `reason`, `content_purged`, and `revertible`. `next_before` is returned when more commits exist.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/memory/history?limit=20' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"commits":[{"id":"6f1d2c3b-8a7e-4b9c-9d0e-1f2a3b4c5d6e","source_kind":"automatic","actor_type":"model","source":"agent_runtime","conversation_id":"bd1f2a1a-6d5c-4a8e-9f1b-2c3d4e5f6a7b","created_at":"2026-10-26T08:00:00Z","versions":[{"id":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","key":"profile","action":"update","before_revision":2,"after_revision":3,"before":"Prefers short answers.","after":"Prefers short answers in English.","evidence":"please answer in English","reason":"user asked for English","content_purged":false,"revertible":true}]}],"next_before":"2026-10-26T07:59:59Z"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/history/{version_id}/revert"
+  method="POST"
+  title="Revert an Agent Memory change"
+  name="#Revert-Agent-Memory-Version"
+/>
+
+<Row>
+  <Col>
+    Restores a slot to its content before this change; the restore is recorded as a new change. Only a version with `revertible` set to `true` can be reverted: it is the slot's latest change and its content is still kept. Agent Memory must be on.
+
+    ### Path and headers
+
+    <Properties>
+      <Property name='version_id' type='string' propKey='version_id'>Required. A `versions[].id` from the history.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API key and memory owner.</Property>
+    </Properties>
+
+    ### Response
+
+    `data.item` is the slot value after the revert. A conflict error is returned when a later change has replaced the slot.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request POST '{apibase}/agents/memory/history/9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d/revert' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"version_id":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","item":{"key":"profile","content":"Prefers short answers.","revision":4,"source_kind":"manager"}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/archive"
+  method="GET"
+  title="Get the Agent Memory archive"
+  name="#Get-Agent-Memory-Archive"
+/>
+
+<Row>
+  <Col>
+    Returns the external user's memory archive. Older content moved out of slots when memory is tidied goes here, and the Agent can still search it.
+
+    ### Headers
+
+    <Properties>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API key and memory owner.</Property>
+    </Properties>
+
+    ### Response
+
+    Each `data.entries[]` item has `id`, `tags`, `source_key` (the slot it came from), `source_kind`, `content`, `created_at`, and `updated_at`.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl '{apibase}/agents/memory/archive' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"entries":[{"id":"3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f","relationship_id":"7e8f9a0b-1c2d-4e3f-9a4b-5c6d7e8f9a0b","tags":"preference","source_key":"profile","source_kind":"automatic","content":"Used to prefer tea over coffee.","created_at":"2026-10-20T08:00:00Z","updated_at":"2026-10-20T08:00:00Z"}]}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/archive/{entry_id}"
+  method="DELETE"
+  title="Delete an Agent Memory archive entry"
+  name="#Delete-Agent-Memory-Archive-Entry"
+/>
+
+<Row>
+  <Col>
+    Permanently deletes one archive entry. This works even while Agent Memory is off, so users can always remove their data.
+
+    ### Path and headers
+
+    <Properties>
+      <Property name='entry_id' type='string' propKey='entry_id'>Required. An `entries[].id` from the archive.</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>Required API key and memory owner.</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/memory/archive/3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Response" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"entry_id":"3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
   url="/api/v1/parameters"
   method="GET"
   title="Get Published Inputs and Upload Limits"
