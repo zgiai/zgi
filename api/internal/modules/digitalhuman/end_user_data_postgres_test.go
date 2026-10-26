@@ -100,7 +100,7 @@ func TestRuntimeWorkspaceEndUserErasurePostgres(t *testing.T) {
 			if _, err := service.ApplyMemoryProposal(ctx, scope, digitalHumanID, MemoryProposalRequest{
 				OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: class, MemoryType: memoryruntime.MemoryTypeFact,
 				Scope: memoryScope, Content: content, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch, RunID: &runID,
-				Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "note"}}, Visibility: MemoryVisibilityWorkspace,
+				Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "note"}}, Visibility: MemoryVisibilityEveryone,
 				Confidence: 1, OccurredAt: time.Now().UTC(),
 			}); err != nil {
 				t.Fatal(err)

@@ -14,6 +14,8 @@ import {
   Loader2,
   RefreshCw,
   RotateCcw,
+  Eye,
+  EyeOff,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -54,6 +56,7 @@ import type {
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryScopeType,
   DigitalHumanMemoryStatus,
+  DigitalHumanMemoryVisibility,
   DigitalHumanMemoryType,
 } from '@/services/types/digital-human';
 
@@ -66,7 +69,8 @@ const memoryTypes: DigitalHumanMemoryType[] = [
   'open_loop',
   'reflection',
 ];
-const scopeTypes: DigitalHumanMemoryScopeType[] = ['workspace', 'channel', 'instance'];
+const scopeTypes: DigitalHumanMemoryScopeType[] = ['instance'];
+const visibilities: DigitalHumanMemoryVisibility[] = ['everyone', 'internal'];
 
 export function DigitalHumanMemory({ id }: { id: string }) {
   const t = useT('digitalHumans');
@@ -80,6 +84,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const [status, setStatus] = useState<typeof all | DigitalHumanMemoryStatus>('active');
   const [scopeType, setScopeType] = useState<typeof all | DigitalHumanMemoryScopeType>(all);
   const [scopeId, setScopeId] = useState('');
+  const [visibility, setVisibility] = useState<typeof all | DigitalHumanMemoryVisibility>(all);
   const [source, setSource] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [repairOpen, setRepairOpen] = useState(false);
@@ -95,8 +100,9 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       scope_type: scopeType === all ? undefined : scopeType,
       scope_id: scopeId.trim() || undefined,
       source: source.trim() || undefined,
+      visibility: visibility === all ? undefined : visibility,
     }),
-    [memoryClass, memoryType, scopeId, scopeType, search, source, status]
+    [memoryClass, memoryType, scopeId, scopeType, search, source, status, visibility]
   );
   const query = useDigitalHumanMemories(id, params);
   const mutations = useDigitalHumanMutations(id);
@@ -108,7 +114,8 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       status !== 'active' ||
       scopeType !== all ||
       scopeId.trim() ||
-      source.trim()
+      source.trim() ||
+      visibility !== all
   );
 
   const clearFilters = () => {
@@ -119,6 +126,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     setScopeType(all);
     setScopeId('');
     setSource('');
+    setVisibility(all);
   };
 
   const toggleFuse = async () => {
@@ -163,7 +171,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     setSelected(null);
   };
 
-  const rescope = async (memory: DigitalHumanMemoryRecord, target: 'self' | 'workspace') => {
+  const rescope = async (memory: DigitalHumanMemoryRecord) => {
     const state = data?.state;
     if (!state) return;
     try {
@@ -175,10 +183,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
           expected_revision: memory.revision,
           config_revision: state.config_revision,
           memory_epoch: state.memory_epoch,
-          // The server always uses the current workspace as the scope.
-          ...(target === 'self'
-            ? { memory_class: 'self' as const }
-            : { memory_class: 'business' as const, scope: { type: 'workspace' as const, id: '' } }),
+          memory_class: 'self',
         },
       });
     } catch {
@@ -186,6 +191,32 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       return;
     }
     toast.success(t('memory.rescope.done'));
+    setSelected(null);
+  };
+
+  const changeVisibility = async (
+    memory: DigitalHumanMemoryRecord,
+    next: DigitalHumanMemoryVisibility
+  ) => {
+    const state = data?.state;
+    if (!state) return;
+    try {
+      await mutations.setMemoryVisibility.mutateAsync({
+        digitalHumanId: id,
+        memoryId: memory.id,
+        request: {
+          operation_id: crypto.randomUUID(),
+          expected_revision: memory.revision,
+          config_revision: state.config_revision,
+          memory_epoch: state.memory_epoch,
+          visibility: next,
+        },
+      });
+    } catch {
+      // The mutation already reports the error.
+      return;
+    }
+    toast.success(t('memory.visibility.done'));
     setSelected(null);
   };
 
@@ -366,6 +397,18 @@ export function DigitalHumanMemory({ id }: { id: string }) {
                 placeholder={t('memory.scopeIdPlaceholder')}
               />
               <MemorySelect
+                value={visibility}
+                onValueChange={value => setVisibility(value as typeof visibility)}
+                placeholder={t('memory.visibility.all')}
+              >
+                <SelectItem value={all}>{t('memory.visibility.all')}</SelectItem>
+                {visibilities.map(value => (
+                  <SelectItem key={value} value={value}>
+                    {t(`memory.visibility.${value}`)}
+                  </SelectItem>
+                ))}
+              </MemorySelect>
+              <MemorySelect
                 value={scopeType}
                 onValueChange={value => setScopeType(value as typeof scopeType)}
                 placeholder={t('memory.allScopes')}
@@ -402,8 +445,13 @@ export function DigitalHumanMemory({ id }: { id: string }) {
         onOpenChange={open => !open && setSelected(null)}
         onInvalidate={invalidate}
         onRescope={rescope}
+        onSetVisibility={changeVisibility}
         onUndo={undo}
-        invalidating={mutations.applyMemoryProposal.isPending || mutations.rescopeMemory.isPending}
+        invalidating={
+          mutations.applyMemoryProposal.isPending ||
+          mutations.rescopeMemory.isPending ||
+          mutations.setMemoryVisibility.isPending
+        }
         undoing={mutations.undoMemory.isPending}
       />
     </div>
@@ -499,6 +547,7 @@ function MemoryBody({
               </Badge>
               <Badge variant="outline">{t(`memory.type.${memory.memory_type}`)}</Badge>
               <MemoryStatusBadge status={memory.status} />
+              <MemoryVisibilityBadge memory={memory} />
             </div>
             {memory.path ? (
               <code className="mt-1 block truncate text-xs text-muted-foreground">
@@ -544,6 +593,7 @@ function MemoryDetail({
   onOpenChange,
   onInvalidate,
   onRescope,
+  onSetVisibility,
   onUndo,
   invalidating,
   undoing,
@@ -553,7 +603,11 @@ function MemoryDetail({
   canManage: boolean;
   onOpenChange: (open: boolean) => void;
   onInvalidate: (memory: DigitalHumanMemoryRecord) => Promise<void>;
-  onRescope: (memory: DigitalHumanMemoryRecord, target: 'self' | 'workspace') => Promise<void>;
+  onRescope: (memory: DigitalHumanMemoryRecord) => Promise<void>;
+  onSetVisibility: (
+    memory: DigitalHumanMemoryRecord,
+    visibility: DigitalHumanMemoryVisibility
+  ) => Promise<void>;
   onUndo: (memory: DigitalHumanMemoryRecord) => Promise<void>;
   invalidating: boolean;
   undoing: boolean;
@@ -573,6 +627,7 @@ function MemoryDetail({
           <div className="flex flex-wrap items-center gap-2 pr-8">
             <SheetTitle>{memory.memory_key}</SheetTitle>
             <MemoryStatusBadge status={memory.status} />
+            <MemoryVisibilityBadge memory={memory} />
           </div>
           <SheetDescription>
             {t(memoryScopeKey(memory))} · {t(`memory.type.${memory.memory_type}`)}
@@ -652,21 +707,43 @@ function MemoryDetail({
                       )}
                       {undoing ? t('memory.undoing') : t('memory.undo')}
                     </Button>
-                    {memory.status === 'active'
-                      ? memoryRescopeTargets(memory).map(target => (
-                          <Button
-                            key={target}
-                            variant="outline"
-                            size="sm"
-                            disabled={invalidating || undoing}
-                            title={t('memory.rescope.hint')}
-                            onClick={() => void onRescope(memory, target)}
-                          >
-                            <ArrowRightLeft className="size-4" />
-                            {target === 'self' ? t('memory.rescope.toSelf') : t('memory.rescope.toWorkspace')}
-                          </Button>
-                        ))
-                      : null}
+                    {memory.status === 'active' && memory.memory_class === 'business' ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={invalidating || undoing}
+                        title={t('memory.rescope.hint')}
+                        onClick={() => void onRescope(memory)}
+                      >
+                        <ArrowRightLeft className="size-4" />
+                        {t('memory.rescope.toSelf')}
+                      </Button>
+                    ) : null}
+                    {memory.status === 'active' &&
+                    memory.memory_class === 'self' &&
+                    memory.memory_type !== 'identity' ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={invalidating || undoing}
+                        title={t('memory.visibility.hint')}
+                        onClick={() =>
+                          void onSetVisibility(
+                            memory,
+                            memory.visibility === 'everyone' ? 'internal' : 'everyone'
+                          )
+                        }
+                      >
+                        {memory.visibility === 'everyone' ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                        {memory.visibility === 'everyone'
+                          ? t('memory.visibility.makeInternal')
+                          : t('memory.visibility.makeEveryone')}
+                      </Button>
+                    ) : null}
                     {memory.status === 'active' ? (
                       <ConfirmDialog
                         variant="danger"
@@ -744,19 +821,28 @@ function MemoryStatusBadge({ status }: { status: DigitalHumanMemoryStatus }) {
   );
 }
 
-// Memories move between self memory and workspace business memory. Identity
-// always stays self memory; other scopes are resolved by the runtime.
-function memoryRescopeTargets(memory: DigitalHumanMemoryRecord): Array<'self' | 'workspace'> {
-  if (memory.memory_class === 'self') {
-    return memory.memory_type === 'identity' ? [] : ['workspace'];
-  }
-  return memory.scope_type === 'workspace' ? ['self'] : ['self', 'workspace'];
+// Shows who may see one of the DigitalHuman's own memories and where it came
+// from (ADR 0015). End-user notes carry neither.
+function MemoryVisibilityBadge({ memory }: { memory: DigitalHumanMemoryRecord }) {
+  const t = useT('digitalHumans');
+  if (memory.memory_class !== 'self') return null;
+  const internal = memory.visibility === 'internal';
+  return (
+    <>
+      <Badge variant={internal ? 'warning' : 'subtle'}>
+        {t(`memory.visibility.${internal ? 'internal' : 'everyone'}`)}
+      </Badge>
+      {memory.origin && memory.origin !== 'operator' ? (
+        <Badge variant="outline">{t(`memory.origin.${memory.origin}`)}</Badge>
+      ) : null}
+    </>
+  );
 }
 
 function memoryScopeKey(memory: DigitalHumanMemoryRecord) {
   return memory.memory_class === 'self'
     ? ('memory.scope.self' as const)
-    : (`memory.scope.${memory.scope_type || 'workspace'}` as const);
+    : ('memory.scope.instance' as const);
 }
 
 function formatDate(value: string) {

@@ -446,7 +446,11 @@ export type DigitalHumanMemoryType =
   | 'fact'
   | 'open_loop'
   | 'reflection';
-export type DigitalHumanMemoryScopeType = 'workspace' | 'channel' | 'instance';
+export type DigitalHumanMemoryScopeType = 'instance';
+/** Who may see a DigitalHuman's own memory (ADR 0015). */
+export type DigitalHumanMemoryVisibility = 'everyone' | 'internal';
+/** Who a memory came from (ADR 0015). */
+export type DigitalHumanMemoryOrigin = 'operator' | 'member' | 'channel' | 'end_user';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {
@@ -467,7 +471,9 @@ export interface DigitalHumanMemory {
   scope_id?: string;
   content: string;
   content_digest: string;
-  visibility: 'workspace' | 'restricted';
+  visibility: DigitalHumanMemoryVisibility;
+  origin?: DigitalHumanMemoryOrigin;
+  origin_channel_id?: string;
   status: DigitalHumanMemoryStatus;
   confidence: number;
   revision: number;
@@ -510,16 +516,27 @@ export interface DigitalHumanMemoryListParams {
   scope_id?: string;
   status?: DigitalHumanMemoryStatus;
   source?: string;
+  visibility?: DigitalHumanMemoryVisibility;
+  origin?: DigitalHumanMemoryOrigin;
+  origin_channel_id?: string;
 }
 
-// Moves one memory between self memory and workspace business memory.
+// Promotes an end user's note into the DigitalHuman's own memory.
 export interface DigitalHumanMemoryRescopeRequest {
   operation_id: string;
   expected_revision: number;
   config_revision: string;
   memory_epoch: number;
-  memory_class: 'self' | 'business';
-  scope?: { type: 'workspace'; id: string };
+  memory_class: 'self';
+}
+
+// Makes one of the DigitalHuman's own memories visible to everyone or internal only.
+export interface DigitalHumanMemoryVisibilityRequest {
+  operation_id: string;
+  expected_revision: number;
+  config_revision: string;
+  memory_epoch: number;
+  visibility: DigitalHumanMemoryVisibility;
 }
 
 export interface DigitalHumanMemoryProposalRequest {
@@ -536,7 +553,7 @@ export interface DigitalHumanMemoryProposalRequest {
   config_revision: string;
   memory_epoch: number;
   evidence?: DigitalHumanMemoryEvidence[];
-  visibility?: 'workspace' | 'restricted';
+  visibility?: DigitalHumanMemoryVisibility;
   confidence?: number;
   source_context: {
     private_conversation: boolean;

@@ -16,11 +16,24 @@ const (
 	MemoryStatusArchived    MemoryStatus = "archived"
 )
 
+// MemoryVisibility says who may see a DigitalHuman memory (ADR 0015): every
+// run, or every run except an external end user's.
 type MemoryVisibility string
 
 const (
-	MemoryVisibilityWorkspace  MemoryVisibility = "workspace"
-	MemoryVisibilityRestricted MemoryVisibility = "restricted"
+	MemoryVisibilityEveryone MemoryVisibility = "everyone"
+	MemoryVisibilityInternal MemoryVisibility = "internal"
+)
+
+// MemoryOrigin is who a memory came from (ADR 0015), so operators can review
+// and undo what one source taught the DigitalHuman.
+type MemoryOrigin string
+
+const (
+	MemoryOriginOperator MemoryOrigin = "operator"
+	MemoryOriginMember   MemoryOrigin = "member"
+	MemoryOriginChannel  MemoryOrigin = "channel"
+	MemoryOriginEndUser  MemoryOrigin = "end_user"
 )
 
 // MemoryState is the subject-wide stale-write fence. No actor identifier is
@@ -56,6 +69,8 @@ type DigitalHumanMemory struct {
 	Content           string                        `gorm:"type:text;not null" json:"content"`
 	ContentDigest     string                        `gorm:"type:varchar(71);not null" json:"content_digest"`
 	Visibility        MemoryVisibility              `gorm:"type:varchar(16);not null" json:"visibility"`
+	Origin            MemoryOrigin                  `gorm:"type:varchar(16);not null;default:operator" json:"origin"`
+	OriginChannelID   string                        `gorm:"type:varchar(255);not null;default:''" json:"origin_channel_id,omitempty"`
 	Status            MemoryStatus                  `gorm:"type:varchar(16);not null" json:"status"`
 	Confidence        float64                       `gorm:"not null" json:"confidence"`
 	Revision          int64                         `gorm:"not null" json:"revision"`

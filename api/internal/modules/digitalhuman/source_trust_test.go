@@ -129,7 +129,7 @@ func TestRunChannelScopeIDUsesVerifiedOwnerWithoutDeliveryAddress(t *testing.T) 
 		t.Fatal("an invalid verified owner fell back to the delivery address")
 	}
 	admission := admitMemoryWrite(trustedRunWithIDs(run, SourceTrustChannelParticipant), taskOnly, memoryWriteBackground, true)
-	if !admission.Allowed || admission.Scope == nil || admission.Scope.ID != conversationScope.String() {
+	if !admission.Allowed || admission.OriginChannelID != conversationScope.String() {
 		t.Fatalf("task_only scheduled admission = %+v", admission)
 	}
 }

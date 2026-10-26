@@ -22,6 +22,7 @@ import type {
   DigitalHumanMemoryListParams,
   DigitalHumanMemoryProposalRequest,
   DigitalHumanMemoryRescopeRequest,
+  DigitalHumanMemoryVisibilityRequest,
   DigitalHumanResourceBindingInput,
   DraftResourceBindings,
   ManualDigitalHumanInvocationRequest,
@@ -478,6 +479,22 @@ export function useDigitalHumanMutations(id?: string) {
       }),
     onError: error => mutationError(error, t('memory.errors.mutate')),
   });
+  const setMemoryVisibility = useMutation({
+    mutationFn: ({
+      digitalHumanId,
+      memoryId,
+      request,
+    }: {
+      digitalHumanId: string;
+      memoryId: string;
+      request: DigitalHumanMemoryVisibilityRequest;
+    }) => digitalHumanService.setMemoryVisibility(digitalHumanId, memoryId, request),
+    onSuccess: (_, variables) =>
+      queryClient.invalidateQueries({
+        queryKey: DIGITAL_HUMAN_KEYS.memories(variables.digitalHumanId),
+      }),
+    onError: error => mutationError(error, t('memory.errors.mutate')),
+  });
   const undoMemory = useMutation({
     mutationFn: ({
       digitalHumanId,
@@ -540,6 +557,7 @@ export function useDigitalHumanMutations(id?: string) {
     cancelRun,
     applyMemoryProposal,
     rescopeMemory,
+    setMemoryVisibility,
     undoMemory,
     updateMemoryState,
     repairMemory,

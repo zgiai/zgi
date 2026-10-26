@@ -45,6 +45,7 @@ type HandlerService interface {
 	UpdateMemoryState(context.Context, Scope, uuid.UUID, UpdateMemoryStateRequest) (*MemoryState, error)
 	ApplyMemoryProposal(context.Context, Scope, uuid.UUID, MemoryProposalRequest) (*MemoryMutationResult, error)
 	RescopeMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryRescopeRequest) (*MemoryMutationResult, error)
+	SetMemoryVisibility(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryVisibilityRequest) (*MemoryMutationResult, error)
 	UndoMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryUndoRequest) (*MemoryMutationResult, error)
 	RepairMemoryProjection(context.Context, Scope, uuid.UUID) (*MemoryProjectionRepairResult, error)
 }
@@ -88,6 +89,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.PATCH("/:id/memory/state", h.UpdateMemoryState)
 	group.POST("/:id/memory/proposals", h.ApplyMemoryProposal)
 	group.POST("/:id/memory/:memory_id/rescope", h.RescopeMemory)
+	group.POST("/:id/memory/:memory_id/visibility", h.SetMemoryVisibility)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
 
@@ -170,6 +172,29 @@ func (h *Handler) RescopeMemory(c *gin.Context) {
 		return
 	}
 	result, err := h.service.RescopeMemory(c.Request.Context(), scope, id, memoryID, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// SetMemoryVisibility makes one memory visible to everyone or internal only.
+func (h *Handler) SetMemoryVisibility(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	memoryID, err := uuid.Parse(strings.TrimSpace(c.Param("memory_id")))
+	if err != nil || memoryID == uuid.Nil {
+		h.writeError(c, applicationError(ErrInvalidRequest, "digital_human.memory.visibility"))
+		return
+	}
+	var request MemoryVisibilityRequest
+	if !h.decode(c, &request) {
+		return
+	}
+	result, err := h.service.SetMemoryVisibility(c.Request.Context(), scope, id, memoryID, request)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -658,6 +683,7 @@ func parseMemoryListQuery(c *gin.Context) (MemoryListQuery, error) {
 		Type:      memoryruntime.MemoryType(c.Query("memory_type")),
 		ScopeType: memoryruntime.MemoryScopeType(c.Query("scope_type")),
 		ScopeID:   c.Query("scope_id"), Status: MemoryStatus(c.Query("status")), Source: c.Query("source"),
+		Visibility: MemoryVisibility(c.Query("visibility")), Origin: MemoryOrigin(c.Query("origin")), OriginChannelID: c.Query("origin_channel_id"),
 	}, nil
 }
 

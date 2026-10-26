@@ -66,7 +66,7 @@ func TestWorkspaceAssetMoveMovesDigitalHumansPostgres(t *testing.T) {
 	if _, err := service.ApplyMemoryProposal(ctx, scope, digitalHumanID, digitalhuman.MemoryProposalRequest{
 		OperationID: uuid.New(), Key: "launch", Action: memoryruntime.MutationActionUpsert, MemoryClass: memoryruntime.MemoryClassSelf,
 		MemoryType: memoryruntime.MemoryTypeFact, Content: "The launch is on Monday.", ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-		Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "note"}}, Visibility: digitalhuman.MemoryVisibilityWorkspace,
+		Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "note"}}, Visibility: digitalhuman.MemoryVisibilityEveryone,
 		Confidence: 1, OccurredAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)

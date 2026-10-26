@@ -21,11 +21,15 @@ const (
 const (
 	memoryAdmissionReasonTrust        = "source_trust_not_admitted"
 	memoryAdmissionReasonChannelScope = "channel_scope_unresolved"
+	memoryAdmissionReasonEveryone     = "everyone_memory_operator_only"
 )
 
 var (
 	errMemorySourceTrustRejected    = fmt.Errorf("%w: %s", ErrMemoryPolicyRejected, memoryAdmissionReasonTrust)
 	errMemoryChannelScopeUnresolved = fmt.Errorf("%w: %s", ErrMemoryPolicyRejected, memoryAdmissionReasonChannelScope)
+	// errMemoryEveryoneOperatorOnly rejects a change below operator trust to
+	// a memory every user, external ones included, can see.
+	errMemoryEveryoneOperatorOnly = fmt.Errorf("%w: %s", ErrMemoryPolicyRejected, memoryAdmissionReasonEveryone)
 )
 
 // err returns the rejection cause for a denied admission.
@@ -37,25 +41,28 @@ func (a memoryWriteAdmission) err() error {
 }
 
 // memoryWriteAdmission is the single source-trust policy for DigitalHuman
-// memory writes (ADR 0004). When admitted it returns the class and scope the
-// write must use; the model never chooses them.
+// memory writes (ADR 0004, ADR 0015). When admitted it returns the class and
+// scope the write must use; the model never chooses them.
 type memoryWriteAdmission struct {
 	Allowed bool
 	Reason  string
 	Trust   SourceTrust
 	Class   memoryruntime.MemoryClass
 	Scope   *memoryruntime.MemoryScopeRef
-	// Restricted keeps the write out of workspace-wide recall, as instance
-	// memory requires.
-	Restricted bool
+	// InternalOnly limits the write to internal memories: everyone inside
+	// the team shares them, and external end users never see them.
+	InternalOnly    bool
+	Origin          MemoryOrigin
+	OriginChannelID string
 }
 
-// visibility is the visibility an admitted write is stored with.
-func (a memoryWriteAdmission) visibility() MemoryVisibility {
-	if a.Restricted {
-		return MemoryVisibilityRestricted
+// stamp gives a write request the visibility rule and origin of the
+// admission.
+func (a memoryWriteAdmission) stamp(request *MemoryProposalRequest) {
+	request.internalOnly, request.origin, request.originChannelID = a.InternalOnly, a.Origin, a.OriginChannelID
+	if a.InternalOnly || a.Scope != nil {
+		request.Visibility = MemoryVisibilityInternal
 	}
-	return MemoryVisibilityWorkspace
 }
 
 func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, autoExtraction bool) memoryWriteAdmission {
@@ -64,7 +71,13 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 	switch trust {
 	case SourceTrustAuthorizedOperator:
 		if mode == memoryWriteExplicit || (mode == memoryWriteProactive && autoExtraction) {
-			return memoryWriteAdmission{Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassSelf}
+			return memoryWriteAdmission{Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassSelf, Origin: MemoryOriginOperator}
+		}
+	case SourceTrustWorkspaceMember:
+		// Members share the DigitalHuman's memory inside the team: explicitly
+		// at any time, otherwise when automatic extraction is on.
+		if mode == memoryWriteExplicit || autoExtraction {
+			return memoryWriteAdmission{Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassSelf, InternalOnly: true, Origin: MemoryOriginMember}
 		}
 	case SourceTrustChannelParticipant:
 		if !autoExtraction {
@@ -75,8 +88,8 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 			return memoryWriteAdmission{Reason: memoryAdmissionReasonChannelScope, Trust: trust}
 		}
 		return memoryWriteAdmission{
-			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassBusiness,
-			Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeChannel, ID: channelID.String()},
+			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassSelf, InternalOnly: true,
+			Origin: MemoryOriginChannel, OriginChannelID: channelID.String(),
 		}
 	case SourceTrustExternalEndUser:
 		// An end user writes only their own instance's memory: explicitly at
@@ -87,7 +100,7 @@ func admitMemoryWrite(run *Run, event invocation.Event, mode memoryWriteMode, au
 			return rejected
 		}
 		return memoryWriteAdmission{
-			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassBusiness, Restricted: true,
+			Allowed: true, Trust: trust, Class: memoryruntime.MemoryClassBusiness, Origin: MemoryOriginEndUser,
 			Scope: &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: instanceID.String()},
 		}
 	}
@@ -100,7 +113,8 @@ func backgroundExtractionAdmitted(run *Run) bool {
 	if _, ok := runInstanceScopeID(run); ok {
 		return true
 	}
-	return RunSourceTrust(run) == SourceTrustChannelParticipant
+	trust := RunSourceTrust(run)
+	return trust == SourceTrustChannelParticipant || trust == SourceTrustWorkspaceMember
 }
 
 // memoryToolAvailable reports whether the inline memory tool is offered. It
@@ -108,7 +122,7 @@ func backgroundExtractionAdmitted(run *Run) bool {
 // call would be rejected.
 func memoryToolAvailable(run *Run, autoExtraction bool) bool {
 	switch RunSourceTrust(run) {
-	case SourceTrustAuthorizedOperator:
+	case SourceTrustAuthorizedOperator, SourceTrustWorkspaceMember:
 		return true
 	case SourceTrustChannelParticipant:
 		return autoExtraction
@@ -120,13 +134,13 @@ func memoryToolAvailable(run *Run, autoExtraction bool) bool {
 	}
 }
 
-// memoryReadScope is the set of memories one run may recall: self memory,
-// workspace-scoped business memory for workspace sources, and the business
-// memory of the run's own channel conversation.
+// memoryReadScope is the set of memories one run may recall: the
+// DigitalHuman's own memory, without internal entries for an external end
+// user (ADR 0015), and the run's own instance notes.
 type memoryReadScope struct {
-	workspaceID string
-	channelID   string
-	instanceID  string
+	// external hides internal memories.
+	external   bool
+	instanceID string
 	// instanceSince hides instance memory unwritten since then, when
 	// instance memory expires.
 	instanceSince *time.Time
@@ -137,12 +151,7 @@ func memoryReadScopeForRun(run *Run, event invocation.Event) memoryReadScope {
 	if run == nil {
 		return scope
 	}
-	if RunSourceTrust(run) != SourceTrustExternalEndUser {
-		scope.workspaceID = run.WorkspaceID.String()
-	}
-	if channelID, ok := runChannelScopeID(run, event); ok {
-		scope.channelID = channelID.String()
-	}
+	scope.external = RunSourceTrust(run) == SourceTrustExternalEndUser
 	if instanceID, ok := runInstanceScopeID(run); ok {
 		scope.instanceID = instanceID.String()
 		if ttl := instanceMemoryTTL(); ttl > 0 {
@@ -158,20 +167,12 @@ func (s memoryReadScope) allows(memory *DigitalHumanMemory) bool {
 		return false
 	}
 	if memory.MemoryClass == memoryruntime.MemoryClassSelf {
-		return true
+		return !s.external || memory.Visibility == MemoryVisibilityEveryone
 	}
 	switch memory.ScopeType {
-	case memoryruntime.MemoryScopeWorkspace:
-		if s.workspaceID == "" {
-			return false
-		}
-		return memory.Visibility != MemoryVisibilityRestricted || memory.ScopeID == s.workspaceID
-	case memoryruntime.MemoryScopeChannel:
-		return s.channelID != "" && memory.ScopeID == s.channelID
 	case memoryruntime.MemoryScopeInstance:
 		return s.instanceID != "" && memory.ScopeID == s.instanceID && (s.instanceSince == nil || !memory.UpdatedAt.Before(*s.instanceSince))
 	default:
-		// Project, customer, and campaign scopes cannot be resolved for a run yet.
 		return false
 	}
 }
@@ -181,13 +182,9 @@ func (s memoryReadScope) allows(memory *DigitalHumanMemory) bool {
 func (s memoryReadScope) sqlPredicate() (string, []any) {
 	clause := "(memory_class = ?"
 	args := []any{memoryruntime.MemoryClassSelf}
-	if s.workspaceID != "" {
-		clause += " OR (memory_class = ? AND scope_type = ? AND (visibility <> ? OR scope_id = ?))"
-		args = append(args, memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeWorkspace, MemoryVisibilityRestricted, s.workspaceID)
-	}
-	if s.channelID != "" {
-		clause += " OR (memory_class = ? AND scope_type = ? AND scope_id = ?)"
-		args = append(args, memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeChannel, s.channelID)
+	if s.external {
+		clause = "((memory_class = ? AND visibility = ?)"
+		args = append(args, MemoryVisibilityEveryone)
 	}
 	if s.instanceID != "" {
 		clause += " OR (memory_class = ? AND scope_type = ? AND scope_id = ?"

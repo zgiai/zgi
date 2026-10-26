@@ -62,13 +62,13 @@ func TestDigitalHumanMemoryRescopePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write := func(key string, memoryType memoryruntime.MemoryType) *DigitalHumanMemory {
+	write := func(key string, memoryType memoryruntime.MemoryType, class memoryruntime.MemoryClass, memoryScope *memoryruntime.MemoryScopeRef) *DigitalHumanMemory {
 		t.Helper()
 		result, err := service.ApplyMemoryProposal(t.Context(), scope, digitalHumanID, MemoryProposalRequest{
-			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: memoryruntime.MemoryClassSelf,
+			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: class, Scope: memoryScope,
 			MemoryType: memoryType, Content: key + " content", ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "operator:" + key}},
-			Visibility: MemoryVisibilityWorkspace, Confidence: 1, OccurredAt: fixedNow, AdminApproved: true,
+			Confidence: 1, OccurredAt: fixedNow, AdminApproved: true,
 			SourceContext: MemorySourceContext{PromotedByAuthorizedActor: true},
 		})
 		if err != nil {
@@ -82,100 +82,76 @@ func TestDigitalHumanMemoryRescopePostgres(t *testing.T) {
 			MemoryClass: class, Scope: memoryScope,
 		})
 	}
-	workspace := &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeWorkspace, ID: "ignored-client-value"}
+	instance := &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: uuid.NewString()}
 
-	original := write("release-window", memoryruntime.MemoryTypeFact)
-	moved, err := rescope(original, memoryruntime.MemoryClassBusiness, workspace)
+	// An operator promotes an end user's note into the DigitalHuman's own
+	// memory; it starts internal (ADR 0015).
+	note := write("release-window", memoryruntime.MemoryTypeFact, memoryruntime.MemoryClassBusiness, instance)
+	promoted, err := rescope(note, memoryruntime.MemoryClassSelf, nil)
 	if err != nil {
-		t.Fatalf("rescope to workspace: %v", err)
+		t.Fatalf("promote note: %v", err)
 	}
-	if moved.Memory.MemoryClass != memoryruntime.MemoryClassBusiness || moved.Memory.ScopeType != memoryruntime.MemoryScopeWorkspace ||
-		moved.Memory.ScopeID != workspaceID.String() || moved.Memory.Content != original.Content || moved.Memory.SupersedesID != nil {
-		t.Fatalf("moved memory = %#v", moved.Memory)
+	if promoted.Memory.MemoryClass != memoryruntime.MemoryClassSelf || promoted.Memory.ScopeType != "" || promoted.Memory.Visibility != MemoryVisibilityInternal ||
+		promoted.Memory.Content != note.Content || promoted.Memory.SupersedesID != nil {
+		t.Fatalf("promoted memory = %#v", promoted.Memory)
 	}
-	old, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, original.ID)
+	old, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, note.ID)
 	if err != nil || old.Status != MemoryStatusInvalidated {
-		t.Fatalf("original after rescope = %#v, %v", old, err)
+		t.Fatalf("note after promotion = %#v, %v", old, err)
 	}
 
 	// A retry with the same operation replays the committed move.
-	retried, err := service.RescopeMemory(t.Context(), scope, digitalHumanID, original.ID, MemoryRescopeRequest{
-		OperationID: moved.Event.OperationID, ExpectedRevision: original.Revision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-		MemoryClass: memoryruntime.MemoryClassBusiness, Scope: workspace,
+	retried, err := service.RescopeMemory(t.Context(), scope, digitalHumanID, note.ID, MemoryRescopeRequest{
+		OperationID: promoted.Event.OperationID, ExpectedRevision: note.Revision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
+		MemoryClass: memoryruntime.MemoryClassSelf,
 	})
-	if err != nil || !retried.Replayed || retried.Memory.ID != moved.Memory.ID {
-		t.Fatalf("retried rescope = %#v, %v", retried, err)
+	if err != nil || !retried.Replayed || retried.Memory.ID != promoted.Memory.ID {
+		t.Fatalf("retried promotion = %#v, %v", retried, err)
 	}
 
 	// The move is an ordinary memory operation and can be undone.
-	if _, err := service.UndoMemory(t.Context(), scope, digitalHumanID, moved.Event.OperationID, MemoryUndoRequest{ExpectedRevision: moved.Memory.Revision}); err != nil {
-		t.Fatalf("undo rescope: %v", err)
+	if _, err := service.UndoMemory(t.Context(), scope, digitalHumanID, promoted.Event.OperationID, MemoryUndoRequest{ExpectedRevision: promoted.Memory.Revision}); err != nil {
+		t.Fatalf("undo promotion: %v", err)
 	}
-	restored, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, original.ID)
+	restored, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, note.ID)
 	if err != nil || restored.Status != MemoryStatusActive {
-		t.Fatalf("original after undo = %#v, %v", restored, err)
+		t.Fatalf("note after undo = %#v, %v", restored, err)
 	}
 
-	// Moving again reactivates the workspace row the first move left behind,
-	// and that move can be undone too.
-	again, err := rescope(restored, memoryruntime.MemoryClassBusiness, workspace)
-	if err != nil {
-		t.Fatalf("rescope after undo: %v", err)
+	// The DigitalHuman's own memory is the only target.
+	if _, err := rescope(restored, memoryruntime.MemoryClassBusiness, instance); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("rescope to a business scope error = %v, want invalid request", err)
 	}
-	if again.Memory.ID != moved.Memory.ID || again.Memory.Status != MemoryStatusActive || again.Memory.ScopeType != memoryruntime.MemoryScopeWorkspace {
-		t.Fatalf("second move = %#v", again.Memory)
-	}
-	if _, err := service.UndoMemory(t.Context(), scope, digitalHumanID, again.Event.OperationID, MemoryUndoRequest{ExpectedRevision: again.Memory.Revision}); err != nil {
-		t.Fatalf("undo second rescope: %v", err)
-	}
-	restored, err = NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, original.ID)
-	if err != nil || restored.Status != MemoryStatusActive {
-		t.Fatalf("original after second undo = %#v, %v", restored, err)
-	}
-	workspaceRow, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, moved.Memory.ID)
-	if err != nil || workspaceRow.Status != MemoryStatusInvalidated {
-		t.Fatalf("workspace row after second undo = %#v, %v", workspaceRow, err)
-	}
-
-	// An active memory with the same key in the target scope is a conflict.
-	shared := write("shared-key", memoryruntime.MemoryTypeFact)
-	if _, err := service.ApplyMemoryProposal(t.Context(), scope, digitalHumanID, MemoryProposalRequest{
-		OperationID: uuid.New(), Key: "shared-key", Action: memoryruntime.MutationActionUpsert, MemoryClass: memoryruntime.MemoryClassBusiness,
-		Scope:      &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String()},
-		MemoryType: memoryruntime.MemoryTypeFact, Content: "workspace version", ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-		Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "operator:shared-key"}},
-		Visibility: MemoryVisibilityWorkspace, Confidence: 1, OccurredAt: fixedNow, AdminApproved: true,
-		SourceContext: MemorySourceContext{PromotedByAuthorizedActor: true},
-	}); err != nil {
-		t.Fatalf("write workspace shared-key: %v", err)
-	}
-	if _, err := rescope(shared, memoryruntime.MemoryClassBusiness, workspace); !errors.Is(err, ErrMemoryConflict) {
-		t.Fatalf("rescope onto active key error = %v, want conflict", err)
-	}
-
-	// Identity stays self memory, and a move to the current scope is refused.
-	identity := write("who-i-am", memoryruntime.MemoryTypeIdentity)
-	if _, err := rescope(identity, memoryruntime.MemoryClassBusiness, workspace); !errors.Is(err, ErrMemoryPolicyRejected) {
-		t.Fatalf("identity rescope error = %v, want policy rejected", err)
-	}
-	if _, err := rescope(restored, memoryruntime.MemoryClassSelf, nil); !errors.Is(err, ErrInvalidRequest) {
+	identity := write("who-i-am", memoryruntime.MemoryTypeIdentity, memoryruntime.MemoryClassSelf, nil)
+	if _, err := rescope(identity, memoryruntime.MemoryClassSelf, nil); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("same-scope rescope error = %v, want invalid request", err)
 	}
-	if _, err := rescope(restored, memoryruntime.MemoryClassBusiness, &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeChannel, ID: "group"}); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("channel rescope error = %v, want invalid request", err)
-	}
 
-	// A client proposal still cannot supersede across scopes.
-	_, err = service.ApplyMemoryProposal(t.Context(), scope, digitalHumanID, MemoryProposalRequest{
-		OperationID: uuid.New(), Key: restored.MemoryKey, Action: memoryruntime.MutationActionUpsert, MemoryClass: memoryruntime.MemoryClassBusiness,
-		Scope:      &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String()},
-		MemoryType: restored.MemoryType, Content: restored.Content, SupersedesID: &restored.ID, ExpectedSupersededRevision: restored.Revision,
-		ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-		Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "operator:cross-scope"}},
-		Visibility: MemoryVisibilityWorkspace, Confidence: 1, OccurredAt: fixedNow, AdminApproved: true,
-		SourceContext: MemorySourceContext{PromotedByAuthorizedActor: true},
-	})
-	if !errors.Is(err, ErrMemoryConflict) {
-		t.Fatalf("cross-scope proposal error = %v, want conflict", err)
+	// An operator switches who may see a memory; each switch is a recorded,
+	// undoable change.
+	public := write("price-list", memoryruntime.MemoryTypeFact, memoryruntime.MemoryClassSelf, nil)
+	if public.Visibility != MemoryVisibilityEveryone || public.Origin != MemoryOriginOperator {
+		t.Fatalf("operator memory = %#v", public)
+	}
+	setVisibility := func(memory *DigitalHumanMemory, visibility MemoryVisibility) (*MemoryMutationResult, error) {
+		return service.SetMemoryVisibility(t.Context(), scope, digitalHumanID, memory.ID, MemoryVisibilityRequest{
+			OperationID: uuid.New(), ExpectedRevision: memory.Revision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch, Visibility: visibility,
+		})
+	}
+	hidden, err := setVisibility(public, MemoryVisibilityInternal)
+	if err != nil || hidden.Memory.Visibility != MemoryVisibilityInternal || hidden.Memory.Revision != public.Revision+1 || hidden.Memory.Content != public.Content {
+		t.Fatalf("make internal = %#v, %v", hidden, err)
+	}
+	if _, err := setVisibility(public, MemoryVisibilityEveryone); !errors.Is(err, ErrMemoryConflict) {
+		t.Fatalf("stale visibility change error = %v, want conflict", err)
+	}
+	if _, err := setVisibility(hidden.Memory, "members"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("unknown visibility error = %v, want invalid request", err)
+	}
+	if _, err := service.UndoMemory(t.Context(), scope, digitalHumanID, hidden.Event.OperationID, MemoryUndoRequest{ExpectedRevision: hidden.Memory.Revision}); err != nil {
+		t.Fatalf("undo visibility change: %v", err)
+	}
+	if again, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, public.ID); err != nil || again.Visibility != MemoryVisibilityEveryone {
+		t.Fatalf("memory after undo = %#v, %v", again, err)
 	}
 }

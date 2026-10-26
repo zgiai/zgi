@@ -37,6 +37,11 @@ type MemoryProposalRequest struct {
 	// rescope is set only by RescopeMemory. It lets the supersede move a
 	// memory to another class or scope; clients cannot set it.
 	rescope bool
+	// internalOnly is set for writes below operator trust (ADR 0015): they
+	// create internal memories and may change only internal ones.
+	internalOnly    bool
+	origin          MemoryOrigin
+	originChannelID string
 }
 
 type MemoryListQuery struct {
@@ -49,6 +54,11 @@ type MemoryListQuery struct {
 	Status    MemoryStatus
 	Source    string
 	Search    string
+	// Visibility, Origin, and OriginChannelID filter the DigitalHuman's own
+	// memory (ADR 0015).
+	Visibility      MemoryVisibility
+	Origin          MemoryOrigin
+	OriginChannelID string
 }
 
 type MemoryListResult struct {

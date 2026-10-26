@@ -165,7 +165,7 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation belong to this end user's relationship only. They cannot change the DigitalHuman's own self memory or what other users see. If memory is full, update or clear an entry that no longer matters instead of adding one."
 	}
 	if !files && toolEnabled && RunSourceTrust(run) == SourceTrustChannelParticipant {
-		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation stay scoped to this conversation. They cannot change the DigitalHuman's own self memory or memory used in other conversations."
+		preparation.SystemPromptAddendum += "\n\nMemory changes made in this conversation are internal: they are shared with everyone inside the team, in every channel and the console, and external users never see them. Memory that external users see can be changed only by an operator."
 	}
 	if files {
 		if section := p.prepareMemoryFiles(ctx, run, event); section != "" {
@@ -403,7 +403,7 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 		OperationID: operationID, Key: args.Key, Action: args.Action, MemoryClass: memoryClass, Scope: memoryScope, MemoryType: args.MemoryType,
 		Content: args.Content, ExpectedRevision: args.ExpectedRevision, SupersedesID: args.SupersedesID,
 		ExpectedSupersededRevision: args.ExpectedSupersededRevision, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
-		Visibility: admission.visibility(), Confidence: args.Confidence, RunID: &run.ID,
+		Confidence: args.Confidence, RunID: &run.ID,
 		Evidence: []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
 		SourceContext: MemorySourceContext{
 			PrivateConversation:       event.Origin.Kind == invocation.OriginManual,
@@ -412,6 +412,7 @@ func (p *DefaultMemoryRuntimeProvider) commitMemoryToolArguments(
 		OccurredAt: p.now(),
 	}
 	request.SourceContext.SourceTrust = admission.Trust
+	admission.stamp(&request)
 	if !admission.Allowed {
 		p.service.recordRejectedMemoryProposal(ctx, runScope(run), run.DigitalHumanID, request, admission.err())
 		return memoryToolFailure(AppCodeMemoryPolicyRejected.String(), false)

@@ -32,6 +32,7 @@ import type {
   DigitalHumanMemoryState,
   DigitalHumanMemoryProposalRequest,
   DigitalHumanMemoryRescopeRequest,
+  DigitalHumanMemoryVisibilityRequest,
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidateList,
   DraftResourceBindings,
@@ -356,6 +357,14 @@ class DigitalHumanService extends BaseService {
     data: DigitalHumanMemoryRescopeRequest
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
     return this.request('post', `/digital-humans/${id}/memory/${memoryId}/rescope`, data);
+  }
+
+  setMemoryVisibility(
+    id: string,
+    memoryId: string,
+    data: DigitalHumanMemoryVisibilityRequest
+  ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
+    return this.request('post', `/digital-humans/${id}/memory/${memoryId}/visibility`, data);
   }
 
   undoMemory(

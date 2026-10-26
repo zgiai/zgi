@@ -18,8 +18,8 @@ import (
 
 // File edits (ADR 0014). One memory_edit tool changes every memory a run may
 // write; each edit is routed by its path to the store that owns it: the
-// DigitalHuman's own memory for its admitted directory (/me/, /conversation/
-// or /user/notes/), and the user's relationship memory for /user/. The path
+// DigitalHuman's own memory for its admitted directory (/me/ or
+// /user/notes/), and the user's relationship memory for /user/. The path
 // decides the target and the store's existing checks decide whether the edit
 // is allowed. An edit to any other path is rejected with a hint.
 
@@ -216,10 +216,10 @@ func (p *DefaultMemoryRuntimeProvider) fileEditor(run *Run, event invocation.Eve
 	}
 	editor := &digitalHumanFileEditor{provider: p, run: run, event: event, state: state, promotionAuthorized: promotionAuthorized}
 	switch {
+	case admission.Class == memoryruntime.MemoryClassSelf && admission.InternalOnly:
+		editor.dir, editor.about = "/me/", "your own durable knowledge, experience, and decisions, shared with everyone inside the team. What you save here is internal: external users never see it. Files marked read_only are shown to external users and only an operator can change them"
 	case admission.Class == memoryruntime.MemoryClassSelf:
 		editor.dir, editor.about = "/me/", "your own durable knowledge, experience, and decisions, which every conversation can read"
-	case admission.Scope != nil && admission.Scope.Type == memoryruntime.MemoryScopeChannel:
-		editor.dir, editor.about = "/conversation/", "context of this channel conversation only"
 	case admission.Scope != nil && admission.Scope.Type == memoryruntime.MemoryScopeInstance:
 		editor.dir, editor.about = "/user/notes/", "your notes on your work with this person: commitments you made, open loops, and their business context, plans, budgets, and decisions"
 	default:
@@ -457,7 +457,7 @@ func withArchiveResults(tools []skillloop.RuntimeTool, search func(context.Conte
 			if decodeStrictToolArguments(call.Function.Arguments, &args) != nil || strings.TrimSpace(args.Query) == "" {
 				return result
 			}
-			// A search inside /me/ or /conversation/ is not about the person.
+			// A search inside /me/ is not about the person.
 			if args.Path != "" && !strings.HasPrefix(args.Path, "/user/") {
 				return result
 			}

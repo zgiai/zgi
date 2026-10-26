@@ -158,6 +158,15 @@ func (r *GormRepository) ListMemories(ctx context.Context, scope Scope, digitalH
 	if query.Source != "" {
 		db = db.Where("source_principal_id = ?", query.Source)
 	}
+	if query.Visibility != "" {
+		db = db.Where("visibility = ?", query.Visibility)
+	}
+	if query.Origin != "" {
+		db = db.Where("origin = ?", query.Origin)
+	}
+	if query.OriginChannelID != "" {
+		db = db.Where("origin_channel_id = ?", query.OriginChannelID)
+	}
 	if query.Search != "" {
 		like := "%" + strings.ToLower(query.Search) + "%"
 		db = db.Where("LOWER(memory_key) LIKE ? OR LOWER(content) LIKE ?", like, like)

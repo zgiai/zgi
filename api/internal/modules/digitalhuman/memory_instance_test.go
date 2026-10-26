@@ -30,7 +30,7 @@ func TestInstanceMemoryAdmissionWritesOnlyTheOwnInstance(t *testing.T) {
 	t.Setenv("ZGI_DIGITAL_HUMAN_INSTANCE_MEMORY_ENABLED", "true")
 	explicit := admitMemoryWrite(run, api, memoryWriteExplicit, false)
 	if !explicit.Allowed || explicit.Class != memoryruntime.MemoryClassBusiness || explicit.Scope == nil ||
-		explicit.Scope.Type != memoryruntime.MemoryScopeInstance || explicit.Scope.ID != instanceID.String() || explicit.visibility() != MemoryVisibilityRestricted {
+		explicit.Scope.Type != memoryruntime.MemoryScopeInstance || explicit.Scope.ID != instanceID.String() || explicit.Origin != MemoryOriginEndUser {
 		t.Fatalf("explicit instance admission = %+v", explicit)
 	}
 	if got := admitMemoryWrite(run, api, memoryWriteProactive, false); got.Allowed {
@@ -49,7 +49,7 @@ func TestInstanceMemoryAdmissionWritesOnlyTheOwnInstance(t *testing.T) {
 	}
 	member := trustedRun(SourceTrustWorkspaceMember, SurfaceConsole)
 	member.EndUserInstanceID = run.EndUserInstanceID
-	if got := admitMemoryWrite(member, api, memoryWriteExplicit, true); got.Allowed {
+	if got := admitMemoryWrite(member, api, memoryWriteExplicit, true); got.Scope != nil || !got.InternalOnly {
 		t.Fatalf("a member run wrote instance memory: %+v", got)
 	}
 }
@@ -66,15 +66,18 @@ func TestInstanceMemoryRecallIsLimitedToTheOwnInstanceAndExpiry(t *testing.T) {
 	run.OrganizationID, run.WorkspaceID, run.DigitalHumanID = scope.OrganizationID, scope.WorkspaceID, digitalHumanID
 	now := time.Now().UTC()
 	rows := map[string]*DigitalHumanMemory{
-		"self":           {MemoryClass: memoryruntime.MemoryClassSelf, UpdatedAt: now},
-		"workspace":      {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeWorkspace, ScopeID: scope.WorkspaceID.String(), UpdatedAt: now},
+		"self":           {MemoryClass: memoryruntime.MemoryClassSelf, Visibility: MemoryVisibilityEveryone, UpdatedAt: now},
+		"internal":       {MemoryClass: memoryruntime.MemoryClassSelf, UpdatedAt: now},
 		"own-instance":   {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: instanceID.String(), UpdatedAt: now},
 		"stale-instance": {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: instanceID.String(), UpdatedAt: now.Add(-48 * time.Hour)},
 		"other-instance": {MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: uuid.NewString(), UpdatedAt: now},
 	}
 	for key, row := range rows {
 		row.ID, row.OrganizationID, row.WorkspaceID, row.DigitalHumanID = uuid.New(), scope.OrganizationID, scope.WorkspaceID, digitalHumanID
-		row.MemoryKey, row.MemoryType, row.Content, row.Status, row.Visibility = key, memoryruntime.MemoryTypeFact, key, MemoryStatusActive, MemoryVisibilityRestricted
+		row.MemoryKey, row.MemoryType, row.Content, row.Status = key, memoryruntime.MemoryTypeFact, key, MemoryStatusActive
+		if row.Visibility == "" {
+			row.Visibility = MemoryVisibilityInternal
+		}
 		row.Evidence, row.CreatedAt = datatypes.JSON(`[]`), row.UpdatedAt
 		if err := repo.db.Create(row).Error; err != nil {
 			t.Fatal(err)
@@ -121,7 +124,7 @@ func TestInstanceMemoryCapacityAndExpiryAreOptional(t *testing.T) {
 	for index, key := range []string{"first", "second"} {
 		row := &DigitalHumanMemory{ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
 			MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: instanceID.String(), MemoryKey: key,
-			MemoryType: memoryruntime.MemoryTypeFact, Content: key, Status: MemoryStatusActive, Visibility: MemoryVisibilityRestricted,
+			MemoryType: memoryruntime.MemoryTypeFact, Content: key, Status: MemoryStatusActive, Visibility: MemoryVisibilityInternal,
 			Evidence: datatypes.JSON(`[]`), CreatedAt: now, UpdatedAt: now.Add(-time.Duration(index*72) * time.Hour)}
 		if err := repo.db.Create(row).Error; err != nil {
 			t.Fatal(err)

@@ -370,9 +370,10 @@ func (r *MemoryExtractionRunner) applyDrafts(
 			ExpectedRevision: expectedRevision, ConfigRevision: job.ConfigRevision, MemoryEpoch: job.MemoryEpoch,
 			SupersedesID: draft.SupersedesID, ExpectedSupersededRevision: draft.ExpectedSupersededRevision,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
-			Visibility: target.visibility(), Confidence: draft.Confidence, RunID: &run.ID,
+			Confidence: draft.Confidence, RunID: &run.ID,
 			SourceContext: MemorySourceContext{PrivateConversation: false, SourceTrust: target.Trust}, OccurredAt: source.CompletedAt,
 		}
+		target.stamp(&request)
 		result, err := r.service.ApplyAutonomousMemoryProposal(ctx, scope, job.DigitalHumanID, request)
 		if err != nil {
 			if errors.Is(err, ErrMemoryPolicyRejected) || errors.Is(err, ErrInvalidRequest) {
@@ -476,6 +477,9 @@ func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error
 // and scope a write admission targets.
 func memoryInWriteTarget(memory *DigitalHumanMemory, target memoryWriteAdmission) bool {
 	if memory.MemoryClass != target.Class {
+		return false
+	}
+	if target.InternalOnly && memory.Visibility != MemoryVisibilityInternal {
 		return false
 	}
 	if target.Scope == nil {

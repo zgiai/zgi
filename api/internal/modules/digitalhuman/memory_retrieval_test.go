@@ -126,14 +126,16 @@ func TestMemoryProjectionStableDocumentID(t *testing.T) {
 }
 
 func TestAuthoritativeMemoryResultFiltersByReadScopeAndTrims(t *testing.T) {
-	readScope := memoryReadScope{workspaceID: "workspace", channelID: "channel-a"}
+	// An external end user's run: internal memory and other people's notes
+	// are filtered out of recall (ADR 0015).
+	readScope := memoryReadScope{external: true, instanceID: "instance-a"}
 	selfA, selfB, ownChannel, otherChannel, customer := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	memories := map[uuid.UUID]*DigitalHumanMemory{
-		otherChannel: {ID: otherChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-b", Status: MemoryStatusActive, Content: "other"},
-		customer:     {ID: customer, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeType("customer"), ScopeID: "c", Status: MemoryStatusActive, Content: "customer"},
-		ownChannel:   {ID: ownChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeChannel, ScopeID: "channel-a", Status: MemoryStatusActive, Content: "own"},
-		selfA:        {ID: selfA, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self a"},
-		selfB:        {ID: selfB, MemoryClass: memoryruntime.MemoryClassSelf, Status: MemoryStatusActive, Content: "self b"},
+		otherChannel: {ID: otherChannel, MemoryClass: memoryruntime.MemoryClassSelf, Visibility: MemoryVisibilityInternal, Status: MemoryStatusActive, Content: "internal"},
+		customer:     {ID: customer, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-b", Status: MemoryStatusActive, Content: "someone else"},
+		ownChannel:   {ID: ownChannel, MemoryClass: memoryruntime.MemoryClassBusiness, ScopeType: memoryruntime.MemoryScopeInstance, ScopeID: "instance-a", Status: MemoryStatusActive, Content: "own"},
+		selfA:        {ID: selfA, MemoryClass: memoryruntime.MemoryClassSelf, Visibility: MemoryVisibilityEveryone, Status: MemoryStatusActive, Content: "self a"},
+		selfB:        {ID: selfB, MemoryClass: memoryruntime.MemoryClassSelf, Visibility: MemoryVisibilityEveryone, Status: MemoryStatusActive, Content: "self b"},
 	}
 	response := &datasetservice.KnowledgeRetrieveResponse{Resources: []datasetservice.KnowledgeRetrieverResource{
 		{SegmentID: otherChannel.String(), Score: 0.99},

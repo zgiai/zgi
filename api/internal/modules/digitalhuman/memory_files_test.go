@@ -10,25 +10,39 @@ import (
 )
 
 func fileMemory(class memoryruntime.MemoryClass, scope memoryruntime.MemoryScopeType, memoryType memoryruntime.MemoryType, key, content string) *DigitalHumanMemory {
-	return &DigitalHumanMemory{ID: uuid.New(), MemoryClass: class, ScopeType: scope, MemoryType: memoryType, MemoryKey: key, Content: content, Revision: 2}
+	return &DigitalHumanMemory{ID: uuid.New(), MemoryClass: class, ScopeType: scope, MemoryType: memoryType, MemoryKey: key, Content: content, Revision: 2, Visibility: MemoryVisibilityEveryone}
 }
 
 func TestMemoryFilePathsSayWhoTheMemoryIsAbout(t *testing.T) {
 	for want, memory := range map[string]*DigitalHumanMemory{
-		"/me/return_policy.md":         fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "return_policy", "x"),
-		"/me/team/pricing_floor.md":    fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeWorkspace, memoryruntime.MemoryTypeFact, "pricing_floor", "x"),
-		"/conversation/launch_plan.md": fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeChannel, memoryruntime.MemoryTypeDecision, "launch_plan", "x"),
-		"/user/notes/quote_due.md":     fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeOpenLoop, "quote_due", "x"),
-		"/me/a_b.md":                   fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "a/b", "x"),
-		"":                             fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeType("project"), memoryruntime.MemoryTypeFact, "never_resolved", "x"),
+		"/me/return_policy.md":     fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "return_policy", "x"),
+		"/user/notes/quote_due.md": fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeInstance, memoryruntime.MemoryTypeOpenLoop, "quote_due", "x"),
+		"/me/a_b.md":               fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "a/b", "x"),
+		"":                         fileMemory(memoryruntime.MemoryClassBusiness, memoryruntime.MemoryScopeType("project"), memoryruntime.MemoryTypeFact, "never_resolved", "x"),
 	} {
 		if got := memoryFilePath(memory); got != want {
 			t.Fatalf("path of %s/%s/%s = %q, want %q", memory.MemoryClass, memory.ScopeType, memory.MemoryKey, got, want)
 		}
 	}
 	identity := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeIdentity, "persona", "x")
-	if attributes := memoryFileAttributes(identity); !strings.Contains(attributes, `read_only="true"`) || !strings.Contains(attributes, `audience="everyone"`) || !strings.Contains(attributes, `revision="2"`) {
+	if attributes := memoryFileAttributes(identity, true); !strings.Contains(attributes, `read_only="true"`) || !strings.Contains(attributes, `audience="everyone"`) || !strings.Contains(attributes, `revision="2"`) {
 		t.Fatalf("identity attributes = %s", attributes)
+	}
+}
+
+func TestMemoryFileAttributesShowVisibilityOriginAndWhoMayEdit(t *testing.T) {
+	public := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "return_policy", "x")
+	public.Origin = MemoryOriginOperator
+	internal := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "launch_plan", "x")
+	internal.Visibility, internal.Origin = MemoryVisibilityInternal, MemoryOriginChannel
+	if got := memoryFileAttributes(public, true); !strings.Contains(got, `audience="everyone"`) || !strings.Contains(got, `origin="operator"`) || strings.Contains(got, "read_only") {
+		t.Fatalf("operator view of public memory = %s", got)
+	}
+	if got := memoryFileAttributes(public, false); !strings.Contains(got, `read_only="true"`) {
+		t.Fatalf("a member may not change public memory: %s", got)
+	}
+	if got := memoryFileAttributes(internal, false); !strings.Contains(got, `audience="members"`) || !strings.Contains(got, `origin="channel"`) || strings.Contains(got, "read_only") {
+		t.Fatalf("member view of internal memory = %s", got)
 	}
 }
 
@@ -38,7 +52,7 @@ func TestMemoryFilesRenderRecalledFilesThenAnIndexWithinBudget(t *testing.T) {
 	for i := 0; i < 80; i++ {
 		listed = append(listed, fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "fact_"+string(rune('a'+i%26))+strings.Repeat("x", i), "第一行内容"+strings.Repeat("长", 120)+"\n第二行"))
 	}
-	rendered := renderMemoryFiles([]*DigitalHumanMemory{recalled}, listed, 3000, false)
+	rendered := renderMemoryFiles([]*DigitalHumanMemory{recalled}, listed, 3000, false, true)
 	if utf8.RuneCountInString(rendered) > 3000 {
 		t.Fatalf("rendered %d chars over the 3000 budget", utf8.RuneCountInString(rendered))
 	}
@@ -54,7 +68,7 @@ func TestMemoryFilesRenderRecalledFilesThenAnIndexWithinBudget(t *testing.T) {
 
 	// A recalled file that does not fit is cut with a marker, never dropped silently.
 	long := fileMemory(memoryruntime.MemoryClassSelf, "", memoryruntime.MemoryTypeFact, "handbook", strings.Repeat("规", 5000))
-	rendered = renderMemoryFiles([]*DigitalHumanMemory{long}, nil, 2000, true)
+	rendered = renderMemoryFiles([]*DigitalHumanMemory{long}, nil, 2000, true, true)
 	if utf8.RuneCountInString(rendered) > 2000 || !strings.Contains(rendered, "[truncated; read the whole file with memory_view]") || !strings.Contains(rendered, "most recently updated") {
 		t.Fatalf("long recalled file:\n%s", rendered)
 	}

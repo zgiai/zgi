@@ -242,8 +242,8 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 	}
 	request.Key, request.Content, request.Scope, request.Evidence = validated.Key, validated.Content, validated.Scope, validated.Evidence
 	request.ConfigRevision, request.MemoryEpoch, request.OccurredAt = validated.Fence.ConfigRevision, validated.Fence.MemoryEpoch, validated.OccurredAt
-	if request.Visibility == "" {
-		request.Visibility = MemoryVisibilityWorkspace
+	if request.origin == "" {
+		request.origin = MemoryOriginOperator
 	}
 	if request.Confidence == 0 {
 		request.Confidence = 1
@@ -364,6 +364,10 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 			return nil, nil, nil, err
 		}
 		validFrom := request.OccurredAt
+		visibility := request.Visibility
+		if visibility == "" {
+			visibility = MemoryVisibilityEveryone
+		}
 		supersedesID := request.SupersedesID
 		if request.rescope {
 			// A supersede link stays within one scope. A rescoped memory is
@@ -373,7 +377,8 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 		memory := &DigitalHumanMemory{
 			ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
 			MemoryKey: request.Key, MemoryClass: request.MemoryClass, MemoryType: request.MemoryType, ScopeType: scopeType, ScopeID: scopeID,
-			Content: request.Content, ContentDigest: memoryContentDigest(request.Content), Visibility: request.Visibility,
+			Content: request.Content, ContentDigest: memoryContentDigest(request.Content), Visibility: visibility,
+			Origin: request.origin, OriginChannelID: request.originChannelID,
 			Status: MemoryStatusActive, Confidence: request.Confidence, Revision: 1, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence: mustJSON(request.Evidence), SourcePrincipalID: scope.ActorID.String(), LastOperationID: request.OperationID,
 			SupersedesID: supersedesID, ValidFrom: &validFrom, CreatedAt: now, UpdatedAt: now,
@@ -402,6 +407,9 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 	if current.Revision != request.ExpectedRevision {
 		return nil, nil, nil, ErrMemoryConflict
 	}
+	if request.internalOnly && current.Visibility != MemoryVisibilityInternal {
+		return nil, nil, nil, errMemoryEveryoneOperatorOnly
+	}
 	before, _ := json.Marshal(current)
 	current.Revision++
 	current.LastOperationID, current.SourcePrincipalID, current.ConfigRevision, current.MemoryEpoch = request.OperationID, scope.ActorID.String(), state.ConfigRevision, state.MemoryEpoch
@@ -410,7 +418,10 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 		current.Status, current.ValidTo = MemoryStatusInvalidated, &now
 	} else {
 		current.MemoryType, current.Content, current.ContentDigest = request.MemoryType, request.Content, memoryContentDigest(request.Content)
-		current.Visibility, current.Confidence, current.Status, current.ValidTo = request.Visibility, request.Confidence, MemoryStatusActive, nil
+		if request.Visibility != "" {
+			current.Visibility = request.Visibility
+		}
+		current.Confidence, current.Status, current.ValidTo = request.Confidence, MemoryStatusActive, nil
 		validFrom := request.OccurredAt
 		current.ValidFrom = &validFrom
 	}
@@ -433,6 +444,9 @@ func invalidateSupersededMemory(ctx context.Context, tx *GormRepository, scope S
 	}
 	if err != nil {
 		return nil, err
+	}
+	if request.internalOnly && superseded.Visibility != MemoryVisibilityInternal {
+		return nil, errMemoryEveryoneOperatorOnly
 	}
 	sameScope := superseded.MemoryClass == request.MemoryClass && superseded.ScopeType == scopeType && superseded.ScopeID == scopeID
 	if superseded.Status != MemoryStatusActive || superseded.Revision != request.ExpectedSupersededRevision || sameScope == request.rescope {
@@ -625,10 +639,16 @@ func validateMemoryProposalPolicy(request MemoryProposalRequest, autonomous bool
 	if len(request.Content) > maxMemoryContentBytes || request.Confidence < 0 || request.Confidence > 1 {
 		return ErrMemoryPolicyRejected
 	}
-	if request.Visibility != MemoryVisibilityWorkspace && request.Visibility != MemoryVisibilityRestricted {
+	if request.Visibility != "" && request.Visibility != MemoryVisibilityEveryone && request.Visibility != MemoryVisibilityInternal {
 		return ErrMemoryPolicyRejected
 	}
-	if request.SourceContext.PrivateConversation && !request.SourceContext.PromotedByAuthorizedActor {
+	if request.internalOnly && request.Visibility != MemoryVisibilityInternal {
+		return errMemoryEveryoneOperatorOnly
+	}
+	// A private console conversation reaches memory everyone sees only
+	// through an authorized operator; internal memory is shared inside the
+	// team by design (ADR 0015).
+	if request.SourceContext.PrivateConversation && !request.SourceContext.PromotedByAuthorizedActor && !request.internalOnly {
 		return ErrMemoryPolicyRejected
 	}
 	if sensitiveMemoryPattern.MatchString(request.Content) || looksLikeStructuredBusinessObject(request.Content) {

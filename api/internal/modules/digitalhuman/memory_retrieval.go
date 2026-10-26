@@ -172,7 +172,7 @@ func (p *DigitalHumanMemoryProjectionProvider) recallWithinScopes(ctx context.Co
 		return
 	}
 	scopeIDs := []string{}
-	for _, id := range []string{readScope.instanceID, readScope.channelID} {
+	for _, id := range []string{readScope.instanceID} {
 		if id != "" {
 			scopeIDs = append(scopeIDs, id)
 		}

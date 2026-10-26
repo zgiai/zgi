@@ -35,8 +35,6 @@ import run
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DIGITAL_HUMAN_SUBJECT_NAMESPACE = "external-digital-human-memory"
-# Operator memory visibility in scenario files, as the proposals API spells it.
-PROPOSAL_VISIBILITY = {"everyone": "workspace", "internal": "restricted"}
 
 
 def api_end_user_subject(workspace_id, digital_human_id, user):
@@ -84,7 +82,7 @@ class DigitalHumanClient:
         state = self.memory_state()
         self.console("POST", f"/digital-humans/{self.digital_human_id}/memory/proposals", {
             "operation_id": str(uuid.uuid4()), "key": key, "action": "upsert", "memory_class": "self", "memory_type": memory_type,
-            "visibility": PROPOSAL_VISIBILITY[visibility],
+            "visibility": visibility,
             "content": content, "expected_revision": 0, "config_revision": state["config_revision"], "memory_epoch": state["memory_epoch"],
             "evidence": [{"type": "manual", "id": f"operator:{uuid.uuid4()}"}],
             "source_context": {"private_conversation": False, "promoted_by_authorized_actor": True},

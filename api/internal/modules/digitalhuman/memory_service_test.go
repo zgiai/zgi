@@ -15,7 +15,7 @@ func TestValidateMemoryProposalPolicyRejectsUnsafeAutonomousWrites(t *testing.T)
 		MemoryClass: memoryruntime.MemoryClassSelf,
 		MemoryType:  memoryruntime.MemoryTypeExperience,
 		Content:     "Prefer concise, evidence-backed summaries.",
-		Visibility:  MemoryVisibilityWorkspace,
+		Visibility:  MemoryVisibilityEveryone,
 		Confidence:  0.8,
 	}
 	if err := validateMemoryProposalPolicy(base, true); err != nil {
@@ -59,7 +59,7 @@ func TestValidateMemoryProposalPolicyRequiresExplicitIdentityApproval(t *testing
 		MemoryClass: memoryruntime.MemoryClassSelf,
 		MemoryType:  memoryruntime.MemoryTypeIdentity,
 		Content:     "I am responsible for growth research.",
-		Visibility:  MemoryVisibilityWorkspace,
+		Visibility:  MemoryVisibilityEveryone,
 		Confidence:  1,
 	}
 	if err := validateMemoryProposalPolicy(request, false); !errors.Is(err, ErrMemoryPolicyRejected) {

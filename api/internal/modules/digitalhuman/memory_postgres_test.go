@@ -146,15 +146,14 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	if rejectedLedger.Status != "rejected" || rejectedLedger.MemoryOperationID == nil || *rejectedLedger.MemoryOperationID != rejectedEvent.OperationID {
 		t.Fatalf("unauthorized runtime ledger = %#v, event operation = %s", rejectedLedger, rejectedEvent.OperationID)
 	}
-	projectScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String()}
 	operationID := uuid.New()
 	proposal := MemoryProposalRequest{
 		OperationID: operationID, Key: "launch-date", Action: memoryruntime.MutationActionUpsert,
-		MemoryClass: memoryruntime.MemoryClassBusiness, MemoryType: memoryruntime.MemoryTypeFact,
-		Scope: &projectScope, Content: "The approved launch date is September 8.",
+		MemoryClass: memoryruntime.MemoryClassSelf, MemoryType: memoryruntime.MemoryTypeFact,
+		Content:          "The approved launch date is September 8.",
 		ExpectedRevision: 0, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 		Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeManual, ID: "approval:launch-date"}},
-		Visibility: MemoryVisibilityWorkspace, Confidence: 1, OccurredAt: fixedNow,
+		Visibility: MemoryVisibilityEveryone, Confidence: 1, OccurredAt: fixedNow,
 	}
 	created, err := service.ApplyMemoryProposal(t.Context(), scopeA, detail.Definition.ID, proposal)
 	if err != nil {
@@ -164,7 +163,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatalf("created memory = %#v", created.Memory)
 	}
 
-	otherScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeChannel, ID: "channel-8"}
+	otherScope := memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeInstance, ID: uuid.NewString()}
 	var items []*DigitalHumanMemory
 	for name, scope := range map[string]Scope{"actor_a": scopeA, "actor_b": scopeB} {
 		retrieved, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)
@@ -312,6 +311,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	}
 	otherScopeProposal := oldProposal
 	otherScopeProposal.OperationID, otherScopeProposal.Key, otherScopeProposal.Scope = uuid.New(), "other-project-fact", &otherScope
+	otherScopeProposal.MemoryClass = memoryruntime.MemoryClassBusiness
 	otherScopeMemory, err := service.ApplyMemoryProposal(t.Context(), scopeA, detail.Definition.ID, otherScopeProposal)
 	if err != nil || otherScopeMemory.Memory == nil {
 		t.Fatalf("create other-scope memory = %#v, err %v", otherScopeMemory, err)
@@ -480,8 +480,9 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 	if err := service.ScheduleMemoryExtraction(t.Context(), scope, run, conversationID, messageID, datatypes.JSON(`[]`)); err != nil {
 		t.Fatal(err)
 	}
-	// A run without a channel source is never queued for extraction.
-	memberTrust := string(SourceTrustWorkspaceMember)
+	// An operator run is never queued for extraction: its memory changes stay
+	// explicit.
+	memberTrust := string(SourceTrustAuthorizedOperator)
 	untrusted := *run
 	untrusted.ID, untrusted.SourceTrust, untrusted.IdempotencyKey = uuid.New(), &memberTrust, "untrusted-"+event.IdempotencyKey
 	if err := repository.CreateRun(t.Context(), &untrusted); err != nil {
@@ -508,8 +509,10 @@ func TestDigitalHumanMemoryPostgresExtractionJobCommitsFromReferences(t *testing
 		t.Fatalf("extractor calls=%d input=%#v", extractor.calls, extractor.input.Source)
 	}
 	items, err := service.RetrieveMemories(t.Context(), scope, detail.Definition.ID, 10)
-	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 || items[0].MemoryClass != memoryruntime.MemoryClassBusiness ||
-		items[0].ScopeType != memoryruntime.MemoryScopeChannel || items[0].ScopeID != channelConversationID.String() {
+	// A channel teaches the DigitalHuman's own memory, internal and marked
+	// with the channel it came from (ADR 0015).
+	if err != nil || len(items) != 1 || items[0].MemoryKey != "launch-date" || items[0].Revision != 1 || items[0].MemoryClass != memoryruntime.MemoryClassSelf ||
+		items[0].Visibility != MemoryVisibilityInternal || items[0].Origin != MemoryOriginChannel || items[0].OriginChannelID != channelConversationID.String() {
 		t.Fatalf("extracted memory = %#v, err %v", items, err)
 	}
 	var job MemoryExtractionJob

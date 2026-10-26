@@ -134,7 +134,7 @@ func validBusinessMutation() MemoryMutation {
 		Action:           MutationActionUpsert,
 		Class:            MemoryClassBusiness,
 		Type:             MemoryTypeFact,
-		Scope:            &MemoryScopeRef{Type: MemoryScopeWorkspace, ID: "33333333-3333-3333-3333-333333333333"},
+		Scope:            &MemoryScopeRef{Type: MemoryScopeInstance, ID: "33333333-3333-3333-3333-333333333333"},
 		Content:          "The launch date is September 8.",
 		ExpectedRevision: 7,
 		Fence:            MemoryFence{ConfigRevision: "sha256:run-spec", MemoryEpoch: 3},
@@ -156,12 +156,12 @@ func validRuntimeSubject() runtimeidentity.SubjectRef {
 }
 
 func TestValidateMemoryScopeRefRejectsRetiredScopes(t *testing.T) {
-	for _, retired := range []string{"project", "customer", "campaign"} {
+	for _, retired := range []string{"project", "customer", "campaign", "workspace", "channel"} {
 		if _, err := ValidateMemoryScopeRef(MemoryScopeRef{Type: MemoryScopeType(retired), ID: "x"}); !errors.Is(err, ErrInvalidContract) {
 			t.Fatalf("%s scope error = %v", retired, err)
 		}
 	}
-	for _, live := range []MemoryScopeType{MemoryScopeWorkspace, MemoryScopeChannel, MemoryScopeInstance} {
+	for _, live := range []MemoryScopeType{MemoryScopeInstance} {
 		if _, err := ValidateMemoryScopeRef(MemoryScopeRef{Type: live, ID: "x"}); err != nil {
 			t.Fatalf("%s scope error = %v", live, err)
 		}
