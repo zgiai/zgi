@@ -66,6 +66,23 @@ type MemoryListResult struct {
 	PageSize int                   `json:"page_size"`
 	HasMore  bool                  `json:"has_more"`
 	State    *MemoryState          `json:"state"`
+	// Facets count the entries of the listed status, whatever the other
+	// filters, by type, visibility, origin, and channel.
+	Facets *MemoryFacets `json:"facets"`
+}
+
+// MemoryFacets count the DigitalHuman's memories by attribute (ADR 0015).
+type MemoryFacets struct {
+	Types      map[string]int64     `json:"types"`
+	Visibility map[string]int64     `json:"visibility"`
+	Origins    map[string]int64     `json:"origins"`
+	Channels   []MemoryChannelFacet `json:"channels"`
+}
+
+// MemoryChannelFacet counts the memories one channel conversation taught.
+type MemoryChannelFacet struct {
+	ID    string `json:"id"`
+	Count int64  `json:"count"`
 }
 
 type MemoryMutationResult struct {

@@ -588,6 +588,14 @@ const messages = {
       legacy: 'Earlier memory',
     },
   },
+  memoryItems: {
+    search: 'Search memory',
+    empty: 'No memory yet.',
+    noMatch: 'No memory matches this search.',
+    save: 'Save',
+    delete: 'Delete',
+    undo: 'Undo',
+  },
   memoryNotes: {
     title: 'Notes about you',
     description:

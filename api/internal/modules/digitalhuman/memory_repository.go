@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -92,6 +93,62 @@ func (r *GormRepository) MemoryByIDForUpdate(ctx context.Context, scope Scope, d
 		return nil, err
 	}
 	return &memory, nil
+}
+
+// MemoryByID reads one of the DigitalHuman's memories without locking it.
+func (r *GormRepository) MemoryByID(ctx context.Context, scope Scope, digitalHumanID, memoryID uuid.UUID) (*DigitalHumanMemory, error) {
+	var memory DigitalHumanMemory
+	err := r.db.WithContext(ctx).Where(
+		"id = ? AND organization_id = ? AND workspace_id = ? AND digital_human_id = ?",
+		memoryID, scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
+	).Take(&memory).Error
+	if err != nil {
+		return nil, err
+	}
+	return &memory, nil
+}
+
+// MemoryFacets counts the DigitalHuman's memories of one status by type,
+// visibility, origin, and channel, so a long list can show its groups and
+// filters without loading every entry.
+func (r *GormRepository) MemoryFacets(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, status MemoryStatus) (*MemoryFacets, error) {
+	var rows []struct {
+		MemoryType      string
+		Visibility      string
+		Origin          string
+		OriginChannelID string
+		Count           int64
+	}
+	db := r.db.WithContext(ctx).Model(&DigitalHumanMemory{}).Where(
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ?", scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
+	)
+	if status != "" {
+		db = db.Where("status = ?", status)
+	}
+	if err := db.Select("memory_type, visibility, origin, origin_channel_id, count(*) AS count").
+		Group("memory_type, visibility, origin, origin_channel_id").Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("count DigitalHuman memory facets: %w", err)
+	}
+	facets := &MemoryFacets{Types: map[string]int64{}, Visibility: map[string]int64{}, Origins: map[string]int64{}, Channels: []MemoryChannelFacet{}}
+	channels := map[string]int64{}
+	for _, row := range rows {
+		facets.Types[row.MemoryType] += row.Count
+		facets.Visibility[row.Visibility] += row.Count
+		facets.Origins[row.Origin] += row.Count
+		if row.OriginChannelID != "" {
+			channels[row.OriginChannelID] += row.Count
+		}
+	}
+	for id, count := range channels {
+		facets.Channels = append(facets.Channels, MemoryChannelFacet{ID: id, Count: count})
+	}
+	sort.Slice(facets.Channels, func(i, j int) bool {
+		if facets.Channels[i].Count != facets.Channels[j].Count {
+			return facets.Channels[i].Count > facets.Channels[j].Count
+		}
+		return facets.Channels[i].ID < facets.Channels[j].ID
+	})
+	return facets, nil
 }
 
 func (r *GormRepository) CreateMemory(ctx context.Context, memory *DigitalHumanMemory) error {

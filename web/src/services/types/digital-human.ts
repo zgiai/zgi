@@ -499,6 +499,30 @@ export interface DigitalHumanMemoryList {
   page_size: number;
   has_more: boolean;
   state: DigitalHumanMemoryState;
+  /** Counts of the listed status, whatever the other filters (ADR 0015). */
+  facets?: DigitalHumanMemoryFacets;
+}
+
+export interface DigitalHumanMemoryFacets {
+  types: Partial<Record<DigitalHumanMemoryType, number>>;
+  visibility: Partial<Record<DigitalHumanMemoryVisibility, number>>;
+  origins: Partial<Record<DigitalHumanMemoryOrigin, number>>;
+  /** Channel conversations that taught the DigitalHuman, most entries first. */
+  channels: { id: string; count: number }[];
+}
+
+// Changes the visibility of, or invalidates, several memories at once. Each
+// memory changes in its own recorded, undoable mutation.
+export interface DigitalHumanMemoryBulkRequest {
+  operation_id: string;
+  action: 'set_visibility' | 'invalidate';
+  visibility?: DigitalHumanMemoryVisibility;
+  memory_ids: string[];
+}
+
+export interface DigitalHumanMemoryBulkResult {
+  updated: number;
+  skipped: { memory_id: string; reason: string }[];
 }
 
 export interface DigitalHumanMemoryListParams {

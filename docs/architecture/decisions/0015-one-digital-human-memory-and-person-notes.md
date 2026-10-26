@@ -94,7 +94,7 @@ Memory pages are reworked for many entries:
   - a compact list grouped by type, with counts and collapsible groups;
   - filters for visibility, origin (operator, member, channel and which group), and status;
   - search;
-  - bulk "make everyone / internal", and undo by origin;
+  - bulk "make everyone / internal" and invalidate over selected entries (`POST /memory/bulk`); undo by origin is a filter by origin or channel, select all, and invalidate, and each change stays undoable on its own;
   - the detail opens in the existing side sheet.
 - **Runtime Workspace end-user panel:** each end user's notes for each DigitalHuman, with delete and promote.
 - **Profile page and WebApp "My Memory"** (one relationship at a time): tabs for Memory, Notes (DigitalHumans only), Archive, and History, instead of one long page. Items are compact rows with inline edit and search.

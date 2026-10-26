@@ -103,4 +103,31 @@ func TestDigitalHumanMemoryVisibilityPostgres(t *testing.T) {
 	if again, err := NewRepository(tx).MemoryByIDForUpdate(t.Context(), scope, digitalHumanID, public.ID); err != nil || again.Visibility != MemoryVisibilityEveryone {
 		t.Fatalf("memory after undo = %#v, %v", again, err)
 	}
+
+	// Bulk actions change each selected memory in its own mutation, skip
+	// what cannot change, and replay when retried.
+	second, third := write("support-hours", memoryruntime.MemoryTypeFact), write("persona", memoryruntime.MemoryTypeIdentity)
+	bulk := MemoryBulkRequest{OperationID: uuid.New(), Action: MemoryBulkSetVisibility, Visibility: MemoryVisibilityInternal, MemoryIDs: []uuid.UUID{public.ID, second.ID, third.ID, uuid.New()}}
+	result, err := service.ApplyMemoryBulk(t.Context(), scope, digitalHumanID, bulk)
+	if err != nil || result.Updated != 2 || len(result.Skipped) != 2 || result.Skipped[0].Reason != memoryBulkSkipIdentity || result.Skipped[1].Reason != memoryBulkSkipNotFound {
+		t.Fatalf("bulk visibility = %#v, %v", result, err)
+	}
+	if replay, err := service.ApplyMemoryBulk(t.Context(), scope, digitalHumanID, bulk); err != nil || replay.Updated != 0 || len(replay.Skipped) != 4 {
+		t.Fatalf("replayed bulk visibility = %#v, %v", replay, err)
+	}
+	listed, err := service.ListMemories(t.Context(), scope, digitalHumanID, MemoryListQuery{Status: MemoryStatusActive, Visibility: MemoryVisibilityInternal})
+	if err != nil || listed.Total != 2 || listed.Facets.Visibility["internal"] != 2 || listed.Facets.Visibility["everyone"] != 1 ||
+		listed.Facets.Types["fact"] != 2 || listed.Facets.Types["identity"] != 1 || listed.Facets.Origins["operator"] != 3 {
+		t.Fatalf("listed internal memory = %#v, %v", listed, err)
+	}
+	invalidated, err := service.ApplyMemoryBulk(t.Context(), scope, digitalHumanID, MemoryBulkRequest{OperationID: uuid.New(), Action: MemoryBulkInvalidate, MemoryIDs: []uuid.UUID{public.ID, second.ID}})
+	if err != nil || invalidated.Updated != 2 {
+		t.Fatalf("bulk invalidate = %#v, %v", invalidated, err)
+	}
+	if active, err := service.ListMemories(t.Context(), scope, digitalHumanID, MemoryListQuery{Status: MemoryStatusActive}); err != nil || active.Total != 1 || active.Facets.Types["fact"] != 0 {
+		t.Fatalf("active memory after bulk invalidate = %#v, %v", active, err)
+	}
+	if _, err := service.ApplyMemoryBulk(t.Context(), scope, digitalHumanID, MemoryBulkRequest{OperationID: uuid.New(), Action: "delete", MemoryIDs: []uuid.UUID{third.ID}}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("unknown bulk action error = %v", err)
+	}
 }

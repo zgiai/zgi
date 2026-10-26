@@ -47,7 +47,14 @@ func (s *Service) ListMemories(ctx context.Context, scope Scope, digitalHumanID 
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.list")
 	}
-	return &MemoryListResult{Items: items, Total: total, Page: query.Page, PageSize: query.PageSize, HasMore: query.Page*query.PageSize < int(total), State: state}, nil
+	facets, err := s.repo.MemoryFacets(ctx, scope, digitalHumanID, query.Status)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.memory.list")
+	}
+	return &MemoryListResult{
+		Items: items, Total: total, Page: query.Page, PageSize: query.PageSize, HasMore: query.Page*query.PageSize < int(total),
+		State: state, Facets: facets,
+	}, nil
 }
 
 // UpdateMemoryState toggles the automatic extraction fuse and advances the

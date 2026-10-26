@@ -6,6 +6,8 @@ import { useDigitalHumanObjectHref } from '@/components/digital-human/digital-hu
 import {
   AlertCircle,
   BrainCircuit,
+  ChevronDown,
+  ChevronRight,
   Clock3,
   ExternalLink,
   FileCheck2,
@@ -24,6 +26,7 @@ import {
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
@@ -43,7 +46,7 @@ import {
 } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  useDigitalHumanMemories,
+  useDigitalHumanMemoryPages,
   useDigitalHumanMutations,
 } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
@@ -51,7 +54,9 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
   DigitalHumanMemory as DigitalHumanMemoryRecord,
+  DigitalHumanMemoryFacets,
   DigitalHumanMemoryListParams,
+  DigitalHumanMemoryOrigin,
   DigitalHumanMemoryStatus,
   DigitalHumanMemoryVisibility,
   DigitalHumanMemoryType,
@@ -67,50 +72,99 @@ const memoryTypes: DigitalHumanMemoryType[] = [
   'reflection',
 ];
 const visibilities: DigitalHumanMemoryVisibility[] = ['everyone', 'internal'];
+const origins: DigitalHumanMemoryOrigin[] = ['operator', 'member', 'channel', 'end_user'];
 
 export function DigitalHumanMemory({ id }: { id: string }) {
   const t = useT('digitalHumans');
   const permissions = useAccountPermissions();
   const canManage = permissions.hasPermission('digital_human.memory.manage');
   const [search, setSearch] = useState('');
-  const [memoryType, setMemoryType] = useState<typeof all | DigitalHumanMemoryType>(all);
   // Invalidated memories no longer shape behavior; they are hidden unless
   // the reader asks for them.
   const [status, setStatus] = useState<typeof all | DigitalHumanMemoryStatus>('active');
   const [visibility, setVisibility] = useState<typeof all | DigitalHumanMemoryVisibility>(all);
+  const [origin, setOrigin] = useState<typeof all | DigitalHumanMemoryOrigin>(all);
+  const [channel, setChannel] = useState<string>(all);
   const [source, setSource] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [repairOpen, setRepairOpen] = useState(false);
   const [selected, setSelected] = useState<DigitalHumanMemoryRecord | null>(null);
+  // Memories picked for a bulk action, by ID.
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [bulkInvalidateOpen, setBulkInvalidateOpen] = useState(false);
   const params = useMemo<DigitalHumanMemoryListParams>(
     () => ({
-      page: 1,
       page_size: 100,
       search: search.trim() || undefined,
-      memory_type: memoryType === all ? undefined : memoryType,
       status: status === all ? undefined : status,
       source: source.trim() || undefined,
       visibility: visibility === all ? undefined : visibility,
+      origin: origin === all ? undefined : origin,
+      origin_channel_id: channel === all ? undefined : channel,
     }),
-    [memoryType, search, source, status, visibility]
+    [channel, origin, search, source, status, visibility]
   );
-  const query = useDigitalHumanMemories(id, params);
+  const query = useDigitalHumanMemoryPages(id, params);
   const mutations = useDigitalHumanMutations(id);
-  const data = query.data?.data;
+  const data = query.data?.pages[0]?.data;
+  const memories = useMemo(
+    () => query.data?.pages.flatMap(page => page.data?.items ?? []) ?? [],
+    [query.data]
+  );
+  const facets = data?.facets;
   const hasFilters = Boolean(
     search.trim() ||
-      memoryType !== all ||
       status !== 'active' ||
       source.trim() ||
-      visibility !== all
+      visibility !== all ||
+      origin !== all ||
+      channel !== all
   );
+  const pickedMemories = memories.filter(memory => picked.has(memory.id));
 
   const clearFilters = () => {
     setSearch('');
-    setMemoryType(all);
     setStatus('active');
     setSource('');
     setVisibility(all);
+    setOrigin(all);
+    setChannel(all);
+  };
+
+  const togglePicked = (ids: string[], on: boolean) => {
+    setPicked(current => {
+      const next = new Set(current);
+      ids.forEach(memoryId => (on ? next.add(memoryId) : next.delete(memoryId)));
+      return next;
+    });
+  };
+
+  const applyBulk = async (
+    action: 'set_visibility' | 'invalidate',
+    next?: DigitalHumanMemoryVisibility
+  ) => {
+    if (pickedMemories.length === 0) return;
+    try {
+      const result = await mutations.applyMemoryBulk.mutateAsync({
+        digitalHumanId: id,
+        request: {
+          operation_id: crypto.randomUUID(),
+          action,
+          visibility: next,
+          memory_ids: pickedMemories.map(memory => memory.id),
+        },
+      });
+      toast.success(
+        t('memory.bulk.done', {
+          updated: result.data.updated,
+          skipped: result.data.skipped.length,
+        })
+      );
+      setPicked(new Set());
+      setBulkInvalidateOpen(false);
+    } catch {
+      // The mutation already reports the error.
+    }
   };
 
   const toggleFuse = async () => {
@@ -295,25 +349,13 @@ export function DigitalHumanMemory({ id }: { id: string }) {
 
       <section className="overflow-hidden rounded-xl border bg-background">
         <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-b p-4">
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_repeat(2,minmax(160px,0.45fr))_auto]">
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_repeat(3,minmax(150px,0.4fr))_auto]">
             <Input
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder={t('memory.searchPlaceholder')}
               leftIcon={<Search />}
             />
-            <MemorySelect
-              value={memoryType}
-              onValueChange={value => setMemoryType(value as typeof memoryType)}
-              placeholder={t('memory.allTypes')}
-            >
-              <SelectItem value={all}>{t('memory.allTypes')}</SelectItem>
-              {memoryTypes.map(type => (
-                <SelectItem key={type} value={type}>
-                  {t(`memory.type.${type}`)}
-                </SelectItem>
-              ))}
-            </MemorySelect>
             <MemorySelect
               value={status}
               onValueChange={value => setStatus(value as typeof status)}
@@ -324,6 +366,33 @@ export function DigitalHumanMemory({ id }: { id: string }) {
               <SelectItem value="invalidated">{t('memory.status.invalidated')}</SelectItem>
               <SelectItem value="archived">{t('memory.status.archived')}</SelectItem>
             </MemorySelect>
+            <MemorySelect
+              value={visibility}
+              onValueChange={value => setVisibility(value as typeof visibility)}
+              placeholder={t('memory.visibility.all')}
+            >
+              <SelectItem value={all}>{t('memory.visibility.all')}</SelectItem>
+              {visibilities.map(value => (
+                <SelectItem key={value} value={value}>
+                  {withCount(t(`memory.visibility.${value}`), facets?.visibility[value])}
+                </SelectItem>
+              ))}
+            </MemorySelect>
+            <MemorySelect
+              value={origin}
+              onValueChange={value => {
+                setOrigin(value as typeof origin);
+                if (value !== 'channel') setChannel(all);
+              }}
+              placeholder={t('memory.origin.all')}
+            >
+              <SelectItem value={all}>{t('memory.origin.all')}</SelectItem>
+              {origins.map(value => (
+                <SelectItem key={value} value={value}>
+                  {withCount(t(`memory.origin.${value}`), facets?.origins[value])}
+                </SelectItem>
+              ))}
+            </MemorySelect>
             <CollapsibleTrigger asChild>
               <Button variant="outline" size="sm" className="justify-start xl:justify-center">
                 <SlidersHorizontal className="size-4" />
@@ -331,25 +400,32 @@ export function DigitalHumanMemory({ id }: { id: string }) {
               </Button>
             </CollapsibleTrigger>
           </div>
+          {origin === 'channel' && facets?.channels.length ? (
+            <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_minmax(150px,0.4fr)]">
+              <div className="self-center text-xs text-muted-foreground">
+                {t('memory.channelHint')}
+              </div>
+              <MemorySelect
+                value={channel}
+                onValueChange={setChannel}
+                placeholder={t('memory.allChannels')}
+              >
+                <SelectItem value={all}>{t('memory.allChannels')}</SelectItem>
+                {facets.channels.map(item => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {withCount(t('memory.channelLabel', { id: shortID(item.id) }), item.count)}
+                  </SelectItem>
+                ))}
+              </MemorySelect>
+            </div>
+          ) : null}
           <CollapsibleContent>
-            <div className="mt-3 grid gap-2 rounded-lg bg-muted/30 p-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto]">
+            <div className="mt-3 grid gap-2 rounded-lg bg-muted/30 p-3 md:grid-cols-[minmax(180px,1fr)_auto]">
               <Input
                 value={source}
                 onChange={event => setSource(event.target.value)}
                 placeholder={t('memory.sourcePlaceholder')}
               />
-              <MemorySelect
-                value={visibility}
-                onValueChange={value => setVisibility(value as typeof visibility)}
-                placeholder={t('memory.visibility.all')}
-              >
-                <SelectItem value={all}>{t('memory.visibility.all')}</SelectItem>
-                {visibilities.map(value => (
-                  <SelectItem key={value} value={value}>
-                    {t(`memory.visibility.${value}`)}
-                  </SelectItem>
-                ))}
-              </MemorySelect>
               <Button variant="ghost" size="sm" onClick={clearFilters} disabled={!hasFilters}>
                 <FilterX className="size-4" />
                 {t('memory.clearFilters')}
@@ -358,14 +434,86 @@ export function DigitalHumanMemory({ id }: { id: string }) {
           </CollapsibleContent>
         </Collapsible>
 
-        <MemoryBody
+        {canManage && picked.size > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 border-b bg-primary/5 px-4 py-2 text-sm">
+            <span className="font-medium">{t('memory.bulk.selected', { count: picked.size })}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={mutations.applyMemoryBulk.isPending}
+              onClick={() => void applyBulk('set_visibility', 'everyone')}
+            >
+              <Eye className="size-4" />
+              {t('memory.visibility.makeEveryone')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={mutations.applyMemoryBulk.isPending}
+              onClick={() => void applyBulk('set_visibility', 'internal')}
+            >
+              <EyeOff className="size-4" />
+              {t('memory.visibility.makeInternal')}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={mutations.applyMemoryBulk.isPending}
+              onClick={() => setBulkInvalidateOpen(true)}
+            >
+              <Trash2 className="size-4" />
+              {t('memory.invalidate')}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto"
+              onClick={() => setPicked(new Set())}
+            >
+              {t('memory.bulk.clearSelection')}
+            </Button>
+            <ConfirmDialog
+              open={bulkInvalidateOpen}
+              onOpenChange={setBulkInvalidateOpen}
+              variant="danger"
+              title={t('memory.bulk.invalidateTitle', { count: picked.size })}
+              description={t('memory.bulk.invalidateDescription')}
+              confirmText={t('memory.invalidate')}
+              cancelText={t('common.cancel')}
+              loading={mutations.applyMemoryBulk.isPending}
+              onConfirm={() => void applyBulk('invalidate')}
+            />
+          </div>
+        ) : null}
+
+        <MemoryGroups
           loading={query.isLoading}
           error={query.isError}
-          memories={data?.items ?? []}
+          memories={memories}
+          facets={facets}
+          total={data?.total ?? 0}
           hasFilters={hasFilters}
+          canPick={canManage}
+          picked={picked}
+          onPick={togglePicked}
           onRetry={() => void query.refetch()}
+          onClearFilters={clearFilters}
           onSelect={setSelected}
         />
+        {query.hasNextPage ? (
+          <div className="flex items-center justify-center gap-3 border-t px-4 py-3 text-xs text-muted-foreground">
+            <span>{t('memory.showing', { shown: memories.length, total: data?.total ?? 0 })}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={query.isFetchingNextPage}
+              onClick={() => void query.fetchNextPage()}
+            >
+              {query.isFetchingNextPage ? <Loader2 className="size-4 animate-spin" /> : null}
+              {t('memory.loadMore')}
+            </Button>
+          </div>
+        ) : null}
       </section>
 
       <MemoryDetail
@@ -406,22 +554,35 @@ function MemorySelect({
   );
 }
 
-function MemoryBody({
+function MemoryGroups({
   loading,
   error,
   memories,
+  facets,
+  total,
   hasFilters,
+  canPick,
+  picked,
+  onPick,
   onRetry,
+  onClearFilters,
   onSelect,
 }: {
   loading: boolean;
   error: boolean;
   memories: DigitalHumanMemoryRecord[];
+  facets?: DigitalHumanMemoryFacets;
+  total: number;
   hasFilters: boolean;
+  canPick: boolean;
+  picked: Set<string>;
+  onPick: (ids: string[], on: boolean) => void;
   onRetry: () => void;
+  onClearFilters: () => void;
   onSelect: (memory: DigitalHumanMemoryRecord) => void;
 }) {
   const t = useT('digitalHumans');
+  const [collapsed, setCollapsed] = useState<Set<DigitalHumanMemoryType>>(() => new Set());
   if (loading) {
     return (
       <div className="flex min-h-72 items-center justify-center">
@@ -451,61 +612,132 @@ function MemoryBody({
           {t('memory.emptyDescription')}
         </p>
         {hasFilters ? (
-          <Badge variant="outline" className="mt-3">
+          <Button variant="outline" size="sm" className="mt-3" onClick={onClearFilters}>
+            <FilterX className="size-4" />
             {t('memory.clearFilters')}
-          </Badge>
+          </Button>
         ) : null}
       </div>
     );
   }
+  const groups = memoryTypes
+    .map(type => ({ type, items: memories.filter(memory => memory.memory_type === type) }))
+    .filter(group => group.items.length > 0);
+  // Without filters the facet count is the group's full size; with filters
+  // only the loaded entries are known.
+  const groupTotal = (type: DigitalHumanMemoryType, loaded: number) =>
+    !hasFilters && memories.length < total ? (facets?.types[type] ?? loaded) : loaded;
   return (
     <div className="divide-y">
-      {memories.map(memory => (
-        <button
-          key={memory.id}
-          type="button"
-          onClick={() => onSelect(memory)}
-          className="group grid w-full gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/30 md:grid-cols-[minmax(0,1fr)_minmax(160px,auto)_minmax(150px,auto)] md:items-center"
-        >
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{t(`memory.type.${memory.memory_type}`)}</Badge>
-              <MemoryStatusBadge status={memory.status} />
-              <MemoryVisibilityBadge memory={memory} />
+      {groups.map(group => {
+        const open = !collapsed.has(group.type);
+        const ids = group.items.map(memory => memory.id);
+        const allPicked = ids.every(memoryId => picked.has(memoryId));
+        const somePicked = !allPicked && ids.some(memoryId => picked.has(memoryId));
+        return (
+          <section key={group.type}>
+            <div className="flex items-center gap-3 bg-muted/30 px-4 py-2">
+              {canPick ? (
+                <Checkbox
+                  checked={allPicked ? true : somePicked ? 'indeterminate' : false}
+                  aria-label={t('memory.bulk.pickGroup')}
+                  onCheckedChange={checked => onPick(ids, checked === true)}
+                />
+              ) : null}
+              <button
+                type="button"
+                className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
+                aria-expanded={open}
+                onClick={() =>
+                  setCollapsed(current => {
+                    const next = new Set(current);
+                    if (open) next.add(group.type);
+                    else next.delete(group.type);
+                    return next;
+                  })
+                }
+              >
+                {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                {t(`memory.type.${group.type}`)}
+                <Badge variant="subtle">{groupTotal(group.type, group.items.length)}</Badge>
+              </button>
             </div>
-            {memory.path ? (
-              <code className="mt-1 block truncate text-xs text-muted-foreground">
-                {memory.path}
-              </code>
+            {open ? (
+              <div className="divide-y">
+                {group.items.map(memory => (
+                  <MemoryRow
+                    key={memory.id}
+                    memory={memory}
+                    canPick={canPick}
+                    picked={picked.has(memory.id)}
+                    onPick={on => onPick([memory.id], on)}
+                    onSelect={() => onSelect(memory)}
+                  />
+                ))}
+              </div>
             ) : null}
-            <p
-              className={cn(
-                'line-clamp-2 text-sm font-medium leading-6',
-                memory.status !== 'active' && 'text-muted-foreground line-through'
-              )}
-            >
-              {memory.content}
-            </p>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            <div className="font-medium text-foreground">{t(memoryOriginKey(memory))}</div>
-            <div className="mt-1">
-              {t(`memory.confidenceLevel.${memory.confidence >= 0.8 ? 'high' : memory.confidence >= 0.5 ? 'medium' : 'low'}`)}
-            </div>
-            <div className="mt-1">
-              {t('memory.sourceSummary', {
-                source: maskMemorySource(memory.source_principal_id),
-              })}
-            </div>
-          </div>
-          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground md:justify-end">
-            <div className="text-right">
-              <div>{t('memory.updated', { date: formatDate(memory.updated_at) })}</div>
-            </div>
-            <ExternalLink className="size-4 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
-          </div>
-        </button>
-      ))}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+// One compact line per memory: its first line, path, and the attributes an
+// operator scans for; the full entry opens in the side sheet.
+function MemoryRow({
+  memory,
+  canPick,
+  picked,
+  onPick,
+  onSelect,
+}: {
+  memory: DigitalHumanMemoryRecord;
+  canPick: boolean;
+  picked: boolean;
+  onPick: (on: boolean) => void;
+  onSelect: () => void;
+}) {
+  const t = useT('digitalHumans');
+  return (
+    <div
+      className={cn(
+        'group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/30',
+        picked && 'bg-primary/5'
+      )}
+    >
+      {canPick ? (
+        <Checkbox
+          checked={picked}
+          aria-label={t('memory.bulk.pick')}
+          onCheckedChange={checked => onPick(checked === true)}
+        />
+      ) : null}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="grid min-w-0 flex-1 gap-1 text-left md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-4"
+      >
+        <div className="min-w-0">
+          <p
+            className={cn(
+              'truncate text-sm',
+              memory.status !== 'active' && 'text-muted-foreground line-through'
+            )}
+          >
+            {memory.content.split('\n')[0]}
+          </p>
+          {memory.path ? (
+            <code className="block truncate text-xs text-muted-foreground">{memory.path}</code>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground md:justify-end">
+          {memory.status !== 'active' ? <MemoryStatusBadge status={memory.status} /> : null}
+          <MemoryVisibilityBadge memory={memory} compact />
+          <span className="whitespace-nowrap">{formatShortDate(memory.updated_at)}</span>
+          <ExternalLink className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+        </div>
+      </button>
     </div>
   );
 }
@@ -731,14 +963,22 @@ function MemoryStatusBadge({ status }: { status: DigitalHumanMemoryStatus }) {
 
 // Shows who may see one of the DigitalHuman's memories and where it came
 // from (ADR 0015).
-function MemoryVisibilityBadge({ memory }: { memory: DigitalHumanMemoryRecord }) {
+function MemoryVisibilityBadge({
+  memory,
+  compact = false,
+}: {
+  memory: DigitalHumanMemoryRecord;
+  compact?: boolean;
+}) {
   const t = useT('digitalHumans');
   const internal = memory.visibility === 'internal';
   return (
     <>
-      <Badge variant={internal ? 'warning' : 'subtle'}>
-        {t(`memory.visibility.${internal ? 'internal' : 'everyone'}`)}
-      </Badge>
+      {internal || !compact ? (
+        <Badge variant={internal ? 'warning' : 'subtle'}>
+          {t(`memory.visibility.${internal ? 'internal' : 'everyone'}`)}
+        </Badge>
+      ) : null}
       {memory.origin && memory.origin !== 'operator' ? (
         <Badge variant="outline">{t(`memory.origin.${memory.origin}`)}</Badge>
       ) : null}
@@ -750,14 +990,20 @@ function memoryOriginKey(memory: DigitalHumanMemoryRecord) {
   return `memory.origin.${memory.origin ?? 'operator'}` as const;
 }
 
+function formatShortDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+function withCount(label: string, count?: number) {
+  return count === undefined ? label : `${label} (${count})`;
+}
+
+function shortID(value: string) {
+  return value.length <= 8 ? value : value.slice(0, 8);
+}
+
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
-function maskMemorySource(value?: string | null) {
-  const normalized = value?.trim();
-  if (!normalized) return '—';
-  if (normalized.length <= 8) return normalized;
-  return `${normalized.slice(0, 3)}…${normalized.slice(-4)}`;
 }

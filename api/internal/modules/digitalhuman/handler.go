@@ -45,6 +45,7 @@ type HandlerService interface {
 	UpdateMemoryState(context.Context, Scope, uuid.UUID, UpdateMemoryStateRequest) (*MemoryState, error)
 	ApplyMemoryProposal(context.Context, Scope, uuid.UUID, MemoryProposalRequest) (*MemoryMutationResult, error)
 	SetMemoryVisibility(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryVisibilityRequest) (*MemoryMutationResult, error)
+	ApplyMemoryBulk(context.Context, Scope, uuid.UUID, MemoryBulkRequest) (*MemoryBulkResult, error)
 	UndoMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryUndoRequest) (*MemoryMutationResult, error)
 	RepairMemoryProjection(context.Context, Scope, uuid.UUID) (*MemoryProjectionRepairResult, error)
 }
@@ -88,6 +89,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.PATCH("/:id/memory/state", h.UpdateMemoryState)
 	group.POST("/:id/memory/proposals", h.ApplyMemoryProposal)
 	group.POST("/:id/memory/:memory_id/visibility", h.SetMemoryVisibility)
+	group.POST("/:id/memory/bulk", h.ApplyMemoryBulk)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
 
@@ -170,6 +172,24 @@ func (h *Handler) SetMemoryVisibility(c *gin.Context) {
 		return
 	}
 	result, err := h.service.SetMemoryVisibility(c.Request.Context(), scope, id, memoryID, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// ApplyMemoryBulk changes the visibility of, or invalidates, several memories.
+func (h *Handler) ApplyMemoryBulk(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var request MemoryBulkRequest
+	if !h.decode(c, &request) {
+		return
+	}
+	result, err := h.service.ApplyMemoryBulk(c.Request.Context(), scope, id, request)
 	if err != nil {
 		h.writeError(c, err)
 		return

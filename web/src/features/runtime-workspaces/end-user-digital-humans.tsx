@@ -220,7 +220,12 @@ function DigitalHumanPanel({
                     />
                   </div>
                 </div>
-                <p className="mt-1 whitespace-pre-wrap break-words">{memory.content}</p>
+                <p
+                  className="mt-1 line-clamp-3 whitespace-pre-wrap break-words"
+                  title={memory.content}
+                >
+                  {memory.content}
+                </p>
               </li>
             ))}
           </ul>

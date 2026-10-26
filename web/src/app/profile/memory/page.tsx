@@ -2,22 +2,13 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  ArrowLeft,
-  Bot,
-  Brain,
-  Download,
-  Plus,
-  RotateCcw,
-  Save,
-  Trash2,
-  UserRound,
-} from 'lucide-react';
+import { ArrowLeft, Bot, Brain, Download, Plus, RotateCcw, Trash2, UserRound } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
+import { MemoryItemList } from '@/components/memory/memory-item-list';
 import { MemoryNotesPanel } from '@/components/memory/memory-notes-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useT } from '@/i18n';
 import { relationshipMemoryService } from '@/services/relationship-memory.service';
@@ -46,6 +38,7 @@ import { getErrorMessage } from '@/utils/error-notifications';
 const memoryKeys = ['user-relationship-memories'] as const;
 const categories: UserMemoryCategory[] = ['profile', 'preference', 'constraint', 'relationship'];
 const allFilterValue = 'all';
+type DetailTab = 'memory' | 'notes' | 'archive' | 'history';
 
 function downloadJSON(filename: string, value: unknown) {
   const url = URL.createObjectURL(
@@ -73,7 +66,7 @@ export default function ProfileMemoryPage() {
   const [status, setStatus] = useState<UserMemoryRelationshipStatus | ''>('');
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState('');
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [tab, setTab] = useState<DetailTab>('memory');
   const [newItem, setNewItem] = useState<{
     key: string;
     category: UserMemoryCategory;
@@ -112,6 +105,11 @@ export default function ProfileMemoryPage() {
   });
   const relationships = useMemo(() => listQuery.data?.data.items ?? [], [listQuery.data]);
   const detail = detailQuery.data?.data;
+  // The DigitalHuman's notes on the person are shown in their own tab.
+  const ownItems = useMemo(
+    () => detail?.items.filter(item => !item.key.startsWith('notes/')) ?? [],
+    [detail]
+  );
 
   useEffect(() => {
     if (selectedId || relationships.length === 0) return;
@@ -165,7 +163,7 @@ export default function ProfileMemoryPage() {
 
   const selectRelationship = (relationship: UserMemoryRelationship) => {
     setSelectedId(relationship.id);
-    setDrafts({});
+    setTab('memory');
   };
 
   return (
@@ -430,285 +428,269 @@ export default function ProfileMemoryPage() {
                     ) : null}
                   </div>
 
-                  <div className="space-y-4 p-5">
-                    {deletedUndo?.relationshipId === detail.id &&
-                    new Date(deletedUndo.undoableUntil).getTime() > Date.now() ? (
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                        <span>{t('memory.deletedUndoAvailable', { key: deletedUndo.key })}</span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            operation.mutate(async () => {
-                              const response = await relationshipMemoryService.undo(
-                                detail.id,
-                                deletedUndo.operationId
-                              );
-                              setDeletedUndo(null);
-                              return response;
-                            })
-                          }
-                        >
-                          <RotateCcw className="mr-1 size-4" />
-                          {t('memory.undo')}
-                        </Button>
-                      </div>
-                    ) : null}
-                    {detail.items.length === 0 ? (
-                      <EmptyState
-                        title={t('memory.noItems')}
-                        description={t('memory.noItemsDescription')}
-                      />
-                    ) : null}
-                    {detail.items
-                      .filter(item => !item.key.startsWith('notes/'))
-                      .map(item => {
-                        const draft = drafts[item.id] ?? item.content;
-                        const changed = draft.trim() !== item.content;
-                        const lastOperationId = item.last_operation_id;
-                        const undoable = Boolean(
-                          lastOperationId &&
-                            item.undoable_until &&
-                            new Date(item.undoable_until).getTime() > Date.now()
-                        );
-                        return (
-                          <div key={item.id} className="rounded-xl border p-4">
-                            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">{item.display_name || item.key}</span>
-                                <Badge variant="outline">
-                                  {detail.consumer_type === 'digital_human'
-                                    ? `/user/${item.key.replaceAll('/', '_')}.md`
-                                    : item.key}
-                                </Badge>
-                                {item.category ? (
-                                  <Badge variant="secondary">
-                                    {t(`memory.category.${item.category}`)}
-                                  </Badge>
-                                ) : null}
-                              </div>
-                              <span className="text-xs text-muted-foreground">
-                                r{item.revision} · {t(`memory.source.${item.source_kind}`)} ·{' '}
-                                {new Date(item.updated_at).toLocaleString()}
-                              </span>
-                            </div>
-                            <Textarea
-                              value={draft}
-                              disabled={!detail.can_manage || operation.isPending}
-                              maxLength={2000}
-                              onChange={event =>
-                                setDrafts(value => ({ ...value, [item.id]: event.target.value }))
-                              }
-                              className="min-h-24"
-                            />
-                            {detail.can_manage ? (
-                              <div className="mt-3 flex justify-end gap-2">
-                                {undoable && lastOperationId ? (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() =>
-                                      operation.mutate(() =>
-                                        relationshipMemoryService.undo(detail.id, lastOperationId)
-                                      )
-                                    }
-                                  >
-                                    <RotateCcw className="mr-1 size-4" />
-                                    {t('memory.undo')}
-                                  </Button>
-                                ) : null}
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="text-destructive"
-                                  onClick={() => {
-                                    if (window.confirm(t('memory.deleteItemConfirm'))) {
-                                      operation.mutate(async () => {
-                                        const response = await relationshipMemoryService.deleteItem(
-                                          detail.id,
-                                          item.key,
-                                          item.revision
-                                        );
-                                        if (response.data.deleted && response.data.undoable_until) {
-                                          setDeletedUndo({
-                                            relationshipId: detail.id,
-                                            operationId: response.data.operation_id,
-                                            key: item.display_name || item.key,
-                                            undoableUntil: response.data.undoable_until,
-                                          });
-                                        }
-                                        return response;
-                                      });
-                                    }
-                                  }}
-                                >
-                                  <Trash2 className="mr-1 size-4" />
-                                  {t('memory.delete')}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  disabled={!changed || !draft.trim()}
-                                  onClick={() =>
-                                    operation.mutate(() =>
-                                      relationshipMemoryService.putItem(detail.id, item.key, {
-                                        display_name: item.display_name,
-                                        category: item.category,
-                                        content: draft.trim(),
-                                        expected_revision: item.revision,
-                                      })
-                                    )
-                                  }
-                                >
-                                  <Save className="mr-1 size-4" />
-                                  {t('memory.save')}
-                                </Button>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-
-                    {detail.can_manage && detail.consumer_type === 'digital_human' ? (
-                      <div className="rounded-xl border border-dashed p-4">
-                        <h3 className="mb-3 text-sm font-medium">{t('memory.addItem')}</h3>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <Input
-                            value={newItem.key}
-                            maxLength={64}
-                            placeholder={t('memory.keyPlaceholder')}
-                            onChange={event =>
-                              setNewItem(value => ({ ...value, key: event.target.value }))
-                            }
-                          />
-                          <Select
-                            value={newItem.category}
-                            onValueChange={category =>
-                              setNewItem(value => ({
-                                ...value,
-                                category: category as UserMemoryCategory,
-                              }))
+                  <Tabs
+                    value={tab}
+                    onValueChange={value => setTab(value as DetailTab)}
+                    className="p-5"
+                  >
+                    <TabsList>
+                      <TabsTrigger value="memory">
+                        {t('memory.tabs.memory')}
+                        <Badge variant="subtle" className="ml-1.5">
+                          {ownItems.length}
+                        </Badge>
+                      </TabsTrigger>
+                      {detail.consumer_type === 'digital_human' ? (
+                        <TabsTrigger value="notes">{tNotes('title')}</TabsTrigger>
+                      ) : null}
+                      <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
+                      <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="memory" className="mt-4 space-y-4">
+                      {deletedUndo?.relationshipId === detail.id &&
+                      new Date(deletedUndo.undoableUntil).getTime() > Date.now() ? (
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                          <span>{t('memory.deletedUndoAvailable', { key: deletedUndo.key })}</span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              operation.mutate(async () => {
+                                const response = await relationshipMemoryService.undo(
+                                  detail.id,
+                                  deletedUndo.operationId
+                                );
+                                setDeletedUndo(null);
+                                return response;
+                              })
                             }
                           >
-                            <SelectTrigger
-                              className="w-full"
-                              aria-label={t('memory.categoryLabel')}
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {categories.map(category => (
-                                <SelectItem key={category} value={category}>
-                                  {t(`memory.category.${category}`)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            <RotateCcw className="mr-1 size-4" />
+                            {t('memory.undo')}
+                          </Button>
                         </div>
-                        <Textarea
-                          className="mt-3"
-                          value={newItem.content}
-                          maxLength={2000}
-                          placeholder={t('memory.contentPlaceholder')}
-                          onChange={event =>
-                            setNewItem(value => ({ ...value, content: event.target.value }))
-                          }
-                        />
-                        <Button
-                          className="mt-3"
-                          size="sm"
-                          disabled={!newItem.key.trim() || !newItem.content.trim()}
-                          onClick={() =>
-                            operation.mutate(async () => {
-                              await relationshipMemoryService.putItem(
-                                detail.id,
-                                newItem.key.trim(),
-                                {
-                                  display_name: newItem.key.trim(),
-                                  category: newItem.category,
-                                  content: newItem.content.trim(),
-                                  expected_revision: 0,
-                                }
-                              );
-                              setNewItem({ key: '', category: 'preference', content: '' });
-                            })
-                          }
-                        >
-                          <Plus className="mr-1 size-4" />
-                          {t('memory.add')}
-                        </Button>
-                      </div>
-                    ) : null}
-                    {detail.can_manage && detail.items.length > 0 ? (
-                      <div className="flex justify-end border-t pt-4">
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => {
-                            if (window.confirm(t('memory.clearConfirm'))) {
-                              operation.mutate(() => relationshipMemoryService.clear(detail.id));
-                            }
-                          }}
-                        >
-                          {t('memory.clearAll')}
-                        </Button>
-                      </div>
-                    ) : null}
-                    <div className="space-y-3 border-t pt-4">
-                      <h3 className="text-sm font-medium">{tHistory('title')}</h3>
-                      <MemoryHistoryPanel
+                      ) : null}
+                      <MemoryItemList
                         key={detail.id}
-                        load={async before =>
-                          (await relationshipMemoryService.history(detail.id, { before })).data
+                        canEdit={detail.can_manage}
+                        busy={operation.isPending}
+                        empty={
+                          <EmptyState
+                            title={t('memory.noItems')}
+                            description={t('memory.noItemsDescription')}
+                          />
                         }
-                        revert={versionId => relationshipMemoryService.revert(detail.id, versionId)}
-                        labelFor={key =>
-                          detail.items.find(item => item.key === key)?.display_name || key
-                        }
-                        canRevert={detail.can_manage}
-                        refreshKey={detailQuery.dataUpdatedAt}
-                        onReverted={refresh}
+                        items={ownItems.map(item => ({
+                          id: item.key,
+                          label: item.display_name || item.key,
+                          badges: [
+                            ...(item.category ? [t(`memory.category.${item.category}`)] : []),
+                            ...(detail.consumer_type === 'digital_human'
+                              ? [`/user/${item.key.replaceAll('/', '_')}.md`]
+                              : []),
+                          ],
+                          content: item.content,
+                          meta: `r${item.revision} · ${t(`memory.source.${item.source_kind}`)} · ${new Date(item.updated_at).toLocaleString()}`,
+                          undoable: Boolean(
+                            item.last_operation_id &&
+                              item.undoable_until &&
+                              new Date(item.undoable_until).getTime() > Date.now()
+                          ),
+                        }))}
+                        onSave={(row, content) => {
+                          const item = ownItems.find(candidate => candidate.key === row.id);
+                          if (!item) return Promise.resolve();
+                          return operation.mutateAsync(() =>
+                            relationshipMemoryService.putItem(detail.id, item.key, {
+                              display_name: item.display_name,
+                              category: item.category,
+                              content,
+                              expected_revision: item.revision,
+                            })
+                          );
+                        }}
+                        onUndo={row => {
+                          const operationId = ownItems.find(
+                            candidate => candidate.key === row.id
+                          )?.last_operation_id;
+                          if (operationId) {
+                            operation.mutate(() =>
+                              relationshipMemoryService.undo(detail.id, operationId)
+                            );
+                          }
+                        }}
+                        onDelete={row => {
+                          const item = ownItems.find(candidate => candidate.key === row.id);
+                          if (!item || !window.confirm(t('memory.deleteItemConfirm'))) return;
+                          operation.mutate(async () => {
+                            const response = await relationshipMemoryService.deleteItem(
+                              detail.id,
+                              item.key,
+                              item.revision
+                            );
+                            if (response.data.deleted && response.data.undoable_until) {
+                              setDeletedUndo({
+                                relationshipId: detail.id,
+                                operationId: response.data.operation_id,
+                                key: item.display_name || item.key,
+                                undoableUntil: response.data.undoable_until,
+                              });
+                            }
+                            return response;
+                          });
+                        }}
                       />
-                    </div>
+                      {detail.can_manage && detail.consumer_type === 'digital_human' ? (
+                        <div className="rounded-xl border border-dashed p-4">
+                          <h3 className="mb-3 text-sm font-medium">{t('memory.addItem')}</h3>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <Input
+                              value={newItem.key}
+                              maxLength={64}
+                              placeholder={t('memory.keyPlaceholder')}
+                              onChange={event =>
+                                setNewItem(value => ({ ...value, key: event.target.value }))
+                              }
+                            />
+                            <Select
+                              value={newItem.category}
+                              onValueChange={category =>
+                                setNewItem(value => ({
+                                  ...value,
+                                  category: category as UserMemoryCategory,
+                                }))
+                              }
+                            >
+                              <SelectTrigger
+                                className="w-full"
+                                aria-label={t('memory.categoryLabel')}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {categories.map(category => (
+                                  <SelectItem key={category} value={category}>
+                                    {t(`memory.category.${category}`)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Textarea
+                            className="mt-3"
+                            value={newItem.content}
+                            maxLength={2000}
+                            placeholder={t('memory.contentPlaceholder')}
+                            onChange={event =>
+                              setNewItem(value => ({ ...value, content: event.target.value }))
+                            }
+                          />
+                          <Button
+                            className="mt-3"
+                            size="sm"
+                            disabled={!newItem.key.trim() || !newItem.content.trim()}
+                            onClick={() =>
+                              operation.mutate(async () => {
+                                await relationshipMemoryService.putItem(
+                                  detail.id,
+                                  newItem.key.trim(),
+                                  {
+                                    display_name: newItem.key.trim(),
+                                    category: newItem.category,
+                                    content: newItem.content.trim(),
+                                    expected_revision: 0,
+                                  }
+                                );
+                                setNewItem({ key: '', category: 'preference', content: '' });
+                              })
+                            }
+                          >
+                            <Plus className="mr-1 size-4" />
+                            {t('memory.add')}
+                          </Button>
+                        </div>
+                      ) : null}
+                      {detail.can_manage && detail.items.length > 0 ? (
+                        <div className="flex justify-end border-t pt-4">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => {
+                              if (window.confirm(t('memory.clearConfirm'))) {
+                                operation.mutate(() => relationshipMemoryService.clear(detail.id));
+                              }
+                            }}
+                          >
+                            {t('memory.clearAll')}
+                          </Button>
+                        </div>
+                      ) : null}
+                    </TabsContent>
                     {detail.consumer_type === 'digital_human' ? (
-                      <div className="space-y-3 border-t pt-4">
-                        <h3 className="text-sm font-medium">{tNotes('title')}</h3>
-                        <MemoryNotesPanel
+                      <TabsContent value="notes" className="mt-4">
+                        {tab === 'notes' ? (
+                          <MemoryNotesPanel
+                            key={detail.id}
+                            load={async () =>
+                              (await relationshipMemoryService.notes(detail.id)).data.notes
+                            }
+                            remove={
+                              detail.can_manage
+                                ? note =>
+                                    relationshipMemoryService.deleteNote(
+                                      detail.id,
+                                      note.key,
+                                      note.revision
+                                    )
+                                : undefined
+                            }
+                            refreshKey={detailQuery.dataUpdatedAt}
+                          />
+                        ) : null}
+                      </TabsContent>
+                    ) : null}
+                    <TabsContent value="archive" className="mt-4">
+                      {tab === 'archive' ? (
+                        <MemoryArchivePanel
                           key={detail.id}
                           load={async () =>
-                            (await relationshipMemoryService.notes(detail.id)).data.notes
+                            (await relationshipMemoryService.archive(detail.id)).data.entries
                           }
-                          remove={
-                            detail.can_manage
-                              ? note =>
-                                  relationshipMemoryService.deleteNote(
-                                    detail.id,
-                                    note.key,
-                                    note.revision
-                                  )
-                              : undefined
+                          remove={entryId =>
+                            relationshipMemoryService.deleteArchiveEntry(detail.id, entryId)
                           }
+                          update={(entryId, content) =>
+                            relationshipMemoryService.updateArchiveEntry(
+                              detail.id,
+                              entryId,
+                              content
+                            )
+                          }
+                          canManage={detail.can_manage}
                           refreshKey={detailQuery.dataUpdatedAt}
                         />
-                      </div>
-                    ) : null}
-                    <div className="space-y-3 border-t pt-4">
-                      <h3 className="text-sm font-medium">{tArchive('title')}</h3>
-                      <MemoryArchivePanel
-                        key={detail.id}
-                        load={async () =>
-                          (await relationshipMemoryService.archive(detail.id)).data.entries
-                        }
-                        remove={entryId =>
-                          relationshipMemoryService.deleteArchiveEntry(detail.id, entryId)
-                        }
-                        update={(entryId, content) =>
-                          relationshipMemoryService.updateArchiveEntry(detail.id, entryId, content)
-                        }
-                        canManage={detail.can_manage}
-                        refreshKey={detailQuery.dataUpdatedAt}
-                      />
-                    </div>
-                  </div>
+                      ) : null}
+                    </TabsContent>
+                    <TabsContent value="history" className="mt-4">
+                      {tab === 'history' ? (
+                        <MemoryHistoryPanel
+                          key={detail.id}
+                          load={async before =>
+                            (await relationshipMemoryService.history(detail.id, { before })).data
+                          }
+                          revert={versionId =>
+                            relationshipMemoryService.revert(detail.id, versionId)
+                          }
+                          labelFor={key =>
+                            detail.items.find(item => item.key === key)?.display_name || key
+                          }
+                          canRevert={detail.can_manage}
+                          refreshKey={detailQuery.dataUpdatedAt}
+                          onReverted={refresh}
+                        />
+                      ) : null}
+                    </TabsContent>
+                  </Tabs>
                 </div>
               ) : null}
             </section>

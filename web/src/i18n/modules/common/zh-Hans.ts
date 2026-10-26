@@ -570,6 +570,14 @@ const messages: CommonMessages = {
       legacy: '早期记忆',
     },
   },
+  memoryItems: {
+    search: '搜索记忆',
+    empty: '还没有记忆。',
+    noMatch: '没有符合搜索条件的记忆。',
+    save: '保存',
+    delete: '删除',
+    undo: '撤销',
+  },
   memoryNotes: {
     title: '关于你的笔记',
     description: '数字人在与你协作中记下的事项，例如承诺和待办。笔记由数字人维护，你可以查看和删除，但不能修改。',
