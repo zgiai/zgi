@@ -283,7 +283,8 @@ func TestDigitalHumanResolverIdentitySelectsTheExactBindingInstance(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.OrganizationID != request.OrganizationID || identity.OwnerAccountID != request.OwnerAccountID ||
+	if identity.ConversationID != request.ConversationID ||
+		identity.OrganizationID != request.OrganizationID || identity.OwnerAccountID != request.OwnerAccountID ||
 		identity.ActingPrincipalID != request.ActingPrincipalID || identity.BindingID != target.ID ||
 		identity.ConnectionID != target.ConnectionID || identity.ConnectorID != request.ConnectorID ||
 		identity.OperationID != request.OperationID || identity.Target != request.Target ||
@@ -492,6 +493,7 @@ func (harness *digitalHumanHarness) capabilityRequest(scope core.TargetScope, ve
 
 func (harness *digitalHumanHarness) identityRequest(binding core.TargetBinding, operationID string) connectordispatch.IdentityResolutionRequest {
 	return connectordispatch.IdentityResolutionRequest{
+		ConversationID: uuid.NewString(),
 		OrganizationID: harness.organizationID, OwnerAccountID: harness.ownerID,
 		ActingPrincipalID: harness.ownerID, ConnectorID: binding.ConnectorID,
 		Target: binding.Target, OperationID: core.Identifier(operationID),
