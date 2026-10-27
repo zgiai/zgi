@@ -4,6 +4,7 @@ import { usePublishWorkflow, useSaveWorkflowDraft } from '@/hooks';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { flushWorkflowPendingEdits } from './pending-edits';
+import { isActiveWorkflowEditor } from '../store/helpers/editor-session';
 import type { WorkflowData } from '../store/type';
 
 /**
@@ -59,6 +60,10 @@ export const useCombinedWorkflowSave = (agentId: string) => {
           // started a follow-up snapshot while this caller was waiting.
           continue;
         }
+
+        // The editor was closed or switched to another workflow: the global
+        // store no longer holds this workflow, so never snapshot it for agentId.
+        if (!isActiveWorkflowEditor(agentId)) return false;
 
         flushWorkflowPendingEdits();
         const stateAfterFlush = useWorkflowStore.getState();
@@ -116,6 +121,10 @@ export const useCombinedWorkflowSave = (agentId: string) => {
               silent,
             });
 
+            // The request finished after the user left this workflow. Its own
+            // save is done; do not inspect or flag the next editor's store.
+            if (!isActiveWorkflowEditor(agentId)) return false;
+
             // The mutation success handler clears dirty flags. Restore them if
             // the graph changed while this exact snapshot was being persisted;
             // the loop will then save the newer snapshot before publishing.
@@ -133,11 +142,13 @@ export const useCombinedWorkflowSave = (agentId: string) => {
             }
             return true;
           } catch (error) {
-            useWorkflowStore.setState({
-              isDirty: prevIsDirty,
-              hasLayoutChanges: prevHasLayoutChanges,
-              lastSavedAt: prevLastSavedAt ?? null,
-            });
+            if (isActiveWorkflowEditor(agentId)) {
+              useWorkflowStore.setState({
+                isDirty: prevIsDirty,
+                hasLayoutChanges: prevHasLayoutChanges,
+                lastSavedAt: prevLastSavedAt ?? null,
+              });
+            }
             // The mutation hook owns user-facing error feedback.
             console.error('Failed to save workflow:', error);
             return false;

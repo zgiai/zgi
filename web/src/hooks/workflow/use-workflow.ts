@@ -1,4 +1,5 @@
 import { mergeSavedConnectorNodes } from '@/components/workflow/store/helpers/merge-saved-connectors';
+import { isActiveWorkflowEditor } from '@/components/workflow/store/helpers/editor-session';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { workflowService } from '@/services/workflow.service';
 import type {
@@ -127,7 +128,9 @@ export function useSaveWorkflowDraft() {
           context.previousWorkflowDraft
         );
       }
-      if (context) {
+      // The global store belongs to whichever editor is open now; only roll
+      // back its flags when that is still this workflow.
+      if (context && isActiveWorkflowEditor(variables.agentId)) {
         useWorkflowStore.setState({
           isDirty: context.prevIsDirty ?? true,
           hasLayoutChanges: context.prevHasLayoutChanges ?? false,
@@ -156,8 +159,10 @@ export function useSaveWorkflowDraft() {
 
       // 2. Synchronize the canonical hash into the Zustand store
       // This ensures the next save request carries the correct current hash.
+      // Skip when the user already left this workflow: the store now holds
+      // another editor's graph and must not receive this save's hash or refs.
       const currentState = useWorkflowStore.getState();
-      if (currentState.workflowData) {
+      if (currentState.workflowData && isActiveWorkflowEditor(variables.agentId)) {
         const nodes = mergeSavedConnectorNodes(
           currentState.nodes,
           variables.workflowData.graph.nodes,
