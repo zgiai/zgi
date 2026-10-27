@@ -2,10 +2,17 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Brain, Download, MoreHorizontal, Plus, Trash2 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import {
+  Brain,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  MoreHorizontal,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { ProtectedRoute } from '@/components/auth/protected-route';
+import { AccountPageHeader } from '@/components/account/account-shell';
 import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryBoard, type MemoryTopic } from '@/components/memory/memory-board';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
@@ -24,7 +31,9 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -41,7 +50,6 @@ import type {
   UserMemoryRelationshipStatus,
   UserRelationshipMemoryItem,
 } from '@/services/types/relationship-memory';
-import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { formatDate } from '@/utils/format';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -49,6 +57,8 @@ import { getErrorMessage } from '@/utils/error-notifications';
 const memoryKeys = ['user-relationship-memories'] as const;
 const categories: UserMemoryCategory[] = ['profile', 'preference', 'constraint', 'relationship'];
 const allFilterValue = 'all';
+// The assistant switcher lists one page; the API serves at most 100.
+const relationshipPageSize = 100;
 // Filters only help once there are more assistants than fit at a glance.
 const filterThreshold = 6;
 type DetailTab = 'memory' | 'notes' | 'archive' | 'history';
@@ -88,7 +98,6 @@ export default function ProfileMemoryPage() {
   const tHistory = useT('common.memoryHistory');
   const tArchive = useT('common.memoryArchive');
   const tNotes = useT('common.memoryNotes');
-  const router = useRouter();
   const queryClient = useQueryClient();
   const sessionStatus = useAuthStore.use.sessionStatus();
   const memoryQueriesEnabled = sessionStatus === 'authenticated';
@@ -115,7 +124,7 @@ export default function ProfileMemoryPage() {
         consumer_type: consumerType || undefined,
         status: status || undefined,
         page,
-        page_size: 20,
+        page_size: relationshipPageSize,
       }),
     enabled: memoryQueriesEnabled,
   });
@@ -134,8 +143,6 @@ export default function ProfileMemoryPage() {
   );
   const showFilters = total > filterThreshold || Boolean(consumerType || status);
   const autoCaptureAvailable = detail?.auto_capture_available !== false;
-  // With a single assistant the list only repeats the detail header.
-  const showList = total > 1 || Boolean(consumerType || status) || !listQuery.isSuccess;
 
   useEffect(() => {
     if (selectedId || relationships.length === 0) return;
@@ -148,7 +155,7 @@ export default function ProfileMemoryPage() {
     const requested = relationships.find(item => item.consumer_id === requestedConsumerID);
     if (requested) {
       setSelectedId(requested.id);
-    } else if (page * 20 < total) {
+    } else if (page * relationshipPageSize < total) {
       // A shortcut from an Agent or DigitalHuman must locate the relationship
       // even when it is not on the first organization-wide page.
       setPage(value => value + 1);
@@ -208,434 +215,393 @@ export default function ProfileMemoryPage() {
     setTab('memory');
   };
 
-  return (
-    <ProtectedRoute>
-      <div className="min-h-screen bg-muted/30">
-        <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mb-5">
-            <Button variant="ghost" size="sm" className="mb-2 -ml-2" onClick={() => router.back()}>
-              <ArrowLeft className="mr-1 size-4" />
-              {t('backButton')}
-            </Button>
-            <div className="flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <Brain className="size-5" />
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold">{t('memory.title')}</h1>
-                <p className="mt-0.5 text-sm text-muted-foreground">{t('memory.description')}</p>
-              </div>
-            </div>
-          </div>
+  const statusLine = (item: UserMemoryRelationship) =>
+    item.status === 'archived'
+      ? t('memory.archivedConsumer')
+      : !item.memory_enabled
+        ? t('memory.memoryOff')
+        : item.item_count === 1
+          ? t('memory.itemCountOne')
+          : t('memory.itemCount', { count: item.item_count });
 
-          {showFilters ? (
-            <div className="mb-4 flex flex-wrap gap-3">
-              <Select
-                value={consumerType || allFilterValue}
-                onValueChange={value => {
-                  setConsumerType(
-                    value === allFilterValue ? '' : (value as UserMemoryConsumerType)
-                  );
-                  setPage(1);
-                }}
-              >
-                <SelectTrigger
-                  className="w-full sm:w-[200px]"
-                  aria-label={t('memory.consumerFilter')}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={allFilterValue}>{t('memory.allConsumers')}</SelectItem>
-                  <SelectItem value="agent">{t('memory.agent')}</SelectItem>
-                  <SelectItem value="digital_human">{t('memory.digitalHuman')}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={status || allFilterValue}
-                onValueChange={value => {
-                  setStatus(
-                    value === allFilterValue ? '' : (value as UserMemoryRelationshipStatus)
-                  );
-                  setPage(1);
-                }}
-              >
-                <SelectTrigger
-                  className="w-full sm:w-[200px]"
-                  aria-label={t('memory.statusFilter')}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={allFilterValue}>{t('memory.allStatuses')}</SelectItem>
-                  <SelectItem value="active">{t('memory.active')}</SelectItem>
-                  <SelectItem value="archived">{t('memory.archived')}</SelectItem>
-                </SelectContent>
-              </Select>
+  const switcher =
+    relationships.length > 0 ? (
+      <div className="flex items-center gap-1">
+        {total > relationshipPageSize ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            isIcon
+            aria-label={t('memory.previous')}
+            disabled={page <= 1}
+            onClick={() => {
+              setPage(value => value - 1);
+              setSelectedId('');
+            }}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+        ) : null}
+        <Select
+          value={selectedId}
+          onValueChange={id => {
+            const relationship = relationships.find(item => item.id === id);
+            if (relationship) selectRelationship(relationship);
+          }}
+        >
+          <SelectTrigger
+            className="h-10 w-[min(300px,80vw)]"
+            aria-label={t('memory.switchAssistant')}
+          >
+            <SelectValue placeholder={t('memory.switchAssistant')} />
+          </SelectTrigger>
+          <SelectContent align="end" className="max-h-96">
+            {grouped.map(group => (
+              <SelectGroup key={group.id}>
+                {grouped.length > 1 ? <SelectLabel>{group.name}</SelectLabel> : null}
+                {group.items.map(item => (
+                  <SelectItem key={item.id} value={item.id}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[10px] font-medium text-primary">
+                        {initialsOf(item.consumer_name_snapshot || item.consumer_id)}
+                      </span>
+                      <span className="truncate">
+                        {item.consumer_name_snapshot || item.consumer_id}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {statusLine(item)}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+          </SelectContent>
+        </Select>
+        {total > relationshipPageSize ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            isIcon
+            aria-label={t('memory.next')}
+            disabled={page * relationshipPageSize >= total}
+            onClick={() => {
+              setPage(value => value + 1);
+              setSelectedId('');
+            }}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        ) : null}
+      </div>
+    ) : null;
+
+  return (
+    <div>
+      <AccountPageHeader
+        title={t('memory.title')}
+        description={t('memory.description')}
+        actions={switcher}
+      />
+
+      {showFilters ? (
+        <div className="mb-4 flex flex-wrap gap-3">
+          <Select
+            value={consumerType || allFilterValue}
+            onValueChange={value => {
+              setConsumerType(value === allFilterValue ? '' : (value as UserMemoryConsumerType));
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-[200px]" aria-label={t('memory.consumerFilter')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={allFilterValue}>{t('memory.allConsumers')}</SelectItem>
+              <SelectItem value="agent">{t('memory.agent')}</SelectItem>
+              <SelectItem value="digital_human">{t('memory.digitalHuman')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={status || allFilterValue}
+            onValueChange={value => {
+              setStatus(value === allFilterValue ? '' : (value as UserMemoryRelationshipStatus));
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-[200px]" aria-label={t('memory.statusFilter')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={allFilterValue}>{t('memory.allStatuses')}</SelectItem>
+              <SelectItem value="active">{t('memory.active')}</SelectItem>
+              <SelectItem value="archived">{t('memory.archived')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+
+      {listQuery.isLoading ? <Skeleton className="h-[420px] rounded-xl" /> : null}
+      {listQuery.isError ? (
+        <section className="rounded-xl border bg-background">
+          <EmptyState
+            title={t('memory.loadFailed')}
+            action={
+              <Button size="sm" onClick={() => listQuery.refetch()}>
+                {t('memory.retry')}
+              </Button>
+            }
+          />
+        </section>
+      ) : null}
+      {listQuery.isSuccess && relationships.length === 0 ? (
+        <section className="rounded-xl border bg-background">
+          <EmptyState title={t('memory.empty')} description={t('memory.emptyDescription')} />
+        </section>
+      ) : null}
+
+      {selectedId ? (
+        <section className="min-h-[420px] rounded-xl border bg-background">
+          {detailQuery.isLoading ? (
+            <div className="space-y-4 p-6">
+              <Skeleton className="h-8 w-56" />
+              <Skeleton className="h-24" />
+              <Skeleton className="h-32" />
             </div>
           ) : null}
-
-          <div className={cn('grid gap-5', showList && 'lg:grid-cols-[240px_minmax(0,1fr)]')}>
-            <section
-              className={cn('space-y-4 lg:sticky lg:top-6 lg:self-start', !showList && 'hidden')}
-            >
-              {listQuery.isLoading
-                ? [0, 1, 2].map(item => <Skeleton key={item} className="h-20 rounded-xl" />)
-                : null}
-              {listQuery.isError ? (
-                <EmptyState
-                  title={t('memory.loadFailed')}
-                  action={
-                    <Button size="sm" onClick={() => listQuery.refetch()}>
-                      {t('memory.retry')}
-                    </Button>
-                  }
-                />
-              ) : null}
-              {!listQuery.isLoading && !listQuery.isError && grouped.length === 0 ? (
-                <EmptyState title={t('memory.empty')} description={t('memory.emptyDescription')} />
-              ) : null}
-              {grouped.map(group => (
-                <div key={group.id}>
-                  <div className="mb-1.5 px-1 text-xs font-medium text-muted-foreground">
-                    {group.name}
-                  </div>
-                  <div className="space-y-1">
-                    {group.items.map(item => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        aria-pressed={selectedId === item.id}
-                        onClick={() => selectRelationship(item)}
-                        className={cn(
-                          'w-full rounded-xl border border-transparent p-2.5 text-left transition-colors hover:bg-background',
-                          selectedId === item.id && 'border-border bg-background shadow-sm'
-                        )}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={cn(
-                              'flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-medium',
-                              selectedId === item.id
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-primary/10 text-primary'
-                            )}
-                          >
-                            {initialsOf(item.consumer_name_snapshot || item.consumer_id)}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div
-                              className="truncate text-sm font-medium"
-                              title={item.consumer_name_snapshot}
-                            >
-                              {item.consumer_name_snapshot || item.consumer_id}
-                            </div>
-                            <div className="mt-0.5 text-xs text-muted-foreground">
-                              {item.status === 'archived'
-                                ? t('memory.archivedConsumer')
-                                : !item.memory_enabled
-                                  ? t('memory.memoryOff')
-                                  : item.item_count === 1
-                                    ? t('memory.itemCountOne')
-                                    : t('memory.itemCount', { count: item.item_count })}
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              {total > 20 ? (
-                <div className="flex items-center justify-between">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page <= 1}
-                    onClick={() => setPage(value => value - 1)}
-                  >
-                    {t('memory.previous')}
-                  </Button>
-                  <span className="text-xs text-muted-foreground">{page}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page * 20 >= total}
-                    onClick={() => setPage(value => value + 1)}
-                  >
-                    {t('memory.next')}
-                  </Button>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="min-h-[420px] rounded-xl border bg-background">
-              {selectedId && detailQuery.isLoading ? (
-                <div className="space-y-4 p-6">
-                  <Skeleton className="h-8 w-56" />
-                  <Skeleton className="h-24" />
-                  <Skeleton className="h-32" />
-                </div>
-              ) : null}
-              {selectedId && detailQuery.isError ? (
-                <EmptyState
-                  title={t('memory.loadFailed')}
-                  action={
-                    <Button size="sm" onClick={() => detailQuery.refetch()}>
-                      {t('memory.retry')}
-                    </Button>
-                  }
-                />
-              ) : null}
-              {detail ? (
-                <div>
-                  <div className="border-b px-5 pb-4 pt-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <h2 className="truncate text-lg font-semibold">
-                          {detail.consumer_name_snapshot || detail.consumer_id}
-                        </h2>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {detail.workspace_name} ·{' '}
-                          {detail.consumer_type === 'agent'
-                            ? t('memory.agent')
-                            : t('memory.digitalHuman')}
-                        </p>
-                      </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" aria-label={t('memory.moreActions')}>
-                            <MoreHorizontal className="mr-1 size-4" />
-                            {t('memory.more')}
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onSelect={async () => {
-                              const value = await relationshipMemoryService.export(detail.id);
-                              downloadJSON(`user-memory-${detail.id}.json`, value.data);
-                            }}
-                          >
-                            <Download />
-                            {t('memory.export')}
-                          </DropdownMenuItem>
-                          {detail.can_manage && ownItems.length > 0 ? (
-                            <DropdownMenuItem onSelect={() => setConfirm('clear')}>
-                              <Trash2 />
-                              {t('memory.clearAll')}
-                            </DropdownMenuItem>
-                          ) : null}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onSelect={() => setConfirm('delete')}
-                          >
-                            <Trash2 />
-                            {t('memory.permanentDelete')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg bg-muted/50 px-3 py-2">
-                      <SettingToggle
-                        id="memory-enabled"
-                        label={t('memory.memoryEnabled')}
-                        hint={t('memory.memoryEnabledHint')}
-                      >
-                        <Switch
-                          aria-labelledby="memory-enabled"
-                          checked={detail.memory_enabled}
-                          disabled={!detail.can_manage || settings.isPending}
-                          onCheckedChange={checked =>
-                            settings.mutate(() =>
-                              relationshipMemoryService.updateSettings(detail.id, {
-                                memory_enabled: checked,
-                                expected_revision: detail.settings_revision,
-                              })
-                            )
-                          }
-                        />
-                      </SettingToggle>
-                      <SettingToggle
-                        id="memory-auto-capture"
-                        label={t('memory.autoCapture')}
-                        hint={
-                          autoCaptureAvailable
-                            ? t('memory.autoCaptureHint')
-                            : t('memory.autoCaptureUnavailableHint')
+          {detailQuery.isError ? (
+            <EmptyState
+              title={t('memory.loadFailed')}
+              action={
+                <Button size="sm" onClick={() => detailQuery.refetch()}>
+                  {t('memory.retry')}
+                </Button>
+              }
+            />
+          ) : null}
+          {detail ? (
+            <div>
+              <div className="border-b px-5 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                    <SettingToggle
+                      id="memory-enabled"
+                      label={t('memory.memoryEnabled')}
+                      hint={t('memory.memoryEnabledHint')}
+                    >
+                      <Switch
+                        aria-labelledby="memory-enabled"
+                        checked={detail.memory_enabled}
+                        disabled={!detail.can_manage || settings.isPending}
+                        onCheckedChange={checked =>
+                          settings.mutate(() =>
+                            relationshipMemoryService.updateSettings(detail.id, {
+                              memory_enabled: checked,
+                              expected_revision: detail.settings_revision,
+                            })
+                          )
                         }
-                        note={autoCaptureAvailable ? undefined : t('memory.autoCaptureUnavailable')}
-                      >
-                        <Switch
-                          aria-labelledby="memory-auto-capture"
-                          checked={autoCaptureAvailable && detail.auto_capture_enabled}
-                          disabled={
-                            !autoCaptureAvailable ||
-                            !detail.can_manage ||
-                            !detail.memory_enabled ||
-                            settings.isPending
-                          }
-                          onCheckedChange={checked =>
-                            settings.mutate(() =>
-                              relationshipMemoryService.updateSettings(detail.id, {
-                                auto_capture_enabled: checked,
-                                expected_revision: detail.settings_revision,
-                              })
-                            )
-                          }
-                        />
-                      </SettingToggle>
-                    </div>
-                    {!detail.can_manage ? (
-                      <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
-                        {t('memory.readOnly')}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <Tabs
-                    value={tab}
-                    onValueChange={value => setTab(value as DetailTab)}
-                    className="p-5"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <TabsList>
-                        <TabsTrigger value="memory">{t('memory.tabs.memory')}</TabsTrigger>
-                        {detail.consumer_type === 'digital_human' ? (
-                          <TabsTrigger value="notes">{tNotes('title')}</TabsTrigger>
-                        ) : null}
-                        <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
-                        <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
-                      </TabsList>
-                      {tab === 'memory' && detail.can_manage && ownItems.length > 0 ? (
-                        <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
-                          <Plus className="mr-1 size-4" />
-                          {tItems('add')}
-                        </Button>
-                      ) : null}
-                    </div>
-                    <TabsContent value="memory" className="mt-4">
-                      <RelationshipMemoryBoard
-                        key={detail.id}
-                        detail={detail}
-                        items={ownItems}
-                        act={act}
-                        tItems={tItems}
-                        categoryTitle={category => t(`memory.category.${category}`)}
-                        empty={t('memory.noItems')}
-                        addOpen={addOpen}
-                        onAddOpenChange={setAddOpen}
                       />
-                    </TabsContent>
-                    {detail.consumer_type === 'digital_human' ? (
-                      <TabsContent value="notes" className="mt-4">
-                        {tab === 'notes' ? (
-                          <MemoryNotesPanel
-                            key={detail.id}
-                            load={async () =>
-                              (await relationshipMemoryService.notes(detail.id)).data.notes
-                            }
-                            remove={
-                              detail.can_manage
-                                ? note =>
-                                    relationshipMemoryService.deleteNote(
-                                      detail.id,
-                                      note.key,
-                                      note.revision
-                                    )
-                                : undefined
-                            }
-                            refreshKey={detailQuery.dataUpdatedAt}
-                          />
-                        ) : null}
-                      </TabsContent>
-                    ) : null}
-                    <TabsContent value="archive" className="mt-4">
-                      {tab === 'archive' ? (
-                        <MemoryArchivePanel
-                          key={detail.id}
-                          load={async () =>
-                            (await relationshipMemoryService.archive(detail.id)).data.entries
-                          }
-                          remove={entryId =>
-                            relationshipMemoryService.deleteArchiveEntry(detail.id, entryId)
-                          }
-                          update={(entryId, content) =>
-                            relationshipMemoryService.updateArchiveEntry(
-                              detail.id,
-                              entryId,
-                              content
-                            )
-                          }
-                          canManage={detail.can_manage}
-                          refreshKey={detailQuery.dataUpdatedAt}
-                        />
+                    </SettingToggle>
+                    <SettingToggle
+                      id="memory-auto-capture"
+                      label={t('memory.autoCapture')}
+                      hint={
+                        autoCaptureAvailable
+                          ? t('memory.autoCaptureHint')
+                          : t('memory.autoCaptureUnavailableHint')
+                      }
+                      note={autoCaptureAvailable ? undefined : t('memory.autoCaptureUnavailable')}
+                    >
+                      <Switch
+                        aria-labelledby="memory-auto-capture"
+                        checked={autoCaptureAvailable && detail.auto_capture_enabled}
+                        disabled={
+                          !autoCaptureAvailable ||
+                          !detail.can_manage ||
+                          !detail.memory_enabled ||
+                          settings.isPending
+                        }
+                        onCheckedChange={checked =>
+                          settings.mutate(() =>
+                            relationshipMemoryService.updateSettings(detail.id, {
+                              auto_capture_enabled: checked,
+                              expected_revision: detail.settings_revision,
+                            })
+                          )
+                        }
+                      />
+                    </SettingToggle>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" aria-label={t('memory.moreActions')}>
+                        <MoreHorizontal className="mr-1 size-4" />
+                        {t('memory.more')}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onSelect={async () => {
+                          const value = await relationshipMemoryService.export(detail.id);
+                          downloadJSON(`user-memory-${detail.id}.json`, value.data);
+                        }}
+                      >
+                        <Download />
+                        {t('memory.export')}
+                      </DropdownMenuItem>
+                      {detail.can_manage && ownItems.length > 0 ? (
+                        <DropdownMenuItem onSelect={() => setConfirm('clear')}>
+                          <Trash2 />
+                          {t('memory.clearAll')}
+                        </DropdownMenuItem>
                       ) : null}
-                    </TabsContent>
-                    <TabsContent value="history" className="mt-4">
-                      {tab === 'history' ? (
-                        <MemoryHistoryPanel
-                          key={detail.id}
-                          load={async before =>
-                            (await relationshipMemoryService.history(detail.id, { before })).data
-                          }
-                          revert={versionId =>
-                            relationshipMemoryService.revert(detail.id, versionId)
-                          }
-                          labelFor={key => {
-                            const item = detail.items.find(candidate => candidate.key === key);
-                            return memoryTopicTitle(key, item?.display_name, topic =>
-                              tItems(`topics.${topic}`)
-                            );
-                          }}
-                          canRevert={detail.can_manage}
-                          refreshKey={detailQuery.dataUpdatedAt}
-                          onReverted={refresh}
-                        />
-                      ) : null}
-                    </TabsContent>
-                  </Tabs>
-
-                  <ConfirmDialog
-                    open={confirm === 'clear'}
-                    onOpenChange={next => !next && setConfirm(null)}
-                    title={t('memory.clearConfirmTitle')}
-                    description={t('memory.clearConfirm')}
-                    confirmText={t('memory.clearAll')}
-                    cancelText={t('memory.cancel')}
-                    variant="danger"
-                    loading={settings.isPending}
-                    onConfirm={() =>
-                      settings.mutate(async () => {
-                        await relationshipMemoryService.clear(detail.id);
-                        setConfirm(null);
-                      })
-                    }
-                  />
-                  <ConfirmDialog
-                    open={confirm === 'delete'}
-                    onOpenChange={next => !next && setConfirm(null)}
-                    title={t('memory.permanentDeleteTitle')}
-                    description={t('memory.deleteRelationshipConfirm')}
-                    confirmText={t('memory.permanentDelete')}
-                    cancelText={t('memory.cancel')}
-                    variant="danger"
-                    loading={settings.isPending}
-                    onConfirm={() =>
-                      settings.mutate(async () => {
-                        await relationshipMemoryService.permanentlyDelete(detail.id);
-                        setConfirm(null);
-                        setSelectedId('');
-                      })
-                    }
-                  />
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onSelect={() => setConfirm('delete')}>
+                        <Trash2 />
+                        {t('memory.permanentDelete')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
-              ) : null}
-            </section>
-          </div>
-        </div>
-      </div>
-    </ProtectedRoute>
+                {!detail.can_manage ? (
+                  <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+                    {t('memory.readOnly')}
+                  </p>
+                ) : null}
+              </div>
+
+              <Tabs value={tab} onValueChange={value => setTab(value as DetailTab)} className="p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <TabsList>
+                    <TabsTrigger value="memory">{t('memory.tabs.memory')}</TabsTrigger>
+                    {detail.consumer_type === 'digital_human' ? (
+                      <TabsTrigger value="notes">{tNotes('title')}</TabsTrigger>
+                    ) : null}
+                    <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
+                    <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
+                  </TabsList>
+                  {tab === 'memory' && detail.can_manage && ownItems.length > 0 ? (
+                    <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+                      <Plus className="mr-1 size-4" />
+                      {tItems('add')}
+                    </Button>
+                  ) : null}
+                </div>
+                <TabsContent value="memory" className="mt-4">
+                  <RelationshipMemoryBoard
+                    key={detail.id}
+                    detail={detail}
+                    items={ownItems}
+                    act={act}
+                    tItems={tItems}
+                    categoryTitle={category => t(`memory.category.${category}`)}
+                    empty={t('memory.noItems')}
+                    addOpen={addOpen}
+                    onAddOpenChange={setAddOpen}
+                  />
+                </TabsContent>
+                {detail.consumer_type === 'digital_human' ? (
+                  <TabsContent value="notes" className="mt-4">
+                    {tab === 'notes' ? (
+                      <MemoryNotesPanel
+                        key={detail.id}
+                        load={async () =>
+                          (await relationshipMemoryService.notes(detail.id)).data.notes
+                        }
+                        remove={
+                          detail.can_manage
+                            ? note =>
+                                relationshipMemoryService.deleteNote(
+                                  detail.id,
+                                  note.key,
+                                  note.revision
+                                )
+                            : undefined
+                        }
+                        refreshKey={detailQuery.dataUpdatedAt}
+                      />
+                    ) : null}
+                  </TabsContent>
+                ) : null}
+                <TabsContent value="archive" className="mt-4">
+                  {tab === 'archive' ? (
+                    <MemoryArchivePanel
+                      key={detail.id}
+                      load={async () =>
+                        (await relationshipMemoryService.archive(detail.id)).data.entries
+                      }
+                      remove={entryId =>
+                        relationshipMemoryService.deleteArchiveEntry(detail.id, entryId)
+                      }
+                      update={(entryId, content) =>
+                        relationshipMemoryService.updateArchiveEntry(detail.id, entryId, content)
+                      }
+                      canManage={detail.can_manage}
+                      refreshKey={detailQuery.dataUpdatedAt}
+                    />
+                  ) : null}
+                </TabsContent>
+                <TabsContent value="history" className="mt-4">
+                  {tab === 'history' ? (
+                    <MemoryHistoryPanel
+                      key={detail.id}
+                      load={async before =>
+                        (await relationshipMemoryService.history(detail.id, { before })).data
+                      }
+                      revert={versionId => relationshipMemoryService.revert(detail.id, versionId)}
+                      labelFor={key => {
+                        const item = detail.items.find(candidate => candidate.key === key);
+                        return memoryTopicTitle(key, item?.display_name, topic =>
+                          tItems(`topics.${topic}`)
+                        );
+                      }}
+                      canRevert={detail.can_manage}
+                      refreshKey={detailQuery.dataUpdatedAt}
+                      onReverted={refresh}
+                    />
+                  ) : null}
+                </TabsContent>
+              </Tabs>
+
+              <ConfirmDialog
+                open={confirm === 'clear'}
+                onOpenChange={next => !next && setConfirm(null)}
+                title={t('memory.clearConfirmTitle')}
+                description={t('memory.clearConfirm')}
+                confirmText={t('memory.clearAll')}
+                cancelText={t('memory.cancel')}
+                variant="danger"
+                loading={settings.isPending}
+                onConfirm={() =>
+                  settings.mutate(async () => {
+                    await relationshipMemoryService.clear(detail.id);
+                    setConfirm(null);
+                  })
+                }
+              />
+              <ConfirmDialog
+                open={confirm === 'delete'}
+                onOpenChange={next => !next && setConfirm(null)}
+                title={t('memory.permanentDeleteTitle')}
+                description={t('memory.deleteRelationshipConfirm')}
+                confirmText={t('memory.permanentDelete')}
+                cancelText={t('memory.cancel')}
+                variant="danger"
+                loading={settings.isPending}
+                onConfirm={() =>
+                  settings.mutate(async () => {
+                    await relationshipMemoryService.permanentlyDelete(detail.id);
+                    setConfirm(null);
+                    setSelectedId('');
+                  })
+                }
+              />
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
   );
 }
 

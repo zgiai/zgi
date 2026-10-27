@@ -47,6 +47,7 @@ const messages: ProfileMessages = {
     previous: '上一页',
     next: '下一页',
     moreActions: '更多操作',
+    switchAssistant: '选择助手',
     more: '更多',
     export: '下载副本',
     permanentDelete: '永久删除',

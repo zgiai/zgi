@@ -46,6 +46,7 @@ const messages = {
     previous: 'Previous',
     next: 'Next',
     moreActions: 'More actions',
+    switchAssistant: 'Choose an assistant',
     more: 'More',
     export: 'Download a copy',
     permanentDelete: 'Delete permanently',

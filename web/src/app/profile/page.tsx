@@ -1,9 +1,8 @@
 'use client';
 
 import React from 'react';
-import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
-import { ProtectedRoute } from '@/components/auth/protected-route';
+import { AccountPageHeader } from '@/components/account/account-shell';
 import { useAuthStore } from '@/store/auth-store';
 import { useProfile, useUpdateProfile } from '@/hooks/use-profile';
 import { Button } from '@/components/ui/button';
@@ -33,7 +32,6 @@ interface ProfileFormValues {
 }
 
 export default function ProfilePage() {
-  const router = useRouter();
   const t = useT('profile');
 
   const user = useAuthStore.use.user();
@@ -106,23 +104,10 @@ export default function ProfilePage() {
   };
 
   return (
-    <ProtectedRoute>
-      <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* Header */}
-          <div className="mb-8">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.back()}
-              className="mb-4 hover:bg-muted/50 transition-colors"
-            >
-              <Icons.ChevronLeft className="h-4 w-4 mr-1" />
-              {t('backButton')}
-            </Button>
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground">{t('title')}</h1>
-            <p className="text-sm text-muted-foreground mt-1">{t('personalInfoDesc')}</p>
-          </div>
+    <>
+      <div>
+        <div className="max-w-3xl">
+          <AccountPageHeader title={t('title')} description={t('personalInfoDesc')} />
 
           {/* Main Content Card */}
           <div className="bg-background rounded-xl border border-border shadow-sm overflow-hidden">
@@ -261,7 +246,13 @@ export default function ProfilePage() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => router.back()}
+                      onClick={() => {
+                        // Cancel discards unsaved edits; the page itself stays.
+                        form.reset();
+                        setAvatarPreview(profile?.avatar_url || user?.avatar_url || null);
+                        setAvatarFileId(null);
+                        setAvatarRemoved(false);
+                      }}
                       className="h-10 px-6 hover:bg-muted transition-colors"
                     >
                       {t('cancel')}
@@ -296,6 +287,6 @@ export default function ProfilePage() {
           aspect={1}
         />
       </div>
-    </ProtectedRoute>
+    </>
   );
 }

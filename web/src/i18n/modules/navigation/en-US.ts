@@ -14,6 +14,8 @@ const messages = {
   systemSettings: 'Personal Settings',
   profile: 'Profile',
   memory: 'My memory',
+  accountCenter: 'Account',
+  backToWorkspace: 'Back to workspace',
   notifications: 'Notification settings',
   models: 'Models',
   modelPlaza: 'Model Plaza',

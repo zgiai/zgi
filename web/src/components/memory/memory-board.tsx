@@ -48,6 +48,12 @@ import { joinFacts, splitFacts } from './memory-topics';
 const undoToastDuration = 10_000;
 // How long a fact that was just written stays highlighted.
 const highlightDuration = 2_500;
+// Quiet icon buttons for row and topic actions: small, muted until hovered.
+const iconActionClass =
+  'size-7 rounded-md text-muted-foreground hover:bg-background hover:text-foreground [&_svg]:size-3.5';
+const dangerIconActionClass = `${iconActionClass} hover:text-destructive`;
+// The confirm button beside an inline editor.
+const confirmIconClass = 'size-7 rounded-md [&_svg]:size-3.5';
 
 export interface MemoryTopic {
   key: string;
@@ -358,10 +364,14 @@ export function MemoryBoard({
                             variant="ghost"
                             size="xs"
                             isIcon
-                            className="sm:opacity-0 sm:transition-opacity sm:focus-visible:opacity-100 sm:group-focus-within/topic:opacity-100 sm:group-hover/topic:opacity-100 data-[state=open]:opacity-100"
+                            interactive={false}
+                            className={cn(
+                              iconActionClass,
+                              'hover:bg-muted sm:opacity-0 sm:transition-opacity sm:focus-visible:opacity-100 sm:group-focus-within/topic:opacity-100 sm:group-hover/topic:opacity-100 data-[state=open]:bg-muted data-[state=open]:opacity-100'
+                            )}
                             aria-label={t('topicActions', { topic: topic.title })}
                           >
-                            <MoreHorizontal className="size-4" />
+                            <MoreHorizontal />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
@@ -412,6 +422,7 @@ export function MemoryBoard({
                             <Button
                               size="xs"
                               isIcon
+                              className={confirmIconClass}
                               aria-label={t('save')}
                               disabled={busy}
                               onClick={() => void saveEdit(topic)}
@@ -422,6 +433,8 @@ export function MemoryBoard({
                               variant="ghost"
                               size="xs"
                               isIcon
+                              className={iconActionClass}
+                              interactive={false}
                               aria-label={t('cancel')}
                               disabled={busy}
                               onClick={() => setEditing(null)}
@@ -456,6 +469,8 @@ export function MemoryBoard({
                                   variant="ghost"
                                   size="xs"
                                   isIcon
+                                  className={iconActionClass}
+                                  interactive={false}
                                   aria-label={t('editFact')}
                                   disabled={busy}
                                   onClick={() => setEditing({ key: topic.key, index, text: fact })}
@@ -468,7 +483,8 @@ export function MemoryBoard({
                                   isIcon
                                   aria-label={t('deleteFact')}
                                   disabled={busy}
-                                  className="hover:text-destructive"
+                                  className={dangerIconActionClass}
+                                  interactive={false}
                                   onClick={() => void removeFact(topic, index)}
                                 >
                                   <Trash2 />
@@ -503,6 +519,7 @@ export function MemoryBoard({
                       <Button
                         size="xs"
                         isIcon
+                        className={confirmIconClass}
                         aria-label={t('save')}
                         disabled={busy}
                         onClick={() => void saveAdded(topic)}
@@ -513,6 +530,8 @@ export function MemoryBoard({
                         variant="ghost"
                         size="xs"
                         isIcon
+                        className={iconActionClass}
+                        interactive={false}
                         aria-label={t('cancel')}
                         disabled={busy}
                         onClick={() => setAdding(null)}

@@ -16,6 +16,8 @@ const messages: NavigationMessages = {
   systemSettings: '个人设置',
   profile: '个人资料',
   memory: '我的记忆',
+  accountCenter: '个人中心',
+  backToWorkspace: '返回工作台',
   notifications: '通知设置',
   models: '模型',
   modelPlaza: '模型广场',
