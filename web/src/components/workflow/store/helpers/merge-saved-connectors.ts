@@ -11,7 +11,11 @@ function identity(node: WorkflowNode): string {
   ]);
 }
 
-/** Apply server-assigned references only while the submitted selection is unchanged. */
+/**
+ * Apply server-assigned references only while the submitted selection is unchanged.
+ * Returns `current` itself when no node needed a server reference, so callers can
+ * keep reference equality and avoid treating an unchanged graph as edited.
+ */
 export function mergeSavedConnectorNodes(
   current: WorkflowNode[],
   submitted: WorkflowNode[],
@@ -19,7 +23,8 @@ export function mergeSavedConnectorNodes(
 ): WorkflowNode[] {
   const before = new Map(submitted.map(node => [node.id, node]));
   const saved = new Map(canonical.map(node => [node.id, node]));
-  return current.map(node => {
+  let changed = false;
+  const merged = current.map(node => {
     const source = before.get(node.id);
     const next = saved.get(node.id);
     if (
@@ -32,6 +37,7 @@ export function mergeSavedConnectorNodes(
     }
     const data = next.data as Record<string, unknown>;
     if (identity(source) === identity(next)) return node;
+    changed = true;
     return {
       ...node,
       data: {
@@ -44,4 +50,5 @@ export function mergeSavedConnectorNodes(
       },
     } as WorkflowNode;
   });
+  return changed ? merged : current;
 }

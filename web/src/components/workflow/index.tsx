@@ -536,6 +536,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     shouldGuard: !isReadOnly,
     isValid,
     isSaving,
+    assetKind: agentType === AgentType.AGENT ? 'agent' : 'workflow',
     onSave: handleCombinedSave,
   });
 

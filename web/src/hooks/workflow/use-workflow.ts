@@ -172,11 +172,17 @@ export function useSaveWorkflowDraft() {
         const remainingCommands = (
           currentState.workflowData.connector_reference_commands ?? []
         ).filter(command => acceptedCommands.get(command.reference_id) !== JSON.stringify(command));
+        // Only replace nodes when the server assigned new connector references.
+        // A fresh array for an unchanged graph would look like an edit to the
+        // save loop and trigger another save.
+        const nodesChanged = nodes !== currentState.nodes;
         useWorkflowStore.setState({
-          nodes,
+          ...(nodesChanged ? { nodes } : {}),
           workflowData: {
             ...currentState.workflowData,
-            graph: { ...currentState.workflowData.graph, nodes },
+            graph: nodesChanged
+              ? { ...currentState.workflowData.graph, nodes }
+              : currentState.workflowData.graph,
             connector_reference_commands: remainingCommands,
             hash: data.hash,
           },

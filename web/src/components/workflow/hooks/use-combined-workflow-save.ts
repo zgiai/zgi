@@ -4,6 +4,34 @@ import { usePublishWorkflow, useSaveWorkflowDraft } from '@/hooks';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { flushWorkflowPendingEdits } from './pending-edits';
+import type { WorkflowData } from '../store/type';
+
+/**
+ * Upper bound on consecutive draft saves one call may run. A follow-up pass is
+ * only needed when the user edits while a save is in flight; if the store keeps
+ * reporting changes beyond this, stop and leave the dirty flags for the next save
+ * instead of hammering the API.
+ */
+const MAX_SAVE_PASSES = 5;
+
+/**
+ * Comparable key for workflow metadata outside the graph. Connector reference
+ * commands the server accepted are dropped from the store after a successful
+ * save, so they are excluded here (and a missing list equals an empty one).
+ */
+function workflowMetadataKey(
+  data: WorkflowData | null | undefined,
+  acceptedCommands: ReadonlySet<string>
+): string {
+  return JSON.stringify({
+    ...data,
+    graph: undefined,
+    hash: undefined,
+    connector_reference_commands: (data?.connector_reference_commands ?? []).filter(
+      command => !acceptedCommands.has(JSON.stringify(command))
+    ),
+  });
+}
 
 /**
  * Combined workflow save hook that handles both local store update and API save
@@ -21,6 +49,7 @@ export const useCombinedWorkflowSave = (agentId: string) => {
       const silent = options?.silent ?? false;
       const saveToast = options?.saveToast;
       let savedAtLeastOnce = false;
+      let savePasses = 0;
 
       for (;;) {
         const activeSave = inFlightSaveRef.current;
@@ -41,6 +70,15 @@ export const useCombinedWorkflowSave = (agentId: string) => {
           return true;
         }
 
+        if (savePasses >= MAX_SAVE_PASSES) {
+          // The latest successful save is persisted; newer local changes keep
+          // their dirty flags and will be picked up by the next save.
+          console.warn('Workflow draft still changing after repeated saves; deferring.');
+          if (!silent && saveToast) toast.success(saveToast);
+          return true;
+        }
+        savePasses += 1;
+
         const {
           isDirty: prevIsDirty,
           hasLayoutChanges: prevHasLayoutChanges,
@@ -56,11 +94,10 @@ export const useCombinedWorkflowSave = (agentId: string) => {
           graph: { nodes, edges, viewport },
           hash: Date.now().toString(),
         } as typeof workflowData;
-        const submittedMetadata = JSON.stringify({
-          ...workflowData,
-          graph: undefined,
-          hash: undefined,
-        });
+        const acceptedCommands = new Set(
+          (workflowData?.connector_reference_commands ?? []).map(command => JSON.stringify(command))
+        );
+        const submittedMetadata = workflowMetadataKey(workflowData, acceptedCommands);
 
         const savePromise = (async (): Promise<boolean> => {
           useWorkflowStore.setState({
@@ -83,11 +120,7 @@ export const useCombinedWorkflowSave = (agentId: string) => {
             // the graph changed while this exact snapshot was being persisted;
             // the loop will then save the newer snapshot before publishing.
             const current = useWorkflowStore.getState();
-            const currentMetadata = JSON.stringify({
-              ...current.workflowData,
-              graph: undefined,
-              hash: undefined,
-            });
+            const currentMetadata = workflowMetadataKey(current.workflowData, acceptedCommands);
             const semanticChanged =
               current.graphVersion !== graphVersion || currentMetadata !== submittedMetadata;
             const graphOrLayoutChanged =
