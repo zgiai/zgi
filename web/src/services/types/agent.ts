@@ -494,22 +494,11 @@ export interface AgentMemoryConfigResponse {
   instructions?: string;
 }
 
-export interface AgentMemoryPreviewTurn {
-  user: string;
-  assistant?: string;
-}
-
-export interface AgentMemoryTemplateSample {
-  name: string;
-  turns: AgentMemoryPreviewTurn[];
-}
-
 export interface AgentMemoryTemplate {
   id: string;
   name: string;
   description: string;
   instructions: string;
-  samples: AgentMemoryTemplateSample[];
 }
 
 export interface AgentMemoryTemplatesResponse {

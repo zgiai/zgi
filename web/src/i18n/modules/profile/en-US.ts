@@ -1,6 +1,5 @@
 const messages = {
   title: 'Profile',
-  backButton: 'Back',
   personalInfo: 'Personal Information',
   personalInfoDesc: 'Manage your personal profile and preferences',
   accountDetails: 'Account Details',

@@ -8,7 +8,6 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
@@ -72,7 +71,6 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		internalWorkflowHandler.SetDiagnoser(diagnosis.NewDiagnoser(context.Background(), llmClientTyped))
 	}
 
-	agentMemoryService := agentmemory.NewService(db)
 	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
 	var runtimeAgentMemory any = userRelationshipMemory
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
@@ -93,7 +91,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	if graphFlowService != nil {
 		defaultModelResolver = graphFlowService.DefaultModelSvc
 	}
-	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	agentHandler := agents.NewAgentsHandler(agentService, nil, accountService, enterpriseService, db, chatRuntimeService)
 	agentHandler.SetFileService(fileService)
 	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)

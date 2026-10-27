@@ -123,16 +123,3 @@ type UndoResponse struct {
 	OperationID string             `json:"operation_id"`
 	Value       *SlotValueResponse `json:"value,omitempty"`
 }
-
-type ScheduleExtractionRequest struct {
-	WorkspaceID        string
-	AgentID            string
-	UserScope          string
-	UserID             string
-	ConversationID     string
-	MessageWatermarkID string
-	ExtractorVersion   string
-	ConfigScope        string
-	ConfigRevision     string
-	Slots              []RuntimeSlot
-}

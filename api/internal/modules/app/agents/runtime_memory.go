@@ -26,9 +26,6 @@ func (s *agentsService) ListAgentMemoryValues(ctx context.Context, agentID, acco
 	if err != nil {
 		return nil, err
 	}
-	if s.agentMemoryService == nil {
-		return nil, fmt.Errorf("agent memory service is not configured")
-	}
 	targetUserID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
@@ -56,9 +53,6 @@ func (s *agentsService) UpdateAgentMemoryValue(ctx context.Context, agentID, acc
 	if err != nil {
 		return nil, err
 	}
-	if s.agentMemoryService == nil {
-		return nil, fmt.Errorf("agent memory service is not configured")
-	}
 	targetUserID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
 		return nil, fmt.Errorf("account id is invalid")
@@ -82,9 +76,6 @@ func (s *agentsService) ClearAgentMemoryValue(ctx context.Context, agentID, acco
 	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
 		return nil, err
-	}
-	if s.agentMemoryService == nil {
-		return nil, fmt.Errorf("agent memory service is not configured")
 	}
 	targetUserID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
@@ -264,8 +255,8 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 	if err != nil {
 		return nil, err
 	}
-	if s.db == nil || s.agentMemoryService == nil {
-		return nil, fmt.Errorf("database and agent memory service are required")
+	if s.db == nil {
+		return nil, fmt.Errorf("database is required")
 	}
 	actorID, err := uuid.Parse(strings.TrimSpace(accountID))
 	if err != nil {
@@ -286,7 +277,6 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 		if err := query.Take(&current).Error; err != nil {
 			return err
 		}
-		memorySvc := agentmemory.NewService(tx)
 		currentConfig := agentConfigResponse(ag.ID.String(), &current)
 		currentRevision := agentMemoryConfigRevision(currentConfig.AgentMemoryEnabled, currentConfig.AgentMemoryAutoExtractionEnabled, nil)
 		if expected := strings.TrimSpace(req.ConfigRevision); expected != "" && expected != currentRevision {
@@ -310,9 +300,6 @@ func (s *agentsService) UpdateAgentMemoryConfig(ctx context.Context, agentID, ac
 		}
 		result = &dto.AgentMemoryConfigResponse{Enabled: req.Enabled, AutoExtractionEnabled: req.AutoExtractionEnabled, Slots: []dto.AgentMemorySlotConfig{},
 			ConfigRevision: agentMemoryConfigRevision(req.Enabled, req.AutoExtractionEnabled, nil), Instructions: configReq.AgentMemoryInstructions}
-		if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, result.ConfigRevision); err != nil {
-			return err
-		}
 		return nil
 	})
 	return result, err

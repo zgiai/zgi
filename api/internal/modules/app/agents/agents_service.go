@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
@@ -35,7 +34,6 @@ type agentsService struct {
 	tenantService             interfaces.WorkspaceManagementService
 	workflowService           interfaces.WorkflowService
 	chatRuntimeService        runtimeservice.Service
-	agentMemoryService        *agentmemory.Service
 	relationshipMemory        *relationshipmemory.AgentAdapter
 	dataSourceService         datasourceservice.DataSourceService
 	knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService
@@ -58,7 +56,6 @@ func NewAgentsService(
 	tenantService interfaces.WorkspaceManagementService,
 	workflowService interfaces.WorkflowService,
 	chatRuntimeService runtimeservice.Service,
-	agentMemoryService *agentmemory.Service,
 	dataSourceService datasourceservice.DataSourceService,
 	knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService,
 	resourcePermissionService interfaces.ResourcePermissionService,
@@ -90,7 +87,6 @@ func NewAgentsService(
 		tenantService:             tenantService,
 		workflowService:           workflowService,
 		chatRuntimeService:        chatRuntimeService,
-		agentMemoryService:        agentMemoryService,
 		relationshipMemory:        relationshipMemory,
 		dataSourceService:         dataSourceService,
 		knowledgeRetrievalService: knowledgeRetrievalService,

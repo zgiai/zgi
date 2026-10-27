@@ -17,7 +17,6 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -295,10 +294,6 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		if err := txService.projectOwnedAgentConnectorBindings(ctx, tx, ag, accountID, currentConfig); err != nil {
 			return err
 		}
-		var memoryService *agentmemory.Service
-		if s.agentMemoryService != nil {
-			memoryService = agentmemory.NewService(tx)
-		}
 		currentRows, err := s.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 		if err != nil {
 			return err
@@ -353,13 +348,6 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		}
 		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
 			return err
-		}
-		if memoryService != nil {
-			nextMemoryConfig := agentConfigResponse(ag.ID.String(), &current)
-			nextRevision := agentMemoryConfigRevision(nextMemoryConfig.AgentMemoryEnabled, nextMemoryConfig.AgentMemoryAutoExtractionEnabled, nil)
-			if err := memoryService.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, nextRevision); err != nil {
-				return err
-			}
 		}
 		saved = &current
 		savedRows = nextRows
@@ -506,13 +494,6 @@ func (s *agentsService) updateAgentConfigWithSystemPromptPatchCAS(ctx context.Co
 		}
 		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
 			return err
-		}
-		if s.agentMemoryService != nil {
-			memorySvc := agentmemory.NewService(tx)
-			revision := agentMemoryConfigRevision(nextConfig.AgentMemoryEnabled, nextConfig.AgentMemoryAutoExtractionEnabled, nil)
-			if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision); err != nil {
-				return err
-			}
 		}
 		saved = &current
 		savedRows = nextRows
@@ -892,10 +873,6 @@ func (s *agentsService) createAgentPublishedVersion(
 		if err := txService.projectOwnedAgentConnectorBindings(ctx, tx, ag, accountID, currentConfig); err != nil {
 			return err
 		}
-		var memoryService *agentmemory.Service
-		if s.agentMemoryService != nil {
-			memoryService = agentmemory.NewService(tx)
-		}
 		rows, err := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
 		if err != nil {
 			return err
@@ -979,12 +956,6 @@ func (s *agentsService) createAgentPublishedVersion(
 			PublishedVersionUUID: &version.VersionUUID,
 		}, publishedBindings); err != nil {
 			return err
-		}
-		if memoryService == nil {
-			return nil
-		}
-		if err := memoryService.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopePublished, publishedMemoryRevision); err != nil {
-			return fmt.Errorf("advance published agent memory configuration: %w", err)
 		}
 		return nil
 	})
@@ -1227,13 +1198,6 @@ func (s *agentsService) rollbackAgentPublishedVersionCAS(
 		}
 		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, rows); err != nil {
 			return err
-		}
-		if s.agentMemoryService != nil {
-			memorySvc := agentmemory.NewService(tx)
-			revision := agentMemoryConfigRevision(snapshot.AgentMemoryEnabled, snapshot.AgentMemoryAutoExtractionEnabled, nil)
-			if err := memorySvc.SetAgentConfigRevision(ctx, ag.TenantID, ag.ID, agentmemory.ConfigScopeDraft, revision); err != nil {
-				return fmt.Errorf("advance draft agent memory configuration during rollback: %w", err)
-			}
 		}
 		result = agentConfigResponse(ag.ID.String(), &current)
 		result.EnabledSkillIDs = applied.EnabledSkillIDs

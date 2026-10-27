@@ -62,7 +62,7 @@ func normalizeConfigRevisionSlots(slots []RuntimeSlot) []configRevisionSlot {
 		seen[key] = struct{}{}
 
 		// A missing limit means the 2,000-character default, as it always has.
-		maxChars := defaultSlotMaxChars
+		maxChars := 2000
 		if slot.MaxChars > 0 && slot.MaxChars <= maxRevisionSlotChars {
 			maxChars = slot.MaxChars
 		}

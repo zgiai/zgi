@@ -2,7 +2,6 @@ import type { ProfileMessages } from './en-US';
 
 const messages: ProfileMessages = {
   title: '个人资料',
-  backButton: '返回',
   personalInfo: '个人信息',
   personalInfoDesc: '管理您的个人资料和偏好设置',
   accountDetails: '账户详情',
