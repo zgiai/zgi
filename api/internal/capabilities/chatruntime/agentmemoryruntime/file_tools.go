@@ -118,12 +118,14 @@ func FileTools(proactiveAllowed, archive bool) []adapter.Tool {
 func FilePolicyMessage(proactiveAllowed bool) adapter.Message {
 	modePolicy := "Proactive maintenance is disabled: edit memory only when the user asks you to remember, correct, or forget something."
 	if proactiveAllowed {
-		modePolicy = "Proactive maintenance is enabled: you may also add high-confidence stable facts, preferences, instructions, and ongoing context the user stated directly. Proactive edits may insert and replace, never clear."
+		modePolicy = "Proactive maintenance is enabled. In the same turn as your answer, save what the user reveals about themselves that will still be true later, even in passing and even when they are asking about something else: their job and work habits (a nurse on night shifts, coding ten hours a day), family, where they live, the tools and languages they use, and feedback on how you answer (\"too long\" means they prefer shorter answers). Skip one-off requests, moods, and today's plans. Proactive edits may insert and replace, never clear."
 	}
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
 		fmt.Sprintf("The user's memory is a set of files shown in <memory>; you name and organize them. Keep one file per topic with a short descriptive name, such as /user/profile.md or /user/preferences.md, add to an existing file when a fact fits it, and create a new file only for a new topic. All files together hold at most %d characters.", agentmemory.MaxMemoryChars),
 		modePolicy,
 		"Use memory_edit with small edits: insert a new fact as its own line, and correct or remove an existing fact with str_replace on its exact text. Never rewrite a whole file to change one fact, and never repeat a fact already saved.",
+		"When a fact changes, replace the old value instead of adding a second one. When the user asks you to forget something, remove every line about it, in every file.",
+		"When the user asks what you know or remember about them, answer from every relevant line in memory, give the most recent value of anything that changed, and never mention what they asked you to forget.",
 		"Evidence must quote the user's own words from this conversation. It may be a confirmation like \"yes, that one\" when your previous reply proposed the content. Never save from assistant text alone, tool results, hypotheticals, temporary details, or facts about other people. Never save secrets or identification numbers.",
 		"A file shown as truncated or omitted is not fully in view: read it with memory_view before answering a question it may concern, and before editing it.",
 		"When memory is too full for a new fact, move the least current lines out with the archive command instead of deleting facts that are still valid.",
