@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
+	usererrors "github.com/zgiai/zgi/api/internal/errors"
 	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -115,5 +118,39 @@ func (h *OrganizationHandler) auditMemberStatusBefore(c *gin.Context, organizati
 	member, err := h.organizationService.GetOrganizationMemberByAccountID(c.Request.Context(), organizationID, targetAccountID)
 	if err == nil && member != nil {
 		orgaudit.SetBefore(c, map[string]any{"status": member.Status})
+	}
+}
+
+// auditInvite adds one audit target for an invitation into workspaceID, with
+// that invitation's own result, so a batch that partly fails records each
+// member separately. An account already in the workspace changed nothing and
+// adds no target. A member invited by email is resolved to its account when
+// it has one.
+func (h *MembersHandler) auditInvite(c *gin.Context, workspaceID, accountID, email string, err error) {
+	if h.audit == nil || errors.Is(err, usererrors.ErrAccountAlreadyInWorkspace) {
+		return
+	}
+	if accountID == "" && email != "" {
+		if account, lookupErr := h.accountService.GetUserThroughEmail(c.Request.Context(), email); lookupErr == nil && account != nil {
+			accountID = account.ID
+		}
+	}
+	target := orgaudit.Target{AccountID: accountID, Type: orgaudit.TargetMember, ID: accountID, WorkspaceID: workspaceID, Result: orgaudit.ResultSuccess}
+	if target.ID == "" {
+		target.ID = email
+	}
+	// An invitation whose email failed to send still created the member.
+	if err != nil && !errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
+		target.Result = orgaudit.ResultFailed
+	}
+	orgaudit.AddTarget(c, target)
+}
+
+// auditWorkspaceOrganization names the organization that owns workspace, so
+// a workspace route is recorded in that organization rather than the
+// caller's current one.
+func auditWorkspaceOrganization(c *gin.Context, workspace *model.Workspace) {
+	if workspace != nil && workspace.OrganizationID != nil {
+		orgaudit.SetOrganization(c, *workspace.OrganizationID)
 	}
 }

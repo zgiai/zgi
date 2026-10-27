@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +13,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	usererrors "github.com/zgiai/zgi/api/internal/errors"
 	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
@@ -224,4 +228,107 @@ func TestWriteRoutesAreAudited(t *testing.T) {
 		checked++
 	}
 	require.Greater(t, checked, 35)
+}
+
+// inviteOrganizationService answers organization membership per account.
+type inviteOrganizationService struct {
+	membersHandlerOrganizationService
+	members map[string]bool
+}
+
+func (s *inviteOrganizationService) IsOrganizationMember(_ context.Context, _, accountID string) (bool, error) {
+	return s.members[accountID], nil
+}
+
+// inviteWorkspaceService records the accounts it adds to the workspace.
+type inviteWorkspaceService struct {
+	membersHandlerWorkspaceManagementService
+	added []string
+}
+
+func (s *inviteWorkspaceService) GetUserRole(context.Context, string, string) (*model.WorkspaceMemberRole, error) {
+	return nil, nil
+}
+
+func (s *inviteWorkspaceService) AddMember(_ context.Context, req *interfaces.AddMemberRequest) error {
+	s.added = append(s.added, req.AccountID)
+	return nil
+}
+
+// inviteAccountService resolves invited emails to accounts.
+type inviteAccountService struct {
+	membersHandlerAccountService
+	byEmail map[string]string
+}
+
+func (s *inviteAccountService) GetUserThroughEmail(_ context.Context, email string) (*auth_model.Account, error) {
+	if id, ok := s.byEmail[email]; ok {
+		return &auth_model.Account{ID: id, Email: email}, nil
+	}
+	return nil, nil
+}
+
+func newInviteHandler(organizations *inviteOrganizationService, workspaces *inviteWorkspaceService, accounts *inviteAccountService) *MembersHandler {
+	organizations.workspaceOrganizationID = auditOrgID
+	organizations.checkWorkspacePermissionAllowed = true
+	orgID := auditOrgID
+	workspaces.workspaceByID = &model.Workspace{ID: auditWorkspaceID, OrganizationID: &orgID}
+	accounts.account = &auth_model.Account{ID: auditOperatorID}
+	handler := NewMembersHandler(workspaces, accounts, organizations, "")
+	handler.SetAuditRecorder(orgaudit.NewRecorder(&auditCapture{})) // enables the email lookup
+	return handler
+}
+
+func TestBatchInviteRecordsEachMemberWithItsOwnResult(t *testing.T) {
+	workspaces := &inviteWorkspaceService{}
+	handler := newInviteHandler(&inviteOrganizationService{members: map[string]bool{auditMemberID: true}}, workspaces, &inviteAccountService{})
+	body := `{"account_ids":["` + auditMemberID + `","` + auditOtherID + `"],"role":"normal"}`
+	capture, response := serveAudited(t, http.MethodPost, "/workspaces/:workspace_id/members/batch-invite-by-ids",
+		"/workspaces/"+auditWorkspaceID+"/members/batch-invite-by-ids", body, handler.BatchInviteWorkspaceMembers, orgaudit.ActionWorkspaceMemberAdd)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"status":"failed"`)
+	require.Equal(t, []string{auditMemberID}, workspaces.added)
+	require.Len(t, capture.logs, 2)
+	byTarget := map[string]orgaudit.Log{}
+	for _, log := range capture.logs {
+		require.NotNil(t, log.TargetAccountID)
+		require.Equal(t, auditOrgID, log.OrganizationID.String())
+		require.Equal(t, auditWorkspaceID, log.WorkspaceID.String())
+		require.Equal(t, "normal", auditFields(t, log.After)["workspace_role"])
+		byTarget[log.TargetAccountID.String()] = log
+	}
+	require.Equal(t, orgaudit.ResultSuccess, byTarget[auditMemberID].Result)
+	require.Equal(t, orgaudit.ResultFailed, byTarget[auditOtherID].Result)
+}
+
+func TestEmailInviteRecordsTheResolvedMemberAndItsResult(t *testing.T) {
+	invite := func(inviteErr error) []orgaudit.Log {
+		accounts := &inviteAccountService{byEmail: map[string]string{"new@example.com": auditMemberID}}
+		accounts.inviteMemberExErr = inviteErr
+		handler := newInviteHandler(&inviteOrganizationService{}, &inviteWorkspaceService{}, accounts)
+		capture, response := serveAudited(t, http.MethodPost, "/workspaces/:workspace_id/members/invite-email-ex",
+			"/workspaces/"+auditWorkspaceID+"/members/invite-email-ex", `{"email":"new@example.com","role":"normal"}`,
+			handler.InviteWorkspaceMemberByEmailEx, orgaudit.ActionWorkspaceMemberAdd)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		return capture.logs
+	}
+
+	logs := invite(nil)
+	require.Len(t, logs, 1)
+	require.Equal(t, orgaudit.ResultSuccess, logs[0].Result)
+	require.Equal(t, auditMemberID, logs[0].TargetAccountID.String())
+
+	// The response is 200 either way; the record carries the item's failure.
+	logs = invite(errors.New("smtp refused"))
+	require.Len(t, logs, 1)
+	require.Equal(t, orgaudit.ResultFailed, logs[0].Result)
+
+	// Created but the email bounced: the member still exists.
+	logs = invite(usererrors.ErrInviteEmailDeliveryFailed)
+	require.Len(t, logs, 1)
+	require.Equal(t, orgaudit.ResultSuccess, logs[0].Result)
+
+	// Already in the workspace: nothing changed, nothing recorded.
+	require.Empty(t, invite(usererrors.ErrAccountAlreadyInWorkspace))
 }
