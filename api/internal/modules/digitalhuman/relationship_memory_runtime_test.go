@@ -72,3 +72,20 @@ func TestCompositeMemoryRuntimeProviderKeepsOwnedAndRelationshipMemorySeparate(t
 		t.Fatalf("second tool = %q, want %q", got, memorySearchToolName)
 	}
 }
+
+func TestPersonMemoryEventDescribesOnlyThePersonsOwnMemory(t *testing.T) {
+	person := &relationshipFileEditor{contract: relationshipmemory.ConsumerMemoryContract{DefinitionMode: "files"}}
+	operationID := uuid.New()
+	event, ok := personMemoryEvent(person, memoryFileEdit{Command: memoryEditInsert, Path: "/user/preferences.md", Mode: "proactive"}, operationID)
+	if !ok || event.Type != "memory_update" || event.Payload["key"] != "preferences" || event.Payload["source_kind"] != relationshipmemory.SourceAutomatic || event.Payload["memory_scope"] != "digital_human" {
+		t.Fatalf("insert event = %#v, %v", event, ok)
+	}
+	event, ok = personMemoryEvent(person, memoryFileEdit{Command: memoryEditReplace, Path: "/user/preferences.md", OldText: "tea", Mode: "explicit"}, operationID)
+	if !ok || event.Type != "memory_clear" || event.Payload["source_kind"] != relationshipmemory.SourceExplicit {
+		t.Fatalf("removal event = %#v, %v", event, ok)
+	}
+	own := &digitalHumanFileEditor{dir: "/me/"}
+	if _, ok := personMemoryEvent(own, memoryFileEdit{Command: memoryEditCreate, Path: "/me/launch.md"}, operationID); ok {
+		t.Fatal("the DigitalHuman's own memory produced a person memory event")
+	}
+}

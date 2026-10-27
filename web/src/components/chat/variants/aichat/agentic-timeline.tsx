@@ -1260,8 +1260,12 @@ function AgentMemoryTimelineRow({ item }: { item: MemoryTimelineItem }) {
   );
 }
 
+// A change to the person's memory with an Agent or a DigitalHuman.
 function isAgentMemoryNotice(item: AIChatAgenticTimelineItem): item is MemoryTimelineItem {
-  return item.type === 'memory_event' && item.event.memory_scope === 'agent';
+  return (
+    item.type === 'memory_event' &&
+    (item.event.memory_scope === 'agent' || item.event.memory_scope === 'digital_human')
+  );
 }
 
 /**
@@ -1290,7 +1294,7 @@ function MemoryTimelineRow({
   const { locale } = useLocale();
   const memoryDisplayName = item.event.display_name || item.event.key;
 
-  if (item.event.memory_scope === 'agent') return <AgentMemoryTimelineRow item={item} />;
+  if (isAgentMemoryNotice(item)) return <AgentMemoryTimelineRow item={item} />;
 
   return (
     <div className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-left text-xs text-foreground">

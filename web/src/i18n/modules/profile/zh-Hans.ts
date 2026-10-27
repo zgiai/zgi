@@ -65,7 +65,7 @@ const messages: ProfileMessages = {
     failed: '记忆更新失败',
     clearAll: '全部忘记',
     clearConfirmTitle: '全部忘记？',
-    clearConfirm: '这个助手会忘记记住的关于你的全部内容，之后可在“历史”中恢复。',
+    clearConfirm: '这个助手会忘记记住的关于你的全部内容，之后可在“修改历史”中恢复。',
     cancel: '取消',
   },
 };

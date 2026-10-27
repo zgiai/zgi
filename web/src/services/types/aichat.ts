@@ -296,7 +296,7 @@ export interface AIChatSkillInvocation {
   governance?: AIChatToolGovernanceDecision | null;
   asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
-  memory_scope?: 'account' | 'agent';
+  memory_scope?: 'account' | 'agent' | 'digital_human';
   action?: AIChatMemoryMutationAction;
   key?: string;
   display_name?: string;
@@ -1222,7 +1222,7 @@ export interface AIChatUserInputRequestedEventData extends AIChatUserInputReques
 export interface AIChatMemoryMutationEventData {
   conversation_id: string;
   message_id: string;
-  memory_scope?: 'account' | 'agent';
+  memory_scope?: 'account' | 'agent' | 'digital_human';
   action: AIChatMemoryMutationAction;
   entry_id?: string;
   key?: string;

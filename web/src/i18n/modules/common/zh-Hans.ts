@@ -594,7 +594,7 @@ const messages: CommonMessages = {
     topicActions: '「{topic}」的更多操作',
     deleteTopic: '删除这组记忆',
     deleteTopicTitle: '删除「{topic}」？',
-    deleteTopicDescription: '这组下的所有内容都会被忘记，之后可在“历史”中恢复。',
+    deleteTopicDescription: '这组下的所有内容都会被忘记，之后可在“修改历史”中恢复。',
     topicDeleted: '已删除「{topic}」',
     undoAutomatic: '撤销自动记录',
     meta: '更新于 {time} · {source}',

@@ -132,6 +132,7 @@ func newMemoryEditTool(run *Run, editors []memoryFileEditor) skillloop.RuntimeTo
 			return memoryToolFailure("invalid_arguments", true)
 		}
 		outcomes := make([]memoryFileEditOutcome, 0, len(args.Edits))
+		var events []skillloop.RuntimeToolEvent
 		accepted := 0
 		for index, edit := range args.Edits {
 			edit.Command = strings.ToLower(strings.TrimSpace(edit.Command))
@@ -153,6 +154,9 @@ func newMemoryEditTool(run *Run, editors []memoryFileEditor) skillloop.RuntimeTo
 			default:
 				outcome.Status = memoryEditAccepted
 				accepted++
+				if event, ok := personMemoryEvent(editor, edit, operationID); ok {
+					events = append(events, event)
+				}
 			}
 			outcomes = append(outcomes, outcome)
 		}
@@ -161,9 +165,32 @@ func newMemoryEditTool(run *Run, editors []memoryFileEditor) skillloop.RuntimeTo
 			status = "failed"
 		}
 		result := map[string]any{"status": status, "edits": outcomes, "accepted": accepted}
-		return skillloop.RuntimeToolResult{Status: status, Arguments: map[string]any{"edit_count": len(args.Edits)}, Result: result, ModelResult: result, Recoverable: accepted == 0}
+		return skillloop.RuntimeToolResult{Status: status, Arguments: map[string]any{"edit_count": len(args.Edits)}, Result: result, ModelResult: result, Recoverable: accepted == 0, Events: events}
 	}
 	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanMemory, Handler: handler}
+}
+
+// personMemoryEvent describes an accepted edit of the person's own memory
+// (/user/) the way an Agent's memory change is described, so the reply can
+// say what it remembered. The DigitalHuman's own memory and notes are not
+// the person's and get no event.
+func personMemoryEvent(editor memoryFileEditor, edit memoryFileEdit, operationID uuid.UUID) (skillloop.RuntimeToolEvent, bool) {
+	if _, ok := editor.(*relationshipFileEditor); !ok {
+		return skillloop.RuntimeToolEvent{}, false
+	}
+	key, ok := memoryFileKey(editor.directory(), edit.Path)
+	if !ok {
+		return skillloop.RuntimeToolEvent{}, false
+	}
+	eventType, action, status := "memory_update", "update", "updated"
+	if edit.Command == memoryEditDelete || (edit.Command == memoryEditReplace && strings.TrimSpace(edit.NewText) == "" && strings.TrimSpace(edit.OldText) != "") {
+		eventType, action, status = "memory_clear", "clear", "cleared"
+	}
+	return skillloop.RuntimeToolEvent{Type: eventType, Payload: map[string]interface{}{
+		"memory_scope": "digital_human", "action": action, "key": key, "status": "success",
+		"mutation_status": status, "source_kind": sourceKindForRelationshipMode(strings.ToLower(strings.TrimSpace(edit.Mode))),
+		"operation_id": operationID.String(),
+	}}, true
 }
 
 func editorForPath(editors []memoryFileEditor, path string) memoryFileEditor {

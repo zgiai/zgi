@@ -192,7 +192,7 @@ func renderUserMemoryFilesGuidance(items []relationshipmemory.UserMemoryItem, pr
 	}
 	mode := "Change /user/ files only when the person directly asks you to remember, correct, or forget something about themselves."
 	if proactiveAllowed {
-		mode = "You may also add to /user/ a stable fact or preference the person states about themselves, without being asked."
+		mode = "You may also add to /user/ a stable fact or preference the person states about themselves, without being asked. Use mode explicit only when they asked you to remember, correct, or forget it; anything you save on your own uses mode proactive, so they can tell it apart and undo it."
 	}
 	return strings.Join(append(sections, mode, "Never store project, customer, channel, credential, third-party, or document data under /user/."), "\n\n")
 }

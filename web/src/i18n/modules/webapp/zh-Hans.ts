@@ -340,7 +340,7 @@ const messages: WebappMessages = {
     memoryLoginRequiredDescription: '该智能体已开启记忆功能，请登录后使用。',
     memory: {
       title: '我的记忆',
-      description: '这个助手记住的关于你的事，可以随时修改或删除，也能在“历史”中找回。',
+      description: '这个助手记住的关于你的事，可以随时修改或删除，也能在“修改历史”中找回。',
       entry: '记忆',
       entryNew: '记忆，有新内容',
       tabMemory: '记忆',

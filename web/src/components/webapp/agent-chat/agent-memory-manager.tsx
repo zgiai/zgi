@@ -146,13 +146,24 @@ export function AgentMemoryManager({
     if (memoryEnabled) void load(true);
   }, [load, memoryEnabled, changeTick]);
 
+  // Opening and closing the dialog both mark memory as seen: changes made
+  // while it was open, such as an undo, are not news.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
+    const markSeen = () => {
+      const now = Math.floor(Date.now() / 1000);
+      writeSeen(webAppId, now);
+      setSeenAt(now);
+    };
+    if (!open) {
+      if (wasOpenRef.current) markSeen();
+      wasOpenRef.current = false;
+      return;
+    }
+    wasOpenRef.current = true;
     setTab('memory');
     void load(loaded);
-    const now = Math.floor(Date.now() / 1000);
-    writeSeen(webAppId, now);
-    setSeenAt(now);
+    markSeen();
     // Opening is what matters; reloading on every refresh would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, webAppId]);

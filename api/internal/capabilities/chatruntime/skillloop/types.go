@@ -273,8 +273,18 @@ type RuntimeToolResult struct {
 	PendingQuestion     map[string]interface{}
 	PendingClientAction map[string]interface{}
 	PendingUserInput    map[string]interface{}
-	Error               error
-	Recoverable         bool
+	// Events are runtime events the tool's work produced, such as a memory
+	// change, recorded on the message's timeline like the chat runtime's own.
+	Events      []RuntimeToolEvent
+	Error       error
+	Recoverable bool
+}
+
+// RuntimeToolEvent is one event a runtime tool reports. The conversation and
+// message IDs are added when it is recorded.
+type RuntimeToolEvent struct {
+	Type    string
+	Payload map[string]interface{}
 }
 
 type TerminalStateGuardDecisionRecord struct {
