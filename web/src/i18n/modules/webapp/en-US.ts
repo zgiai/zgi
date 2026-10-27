@@ -365,7 +365,15 @@ const messages = {
     memory: {
       title: 'My memory',
       description:
-        'What this assistant remembers about you. You can change or delete anything here, and restore earlier versions from History.',
+        'What this assistant remembers about you. Change or delete anything, or get it back from History.',
+      entry: 'Memory',
+      entryNew: 'Memory, something new',
+      tabMemory: 'Memory',
+      more: 'More',
+      savedTo: 'Saved to {topics}',
+      autoSavedTo: 'Remembered in {topics}',
+      removedFrom: 'Removed {topics} from memory',
+      view: 'View',
       empty: 'This assistant has not remembered anything about you yet.',
       autoUpdated: 'Memory was updated automatically. Review or undo it in My memory.',
       moreActions: 'More actions',

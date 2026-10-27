@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  Brain,
   CheckCircle2,
   ChevronDown,
   CircleHelp,
@@ -18,6 +19,8 @@ import MarkdownViewer from '@/components/common/markdown-viewer';
 import { useT } from '@/i18n/translations';
 import type { ScopedTranslations } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
+import { useAgentMemoryOpener } from '@/components/memory/agent-memory-opener';
+import { memoryTopicTitle } from '@/components/memory/memory-topics';
 import { cn } from '@/lib/utils';
 import { formatMs } from '@/utils/format';
 import type {
@@ -1198,6 +1201,85 @@ function memoryEventTitle(
   });
 }
 
+// The topic a memory file key names, e.g. "/user/preferences.md" -> "preferences".
+function agentMemoryTopicKey(key: string): string {
+  return key.replace(/^\/?user\//, '').replace(/\.md$/, '');
+}
+
+// An Agent's memory notice names the topics it touched, in the words the
+// memory dialog uses, and opens that dialog when the surface provides one.
+function AgentMemoryTimelineRow({ item }: { item: MemoryTimelineItem }) {
+  const t = useT('webapp');
+  const tItems = useT('common.memoryItems');
+  const opener = useAgentMemoryOpener();
+  const notifyChanged = opener?.notifyChanged;
+  const isLive = !item.id.startsWith('history-');
+  useEffect(() => {
+    // Rows restored with a conversation are old news; only live ones count.
+    if (isLive) notifyChanged?.();
+  }, [isLive, notifyChanged]);
+
+  const keys = item.event.keys?.length ? item.event.keys : item.event.key ? [item.event.key] : [];
+  const topics = Array.from(
+    new Set(
+      keys.map(key => {
+        const topicKey = agentMemoryTopicKey(key);
+        const displayName = keys.length === 1 ? item.event.display_name : undefined;
+        return memoryTopicTitle(topicKey, displayName, topic => tItems(`topics.${topic}`));
+      })
+    )
+  )
+    .map(topic => tItems('topicQuote', { topic }))
+    .join(' ');
+  const removed = item.event.action === 'delete' || item.event.action === 'clear';
+  const label = !topics
+    ? t('agentChat.memory.autoUpdated')
+    : removed
+      ? t('agentChat.memory.removedFrom', { topics })
+      : item.event.source_kind === 'automatic'
+        ? t('agentChat.memory.autoSavedTo', { topics })
+        : t('agentChat.memory.savedTo', { topics });
+
+  return (
+    <div className="flex min-h-7 w-full min-w-0 items-center gap-1.5 text-left text-xs text-muted-foreground">
+      <Brain className="size-3.5 shrink-0 text-primary/80" />
+      <span className="min-w-0 truncate">{label}</span>
+      {opener ? (
+        <>
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            className="shrink-0 rounded text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={opener.open}
+          >
+            {t('agentChat.memory.view')}
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function isAgentMemoryNotice(item: AIChatAgenticTimelineItem): item is MemoryTimelineItem {
+  return item.type === 'memory_event' && item.event.memory_scope === 'agent';
+}
+
+/**
+ * What the reply remembered, shown under the answer instead of inside the
+ * folded process, so people see it without expanding anything.
+ */
+export function AIChatAgentMemoryNotices({ timeline }: { timeline: AIChatAgenticTimelineItem[] }) {
+  const notices = timeline.filter(isAgentMemoryNotice);
+  if (notices.length === 0) return null;
+  return (
+    <div className="mt-2 space-y-0.5">
+      {notices.map(item => (
+        <AgentMemoryTimelineRow key={item.id} item={item} />
+      ))}
+    </div>
+  );
+}
+
 function MemoryTimelineRow({
   item,
   showMemoryKey,
@@ -1206,8 +1288,9 @@ function MemoryTimelineRow({
   showMemoryKey: boolean;
 }) {
   const { locale } = useLocale();
-  const t = useT('webapp');
   const memoryDisplayName = item.event.display_name || item.event.key;
+
+  if (item.event.memory_scope === 'agent') return <AgentMemoryTimelineRow item={item} />;
 
   return (
     <div className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-left text-xs text-foreground">
@@ -1215,11 +1298,7 @@ function MemoryTimelineRow({
         <CheckCircle2 className="size-3.5" />
       </span>
       <span className="min-w-0 flex-1 truncate">
-        {!showMemoryKey &&
-        item.event.memory_scope === 'agent' &&
-        item.event.source_kind === 'automatic'
-          ? t('agentChat.memory.autoUpdated')
-          : memoryEventTitle(item, locale, showMemoryKey)}
+        {memoryEventTitle(item, locale, showMemoryKey)}
       </span>
       {showMemoryKey && memoryDisplayName ? (
         <span className="max-w-32 shrink-0 truncate rounded border border-emerald-500/20 bg-background/70 px-1.5 py-0.5 text-[11px] text-muted-foreground">
@@ -4033,7 +4112,7 @@ function buildTimelineRenderItems(
   recoveredInvalidArgumentTimelineItemIds: ReadonlySet<string>
 ): TimelineRenderItem[] {
   return filterTimelineForRendering(
-    timeline,
+    timeline.filter(item => !isAgentMemoryNotice(item)),
     messageStatus,
     governanceCorrelationIds,
     enableToolGovernanceApprovals

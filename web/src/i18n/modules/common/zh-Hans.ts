@@ -573,6 +573,8 @@ const messages: CommonMessages = {
   memoryItems: {
     search: '搜索记忆',
     empty: '还没有记住任何内容。',
+    emptyHint: '在对话中说“记住……”，或者直接添加一条。',
+    topicQuote: '「{topic}」',
     noMatch: '没有符合搜索条件的记忆。',
     save: '保存',
     cancel: '取消',

@@ -46,6 +46,7 @@ const messages = {
     previous: 'Previous',
     next: 'Next',
     moreActions: 'More actions',
+    more: 'More',
     export: 'Download a copy',
     permanentDelete: 'Delete permanently',
     permanentDeleteTitle: 'Delete permanently?',
@@ -58,7 +59,6 @@ const messages = {
     readOnly:
       'You no longer have access to this workspace, or this assistant is archived. You can still download or permanently delete its memory.',
     noItems: 'Nothing remembered yet',
-    noItemsDescription: 'Use “Add memory” to tell this assistant something about you.',
     saved: 'Settings updated',
     failed: 'Memory could not be updated',
     clearAll: 'Forget everything',

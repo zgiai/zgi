@@ -48,7 +48,10 @@ import { UniversalFilePreviewDialog } from '@/components/files/universal-file-pr
 import { MarkdownImage } from '@/components/common/markdown-image';
 import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { API_URL } from '@/lib/config';
-import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
+import {
+  AIChatAgentMemoryNotices,
+  AIChatAgenticTimeline,
+} from '@/components/chat/variants/aichat/agentic-timeline';
 import type {
   AIChatToolGovernanceDecisionSubmitPayload,
   AITaskProposalActionPayload,
@@ -1763,6 +1766,8 @@ export function AIChatMessageBubble({
         ) : isStopped && !hasGeneratedImagePreviews ? (
           <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
         ) : null}
+
+        {hasTimeline ? <AIChatAgentMemoryNotices timeline={connectorTimeline} /> : null}
 
         <AIChatGeneratedImagePreviews files={generatedImagePreviewFilesForDisplay} />
 

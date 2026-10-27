@@ -2550,11 +2550,12 @@ const messages = {
     },
     memory: {
       agentTitle: 'Remember each user',
-      agentDescription:
-        'Let the Agent remember what matters about each user across conversations. It decides what to keep and organizes the memory itself; the instructions below say what this Agent should remember.',
+      agentDescription: 'Remember what matters about each user across conversations.',
       autoUnavailable:
-        'Automatic memory is turned off for this deployment, so this switch has no effect for now. The Agent still remembers when a user asks it to.',
-      autoExtractionTitle: 'Organize and update memory automatically',
+        'Automatic memory is off for this deployment. The Agent still remembers when a user asks it to.',
+      autoUnavailableBadge: 'Off for this deployment',
+      autoExtractionTitle: 'Remember automatically',
+      autoExtractionSummary: 'Note lasting details from conversations without being asked.',
       autoExtractionDescription:
         'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
       applyTemplate: 'Use a template',
@@ -2569,16 +2570,15 @@ const messages = {
         'Your current memory instructions will be replaced by the template.',
       templateReplaceConfirmAction: 'Replace',
       templateReplaceConfirmCancel: 'Cancel',
-      instructionsLabel: 'Memory instructions (optional)',
+      instructionsLabel: 'Memory instructions',
+      instructionsOptional: 'Optional',
       instructionsPlaceholder:
         "For example: This is a support assistant. Remember the customer's plan and communication preferences; do not record how a single ticket was handled.",
       instructionsHelp:
         'Describe what this Agent should remember about each user and what it should not. The Agent organizes the memory itself. Instructions cannot override evidence, sensitive-content, or other safety rules. Up to 2,000 characters.',
-      instructionsEmpty:
-        'Without instructions, the Agent uses general rules to decide what about each user is worth remembering.',
-      manageHint:
-        'Users can view, change, or delete their own memory under “My memory” in the app.',
-      viewValues: 'View my test memory',
+      instructionsEmpty: 'Left empty, general rules decide what to remember.',
+      manageHint: 'Users manage their own memory under “My memory”',
+      viewValues: 'My test memory',
       preview: {
         open: 'Preview',
         title: 'Preview memory',

@@ -591,6 +591,8 @@ const messages = {
   memoryItems: {
     search: 'Search memory',
     empty: 'Nothing remembered yet.',
+    emptyHint: 'Say “remember …” in a chat, or add one here.',
+    topicQuote: '“{topic}”',
     noMatch: 'No memory matches your search.',
     save: 'Save',
     cancel: 'Cancel',

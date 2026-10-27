@@ -2,16 +2,16 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Bot, Brain, Download, MoreHorizontal, Trash2, UserRound } from 'lucide-react';
+import { ArrowLeft, Brain, Download, MoreHorizontal, Plus, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryBoard, type MemoryTopic } from '@/components/memory/memory-board';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
+import { InfoHint } from '@/components/memory/info-hint';
 import { MemoryNotesPanel } from '@/components/memory/memory-notes-panel';
 import { joinFacts, memoryTopicTitle, splitFacts } from '@/components/memory/memory-topics';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -41,6 +41,7 @@ import type {
   UserMemoryRelationshipStatus,
   UserRelationshipMemoryItem,
 } from '@/services/types/relationship-memory';
+import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import { formatDate } from '@/utils/format';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -51,6 +52,18 @@ const allFilterValue = 'all';
 // Filters only help once there are more assistants than fit at a glance.
 const filterThreshold = 6;
 type DetailTab = 'memory' | 'notes' | 'archive' | 'history';
+// A DigitalHuman files facts by category; each category borrows the icon of
+// the Agent topic that means the same thing.
+const categoryIconKeys: Record<UserMemoryCategory, string> = {
+  profile: 'profile',
+  preference: 'preferences',
+  constraint: 'standing_instructions',
+  relationship: 'family',
+};
+
+function initialsOf(name: string) {
+  return Array.from(name.trim()).slice(0, 2).join('').toUpperCase() || '?';
+}
 
 function downloadJSON(filename: string, value: unknown) {
   const url = URL.createObjectURL(
@@ -85,6 +98,7 @@ export default function ProfileMemoryPage() {
   const [selectedId, setSelectedId] = useState('');
   const [tab, setTab] = useState<DetailTab>('memory');
   const [confirm, setConfirm] = useState<'clear' | 'delete' | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -119,6 +133,8 @@ export default function ProfileMemoryPage() {
     [detail]
   );
   const showFilters = total > filterThreshold || Boolean(consumerType || status);
+  // With a single assistant the list only repeats the detail header.
+  const showList = total > 1 || Boolean(consumerType || status) || !listQuery.isSuccess;
 
   useEffect(() => {
     if (selectedId || relationships.length === 0) return;
@@ -194,25 +210,25 @@ export default function ProfileMemoryPage() {
   return (
     <ProtectedRoute>
       <div className="min-h-screen bg-muted/30">
-        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-          <div className="mb-6">
-            <Button variant="ghost" size="sm" className="mb-3 -ml-2" onClick={() => router.back()}>
+        <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mb-5">
+            <Button variant="ghost" size="sm" className="mb-2 -ml-2" onClick={() => router.back()}>
               <ArrowLeft className="mr-1 size-4" />
               {t('backButton')}
             </Button>
             <div className="flex items-center gap-3">
-              <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
                 <Brain className="size-5" />
               </div>
               <div>
-                <h1 className="text-2xl font-semibold">{t('memory.title')}</h1>
-                <p className="mt-1 text-sm text-muted-foreground">{t('memory.description')}</p>
+                <h1 className="text-xl font-semibold">{t('memory.title')}</h1>
+                <p className="mt-0.5 text-sm text-muted-foreground">{t('memory.description')}</p>
               </div>
             </div>
           </div>
 
           {showFilters ? (
-            <div className="mb-5 flex flex-wrap gap-3 rounded-xl border bg-background p-4">
+            <div className="mb-4 flex flex-wrap gap-3">
               <Select
                 value={consumerType || allFilterValue}
                 onValueChange={value => {
@@ -258,8 +274,10 @@ export default function ProfileMemoryPage() {
             </div>
           ) : null}
 
-          <div className="grid gap-5 lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.8fr)]">
-            <section className="space-y-4">
+          <div className={cn('grid gap-5', showList && 'lg:grid-cols-[240px_minmax(0,1fr)]')}>
+            <section
+              className={cn('space-y-4 lg:sticky lg:top-6 lg:self-start', !showList && 'hidden')}
+            >
               {listQuery.isLoading
                 ? [0, 1, 2].map(item => <Skeleton key={item} className="h-20 rounded-xl" />)
                 : null}
@@ -278,27 +296,35 @@ export default function ProfileMemoryPage() {
               ) : null}
               {grouped.map(group => (
                 <div key={group.id}>
-                  <div className="mb-2 text-xs font-medium text-muted-foreground">{group.name}</div>
-                  <div className="space-y-2">
+                  <div className="mb-1.5 px-1 text-xs font-medium text-muted-foreground">
+                    {group.name}
+                  </div>
+                  <div className="space-y-1">
                     {group.items.map(item => (
                       <button
                         key={item.id}
                         type="button"
                         aria-pressed={selectedId === item.id}
                         onClick={() => selectRelationship(item)}
-                        className={`w-full rounded-xl border bg-background p-3 text-left transition-colors hover:border-primary/40 ${selectedId === item.id ? 'border-primary ring-1 ring-primary/20' : ''}`}
+                        className={cn(
+                          'w-full rounded-xl border border-transparent p-2.5 text-left transition-colors hover:bg-background',
+                          selectedId === item.id && 'border-border bg-background shadow-sm'
+                        )}
                       >
                         <div className="flex items-center gap-3">
-                          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                            {item.consumer_type === 'agent' ? (
-                              <Bot className="size-4" />
-                            ) : (
-                              <UserRound className="size-4" />
+                          <div
+                            className={cn(
+                              'flex size-9 shrink-0 items-center justify-center rounded-lg text-xs font-medium',
+                              selectedId === item.id
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-primary/10 text-primary'
                             )}
+                          >
+                            {initialsOf(item.consumer_name_snapshot || item.consumer_id)}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div
-                              className="truncate font-medium"
+                              className="truncate text-sm font-medium"
                               title={item.consumer_name_snapshot}
                             >
                               {item.consumer_name_snapshot || item.consumer_id}
@@ -362,7 +388,7 @@ export default function ProfileMemoryPage() {
               ) : null}
               {detail ? (
                 <div>
-                  <div className="border-b p-5">
+                  <div className="border-b px-5 pb-4 pt-5">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0">
                         <h2 className="truncate text-lg font-semibold">
@@ -377,13 +403,9 @@ export default function ProfileMemoryPage() {
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            isIcon
-                            aria-label={t('memory.moreActions')}
-                          >
-                            <MoreHorizontal className="size-4" />
+                          <Button variant="outline" size="sm" aria-label={t('memory.moreActions')}>
+                            <MoreHorizontal className="mr-1 size-4" />
+                            {t('memory.more')}
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
@@ -413,11 +435,11 @@ export default function ProfileMemoryPage() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
-                    <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                      <SettingRow
+                    <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg bg-muted/50 px-3 py-2">
+                      <SettingToggle
                         id="memory-enabled"
                         label={t('memory.memoryEnabled')}
-                        description={t('memory.memoryEnabledHint')}
+                        hint={t('memory.memoryEnabledHint')}
                       >
                         <Switch
                           aria-labelledby="memory-enabled"
@@ -432,11 +454,11 @@ export default function ProfileMemoryPage() {
                             )
                           }
                         />
-                      </SettingRow>
-                      <SettingRow
+                      </SettingToggle>
+                      <SettingToggle
                         id="memory-auto-capture"
                         label={t('memory.autoCapture')}
-                        description={t('memory.autoCaptureHint')}
+                        hint={t('memory.autoCaptureHint')}
                       >
                         <Switch
                           aria-labelledby="memory-auto-capture"
@@ -453,7 +475,7 @@ export default function ProfileMemoryPage() {
                             )
                           }
                         />
-                      </SettingRow>
+                      </SettingToggle>
                     </div>
                     {!detail.can_manage ? (
                       <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
@@ -467,19 +489,22 @@ export default function ProfileMemoryPage() {
                     onValueChange={value => setTab(value as DetailTab)}
                     className="p-5"
                   >
-                    <TabsList>
-                      <TabsTrigger value="memory">
-                        {t('memory.tabs.memory')}
-                        <Badge variant="subtle" className="ml-1.5">
-                          {ownItems.length}
-                        </Badge>
-                      </TabsTrigger>
-                      {detail.consumer_type === 'digital_human' ? (
-                        <TabsTrigger value="notes">{tNotes('title')}</TabsTrigger>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <TabsList>
+                        <TabsTrigger value="memory">{t('memory.tabs.memory')}</TabsTrigger>
+                        {detail.consumer_type === 'digital_human' ? (
+                          <TabsTrigger value="notes">{tNotes('title')}</TabsTrigger>
+                        ) : null}
+                        <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
+                        <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
+                      </TabsList>
+                      {tab === 'memory' && detail.can_manage && ownItems.length > 0 ? (
+                        <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+                          <Plus className="mr-1 size-4" />
+                          {tItems('add')}
+                        </Button>
                       ) : null}
-                      <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
-                      <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
-                    </TabsList>
+                    </div>
                     <TabsContent value="memory" className="mt-4">
                       <RelationshipMemoryBoard
                         key={detail.id}
@@ -488,12 +513,9 @@ export default function ProfileMemoryPage() {
                         act={act}
                         tItems={tItems}
                         categoryTitle={category => t(`memory.category.${category}`)}
-                        empty={
-                          <EmptyState
-                            title={t('memory.noItems')}
-                            description={t('memory.noItemsDescription')}
-                          />
-                        }
+                        empty={t('memory.noItems')}
+                        addOpen={addOpen}
+                        onAddOpenChange={setAddOpen}
                       />
                     </TabsContent>
                     {detail.consumer_type === 'digital_human' ? (
@@ -617,6 +639,8 @@ function RelationshipMemoryBoard({
   tItems,
   categoryTitle,
   empty,
+  addOpen,
+  onAddOpenChange,
 }: {
   detail: UserMemoryRelationshipDetail;
   items: UserRelationshipMemoryItem[];
@@ -624,6 +648,8 @@ function RelationshipMemoryBoard({
   tItems: ReturnType<typeof useT<'common.memoryItems'>>;
   categoryTitle: (category: UserMemoryCategory) => string;
   empty: ReactNode;
+  addOpen: boolean;
+  onAddOpenChange: (open: boolean) => void;
 }) {
   const isAgent = detail.consumer_type === 'agent';
   const byKey = new Map(items.map(item => [item.key, item]));
@@ -636,6 +662,7 @@ function RelationshipMemoryBoard({
     key: item.key,
     title: titleOf(item),
     content: item.content,
+    iconKey: !isAgent && item.category ? categoryIconKeys[item.category] : undefined,
     meta: tItems('meta', {
       time: formatDate(item.updated_at),
       source: tItems(`sources.${item.source_kind}`),
@@ -675,6 +702,9 @@ function RelationshipMemoryBoard({
       topics={topics}
       canEdit={detail.can_manage}
       empty={empty}
+      layout="auto"
+      addOpen={addOpen}
+      onAddOpenChange={onAddOpenChange}
       onSave={save}
       onDeleteTopic={async key => {
         const item = byKey.get(key);
@@ -728,25 +758,23 @@ function EmptyState({
   );
 }
 
-function SettingRow({
+function SettingToggle({
   id,
   label,
-  description,
+  hint,
   children,
 }: {
   id: string;
   label: string;
-  description: string;
+  hint: string;
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3">
-      <div>
-        <div id={id} className="text-sm font-medium">
-          {label}
-        </div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>
-      </div>
+    <div className="flex items-center gap-2">
+      <span id={id} className="text-sm">
+        {label}
+      </span>
+      <InfoHint text={hint} />
       {children}
     </div>
   );

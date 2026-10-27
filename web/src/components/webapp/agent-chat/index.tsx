@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LogIn } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from 'zustand';
@@ -28,6 +28,7 @@ import {
 } from '@/components/chat/runtime/conversation-route-handoff';
 import { transcribeAgentWebAppVoice } from '@/services/voice-transcription.service';
 import { generateAgentWebAppSpeech } from '@/services/voice-speech.service';
+import { AgentMemoryOpenerContext } from '@/components/memory/agent-memory-opener';
 import { AgentMemoryManager } from './agent-memory-manager';
 
 interface AgentWebappChatProps {
@@ -59,6 +60,16 @@ function resolveWebAppIcon(config: WebAppWorkflowConfig, fallbackTitle: string) 
 }
 
 export default function AgentWebappChat({ webAppId, config }: AgentWebappChatProps) {
+  // Memory notices in replies open the same dialog as the header button.
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryChangeTick, setMemoryChangeTick] = useState(0);
+  const memoryOpener = useMemo(
+    () => ({
+      open: () => setMemoryOpen(true),
+      notifyChanged: () => setMemoryChangeTick(tick => tick + 1),
+    }),
+    []
+  );
   const t = useT('webapp');
   const pathname = usePathname();
   const router = useRouter();
@@ -255,45 +266,53 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   }
 
   return (
-    <Chat
-      mode="aichat"
-      controller={controller}
-      modelSelectorValue={modelValue}
-      onModelChange={() => undefined}
-      beforeSend={handleBeforeSend}
-      inputTopNotice={
-        modelPrecheckWarnings.length > 0 ? (
-          <AIChatModelPrecheckWarning warnings={modelPrecheckWarnings} />
-        ) : undefined
-      }
-      variant="full"
-      showModelSelector={false}
-      requireModel={false}
-      supportsVisionOverride={supportsVision}
-      showMemoryToggle={false}
+    <AgentMemoryOpenerContext.Provider value={memoryOpener}>
+      <Chat
+        mode="aichat"
+        controller={controller}
+        modelSelectorValue={modelValue}
+        onModelChange={() => undefined}
+        beforeSend={handleBeforeSend}
+        inputTopNotice={
+          modelPrecheckWarnings.length > 0 ? (
+            <AIChatModelPrecheckWarning warnings={modelPrecheckWarnings} />
+          ) : undefined
+        }
+        variant="full"
+        showModelSelector={false}
+        requireModel={false}
+        supportsVisionOverride={supportsVision}
+        showMemoryToggle={false}
         enableUpload={Boolean(agentConfig?.file_upload_enabled)}
         uploadRequiresLogin={!isAuthenticated}
         fileUploadPolicy={agentConfig?.file_upload_policy}
-      uploadScope={uploadScope}
-      showFileLibraryPicker={canUseFiles}
-      allowWorkspaceSwitch
-      suggestions={agentConfig?.suggested_questions ?? []}
-      inputPlaceholder={inputPlaceholder}
-      embeddedConversationMode="drawer"
-      onSelectConversation={handleSelectConversation}
-      onStartNewConversation={handleStartNewConversation}
-      showAssistantModelMeta={false}
-      surface="agent-webapp"
-      openingGuideBrand={openingGuideBrand}
-      homeTitle={homeTitle}
-      homeDescription={agentConfig?.opening_statement ?? ''}
-      voiceTranscriber={voiceInputEnabled ? handleVoiceTranscription : undefined}
-      speechSynthesizer={speechEnabled ? handleSpeechSynthesis : undefined}
-      headerRightAction={
-        isAuthenticated ? (
-          <AgentMemoryManager webAppId={webAppId} memoryEnabled={memoryEnabled} />
-        ) : undefined
-      }
-    />
+        uploadScope={uploadScope}
+        showFileLibraryPicker={canUseFiles}
+        allowWorkspaceSwitch
+        suggestions={agentConfig?.suggested_questions ?? []}
+        inputPlaceholder={inputPlaceholder}
+        embeddedConversationMode="drawer"
+        onSelectConversation={handleSelectConversation}
+        onStartNewConversation={handleStartNewConversation}
+        showAssistantModelMeta={false}
+        surface="agent-webapp"
+        openingGuideBrand={openingGuideBrand}
+        homeTitle={homeTitle}
+        homeDescription={agentConfig?.opening_statement ?? ''}
+        voiceTranscriber={voiceInputEnabled ? handleVoiceTranscription : undefined}
+        speechSynthesizer={speechEnabled ? handleSpeechSynthesis : undefined}
+        headerRightAction={
+          isAuthenticated ? (
+            <AgentMemoryManager
+              webAppId={webAppId}
+              memoryEnabled={memoryEnabled}
+              open={memoryOpen}
+              onOpenChange={setMemoryOpen}
+              changeTick={memoryChangeTick}
+            />
+          ) : undefined
+        }
+      />
+    </AgentMemoryOpenerContext.Provider>
   );
 }

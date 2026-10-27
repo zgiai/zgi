@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, Download, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { Brain, Download, Loader2, MoreHorizontal, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { MemoryArchivePanel } from '@/components/memory/memory-archive-panel';
 import { MemoryHistoryPanel } from '@/components/memory/memory-history-panel';
@@ -39,7 +39,13 @@ import { getErrorMessage } from '@/utils/error-notifications';
 interface AgentMemoryManagerProps {
   webAppId: string;
   memoryEnabled: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Bumped when a reply changes memory, so the entry can show a new-memory dot. */
+  changeTick?: number;
 }
+
+type MemoryTab = 'memory' | 'history' | 'archive';
 
 function downloadJSON(filename: string, value: unknown) {
   const url = URL.createObjectURL(
@@ -54,53 +60,114 @@ function downloadJSON(filename: string, value: unknown) {
   URL.revokeObjectURL(url);
 }
 
-export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManagerProps) {
+// When the user last looked at this assistant's memory, in Unix seconds. The
+// entry shows a dot for anything the assistant remembered after that.
+function seenKey(webAppId: string) {
+  return `zgi:agent-memory-seen:${webAppId}`;
+}
+
+function readSeen(webAppId: string): number | null {
+  try {
+    const value = Number(window.localStorage.getItem(seenKey(webAppId)));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSeen(webAppId: string, seconds: number) {
+  try {
+    window.localStorage.setItem(seenKey(webAppId), String(seconds));
+  } catch {
+    // A missing dot is harmless.
+  }
+}
+
+export function AgentMemoryManager({
+  webAppId,
+  memoryEnabled,
+  open,
+  onOpenChange,
+  changeTick = 0,
+}: AgentMemoryManagerProps) {
   const t = useT('webapp.agentChat.memory');
   const tItems = useT('common.memoryItems');
   const tHistory = useT('common.memoryHistory');
   const tArchive = useT('common.memoryArchive');
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'memory' | 'history' | 'archive'>('memory');
+  const [tab, setTab] = useState<MemoryTab>('memory');
   const [values, setValues] = useState<WebAppAgentMemoryValue[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [seenAt, setSeenAt] = useState<number | null>(null);
   const isLoadingRef = useRef(false);
-  const loadedWebAppIdRef = useRef('');
   const tRef = useRef(t);
 
   useEffect(() => {
     tRef.current = t;
   }, [t]);
 
-  const load = useCallback(async () => {
-    if (isLoadingRef.current) return;
-    isLoadingRef.current = true;
-    setLoading(true);
-    try {
-      const response = await WebAppService.getAgentMemory(webAppId);
-      const nextValues = response.data.values ?? [];
-      setValues(nextValues);
-    } catch (error) {
-      toast.error(getErrorMessage(error) || tRef.current('loadFailed'));
-    } finally {
-      isLoadingRef.current = false;
-      setLoading(false);
-    }
-  }, [webAppId]);
+  const load = useCallback(
+    async (quiet = false) => {
+      if (isLoadingRef.current) return;
+      isLoadingRef.current = true;
+      if (!quiet) setLoading(true);
+      try {
+        const response = await WebAppService.getAgentMemory(webAppId);
+        setValues(response.data.values ?? []);
+        setLoaded(true);
+      } catch (error) {
+        if (!quiet) toast.error(getErrorMessage(error) || tRef.current('loadFailed'));
+      } finally {
+        isLoadingRef.current = false;
+        if (!quiet) setLoading(false);
+      }
+    },
+    [webAppId]
+  );
 
+  // The first visit marks everything as seen; later visits compare against it.
   useEffect(() => {
-    if (!open) {
-      loadedWebAppIdRef.current = '';
+    const seen = readSeen(webAppId);
+    if (seen) {
+      setSeenAt(seen);
       return;
     }
-    if (loadedWebAppIdRef.current === webAppId) return;
-    loadedWebAppIdRef.current = webAppId;
-    void load();
-  }, [load, open, webAppId]);
+    const now = Math.floor(Date.now() / 1000);
+    writeSeen(webAppId, now);
+    setSeenAt(now);
+  }, [webAppId]);
+
+  // Load quietly up front and after each reply that changed memory, so the
+  // entry knows whether there is something new.
+  useEffect(() => {
+    if (memoryEnabled) void load(true);
+  }, [load, memoryEnabled, changeTick]);
+
+  useEffect(() => {
+    if (!open) return;
+    setTab('memory');
+    void load(loaded);
+    const now = Math.floor(Date.now() / 1000);
+    writeSeen(webAppId, now);
+    setSeenAt(now);
+    // Opening is what matters; reloading on every refresh would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, webAppId]);
 
   const valuesByKey = useMemo(() => new Map(values.map(value => [value.key, value])), [values]);
-  const hasSavedValues = values.some(value => Boolean(value.content.trim()));
+  const savedValues = useMemo(() => values.filter(value => value.content.trim()), [values]);
+  const hasNew =
+    !open &&
+    seenAt !== null &&
+    savedValues.some(
+      value =>
+        value.source_kind !== 'manager' &&
+        typeof value.updated_at === 'number' &&
+        value.updated_at > seenAt
+    );
 
   // The board reports success with its own toast; failures are shown here
   // and rethrown so the board keeps the edit open.
@@ -109,10 +176,10 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
     setBusyKey(key);
     try {
       await WebAppService.updateAgentMemory(webAppId, key, content, value?.revision ?? 0);
-      await load();
+      await load(true);
     } catch (error) {
       toast.error(getErrorMessage(error) || t('saveFailed'));
-      await load();
+      await load(true);
       throw error;
     } finally {
       setBusyKey('');
@@ -125,7 +192,7 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
     setBusyKey(key);
     try {
       const response = await WebAppService.deleteAgentMemory(webAppId, key, value.revision);
-      await load();
+      await load(true);
       const operationId = response.data?.last_operation_id;
       const until = response.data?.undoable_until;
       if (operationId && until && until > Date.now() / 1000) {
@@ -134,7 +201,7 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
       return undefined;
     } catch (error) {
       toast.error(getErrorMessage(error) || t('deleteFailed'));
-      await load();
+      await load(true);
       throw error;
     } finally {
       setBusyKey('');
@@ -149,7 +216,7 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
       toast.error(getErrorMessage(error) || t('undoFailed'));
       throw error;
     } finally {
-      await load();
+      await load(true);
     }
   };
 
@@ -159,7 +226,7 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
       await WebAppService.deleteAllAgentMemory(webAppId);
       toast.success(t('allDeleted'));
       setDeleteAllOpen(false);
-      await load();
+      await load(true);
     } catch (error) {
       toast.error(getErrorMessage(error) || t('deleteFailed'));
     } finally {
@@ -185,30 +252,125 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
         type="button"
         variant="ghost"
         size="sm"
-        className="size-8 p-0"
-        title={t('title')}
-        aria-label={t('title')}
-        onClick={() => setOpen(true)}
+        className="relative h-8 gap-1.5 px-2.5 text-muted-foreground hover:text-foreground"
+        aria-label={hasNew ? t('entryNew') : t('entry')}
+        onClick={() => onOpenChange(true)}
       >
         <Brain className="size-4" />
+        <span className="text-xs">{t('entry')}</span>
+        {hasNew ? (
+          <span
+            aria-hidden="true"
+            className="absolute right-1 top-1 size-2 rounded-full bg-destructive ring-2 ring-background"
+          />
+        ) : null}
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent size="lg" className="max-h-[min(760px,calc(100vh-2rem))]">
           <DialogHeader>
             <DialogTitle>{t('title')}</DialogTitle>
             <DialogDescription>{t('description')}</DialogDescription>
           </DialogHeader>
-          <DialogBody className="space-y-4">
-            <Tabs
-              value={tab}
-              onValueChange={value => setTab(value as 'memory' | 'history' | 'archive')}
-            >
-              <TabsList>
-                <TabsTrigger value="memory">{t('title')}</TabsTrigger>
-                <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
-                <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
-              </TabsList>
+          <DialogBody>
+            <Tabs value={tab} onValueChange={value => setTab(value as MemoryTab)}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <TabsList>
+                  <TabsTrigger value="memory">{t('tabMemory')}</TabsTrigger>
+                  <TabsTrigger value="history">{tHistory('title')}</TabsTrigger>
+                  <TabsTrigger value="archive">{tArchive('title')}</TabsTrigger>
+                </TabsList>
+                {tab === 'memory' ? (
+                  <div className="flex items-center gap-2">
+                    {memoryEnabled && savedValues.length > 0 ? (
+                      <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+                        <Plus className="mr-1 size-4" />
+                        {tItems('add')}
+                      </Button>
+                    ) : null}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-label={t('moreActions')}
+                          disabled={Boolean(busyKey)}
+                        >
+                          <MoreHorizontal className="mr-1 size-4" />
+                          {t('more')}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => void exportValues()}>
+                          <Download />
+                          {t('export')}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={savedValues.length === 0}
+                          onSelect={() => setDeleteAllOpen(true)}
+                        >
+                          <Trash2 />
+                          {t('deleteAll')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                ) : null}
+              </div>
+              <TabsContent value="memory" className="mt-4">
+                {loading && !loaded ? (
+                  <div className="flex min-h-40 items-center justify-center">
+                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <MemoryBoard
+                    canEdit={memoryEnabled}
+                    empty={t('empty')}
+                    topics={savedValues.map(value => ({
+                      key: value.key,
+                      title: agentMemoryTitle(value, tItems),
+                      content: value.content,
+                      meta: agentMemoryMeta(value, tItems),
+                      undoAutomatic:
+                        agentMemoryUndoable(value) && value.last_operation_id
+                          ? () => undoOperation(value.last_operation_id as string)
+                          : undefined,
+                    }))}
+                    onSave={save}
+                    onDeleteTopic={remove}
+                    addTargets={agentMemoryAddTargets(values, tItems)}
+                    onAdd={(key, fact) =>
+                      save(
+                        key,
+                        joinFacts([...splitFacts(valuesByKey.get(key)?.content ?? ''), fact])
+                      )
+                    }
+                    addOpen={addOpen}
+                    onAddOpenChange={setAddOpen}
+                  />
+                )}
+              </TabsContent>
+              <TabsContent value="history" className="mt-4">
+                {tab === 'history' ? (
+                  <MemoryHistoryPanel
+                    load={async before =>
+                      (await WebAppService.getAgentMemoryHistory(webAppId, { before })).data
+                    }
+                    revert={versionId =>
+                      WebAppService.revertAgentMemoryVersion(webAppId, versionId)
+                    }
+                    labelFor={key => {
+                      const value = valuesByKey.get(key);
+                      return agentMemoryTitle({ key, name: value?.name }, tItems);
+                    }}
+                    canRevert={memoryEnabled}
+                    refreshKey={values}
+                    onReverted={() => load(true)}
+                  />
+                ) : null}
+              </TabsContent>
               <TabsContent value="archive" className="mt-4">
                 {tab === 'archive' ? (
                   <MemoryArchivePanel
@@ -221,85 +383,6 @@ export function AgentMemoryManager({ webAppId, memoryEnabled }: AgentMemoryManag
                     refreshKey={values}
                   />
                 ) : null}
-              </TabsContent>
-              <TabsContent value="history" className="mt-4">
-                {tab === 'history' ? (
-                  <MemoryHistoryPanel
-                    load={async before =>
-                      (await WebAppService.getAgentMemoryHistory(webAppId, { before })).data
-                    }
-                    revert={versionId =>
-                      WebAppService.revertAgentMemoryVersion(webAppId, versionId)
-                    }
-                    labelFor={key => valuesByKey.get(key)?.name || key}
-                    canRevert={memoryEnabled}
-                    refreshKey={values}
-                    onReverted={load}
-                  />
-                ) : null}
-              </TabsContent>
-              <TabsContent value="memory" className="mt-4 space-y-4">
-                {loading ? (
-                  <div className="flex min-h-40 items-center justify-center">
-                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
-                  </div>
-                ) : (
-                  <MemoryBoard
-                    canEdit={memoryEnabled}
-                    empty={t('empty')}
-                    topics={values
-                      .filter(value => value.content.trim())
-                      .map(value => ({
-                        key: value.key,
-                        title: agentMemoryTitle(value, tItems),
-                        content: value.content,
-                        meta: agentMemoryMeta(value, tItems),
-                        undoAutomatic:
-                          agentMemoryUndoable(value) && value.last_operation_id
-                            ? () => undoOperation(value.last_operation_id as string)
-                            : undefined,
-                      }))}
-                    onSave={save}
-                    onDeleteTopic={remove}
-                    addTargets={agentMemoryAddTargets(values, tItems)}
-                    onAdd={(key, fact) =>
-                      save(
-                        key,
-                        joinFacts([...splitFacts(valuesByKey.get(key)?.content ?? ''), fact])
-                      )
-                    }
-                    menu={
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            isIcon
-                            aria-label={t('moreActions')}
-                            disabled={Boolean(busyKey)}
-                          >
-                            <MoreHorizontal className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onSelect={() => void exportValues()}>
-                            <Download />
-                            {t('export')}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            disabled={!hasSavedValues}
-                            onSelect={() => setDeleteAllOpen(true)}
-                          >
-                            <Trash2 />
-                            {t('deleteAll')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    }
-                  />
-                )}
               </TabsContent>
             </Tabs>
           </DialogBody>

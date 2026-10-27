@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, FlaskConical, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
+import { InfoHint } from '@/components/memory/info-hint';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -160,103 +162,112 @@ export function AgentRuntimeMemorySection({
         onToggle={onToggleSection}
       >
         <div className="space-y-3">
-          <div className="space-y-3 rounded-md border p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div id="agent-memory-enabled" className="text-sm font-medium">
-                  {t('memory.agentTitle')}
-                </div>
-                <div className="text-xs text-muted-foreground">{t('memory.agentDescription')}</div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div id="agent-memory-enabled" className="text-sm font-medium">
+                {t('memory.agentTitle')}
               </div>
-              <Switch
-                aria-labelledby="agent-memory-enabled"
-                checked={agentMemoryEnabled}
-                disabled={readOnly}
-                onCheckedChange={onChangeAgentMemoryEnabled}
-              />
+              <div className="text-xs text-muted-foreground">{t('memory.agentDescription')}</div>
             </div>
-            {agentMemoryEnabled && (
-              <div className="space-y-2">
-                <div className="space-y-2 rounded-md bg-muted/30 px-3 py-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div id="agent-memory-auto" className="text-xs font-medium">
-                        {t('memory.autoExtractionTitle')}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {t('memory.autoExtractionDescription')}
-                      </div>
-                    </div>
-                    <Switch
-                      aria-labelledby="agent-memory-auto"
-                      checked={agentMemoryAutoExtractionEnabled}
-                      disabled={readOnly}
-                      onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
-                    />
+            <Switch
+              aria-labelledby="agent-memory-enabled"
+              checked={agentMemoryEnabled}
+              disabled={readOnly}
+              onCheckedChange={onChangeAgentMemoryEnabled}
+            />
+          </div>
+          {agentMemoryEnabled && (
+            <>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span id="agent-memory-auto" className="text-sm font-medium">
+                      {t('memory.autoExtractionTitle')}
+                    </span>
+                    <InfoHint text={t('memory.autoExtractionDescription')} />
+                    {!automaticAvailable && (
+                      <Badge variant="warning" title={t('memory.autoUnavailable')}>
+                        {t('memory.autoUnavailableBadge')}
+                      </Badge>
+                    )}
                   </div>
-                  {!automaticAvailable && (
-                    <div className="text-[11px] text-amber-700 dark:text-amber-400">
-                      {t('memory.autoUnavailable')}
-                    </div>
-                  )}
+                  <div className="text-xs text-muted-foreground">
+                    {automaticAvailable
+                      ? t('memory.autoExtractionSummary')
+                      : t('memory.autoUnavailable')}
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-medium text-muted-foreground">
-                      {t('memory.instructionsLabel')}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        onClick={() => setTemplateDialogOpen(true)}
-                        disabled={readOnly}
-                      >
-                        <Sparkles className="size-3" />
-                        {t('memory.applyTemplate')}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        onClick={() => setPreviewOpen(true)}
-                      >
-                        <FlaskConical className="size-3" />
-                        {t('memory.preview.open')}
-                      </Button>
-                    </div>
-                  </div>
-                  <Textarea
-                    value={agentMemoryInstructions}
-                    maxLength={AGENT_MEMORY_LIMITS.maxInstructionsChars}
-                    showCharacterCount
-                    className="min-h-28"
-                    aria-label={t('memory.instructionsLabel')}
-                    placeholder={t('memory.instructionsPlaceholder')}
+                <Switch
+                  aria-labelledby="agent-memory-auto"
+                  checked={agentMemoryAutoExtractionEnabled}
+                  disabled={readOnly}
+                  onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-medium">{t('memory.instructionsLabel')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('memory.instructionsOptional')}
+                  </span>
+                  <InfoHint text={t('memory.instructionsHelp')} />
+                </div>
+                <Textarea
+                  value={agentMemoryInstructions}
+                  maxLength={AGENT_MEMORY_LIMITS.maxInstructionsChars}
+                  showCharacterCount
+                  className="min-h-24"
+                  aria-label={t('memory.instructionsLabel')}
+                  placeholder={t('memory.instructionsPlaceholder')}
+                  disabled={readOnly}
+                  onChange={event =>
+                    onChangeAgentMemoryInstructions(
+                      event.target.value.slice(0, AGENT_MEMORY_LIMITS.maxInstructionsChars)
+                    )
+                  }
+                />
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => setTemplateDialogOpen(true)}
                     disabled={readOnly}
-                    onChange={event =>
-                      onChangeAgentMemoryInstructions(
-                        event.target.value.slice(0, AGENT_MEMORY_LIMITS.maxInstructionsChars)
-                      )
-                    }
-                  />
-                  <div className="text-[11px] text-muted-foreground">
-                    {agentMemoryInstructions.trim()
-                      ? t('memory.instructionsHelp')
-                      : t('memory.instructionsEmpty')}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2">
-                  <div className="text-[11px] text-muted-foreground">{t('memory.manageHint')}</div>
-                  <Button type="button" variant="outline" size="xs" onClick={onOpenMemoryValues}>
-                    <Eye className="size-3" />
-                    {t('memory.viewValues')}
+                  >
+                    <Sparkles className="size-3" />
+                    {t('memory.applyTemplate')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => setPreviewOpen(true)}
+                  >
+                    <FlaskConical className="size-3" />
+                    {t('memory.preview.open')}
                   </Button>
                 </div>
+                {!agentMemoryInstructions.trim() && (
+                  <div className="text-xs text-muted-foreground">
+                    {t('memory.instructionsEmpty')}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t pt-2.5">
+                <span className="text-xs text-muted-foreground">{t('memory.manageHint')}</span>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  className="h-auto px-0 text-primary"
+                  onClick={onOpenMemoryValues}
+                >
+                  <Eye className="size-3" />
+                  {t('memory.viewValues')}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </RuntimeSection>
     </>

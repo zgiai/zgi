@@ -2386,10 +2386,11 @@ const messages: AgentsMessages = {
     },
     memory: {
       agentTitle: '记住每位用户',
-      agentDescription:
-        '让智能体跨对话记住每位用户的重要信息。记什么、怎么整理由智能体自己决定，下方的记忆说明告诉它这个智能体应该记住哪些内容。',
-      autoUnavailable: '当前部署未开启自动记忆，这个开关暂不生效。用户明确要求时，智能体仍会记住。',
-      autoExtractionTitle: '自动整理并更新记忆',
+      agentDescription: '跨对话记住每位用户的重要信息。',
+      autoUnavailable: '当前部署未开启自动记忆。用户明确要求时，智能体仍会记住。',
+      autoUnavailableBadge: '部署未开启',
+      autoExtractionTitle: '自动记住',
+      autoExtractionSummary: '从对话中主动记下值得长期保留的信息。',
       autoExtractionDescription:
         '开启后，智能体会从对话中识别值得长期保留的用户信息、偏好和要求，并自动更新记忆，让后续回答更贴合用户。此功能可能在对话过程中或会话空闲后增加模型调用，因此会产生更多 Token 消耗。',
       applyTemplate: '使用模板',
@@ -2402,14 +2403,15 @@ const messages: AgentsMessages = {
       templateReplaceConfirmDescription: '当前的记忆说明会被模板内容替换。',
       templateReplaceConfirmAction: '替换',
       templateReplaceConfirmCancel: '取消',
-      instructionsLabel: '记忆说明（选填）',
+      instructionsLabel: '记忆说明',
+      instructionsOptional: '选填',
       instructionsPlaceholder:
         '例如：这是一个客服助手，记住客户的套餐和沟通偏好，不要记录单次工单的处理过程。',
       instructionsHelp:
         '描述这个智能体应该记住用户的哪些信息、哪些不该记。记忆由智能体自行整理。说明不能绕过证据、敏感信息等安全规则。最多 2000 字。',
-      instructionsEmpty: '不填写时，智能体按通用规则判断哪些用户信息值得长期记住。',
-      manageHint: '用户可以在应用的“我的记忆”中查看、修改或删除自己的记忆。',
-      viewValues: '查看我的测试记忆',
+      instructionsEmpty: '不填时，智能体按通用规则判断记什么。',
+      manageHint: '用户在应用的“我的记忆”中管理自己的记忆',
+      viewValues: '我的测试记忆',
       preview: {
         open: '预览效果',
         title: '预览记忆效果',
