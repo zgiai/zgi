@@ -57,6 +57,11 @@ assert.match(
 );
 assert.match(
   source,
+  /if \(savePasses >= MAX_SAVE_PASSES\) \{[^}]*return false;\s*\}/,
+  'hitting the save cap must report failure so publish and save-and-leave stop'
+);
+assert.match(
+  source,
   /function workflowMetadataKey[\s\S]*connector_reference_commands: \(data\?\.connector_reference_commands \?\? \[\]\)\.filter/,
   'accepted connector commands cleared after save must not count as a new edit'
 );

@@ -64,6 +64,9 @@ export interface DashboardRecentWorkItem {
   is_published?: boolean;
   can_open_editor?: boolean;
   can_view_logs?: boolean;
+  /** Workflow items only: the batch-test pages the account may open. */
+  can_view_batch_test?: boolean;
+  prefer_batch_test_library?: boolean;
 }
 
 export interface DashboardRecentWork {

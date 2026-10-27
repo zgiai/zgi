@@ -44,6 +44,9 @@ type DashboardWorkspaceScopes struct {
 	// unpublished assets. Elsewhere only published assets and its own drafts show.
 	AgentDraftWorkspaceIDs    []string
 	WorkflowDraftWorkspaceIDs []string
+	// WorkflowTestLibraryWorkspaceIDs are the workspaces where the account may
+	// open a workflow's batch-test library (workflow.view).
+	WorkflowTestLibraryWorkspaceIDs []string
 }
 
 // RecentWorkRequest describes a recent-work query for either overview or workspace scope.
@@ -64,6 +67,9 @@ type RecentWorkRequest struct {
 	// unpublished assets. Elsewhere only published assets and its own drafts show.
 	AgentDraftWorkspaceIDs    []string
 	WorkflowDraftWorkspaceIDs []string
+	// WorkflowTestLibraryWorkspaceIDs are the workspaces where the account may
+	// open a workflow's batch-test library (workflow.view).
+	WorkflowTestLibraryWorkspaceIDs []string
 }
 
 // RecentWorkItem represents one recently updated console work item.
@@ -82,6 +88,9 @@ type RecentWorkItem struct {
 	IsPublished   *bool  `json:"is_published,omitempty"`
 	CanOpenEditor *bool  `json:"can_open_editor,omitempty"`
 	CanViewLogs   *bool  `json:"can_view_logs,omitempty"`
+	// CanViewBatchTest and PreferBatchTestLibrary are set for workflow items only.
+	CanViewBatchTest       *bool `json:"can_view_batch_test,omitempty"`
+	PreferBatchTestLibrary *bool `json:"prefer_batch_test_library,omitempty"`
 }
 
 // RecentWorkResponse represents recent work items for the console homepage.

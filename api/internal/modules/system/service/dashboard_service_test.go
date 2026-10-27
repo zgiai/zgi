@@ -85,6 +85,37 @@ func TestDashboardServiceRecentAgentsBranchesByRuntimeType(t *testing.T) {
 	require.False(t, *items[0].IsPublished)
 	require.True(t, *items[0].CanOpenEditor)
 	require.False(t, *items[0].CanViewLogs)
+	require.NotNil(t, items[0].CanViewBatchTest)
+	require.False(t, *items[0].CanViewBatchTest)
+	require.False(t, *items[0].PreferBatchTestLibrary)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceRecentWorkflowsLetViewersOpenBatchTest(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["agents"] = true
+	svc.tableCache["workspaces"] = true
+	svc.tableCache["workflows"] = true
+
+	updatedAt := time.Unix(1710000000, 0).UTC()
+	mock.ExpectQuery(`(?s)SELECT .*FROM "?agents"? AS a.*a\.agent_type IN.*ORDER BY a\.updated_at DESC.*LIMIT`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "title", "resource_id", "workspace_id", "workspace_name", "updated_at", "created_at", "agent_type", "is_published",
+		}).AddRow("workflow-1", "Workflow One", "workflow-1", "ws-workflow", "Workflow Space", updatedAt, updatedAt, "WORKFLOW", true))
+
+	items := svc.getRecentAgents(context.Background(), recentAgentScope{
+		workspaceIDs:            []string{"ws-workflow"},
+		testLibraryWorkspaceIDs: []string{"ws-workflow"},
+		accountID:               "acc-1",
+		workflow:                true,
+	}, dashboardWorkflowAgentTypes, "workflow", 3)
+
+	require.Len(t, items, 1)
+	require.False(t, *items[0].CanOpenEditor)
+	require.False(t, *items[0].CanViewLogs)
+	require.True(t, *items[0].CanViewBatchTest)
+	require.True(t, *items[0].PreferBatchTestLibrary)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

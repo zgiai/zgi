@@ -71,11 +71,11 @@ export const useCombinedWorkflowSave = (agentId: string) => {
         }
 
         if (savePasses >= MAX_SAVE_PASSES) {
-          // The latest successful save is persisted; newer local changes keep
-          // their dirty flags and will be picked up by the next save.
+          // Newer local changes are still unsaved and keep their dirty flags for
+          // the next save. Report failure so publish and save-and-leave do not
+          // proceed past edits that were never persisted.
           console.warn('Workflow draft still changing after repeated saves; deferring.');
-          if (!silent && saveToast) toast.success(saveToast);
-          return true;
+          return false;
         }
         savePasses += 1;
 

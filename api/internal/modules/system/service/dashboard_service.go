@@ -227,11 +227,12 @@ func (s *dashboardService) loadRecentWork(ctx context.Context, req model.RecentW
 		accountID:         req.AccountID,
 	}, []string{dashboardAgentTypeAgent}, "agent", limit)...)
 	items = append(items, s.getRecentAgents(ctx, recentAgentScope{
-		workspaceIDs:      req.WorkflowWorkspaceIDs,
-		draftWorkspaceIDs: req.WorkflowDraftWorkspaceIDs,
-		logsWorkspaceIDs:  req.WorkflowConversationWorkspaceIDs,
-		accountID:         req.AccountID,
-		workflow:          true,
+		workspaceIDs:            req.WorkflowWorkspaceIDs,
+		draftWorkspaceIDs:       req.WorkflowDraftWorkspaceIDs,
+		logsWorkspaceIDs:        req.WorkflowConversationWorkspaceIDs,
+		testLibraryWorkspaceIDs: req.WorkflowTestLibraryWorkspaceIDs,
+		accountID:               req.AccountID,
+		workflow:                true,
 	}, dashboardWorkflowAgentTypes, "workflow", limit)...)
 	items = append(items, s.getRecentDatasets(ctx, req.DatasetWorkspaceIDs, req.AccountID, limit)...)
 	items = append(items, s.getRecentAgentConversations(ctx, req.AgentConversationWorkspaceIDs, []string{dashboardAgentTypeAgent}, req.AccountID, limit)...)
@@ -495,8 +496,10 @@ type recentAgentScope struct {
 	workspaceIDs      []string
 	draftWorkspaceIDs []string
 	logsWorkspaceIDs  []string
-	accountID         string
-	workflow          bool
+	// testLibraryWorkspaceIDs (workflows only) allow the batch-test library.
+	testLibraryWorkspaceIDs []string
+	accountID               string
+	workflow                bool
 }
 
 type recentAgentRow struct {
@@ -587,6 +590,13 @@ func (s *dashboardService) getRecentAgents(ctx context.Context, scope recentAgen
 		items[i].IsPublished = &isPublished
 		items[i].CanOpenEditor = &canOpenEditor
 		items[i].CanViewLogs = &canViewLogs
+		if scope.workflow {
+			// Mirrors the asset card: workflow viewers reach the batch-test pages.
+			preferLibrary := containsString(scope.testLibraryWorkspaceIDs, row.WorkspaceID)
+			canViewBatchTest := preferLibrary || canViewLogs
+			items[i].CanViewBatchTest = &canViewBatchTest
+			items[i].PreferBatchTestLibrary = &preferLibrary
+		}
 	}
 	return items
 }

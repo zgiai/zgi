@@ -153,6 +153,7 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 		FileWorkspaceIDs:                 scopes.FileWorkspaceIDs,
 		AgentDraftWorkspaceIDs:           scopes.AgentDraftWorkspaceIDs,
 		WorkflowDraftWorkspaceIDs:        scopes.WorkflowDraftWorkspaceIDs,
+		WorkflowTestLibraryWorkspaceIDs:  scopes.WorkflowTestLibraryWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -202,6 +203,7 @@ func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID
 		FileWorkspaceIDs:                 scopes.FileWorkspaceIDs,
 		AgentDraftWorkspaceIDs:           scopes.AgentDraftWorkspaceIDs,
 		WorkflowDraftWorkspaceIDs:        scopes.WorkflowDraftWorkspaceIDs,
+		WorkflowTestLibraryWorkspaceIDs:  scopes.WorkflowTestLibraryWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -270,6 +272,10 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
+	workflowTestLibraryWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionWorkflowView)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
 
 	return systemmodel.DashboardWorkspaceScopes{
 		WorkspaceIDs:                     workspaceIDs,
@@ -282,6 +288,7 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 		FileWorkspaceIDs:                 fileWorkspaceIDs,
 		AgentDraftWorkspaceIDs:           agentDraftWorkspaceIDs,
 		WorkflowDraftWorkspaceIDs:        workflowDraftWorkspaceIDs,
+		WorkflowTestLibraryWorkspaceIDs:  workflowTestLibraryWorkspaceIDs,
 	}, nil
 }
 
@@ -344,6 +351,11 @@ func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Cont
 		return scopes, err
 	} else if ok {
 		scopes.WorkflowDraftWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionWorkflowView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.WorkflowTestLibraryWorkspaceIDs = []string{workspaceID}
 	}
 
 	return scopes, nil

@@ -4,7 +4,12 @@ import { getAgentDetailDefaultHref } from '@/utils/agent-detail-routes';
 
 export type RecentWorkAgentAccess = Pick<
   DashboardRecentWorkItem,
-  'agent_type' | 'is_published' | 'can_open_editor' | 'can_view_logs'
+  | 'agent_type'
+  | 'is_published'
+  | 'can_open_editor'
+  | 'can_view_logs'
+  | 'can_view_batch_test'
+  | 'prefer_batch_test_library'
 >;
 
 export function getRecentWorkHref(
@@ -58,9 +63,10 @@ function getRecentAgentHref(
     canOpenEditor: Boolean(access.can_open_editor),
     canManageRuntimeAccess: false,
     canViewRuntimeLogs: Boolean(access.can_view_logs),
-    canViewBatchTest: false,
+    canViewBatchTest: Boolean(access.can_view_batch_test),
     canRunBatchTest: false,
     isPublished: Boolean(access.is_published),
+    preferBatchTestLibrary: Boolean(access.prefer_batch_test_library),
   });
 }
 
