@@ -55,7 +55,11 @@ const messages = {
     memoryEnabled: 'Remember me',
     memoryEnabledHint: 'Let this assistant use and update what it remembers about you.',
     autoCapture: 'Remember automatically',
-    autoCaptureHint: 'Let it note useful things from your chats without being asked.',
+    autoCaptureHint:
+      'It notes useful things from your chats without being asked. On by default; turn it off anytime.',
+    autoCaptureUnavailable: 'Off for this assistant',
+    autoCaptureUnavailableHint:
+      'This assistant or deployment has automatic memory off. It still remembers when you ask it to.',
     readOnly:
       'You no longer have access to this workspace, or this assistant is archived. You can still download or permanently delete its memory.',
     noItems: 'Nothing remembered yet',

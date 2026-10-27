@@ -112,7 +112,10 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 		}
 		return nil, agentmemory.ErrUnauthorized
 	}
-	relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{OrganizationID: *scope.OrganizationID, WorkspaceID: workspaceID, Subject: usersubject.Ref{Kind: kind, ID: userID}, IssuerType: issuerType, IssuerID: issuerID, ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: scope.Name})
+	// Automatic memory follows the Agent: the person's switch starts on and
+	// only matters once they turn it off. The Agent's own setting and the
+	// deployment fuse still decide whether anything runs.
+	relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{OrganizationID: *scope.OrganizationID, WorkspaceID: workspaceID, Subject: usersubject.Ref{Kind: kind, ID: userID}, IssuerType: issuerType, IssuerID: issuerID, ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: scope.Name, AutoCaptureEnabled: true})
 	return relationship, mapAgentMemoryError(err)
 }
 

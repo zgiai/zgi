@@ -133,6 +133,7 @@ export default function ProfileMemoryPage() {
     [detail]
   );
   const showFilters = total > filterThreshold || Boolean(consumerType || status);
+  const autoCaptureAvailable = detail?.auto_capture_available !== false;
   // With a single assistant the list only repeats the detail header.
   const showList = total > 1 || Boolean(consumerType || status) || !listQuery.isSuccess;
 
@@ -458,13 +459,21 @@ export default function ProfileMemoryPage() {
                       <SettingToggle
                         id="memory-auto-capture"
                         label={t('memory.autoCapture')}
-                        hint={t('memory.autoCaptureHint')}
+                        hint={
+                          autoCaptureAvailable
+                            ? t('memory.autoCaptureHint')
+                            : t('memory.autoCaptureUnavailableHint')
+                        }
+                        note={autoCaptureAvailable ? undefined : t('memory.autoCaptureUnavailable')}
                       >
                         <Switch
                           aria-labelledby="memory-auto-capture"
-                          checked={detail.auto_capture_enabled}
+                          checked={autoCaptureAvailable && detail.auto_capture_enabled}
                           disabled={
-                            !detail.can_manage || !detail.memory_enabled || settings.isPending
+                            !autoCaptureAvailable ||
+                            !detail.can_manage ||
+                            !detail.memory_enabled ||
+                            settings.isPending
                           }
                           onCheckedChange={checked =>
                             settings.mutate(() =>
@@ -762,11 +771,14 @@ function SettingToggle({
   id,
   label,
   hint,
+  note,
   children,
 }: {
   id: string;
   label: string;
   hint: string;
+  /** A short reason shown beside a switch that cannot be used. */
+  note?: string;
   children: ReactNode;
 }) {
   return (
@@ -776,6 +788,7 @@ function SettingToggle({
       </span>
       <InfoHint text={hint} />
       {children}
+      {note ? <span className="text-xs text-muted-foreground">{note}</span> : null}
     </div>
   );
 }

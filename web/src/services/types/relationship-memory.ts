@@ -46,6 +46,8 @@ export interface UserMemoryRelationship {
 
 export interface UserMemoryRelationshipDetail extends UserMemoryRelationship {
   items: UserRelationshipMemoryItem[];
+  /** False when the assistant or the deployment has automatic memory off. */
+  auto_capture_available?: boolean;
 }
 
 export interface UserMemoryRelationshipPage {

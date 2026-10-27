@@ -73,12 +73,28 @@ func (h *Handler) ListRelationships(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// relationshipDetailResponse adds whether automatic memory can run at all, so
+// the person's switch is not shown as working when the assistant or the
+// deployment has it off.
+type relationshipDetailResponse struct {
+	*RelationshipDetail
+	AutoCaptureAvailable bool `json:"auto_capture_available"`
+}
+
 func (h *Handler) GetRelationship(c *gin.Context) {
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
 	}
-	response.Success(c, detail)
+	contract, err := h.managementContract(c, detail)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, relationshipDetailResponse{
+		RelationshipDetail:   detail,
+		AutoCaptureAvailable: contract.Enabled && contract.AutoCaptureAllowed && AutomaticExtractionEnabled(),
+	})
 }
 
 type updateSettingsPayload struct {
