@@ -393,35 +393,30 @@ export default function ProfileMemoryPage() {
                         }
                       />
                     </SettingToggle>
-                    <SettingToggle
-                      id="memory-auto-capture"
-                      label={t('memory.autoCapture')}
-                      hint={
-                        autoCaptureAvailable
-                          ? t('memory.autoCaptureHint')
-                          : t('memory.autoCaptureUnavailableHint')
-                      }
-                      note={autoCaptureAvailable ? undefined : t('memory.autoCaptureUnavailable')}
-                    >
-                      <Switch
-                        aria-labelledby="memory-auto-capture"
-                        checked={autoCaptureAvailable && detail.auto_capture_enabled}
-                        disabled={
-                          !autoCaptureAvailable ||
-                          !detail.can_manage ||
-                          !detail.memory_enabled ||
-                          settings.isPending
-                        }
-                        onCheckedChange={checked =>
-                          settings.mutate(() =>
-                            relationshipMemoryService.updateSettings(detail.id, {
-                              auto_capture_enabled: checked,
-                              expected_revision: detail.settings_revision,
-                            })
-                          )
-                        }
-                      />
-                    </SettingToggle>
+                    {/* Not offered when the assistant or the deployment has no automatic memory. */}
+                    {autoCaptureAvailable ? (
+                      <SettingToggle
+                        id="memory-auto-capture"
+                        label={t('memory.autoCapture')}
+                        hint={t('memory.autoCaptureHint')}
+                      >
+                        <Switch
+                          aria-labelledby="memory-auto-capture"
+                          checked={detail.auto_capture_enabled}
+                          disabled={
+                            !detail.can_manage || !detail.memory_enabled || settings.isPending
+                          }
+                          onCheckedChange={checked =>
+                            settings.mutate(() =>
+                              relationshipMemoryService.updateSettings(detail.id, {
+                                auto_capture_enabled: checked,
+                                expected_revision: detail.settings_revision,
+                              })
+                            )
+                          }
+                        />
+                      </SettingToggle>
+                    ) : null}
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

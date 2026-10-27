@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { MemoryInstructionsField, MemorySettingRow } from '@/components/memory/memory-settings';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
@@ -73,24 +72,18 @@ export function AgentRuntimeMemorySection({
         />
         {agentMemoryEnabled && (
           <>
-            <MemorySettingRow
-              id="agent-memory-auto"
-              title={t('memory.autoExtractionTitle')}
-              description={
-                automaticAvailable ? t('memory.autoExtractionSummary') : t('memory.autoUnavailable')
-              }
-              hint={t('memory.autoExtractionDescription')}
-              badge={
-                automaticAvailable ? null : (
-                  <Badge variant="warning" title={t('memory.autoUnavailable')}>
-                    {t('memory.autoUnavailableBadge')}
-                  </Badge>
-                )
-              }
-              checked={agentMemoryAutoExtractionEnabled}
-              disabled={readOnly}
-              onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
-            />
+            {/* Without automatic memory in the deployment there is nothing to choose. */}
+            {automaticAvailable ? (
+              <MemorySettingRow
+                id="agent-memory-auto"
+                title={t('memory.autoExtractionTitle')}
+                description={t('memory.autoExtractionSummary')}
+                hint={t('memory.autoExtractionDescription')}
+                checked={agentMemoryAutoExtractionEnabled}
+                disabled={readOnly}
+                onCheckedChange={onChangeAgentMemoryAutoExtractionEnabled}
+              />
+            ) : null}
             <MemoryInstructionsField
               value={agentMemoryInstructions}
               onChange={onChangeAgentMemoryInstructions}

@@ -600,21 +600,6 @@ const messages: DigitalHumansMessages = {
     },
     title: '设置',
     description: '单独管理渠道反馈等运行偏好，不改变数字人的身份与人设。',
-    channelResponseTitle: '渠道里的回复方式',
-    channelReply: {
-      received: {
-        title: '收到消息',
-        description: '在对方的消息上加一个处理中的表情：飞书显示“敲键盘”，钉钉显示“🤔思考中”；不支持表情的渠道先回一句“已收到，正在处理…”。',
-      },
-      working: {
-        title: '处理中',
-        description: '处理时间较长时，把阶段性进展作为单独消息发出。进度消息偶尔可能丢失，不影响最终回复。',
-      },
-      done: {
-        title: '完成',
-        description: '撤下处理中的表情，发送最终回复和生成的文件。',
-      },
-    },
     unsaved: '有尚未保存的修改',
     saved: '所有设置均已保存',
     pendingPublish: '草稿已保存，等待发布后生效',
@@ -791,7 +776,7 @@ const messages: DigitalHumansMessages = {
   configurationHub: {
     sectionNav: '配置分区',
     conversationTitle: '对话体验',
-    conversationDescription: '用户可以上传哪些文件，以及数字人在渠道里怎样回复。',
+    conversationDescription: '用户可以上传哪些文件。',
     title: '配置',
     description: '在同一份可发布草稿中管理身份、回复行为和授权资源。',
     navigation: '配置分区',

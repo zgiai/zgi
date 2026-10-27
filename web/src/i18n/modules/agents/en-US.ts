@@ -2551,9 +2551,6 @@ const messages = {
     memory: {
       agentTitle: 'Remember each user',
       agentDescription: 'Remember what matters about each user across conversations.',
-      autoUnavailable:
-        'Automatic memory is off for this deployment. The Agent still remembers when a user asks it to.',
-      autoUnavailableBadge: 'Off for this deployment',
       autoExtractionTitle: 'Remember automatically',
       autoExtractionSummary: 'Note lasting details from conversations without being asked.',
       autoExtractionDescription:

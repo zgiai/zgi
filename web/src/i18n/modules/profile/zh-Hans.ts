@@ -57,8 +57,6 @@ const messages: ProfileMessages = {
     memoryEnabledHint: '允许这个助手使用和更新关于你的记忆。',
     autoCapture: '自动记住',
     autoCaptureHint: '它会在对话中主动记下有用的信息，无需你提醒。默认开启，你可以随时关闭。',
-    autoCaptureUnavailable: '助手未开启',
-    autoCaptureUnavailableHint: '这个助手或当前部署没有开启自动记住。你明确要求时，它仍会记住。',
     readOnly: '你已无该工作空间的权限，或这个助手已归档。你仍可下载或永久删除它的记忆。',
     noItems: '还没有记住任何内容',
     saved: '设置已更新',

@@ -2387,8 +2387,6 @@ const messages: AgentsMessages = {
     memory: {
       agentTitle: '记住每位用户',
       agentDescription: '跨对话记住每位用户的重要信息。',
-      autoUnavailable: '当前部署未开启自动记忆。用户明确要求时，智能体仍会记住。',
-      autoUnavailableBadge: '部署未开启',
       autoExtractionTitle: '自动记住',
       autoExtractionSummary: '从对话中主动记下值得长期保留的信息。',
       autoExtractionDescription:

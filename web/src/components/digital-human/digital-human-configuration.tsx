@@ -19,7 +19,6 @@ import {
   Pencil,
   Plus,
   Search,
-  SmilePlus,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -200,7 +199,7 @@ function ConfigurationEditor({
   useEffect(() => {
     if (initialPanel !== 'response') return;
     const timer = window.setTimeout(
-      () => document.getElementById('configuration-behavior')?.scrollIntoView({ block: 'center' }),
+      () => document.getElementById('configuration-conversation')?.scrollIntoView({ block: 'center' }),
       300
     );
     return () => window.clearTimeout(timer);
@@ -587,14 +586,11 @@ function ConfigurationEditor({
                 title={t('configurationHub.conversationTitle')}
                 description={t('configurationHub.conversationDescription')}
               >
-                <div className="space-y-3">
-                  <PolicyFileUploadSettings
-                    value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy}
-                    onChange={setFileUploadPolicy}
-                    disabled={!editingEnabled}
-                  />
-                  <ChannelReplyFlow />
-                </div>
+                <PolicyFileUploadSettings
+                  value={previewVersion ? previewVersion.file_upload_policy : fileUploadPolicy}
+                  onChange={setFileUploadPolicy}
+                  disabled={!editingEnabled}
+                />
               </ConfigurationSection>
 
               <ConfigurationSection
@@ -806,41 +802,6 @@ function linuxEnvironmentUnavailableKey(reason?: string) {
   return known
     ? (`preferences.linuxEnvironmentUnavailableReasons.${known}` as const)
     : ('preferences.linuxEnvironmentUnavailable' as const);
-}
-
-const CHANNEL_REPLY_STEPS = [
-  { key: 'received', icon: SmilePlus },
-  { key: 'working', icon: MessageSquareText },
-  { key: 'done', icon: CheckCircle2 },
-] as const;
-
-// How a digital human answers in a chat channel. It is not configurable: every
-// channel message is acknowledged and reports progress.
-function ChannelReplyFlow() {
-  const t = useT('digitalHumans');
-  return (
-    <div id="configuration-behavior" className="rounded-lg border bg-background px-4 py-3">
-      <p className="text-xs font-medium text-muted-foreground">{t('preferences.channelResponseTitle')}</p>
-      <ol className="mt-3 space-y-3">
-        {CHANNEL_REPLY_STEPS.map(({ key, icon: Icon }, index) => (
-          <li key={key} className="flex gap-3">
-            <div className="flex flex-col items-center">
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <Icon className="size-3.5" aria-hidden="true" />
-              </span>
-              {index < CHANNEL_REPLY_STEPS.length - 1 ? <span className="mt-1 w-px flex-1 bg-border" /> : null}
-            </div>
-            <div className="min-w-0 pb-1">
-              <p className="text-sm font-medium">{t(`preferences.channelReply.${key}.title`)}</p>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                {t(`preferences.channelReply.${key}.description`)}
-              </p>
-            </div>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
 }
 
 function PreferenceSwitch({
