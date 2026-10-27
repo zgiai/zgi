@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	usererrors "github.com/zgiai/zgi/api/internal/errors"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -27,6 +28,7 @@ type MembersHandler struct {
 	//registerService *auth.RegisterService
 	enterpriseService interfaces.OrganizationService
 	consoleWebURL     string
+	audit             *orgaudit.Recorder
 }
 
 func memberActivationURL(consoleWebURL, email, token string) string {
@@ -219,6 +221,8 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+
+	orgaudit.SetAfter(c, map[string]any{"emails": req.Emails, "workspace_role": req.Role})
 
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -715,6 +719,17 @@ func (h *MembersHandler) UpdateWorkspaceMemberExtensionDetail(c *gin.Context) {
 		return
 	}
 
+	if targetWorkspace.OrganizationID != nil {
+		orgaudit.SetOrganization(c, *targetWorkspace.OrganizationID)
+	}
+	orgaudit.SetAfter(c, map[string]any{
+		"workspace_role":   req.Role,
+		"permissions":      req.Permissions,
+		"position":         req.Position,
+		"status":           req.Status,
+		"new_workspace_id": req.NewWorkspaceID,
+	})
+
 	member, err := h.workspaceManagementService.GetWorkspaceMemberWithExtensionsById(c.Request.Context(), targetWorkspace.ID, memberID)
 	if err != nil {
 		switch {
@@ -816,6 +831,15 @@ func (h *MembersHandler) UpdateWorkspaceMemberExtensionDetail(c *gin.Context) {
 		targetWorkspace = newWorkspace
 	}
 
+	if member != nil {
+		orgaudit.SetBefore(c, map[string]any{
+			"workspace_role":    member.Role,
+			"workspace_role_id": member.RoleID,
+			"permissions":       member.Permissions,
+			"permission_source": member.PermissionSource,
+			"position":          member.Position,
+		})
+	}
 	if req.Role != nil || req.Position != nil || len(req.Permissions) > 0 {
 		err = h.workspaceManagementService.UpdateMemberRoleExtensions(
 			c.Request.Context(),
@@ -2031,9 +2055,9 @@ func (h *MembersHandler) RegisterRoutes(router *gin.RouterGroup) {
 			current.POST("/members/invite-email",
 				accountMiddleware.SetupRequired(),
 				accountMiddleware.AccountInitializationRequired(),
-				h.InviteMemberByEmail)
-			current.DELETE("/members/:member_id", h.CancelMemberInvite)
-			current.PUT("/members/:member_id/update-role", h.UpdateMemberRole)
+				h.audit.Wrap(orgaudit.ActionMemberInvite, h.InviteMemberByEmail))
+			current.DELETE("/members/:member_id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRemove, h.CancelMemberInvite))
+			current.PUT("/members/:member_id/update-role", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRole, h.UpdateMemberRole))
 			current.GET("/dataset-operators", h.GetDatasetOperatorMembers)
 		}
 
@@ -2042,20 +2066,20 @@ func (h *MembersHandler) RegisterRoutes(router *gin.RouterGroup) {
 			//workspace.GET("/members", h.GetWorkspaceMembers)
 			workspace.GET("/members", h.GetWorkspaceMembersExtension)
 			workspace.GET("/members/:member_id", h.GetWorkspaceMemberExtensionDetail)
-			workspace.PUT("/members/:member_id", h.UpdateWorkspaceMemberExtensionDetail)
-			workspace.POST("/members/invite-email", h.InviteWorkspaceMemberByEmailEx)
-			workspace.POST("/members/invite-email-ex", h.InviteWorkspaceMemberByEmailEx)
-			workspace.POST("/members/invite-by-id", h.InviteWorkspaceMemberByAccountId)
-			workspace.POST("/members/batch-invite-by-ids", h.BatchInviteWorkspaceMembers)
-			workspace.DELETE("/members/:member_id", h.CancelWorkspaceMemberInvite)
-			workspace.PUT("/members/:member_id/update-role", h.UpdateWorkspaceMemberRole)
-			workspace.PUT("/members/:member_id/update-ex", h.UpdateWorkspaceMemberExtension)
+			workspace.PUT("/members/:member_id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberPerms, h.UpdateWorkspaceMemberExtensionDetail))
+			workspace.POST("/members/invite-email", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.InviteWorkspaceMemberByEmailEx))
+			workspace.POST("/members/invite-email-ex", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.InviteWorkspaceMemberByEmailEx))
+			workspace.POST("/members/invite-by-id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.InviteWorkspaceMemberByAccountId))
+			workspace.POST("/members/batch-invite-by-ids", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.BatchInviteWorkspaceMembers))
+			workspace.DELETE("/members/:member_id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRemove, h.CancelWorkspaceMemberInvite))
+			workspace.PUT("/members/:member_id/update-role", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRole, h.UpdateWorkspaceMemberRole))
+			workspace.PUT("/members/:member_id/update-ex", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRole, h.UpdateWorkspaceMemberExtension))
 			workspace.GET("/dataset-operators", h.GetWorkspaceDatasetOperatorMembers)
 			workspace.GET("/non-members", h.GetWorkspaceNonMembers)
 		}
 
-		workspaces.POST("/members/:member_id/re-invite", h.ReInviteMemberById)
+		workspaces.POST("/members/:member_id/re-invite", h.audit.Wrap(orgaudit.ActionMemberInvite, h.ReInviteMemberById))
 
-		workspaces.POST("/default/members/invite-email-ex", h.InviteDefaultMemberByEmailEx)
+		workspaces.POST("/default/members/invite-email-ex", h.audit.Wrap(orgaudit.ActionMemberInvite, h.InviteDefaultMemberByEmailEx))
 	}
 }
