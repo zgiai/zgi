@@ -25,6 +25,22 @@ func TestWrapMutationForAffectedRowsWrapsPlainMutations(t *testing.T) {
 	}
 }
 
+func TestWrapMutationForAffectedRowsIgnoresDelimitersInsideQuotes(t *testing.T) {
+	cases := []string{
+		`UPDATE "t" SET note = 'a--b' WHERE id = 1`,
+		`UPDATE "t" SET note = 'x; y /* z */' WHERE id = 1`,
+		`INSERT INTO "t" ("note") VALUES ('it''s; fine')`,
+		`INSERT INTO "t" ("note") VALUES (E'a\'; --b')`,
+		`UPDATE "odd;--name" SET "a" = $1 WHERE "id" = $2`,
+		`UPDATE "t" SET note = $q$a; -- b$q$ WHERE id = $1`,
+	}
+	for _, query := range cases {
+		if _, ok := wrapMutationForAffectedRows(query); !ok {
+			t.Fatalf("expected %q to be wrapped", query)
+		}
+	}
+}
+
 func TestWrapMutationForAffectedRowsLeavesOtherStatementsUnchanged(t *testing.T) {
 	cases := []string{
 		`SELECT * FROM "t"`,
@@ -33,6 +49,9 @@ func TestWrapMutationForAffectedRowsLeavesOtherStatementsUnchanged(t *testing.T)
 		`WITH x AS (SELECT 1) DELETE FROM "t" WHERE id IN (SELECT * FROM x)`,
 		`DELETE FROM "t"; DELETE FROM "u"`,
 		`DELETE FROM "t" -- trailing comment`,
+		`DELETE FROM "t" WHERE note = 'x' /* trailing */`,
+		`DELETE FROM "t" WHERE note = 'unterminated`,
+		`UPDATE "t" SET note = 'a'; DELETE FROM "u"`,
 		`CREATE TABLE "t" (id int)`,
 		`not sql at all`,
 	}
