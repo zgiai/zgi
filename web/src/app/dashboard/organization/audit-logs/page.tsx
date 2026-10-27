@@ -135,7 +135,9 @@ export default function OrganizationAuditLogsPage() {
   const [refreshKey, setRefreshKey] = useState(() => Date.now());
   const [selected, setSelected] = useState<OrgAuditLog | null>(null);
 
-  const params = useMemo(
+  // refreshKey only moves the start of the date range forward; Refresh also
+  // refetches, since the query key is unchanged within the same day.
+  const queryParams = useMemo(
     () => ({
       page,
       limit: PAGE_SIZE,
@@ -147,11 +149,9 @@ export default function OrganizationAuditLogsPage() {
         dateRange === 'all'
           ? undefined
           : getUnixTime(startOfDay(subDays(new Date(refreshKey), DATE_RANGE_DAYS[dateRange]))),
-      refresh: refreshKey,
     }),
     [page, action, result, actor, target, dateRange, refreshKey]
   );
-  const { refresh: _refresh, ...queryParams } = params;
   const query = useOrganizationAuditLogs(currentOrganization?.id, queryParams, canView);
   const data = query.data;
   const items = data?.items ?? [];
@@ -296,7 +296,15 @@ export default function OrganizationAuditLogsPage() {
                   {tCommon('resetFilters')}
                 </Button>
               ) : null}
-              <Button variant="outline" className="gap-2" onClick={() => setRefreshKey(Date.now())}>
+              <Button
+                variant="outline"
+                className="gap-2"
+                disabled={query.isFetching}
+                onClick={() => {
+                  setRefreshKey(Date.now());
+                  void query.refetch();
+                }}
+              >
                 <RefreshCw className="h-4 w-4" />
                 {tCommon('refresh')}
               </Button>
