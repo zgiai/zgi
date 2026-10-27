@@ -476,9 +476,12 @@ func (h *Handler) accountRelationship(c *gin.Context) (*RelationshipDetail, bool
 
 func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail) (ConsumerMemoryContract, error) {
 	if detail.ConsumerType == ConsumerDigitalHuman {
-		var row struct{ Revision string }
+		var row struct {
+			Revision     string
+			MemoryPolicy datatypes.JSON
+		}
 		err := h.service.db.WithContext(c.Request.Context()).Table("digital_humans AS consumer").
-			Select("published.revision").
+			Select("published.revision, published.memory_policy").
 			Joins("JOIN digital_human_versions AS published ON published.id = consumer.published_version_id AND published.state = ?", "published").
 			Where("consumer.id = ? AND consumer.workspace_id = ? AND consumer.deleted_at IS NULL", detail.ConsumerID, detail.WorkspaceID).
 			Take(&row).Error
@@ -488,8 +491,16 @@ func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail)
 		if err != nil {
 			return ConsumerMemoryContract{}, err
 		}
-		// A person's memory with a DigitalHuman is files, as with an Agent (ADR 0019).
-		return ConsumerMemoryContract{Enabled: true, DefinitionMode: "files", AutoCaptureAllowed: true, ConfigRevision: row.Revision, RenderBudgetChars: defaultRenderBudget}, nil
+		// A person's memory with a DigitalHuman is files, as with an Agent, and
+		// its operator can turn it or its automatic part off (ADR 0019).
+		var policy struct {
+			Enabled     *bool `json:"user_memory_enabled"`
+			AutoCapture *bool `json:"user_auto_capture_enabled"`
+		}
+		_ = json.Unmarshal(row.MemoryPolicy, &policy)
+		enabled := policy.Enabled == nil || *policy.Enabled
+		autoCapture := enabled && (policy.AutoCapture == nil || *policy.AutoCapture)
+		return ConsumerMemoryContract{Enabled: enabled, DefinitionMode: "files", AutoCaptureAllowed: autoCapture, ConfigRevision: row.Revision, RenderBudgetChars: defaultRenderBudget}, nil
 	}
 	var row struct{ ConfigSnapshot datatypes.JSON }
 	err := h.service.db.WithContext(c.Request.Context()).Table("agent_published_versions").

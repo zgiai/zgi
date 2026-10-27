@@ -63,3 +63,27 @@ func TestMemoryInstructionsReachTheExtractionPromptBelowTheRules(t *testing.T) {
 		t.Fatal("an empty instruction added a section")
 	}
 }
+
+func TestUserMemorySettingsDefaultOnAndFollowTheOperator(t *testing.T) {
+	for name, test := range map[string]struct {
+		policy             string
+		enabled, automatic bool
+	}{
+		"missing":               {policy: ``, enabled: true, automatic: true},
+		"no keys":               {policy: `{"instructions":"x"}`, enabled: true, automatic: true},
+		"automatic off":         {policy: `{"user_auto_capture_enabled":false}`, enabled: true, automatic: false},
+		"memory off":            {policy: `{"user_memory_enabled":false}`, enabled: false, automatic: false},
+		"off wins over auto on": {policy: `{"user_memory_enabled":false,"user_auto_capture_enabled":true}`, enabled: false, automatic: false},
+	} {
+		enabled, automatic := userMemorySettingsFromPolicy(datatypes.JSON(test.policy))
+		if enabled != test.enabled || automatic != test.automatic {
+			t.Fatalf("%s: got %v/%v, want %v/%v", name, enabled, automatic, test.enabled, test.automatic)
+		}
+	}
+	if err := validateMemoryPolicy(map[string]any{"user_memory_enabled": "yes"}); err == nil {
+		t.Fatal("a non-boolean switch was accepted")
+	}
+	if err := validateMemoryPolicy(map[string]any{"user_memory_enabled": false, "user_auto_capture_enabled": true}); err != nil {
+		t.Fatalf("boolean switches were rejected: %v", err)
+	}
+}

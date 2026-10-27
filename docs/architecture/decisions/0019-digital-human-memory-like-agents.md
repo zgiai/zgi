@@ -37,6 +37,7 @@ After ADR 0017, an Agent keeps each person's memory as files the model names and
    - A new relationship, with an Agent or a DigitalHuman, starts with the person's switch on.
    - Migration `202610261700000000` turns it on once for DigitalHuman relationships whose settings were never changed.
    - Whether automatic memory runs is still decided by the DigitalHuman's own setting and the deployment fuse `ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED`.
+   - The operator has the Agent's two switches in the published memory policy: `user_memory_enabled` turns remembering each person off, and `user_auto_capture_enabled` turns its automatic part off. Both are on when missing.
 4. **Profile pages show both consumers the same way:** topics of facts named by their files.
 
 Not in this decision: background consolidation of `/user/` after a conversation, as Agents have. A DigitalHuman remembers about the person only within the conversation, explicitly or, when allowed, proactively. Adding consolidation is a separate step with its own token cost.

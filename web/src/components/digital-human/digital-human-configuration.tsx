@@ -26,7 +26,11 @@ import {
 import { toast } from 'sonner';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
 import { DigitalHumanResourceBindings } from '@/components/digital-human/digital-human-resource-bindings';
-import { DigitalHumanMemoryInstructions } from '@/components/digital-human/digital-human-memory-instructions';
+import {
+  DigitalHumanMemorySettings,
+  memorySettingsOf,
+  withMemorySettings,
+} from '@/components/digital-human/digital-human-memory-instructions';
 import { DigitalHumanWorkJournal } from '@/components/digital-human/digital-human-work-journal';
 import { appendWorkJournalPrompt } from '@/components/digital-human/digital-human-work-journal-model';
 import { DigitalHumanDraftPreview } from '@/components/digital-human/digital-human-draft-preview';
@@ -161,8 +165,8 @@ function ConfigurationEditor({
     return initialRules.length > 0 ? initialRules : [''];
   });
   const [model, setModel] = useState(detail?.draft.default_model ?? '');
-  const [memoryInstructions, setMemoryInstructions] = useState(
-    memoryInstructionsOf(detail?.draft.memory_policy)
+  const [memorySettings, setMemorySettings] = useState(() =>
+    memorySettingsOf(detail?.draft.memory_policy)
   );
   const [executionEnabled, setExecutionEnabled] = useState(
     detail?.draft.execution_runtime?.enabled ?? false
@@ -214,9 +218,9 @@ function ConfigurationEditor({
       goals: detail?.draft.goals ?? [],
       rules: detail?.draft.rules ?? [],
       default_model: detail?.draft.default_model ?? '',
-      memory_policy: withMemoryInstructions(
+      memory_policy: withMemorySettings(
         detail?.draft.memory_policy,
-        memoryInstructionsOf(detail?.draft.memory_policy)
+        memorySettingsOf(detail?.draft.memory_policy)
       ),
       execution_runtime: { enabled: executionEnabled },
       file_upload_policy: fileUploadPolicy,
@@ -240,7 +244,7 @@ function ConfigurationEditor({
       goals: normalizedGoals,
       rules: normalizedRules,
       default_model: model,
-      memory_policy: withMemoryInstructions(detail?.draft.memory_policy, memoryInstructions),
+      memory_policy: withMemorySettings(detail?.draft.memory_policy, memorySettings),
       execution_runtime: { enabled: executionEnabled },
       file_upload_policy: fileUploadPolicy,
       trigger_policy: {
@@ -568,14 +572,12 @@ function ConfigurationEditor({
                 title={t('memoryInstructions.title')}
                 description={t('memoryInstructions.description')}
               >
-                <DigitalHumanMemoryInstructions
+                <DigitalHumanMemorySettings
                   digitalHumanId={id}
                   value={
-                    previewVersion
-                      ? memoryInstructionsOf(previewVersion.memory_policy)
-                      : memoryInstructions
+                    previewVersion ? memorySettingsOf(previewVersion.memory_policy) : memorySettings
                   }
-                  onChange={setMemoryInstructions}
+                  onChange={setMemorySettings}
                   disabled={!editingEnabled}
                 />
               </ConfigurationSection>
@@ -656,21 +658,6 @@ const orchestrationSections = [
   { id: 'configuration-conversation', label: 'configurationHub.conversationTitle' },
   { id: 'configuration-runtime', label: 'preferences.runtimeTitle' },
 ] as const;
-
-// memoryInstructionsOf reads the operator's memory instructions from a memory
-// policy (ADR 0015).
-function memoryInstructionsOf(policy?: Record<string, unknown>) {
-  return typeof policy?.instructions === 'string' ? policy.instructions : '';
-}
-
-// withMemoryInstructions keeps the rest of the memory policy as it is, and
-// leaves empty instructions out, as the server stores them.
-function withMemoryInstructions(policy: Record<string, unknown> | undefined, instructions: string) {
-  const rest = { ...(policy ?? {}) };
-  delete rest.instructions;
-  const trimmed = instructions.trim();
-  return trimmed ? { ...rest, instructions: trimmed } : rest;
-}
 
 function ConfigurationSection({
   id,

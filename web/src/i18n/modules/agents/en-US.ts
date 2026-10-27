@@ -2558,26 +2558,10 @@ const messages = {
       autoExtractionSummary: 'Note lasting details from conversations without being asked.',
       autoExtractionDescription:
         'When on, the Agent notes user information, preferences, and requests worth keeping as the conversation happens, so later answers fit the user better. Noting them adds some model calls within the turn.',
-      applyTemplate: 'Use a template',
-      templateDialogTitle: 'Memory templates',
-      templateDialogDescription:
-        'Start from memory instructions written for a common scenario, then adjust them.',
-      templatesLoading: 'Loading templates…',
-      templateUse: 'Use these instructions',
       templateApplied: 'Memory instructions filled in from the template',
-      templateReplaceConfirmTitle: 'Replace the current instructions?',
-      templateReplaceConfirmDescription:
-        'Your current memory instructions will be replaced by the template.',
-      templateReplaceConfirmAction: 'Replace',
-      templateReplaceConfirmCancel: 'Cancel',
-      instructionsLabel: 'Memory instructions',
-      instructionsOptional: 'Optional',
       instructionsPlaceholder:
         "For example: This is a support assistant. Remember the customer's plan and communication preferences; do not record how a single ticket was handled.",
-      instructionsHelp:
-        'Describe what this Agent should remember about each user and what it should not. The Agent organizes the memory itself. Instructions cannot override evidence, sensitive-content, or other safety rules. Up to 2,000 characters.',
-      instructionsEmpty: 'Left empty, general rules decide what to remember.',
-      manageHint: 'Users manage their own memory under “My memory”',
+      tryHint: 'Try it in the debug chat on the right, e.g. "remember I prefer short answers".',
       viewValues: 'My test memory',
     },
     memoryValues: {

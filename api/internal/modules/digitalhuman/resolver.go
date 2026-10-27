@@ -140,16 +140,18 @@ func (r *Resolver) resolveVersion(ctx context.Context, event invocation.Event, d
 		identityName = definition.Name
 	}
 	now := r.now()
-	userMemoryEnabled := invocationAllowsUserMemory(event)
+	// The surface decides whether a person can be remembered at all; the
+	// version's memory policy decides whether this DigitalHuman does.
+	policyUserMemory, policyAutoCapture := userMemorySettingsFromPolicy(version.MemoryPolicy)
+	userMemoryEnabled := invocationAllowsUserMemory(event) && policyUserMemory
 	snapshot := ExecutionSnapshot{
 		FileUploadPolicy: chatfile.Clone(version.FileUploadPolicy),
 		SchemaVersion:    executionSnapshotSchemaV1, Subject: event.Target, DigitalHumanVersion: version.ID,
 		IdentityName: identityName, Persona: version.Persona, Goals: goals, Rules: rules, Model: version.DefaultModel, Bindings: bindings,
 		UseUserMemory: userMemoryEnabled, UseAgentMemory: false,
-		// Kept in the v1 snapshot for compatibility with persisted runs. DigitalHuman
-		// relationship memory is a product capability now; the user's relationship
-		// setting is the only per-user automatic-capture control.
-		UserMemoryAutoCaptureAllowed: userMemoryEnabled,
+		// The person's own switch still decides for them; this is the
+		// operator's.
+		UserMemoryAutoCaptureAllowed: userMemoryEnabled && policyAutoCapture,
 		ChannelResponsePolicy:        channelResponsePolicyPointer(defaultChannelResponsePolicy()),
 		ExecutionRuntime:             cloneExecutionRuntime(version.ExecutionRuntime),
 		ResolvedAt:                   now,

@@ -2393,24 +2393,10 @@ const messages: AgentsMessages = {
       autoExtractionSummary: '从对话中主动记下值得长期保留的信息。',
       autoExtractionDescription:
         '开启后，智能体会在对话中识别值得长期保留的用户信息、偏好和要求，并主动记下，让后续回答更贴合用户。主动记下时会在当轮对话里多一些模型调用。',
-      applyTemplate: '使用模板',
-      templateDialogTitle: '记忆模板',
-      templateDialogDescription: '从为常见场景写好的记忆说明开始，再按需调整。',
-      templatesLoading: '正在加载模板…',
-      templateUse: '使用这份说明',
       templateApplied: '已用模板填入记忆说明',
-      templateReplaceConfirmTitle: '替换当前的记忆说明？',
-      templateReplaceConfirmDescription: '当前的记忆说明会被模板内容替换。',
-      templateReplaceConfirmAction: '替换',
-      templateReplaceConfirmCancel: '取消',
-      instructionsLabel: '记忆说明',
-      instructionsOptional: '选填',
       instructionsPlaceholder:
         '例如：这是一个客服助手，记住客户的套餐和沟通偏好，不要记录单次工单的处理过程。',
-      instructionsHelp:
-        '描述这个智能体应该记住用户的哪些信息、哪些不该记。记忆由智能体自行整理。说明不能绕过证据、敏感信息等安全规则。最多 2000 字。',
-      instructionsEmpty: '不填时，智能体按通用规则判断记什么。',
-      manageHint: '用户在应用的“我的记忆”中管理自己的记忆',
+      tryHint: '在右侧调试里说一句“记住我喜欢简短的回答”试试。',
       viewValues: '我的测试记忆',
     },
     memoryValues: {

@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Eye, Loader2, Play, Plus, Trash2 } from 'lucide-react';
+import { ArrowRight, Loader2, MessageSquareText, Play, Plus, Trash2 } from 'lucide-react';
+import { MemoryInstructionsField, MemorySettingRow } from '@/components/memory/memory-settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogBody,
@@ -22,40 +23,82 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  useDigitalHumanMemories,
+  useDigitalHumanMutations,
+} from '@/hooks/digital-human/use-digital-humans';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import { digitalHumanService } from '@/services/digital-human.service';
-import type {
-  DigitalHumanMemoryInstructionsTemplate,
-  DigitalHumanMemoryPreviewTurn,
-} from '@/services/types/digital-human';
+import type { DigitalHumanMemoryPreviewTurn } from '@/services/types/digital-human';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 export const MAX_MEMORY_INSTRUCTIONS = 2000;
 const MAX_PREVIEW_TURNS = 10;
 
-interface DigitalHumanMemoryInstructionsProps {
+/** The parts of a DigitalHuman's memory policy its operator edits. */
+export interface DigitalHumanMemorySettingsValue {
+  userMemoryEnabled: boolean;
+  userAutoCaptureEnabled: boolean;
+  instructions: string;
+}
+
+// memorySettingsOf reads the operator's memory settings from a memory policy
+// (ADR 0015, ADR 0019). Missing switches are on.
+export function memorySettingsOf(
+  policy?: Record<string, unknown>
+): DigitalHumanMemorySettingsValue {
+  return {
+    userMemoryEnabled: policy?.user_memory_enabled !== false,
+    userAutoCaptureEnabled: policy?.user_auto_capture_enabled !== false,
+    instructions: typeof policy?.instructions === 'string' ? policy.instructions : '',
+  };
+}
+
+// withMemorySettings keeps the rest of the memory policy as it is. Switches
+// that are on and empty instructions are left out, as the server reads them.
+export function withMemorySettings(
+  policy: Record<string, unknown> | undefined,
+  settings: DigitalHumanMemorySettingsValue
+) {
+  const rest = { ...(policy ?? {}) };
+  delete rest.instructions;
+  delete rest.user_memory_enabled;
+  delete rest.user_auto_capture_enabled;
+  const instructions = settings.instructions.trim();
+  return {
+    ...rest,
+    ...(settings.userMemoryEnabled ? {} : { user_memory_enabled: false }),
+    ...(settings.userAutoCaptureEnabled ? {} : { user_auto_capture_enabled: false }),
+    ...(instructions ? { instructions } : {}),
+  };
+}
+
+interface DigitalHumanMemorySettingsProps {
   digitalHumanId: string;
-  value: string;
-  onChange: (value: string) => void;
+  value: DigitalHumanMemorySettingsValue;
+  onChange: (value: DigitalHumanMemorySettingsValue) => void;
   disabled: boolean;
 }
 
-// Edits the operator's memory instructions (ADR 0015): business guidance for
-// what the DigitalHuman should remember or ignore. They never override the
-// fixed rules on evidence, sensitive content, or who may see memory.
-export function DigitalHumanMemoryInstructions({
+// Edits how a DigitalHuman remembers: whether it remembers each person, and
+// automatically, the operator's memory instructions, and whether it builds
+// up its own work experience. The first three are part of the draft; the
+// last is the DigitalHuman's memory state and changes at once.
+export function DigitalHumanMemorySettings({
   digitalHumanId,
   value,
   onChange,
   disabled,
-}: DigitalHumanMemoryInstructionsProps) {
+}: DigitalHumanMemorySettingsProps) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
+  const permissions = useAccountPermissions();
+  const canManageMemory = permissions.hasPermission('digital_human.memory.manage');
+  const mutations = useDigitalHumanMutations(digitalHumanId);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [templateId, setTemplateId] = useState('');
-  const [pendingTemplate, setPendingTemplate] =
-    useState<DigitalHumanMemoryInstructionsTemplate | null>(null);
   const templatesQuery = useQuery({
     queryKey: ['digital-human-memory-templates', locale],
     queryFn: () => digitalHumanService.listMemoryInstructionsTemplates(locale),
@@ -63,81 +106,101 @@ export function DigitalHumanMemoryInstructions({
   });
   const templates = templatesQuery.data?.data?.templates ?? [];
   const selectedTemplate = templates.find(template => template.id === templateId);
-  // Applying a template replaces the instructions; unsaved text is confirmed
-  // first.
-  const applyTemplate = (template: DigitalHumanMemoryInstructionsTemplate) => {
-    setTemplateId(template.id);
-    onChange(template.instructions);
-    setPendingTemplate(null);
+  const memoryState = useDigitalHumanMemories(digitalHumanId, { page_size: 1 }, canManageMemory)
+    .data?.data?.state;
+  const toggleWorkMemory = async (next: boolean) => {
+    if (!memoryState) return;
+    try {
+      await mutations.updateMemoryState.mutateAsync({
+        digitalHumanId,
+        expectedMemoryEpoch: memoryState.memory_epoch,
+        autoExtractionEnabled: next,
+      });
+    } catch {
+      // The mutation already reports the error.
+    }
   };
+  const samples = (selectedTemplate ? [selectedTemplate] : templates).flatMap(template =>
+    template.samples.map((sample, index) => ({
+      id: `${template.id}:${index}`,
+      label: `${template.name} · ${sample.name}`,
+      turns: sample.turns,
+    }))
+  );
+
   return (
-    <div className="space-y-2">
-      {templates.length > 0 ? (
-        <Select
-          value={templateId}
-          disabled={disabled}
-          onValueChange={id => {
-            const template = templates.find(item => item.id === id);
-            if (!template) return;
-            if (value.trim() && value.trim() !== template.instructions) {
-              setPendingTemplate(template);
-            } else {
-              applyTemplate(template);
-            }
-          }}
-        >
-          <SelectTrigger aria-label={t('memoryInstructions.template.label')}>
-            <SelectValue placeholder={t('memoryInstructions.template.placeholder')} />
-          </SelectTrigger>
-          <SelectContent>
-            {templates.map(template => (
-              <SelectItem key={template.id} value={template.id}>
-                {template.name} · {template.description}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      ) : null}
-      <ConfirmDialog
-        open={Boolean(pendingTemplate)}
-        onOpenChange={next => !next && setPendingTemplate(null)}
-        title={t('memoryInstructions.template.replaceTitle')}
-        description={t('memoryInstructions.template.replaceDescription')}
-        confirmText={t('memoryInstructions.template.replace')}
-        cancelText={t('common.cancel')}
-        variant="warning"
-        onConfirm={() => pendingTemplate && applyTemplate(pendingTemplate)}
-      />
-      <Textarea
-        value={value}
-        maxLength={MAX_MEMORY_INSTRUCTIONS}
+    <div className="space-y-4">
+      <MemorySettingRow
+        id="digital-human-user-memory"
+        title={t('memoryInstructions.userMemoryTitle')}
+        description={t('memoryInstructions.userMemoryDescription')}
+        checked={value.userMemoryEnabled}
         disabled={disabled}
-        className="min-h-28"
-        placeholder={t('memoryInstructions.placeholder')}
-        onChange={event => onChange(event.target.value)}
+        onCheckedChange={checked => onChange({ ...value, userMemoryEnabled: checked })}
       />
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">
-          {t('memoryInstructions.count', { count: value.length, max: MAX_MEMORY_INSTRUCTIONS })}
-        </span>
-        <Button type="button" variant="outline" size="sm" onClick={() => setPreviewOpen(true)}>
-          <Eye className="size-4" />
-          {t('memoryInstructions.preview.open')}
+      {value.userMemoryEnabled ? (
+        <MemorySettingRow
+          id="digital-human-user-auto"
+          title={t('memoryInstructions.autoTitle')}
+          description={t('memoryInstructions.autoDescription')}
+          hint={t('memoryInstructions.autoHint')}
+          checked={value.userAutoCaptureEnabled}
+          disabled={disabled}
+          onCheckedChange={checked => onChange({ ...value, userAutoCaptureEnabled: checked })}
+        />
+      ) : null}
+      {canManageMemory ? (
+        <MemorySettingRow
+          id="digital-human-work-memory"
+          title={t('memoryInstructions.workTitle')}
+          description={t('memoryInstructions.workDescription')}
+          hint={t('memoryInstructions.workHint')}
+          badge={
+            <Badge variant="outline" className="font-normal">
+              {t('memoryInstructions.workImmediate')}
+            </Badge>
+          }
+          checked={memoryState?.auto_extraction_enabled ?? false}
+          disabled={!memoryState || mutations.updateMemoryState.isPending}
+          onCheckedChange={next => void toggleWorkMemory(next)}
+        />
+      ) : null}
+      <MemoryInstructionsField
+        value={value.instructions}
+        onChange={instructions => onChange({ ...value, instructions })}
+        maxLength={MAX_MEMORY_INSTRUCTIONS}
+        templates={templates}
+        placeholder={t('memoryInstructions.placeholder')}
+        disabled={disabled}
+        onTemplateApplied={template => setTemplateId(template.id)}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t pt-2.5">
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          className="h-auto px-0 text-primary"
+          onClick={() => setPreviewOpen(true)}
+        >
+          <MessageSquareText className="size-3" />
+          {t('memoryInstructions.tryPreview')}
+        </Button>
+        <Button asChild variant="link" size="xs" className="h-auto px-0 text-primary">
+          <Link href={`/console/digital-humans/${encodeURIComponent(digitalHumanId)}/memory`}>
+            {t('memoryInstructions.viewMemory')}
+            <ArrowRight className="size-3" />
+          </Link>
         </Button>
       </div>
-      <DigitalHumanMemoryPreviewDialog
-        open={previewOpen}
-        onOpenChange={setPreviewOpen}
-        digitalHumanId={digitalHumanId}
-        instructions={value}
-        samples={(selectedTemplate ? [selectedTemplate] : templates).flatMap(template =>
-          template.samples.map((sample, index) => ({
-            id: `${template.id}:${index}`,
-            label: `${template.name} · ${sample.name}`,
-            turns: sample.turns,
-          }))
-        )}
-      />
+      {previewOpen ? (
+        <DigitalHumanMemoryPreviewDialog
+          open
+          onOpenChange={setPreviewOpen}
+          digitalHumanId={digitalHumanId}
+          instructions={value.instructions}
+          samples={samples}
+        />
+      ) : null}
     </div>
   );
 }
@@ -158,10 +221,11 @@ function DigitalHumanMemoryPreviewDialog({
   samples: Array<{ id: string; label: string; turns: DigitalHumanMemoryPreviewTurn[] }>;
 }) {
   const t = useT('digitalHumans');
-  const [turns, setTurns] = useState<DigitalHumanMemoryPreviewTurn[]>([
-    { user: '', assistant: '' },
-  ]);
-  const [sample, setSample] = useState('');
+  // It opens on the first sample, so there is something to run at once.
+  const [turns, setTurns] = useState<DigitalHumanMemoryPreviewTurn[]>(() =>
+    samples[0] ? samples[0].turns.map(turn => ({ ...turn })) : [{ user: '', assistant: '' }]
+  );
+  const [sample, setSample] = useState(samples[0]?.id ?? '');
   const preview = useMutation({
     mutationFn: async () =>
       (

@@ -588,6 +588,19 @@ const messages = {
       legacy: 'Earlier memory',
     },
   },
+  memorySettings: {
+    instructionsLabel: 'Memory instructions',
+    instructionsOptional: 'Optional',
+    instructionsHint:
+      'Describe what is worth remembering about each person and what is not. The model organizes the memory itself. Instructions never override the rules on evidence and sensitive content. Up to {max} characters.',
+    instructionsEmpty: 'Left empty, general rules decide what to remember.',
+    templateLabel: 'Memory instructions template',
+    templatePlaceholder: 'Start from a template',
+    replaceTitle: 'Replace the current memory instructions?',
+    replaceDescription: 'The template replaces what you wrote. You can still edit it afterwards.',
+    replace: 'Replace',
+    cancel: 'Cancel',
+  },
   memoryItems: {
     search: 'Search memory',
     empty: 'Nothing remembered yet.',

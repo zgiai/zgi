@@ -13,6 +13,7 @@ import {
   FileCheck2,
   FilterX,
   Loader2,
+  MoreHorizontal,
   RefreshCw,
   RotateCcw,
   Eye,
@@ -27,8 +28,13 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -73,6 +79,8 @@ const memoryTypes: DigitalHumanMemoryType[] = [
 ];
 const visibilities: DigitalHumanMemoryVisibility[] = ['everyone', 'internal'];
 const origins: DigitalHumanMemoryOrigin[] = ['operator', 'member', 'channel', 'end_user'];
+// Past this many memories the filters are shown without asking.
+const filtersShownFrom = 20;
 
 export function DigitalHumanMemory({ id }: { id: string }) {
   const t = useT('digitalHumans');
@@ -86,7 +94,8 @@ export function DigitalHumanMemory({ id }: { id: string }) {
   const [origin, setOrigin] = useState<typeof all | DigitalHumanMemoryOrigin>(all);
   const [channel, setChannel] = useState<string>(all);
   const [source, setSource] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Null until the reader opens or closes the filters themselves.
+  const [filtersOpen, setFiltersOpen] = useState<boolean | null>(null);
   const [repairOpen, setRepairOpen] = useState(false);
   const [selected, setSelected] = useState<DigitalHumanMemoryRecord | null>(null);
   // Memories picked for a bulk action, by ID.
@@ -121,6 +130,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
       channel !== all
   );
   const pickedMemories = memories.filter(memory => picked.has(memory.id));
+  const showFilters = filtersOpen ?? (hasFilters || (data?.total ?? 0) > filtersShownFrom);
 
   const clearFilters = () => {
     setSearch('');
@@ -165,17 +175,6 @@ export function DigitalHumanMemory({ id }: { id: string }) {
     } catch {
       // The mutation already reports the error.
     }
-  };
-
-  const toggleFuse = async () => {
-    const state = data?.state;
-    if (!state) return;
-    await mutations.updateMemoryState.mutateAsync({
-      digitalHumanId: id,
-      expectedMemoryEpoch: state.memory_epoch,
-      autoExtractionEnabled: !state.auto_extraction_enabled,
-    });
-    toast.success(t('memory.fuseUpdated'));
   };
 
   const invalidate = async (memory: DigitalHumanMemoryRecord) => {
@@ -261,147 +260,160 @@ export function DigitalHumanMemory({ id }: { id: string }) {
             </div>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void query.refetch()}
-          disabled={query.isFetching}
-        >
-          <RefreshCw className={cn('size-4', query.isFetching && 'animate-spin')} />
-          {t('common.refresh')}
-        </Button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {data?.state ? (
+            <>
+              <span className="text-sm text-muted-foreground">
+                {t('memory.count', { count: data.total })}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant={data.state.auto_extraction_enabled ? 'success' : 'subtle'}
+                    className="cursor-default"
+                  >
+                    {data.state.auto_extraction_enabled ? t('memory.workOn') : t('memory.workOff')}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-72 leading-5">
+                  {t('memory.workChipHint')}
+                </TooltipContent>
+              </Tooltip>
+            </>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void query.refetch()}
+            disabled={query.isFetching}
+          >
+            <RefreshCw className={cn('size-4', query.isFetching && 'animate-spin')} />
+            {t('common.refresh')}
+          </Button>
+          {canManage ? (
+            <>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" isIcon aria-label={t('memory.more')}>
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-w-72">
+                  <DropdownMenuItem
+                    disabled={mutations.repairMemory.isPending}
+                    onSelect={() => setRepairOpen(true)}
+                  >
+                    {mutations.repairMemory.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Wrench className="size-4" />
+                    )}
+                    <div className="min-w-0">
+                      <div>
+                        {mutations.repairMemory.isPending
+                          ? t('memory.repairing')
+                          : t('memory.repair')}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{t('memory.repairHint')}</div>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <ConfirmDialog
+                open={repairOpen}
+                onOpenChange={setRepairOpen}
+                variant="default"
+                title={t('memory.repairTitle')}
+                description={t('memory.repairDescription')}
+                confirmText={t('memory.repair')}
+                cancelText={t('common.cancel')}
+                loading={mutations.repairMemory.isPending}
+                onConfirm={() => void repairMemory()}
+              />
+            </>
+          ) : null}
+        </div>
       </header>
 
-      {data?.state ? (
-        <section className="flex flex-col gap-3 rounded-xl border bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <ShieldCheck className="mt-0.5 size-5 shrink-0 text-primary" />
-            <div>
-              <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                <span>{t('memory.count', { count: data.total })}</span>
-                <Badge variant={data.state.auto_extraction_enabled ? 'success' : 'subtle'}>
-                  {data.state.auto_extraction_enabled ? t('memory.fuseOn') : t('memory.fuseOff')}
-                </Badge>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">{t('memory.fuseHint')}</p>
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
-            {canManage ? (
-              <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={mutations.repairMemory.isPending}
-                      onClick={() => setRepairOpen(true)}
-                    >
-                      {mutations.repairMemory.isPending ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Wrench className="size-4" />
-                      )}
-                      {mutations.repairMemory.isPending
-                        ? t('memory.repairing')
-                        : t('memory.repair')}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-72 leading-5">
-                    {t('memory.repairHint')}
-                  </TooltipContent>
-                </Tooltip>
-                <ConfirmDialog
-                  open={repairOpen}
-                  onOpenChange={setRepairOpen}
-                  variant="default"
-                  title={t('memory.repairTitle')}
-                  description={t('memory.repairDescription')}
-                  confirmText={t('memory.repair')}
-                  cancelText={t('common.cancel')}
-                  loading={mutations.repairMemory.isPending}
-                  onConfirm={() => void repairMemory()}
-                />
-              </>
-            ) : null}
-            {canManage ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={mutations.updateMemoryState.isPending}
-                onClick={() => void toggleFuse()}
-              >
-                {mutations.updateMemoryState.isPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <ShieldCheck className="size-4" />
-                )}
-                {mutations.updateMemoryState.isPending
-                  ? t('memory.updatingFuse')
-                  : data.state.auto_extraction_enabled
-                    ? t('memory.disableFuse')
-                    : t('memory.enableFuse')}
-              </Button>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
       <section className="overflow-hidden rounded-xl border bg-background">
-        <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="border-b p-4">
-          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_repeat(3,minmax(150px,0.4fr))_auto]">
+        <div className="space-y-2 border-b p-4">
+          <div className="flex gap-2">
             <Input
               value={search}
               onChange={event => setSearch(event.target.value)}
               placeholder={t('memory.searchPlaceholder')}
               leftIcon={<Search />}
+              className="flex-1"
             />
-            <MemorySelect
-              value={status}
-              onValueChange={value => setStatus(value as typeof status)}
-              placeholder={t('memory.allStatuses')}
+            <Button
+              variant={showFilters ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-9 shrink-0"
+              aria-expanded={showFilters}
+              onClick={() => setFiltersOpen(!showFilters)}
             >
-              <SelectItem value={all}>{t('memory.allStatuses')}</SelectItem>
-              <SelectItem value="active">{t('memory.status.active')}</SelectItem>
-              <SelectItem value="invalidated">{t('memory.status.invalidated')}</SelectItem>
-              <SelectItem value="archived">{t('memory.status.archived')}</SelectItem>
-            </MemorySelect>
-            <MemorySelect
-              value={visibility}
-              onValueChange={value => setVisibility(value as typeof visibility)}
-              placeholder={t('memory.visibility.all')}
-            >
-              <SelectItem value={all}>{t('memory.visibility.all')}</SelectItem>
-              {visibilities.map(value => (
-                <SelectItem key={value} value={value}>
-                  {withCount(t(`memory.visibility.${value}`), facets?.visibility[value])}
-                </SelectItem>
-              ))}
-            </MemorySelect>
-            <MemorySelect
-              value={origin}
-              onValueChange={value => {
-                setOrigin(value as typeof origin);
-                if (value !== 'channel') setChannel(all);
-              }}
-              placeholder={t('memory.origin.all')}
-            >
-              <SelectItem value={all}>{t('memory.origin.all')}</SelectItem>
-              {origins.map(value => (
-                <SelectItem key={value} value={value}>
-                  {withCount(t(`memory.origin.${value}`), facets?.origins[value])}
-                </SelectItem>
-              ))}
-            </MemorySelect>
-            <CollapsibleTrigger asChild>
-              <Button variant="outline" size="sm" className="justify-start xl:justify-center">
-                <SlidersHorizontal className="size-4" />
-                {advancedOpen ? t('memory.hideAdvancedFilters') : t('memory.showAdvancedFilters')}
-              </Button>
-            </CollapsibleTrigger>
+              <SlidersHorizontal className="size-4" />
+              {t('memory.filters')}
+            </Button>
           </div>
-          {origin === 'channel' && facets?.channels.length ? (
-            <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_minmax(150px,0.4fr)]">
+          {showFilters ? (
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[repeat(3,minmax(150px,1fr))_minmax(180px,1fr)_auto]">
+              <MemorySelect
+                value={status}
+                onValueChange={value => setStatus(value as typeof status)}
+                placeholder={t('memory.allStatuses')}
+              >
+                <SelectItem value={all}>{t('memory.allStatuses')}</SelectItem>
+                <SelectItem value="active">{t('memory.status.active')}</SelectItem>
+                <SelectItem value="invalidated">{t('memory.status.invalidated')}</SelectItem>
+                <SelectItem value="archived">{t('memory.status.archived')}</SelectItem>
+              </MemorySelect>
+              <MemorySelect
+                value={visibility}
+                onValueChange={value => setVisibility(value as typeof visibility)}
+                placeholder={t('memory.visibility.all')}
+              >
+                <SelectItem value={all}>{t('memory.visibility.all')}</SelectItem>
+                {visibilities.map(value => (
+                  <SelectItem key={value} value={value}>
+                    {withCount(t(`memory.visibility.${value}`), facets?.visibility[value])}
+                  </SelectItem>
+                ))}
+              </MemorySelect>
+              <MemorySelect
+                value={origin}
+                onValueChange={value => {
+                  setOrigin(value as typeof origin);
+                  if (value !== 'channel') setChannel(all);
+                }}
+                placeholder={t('memory.origin.all')}
+              >
+                <SelectItem value={all}>{t('memory.origin.all')}</SelectItem>
+                {origins.map(value => (
+                  <SelectItem key={value} value={value}>
+                    {withCount(t(`memory.origin.${value}`), facets?.origins[value])}
+                  </SelectItem>
+                ))}
+              </MemorySelect>
+              <Input
+                value={source}
+                onChange={event => setSource(event.target.value)}
+                placeholder={t('memory.sourcePlaceholder')}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9"
+                onClick={clearFilters}
+                disabled={!hasFilters}
+              >
+                <FilterX className="size-4" />
+                {t('memory.clearFilters')}
+              </Button>
+            </div>
+          ) : null}
+          {showFilters && origin === 'channel' && facets?.channels.length ? (
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_minmax(150px,0.4fr)]">
               <div className="self-center text-xs text-muted-foreground">
                 {t('memory.channelHint')}
               </div>
@@ -419,20 +431,7 @@ export function DigitalHumanMemory({ id }: { id: string }) {
               </MemorySelect>
             </div>
           ) : null}
-          <CollapsibleContent>
-            <div className="mt-3 grid gap-2 rounded-lg bg-muted/30 p-3 md:grid-cols-[minmax(180px,1fr)_auto]">
-              <Input
-                value={source}
-                onChange={event => setSource(event.target.value)}
-                placeholder={t('memory.sourcePlaceholder')}
-              />
-              <Button variant="ghost" size="sm" onClick={clearFilters} disabled={!hasFilters}>
-                <FilterX className="size-4" />
-                {t('memory.clearFilters')}
-              </Button>
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+        </div>
 
         {canManage && picked.size > 0 ? (
           <div className="flex flex-wrap items-center gap-2 border-b bg-primary/5 px-4 py-2 text-sm">
@@ -683,8 +682,8 @@ function MemoryGroups({
   );
 }
 
-// One compact line per memory: its first line, path, and the attributes an
-// operator scans for; the full entry opens in the side sheet.
+// One compact line per memory: its first line and the attributes an operator
+// scans for; the path shows on hover, the full entry in the side sheet.
 function MemoryRow({
   memory,
   canPick,
@@ -716,6 +715,7 @@ function MemoryRow({
       <button
         type="button"
         onClick={onSelect}
+        title={memory.path || undefined}
         className="grid min-w-0 flex-1 gap-1 text-left md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-4"
       >
         <div className="min-w-0">
@@ -727,9 +727,6 @@ function MemoryRow({
           >
             {memory.content.split('\n')[0]}
           </p>
-          {memory.path ? (
-            <code className="block truncate text-xs text-muted-foreground">{memory.path}</code>
-          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground md:justify-end">
           {memory.status !== 'active' ? <MemoryStatusBadge status={memory.status} /> : null}

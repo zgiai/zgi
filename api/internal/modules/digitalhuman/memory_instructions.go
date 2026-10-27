@@ -28,10 +28,24 @@ const memoryInstructionsKey = "instructions"
 // maxMemoryInstructionsRunes bounds the instructions, as for Agents.
 const maxMemoryInstructionsRunes = 2000
 
+// The person's memory with a DigitalHuman can be turned off by its operator,
+// as an Agent's can (ADR 0019). A policy without these keys keeps both on.
+const (
+	userMemoryEnabledKey      = "user_memory_enabled"
+	userAutoCaptureEnabledKey = "user_auto_capture_enabled"
+)
+
 // validateMemoryPolicy checks the fields of a memory policy that the runtime
 // reads, trims the instructions, and drops empty ones, so clearing them leaves
 // the policy as it was before they were set.
 func validateMemoryPolicy(policy map[string]any) error {
+	for _, key := range []string{userMemoryEnabledKey, userAutoCaptureEnabledKey} {
+		if value, ok := policy[key]; ok && value != nil {
+			if _, isBool := value.(bool); !isBool {
+				return ErrInvalidRequest
+			}
+		}
+	}
 	value, ok := policy[memoryInstructionsKey]
 	if !ok {
 		return nil
@@ -63,6 +77,26 @@ func memoryInstructionsFromPolicy(policy datatypes.JSON) string {
 		return ""
 	}
 	return strings.TrimSpace(decoded.Instructions)
+}
+
+// userMemorySettingsFromPolicy reads whether a version remembers each person
+// and may do so automatically. Missing keys mean on.
+func userMemorySettingsFromPolicy(policy datatypes.JSON) (enabled, autoCapture bool) {
+	var decoded struct {
+		Enabled     *bool `json:"user_memory_enabled"`
+		AutoCapture *bool `json:"user_auto_capture_enabled"`
+	}
+	enabled, autoCapture = true, true
+	if len(policy) == 0 || json.Unmarshal(policy, &decoded) != nil {
+		return enabled, autoCapture
+	}
+	if decoded.Enabled != nil {
+		enabled = *decoded.Enabled
+	}
+	if decoded.AutoCapture != nil {
+		autoCapture = *decoded.AutoCapture
+	}
+	return enabled, enabled && autoCapture
 }
 
 // runMemoryInstructions reads the instructions of the version a run uses.

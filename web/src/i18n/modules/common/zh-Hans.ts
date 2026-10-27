@@ -570,6 +570,19 @@ const messages: CommonMessages = {
       legacy: '早期记忆',
     },
   },
+  memorySettings: {
+    instructionsLabel: '记忆说明',
+    instructionsOptional: '选填',
+    instructionsHint:
+      '描述应该记住每个人的哪些信息、哪些不该记。记忆由模型自行整理。说明不能绕过证据、敏感信息等安全规则。最多 {max} 字。',
+    instructionsEmpty: '不填时，按通用规则判断记什么。',
+    templateLabel: '记忆说明模板',
+    templatePlaceholder: '从模板开始',
+    replaceTitle: '替换当前的记忆说明？',
+    replaceDescription: '模板会替换你已写的内容，替换后仍可修改。',
+    replace: '替换',
+    cancel: '取消',
+  },
   memoryItems: {
     search: '搜索记忆',
     empty: '还没有记住任何内容。',

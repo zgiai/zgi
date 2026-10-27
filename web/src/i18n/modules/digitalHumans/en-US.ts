@@ -2193,23 +2193,26 @@ const messages = {
     },
   },
   memoryInstructions: {
-    title: 'Memory instructions',
-    description:
-      'Tell the digital human what its memory is for: what to keep, what to ignore, and how to phrase it. These are preferences; rules on evidence, sensitive content, and who may see memory still apply.',
+    title: 'Memory',
+    description: 'What the digital human remembers about each person and from its own work.',
+    userMemoryTitle: 'Remember each person',
+    userMemoryDescription: 'Remembers what matters about each person across conversations.',
+    autoTitle: 'Remember automatically',
+    autoDescription: 'Saves what is worth keeping without being asked.',
+    autoHint:
+      'When on, the digital human notices lasting information, preferences, and requests in a conversation and remembers them, so later replies fit the person better. People can always turn this off for themselves.',
+    workTitle: 'Build up work experience',
+    workDescription: 'Keeps experience, decisions, and open items from its work in long-term memory.',
+    workHint:
+      'When off, long-term memory only changes when someone who manages memory asks for it explicitly.',
+    workImmediate: 'Takes effect now',
     placeholder:
       'For example: Keep customer complaints and the fixes we promised, with the date. Ignore small talk and one-off questions.',
-    count: '{count}/{max} characters',
-    template: {
-      label: 'Memory instruction template',
-      placeholder: 'Start from a template for a kind of work',
-      replaceTitle: 'Replace the current instructions?',
-      replaceDescription: 'The template replaces what you wrote. You can edit it afterwards.',
-      replace: 'Replace',
-    },
+    tryPreview: 'Try it with a sample conversation',
+    viewMemory: 'View long-term memory',
     preview: {
       sample: 'Sample conversation',
       samplePlaceholder: 'Fill in a sample conversation',
-      open: 'Preview',
       title: 'Preview memory',
       description:
         'Paste a sample conversation to see what the digital human would remember with these instructions. Nothing is saved.',
@@ -2230,14 +2233,12 @@ const messages = {
     description:
       'Memory belongs to this digital human and is shared across the conversations and people allowed to use it.',
     count: '{count} memories',
-    fuseOn: 'Automatic extraction on',
-    fuseOff: 'Automatic extraction off',
-    fuseHint:
-      'When off, memory can change only through an explicit request from an authorized memory operator.',
-    enableFuse: 'Enable automatic extraction',
-    disableFuse: 'Disable automatic extraction',
-    updatingFuse: 'Updating…',
-    fuseUpdated: 'Automatic extraction policy updated.',
+    workOn: 'Building up experience: on',
+    workOff: 'Building up experience: off',
+    workChipHint:
+      'Turn it on or off under Memory in the configuration. When off, long-term memory only changes when someone who manages memory asks for it explicitly.',
+    more: 'More',
+    filters: 'Filters',
     repair: 'Repair memory recall',
     repairing: 'Rebuilding…',
     repairHint:
@@ -2269,8 +2270,6 @@ const messages = {
     },
     sourcePlaceholder: 'Filter by source principal',
     clearFilters: 'Clear filters',
-    showAdvancedFilters: 'Advanced filters',
-    hideAdvancedFilters: 'Hide advanced filters',
     allStatuses: 'All statuses',
     type: {
       identity: 'Identity',
