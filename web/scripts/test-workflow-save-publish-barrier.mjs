@@ -173,6 +173,8 @@ assert.match(
     viewport: { x: 0, y: 0, zoom: 1 },
     graphVersion: 1,
     workflowData: { graph: { nodes: [], edges: [], viewport: {} }, hash: 'a' },
+    validationResults: { errors: [] },
+    syncRunnableSets() {},
   };
   const store = {
     getState: () => state,
