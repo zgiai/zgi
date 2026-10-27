@@ -254,7 +254,6 @@ func filterDigitalHumanSkillIDs(input []string) []string {
 	forbidden := map[string]struct{}{
 		skills.SkillAgentManagement: {},
 		skills.SkillAgentMemory:     {},
-		skills.SkillUserMemory:      {},
 	}
 	out := make([]string, 0, len(input))
 	for _, id := range input {

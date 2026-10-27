@@ -445,6 +445,10 @@ const messages = {
     },
   },
   consoleChat: {
+    memory: {
+      open: 'Memory',
+      hint: 'See and change what AI chat remembers about you',
+    },
     taskReport: {
       title: 'Scheduled task',
       view: 'View report',
@@ -1536,36 +1540,6 @@ const messages = {
         navigationRunning: 'Navigating to {target}',
         navigationFailed: 'Could not navigate to {target}',
         navigationSucceeded: 'Navigated to {target}',
-      },
-    },
-    memory: {
-      title: 'Memory',
-      add: 'Add memory',
-      save: 'Save memory',
-      delete: 'Delete memory',
-      cancel: 'Cancel',
-      saved: 'Memory saved',
-      saveFailed: 'Failed to save memory',
-      deleteFailed: 'Failed to delete memory',
-      deleteConfirmTitle: 'Delete memory?',
-      deleteConfirmDescription:
-        'This memory will be permanently removed and will no longer be used in future conversations.',
-      empty: 'No memories yet',
-      placeholder: 'Add a durable memory...',
-      expiresAt: 'Expires at',
-      updatedAt: 'Updated {time}',
-      validUntil: 'Valid until {time}',
-      expiredAt: 'Expired at {time}',
-      types: {
-        long_term: 'Long-term',
-        temporary: 'Temporary',
-      },
-      categories: {
-        preference: 'Preference',
-        profile: 'Profile',
-        instruction: 'Instruction',
-        fact: 'Fact',
-        other: 'Other',
       },
     },
     uploadSettings: {

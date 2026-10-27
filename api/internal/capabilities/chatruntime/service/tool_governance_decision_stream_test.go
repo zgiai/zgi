@@ -148,10 +148,9 @@ func newPendingOwnershipLossTestService(t *testing.T) (*service, *PreparedChat, 
 	}, llm).(*service)
 	svc.events = newStreamEventStore(nil)
 	prepared := &PreparedChat{
-		Conversation:            conversation,
-		Message:                 message,
-		LLMRequest:              &adapter.ChatRequest{Provider: provider, Model: message.ModelName},
-		UserMemoryPreflightDone: true,
+		Conversation: conversation,
+		Message:      message,
+		LLMRequest:   &adapter.ChatRequest{Provider: provider, Model: message.ModelName},
 		parts: &chatRequestParts{
 			Query:                message.Query,
 			Provider:             provider,
@@ -465,7 +464,6 @@ func TestRunToolGovernanceDecisionStreamApproveEveryInvocationExecutesFrozenCall
 		nil,
 		nil,
 		runtime,
-		nil,
 	).(*service)
 	svc.events = newStreamEventStore(nil)
 
@@ -705,7 +703,6 @@ func TestRunClientActionContinuationStreamAssetObservationUsesVerifierWithoutRep
 		nil,
 		nil,
 		runtime,
-		nil,
 	).(*service)
 	svc.events = newStreamEventStore(nil)
 
@@ -943,7 +940,6 @@ func TestRunClientActionContinuationStreamAgentUpdatedRouteCompletesWithoutRepea
 		nil,
 		nil,
 		newToolGovernanceStreamSkillRuntime(t, &toolGovernanceStreamFileService{}, &toolGovernanceStreamWorkspacePermissionService{allowed: true}),
-		nil,
 	).(*service)
 	svc.events = newStreamEventStore(nil)
 
@@ -1549,7 +1545,6 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		nil,
 		nil,
 		runtime,
-		nil,
 	).(*service)
 	svc.events = newStreamEventStore(nil)
 

@@ -430,7 +430,7 @@ func (h *ExternalHandler) RegenerateAPIMessage(c *gin.Context) {
 	run, _, err := h.runtime.SubmitRegeneration(c.Request.Context(), scope, access.Definition.ID, RegenerateInvocationRequest{
 		MessageID: messageID, ConversationID: &conversationID, Query: raw.Query, Surface: SurfaceAPI,
 		RuntimeContext: raw.RuntimeContext, OperationContext: raw.OperationContext,
-		Model: raw.Model, Provider: raw.Provider, Parameters: raw.Parameters, UseMemory: raw.UseMemory,
+		Model: raw.Model, Provider: raw.Provider, Parameters: raw.Parameters,
 	})
 	if err != nil {
 		h.writeApplicationError(c, err, "digital_human.external.message.regenerate")

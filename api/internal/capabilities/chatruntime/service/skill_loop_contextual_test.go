@@ -1,16 +1,13 @@
 package service
 
 import (
-	"context"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -1554,30 +1551,6 @@ func TestContextualAIChatTurnStrategyDoesNotUseLegacyPassiveFastPath(t *testing.
 	}
 }
 
-func TestUserMemoryPreflightRunsDuringPrepareForContextualSidebar(t *testing.T) {
-	svc := &service{
-		llmClient:     &fakeAgentMemoryPlannerLLM{},
-		memoryService: fakeUserMemoryService{},
-	}
-	parts := &chatRequestParts{
-		Query:          "what can you do here?",
-		Surface:        aiChatSurfaceContextualSidebar,
-		RuntimeContext: "route=/console/agents/agent-1/agent",
-		UseMemory:      true,
-		SkillIDs:       []string{skills.SkillConsoleNavigator},
-		SkillMode:      skillModeAuto,
-	}
-
-	if !svc.shouldRunUserMemoryPreflightDuringPrepare(parts, &adapter.ChatRequest{}) {
-		t.Fatal("shouldRunUserMemoryPreflightDuringPrepare() = false, want true for contextual sidebar")
-	}
-
-	parts.Surface = aiChatSurfaceWorkChat
-	if svc.shouldRunUserMemoryPreflightDuringPrepare(parts, &adapter.ChatRequest{}) {
-		t.Fatal("shouldRunUserMemoryPreflightDuringPrepare() = true, want false for work chat")
-	}
-}
-
 func TestStreamingMetadataRecordsModelTurnIntent(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "what can you do",
@@ -1603,32 +1576,6 @@ func TestStreamingMetadataRecordsModelTurnIntent(t *testing.T) {
 	if got := stringFromAny(plan["strategy_source"]); got != aiChatTurnStrategySourceModelIntent {
 		t.Fatalf("operation_plan.strategy_source = %q, want %q; plan=%#v", got, aiChatTurnStrategySourceModelIntent, plan)
 	}
-}
-
-type fakeUserMemoryService struct{}
-
-func (fakeUserMemoryService) IsEnabled(context.Context, uuid.UUID) (bool, error) {
-	return true, nil
-}
-
-func (fakeUserMemoryService) RenderContext(context.Context, uuid.UUID, int) (string, error) {
-	return "", nil
-}
-
-func (fakeUserMemoryService) GetModelState(context.Context, uuid.UUID) (*memory.MemoryMeResponse, error) {
-	return &memory.MemoryMeResponse{}, nil
-}
-
-func (fakeUserMemoryService) CreateEntryWithMetadata(context.Context, uuid.UUID, memory.CreateEntryRequest, memory.MutationMetadata) (*memory.MemoryEntryResponse, error) {
-	return &memory.MemoryEntryResponse{}, nil
-}
-
-func (fakeUserMemoryService) UpdateEntryWithMetadata(context.Context, uuid.UUID, uuid.UUID, memory.UpdateEntryRequest, memory.MutationMetadata) (*memory.MemoryEntryResponse, error) {
-	return &memory.MemoryEntryResponse{}, nil
-}
-
-func (fakeUserMemoryService) DeleteEntryWithMetadata(context.Context, uuid.UUID, uuid.UUID, memory.MutationMetadata) error {
-	return nil
 }
 
 func TestContextualAIChatTurnStrategyPrefersMultiRouteNavigationOverAgentManagement(t *testing.T) {

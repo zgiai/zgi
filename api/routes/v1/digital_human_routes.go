@@ -430,7 +430,6 @@ func InitializeDigitalHumanRuntime(deps DigitalHumanRuntimeDeps) *DigitalHumanRu
 		deps.ContentExtractor,
 		deps.OrganizationService,
 		newDigitalHumanSkillRuntime(deps),
-		nil,
 		runtimeInputDispatcher, deps.ConnectorRuntime, deps.ConnectorConfirmationStore,
 		zgimarket.RuntimeResolver(),
 	)

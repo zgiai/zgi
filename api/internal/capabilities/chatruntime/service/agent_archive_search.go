@@ -24,8 +24,8 @@ func (s *service) agentArchiveSearchTool(prepared *PreparedChat, agentID uuid.UU
 	if s.repos == nil || s.repos.DB == nil || prepared == nil || agentID == uuid.Nil {
 		return skillloop.RuntimeTool{}, false
 	}
-	workspaceID := prepared.Scope.AgentResourceWorkspaceID()
-	if workspaceID == nil || *workspaceID == uuid.Nil {
+	workspaceID, ok := agentMemoryWorkspaceID(prepared.Scope, prepared.parts)
+	if !ok {
 		return skillloop.RuntimeTool{}, false
 	}
 	definition := adapter.Tool{Type: "function", Function: adapter.Function{
@@ -45,7 +45,7 @@ func (s *service) agentArchiveSearchTool(prepared *PreparedChat, agentID uuid.UU
 		if err := decodeStrictArguments(call.Function.Arguments, &args); err != nil || strings.TrimSpace(args.Query) == "" {
 			return skillloop.RuntimeToolResult{Status: "error", Error: ErrInvalidInput, Recoverable: true}
 		}
-		entries, err := relationshipmemory.NewAgentAdapter(s.repos.DB).SearchArchive(ctx, *workspaceID, agentID, userScope, agentMemoryUserID(prepared.Scope), args.Query, agentArchiveSearchLimit)
+		entries, err := relationshipmemory.NewAgentAdapter(s.repos.DB).SearchArchive(ctx, workspaceID, agentID, userScope, agentMemoryUserID(prepared.Scope), args.Query, agentArchiveSearchLimit)
 		if err != nil {
 			return skillloop.RuntimeToolResult{Status: "error", Arguments: map[string]interface{}{"query": args.Query}, Error: err, Recoverable: true}
 		}

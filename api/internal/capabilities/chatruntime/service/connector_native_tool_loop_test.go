@@ -57,7 +57,7 @@ func TestConnectorNativeToolLoopFirstRequestUsesCurrentTargetBindings(t *testing
 					const ordinaryInstructions = "ORDINARY_SKILL_BODY_MUST_NOT_BE_PRELOADED"
 					writeConnectorNativeLoopSkill(t, catalogDir, ordinarySkillID, ordinaryInstructions)
 					runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir)
-					svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, nil, chatResolver, agentResolver).(*service)
+					svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, chatResolver, agentResolver).(*service)
 
 					conversationID, messageID, agentID := uuid.New(), uuid.New(), uuid.New()
 					scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New()}
@@ -221,7 +221,7 @@ func TestConnectorNativeToolLoopDispatchesDirectModelCallWithResolvedIdentity(t 
 							return result, err
 						}
 					})
-					svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, nil, chatResolver, agentResolver, actionFactory).(*service)
+					svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, chatResolver, agentResolver, actionFactory).(*service)
 					conversationID, messageID, agentID := uuid.New(), uuid.New(), uuid.New()
 					scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New()}
 					caller := Caller{Type: callerType, Source: runtimemodel.ConversationSourceConsole}

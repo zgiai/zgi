@@ -26,7 +26,7 @@ func TestRunPreparedSkillStreamUsesMainModelTerminalDecisionForLegacyOnlyEvidenc
 		},
 	}
 	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir)
-	svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, nil).(*service)
+	svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime).(*service)
 
 	conversationID := uuid.New()
 	messageID := uuid.New()

@@ -45,7 +45,7 @@ func (a *BrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunCo
 		Model: resolved.Snapshot.Model, BillingAppID: resolved.Snapshot.Subject.ID.String(),
 		BillingAppType:     runtimemodel.ConversationCallerDigitalHuman,
 		RuntimeInputPolicy: chatruntime.RuntimeInputPolicyCheckpointAndFollowUp,
-		UseMemory:          false, AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
+		AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
 		BindingReader: a.bindingReader, BindingSnapshot: snapshotRef,
 		ConnectorTargetScope: connectorScope, ConnectorTargetVersionID: connectorVersion,
 		// A preview must not act in connected systems.

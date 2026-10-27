@@ -356,7 +356,6 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		WorkflowBoundByAccountID:         cfg.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:              cfg.WorkflowBoundAtUnix,
 		BindingAuthorizations:            agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
-		UseMemory:                        false,
 		AgentMemoryEnabled:               cfg.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: cfg.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 agentMemoryRuntimeSlots(cfg.AgentMemorySlots),

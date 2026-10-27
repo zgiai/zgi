@@ -45,7 +45,9 @@ func agentConversationSearchBoundary(db *gorm.DB, prepared *PreparedChat) *gorm.
 }
 
 func (s *service) agentConversationSearchTool(prepared *PreparedChat, agentID uuid.UUID, userScope string) (skillloop.RuntimeTool, bool) {
-	if s.repos == nil || agentConversationSearchBoundary(s.repos.DB, prepared) == nil {
+	// AI chat conversations belong to each organization, while its memory is
+	// the person's across them, so it does not search past conversations.
+	if s.repos == nil || isAIChatMemory(prepared.parts) || agentConversationSearchBoundary(s.repos.DB, prepared) == nil {
 		return skillloop.RuntimeTool{}, false
 	}
 	definition := adapter.Tool{Type: "function", Function: adapter.Function{

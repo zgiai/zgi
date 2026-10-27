@@ -1,19 +1,20 @@
 # User relationship memory
 
-ZGI stores personal memory as a relationship between one user subject and one consumer. Agent slot definitions and DigitalHuman policies remain consumer-owned; saved values, settings, export, and deletion rights belong to the user relationship.
+ZGI stores personal memory as a relationship between one user subject and one consumer: an Agent, a DigitalHuman, or AI chat. Memory instructions and switches remain consumer-owned; saved files, settings, export, and deletion rights belong to the user relationship.
 
 ## Identity and isolation
 
 - Signed-in calls use the account UUID as the subject.
 - Agent API calls keep the request field named `user`. The trimmed, case-sensitive opaque value is converted to a deterministic UUID scoped by workspace and Agent; the raw value is not stored or included in audit events or request logs.
 - API key rotation does not change the derived subject. The same key may use multiple `user` values, which remain isolated.
-- External channel, scheduled DigitalHuman, and AIChat invocations cannot resolve or access relationship memory in P0.
+- External channel and scheduled DigitalHuman invocations cannot resolve or access relationship memory.
+- AI chat memory (ADR 0021) belongs to the signed-in account alone, across organizations. Its relationship has no organization or workspace and uses a fixed consumer ID. Only the main AI chat and the console's contextual assistant use it.
 
 ## Runtime policy
 
-New relationships allow explicit remember/correct/forget operations and disable automatic capture. Runtime access requires the global feature switch, an enabled published consumer contract, an active relationship, and an eligible invocation surface. Automatic capture additionally requires the global automatic-extraction switch, consumer permission, and the user's relationship setting.
+New relationships allow explicit remember/correct/forget operations and start with automatic capture on (ADR 0019). Runtime access requires an enabled consumer contract, an active relationship, and an eligible invocation surface. Automatic capture additionally requires the deployment fuse `ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED` (on unless set to false), the consumer's setting, and the user's relationship setting.
 
-Agent values must match enabled published slots. DigitalHuman values use semantic keys and one of `profile`, `preference`, `constraint`, or `relationship`; project, customer, channel, credential, and document-body data are rejected. At most 4,000 characters are injected as explicitly marked untrusted user data.
+Memory is files the model names and organizes (ADR 0017, ADR 0019), bounded by 10,000 characters per relationship; a full memory moves older content to the person's archive. Credentials, identifiers, and other sensitive values are rejected. Memory is injected as explicitly marked untrusted user data.
 
 DigitalHuman-owned memory and user relationship memory use separate stores and tools. Neither store promotes or copies data into the other.
 

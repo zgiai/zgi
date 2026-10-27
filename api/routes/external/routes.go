@@ -13,7 +13,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -36,7 +35,6 @@ type ExternalRouteDeps struct {
 	LLMClient                  llmclient.LLMClient
 	ToolEngine                 *tools.ToolEngine
 	ToolManager                *tools.ToolManager
-	MemoryService              *memory.Service
 	GraphFlowService           *graphflow.Service
 	PromptResolver             promptservice.PromptService
 	DataSourceService          datasourceservice.DataSourceService
@@ -77,7 +75,6 @@ func RegisterExternalRoutes(r *gin.Engine, deps ExternalRouteDeps) {
 			deps.LLMClient,
 			deps.ToolEngine,
 			deps.ToolManager,
-			deps.MemoryService,
 			deps.GraphFlowService,
 			deps.PromptResolver,
 			deps.DataSourceService,

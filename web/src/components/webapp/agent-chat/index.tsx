@@ -282,7 +282,6 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
         showModelSelector={false}
         requireModel={false}
         supportsVisionOverride={supportsVision}
-        showMemoryToggle={false}
         enableUpload={Boolean(agentConfig?.file_upload_enabled)}
         uploadRequiresLogin={!isAuthenticated}
         fileUploadPolicy={agentConfig?.file_upload_policy}

@@ -24,7 +24,7 @@ func (*dualAgentMemoryBackend) MutateValues(context.Context, uuid.UUID, uuid.UUI
 
 func TestNewServiceRegistersEveryContractImplementedByOptionalBackend(t *testing.T) {
 	backend := &dualAgentMemoryBackend{}
-	constructed := NewServiceWithSkillRuntime(nil, nil, nil, nil, nil, nil, nil, nil, nil, backend).(*service)
+	constructed := NewServiceWithSkillRuntime(nil, nil, nil, nil, nil, nil, nil, nil, backend).(*service)
 
 	if constructed.agentMemoryService != backend {
 		t.Fatal("dual backend was not registered as Agent memory context service")

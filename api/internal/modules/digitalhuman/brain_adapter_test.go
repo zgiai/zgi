@@ -39,7 +39,7 @@ func TestBrainAdapterBuildsDigitalHumanRunConfigWithoutAgentIdentityOrMemory(t *
 	if config.BillingAppType != runtimemodel.ConversationCallerDigitalHuman || config.BillingAppID != subject.ID.String() {
 		t.Fatalf("billing identity = %q/%q", config.BillingAppType, config.BillingAppID)
 	}
-	if config.UseMemory || config.AgentMemoryEnabled || config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 0 {
+	if config.AgentMemoryEnabled || config.AgentMemoryAutoExtractionEnabled || len(config.AgentMemorySlots) != 0 {
 		t.Fatalf("memory flags = %#v", config)
 	}
 	if config.BindingReader == nil || config.BindingSnapshot.Subject != subject || config.BindingSnapshot.VersionID == nil || *config.BindingSnapshot.VersionID != versionID {

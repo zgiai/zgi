@@ -68,7 +68,7 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 	got := normalizeAgentEnabledSkillIDs([]string{
 		skills.SkillAgentKnowledge,
 		skills.SkillAgentWorkflow,
-		skills.SkillUserMemory,
+		"user-memory", // retired by ADR 0021 but still stored in old lists
 		skills.SkillIntentRouter,
 		"web-search",
 		skills.SkillCalculator,

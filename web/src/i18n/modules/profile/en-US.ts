@@ -31,6 +31,8 @@ const messages = {
     allStatuses: 'All statuses',
     agent: 'Agent',
     digitalHuman: 'DigitalHuman',
+    aiChat: 'AI Chat',
+    personal: 'Personal',
     active: 'In use',
     archived: 'Archived',
     archivedConsumer: 'Assistant archived',

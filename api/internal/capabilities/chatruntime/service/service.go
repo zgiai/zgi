@@ -74,6 +74,10 @@ const (
 	streamEventRuntimeInputFollowUpStarted = "runtime_input_follow_up_started"
 	streamEventRuntimeInputCanceled        = "runtime_input_canceled"
 	streamEventRuntimeInputFailed          = "runtime_input_failed"
+	streamEventMemoryCreate                = "memory_create"
+	streamEventMemoryUpdate                = "memory_update"
+	streamEventMemoryDelete                = "memory_delete"
+	streamEventMemoryClear                 = "memory_clear"
 
 	skillModeDisabled = "disabled"
 	skillModeAuto     = "auto"
@@ -93,8 +97,7 @@ const (
 	executionRouteFunctionCallingUnavailable = "function_calling_unavailable"
 	executionRoutePersistedMode              = "persisted_mode"
 
-	userMemoryContextBudgetChars = 4000
-	maxAgentMemoryContextTokens  = 2048
+	maxAgentMemoryContextTokens = 2048
 )
 
 var defaultSystemSkillIDs = []string{
@@ -199,7 +202,6 @@ type RunConfig struct {
 	WorkflowBoundByAccountID         string
 	WorkflowBoundAtUnix              int64
 	BindingAuthorizations            []ResourceBindingAuthorization
-	UseMemory                        bool
 	AgentMemoryEnabled               bool
 	AgentMemoryAutoExtractionEnabled bool
 	AgentMemorySlots                 []AgentMemorySlotConfig
@@ -499,11 +501,6 @@ type Service interface {
 	MigrateWebAppConversation(ctx context.Context, scope Scope, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 }
 
-type UserMemoryService interface {
-	IsEnabled(ctx context.Context, accountID uuid.UUID) (bool, error)
-	RenderContext(ctx context.Context, accountID uuid.UUID, budget int) (string, error)
-}
-
 type AgentMemoryContextService interface {
 	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
@@ -522,7 +519,6 @@ type service struct {
 	contentExtractor               ContentExtractionService
 	workspacePerms                 WorkspacePermissionService
 	skillRuntime                   *skills.Runtime
-	memoryService                  UserMemoryService
 	agentMemoryService             AgentMemoryContextService
 	connectorChatRuntime           connectorruntimeauth.ChatRuntimeResolver
 	connectorAgentRuntime          connectorruntimeauth.AgentRuntimeResolver
@@ -563,7 +559,7 @@ func NewServiceWithDependencies(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 ) Service {
-	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil, nil)
+	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil)
 }
 
 func NewServiceWithSkillRuntime(
@@ -575,7 +571,6 @@ func NewServiceWithSkillRuntime(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 	skillRuntime *skills.Runtime,
-	memoryService UserMemoryService,
 	optionalServices ...interface{},
 ) Service {
 	var agentMemoryService AgentMemoryContextService
@@ -629,7 +624,6 @@ func NewServiceWithSkillRuntime(
 		contentExtractor:               contentExtractor,
 		workspacePerms:                 workspacePerms,
 		skillRuntime:                   skillRuntime,
-		memoryService:                  memoryService,
 		agentMemoryService:             agentMemoryService,
 		connectorChatRuntime:           connectorChatRuntime,
 		connectorAgentRuntime:          connectorAgentRuntime,
@@ -677,9 +671,6 @@ type PreparedChat struct {
 	// pausedAnswer is the answer the paused turn had when the continuation
 	// was prepared, captured before the resumed run can change it.
 	pausedAnswer *string
-
-	UserMemoryPreflightDone  bool
-	UserMemoryPreflightUsage *adapter.Usage
 
 	usageExecutionStarted  bool
 	usageExecutionBaseline *adapter.Usage
@@ -784,7 +775,6 @@ type chatRequestParts struct {
 	MarketSkillIDs                   []string
 	RequiredInitialConnectorBindings []connectorbindings.InitialChatConnection
 	ConnectorToolsEnabled            bool
-	UseMemory                        bool
 	SkillIDs                         []string
 	ToolSkillIDs                     []string
 	SkillMode                        string

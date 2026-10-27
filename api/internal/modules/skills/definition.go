@@ -43,8 +43,10 @@ const (
 	SkillDigitalHumanMemory     = "digital-human-memory"
 	SkillDigitalHumanTasks      = "digital-human-tasks"
 	SkillDigitalHumanArtifacts  = "digital-human-artifacts"
-	SkillUserMemory             = "user-memory"
 	SkillConnectorRuntime       = "connector-runtime"
+	// retiredSkillUserMemory was the AI chat account memory planner, retired by
+	// ADR 0021. Stored skill lists may still name it, so it stays hidden.
+	retiredSkillUserMemory = "user-memory"
 	// SkillZGIMarketTools is the request-scoped Skill of the ZGI Market tools bound to the
 	// current agent or digital human. It is built per run and never stored.
 	SkillZGIMarketTools = "zgi-market-tools"
@@ -116,7 +118,7 @@ type SkillExposureProfile struct {
 
 func IsHiddenSystemSkill(skillID string) bool {
 	switch normalizeSkillID(skillID) {
-	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillDigitalHumanMemory, SkillDigitalHumanArtifacts, SkillUserMemory, SkillConnectorRuntime:
+	case SkillAgentManagement, SkillFileManager, SkillIntentRouter, SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow, SkillAgentMemory, SkillDigitalHumanMemory, SkillDigitalHumanArtifacts, SkillConnectorRuntime, retiredSkillUserMemory:
 		return true
 	default:
 		return false
@@ -188,7 +190,7 @@ func SystemSkillExposureProfile(skillID string) SkillExposureProfile {
 			PageContextRequired: false,
 			GovernanceRisk:      SkillGovernanceRiskMixed,
 		}
-	case SkillAgentMemory, SkillUserMemory:
+	case SkillAgentMemory, retiredSkillUserMemory:
 		return SkillExposureProfile{
 			Category:            SkillExposureHiddenRuntime,
 			UserSelectable:      false,

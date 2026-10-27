@@ -42,7 +42,7 @@ type publishedAgentMemoryContract struct {
 }
 
 func (a *AgentAdapter) GetSettings(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentRelationshipSettings, error) {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if errors.Is(err, ErrRelationshipNotFound) {
 		// A user who has not talked to the Agent yet has the settings a new
 		// relationship starts with; reading them creates nothing.
@@ -76,6 +76,14 @@ func (a *AgentAdapter) UpdateSettings(ctx context.Context, workspaceID, agentID 
 }
 
 func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*UserMemoryRelationship, error) {
+	if agentID == AIChatConsumerID {
+		// Only the person's own account has AI chat memory.
+		if userID == uuid.Nil || userScope != agentmemory.UserScopeAccount {
+			return nil, agentmemory.ErrUnauthorized
+		}
+		relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{Subject: usersubject.AccountSubject(userID), ConsumerType: ConsumerAIChat, ConsumerID: AIChatConsumerID, ConsumerNameSnapshot: "AI Chat"})
+		return relationship, mapAgentMemoryError(err)
+	}
 	if workspaceID == uuid.Nil || agentID == uuid.Nil || userID == uuid.Nil {
 		return nil, agentmemory.ErrUnauthorized
 	}
@@ -112,7 +120,7 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 		return nil, err
 	}
 	if scope.OrganizationID == nil || *scope.OrganizationID == uuid.Nil {
-		if existing, findErr := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID); findErr == nil && existing.Status == RelationshipActive {
+		if existing, findErr := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID); findErr == nil && existing.Status == RelationshipActive {
 			_ = a.service.ArchiveConsumer(ctx, workspaceID, ConsumerAgent, agentID)
 		}
 		return nil, agentmemory.ErrUnauthorized
@@ -137,6 +145,22 @@ func agentEndUserIdentity(registered *usersubject.Subject, agentID uuid.UUID) (u
 	return registered.Kind, registered.IssuerType, &issuerID, nil
 }
 
+// consumerTypeOf names the consumer behind an Agent ID the chat runtime
+// passes. AI chat uses this adapter with AIChatConsumerID and no workspace
+// (ADR 0021).
+func consumerTypeOf(agentID uuid.UUID) string {
+	if agentID == AIChatConsumerID {
+		return ConsumerAIChat
+	}
+	return ConsumerAgent
+}
+
+// aiChatContract is AI chat's memory: the Agent's files, always on, and
+// automatic unless the person or the deployment turns it off.
+func aiChatContract() ConsumerMemoryContract {
+	return ConsumerMemoryContract{Enabled: true, DefinitionMode: "files", AutoCaptureAllowed: true, ConfigRevision: AIChatConfigRevision, RenderBudgetChars: defaultRenderBudget}
+}
+
 // agentContract is the contract of every Agent's memory: files the model
 // names itself (ADR 0017).
 func agentContract() ConsumerMemoryContract {
@@ -150,7 +174,7 @@ func (a *AgentAdapter) agentFiles(ctx context.Context, relationshipID uuid.UUID)
 
 func (a *AgentAdapter) PrivacySlots(ctx context.Context, workspaceID, agentID uuid.UUID, _ []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {
 	// Export and deletion must not create a relationship.
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if errors.Is(err, ErrRelationshipNotFound) {
 		return []agentmemory.RuntimeSlot{}, nil
 	}
@@ -189,7 +213,7 @@ func (a *AgentAdapter) readUserMemory(ctx context.Context, workspaceID, agentID 
 	if enforcePublishedContract {
 		relationship, err = a.relationship(ctx, workspaceID, agentID, userScope, userID)
 	} else {
-		relationship, err = a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+		relationship, err = a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 		if errors.Is(err, ErrRelationshipNotFound) {
 			return []agentmemory.SlotValueResponse{}, nil
 		}
@@ -312,7 +336,7 @@ func (a *AgentAdapter) UpdateValue(ctx context.Context, workspaceID, agentID uui
 }
 
 func (a *AgentAdapter) ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, key string, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error) {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if errors.Is(err, ErrRelationshipNotFound) {
 		response := agentmemory.SlotValueResponse{SlotResponse: slotResponse(slots, key)}
 		return &response, nil
@@ -352,7 +376,7 @@ func (a *AgentAdapter) ClearValue(ctx context.Context, workspaceID, agentID uuid
 }
 
 func (a *AgentAdapter) ClearAllValues(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, _ agentmemory.MutationMetadata) error {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if errors.Is(err, ErrRelationshipNotFound) {
 		return nil
 	}
@@ -371,7 +395,7 @@ func (a *AgentAdapter) ExportUserMemory(ctx context.Context, workspaceID, agentI
 }
 
 func (a *AgentAdapter) UndoAutomaticOperation(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, operationID uuid.UUID, slots []agentmemory.RuntimeSlot) (*agentmemory.UndoResponse, error) {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if err != nil {
 		return nil, mapAgentMemoryError(err)
 	}
@@ -533,6 +557,9 @@ func (a *AgentAdapter) validatePublishedConfigRevision(ctx context.Context, db *
 }
 
 func (a *AgentAdapter) loadPublishedAgentMemoryContract(ctx context.Context, db *gorm.DB, workspaceID, agentID uuid.UUID) (*publishedAgentMemoryContract, error) {
+	if agentID == AIChatConsumerID {
+		return &publishedAgentMemoryContract{Enabled: true, AutoCaptureEnabled: true, ConfigRevision: AIChatConfigRevision}, nil
+	}
 	var row struct {
 		ConfigSnapshot []byte
 	}

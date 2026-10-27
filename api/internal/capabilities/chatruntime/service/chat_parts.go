@@ -21,9 +21,6 @@ func applyRunConfigToChatRequest(config RunConfig, req runtimedto.ChatRequest) r
 	if req.Parameters == nil && config.ModelParameters != nil {
 		req.Parameters = copyStringAnyMap(config.ModelParameters)
 	}
-	if runConfigAllowsUserMemory(config) {
-		req.UseMemory = true
-	}
 	return req
 }
 
@@ -40,10 +37,6 @@ func applyRunConfigToRegenerateRequest(config RunConfig, req runtimedto.Regenera
 	}
 	if req.Parameters == nil && config.ModelParameters != nil {
 		req.Parameters = copyStringAnyMap(config.ModelParameters)
-	}
-	if runConfigAllowsUserMemory(config) && req.UseMemory == nil {
-		useMemory := true
-		req.UseMemory = &useMemory
 	}
 	return req
 }
@@ -75,9 +68,6 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.RuntimeTools = append([]skillloop.RuntimeTool(nil), config.RuntimeTools...)
 	parts.AttachmentReadAllowed = config.AttachmentReadAuthorizer != nil
 	parts.BillingSource = strings.TrimSpace(config.BillingAppType)
-	if runConfigDisablesUserMemory(config) {
-		parts.UseMemory = false
-	}
 }
 
 func applyCallerRuntimeSurfacePolicy(caller Caller, parts *chatRequestParts) {
@@ -104,14 +94,6 @@ func applyPersistedConversationSurface(conversation *runtimemodel.Conversation, 
 		return
 	}
 	parts.Surface = normalizeAIChatSurface(persisted)
-}
-
-func runConfigAllowsUserMemory(config RunConfig) bool {
-	return config.UseMemory && !isAutonomousSubjectCaller(config.BillingAppType)
-}
-
-func runConfigDisablesUserMemory(config RunConfig) bool {
-	return isAutonomousSubjectCaller(config.BillingAppType)
 }
 
 func normalizeAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotConfig {
@@ -206,7 +188,6 @@ func normalizeChatRequest(req runtimedto.ChatRequest) (*chatRequestParts, error)
 		ProviderPtr:         providerPtr,
 		RoutingStrategy:     normalizeRoutingStrategy(req.RoutingStrategy),
 		Parameters:          params,
-		UseMemory:           req.UseMemory,
 		SourceMessageID:     cloneUUIDPointer(req.SourceMessageID),
 		HistoryPolicy:       normalizeConversationHistoryPolicy(req.HistoryPolicy),
 	}, nil
@@ -297,10 +278,6 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 		routingStrategy = normalizeRoutingStrategy(*req.RoutingStrategy)
 	}
 
-	useMemory := boolMetadata(message.Metadata, "use_memory")
-	if req.UseMemory != nil {
-		useMemory = *req.UseMemory
-	}
 	runtimeContext := normalizeRuntimeContext(req.RuntimeContext)
 	surface := normalizeAIChatSurface(regenerateRequestSurface(req, message))
 	operationContext, operationLedger := normalizeOperationContext(req.OperationContext)
@@ -318,7 +295,6 @@ func normalizeRegenerateRequest(req runtimedto.RegenerateMessageRequest, message
 		ProviderPtr:         providerPtr,
 		RoutingStrategy:     routingStrategy,
 		Parameters:          params,
-		UseMemory:           useMemory,
 	}, nil
 }
 
@@ -446,9 +422,6 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 			modelCapabilities["error"] = errMessage
 		}
 		metadata["model_capabilities"] = modelCapabilities
-	}
-	if parts.UseMemory {
-		metadata["use_memory"] = true
 	}
 	if parts.RuntimeContext != "" {
 		metadata["runtime_context"] = map[string]interface{}{

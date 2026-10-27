@@ -131,7 +131,6 @@ export function AgentRuntimePreviewPanel({
           }
           variant="embedded"
           showModelSelector={false}
-          showMemoryToggle={false}
           forcedUseMemory={useMemory}
           enableUpload={fileUploadEnabled}
           fileUploadPolicy={fileUploadPolicy}

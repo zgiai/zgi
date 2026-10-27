@@ -1260,11 +1260,13 @@ function AgentMemoryTimelineRow({ item }: { item: MemoryTimelineItem }) {
   );
 }
 
-// A change to the person's memory with an Agent or a DigitalHuman.
+// A change to the person's memory with an Agent, a DigitalHuman, or AI chat.
 function isAgentMemoryNotice(item: AIChatAgenticTimelineItem): item is MemoryTimelineItem {
   return (
     item.type === 'memory_event' &&
-    (item.event.memory_scope === 'agent' || item.event.memory_scope === 'digital_human')
+    (item.event.memory_scope === 'agent' ||
+      item.event.memory_scope === 'digital_human' ||
+      item.event.memory_scope === 'ai_chat')
   );
 }
 

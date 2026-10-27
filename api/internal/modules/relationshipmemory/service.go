@@ -63,14 +63,20 @@ type EnsureRelationshipRequest struct {
 }
 
 func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationshipRequest) (*UserMemoryRelationship, error) {
-	if s == nil || s.db == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil || req.Subject.ID == uuid.Nil || req.ConsumerID == uuid.Nil {
+	aiChat := req.ConsumerType == ConsumerAIChat
+	if s == nil || s.db == nil || req.Subject.ID == uuid.Nil || req.ConsumerID == uuid.Nil || (!aiChat && (req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil)) {
 		return nil, ErrAccessDenied
 	}
 	if req.Subject.Kind != usersubject.Account && req.Subject.Kind != usersubject.APIEndUser {
 		return nil, fmt.Errorf("%w: invalid subject kind", ErrPolicyRejected)
 	}
-	if req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman {
+	if req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman && !aiChat {
 		return nil, fmt.Errorf("%w: invalid consumer type", ErrPolicyRejected)
+	}
+	// AI chat memory belongs to the person's account alone and to no
+	// organization (ADR 0021).
+	if aiChat && (req.Subject.Kind != usersubject.Account || req.ConsumerID != AIChatConsumerID || req.OrganizationID != uuid.Nil || req.WorkspaceID != uuid.Nil) {
+		return nil, fmt.Errorf("%w: invalid AI chat memory scope", ErrPolicyRejected)
 	}
 	var relationship UserMemoryRelationship
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -155,8 +161,15 @@ func (s *Service) ListAccountRelationships(ctx context.Context, req ListRelation
 	if req.OrganizationID == uuid.Nil || req.AccountID == uuid.Nil {
 		return nil, ErrAccessDenied
 	}
-	if req.ConsumerType != "" && req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman {
+	if req.ConsumerType != "" && req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman && req.ConsumerType != ConsumerAIChat {
 		return nil, fmt.Errorf("%w: invalid consumer type", ErrPolicyRejected)
+	}
+	// The person's AI chat is always one of their assistants, so its settings
+	// are there before the first conversation.
+	if (req.ConsumerType == "" || req.ConsumerType == ConsumerAIChat) && req.Status != RelationshipArchived && req.WorkspaceID == nil {
+		if _, err := s.EnsureRelationship(ctx, EnsureRelationshipRequest{Subject: usersubject.AccountSubject(req.AccountID), ConsumerType: ConsumerAIChat, ConsumerID: AIChatConsumerID, ConsumerNameSnapshot: "AI Chat"}); err != nil {
+			return nil, err
+		}
 	}
 	if req.Status != "" && req.Status != RelationshipActive && req.Status != RelationshipArchived {
 		return nil, fmt.Errorf("%w: invalid relationship status", ErrPolicyRejected)
@@ -173,7 +186,7 @@ func (s *Service) ListAccountRelationships(ctx context.Context, req ListRelation
 	}
 	query := s.db.WithContext(ctx).Table("user_memory_relationships AS relationships").
 		Joins("JOIN user_subjects AS subjects ON subjects.id = relationships.subject_id").
-		Where("relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", req.OrganizationID, usersubject.Account, req.AccountID)
+		Where("(relationships.organization_id = ? OR relationships.consumer_type = ?) AND subjects.kind = ? AND subjects.account_id = ?", req.OrganizationID, ConsumerAIChat, usersubject.Account, req.AccountID)
 	if req.WorkspaceID != nil {
 		query = query.Where("relationships.workspace_id = ?", *req.WorkspaceID)
 	}
@@ -190,11 +203,11 @@ func (s *Service) ListAccountRelationships(ctx context.Context, req ListRelation
 	var items []RelationshipSummary
 	if err := query.Select(`relationships.*,
 		COALESCE(workspaces.name, '') AS workspace_name,
-		(relationships.status = 'active' AND EXISTS (
+		(relationships.status = 'active' AND (relationships.consumer_type = 'ai_chat' OR EXISTS (
 			SELECT 1 FROM workspace_members
 			WHERE workspace_members.workspace_id = relationships.workspace_id
 				AND workspace_members.account_id = ?
-		)) AS can_manage,
+		))) AS can_manage,
 		(SELECT COUNT(*) FROM user_memory_items
 			WHERE user_memory_items.relationship_id = relationships.id) AS item_count`, req.AccountID).
 		Joins("LEFT JOIN workspaces ON workspaces.id = relationships.workspace_id").
@@ -213,7 +226,7 @@ func (s *Service) GetAccountRelationship(ctx context.Context, organizationID, ac
 	var relationship UserMemoryRelationship
 	err := s.db.WithContext(ctx).Table("user_memory_relationships AS relationships").
 		Joins("JOIN user_subjects AS subjects ON subjects.id = relationships.subject_id").
-		Where("relationships.id = ? AND relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", relationshipID, organizationID, usersubject.Account, accountID).
+		Where("relationships.id = ? AND (relationships.organization_id = ? OR relationships.consumer_type = ?) AND subjects.kind = ? AND subjects.account_id = ?", relationshipID, organizationID, ConsumerAIChat, usersubject.Account, accountID).
 		Select("relationships.*").Take(&relationship).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrRelationshipNotFound
@@ -242,7 +255,10 @@ func (s *Service) GetAccountRelationship(ctx context.Context, organizationID, ac
 	_ = s.db.WithContext(ctx).Table("workspaces").Select("name").Where("id = ?", relationship.WorkspaceID).Scan(&workspaceName).Error
 	var membershipCount int64
 	_ = s.db.WithContext(ctx).Table("workspace_members").Where("workspace_id = ? AND account_id = ?", relationship.WorkspaceID, accountID).Count(&membershipCount).Error
-	return &RelationshipDetail{RelationshipSummary: RelationshipSummary{UserMemoryRelationship: relationship, WorkspaceName: workspaceName, CanManage: relationship.Status == RelationshipActive && membershipCount > 0, ItemCount: int64(len(items))}, Items: items}, nil
+	// The person always manages their own AI chat memory; other memory needs
+	// them to still be in the consumer's workspace.
+	canManage := relationship.Status == RelationshipActive && (relationship.ConsumerType == ConsumerAIChat || membershipCount > 0)
+	return &RelationshipDetail{RelationshipSummary: RelationshipSummary{UserMemoryRelationship: relationship, WorkspaceName: workspaceName, CanManage: canManage, ItemCount: int64(len(items))}, Items: items}, nil
 }
 
 type UpdateSettingsRequest struct {

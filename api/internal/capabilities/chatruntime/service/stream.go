@@ -71,28 +71,6 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
-	userMemoryUsage := prepared.UserMemoryPreflightUsage
-	preflightRan := !prepared.UserMemoryPreflightDone
-	if !prepared.UserMemoryPreflightDone {
-		var err error
-		userMemoryUsage, err = s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
-		if err != nil {
-			if s.isStoppedContext(runCtx, prepared.Message.ID) {
-				_ = s.persistStoppedAnswer(persistCtx, prepared, "", userMemoryUsage)
-				return nil, ErrMessageStopped
-			}
-			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-			return nil, newFinalizedStreamError(err)
-		}
-	}
-	preflightUsage := userMemoryUsage
-	if prepared.taskTokenBudget != nil && preflightRan {
-		if prepared.Message.Metadata == nil {
-			prepared.Message.Metadata = map[string]interface{}{}
-		}
-		accountTaskTokenUsage(prepared, userMemoryUsage)
-		s.emitTaskTokenUsageUpdated(persistCtx, prepared, userMemoryUsage, eventCallback)
-	}
 	if !prepared.toolLoopEnabled() {
 		timeline := newProcessTimelineRecorder(runCtx, persistCtx, s, prepared, eventCallback)
 		additional, err := s.claimRuntimeInputsForCurrentRun(
@@ -114,7 +92,6 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 
 	if prepared.toolLoopEnabled() {
 		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
-		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
 			if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, answer, usage, err, eventCallback); handled {
 				return result, budgetErr
@@ -202,7 +179,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
 	}
 	appendDirectAnswerGroundingMessage(prepared)
-	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", preflightUsage, nil, eventCallback); handled {
+	if result, handled, budgetErr := s.handleTaskTokenBudgetPending(persistCtx, prepared, "", nil, nil, eventCallback); handled {
 		return result, budgetErr
 	}
 
@@ -232,7 +209,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	}
 	modelChunkCallback := modelStreamChunkCallback(eventCallback, onChunk)
 	answer, callUsage, err := s.collectStreamAnswerWithEventsAndProgress(runCtx, prepared, stream, eventCallback, modelChunkCallback, modelProgress)
-	usage := mergeUsage(preflightUsage, callUsage)
+	usage := callUsage
 	if settleErr := s.settleClaimedRuntimeInputBatches(persistCtx, prepared, err == nil); settleErr != nil {
 		err = errors.Join(err, settleErr)
 	}
@@ -561,14 +538,6 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	prepared.parts.ContextControl = contextResult.Metadata
 	prepared.LLMRequest = newLLMChatRequest(prepared.parts, contextResult.Messages)
 	prepared.contextBudget = contextResult
-	preflight, err := s.runContextualPreparePreflights(ctx, prepared.Scope, prepared.Conversation, prepared.RunConfig, prepared.parts, prepared.LLMRequest)
-	if err != nil {
-		return err
-	}
-	if preflight != nil {
-		prepared.UserMemoryPreflightDone = preflight.UserMemoryDone
-		prepared.UserMemoryPreflightUsage = preflight.UserMemoryUsage
-	}
 	metadata = preserveRuntimeInputFollowUpMetadata(
 		streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String()),
 		prepared.Message.Metadata,

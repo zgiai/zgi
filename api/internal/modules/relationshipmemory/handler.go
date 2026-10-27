@@ -475,6 +475,9 @@ func (h *Handler) accountRelationship(c *gin.Context) (*RelationshipDetail, bool
 }
 
 func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail) (ConsumerMemoryContract, error) {
+	if detail.ConsumerType == ConsumerAIChat {
+		return aiChatContract(), nil
+	}
 	if detail.ConsumerType == ConsumerDigitalHuman {
 		var row struct {
 			Revision     string

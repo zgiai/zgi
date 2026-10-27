@@ -32,6 +32,8 @@ const messages: ProfileMessages = {
     allStatuses: '全部状态',
     agent: 'Agent',
     digitalHuman: '数字人',
+    aiChat: 'AI 对话',
+    personal: '个人',
     active: '使用中',
     archived: '已归档',
     archivedConsumer: '助手已归档',

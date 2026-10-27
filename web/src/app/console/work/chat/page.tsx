@@ -12,6 +12,7 @@ import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
 import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-warning';
+import { AIChatMemoryOpenerProvider } from '@/components/memory/ai-chat-memory-opener';
 import { useAIChatModelPrecheck } from '@/hooks/aichat/use-aichat-model-precheck';
 import { toast } from 'sonner';
 
@@ -223,30 +224,32 @@ function ChatPageContent() {
           <ChatLoading />
         ) : (
           <React.Suspense fallback={<ChatLoading />}>
-            <Chat
-              mode="aichat"
-              controller={controller}
-              runtimeSurface="work_chat"
-              modelUseCase="text-chat"
-              preferredModelUseCase="agent"
-              modelSelectorValue={modelSelectorValue}
-              modelSelectorWarning={modelPrecheckWarnings.length > 0}
-              isModelInitializing={isModelInitializing}
-              onModelChange={handleModelChange}
-              beforeSend={handleBeforeSend}
-              inputTopNotice={
-                modelPrecheckWarnings.length > 0 ? (
-                  <AIChatModelPrecheckWarning warnings={modelPrecheckWarnings} />
-                ) : undefined
-              }
-              showMemoryToggle={false}
-              homeTitle={t('consoleChat.homeTitle')}
-              homeDescription={t('consoleChat.homeDescription')}
-              inputPlaceholder={t('consoleChat.inputPlaceholder')}
-              defaultSidebarOpen={false}
-              onSelectConversation={handleSelectConversation}
-              onStartNewConversation={handleStartNewConversation}
-            />
+            <AIChatMemoryOpenerProvider>
+              <Chat
+                mode="aichat"
+                controller={controller}
+                runtimeSurface="work_chat"
+                modelUseCase="text-chat"
+                preferredModelUseCase="agent"
+                modelSelectorValue={modelSelectorValue}
+                modelSelectorWarning={modelPrecheckWarnings.length > 0}
+                isModelInitializing={isModelInitializing}
+                onModelChange={handleModelChange}
+                beforeSend={handleBeforeSend}
+                inputTopNotice={
+                  modelPrecheckWarnings.length > 0 ? (
+                    <AIChatModelPrecheckWarning warnings={modelPrecheckWarnings} />
+                  ) : undefined
+                }
+                showMemoryEntry
+                homeTitle={t('consoleChat.homeTitle')}
+                homeDescription={t('consoleChat.homeDescription')}
+                inputPlaceholder={t('consoleChat.inputPlaceholder')}
+                defaultSidebarOpen={false}
+                onSelectConversation={handleSelectConversation}
+                onStartNewConversation={handleStartNewConversation}
+              />
+            </AIChatMemoryOpenerProvider>
           </React.Suspense>
         )}
       </div>

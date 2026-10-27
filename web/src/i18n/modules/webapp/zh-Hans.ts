@@ -414,6 +414,10 @@ const messages: WebappMessages = {
     },
   },
   consoleChat: {
+    memory: {
+      open: '记忆',
+      hint: '查看和设置 AI 对话记住的关于你的内容',
+    },
     taskReport: {
       title: '定时任务',
       view: '查看汇报',
@@ -1464,35 +1468,6 @@ const messages: WebappMessages = {
         navigationRunning: '正在前往 {target}',
         navigationFailed: '无法前往 {target}',
         navigationSucceeded: '已前往 {target}',
-      },
-    },
-    memory: {
-      title: '记忆',
-      add: '添加记忆',
-      save: '保存记忆',
-      delete: '删除记忆',
-      cancel: '取消',
-      saved: '记忆已保存',
-      saveFailed: '保存记忆失败',
-      deleteFailed: '删除记忆失败',
-      deleteConfirmTitle: '删除这条记忆？',
-      deleteConfirmDescription: '删除后，这条记忆将不会再用于后续对话。',
-      empty: '暂无记忆',
-      placeholder: '添加一条长期记忆...',
-      expiresAt: '过期时间',
-      updatedAt: '最近更新：{time}',
-      validUntil: '有效期至 {time}',
-      expiredAt: '已于 {time} 过期',
-      types: {
-        long_term: '长期记忆',
-        temporary: '临时记忆',
-      },
-      categories: {
-        preference: '偏好',
-        profile: '画像',
-        instruction: '指令',
-        fact: '事实',
-        other: '其他',
       },
     },
     uploadSettings: {

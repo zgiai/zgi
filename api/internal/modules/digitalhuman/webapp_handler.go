@@ -232,7 +232,7 @@ func (h *ExternalHandler) RegenerateWebAppMessage(c *gin.Context) {
 	run, _, err := h.runtime.SubmitRegeneration(c.Request.Context(), scope, access.Definition.ID, RegenerateInvocationRequest{
 		MessageID: messageID, ConversationID: &conversationID, Query: request.Query, Surface: SurfaceWebApp,
 		RuntimeContext: request.RuntimeContext, OperationContext: request.OperationContext,
-		Model: request.Model, Provider: request.Provider, Parameters: request.Parameters, UseMemory: request.UseMemory,
+		Model: request.Model, Provider: request.Provider, Parameters: request.Parameters,
 	})
 	if err != nil {
 		h.writeApplicationError(c, err, "digital_human.webapp.message.regenerate")

@@ -102,7 +102,11 @@ export default function ProfileMemoryPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedType = params.get('consumer_type');
-    if (requestedType === 'agent' || requestedType === 'digital_human') {
+    if (
+      requestedType === 'agent' ||
+      requestedType === 'digital_human' ||
+      requestedType === 'ai_chat'
+    ) {
       setConsumerType(requestedType);
     }
   }, []);
@@ -153,20 +157,26 @@ export default function ProfileMemoryPage() {
   }, [total, page, relationships, selectedId]);
   const grouped = useMemo(() => {
     const groups = new Map<string, { id: string; name: string; items: UserMemoryRelationship[] }>();
-    relationships.forEach(item => {
-      const group = groups.get(item.workspace_id);
-      if (group) {
-        group.items.push(item);
-      } else {
-        groups.set(item.workspace_id, {
-          id: item.workspace_id,
-          name: item.workspace_name || item.workspace_id,
-          items: [item],
-        });
-      }
-    });
+    // AI chat memory is the person's own, in no workspace (ADR 0021), and
+    // comes first.
+    [...relationships]
+      .sort((a, b) => Number(b.consumer_type === 'ai_chat') - Number(a.consumer_type === 'ai_chat'))
+      .forEach(item => {
+        const personal = item.consumer_type === 'ai_chat';
+        const key = personal ? 'personal' : item.workspace_id;
+        const group = groups.get(key);
+        if (group) {
+          group.items.push(item);
+        } else {
+          groups.set(key, {
+            id: key,
+            name: personal ? t('memory.personal') : item.workspace_name || item.workspace_id,
+            items: [item],
+          });
+        }
+      });
     return [...groups.values()];
-  }, [relationships]);
+  }, [relationships, t]);
 
   const refresh = async () => {
     await Promise.all([
@@ -205,6 +215,10 @@ export default function ProfileMemoryPage() {
     setTab('memory');
   };
 
+  const consumerName = (item: UserMemoryRelationship) =>
+    item.consumer_type === 'ai_chat'
+      ? t('memory.aiChat')
+      : item.consumer_name_snapshot || item.consumer_id;
   const statusLine = (item: UserMemoryRelationship) =>
     item.status === 'archived'
       ? t('memory.archivedConsumer')
@@ -253,11 +267,9 @@ export default function ProfileMemoryPage() {
                   <SelectItem key={item.id} value={item.id}>
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[10px] font-medium text-primary">
-                        {initialsOf(item.consumer_name_snapshot || item.consumer_id)}
+                        {initialsOf(consumerName(item))}
                       </span>
-                      <span className="truncate">
-                        {item.consumer_name_snapshot || item.consumer_id}
-                      </span>
+                      <span className="truncate">{consumerName(item)}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {statusLine(item)}
                       </span>
@@ -310,6 +322,7 @@ export default function ProfileMemoryPage() {
               <SelectItem value={allFilterValue}>{t('memory.allConsumers')}</SelectItem>
               <SelectItem value="agent">{t('memory.agent')}</SelectItem>
               <SelectItem value="digital_human">{t('memory.digitalHuman')}</SelectItem>
+              <SelectItem value="ai_chat">{t('memory.aiChat')}</SelectItem>
             </SelectContent>
           </Select>
           <Select

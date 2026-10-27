@@ -335,7 +335,6 @@ export function DigitalHumanWebApp({ webAppId }: { webAppId: string }) {
                   variant="full"
                   showModelSelector={false}
                   requireModel={false}
-                  showMemoryToggle={false}
                   forcedUseMemory={false}
           enableUpload={config.file_upload_enabled}
           uploadRequiresLogin={!isAuthenticated}

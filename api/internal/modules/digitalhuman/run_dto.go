@@ -33,7 +33,6 @@ type RegenerateInvocationRequest struct {
 	Model            *string                `json:"model,omitempty"`
 	Provider         *string                `json:"provider,omitempty"`
 	Parameters       map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory        *bool                  `json:"use_memory,omitempty"`
 }
 
 type RunListResult struct {

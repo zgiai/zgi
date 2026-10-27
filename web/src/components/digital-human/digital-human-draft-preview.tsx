@@ -98,7 +98,6 @@ export function DigitalHumanDraftPreview({
             showModelSelector={false}
             variant="embedded"
             requireModel={false}
-            showMemoryToggle={false}
             forcedUseMemory={false}
             enableUpload={fileUploadPolicy == null || fileUploadPolicy.allowed_file_types.length > 0}
             fileUploadPolicy={fileUploadPolicy}

@@ -352,7 +352,6 @@ func SkillArtifactsFromToolMessages(ids PayloadIDs, trace skills.SkillTrace, mes
 type resultSummaryBuilder func(toolName string, payload map[string]interface{}) map[string]interface{}
 
 var resultSummaryBuilders = map[string]resultSummaryBuilder{
-	skills.SkillUserMemory:        summarizeMemoryResult,
 	skills.SkillConsoleNavigator:  summarizeConsoleNavigatorResult,
 	skills.SkillAgentKnowledge:    summarizeAgentKnowledgeResult,
 	skills.SkillInternalKnowledge: summarizeInternalKnowledgeResult,
@@ -436,21 +435,6 @@ func compactConnectorRuntimeConfirmation(confirmation map[string]interface{}) ma
 		result["consequence"] = consequence
 	}
 	return result
-}
-
-func summarizeMemoryResult(toolName string, payload map[string]interface{}) map[string]interface{} {
-	switch toolName {
-	case "add_user_memory", "update_user_memory":
-		return compactMemoryEntryResult(payload)
-	case "delete_user_memory":
-		return compactFields(payload, "result", "entry_id")
-	case "read_user_memory", "list_temporary_memories":
-		return map[string]interface{}{
-			"entries_count": len(interfaceSlice(payload["entries"])),
-		}
-	default:
-		return nil
-	}
 }
 
 func summarizeAgentKnowledgeResult(_ string, payload map[string]interface{}) map[string]interface{} {
@@ -1283,10 +1267,6 @@ func firstJSONToolPayload(messages []tools.ToolInvokeMessage) map[string]interfa
 	return map[string]interface{}{}
 }
 
-func compactMemoryEntryResult(payload map[string]interface{}) map[string]interface{} {
-	return compactFields(payload, "id", "entry_id", "content", "category", "memory_type", "expires_at", "status", "enabled")
-}
-
 func compactFields(payload map[string]interface{}, keys ...string) map[string]interface{} {
 	if len(payload) == 0 {
 		return nil
@@ -1362,15 +1342,6 @@ func recordsFromAny(value interface{}) []map[string]interface{} {
 			return nil
 		}
 		return out
-	}
-}
-
-func interfaceSlice(value interface{}) []interface{} {
-	switch typed := value.(type) {
-	case []interface{}:
-		return typed
-	default:
-		return nil
 	}
 }
 

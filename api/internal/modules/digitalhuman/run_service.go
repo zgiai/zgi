@@ -339,9 +339,6 @@ func (s *RuntimeService) SubmitRegeneration(ctx context.Context, scope Scope, di
 	if request.Parameters != nil {
 		contextValues["regenerate_parameters"] = request.Parameters
 	}
-	if request.UseMemory != nil {
-		contextValues["regenerate_use_memory"] = *request.UseMemory
-	}
 	if surface == SurfaceWebApp && scope.WebAppID != nil && *scope.WebAppID != uuid.Nil {
 		contextValues["web_app_id"] = scope.WebAppID.String()
 	}
@@ -1146,7 +1143,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	chatRequest := runtimedto.ChatRequest{
 		Query: run.Query, Model: config.Model, Provider: config.ModelProvider,
-		Surface: runtimedto.RuntimeSurfaceExternalPageChat, UseMemory: false,
+		Surface:         runtimedto.RuntimeSurfaceExternalPageChat,
 		SourceMessageID: &run.ID,
 		OperationContext: map[string]any{
 			"digital_human_run_id": run.ID.String(), "invocation_event_id": event.ID,
@@ -1714,9 +1711,6 @@ func regenerateRequestFromContext(values map[string]any) runtimedto.RegenerateMe
 	}
 	if parameters, ok := values["regenerate_parameters"].(map[string]any); ok {
 		request.Parameters = parameters
-	}
-	if useMemory, ok := values["regenerate_use_memory"].(bool); ok {
-		request.UseMemory = &useMemory
 	}
 	request.Surface, _ = values["surface"].(string)
 	return request

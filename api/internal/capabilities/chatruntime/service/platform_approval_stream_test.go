@@ -86,7 +86,7 @@ func TestPlatformApprovalStreamsExecuteFrozenCallOnlyAndRejectWithoutCompute(t *
 					governance := &approvalRecordingGateway{PolicyToolGovernanceGateway: skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())}
 					runtime.WithToolGovernanceGateway(governance)
 					svc := NewServiceWithSkillRuntime(&repository.Repositories{Access: toolGovernanceStreamAccessRepo{}, Conversation: &toolGovernanceStreamConversationRepo{conversation: conversation},
-						Message: &toolGovernanceStreamMessageRepo{message: message}, SkillConfig: toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileManager}}, llm, nil, toolGovernanceStreamModelSpecResolver{}, nil, nil, nil, runtime, nil).(*service)
+						Message: &toolGovernanceStreamMessageRepo{message: message}, SkillConfig: toolGovernanceStreamSkillConfigRepo{skillID: skills.SkillFileManager}}, llm, nil, toolGovernanceStreamModelSpecResolver{}, nil, nil, nil, runtime).(*service)
 					svc.events = newStreamEventStore(nil)
 					shellCalls := 0
 					config := RunConfig{BillingAppID: app.String(), BillingAppType: appType, ModelProvider: provider, Model: message.ModelName, EnabledSkillIDs: []string{skills.SkillFileManager}}

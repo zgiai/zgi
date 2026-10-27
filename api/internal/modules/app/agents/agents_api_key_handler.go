@@ -26,7 +26,6 @@ type apiKeyAgentChatRequest struct {
 	FileIDs        []string               `json:"file_ids,omitempty"`
 	ResponseMode   string                 `json:"response_mode,omitempty"`
 	Parameters     map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory      bool                   `json:"use_memory,omitempty"`
 	User           string                 `json:"user,omitempty"`
 	MaxTaskTokens  int                    `json:"max_task_tokens,omitempty"`
 }
@@ -183,7 +182,6 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		FileIDs:        req.FileIDs,
 		ResponseMode:   "streaming",
 		Parameters:     nil,
-		UseMemory:      false,
 		MaxTaskTokens:  req.MaxTaskTokens,
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(

@@ -145,7 +145,7 @@ interface AIChatVariantProps {
   modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
-  showMemoryToggle?: boolean;
+  showMemoryEntry?: boolean;
   forcedUseMemory?: boolean;
   enableUpload?: boolean;
   uploadScope?: AIChatUploadScope;

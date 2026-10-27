@@ -98,7 +98,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	filegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
@@ -300,7 +299,6 @@ type ServiceContainer struct {
 	// Legacy external integrations
 
 	// Account memory
-	memoryService      *memory.Service
 	agentMemoryService *relationshipmemory.AgentAdapter
 
 	// Knowledge retrieval for builtin knowledge tools
@@ -1521,13 +1519,6 @@ func (c *ServiceContainer) GetToolEngine() *tools.ToolEngine {
 		c.toolEngine = tools.NewToolEngine(c.GetToolManager())
 	}
 	return c.toolEngine
-}
-
-func (c *ServiceContainer) GetMemoryService() *memory.Service {
-	if c.memoryService == nil {
-		c.memoryService = memory.NewService(c.db)
-	}
-	return c.memoryService
 }
 
 func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.KnowledgeRetrievalService {

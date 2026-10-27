@@ -440,9 +440,6 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 	if !prepared.parts.AgentMemoryEnabled || len(prepared.parts.AgentMemorySlots) != 1 || prepared.parts.AgentMemoryUserScope != "account" {
 		t.Fatalf("agent memory config = enabled:%v slots:%#v scope:%q", prepared.parts.AgentMemoryEnabled, prepared.parts.AgentMemorySlots, prepared.parts.AgentMemoryUserScope)
 	}
-	if prepared.parts.UseMemory {
-		t.Fatal("Agent continuation unexpectedly enabled AIChat user memory")
-	}
 }
 
 func TestPrepareUserInputContinuationKeepsAIChatMetadataSkills(t *testing.T) {

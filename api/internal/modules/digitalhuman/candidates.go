@@ -209,7 +209,6 @@ func skillResourceCandidates(items []skills.SkillDiscoveryMetadata) ([]ResourceC
 	forbidden := map[string]struct{}{
 		skills.SkillAgentManagement: {},
 		skills.SkillAgentMemory:     {},
-		skills.SkillUserMemory:      {},
 	}
 	candidates := make([]ResourceCandidate, 0, len(items))
 	for _, item := range items {

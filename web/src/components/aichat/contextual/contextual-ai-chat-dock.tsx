@@ -895,7 +895,7 @@ function ContextualAIChatPanel({
           isModelInitializing={isModelInitializing}
           onModelChange={onModelChange}
           variant="embedded"
-          showMemoryToggle={false}
+          showMemoryEntry
           runtimeSurface="contextual_sidebar"
           embeddedConversationMode="drawer"
           embeddedConversationControlsMode="external"

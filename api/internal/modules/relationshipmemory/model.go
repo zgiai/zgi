@@ -11,6 +11,7 @@ import (
 const (
 	ConsumerAgent        = "agent"
 	ConsumerDigitalHuman = "digital_human"
+	ConsumerAIChat       = "ai_chat"
 
 	RelationshipActive   = "active"
 	RelationshipArchived = "archived"
@@ -22,6 +23,15 @@ const (
 	SourceAutomatic = "automatic"
 	SourceManager   = "manager"
 )
+
+// AI chat keeps one memory per person, across organizations (ADR 0021). Its
+// relationship has no organization or workspace (both the zero UUID) and this
+// fixed consumer ID.
+var AIChatConsumerID = uuid.MustParse("00000000-0000-0000-0000-00000000a1c0")
+
+// AIChatConfigRevision is the configuration revision of AI chat memory, which
+// has no builder and so never changes.
+const AIChatConfigRevision = "ai-chat-memory-v1"
 
 type UserMemoryRelationship struct {
 	ID                   uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`

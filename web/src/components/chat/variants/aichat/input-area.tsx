@@ -235,7 +235,7 @@ interface AIChatInputAreaProps {
   modelUseCase?: ModelUseCase;
   modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
-  showMemoryToggle?: boolean;
+  showMemoryEntry?: boolean;
   enableUpload?: boolean;
   fileUploadPolicy?: FileUploadSelection | null;
   uploadScope?: AIChatUploadScope;
@@ -337,7 +337,7 @@ export function AIChatInputArea({
   modelUseCase = 'agent',
   modelAvailabilityUseCase,
   preferredModelUseCase,
-  showMemoryToggle = true,
+  showMemoryEntry = false,
   enableUpload = true,
   fileUploadPolicy,
   uploadScope = { type: 'console' },
@@ -388,7 +388,9 @@ export function AIChatInputArea({
   const [selectedModelProps, setSelectedModelProps] = useState<ModelSelectorModelProps | null>(
     null
   );
-  const [useMemory, setUseMemory] = useState(false);
+  // Turns no longer ask for account memory: AI chat remembers through its
+  // own memory (ADR 0021).
+  const useMemory = false;
   const [isPreparingSend, setIsPreparingSend] = useState(false);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const [isComposerOverflowing, setIsComposerOverflowing] = useState(false);
@@ -1756,7 +1758,7 @@ export function AIChatInputArea({
                 modelUseCase={modelUseCase}
                 modelAvailabilityUseCase={modelAvailabilityUseCase}
                 preferredModelUseCase={preferredModelUseCase}
-                showMemoryToggle={showMemoryToggle}
+                showMemoryEntry={showMemoryEntry}
                 showComposerExpandButton={!hasActiveUserInputRequest && showComposerExpandButton}
                 isComposerExpanded={isComposerExpanded}
                 showToolGovernancePermissionControl={showToolGovernancePermissionControl}
@@ -1781,7 +1783,6 @@ export function AIChatInputArea({
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
                 onOpenConnectedApps={onOpenConnectedApps}
                 onOpenSkillManagement={onOpenSkillManagement}
-                onMemoryEnabledChange={setUseMemory}
                 onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}
                 onSend={handleSend}
                 onStop={onStop}

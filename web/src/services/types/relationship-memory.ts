@@ -1,6 +1,6 @@
 import type { ApiResponseData } from './common';
 
-export type UserMemoryConsumerType = 'agent' | 'digital_human';
+export type UserMemoryConsumerType = 'agent' | 'digital_human' | 'ai_chat';
 export type UserMemoryRelationshipStatus = 'active' | 'archived';
 export type UserMemoryCategory = 'profile' | 'preference' | 'constraint' | 'relationship';
 

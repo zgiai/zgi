@@ -7,7 +7,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	pluginmodel "github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
 	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -126,9 +125,6 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 	providers := h.toolManager.ListProviders(tools.ToolProviderTypeBuiltin)
 	for _, provider := range providers {
 		entity := provider.GetEntity()
-		if isHiddenBuiltinProvider(entity) {
-			continue
-		}
 		var ok bool
 		entity, ok = filterBuiltinProviderEntity(entity, visibility)
 		if !ok {
@@ -216,10 +212,6 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 	provider, err := h.toolManager.GetProvider(c.Request.Context(), tools.ToolProviderTypeBuiltin, providerName, "")
 	if err == nil {
 		entity := provider.GetEntity()
-		if isHiddenBuiltinProvider(entity) {
-			response.Fail(c, response.ErrNotFound)
-			return
-		}
 		var ok bool
 		entity, ok = filterBuiltinProviderEntity(entity, visibility)
 		if !ok {
@@ -344,15 +336,6 @@ func filterBuiltinProviderEntity(entity tools.ToolProviderEntity, visibility bui
 
 func builtinToolVisibilityKey(providerID string, toolName string) string {
 	return strings.TrimSpace(providerID) + "\x00" + strings.TrimSpace(toolName)
-}
-
-func isHiddenBuiltinProvider(entity tools.ToolProviderEntity) bool {
-	for _, tag := range entity.Identity.Tags {
-		if tag == memory.HiddenProviderTag {
-			return true
-		}
-	}
-	return false
 }
 
 // convertProviderEntityToResponse converts ToolProviderEntity to API response format

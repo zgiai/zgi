@@ -182,7 +182,7 @@ interface AIChatShellProps {
   modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
-  showMemoryToggle?: boolean;
+  showMemoryEntry?: boolean;
   forcedUseMemory?: boolean;
   enableUpload?: boolean;
   fileUploadPolicy?: FileUploadSelection | null;
@@ -334,7 +334,7 @@ export function AIChatShell({
   modelAvailabilityUseCase,
   preferredModelUseCase,
   requireModel = true,
-  showMemoryToggle = true,
+  showMemoryEntry = false,
   forcedUseMemory,
   enableUpload = true,
   fileUploadPolicy,
@@ -1982,7 +1982,7 @@ export function AIChatShell({
             modelUseCase={modelUseCase}
             modelAvailabilityUseCase={modelAvailabilityUseCase}
             preferredModelUseCase={preferredModelUseCase}
-            showMemoryToggle={showMemoryToggle}
+            showMemoryEntry={showMemoryEntry}
             enableUpload={enableUpload}
             fileUploadPolicy={fileUploadPolicy}
             uploadRequiresLogin={uploadRequiresLogin}

@@ -44,10 +44,7 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		}, nil
 	}
 	agentID, _ := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
-	workspaceID := uuid.Nil
-	if resourceWorkspaceID := scope.AgentResourceWorkspaceID(); resourceWorkspaceID != nil {
-		workspaceID = *resourceWorkspaceID
-	}
+	workspaceID, _ := agentMemoryWorkspaceID(scope, parts)
 	budgetTokens := maxAgentMemoryContextTokens
 	if modelInputLimit > 0 {
 		budgetTokens = modelInputLimit / 10
@@ -105,12 +102,63 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 	return result.SystemPrompt, result.Metadata, err
 }
 
+// isAIChatMemory reports whether a run uses the person's AI chat memory,
+// which goes through the Agent memory path with the AI chat consumer
+// (ADR 0021).
+func isAIChatMemory(parts *chatRequestParts) bool {
+	return parts != nil && strings.TrimSpace(parts.AgentMemoryAgentID) == relationshipmemory.AIChatConsumerID.String()
+}
+
+// agentMemoryWorkspaceID is the workspace of the memory a run uses: the
+// Agent's, or none for AI chat memory, which belongs to no organization.
+func agentMemoryWorkspaceID(scope Scope, parts *chatRequestParts) (uuid.UUID, bool) {
+	if isAIChatMemory(parts) {
+		return uuid.Nil, true
+	}
+	if workspaceID := scope.AgentResourceWorkspaceID(); workspaceID != nil && *workspaceID != uuid.Nil {
+		return *workspaceID, true
+	}
+	return uuid.Nil, false
+}
+
+// applyAIChatMemoryPolicy gives the person's own AI chat their memory: the
+// main chat and the console's contextual assistant, not pages that embed a
+// chat for others (ADR 0021). It has no builder, so the general rules decide
+// what to keep.
+func applyAIChatMemoryPolicy(caller Caller, parts *chatRequestParts) {
+	if parts == nil || normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAIChat {
+		return
+	}
+	switch normalizeAIChatSurface(parts.Surface) {
+	case aiChatSurfaceWorkChat, aiChatSurfaceContextualSidebar:
+	default:
+		return
+	}
+	parts.AgentMemoryEnabled = true
+	parts.AgentMemoryAutoExtractionEnabled = globalAgentMemoryAutoExtractionEnabled()
+	parts.AgentMemorySlots = nil
+	parts.AgentMemoryUserScope = agentmemory.UserScopeAccount
+	parts.AgentMemoryConfigScope = agentmemory.ConfigScopePublished
+	parts.AgentMemoryConfigRevision = relationshipmemory.AIChatConfigRevision
+	parts.AgentMemoryInstructions = ""
+	parts.AgentMemoryAgentID = relationshipmemory.AIChatConsumerID.String()
+}
+
 func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relationshipmemory.InvocationIdentity {
 	identity := relationshipmemory.InvocationIdentity{
 		Principal:        relationshipmemory.PrincipalRef{ID: scope.AccountID},
 		ConversationType: relationshipmemory.ConversationPrivate,
 	}
 	if parts == nil {
+		return identity
+	}
+	if isAIChatMemory(parts) {
+		identity.Principal.Type = "account"
+		identity.Surface = relationshipmemory.SurfaceAIChat
+		if scope.AccountID != uuid.Nil {
+			subject := usersubject.AccountSubject(scope.AccountID)
+			identity.UserSubject = &subject
+		}
 		return identity
 	}
 	switch strings.TrimSpace(parts.AgentMemoryUserScope) {
@@ -135,6 +183,15 @@ func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relat
 		}
 	}
 	return identity
+}
+
+// agentMemoryEventScope names whose memory an event changed, so the reply
+// can open the right memory page.
+func agentMemoryEventScope(parts *chatRequestParts) string {
+	if isAIChatMemory(parts) {
+		return relationshipmemory.ConsumerAIChat
+	}
+	return "agent"
 }
 
 func agentMemoryContextMessage(parts *chatRequestParts) *adapter.Message {
@@ -208,7 +265,7 @@ func agentMemoryRuntimeAvailable(prepared *PreparedChat, memoryService AgentMemo
 	if !parts.AgentMemoryEnabled || !parts.AgentMemoryToolsEnabled {
 		return false
 	}
-	if prepared.Scope.AgentResourceWorkspaceID() == nil || *prepared.Scope.AgentResourceWorkspaceID() == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
+	if _, ok := agentMemoryWorkspaceID(prepared.Scope, parts); !ok || agentMemoryUserID(prepared.Scope) == uuid.Nil {
 		return false
 	}
 	agentID, err := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
@@ -275,11 +332,10 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			// validation failure. Further attempts remain harmless and final.
 			return memoryRuntimeFailure("retry_exhausted", false)
 		}
-		resourceWorkspaceID := prepared.Scope.AgentResourceWorkspaceID()
-		if resourceWorkspaceID == nil || *resourceWorkspaceID == uuid.Nil {
+		workspaceID, ok := agentMemoryWorkspaceID(prepared.Scope, parts)
+		if !ok {
 			return memoryRuntimeFailure("workspace_missing", false)
 		}
-		workspaceID := *resourceWorkspaceID
 		mutationCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		request := agentmemoryruntime.MutationRequest{
@@ -428,7 +484,7 @@ func (s *service) forEachAgentMemoryMutationEvent(prepared *PreparedChat, respon
 		}
 		payload := map[string]interface{}{
 			"conversation_id": prepared.Conversation.ID.String(), "message_id": prepared.Message.ID.String(),
-			"memory_scope": "agent", "action": action, "key": operation.Key, "status": "success",
+			"memory_scope": agentMemoryEventScope(prepared.parts), "action": action, "key": operation.Key, "status": "success",
 			"mutation_status": operation.Status, "source_kind": operation.SourceKind,
 			"operation_id": operation.OperationID, "revision": operation.Revision,
 		}

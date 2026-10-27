@@ -99,7 +99,7 @@ func TestConnectorFeishuReadModelLoopReceivesResultsAndUsesPageCursor(t *testing
 							return resolved, err
 						}
 					})
-					svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, nil, chatResolver, agentResolver, actionFactory).(*service)
+					svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, chatResolver, agentResolver, actionFactory).(*service)
 					conversationID, messageID, agentID := uuid.New(), uuid.New(), uuid.New()
 					scope := Scope{OrganizationID: uuid.New(), AccountID: uuid.New()}
 					caller := Caller{Type: callerType, Source: runtimemodel.ConversationSourceConsole}

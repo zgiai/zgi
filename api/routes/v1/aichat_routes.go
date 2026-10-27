@@ -8,7 +8,6 @@ import (
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
-	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -27,7 +26,6 @@ type AIChatRouteDeps struct {
 	FileService                chatruntime.FileLookupService
 	ContentExtractor           chatruntime.ContentExtractionService
 	WorkspacePermissionService chatruntime.WorkspacePermissionService
-	MemoryService              *memorymodule.Service
 	AgentMemoryService         *relationshipmemory.AgentAdapter
 	SkillRuntime               *skills.Runtime
 	AccountService             interfaces.AccountService
@@ -56,9 +54,6 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) chatrun
 	if deps.WorkspacePermissionService == nil {
 		panic("aichat routes require workspace permission service")
 	}
-	if deps.MemoryService == nil {
-		panic("aichat routes require memory service")
-	}
 	if deps.AgentMemoryService == nil {
 		panic("aichat routes require agent memory service")
 	}
@@ -80,7 +75,6 @@ func RegisterAIChatRoutes(router *gin.RouterGroup, deps AIChatRouteDeps) chatrun
 		deps.FileService,
 		deps.ContentExtractor,
 		deps.WorkspacePermissionService,
-		deps.MemoryService,
 		deps.AgentMemoryService,
 		deps.SkillRuntime,
 		deps.ConnectorChatRuntime,
