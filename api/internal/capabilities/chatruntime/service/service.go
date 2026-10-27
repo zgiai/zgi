@@ -800,6 +800,9 @@ type chatRequestParts struct {
 	SystemPrompt                     string
 	SystemPromptVersion              string
 	ConfiguredSkillIDs               []string
+	// DatabaseBindingsAbsent marks an Agent or DigitalHuman run with no bound
+	// database table, so the database skill is not offered this turn.
+	DatabaseBindingsAbsent           bool
 	KnowledgeDatasetIDs              []string
 	KnowledgeRetrievalConfig         map[string]interface{}
 	AgentMemoryEnabled               bool

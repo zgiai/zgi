@@ -245,3 +245,56 @@ func TestQueryExecuteError(t *testing.T) {
 		t.Fatalf("expected error position to be set")
 	}
 }
+
+func TestQueryExecuteReportsRowsAffected(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	pool, err := driver.NewPool(ctx, testDBConfig())
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	t.Cleanup(func() { pool.Close() })
+
+	injector := do.New()
+	do.ProvideValue(injector, pool)
+	do.Provide(injector, query.ProvideRepository)
+	do.Provide(injector, service.ProvideQueryService)
+	querySvc := do.MustInvoke[service.QueryService](injector)
+
+	table := `"sqlmeta_rows_affected_` + strings.ReplaceAll(uuid.NewString(), "-", "") + `"`
+	exec := func(sql string, params ...any) *types.QueryResponse {
+		t.Helper()
+		resp, err := querySvc.Execute(ctx, sql, types.QueryOptions{Parameters: params})
+		if err != nil {
+			t.Fatalf("execute %q: %v", sql, err)
+		}
+		if resp.Error != nil {
+			t.Fatalf("execute %q: %#v", sql, resp.Error)
+		}
+		return resp
+	}
+	exec("CREATE TABLE " + table + " (id int PRIMARY KEY, name text)")
+	t.Cleanup(func() {
+		_, _ = querySvc.Execute(context.Background(), "DROP TABLE IF EXISTS "+table, types.QueryOptions{})
+	})
+
+	cases := []struct {
+		sql     string
+		params  []any
+		command string
+		want    int64
+	}{
+		{sql: "INSERT INTO " + table + " (id, name) VALUES ($1, $2), ($3, $4), ($5, $6)", params: []any{1, "a", 2, "b", 3, "c"}, command: "INSERT", want: 3},
+		{sql: "UPDATE " + table + " SET name = $1 WHERE id <= $2", params: []any{"z", 2}, command: "UPDATE", want: 2},
+		{sql: "UPDATE " + table + " SET name = $1 WHERE id = $2", params: []any{"z", 99}, command: "UPDATE", want: 0},
+		{sql: "DELETE FROM " + table + " WHERE id = $1 RETURNING id", params: []any{3}, command: "DELETE", want: 1},
+		{sql: "SELECT * FROM " + table, command: "SELECT", want: 2},
+	}
+	for _, tc := range cases {
+		resp := exec(tc.sql, tc.params...)
+		if resp.Command != tc.command || resp.RowsAffected != tc.want {
+			t.Fatalf("%q: command=%q rows_affected=%d, want %q / %d", tc.sql, resp.Command, resp.RowsAffected, tc.command, tc.want)
+		}
+	}
+}

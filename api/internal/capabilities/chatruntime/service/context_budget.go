@@ -82,6 +82,9 @@ func (s *service) buildTokenBudgetMessages(
 	if continuationContext != nil {
 		extraContextMessages = append(extraContextMessages, *continuationContext)
 	}
+	if unbound := databaseBindingsRemovedMessage(parts, parentMessages); unbound != nil {
+		extraContextMessages = append(extraContextMessages, *unbound)
+	}
 	if turnBoundaryContext != nil {
 		extraContextMessages = append(extraContextMessages, *turnBoundaryContext)
 	}
@@ -290,7 +293,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 
 	maxAllowedOutput := safeLimit - minPrompt
 	if maxAllowedOutput < minOutput {
-		return nil, fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput)
+		return nil, errQueryTooLong()
 	}
 
 	originalMaxTokens, hasRequestedMaxTokens := requestedMaxTokens(parts)
@@ -310,7 +313,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 		reservedOutput = maxAllowedOutput
 	}
 	if reservedOutput < minOutput {
-		return nil, fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput)
+		return nil, errQueryTooLong()
 	}
 
 	effectiveMaxTokens := originalMaxTokens
@@ -327,7 +330,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 		promptBudget = spec.MaxInputTokens
 	}
 	if baseEstimate.Tokens > promptBudget {
-		return nil, fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput)
+		return nil, errQueryTooLong()
 	}
 
 	return &budgetComputation{

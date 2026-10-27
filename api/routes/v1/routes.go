@@ -137,6 +137,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
 		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
 		AuthorizationService:       serviceContainer.GetAuthorizationService(),
+		ApplicationErrorCatalog:    applicationErrorCatalog,
 	})
 
 	// ---------- RAG Evaluation ----------

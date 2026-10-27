@@ -31,6 +31,9 @@ export interface AIChatErrorDisplayMessage {
   kind: 'billing' | 'server' | 'timeout' | 'network' | 'provider' | 'unknown';
 }
 
+const SSE_IDLE_TIMEOUT_ERROR_CODE = 'ERR_SSE_IDLE_TIMEOUT';
+const QUERY_TOO_LONG_ERROR_CODE = 'aichat.query.too_long';
+
 function includesAny(value: string, candidates: string[]): boolean {
   return candidates.some(candidate => value.includes(candidate));
 }
@@ -59,6 +62,9 @@ function resolveFriendlyRuntimeError(
   }
 
   if (
+    // The SSE client's idle watchdog tags its error explicitly; do not rely on
+    // the wording of its message.
+    code === SSE_IDLE_TIMEOUT_ERROR_CODE ||
     includesAny(normalized, [
       'timeout',
       'timed out',
@@ -120,7 +126,8 @@ function resolveFriendlyRuntimeError(
 type AIChatRuntimeErrorCode =
   | WorkflowRuntimeErrorKind
   | 'agent_final_answer_unavailable'
-  | 'aichat.context.compaction_unavailable';
+  | 'aichat.context.compaction_unavailable'
+  | typeof QUERY_TOO_LONG_ERROR_CODE;
 
 function resolveAIChatRuntimeErrorCode(
   code: string | number | undefined,
@@ -129,6 +136,9 @@ function resolveAIChatRuntimeErrorCode(
   const normalizedCode = typeof code === 'string' ? code.trim().toLowerCase() : '';
   if (normalizedCode === 'aichat.context.compaction_unavailable') {
     return 'aichat.context.compaction_unavailable';
+  }
+  if (normalizedCode === QUERY_TOO_LONG_ERROR_CODE) {
+    return QUERY_TOO_LONG_ERROR_CODE;
   }
   if (normalizedCode === 'agent_final_answer_unavailable') {
     return 'agent_final_answer_unavailable';
@@ -177,6 +187,12 @@ function resolveStructuredRuntimeError(
         kind: 'server',
         title: t('webapp.consoleChat.contextCompactionBlocked.title'),
         description: t('webapp.consoleChat.contextCompactionBlocked.description'),
+      };
+    case QUERY_TOO_LONG_ERROR_CODE:
+      return {
+        kind: 'unknown',
+        title: t('webapp.consoleChat.errors.inputTooLong.title'),
+        description: t('webapp.consoleChat.errors.inputTooLong.description'),
       };
     case 'model_service_timeout':
       return {

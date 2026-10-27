@@ -13,6 +13,10 @@ const GENERIC_SYSTEM_ERROR_CODE = '399001';
 // Same prefixes as isApplicationErrorCode in services/application-error-i18n.
 const APPLICATION_CODE_PREFIXES = ['billing.', 'llm.', 'video.', 'image.', 'music.'];
 
+// Chat-runtime catalog codes that have their own runtime copy instead of a
+// requestErrors entry, lifted over the generic system code the same way.
+const AICHAT_RUNTIME_CATALOG_CODES = new Set(['aichat.query.too_long']);
+
 export function isAIChatApplicationErrorCode(code: unknown): code is string {
   return (
     typeof code === 'string' &&
@@ -28,7 +32,7 @@ export function resolveAIChatErrorCode(
   const catalogCode = typeof errorCode === 'string' ? errorCode.trim() : '';
   if (
     (productCode === '' || productCode === GENERIC_SYSTEM_ERROR_CODE) &&
-    isAIChatApplicationErrorCode(catalogCode)
+    (isAIChatApplicationErrorCode(catalogCode) || AICHAT_RUNTIME_CATALOG_CODES.has(catalogCode))
   ) {
     return catalogCode;
   }

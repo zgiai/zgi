@@ -41,6 +41,8 @@ import (
 	"github.com/zgiai/zgi/api/pkg/queue"
 	"github.com/zgiai/zgi/api/pkg/vectordb"
 
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/storage"
 
 	// Security and Redis
@@ -77,6 +79,8 @@ type DatasetRouteDeps struct {
 	TaskHandlerRegistry        datasetTaskHandlerRegistry
 	ResourcePermissionService  interfaces.ResourcePermissionService
 	AuthorizationService       interfaces.AuthorizationService
+	// ApplicationErrorCatalog projects cataloged knowledge-base errors; optional.
+	ApplicationErrorCatalog *appcatalog.Catalog
 }
 
 func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
@@ -201,6 +205,11 @@ func RegisterDatasetRoutes(router *gin.RouterGroup, deps DatasetRouteDeps) {
 		batchTaskManager,
 		deps.ResourcePermissionService,
 	)
+	if deps.ApplicationErrorCatalog != nil {
+		if projector, err := apptransport.NewProjector(deps.ApplicationErrorCatalog); err == nil {
+			datasetHandlerObj.SetErrorProjector(projector)
+		}
+	}
 	documentHandlerObj := datasetHandler.NewDocumentHandler(
 		documentServiceObj,
 		datasetServiceObj,

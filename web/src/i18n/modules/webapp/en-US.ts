@@ -743,6 +743,11 @@ const messages = {
         memberDescription:
           'The model channel or upstream service is unavailable. Select another model or ask an administrator to check the channel.',
       },
+      inputTooLong: {
+        title: 'Your message is too long',
+        description:
+          'The message does not fit what this model can process. Shorten it, split it into several messages, or send long content as a file.',
+      },
     },
     send: 'Send',
     runtimeInput: {

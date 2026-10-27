@@ -17,6 +17,7 @@ import (
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -937,7 +938,9 @@ func (s *service) recordPreparedErrorIdentity(ctx context.Context, prepared *Pre
 }
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, cause error) error {
-	message := publicAichatErrorMessage(cause)
+	// Persist the same catalog message the stream frame publishes, so run logs
+	// and reloaded conversations do not degrade to "Internal server error".
+	message := publicAichatLocalizedErrorMessage(cause, StreamLocale(ctx))
 	s.recordPreparedErrorIdentity(ctx, prepared, cause)
 	finish := func(txRepos *repository.Repositories) error {
 		if err := txRepos.Message.UpdateError(ctx, prepared.Message.ID, message); err != nil {
@@ -1228,13 +1231,8 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error, requestID string
 // catalog entry of its error_code in that locale instead of the fixed English
 // "Internal server error"; the zero Locale uses the catalog's fallback language.
 func BuildLocalizedStreamErrorPayload(prepared *PreparedChat, err error, requestID string, locale appcatalog.Locale) map[string]interface{} {
-	message := publicAichatErrorMessage(err)
+	message := publicAichatLocalizedErrorMessage(err, locale)
 	errorCode := stableAichatErrorCode(err)
-	if _, _, structured := publicAichatStructuredError(err); !structured {
-		if catalogMessage, ok := streamErrorCatalogMessage(errorCode, locale); ok {
-			message = catalogMessage
-		}
-	}
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -1274,6 +1272,22 @@ func stableAichatErrorCode(err error) string {
 			return "billing.model.pricing_not_configured"
 		}
 	}
+	if apperror.IsCode(err, CodeQueryTooLong) {
+		return CodeQueryTooLong.String()
+	}
+	// Billing failures without a user-actionable kind keep their own catalog
+	// identity instead of being reported as a model invocation failure. The
+	// exchange-rate cause is checked first because a settle failure wraps it,
+	// and pre-deduct before the generic billing sentinel that wraps both.
+	switch {
+	case errors.Is(err, gateway.ErrExchangeRateUnavailable), errors.Is(err, adapter.ErrExchangeRateUnavailable):
+		return llmerrors.AppCodeBillingExchangeRateUnavailable.String()
+	case errors.Is(err, gateway.ErrBillingPreDeductFailed):
+		return llmerrors.AppCodeBillingPredeductFailed.String()
+	case errors.Is(err, gateway.ErrBillingSettleFailed), errors.Is(err, adapter.ErrBillingSettleFailed),
+		errors.Is(err, llmerrors.DomainErrBillingFailed):
+		return llmerrors.AppCodeBillingSettleFailed.String()
+	}
 	// Same sentinels as gateway.ApplicationCodeForError, so an unknown model is
 	// published as not found (not retryable) instead of an invocation failure.
 	if errors.Is(err, llmerrors.DomainErrModelNotFound) || errors.Is(err, gateway.ErrModelNotFound) ||
@@ -1291,6 +1305,19 @@ func stableAichatErrorCode(err error) string {
 		return "llm.provider.unavailable"
 	}
 	return "llm.invocation.failed"
+}
+
+// publicAichatLocalizedErrorMessage is the public message for a failed turn: a
+// product error keeps its own message; any other failure is described by the
+// catalog entry of its stable code in the given locale.
+func publicAichatLocalizedErrorMessage(err error, locale appcatalog.Locale) string {
+	message := publicAichatErrorMessage(err)
+	if _, _, structured := publicAichatStructuredError(err); !structured {
+		if catalogMessage, ok := streamErrorCatalogMessage(stableAichatErrorCode(err), locale); ok {
+			message = catalogMessage
+		}
+	}
+	return message
 }
 
 func publicAichatErrorMessage(err error) string {
