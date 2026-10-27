@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
@@ -108,24 +107,8 @@ func TestRelationshipMemoryPostgresIsolationCASAndEpochFence(t *testing.T) {
 		t.Fatalf("replayed delete after undo error = %v", err)
 	}
 
-	job, err := service.ScheduleExtraction(t.Context(), ScheduleRequest{
-		RelationshipID: relationshipA.ID, ConversationID: uuid.New(), MessageWatermarkID: uuid.New(),
-		MemoryEpoch: relationshipA.MemoryEpoch, ConfigRevision: "published-v1", Definitions: contract.Definitions,
-		ExtractorVersion: "relationship-memory-test", IdempotencyKey: uuid.NewString(),
-		ScheduledAt: time.Now(), ForceAt: time.Now().Add(time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := service.ClearItems(t.Context(), relationshipA.ID); err != nil {
 		t.Fatal(err)
-	}
-	var storedJob UserMemoryExtractionJob
-	if err := tx.First(&storedJob, "id = ?", job.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if storedJob.Status != "cancelled" {
-		t.Fatalf("job status = %q", storedJob.Status)
 	}
 	oldEpoch := relationshipA.MemoryEpoch
 	if _, err := service.PutItem(t.Context(), relationshipA.ID, PutItemRequest{

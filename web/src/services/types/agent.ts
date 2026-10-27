@@ -518,32 +518,6 @@ export interface AgentMemoryTemplatesResponse {
   automatic_extraction_available?: boolean;
 }
 
-export interface AgentMemoryPreviewRequest {
-  instructions?: string;
-  turns: AgentMemoryPreviewTurn[];
-  current?: Record<string, string>;
-}
-
-export interface AgentMemoryPreviewEdit {
-  command: string;
-  path: string;
-  text?: string;
-  old_text?: string;
-  new_text?: string;
-  content?: string;
-  evidence: string;
-  reason?: string;
-  status: 'accepted' | 'rejected';
-  rejection?: string;
-}
-
-export interface AgentMemoryPreviewResult {
-  provider: string;
-  model: string;
-  edits: AgentMemoryPreviewEdit[];
-  files: Array<{ key: string; path: string; before: string; after: string }>;
-}
-
 export interface UpdateAgentRuntimeConfigRequest {
   file_upload_policy?: FileUploadSelection | null;
   execution_runtime?: AgentExecutionRuntimeConfig | null;

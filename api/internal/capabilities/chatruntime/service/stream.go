@@ -860,7 +860,6 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 		return err
 	}
 	prepared.Message.Answer = answer
-	s.scheduleAgentMemoryExtractionBestEffort(ctx, prepared)
 	s.dispatchPreparedRuntimeInputFollowUp(ctx, prepared)
 	return nil
 }

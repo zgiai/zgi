@@ -2557,7 +2557,7 @@ const messages = {
       autoExtractionTitle: 'Remember automatically',
       autoExtractionSummary: 'Note lasting details from conversations without being asked.',
       autoExtractionDescription:
-        'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
+        'When on, the Agent notes user information, preferences, and requests worth keeping as the conversation happens, so later answers fit the user better. Noting them adds some model calls within the turn.',
       applyTemplate: 'Use a template',
       templateDialogTitle: 'Memory templates',
       templateDialogDescription:
@@ -2579,27 +2579,6 @@ const messages = {
       instructionsEmpty: 'Left empty, general rules decide what to remember.',
       manageHint: 'Users manage their own memory under “My memory”',
       viewValues: 'My test memory',
-      preview: {
-        open: 'Preview',
-        title: 'Preview memory',
-        description:
-          'Enter a sample conversation to see what the background pass would save with the current (unsaved) memory settings, and which edits the rules reject. Nothing is saved.',
-        sample: 'Sample conversation',
-        samplePlaceholder: "Choose a template's sample conversation",
-        turn: 'Turn {index}',
-        removeTurn: 'Remove this turn',
-        userPlaceholder: 'What the user says',
-        assistantPlaceholder: "The assistant's reply (optional)",
-        addTurn: 'Add turn',
-        run: 'Run preview',
-        model: 'Model: {model}',
-        noEdits: 'Nothing in this conversation needs remembering.',
-        accepted: 'Would save',
-        rejected: 'Rejected',
-        evidence: 'Evidence: {evidence}',
-        rejection: 'Reason: {reason}',
-        empty: '(empty)',
-      },
     },
     memoryValues: {
       title: 'Agent memory',

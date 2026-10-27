@@ -5,7 +5,7 @@
 - Builds on: ADR 0002, ADR 0004, ADR 0006
 - Supersedes (when complete): the slot model in `docs/agent-memory.md`, the separate tool and prompt sets of each memory store, and AIChat account memory's planner.
 - Amends (phase 2): the scopes and trust levels of ADR 0004 and the placement of instance memory in ADR 0006. Memory ownership in ADR 0002, ADR 0004, ADR 0006, and `docs/user-relationship-memory.md` is unchanged.
-- Amended by: ADR 0016 (the slot runtime and both rollout switches are retired; Agents always use blocks on the relationship store)
+- Amended by: ADR 0016 (the slot runtime and both rollout switches are retired; Agents always use blocks on the relationship store); ADR 0020 (background consolidation removed for now)
 
 ## Context
 

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Eye, FlaskConical, Sparkles } from 'lucide-react';
+import { Eye, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { InfoHint } from '@/components/memory/info-hint';
 import { Badge } from '@/components/ui/badge';
@@ -23,7 +23,6 @@ import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
 import type { AgentMemoryTemplate } from '@/services/types/agent';
-import { AgentMemoryPreviewDialog } from '../memory-preview-dialog';
 import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection } from '../types';
 import { AGENT_MEMORY_LIMITS } from '../utils';
@@ -60,7 +59,6 @@ export function AgentRuntimeMemorySection({
 }: AgentRuntimeMemorySectionProps) {
   const t = useT('agents.agentRuntime');
   const { locale } = useLocale();
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<AgentMemoryTemplate | null>(null);
   const templatesQuery = useQuery({
@@ -93,15 +91,6 @@ export function AgentRuntimeMemorySection({
 
   return (
     <>
-      {previewOpen && (
-        <AgentMemoryPreviewDialog
-          open={previewOpen}
-          onOpenChange={setPreviewOpen}
-          agentId={agentId}
-          instructions={agentMemoryInstructions}
-          templates={memoryTemplates}
-        />
-      )}
       <ConfirmDialog
         open={Boolean(pendingTemplate)}
         onOpenChange={dialogOpen => {
@@ -236,15 +225,6 @@ export function AgentRuntimeMemorySection({
                   >
                     <Sparkles className="size-3" />
                     {t('memory.applyTemplate')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={() => setPreviewOpen(true)}
-                  >
-                    <FlaskConical className="size-3" />
-                    {t('memory.preview.open')}
                   </Button>
                 </div>
                 {!agentMemoryInstructions.trim() && (

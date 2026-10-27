@@ -8,7 +8,6 @@ import (
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemoryworker"
 	app "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	workflow "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -111,10 +110,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		if err := scheduler.RegisterTask(task, handler); err != nil {
 			logger.Error("Failed to register chat runtime lease cleanup task", err)
 		}
-		extractionTask := agentmemoryworker.NewExtractionSweepTask()
-		extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, userRelationshipMemory, llmClient))
-		if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
-			logger.Error("Failed to register Agent memory extraction sweep", err)
+		if err := scheduler.RegisterTask(relationshipmemory.NewCleanupTask(), relationshipmemory.NewCleanupHandler(db)); err != nil {
+			logger.Error("Failed to register relationship memory cleanup", err)
 		}
 		if runtimeInputDispatcher != nil {
 			recoveryTask := &app.RuntimeInputRecoveryTask{}
@@ -241,7 +238,6 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.DELETE("/:agent_id", appHandler.DeleteAgent)
 	appsGroup.PUT("/:agent_id/memory/config", appHandler.UpdateAgentMemoryConfig)
 	appsGroup.GET("/:agent_id/memory/templates", appHandler.GetAgentMemoryTemplates)
-	appsGroup.POST("/:agent_id/memory/preview", appHandler.PreviewAgentMemory)
 	appsGroup.GET("/:agent_id/memory/values", appHandler.ListAgentMemoryValues)
 	appsGroup.PUT("/:agent_id/memory/values", appHandler.UpdateAgentMemoryValue)
 	appsGroup.DELETE("/:agent_id/memory/values/:key", appHandler.ClearAgentMemoryValue)

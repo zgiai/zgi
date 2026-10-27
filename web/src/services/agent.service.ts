@@ -23,8 +23,6 @@ import type {
   UpdateAgentMemoryValueRequest,
   AgentMemoryValue,
   AgentMemoryConfigResponse,
-  AgentMemoryPreviewRequest,
-  AgentMemoryPreviewResult,
   AgentMemoryTemplatesResponse,
   PublishAgentResponse,
   PublishAgentRequest,
@@ -325,15 +323,6 @@ class AgentService extends BaseService {
     return this.request('get', `/agents/${agentId}/memory/templates`, undefined, {
       headers: { 'Content-Type': 'application/json' },
       params: { language },
-    });
-  }
-
-  previewAgentMemory(
-    agentId: string,
-    payload: AgentMemoryPreviewRequest
-  ): Promise<ApiResponseData<AgentMemoryPreviewResult>> {
-    return this.request('post', `/agents/${agentId}/memory/preview`, payload, {
-      headers: { 'Content-Type': 'application/json' },
     });
   }
 

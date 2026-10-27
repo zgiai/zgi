@@ -145,33 +145,6 @@ func agentMemoryContextMessage(parts *chatRequestParts) *adapter.Message {
 	return &message
 }
 
-func (s *service) scheduleAgentMemoryExtractionBestEffort(ctx context.Context, prepared *PreparedChat) {
-	if s == nil || s.agentMemoryExtractionScheduler == nil || prepared == nil || prepared.parts == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return
-	}
-	if !prepared.parts.AgentMemoryEnabled || !prepared.parts.AgentMemoryAutoExtractionEnabled || !globalAgentMemoryAutoExtractionEnabled() {
-		return
-	}
-	if state := prepared.parts.AgentMemoryRuntimeState; state != nil && state.RelationshipSettingsResolved && (!state.Enabled || !state.AutoCaptureEnabled) {
-		return
-	}
-	resourceWorkspaceID := prepared.Scope.AgentResourceWorkspaceID()
-	if resourceWorkspaceID == nil || *resourceWorkspaceID == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
-		return
-	}
-	agentID, err := uuid.Parse(strings.TrimSpace(prepared.parts.AgentMemoryAgentID))
-	if err != nil || agentID == uuid.Nil {
-		return
-	}
-	_, _ = s.agentMemoryExtractionScheduler.ScheduleExtraction(ctx, agentmemory.ScheduleExtractionRequest{
-		WorkspaceID: resourceWorkspaceID.String(), AgentID: agentID.String(),
-		UserScope: prepared.parts.AgentMemoryUserScope, UserID: agentMemoryUserID(prepared.Scope).String(),
-		ConversationID: prepared.Conversation.ID.String(), MessageWatermarkID: prepared.Message.ID.String(),
-		ExtractorVersion: "agent-memory-v2", ConfigScope: prepared.parts.AgentMemoryConfigScope,
-		ConfigRevision: prepared.parts.AgentMemoryConfigRevision, Slots: agentMemoryRuntimeSlots(prepared.parts.AgentMemorySlots),
-	})
-}
-
 func globalAgentMemoryAutoExtractionEnabled() bool {
 	return relationshipmemory.AutomaticExtractionEnabled()
 }

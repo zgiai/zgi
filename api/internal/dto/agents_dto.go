@@ -607,20 +607,6 @@ type AgentMemoryConfigResponse struct {
 	Instructions          string                  `json:"instructions"`
 }
 
-// AgentMemoryPreviewRequest asks what a memory configuration would save from
-// a sample conversation. Slots and Instructions default to the draft.
-type AgentMemoryPreviewRequest struct {
-	Instructions *string                  `json:"instructions,omitempty"`
-	Turns        []AgentMemoryPreviewTurn `json:"turns"`
-	// Current is the memory before the conversation, by file name.
-	Current map[string]string `json:"current,omitempty"`
-}
-
-type AgentMemoryPreviewTurn struct {
-	User      string `json:"user"`
-	Assistant string `json:"assistant,omitempty"`
-}
-
 type UpdateAgentMemoryValueRequest struct {
 	UserScope        string `json:"user_scope,omitempty"`
 	UserID           string `json:"user_id,omitempty"`

@@ -22,18 +22,11 @@ func (*dualAgentMemoryBackend) MutateValues(context.Context, uuid.UUID, uuid.UUI
 	return nil, nil
 }
 
-func (*dualAgentMemoryBackend) ScheduleExtraction(context.Context, agentmemory.ScheduleExtractionRequest) (*agentmemory.AgentMemoryExtractionJob, error) {
-	return nil, nil
-}
-
 func TestNewServiceRegistersEveryContractImplementedByOptionalBackend(t *testing.T) {
 	backend := &dualAgentMemoryBackend{}
 	constructed := NewServiceWithSkillRuntime(nil, nil, nil, nil, nil, nil, nil, nil, nil, backend).(*service)
 
 	if constructed.agentMemoryService != backend {
 		t.Fatal("dual backend was not registered as Agent memory context service")
-	}
-	if constructed.agentMemoryExtractionScheduler != backend {
-		t.Fatal("dual backend was not registered as Agent memory extraction scheduler")
 	}
 }

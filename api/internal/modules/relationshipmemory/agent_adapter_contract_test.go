@@ -11,7 +11,6 @@ import (
 // memory off without a compile error.
 var (
 	_ runtimeservice.AgentMemoryContextService       = (*relationshipmemory.AgentAdapter)(nil)
-	_ runtimeservice.AgentMemoryExtractionScheduler  = (*relationshipmemory.AgentAdapter)(nil)
 	_ agentmemoryruntime.MemoryService               = (*relationshipmemory.AgentAdapter)(nil)
 	_ agentmemoryruntime.RelationshipSettingsService = (*relationshipmemory.AgentAdapter)(nil)
 )

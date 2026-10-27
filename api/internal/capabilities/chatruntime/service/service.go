@@ -510,10 +510,6 @@ type AgentMemoryContextService interface {
 	MutateValues(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
 }
 
-type AgentMemoryExtractionScheduler interface {
-	ScheduleExtraction(ctx context.Context, req agentmemory.ScheduleExtractionRequest) (*agentmemory.AgentMemoryExtractionJob, error)
-}
-
 type service struct {
 	repos                          *repository.Repositories
 	llmClient                      llmclient.LLMClient
@@ -528,7 +524,6 @@ type service struct {
 	skillRuntime                   *skills.Runtime
 	memoryService                  UserMemoryService
 	agentMemoryService             AgentMemoryContextService
-	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	connectorChatRuntime           connectorruntimeauth.ChatRuntimeResolver
 	connectorAgentRuntime          connectorruntimeauth.AgentRuntimeResolver
 	connectorDigitalHumanRuntime   connectorruntimeauth.DigitalHumanRuntimeResolver
@@ -584,7 +579,6 @@ func NewServiceWithSkillRuntime(
 	optionalServices ...interface{},
 ) Service {
 	var agentMemoryService AgentMemoryContextService
-	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	var connectorChatRuntime connectorruntimeauth.ChatRuntimeResolver
 	var connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver
 	var connectorDigitalHumanRuntime connectorruntimeauth.DigitalHumanRuntimeResolver
@@ -599,14 +593,10 @@ func NewServiceWithSkillRuntime(
 		if typed, ok := item.(MarketToolResolver); ok && marketTools == nil {
 			marketTools = typed
 		}
-		// Optional services may intentionally implement more than one contract
-		// (the memory backend provides both context and extraction scheduling),
+		// Optional services may intentionally implement more than one contract,
 		// so these assertions must not be mutually exclusive.
 		if typed, ok := item.(AgentMemoryContextService); ok && agentMemoryService == nil {
 			agentMemoryService = typed
-		}
-		if typed, ok := item.(AgentMemoryExtractionScheduler); ok && agentMemoryExtractionScheduler == nil {
-			agentMemoryExtractionScheduler = typed
 		}
 		if typed, ok := item.(RuntimeInputFollowUpDispatcher); ok && runtimeInputDispatcher == nil {
 			runtimeInputDispatcher = typed
@@ -641,7 +631,6 @@ func NewServiceWithSkillRuntime(
 		skillRuntime:                   skillRuntime,
 		memoryService:                  memoryService,
 		agentMemoryService:             agentMemoryService,
-		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
 		connectorChatRuntime:           connectorChatRuntime,
 		connectorAgentRuntime:          connectorAgentRuntime,
 		connectorDigitalHumanRuntime:   connectorDigitalHumanRuntime,

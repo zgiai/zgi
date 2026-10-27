@@ -2,7 +2,6 @@ package relationshipmemory
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -1042,36 +1041,6 @@ type ScheduleRequest struct {
 	IdempotencyKey     string
 	ScheduledAt        time.Time
 	ForceAt            time.Time
-}
-
-func (s *Service) ScheduleExtraction(ctx context.Context, req ScheduleRequest) (*UserMemoryExtractionJob, error) {
-	snapshot, err := json.Marshal(req.Definitions)
-	if err != nil {
-		return nil, err
-	}
-	var relationship UserMemoryRelationship
-	var job UserMemoryExtractionJob
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&relationship, "id = ?", req.RelationshipID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrRelationshipNotFound
-			}
-			return err
-		}
-		if relationship.Status != RelationshipActive || !relationship.MemoryEnabled || !relationship.AutoCaptureEnabled || relationship.MemoryEpoch != req.MemoryEpoch {
-			return ErrAccessDenied
-		}
-		job = UserMemoryExtractionJob{ID: uuid.New(), RelationshipID: req.RelationshipID, ConversationID: req.ConversationID, MessageWatermarkID: req.MessageWatermarkID, MemoryEpoch: req.MemoryEpoch, ConfigRevision: req.ConfigRevision, DefinitionSnapshot: snapshot, ExtractorVersion: req.ExtractorVersion, IdempotencyKey: req.IdempotencyKey, Status: "pending", ScheduledAt: req.ScheduledAt, ForceAt: req.ForceAt}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&job).Error; err != nil {
-			return err
-		}
-		return tx.Where("idempotency_key = ?", req.IdempotencyKey).First(&job).Error
-	})
-	if err != nil {
-		return nil, err
-	}
-	recordExtractionJob(ctx, relationship.ConsumerType, "scheduled")
-	return &job, nil
 }
 
 func consumerTypeForContract(contract ConsumerMemoryContract) string {
