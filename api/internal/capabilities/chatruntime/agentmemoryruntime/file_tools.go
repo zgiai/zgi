@@ -172,7 +172,7 @@ func ExecuteEdits(ctx context.Context, req MutationRequest, rawArguments string)
 		return failedMutation(fmt.Errorf("%w: malformed memory_edit arguments", ErrInvalidInput), nil)
 	}
 	summary := map[string]interface{}{"edit_count": len(arguments.Edits)}
-	if req.MemoryService == nil || req.WorkspaceID == zeroUUID || req.AgentID == zeroUUID || req.UserID == zeroUUID ||
+	if req.MemoryService == nil || scopeMissing(req.WorkspaceID, req.AgentID, req.Personal) || req.UserID == zeroUUID ||
 		req.MutationMetadata.SourceMessageID == nil || *req.MutationMetadata.SourceMessageID == zeroUUID {
 		return failedMutation(fmt.Errorf("%w: agent memory runtime scope is invalid", ErrInvalidInput), summary)
 	}

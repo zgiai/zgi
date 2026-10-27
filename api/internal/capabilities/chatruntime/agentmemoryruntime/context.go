@@ -28,7 +28,7 @@ func BuildContext(ctx context.Context, req ContextRequest) (ContextResult, error
 		ConfigRevision:     strings.TrimSpace(req.ConfigRevision),
 		ContextStatus:      "skipped_scope",
 	}
-	if req.MemoryService == nil || req.WorkspaceID == zeroUUID || req.AgentID == zeroUUID {
+	if req.MemoryService == nil || scopeMissing(req.WorkspaceID, req.AgentID, req.Personal) {
 		return ContextResult{SystemPrompt: req.SystemPrompt, Metadata: metadata, State: state}, nil
 	}
 	if settings, ok := req.MemoryService.(RelationshipSettingsService); ok {

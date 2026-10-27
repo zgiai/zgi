@@ -60,7 +60,7 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 	result, err := agentmemoryruntime.BuildContext(ctx, agentmemoryruntime.ContextRequest{
 		SystemPrompt: systemPrompt, Enabled: parts.AgentMemoryEnabled,
 		Slots: enabledAgentMemorySlots(parts.AgentMemorySlots), MemoryService: s.agentMemoryService,
-		WorkspaceID: workspaceID, AgentID: agentID, UserID: agentMemoryUserID(scope),
+		WorkspaceID: workspaceID, Personal: isAIChatMemory(parts), AgentID: agentID, UserID: agentMemoryUserID(scope),
 		UserScope: parts.AgentMemoryUserScope, ConfigScope: parts.AgentMemoryConfigScope,
 		ConfigRevision: parts.AgentMemoryConfigRevision, Budget: budgetChars,
 	})
@@ -339,7 +339,7 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		mutationCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		request := agentmemoryruntime.MutationRequest{
-			MemoryService: s.agentMemoryService, WorkspaceID: workspaceID, AgentID: agentID,
+			MemoryService: s.agentMemoryService, WorkspaceID: workspaceID, Personal: isAIChatMemory(parts), AgentID: agentID,
 			UserID: agentMemoryUserID(prepared.Scope), UserScope: parts.AgentMemoryUserScope,
 			Slots: state.EnabledSlots, CurrentValues: state.SavedValues,
 			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: currentTurnUserText(parts),

@@ -12,6 +12,12 @@ var ErrInvalidInput = errors.New("invalid input")
 
 var zeroUUID = uuid.Nil
 
+// scopeMissing reports whether a request lacks the memory it is for. Personal
+// memory (AI chat, ADR 0021) has no workspace.
+func scopeMissing(workspaceID, agentID uuid.UUID, personal bool) bool {
+	return (workspaceID == zeroUUID && !personal) || agentID == zeroUUID
+}
+
 type Slot struct {
 	Key         string `json:"key"`
 	Name        string `json:"name,omitempty"`
@@ -53,11 +59,13 @@ type RelationshipSettingsService interface {
 }
 
 type ContextRequest struct {
-	SystemPrompt   string
-	Enabled        bool
-	Slots          []Slot
-	MemoryService  MemoryService
-	WorkspaceID    uuid.UUID
+	SystemPrompt  string
+	Enabled       bool
+	Slots         []Slot
+	MemoryService MemoryService
+	WorkspaceID   uuid.UUID
+	// Personal memory has no workspace (AI chat, ADR 0021).
+	Personal       bool
 	AgentID        uuid.UUID
 	UserID         uuid.UUID
 	UserScope      string
@@ -74,8 +82,10 @@ type ContextResult struct {
 }
 
 type MutationRequest struct {
-	MemoryService     MemoryService
-	WorkspaceID       uuid.UUID
+	MemoryService MemoryService
+	WorkspaceID   uuid.UUID
+	// Personal memory has no workspace (AI chat, ADR 0021).
+	Personal          bool
 	AgentID           uuid.UUID
 	UserID            uuid.UUID
 	UserScope         string
