@@ -11,7 +11,7 @@ One user's files together hold at most 10,000 characters. Templates for common s
 - When the Agent's `auto_extraction_enabled` setting and the global automatic-write fuse are both on, the main model may also save direct, stable user facts, preferences, instructions, and ongoing context. It cannot proactively clear memory.
 - There is no background consolidation after a conversation (ADR 0020). Automatic memory happens only within a turn, when the Agent saves something the user said without being asked.
 - `ZGI_AGENT_MEMORY_INLINE_TOOLS_ENABLED` defaults to `true` and is an immediate fuse for the synchronous memory tools. Models without verified function calling keep chatting and cannot claim that a memory change succeeded.
-- `ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED` defaults to `false` and gates proactive inline writes. `ZGI_AGENT_MEMORY_AUTO_EXTRACTION_ENABLED` is still accepted during rolling upgrades. Turning it off does not affect explicit memory requests, direct edits, chat, or memory reads.
+- `ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED` is on unless set to `false`, and gates proactive inline writes for every Agent and DigitalHuman. When it is unset, `ZGI_AGENT_MEMORY_AUTO_EXTRACTION_ENABLED` is still read, so a deployment that turned automatic memory off under the old name keeps it off. Turning memory on for an Agent turns its automatic memory on too; the builder can turn it off. `ZGI_AGENT_MEMORY_AUTO_EXTRACTION_ENABLED` is still accepted during rolling upgrades. Turning it off does not affect explicit memory requests, direct edits, chat, or memory reads.
 
 Every change is kept in the memory history with the content before and after, and can be reverted.
 
@@ -33,4 +33,4 @@ Earlier releases queued background consolidation jobs, which stored message refe
 
 ## Release gate
 
-Keep the automatic-write fuse off until the evaluation suite in `api/evals/memory` reaches at least 95% automatic-write precision and 100% rejection for sensitive content, assistant-derived content, and illegal clears, using the deployment's own conversation model.
+Automatic memory is on by default. Re-run the automatic suites in `api/evals/memory` with the deployment's own conversation model after changing the model or the memory prompts. Automatic writes should keep rejecting all sensitive content, assistant-derived content, and illegal clears; on 2026-10-27 the Agent suite passed 142/150 and the DigitalHuman suite 89/90, with none of those violations.

@@ -3038,6 +3038,12 @@ func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]
 		changedFields = appendAgentConfigChangedField(changedFields, "enabled_skill_ids")
 	}
 	if value, ok := boolParam(params, "agent_memory_enabled"); ok {
+		// Turning memory on also turns on automatic memory, its default; the
+		// builder can turn that off on its own.
+		if value && !req.AgentMemoryEnabled && !req.AgentMemoryAutoExtractionEnabled {
+			req.AgentMemoryAutoExtractionEnabled = true
+			changedFields = append(changedFields, "agent_memory_auto_extraction_enabled")
+		}
 		req.AgentMemoryEnabled = value
 		changedFields = append(changedFields, "agent_memory_enabled")
 	}

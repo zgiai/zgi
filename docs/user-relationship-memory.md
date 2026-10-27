@@ -27,8 +27,10 @@ The external Agent memory API keeps its existing `user` query parameter and adds
 
 Relationship memory is always on (ADR 0016). Schema migrations move any Agent memory still in the legacy Agent tables into it; the legacy tables keep their rows but are no longer written.
 
-Automatic writes stay behind a fail-closed switch in the example environment files:
+Automatic writes are on by default. A deployment turns them off for everyone with:
 
 ```text
 ZGI_RELATIONSHIP_MEMORY_AUTO_EXTRACTION_ENABLED=false
 ```
+
+Each Agent or DigitalHuman, and each person, can still turn automatic memory off for themselves. Turning memory on for an Agent turns its automatic memory on too.

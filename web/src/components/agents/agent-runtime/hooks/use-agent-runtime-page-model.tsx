@@ -1664,6 +1664,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       },
       onChangeAgentMemoryEnabled: (value: boolean) => {
         if (isRuntimeConfigReadOnly) return;
+        // Turning memory on also turns on automatic memory, its default;
+        // the builder can turn that off on its own.
+        if (value && !agentMemoryEnabled) setAgentMemoryAutoExtractionEnabled(true);
         setAgentMemoryEnabled(value);
       },
       onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => {
