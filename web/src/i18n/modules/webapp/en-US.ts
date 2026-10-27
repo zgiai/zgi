@@ -1767,7 +1767,7 @@ const messages = {
       'internal-knowledge': 'Internal Knowledge',
       'agent-workflow': 'Agent Workflow',
       'agent-management': 'Agent Manager',
-      'agent-memory': 'Agent Memory',
+      'agent-memory': 'Memory',
       'user-memory': 'User Memory',
       calculator: 'Calculator',
       'console-navigator': 'Console Navigator',

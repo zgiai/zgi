@@ -24,7 +24,7 @@ const messages = {
   memory: {
     title: 'My memory',
     description:
-      'What each assistant in this organization remembers about you. You can change or delete any of it.',
+      'What each assistant remembers about you. AI chat memory is yours across organizations. You can change or delete any of it.',
     consumerFilter: 'Assistant type',
     statusFilter: 'Status',
     allConsumers: 'All assistants',

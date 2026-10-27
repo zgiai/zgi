@@ -1685,7 +1685,7 @@ const messages: WebappMessages = {
       'internal-knowledge': '内部知识库',
       'agent-workflow': '智能体工作流',
       'agent-management': '智能体管理器',
-      'agent-memory': '智能体记忆',
+      'agent-memory': '记忆',
       'user-memory': '用户记忆',
       calculator: '计算器',
       'console-navigator': '控制台导航',

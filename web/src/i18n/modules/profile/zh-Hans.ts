@@ -25,7 +25,8 @@ const messages: ProfileMessages = {
   noChanges: '没有需要保存的更改',
   memory: {
     title: '我的记忆',
-    description: '当前组织中每个助手记住的关于你的事。你可以修改或删除其中任何内容。',
+    description:
+      '每个助手记住的关于你的事。AI 对话的记忆跟随你本人，在所有组织中通用。你可以修改或删除其中任何内容。',
     consumerFilter: '助手类型',
     statusFilter: '状态',
     allConsumers: '全部助手',
