@@ -151,18 +151,18 @@ assert.match(
 );
 assert.match(
   workflowHook,
-  /currentState\.workflowData && isActiveWorkflowEditor\(variables\.agentId\)/,
-  'draft save success must not write into another editor’s store'
+  /currentState\.workflowData && isWorkflowEditorSessionActive\(context\?\.editorSession\)/,
+  'draft save success must only write to the store of the editor session that saved'
 );
 assert.match(
   workflowHook,
-  /context && isActiveWorkflowEditor\(variables\.agentId\)/,
-  'draft save failure must not roll back another editor’s flags'
+  /context && isWorkflowEditorSessionActive\(context\.editorSession\)/,
+  'draft save failure must only roll back the editor session that saved'
 );
 
-// Leaving workflow A while its save is in flight and opening workflow B must
-// not let A's save loop submit B's graph under A's id.
-{
+// A save in flight when the user leaves must not touch the next editor: neither
+// another workflow (B) nor a freshly reopened editor of the same workflow (A).
+async function runStaleSaveScenario(nextAgentId) {
   const editorSession = load('src/components/workflow/store/helpers/editor-session.ts');
   let state = {
     isDirty: true,
@@ -186,7 +186,7 @@ assert.match(
   const calls = [];
   let finishRequest;
   const mutateAsync = variables => {
-    calls.push({ agentId: variables.agentId, nodes: variables.workflowData.graph.nodes });
+    calls.push({ agentId: variables.agentId, editorSession: variables.editorSession });
     return new Promise(resolve => {
       finishRequest = resolve;
     });
@@ -222,18 +222,22 @@ assert.match(
   await Promise.resolve();
   assert.equal(calls.length, 1);
   assert.equal(calls[0].agentId, 'A');
+  assert.equal(calls[0].editorSession, editorSession.currentWorkflowEditorSession('A'));
 
-  // "Leave anyway", then open workflow B with its own unsaved graph.
+  // "Leave anyway", then the next editor mounts and loads its own graph.
   releaseA();
-  editorSession.claimWorkflowEditor('B');
-  const bNodes = [{ id: 'b-node' }];
-  state = { ...state, nodes: bNodes, graphVersion: 7, isDirty: true };
+  editorSession.claimWorkflowEditor(nextAgentId);
+  const nextNodes = [{ id: `${nextAgentId}-reloaded` }];
+  state = { ...state, nodes: nextNodes, graphVersion: 7, isDirty: true };
   finishRequest({ code: '0' });
 
-  assert.equal(await saving, false, 'a save that outlived its editor reports not saved');
-  assert.equal(calls.length, 1, "A's loop must not submit again after leaving");
-  assert.equal(state.nodes, bNodes, "B's graph is untouched");
-  assert.equal(state.isDirty, true, "B's dirty flag is untouched");
+  const label = `leave A, open ${nextAgentId}`;
+  assert.equal(await saving, false, `${label}: the stale save reports not saved`);
+  assert.equal(calls.length, 1, `${label}: the stale loop must not submit again`);
+  assert.equal(state.nodes, nextNodes, `${label}: the next editor's graph is untouched`);
+  assert.equal(state.isDirty, true, `${label}: the next editor's dirty flag is untouched`);
 }
+await runStaleSaveScenario('B');
+await runStaleSaveScenario('A');
 
 console.log('Workflow save/publish barrier checks passed.');

@@ -4,7 +4,10 @@ import { usePublishWorkflow, useSaveWorkflowDraft } from '@/hooks';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { flushWorkflowPendingEdits } from './pending-edits';
-import { isActiveWorkflowEditor } from '../store/helpers/editor-session';
+import {
+  currentWorkflowEditorSession,
+  isWorkflowEditorSessionActive,
+} from '../store/helpers/editor-session';
 import type { WorkflowData } from '../store/type';
 
 /**
@@ -51,6 +54,9 @@ export const useCombinedWorkflowSave = (agentId: string) => {
       const saveToast = options?.saveToast;
       let savedAtLeastOnce = false;
       let savePasses = 0;
+      // The editor mount this save belongs to. A save outliving it (the user
+      // left, switched workflows, or reopened this one) stops touching the store.
+      const editorSession = currentWorkflowEditorSession(agentId);
 
       for (;;) {
         const activeSave = inFlightSaveRef.current;
@@ -61,9 +67,9 @@ export const useCombinedWorkflowSave = (agentId: string) => {
           continue;
         }
 
-        // The editor was closed or switched to another workflow: the global
-        // store no longer holds this workflow, so never snapshot it for agentId.
-        if (!isActiveWorkflowEditor(agentId)) return false;
+        // The editor was closed, switched or reopened: the global store no
+        // longer belongs to this save, so never snapshot it for agentId.
+        if (!isWorkflowEditorSessionActive(editorSession)) return false;
 
         flushWorkflowPendingEdits();
         const stateAfterFlush = useWorkflowStore.getState();
@@ -119,11 +125,12 @@ export const useCombinedWorkflowSave = (agentId: string) => {
               agentId,
               workflowData: updatedWorkflowData,
               silent,
+              editorSession,
             });
 
             // The request finished after the user left this workflow. Its own
             // save is done; do not inspect or flag the next editor's store.
-            if (!isActiveWorkflowEditor(agentId)) return false;
+            if (!isWorkflowEditorSessionActive(editorSession)) return false;
 
             // The mutation success handler clears dirty flags. Restore them if
             // the graph changed while this exact snapshot was being persisted;
@@ -142,7 +149,7 @@ export const useCombinedWorkflowSave = (agentId: string) => {
             }
             return true;
           } catch (error) {
-            if (isActiveWorkflowEditor(agentId)) {
+            if (isWorkflowEditorSessionActive(editorSession)) {
               useWorkflowStore.setState({
                 isDirty: prevIsDirty,
                 hasLayoutChanges: prevHasLayoutChanges,

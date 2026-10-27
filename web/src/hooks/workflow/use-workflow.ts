@@ -1,5 +1,8 @@
 import { mergeSavedConnectorNodes } from '@/components/workflow/store/helpers/merge-saved-connectors';
-import { isActiveWorkflowEditor } from '@/components/workflow/store/helpers/editor-session';
+import {
+  currentWorkflowEditorSession,
+  isWorkflowEditorSessionActive,
+} from '@/components/workflow/store/helpers/editor-session';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { workflowService } from '@/services/workflow.service';
 import type {
@@ -65,8 +68,13 @@ export function useSaveWorkflowDraft() {
       agentId: string;
       workflowData: WorkflowData;
       silent?: boolean;
+      /** Editor session that started the save; defaults to the one open now. */
+      editorSession?: number | null;
     }) => workflowService.saveWorkflowDraft(agentId, serializeWorkflowForApi(workflowData)),
-    onMutate: async ({ agentId, workflowData }) => {
+    onMutate: async ({ agentId, workflowData, editorSession: startedBy }) => {
+      // Capture the owning editor before any await so later store writes can
+      // tell whether that editor is still the one on screen.
+      const editorSession = startedBy ?? currentWorkflowEditorSession(agentId);
       // Cancel any outgoing refetches
       await queryClient.cancelQueries({ queryKey: WORKFLOW_KEYS.draft(agentId) });
 
@@ -103,13 +111,15 @@ export function useSaveWorkflowDraft() {
         } as unknown as WorkflowDraftData;
       });
 
-      useWorkflowStore.setState({
-        isDirty: false,
-        hasLayoutChanges: false,
-        suppressNextLayoutDirty: false,
-        suppressNextViewportDirty: false,
-        lastSavedAt: Date.now(),
-      });
+      if (isWorkflowEditorSessionActive(editorSession)) {
+        useWorkflowStore.setState({
+          isDirty: false,
+          hasLayoutChanges: false,
+          suppressNextLayoutDirty: false,
+          suppressNextViewportDirty: false,
+          lastSavedAt: Date.now(),
+        });
+      }
 
       // Return a context object with the snapshotted value
       return {
@@ -118,6 +128,7 @@ export function useSaveWorkflowDraft() {
         prevIsDirty,
         prevHasLayoutChanges,
         lastSavedAt,
+        editorSession,
       } as const;
     },
     onError: (err, variables, context) => {
@@ -130,7 +141,7 @@ export function useSaveWorkflowDraft() {
       }
       // The global store belongs to whichever editor is open now; only roll
       // back its flags when that is still this workflow.
-      if (context && isActiveWorkflowEditor(variables.agentId)) {
+      if (context && isWorkflowEditorSessionActive(context.editorSession)) {
         useWorkflowStore.setState({
           isDirty: context.prevIsDirty ?? true,
           hasLayoutChanges: context.prevHasLayoutChanges ?? false,
@@ -142,7 +153,7 @@ export function useSaveWorkflowDraft() {
       }
       console.error('Save workflow draft error:', err);
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (data, variables, context) => {
       void queryClient.invalidateQueries({ queryKey: ['connectors'] });
       // 1. Partially update the React Query cache with canonical server data
       // This prevents data loss (overwriting nodes with partial response)
@@ -162,7 +173,7 @@ export function useSaveWorkflowDraft() {
       // Skip when the user already left this workflow: the store now holds
       // another editor's graph and must not receive this save's hash or refs.
       const currentState = useWorkflowStore.getState();
-      if (currentState.workflowData && isActiveWorkflowEditor(variables.agentId)) {
+      if (currentState.workflowData && isWorkflowEditorSessionActive(context?.editorSession)) {
         const nodes = mergeSavedConnectorNodes(
           currentState.nodes,
           variables.workflowData.graph.nodes,
