@@ -1,12 +1,14 @@
 ---
 name: digital-human-memory
-description: Retrieve relevant long-term memory owned by the current DigitalHuman when the current question may depend on durable context.
+description: Read and change the current DigitalHuman's long-term memory, and the person's own memory, as files.
 when_to_use: Use when the answer may depend on a durable DigitalHuman fact, decision, preference, experience, open loop, or reflection. Do not call for ordinary questions that do not need long-term context.
 provider_type: builtin
 provider_id: digital_human_memory
 runtime_type: tool
 tools:
-  - retrieve_digital_human_memory
+  - memory_view
+  - memory_search
+  - memory_edit
 supported_callers:
   - digital_human
 max_calls_per_turn: 3
@@ -21,8 +23,8 @@ display:
     en_US: DigitalHuman Memory
     zh_Hans: 数字人长期记忆
   description:
-    en_US: Designed for retrieving relevant durable memory for the current DigitalHuman without exposing its internal knowledge projection.
-    zh_Hans: 适用于根据当前问题召回数字人的相关长期记忆，内部知识投影对用户不可见。
+    en_US: Recalls the DigitalHuman's durable memory as files, searches and reads it, and saves what the conversation establishes, without exposing its internal knowledge projection.
+    zh_Hans: 以文件形式召回、查找和阅读数字人的长期记忆，并保存对话中确认的内容，内部知识投影对用户不可见。
   when_to_use:
     en_US: Use when a response may depend on durable DigitalHuman context.
     zh_Hans: 当回答可能依赖数字人的长期事实或工作上下文时使用。
@@ -41,9 +43,8 @@ Use this skill only when the current question may depend on durable context owne
 
 ## Workflow
 
-1. Decide from the meaning of the current question whether durable memory is relevant.
-2. Build a concise query describing the fact or context needed, rather than copying the entire user message.
-3. Call `retrieve_digital_human_memory` with the query. Use `top_k` only when the default result count is insufficient; keep it within the backend limit.
-4. Treat results as fallible context. Respect memory scope, revision, and confidence. If results are empty or weak, do not invent a memory.
+1. The files most relevant to the current message are recalled at the start of the run, with an index of the others. Read an indexed file with `memory_view` when the answer may depend on it.
+2. When nothing shown fits, search with `memory_search` before saying you do not know. Build a concise query instead of copying the whole user message.
+3. Change memory only with `memory_edit`, in the directory the fact is about: `/me/` for your own knowledge, `/user/notes/` for your notes on the person, `/user/` for facts about the person themselves.
+4. Treat memory as fallible context. Respect its revision, and if nothing fits, do not invent a memory.
 5. Never provide or request an internal knowledge base ID, DigitalHuman ID, organization ID, workspace ID, or permission filter.
-6. Do not silently fall back to the most recent memories when semantic retrieval returns no result.

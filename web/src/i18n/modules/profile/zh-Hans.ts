@@ -68,12 +68,6 @@ const messages: ProfileMessages = {
     clearConfirmTitle: '全部忘记？',
     clearConfirm: '这个助手会忘记记住的关于你的全部内容，之后可在“历史”中恢复。',
     cancel: '取消',
-    category: {
-      profile: '关于你',
-      preference: '偏好',
-      constraint: '长期要求',
-      relationship: '我们的关系',
-    },
   },
 };
 

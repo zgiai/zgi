@@ -113,7 +113,7 @@ Each step ships behind its flag and keeps existing behavior when the flag is off
 
 ## Amendment (2026-10-25, ADR 0014)
 
-With `ZGI_DIGITAL_HUMAN_MEMORY_FILES_ENABLED` on, the model sees instance memory as files under `/user/notes/`: the DigitalHuman's notes on its work with this person, such as commitments, open loops, and business context.
+The model sees instance memory as files under `/user/notes/` (always since ADR 0019): the DigitalHuman's notes on its work with this person, such as commitments, open loops, and business context.
 
 The person's own relationship memory is shown as `/user/`. The person owns it, can view it, and can change it.
 

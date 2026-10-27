@@ -102,25 +102,31 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := NewMemoryRuntimeProvider(service)
-	tool := provider.memoryMutationTool(guardRun, guardEvent, state, true)
+	editor := provider.fileEditor(guardRun, guardEvent, state, true)
+	if editor == nil {
+		t.Fatal("operator run has no writable memory directory")
+	}
+	tool := newMemoryEditTool(guardRun, []memoryFileEditor{editor})
 	scopeResult := tool.Handler(t.Context(), adapter.ToolCall{
 		ID: "legacy-scope-fields",
 		Function: adapter.FunctionCall{
-			Name:      digitalHumanMemoryToolName,
-			Arguments: `{"action":"upsert","mode":"explicit","evidence":"Save this to memory.","key":"scoped","memory_type":"fact","scope_type":"project","scope_id":"project-not-authorized","content":"must not commit","expected_revision":0,"confidence":1}`,
+			Name:      memoryEditToolName,
+			Arguments: `{"edits":[{"command":"create","path":"/me/scoped.md","text":"must not commit","tags":"fact","evidence":"Save this to memory.","mode":"explicit","scope_type":"project","scope_id":"project-not-authorized"}]}`,
 		},
 	})
 	if scopeResult.Status != "failed" || scopeResult.Result["error_code"] != "invalid_arguments" {
 		t.Fatalf("scope-carrying runtime tool result = %#v", scopeResult)
 	}
+	// Automatic memory is off for this DigitalHuman, so a proactive edit is
+	// turned away by the memory policy and recorded as rejected.
 	toolResult := tool.Handler(t.Context(), adapter.ToolCall{
-		ID: "invented-evidence",
+		ID: "proactive-while-off",
 		Function: adapter.FunctionCall{
-			Name:      digitalHumanMemoryToolName,
-			Arguments: `{"action":"upsert","mode":"explicit","evidence":"not said by the user","key":"unauthorized-project","memory_type":"fact","content":"must not commit","expected_revision":0,"confidence":1}`,
+			Name:      memoryEditToolName,
+			Arguments: `{"edits":[{"command":"create","path":"/me/unauthorized-project.md","text":"must not commit","tags":"fact","evidence":"Save this to memory.","mode":"proactive"}]}`,
 		},
 	})
-	if toolResult.Status != "failed" || toolResult.Result["error_code"] != AppCodeMemoryPolicyRejected.String() {
+	if toolResult.Status != "failed" || toolResult.Result["accepted"] != 0 {
 		t.Fatalf("policy-rejected runtime tool result = %#v", toolResult)
 	}
 	var unauthorizedCount int64
@@ -136,7 +142,7 @@ func TestDigitalHumanMemoryPostgresOwnershipFencesAndUndo(t *testing.T) {
 	if err := tx.Where("run_id = ? AND action = ?", guardRunID, "reject").Take(&rejectedEvent).Error; err != nil {
 		t.Fatal(err)
 	}
-	if rejectedEvent.Result != "rejected" || rejectedEvent.ReasonCode != "memory_policy_rejected" {
+	if rejectedEvent.Result != "rejected" || rejectedEvent.ReasonCode != memoryAdmissionReasonTrust {
 		t.Fatalf("unauthorized runtime event = %#v", rejectedEvent)
 	}
 	var rejectedLedger ActionLedgerEntry

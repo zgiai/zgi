@@ -4,7 +4,7 @@
 - Date: 2026-10-25
 - Builds on: ADR 0013 (phase 1 shipped for Agents), ADR 0002, ADR 0004, ADR 0006
 - Amends: ADR 0004 (scopes and trust levels) and ADR 0006 (where instance memory sits in the model's view). Ownership and storage in ADR 0002, ADR 0004, and ADR 0006 do not change.
-- Amended by: ADR 0015 (`/me/team/` and `/conversation/` fold into `/me/`; `/user/notes/` is stored in relationship memory)
+- Amended by: ADR 0015 (`/me/team/` and `/conversation/` fold into `/me/`; `/user/notes/` is stored in relationship memory), ADR 0019 (the switch and the legacy tools are removed; `/user/` uses the Agent's file model)
 
 ## Context
 
@@ -117,7 +117,7 @@ The archive is memory that is kept and searchable but not listed in the index.
 
 ### 8. Rollout
 
-- A fail-closed switch, `ZGI_DIGITAL_HUMAN_MEMORY_FILES_ENABLED`, selects the file view and tools for DigitalHumans. With it off, the current tools and rendering stay.
+- A fail-closed switch, `ZGI_DIGITAL_HUMAN_MEMORY_FILES_ENABLED`, selects the file view and tools for DigitalHumans. With it off, the current tools and rendering stay. (ADR 0019 removed the switch: the file view is always on.)
 - **Evaluation before the switch.** The phase 1 suite gains DigitalHuman scenarios run through the DigitalHuman external API: recall without asking, routing between `/user/` and `/user/notes/`, refusal of other directories, conversation search, and isolation between end users. A baseline is recorded on the current tools first, as in phase 1.
 - Routing accuracy for the two confusable pairs (ADR 0013) must pass before the switch is enabled in a test environment.
 

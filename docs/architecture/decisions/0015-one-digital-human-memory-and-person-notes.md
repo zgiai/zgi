@@ -4,6 +4,7 @@
 - Date: 2026-10-26
 - Builds on: ADR 0013, ADR 0014, ADR 0002, ADR 0004, ADR 0006
 - Amends: ADR 0004 (business scopes and write admission), ADR 0006 (where instance memory is stored), ADR 0014 (directories `/me/team/` and `/conversation/`)
+- Amended by: ADR 0019 (the person's own memory under `/user/` keeps no categories)
 
 ## Context
 

@@ -112,10 +112,7 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 		}
 		return nil, agentmemory.ErrUnauthorized
 	}
-	// Automatic memory follows the Agent: the person's switch starts on and
-	// only matters once they turn it off. The Agent's own setting and the
-	// deployment fuse still decide whether anything runs.
-	relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{OrganizationID: *scope.OrganizationID, WorkspaceID: workspaceID, Subject: usersubject.Ref{Kind: kind, ID: userID}, IssuerType: issuerType, IssuerID: issuerID, ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: scope.Name, AutoCaptureEnabled: true})
+	relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{OrganizationID: *scope.OrganizationID, WorkspaceID: workspaceID, Subject: usersubject.Ref{Kind: kind, ID: userID}, IssuerType: issuerType, IssuerID: issuerID, ConsumerType: ConsumerAgent, ConsumerID: agentID, ConsumerNameSnapshot: scope.Name})
 	return relationship, mapAgentMemoryError(err)
 }
 
@@ -143,18 +140,7 @@ func agentContract() ConsumerMemoryContract {
 
 // agentFiles reads a relationship's memory files, decoded, in name order.
 func (a *AgentAdapter) agentFiles(ctx context.Context, relationshipID uuid.UUID) ([]UserMemoryItem, error) {
-	var items []UserMemoryItem
-	if err := a.service.db.WithContext(ctx).Where("relationship_id = ?", relationshipID).Order("memory_key ASC").Find(&items).Error; err != nil {
-		return nil, err
-	}
-	for index := range items {
-		decoded, err := a.service.codec.Decode(ctx, EncodedContent{Payload: items[index].ContentPayload, Encoding: items[index].ContentEncoding, KeyID: items[index].ContentKeyID})
-		if err != nil {
-			return nil, err
-		}
-		items[index].ContentPayload = decoded
-	}
-	return items, nil
+	return a.service.MemoryFiles(ctx, relationshipID)
 }
 
 func (a *AgentAdapter) PrivacySlots(ctx context.Context, workspaceID, agentID uuid.UUID, _ []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {

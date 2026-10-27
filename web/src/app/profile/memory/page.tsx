@@ -43,7 +43,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useT } from '@/i18n';
 import { relationshipMemoryService } from '@/services/relationship-memory.service';
 import type {
-  UserMemoryCategory,
   UserMemoryConsumerType,
   UserMemoryRelationship,
   UserMemoryRelationshipDetail,
@@ -55,21 +54,12 @@ import { formatDate } from '@/utils/format';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 const memoryKeys = ['user-relationship-memories'] as const;
-const categories: UserMemoryCategory[] = ['profile', 'preference', 'constraint', 'relationship'];
 const allFilterValue = 'all';
 // The assistant switcher lists one page; the API serves at most 100.
 const relationshipPageSize = 100;
 // Filters only help once there are more assistants than fit at a glance.
 const filterThreshold = 6;
 type DetailTab = 'memory' | 'notes' | 'archive' | 'history';
-// A DigitalHuman files facts by category; each category borrows the icon of
-// the Agent topic that means the same thing.
-const categoryIconKeys: Record<UserMemoryCategory, string> = {
-  profile: 'profile',
-  preference: 'preferences',
-  constraint: 'standing_instructions',
-  relationship: 'family',
-};
 
 function initialsOf(name: string) {
   return Array.from(name.trim()).slice(0, 2).join('').toUpperCase() || '?';
@@ -495,7 +485,6 @@ export default function ProfileMemoryPage() {
                     items={ownItems}
                     act={act}
                     tItems={tItems}
-                    categoryTitle={category => t(`memory.category.${category}`)}
                     empty={t('memory.noItems')}
                     addOpen={addOpen}
                     onAddOpenChange={setAddOpen}
@@ -605,14 +594,13 @@ export default function ProfileMemoryPage() {
   );
 }
 
-// The memory tab: an Agent's memory files, or a DigitalHuman's memory items,
-// shown as topics of facts.
+// The memory tab: the person's memory files with an Agent or a DigitalHuman
+// (ADR 0019), shown as topics of facts.
 function RelationshipMemoryBoard({
   detail,
   items,
   act,
   tItems,
-  categoryTitle,
   empty,
   addOpen,
   onAddOpenChange,
@@ -621,23 +609,18 @@ function RelationshipMemoryBoard({
   items: UserRelationshipMemoryItem[];
   act: <T>(task: () => Promise<T>) => Promise<T>;
   tItems: ReturnType<typeof useT<'common.memoryItems'>>;
-  categoryTitle: (category: UserMemoryCategory) => string;
   empty: ReactNode;
   addOpen: boolean;
   onAddOpenChange: (open: boolean) => void;
 }) {
-  const isAgent = detail.consumer_type === 'agent';
   const byKey = new Map(items.map(item => [item.key, item]));
   const titleOf = (item: UserRelationshipMemoryItem) =>
-    !isAgent && item.category && (!item.display_name || item.display_name === item.key)
-      ? categoryTitle(item.category)
-      : memoryTopicTitle(item.key, item.display_name, topic => tItems(`topics.${topic}`));
+    memoryTopicTitle(item.key, item.display_name, topic => tItems(`topics.${topic}`));
 
   const topics: MemoryTopic[] = items.map(item => ({
     key: item.key,
     title: titleOf(item),
     content: item.content,
-    iconKey: !isAgent && item.category ? categoryIconKeys[item.category] : undefined,
     meta: tItems('meta', {
       time: formatDate(item.updated_at),
       source: tItems(`sources.${item.source_kind}`),
@@ -663,14 +646,12 @@ function RelationshipMemoryBoard({
     );
   };
 
-  const addTargets = isAgent
-    ? [
-        ...items.map(item => ({ value: item.key, label: titleOf(item) })),
-        ...(['profile', 'preferences', 'work', 'notes'] as const)
-          .filter(topic => !byKey.has(topic))
-          .map(topic => ({ value: topic, label: tItems(`topics.${topic}`) })),
-      ]
-    : categories.map(category => ({ value: category, label: categoryTitle(category) }));
+  const addTargets = [
+    ...items.map(item => ({ value: item.key, label: titleOf(item) })),
+    ...(['profile', 'preferences', 'work', 'notes'] as const)
+      .filter(topic => !byKey.has(topic))
+      .map(topic => ({ value: topic, label: tItems(`topics.${topic}`) })),
+  ];
 
   return (
     <MemoryBoard
@@ -695,19 +676,9 @@ function RelationshipMemoryBoard({
           : undefined;
       }}
       addTargets={addTargets}
-      onAdd={(target, fact) => {
-        if (isAgent) {
-          return save(target, joinFacts([...splitFacts(byKey.get(target)?.content ?? ''), fact]));
-        }
-        // A DigitalHuman keeps one fact per item, filed under a category.
-        return act(() =>
-          relationshipMemoryService.putItem(detail.id, `note_${Date.now().toString(36)}`, {
-            category: target,
-            content: fact,
-            expected_revision: 0,
-          })
-        );
-      }}
+      onAdd={(target, fact) =>
+        save(target, joinFacts([...splitFacts(byKey.get(target)?.content ?? ''), fact]))
+      }
     />
   );
 }

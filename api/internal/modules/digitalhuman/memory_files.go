@@ -29,9 +29,8 @@ import (
 // further with memory_view and memory_search.
 
 const (
-	memoryFilesEnvironment = "ZGI_DIGITAL_HUMAN_MEMORY_FILES_ENABLED"
-	memoryViewToolName     = "memory_view"
-	memorySearchToolName   = "memory_search"
+	memoryViewToolName   = "memory_view"
+	memorySearchToolName = "memory_search"
 
 	memoryFilesBudgetChars    = 6000
 	memoryFilesRecallTopK     = 5
@@ -40,12 +39,6 @@ const (
 	memoryFilesIndexLineRunes = 80
 	memoryFilesRecallTimeout  = 8 * time.Second
 )
-
-// memoryFilesEnabled reports whether DigitalHumans use the file view. It is
-// fail-closed: anything but an explicit true keeps the current tools.
-func memoryFilesEnabled() bool {
-	return relationshipmemory.DigitalHumanMemoryFilesEnabled()
-}
 
 // memoryFileDirectory is the directory an entry is shown under.
 func memoryFileDirectory(memory *DigitalHumanMemory) string {

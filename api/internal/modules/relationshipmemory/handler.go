@@ -483,12 +483,13 @@ func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail)
 			Where("consumer.id = ? AND consumer.workspace_id = ? AND consumer.deleted_at IS NULL", detail.ConsumerID, detail.WorkspaceID).
 			Take(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ConsumerMemoryContract{DefinitionMode: "dynamic"}, nil
+			return ConsumerMemoryContract{DefinitionMode: "files"}, nil
 		}
 		if err != nil {
 			return ConsumerMemoryContract{}, err
 		}
-		return ConsumerMemoryContract{Enabled: true, DefinitionMode: "dynamic", AllowedCategories: []string{"profile", "preference", "constraint", "relationship"}, AutoCaptureAllowed: true, ConfigRevision: row.Revision, RenderBudgetChars: defaultRenderBudget}, nil
+		// A person's memory with a DigitalHuman is files, as with an Agent (ADR 0019).
+		return ConsumerMemoryContract{Enabled: true, DefinitionMode: "files", AutoCaptureAllowed: true, ConfigRevision: row.Revision, RenderBudgetChars: defaultRenderBudget}, nil
 	}
 	var row struct{ ConfigSnapshot datatypes.JSON }
 	err := h.service.db.WithContext(c.Request.Context()).Table("agent_published_versions").

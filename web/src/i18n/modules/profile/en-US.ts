@@ -71,12 +71,6 @@ const messages = {
     clearConfirm:
       'This assistant will forget everything it remembers about you. You can restore it from History.',
     cancel: 'Cancel',
-    category: {
-      profile: 'About you',
-      preference: 'Preferences',
-      constraint: 'Standing requests',
-      relationship: 'Our relationship',
-    },
   },
 };
 

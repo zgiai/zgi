@@ -775,7 +775,7 @@ func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T
 	now := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
 	memory := &fakeMemoryRuntimeProvider{preparation: &MemoryRuntimePreparation{
 		SystemPromptAddendum: "Authorized active long-term memory:\n- launch is September 8",
-		Tools:                []skillloop.RuntimeTool{{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: digitalHumanMemoryToolName}}}},
+		Tools:                []skillloop.RuntimeTool{{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: memoryEditToolName}}}},
 	}}
 	service := NewRuntimeService(store, fakeExecutionResolver{now: now}, fakeBrainAdapter{}, chat, dispatcher, WithMemoryRuntime(memory))
 	service.now = func() time.Time { return now }

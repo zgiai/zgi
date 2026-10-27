@@ -61,7 +61,6 @@ type EnsureRelationshipRequest struct {
 	ConsumerType         string
 	ConsumerID           uuid.UUID
 	ConsumerNameSnapshot string
-	AutoCaptureEnabled   bool
 }
 
 func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationshipRequest) (*UserMemoryRelationship, error) {
@@ -91,8 +90,12 @@ func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationship
 			ConsumerNameSnapshot: strings.TrimSpace(req.ConsumerNameSnapshot),
 			Status:               RelationshipActive,
 			MemoryEnabled:        true,
-			AutoCaptureEnabled:   req.AutoCaptureEnabled,
-			SettingsRevision:     1,
+			// Automatic memory follows the Agent or DigitalHuman (ADR 0019): the
+			// person's switch starts on and only matters once they turn it off.
+			// The consumer's own setting and the deployment fuse still decide
+			// whether anything runs.
+			AutoCaptureEnabled: true,
+			SettingsRevision:   1,
 		}
 		conflict := clause.OnConflict{
 			Columns:   []clause.Column{{Name: "workspace_id"}, {Name: "subject_id"}, {Name: "consumer_type"}, {Name: "consumer_id"}},
@@ -411,7 +414,8 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 		if req.ExpectedRevision != currentRevision {
 			return ErrRevisionConflict
 		}
-		if !exists && relationship.ConsumerType == ConsumerDigitalHuman {
+		// Category items count; memory files are bounded by their total below.
+		if !exists && relationship.ConsumerType == ConsumerDigitalHuman && req.Contract.DefinitionMode != "files" {
 			var count int64
 			// Notes are the DigitalHuman's, not the person's, and have their own
 			// limit (ADR 0015).
@@ -422,7 +426,7 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 				return ErrCapacityExceeded
 			}
 		}
-		if req.Contract.DefinitionMode == "files" {
+		if req.Contract.DefinitionMode == "files" && !IsNoteKey(req.Key) {
 			if err := s.checkFilesTotal(ctx, tx, relationshipID, req.Key, req.Content); err != nil {
 				return err
 			}
@@ -507,8 +511,23 @@ func validateMutation(req PutItemRequest) error {
 	if (normalizedSourceKind(req.Metadata.SourceKind) == SourceAutomatic || strings.EqualFold(strings.TrimSpace(req.Metadata.ActorType), "model")) && !req.Metadata.EvidenceFromUserInput {
 		return fmt.Errorf("%w: current-user evidence is required", ErrPolicyRejected)
 	}
-	// Agent memory files (ADR 0017) take any valid name; one user's files
-	// together are bounded, which PutItem checks against the stored files.
+	if IsNoteKey(req.Key) {
+		// A DigitalHuman's note on the person is tagged like its own memory
+		// (ADR 0015) whatever the person's own memory looks like.
+		if utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > maxMemoryContentChars {
+			return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
+		}
+		if _, ok := noteCategories[req.Category]; !ok || !ValidNoteName(NoteName(req.Key)) {
+			return fmt.Errorf("%w: invalid note", ErrPolicyRejected)
+		}
+		if agentmemory.ContainsSensitiveContent(req.Content) {
+			return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+		}
+		return nil
+	}
+	// Memory files (ADR 0017, ADR 0019 for DigitalHumans) take any valid name;
+	// one person's files together are bounded, which PutItem checks against
+	// the stored files.
 	if req.Contract.DefinitionMode == "files" {
 		if !agentmemory.ValidMemoryKey(req.Key) || req.Content == "" || utf8.RuneCountInString(req.Content) > agentmemory.MaxMemoryChars {
 			return fmt.Errorf("%w: invalid file name or content length", ErrPolicyRejected)
@@ -526,16 +545,6 @@ func validateMutation(req PutItemRequest) error {
 	}
 	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > contentLimit {
 		return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
-	}
-	if IsNoteKey(req.Key) {
-		// A DigitalHuman's note is tagged like its own memory (ADR 0015).
-		if _, ok := noteCategories[req.Category]; !ok || !ValidNoteName(NoteName(req.Key)) {
-			return fmt.Errorf("%w: invalid note", ErrPolicyRejected)
-		}
-		if agentmemory.ContainsSensitiveContent(req.Content) {
-			return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
-		}
-		return nil
 	}
 	if req.Contract.DefinitionMode == "slots" {
 		for _, definition := range req.Contract.Definitions {
@@ -984,6 +993,9 @@ func (s *Service) RenderContext(ctx context.Context, relationshipID uuid.UUID, c
 		query = query.Where("memory_key IN ?", keys)
 	} else if contract.DefinitionMode == "dynamic" {
 		query = query.Where("category IN ?", contract.AllowedCategories)
+	} else if contract.DefinitionMode == "files" {
+		// A DigitalHuman's notes on the person are its own, not the person's.
+		query = query.Where("memory_key NOT LIKE ?", NoteKeyPrefix+"%")
 	}
 	if err := query.Order("updated_at DESC, memory_key ASC").Find(&items).Error; err != nil {
 		return "", nil, err

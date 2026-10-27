@@ -113,14 +113,10 @@ func TestMemorySearchKeepsMatchesInsideTheRequestedDirectory(t *testing.T) {
 	}
 }
 
-func TestMemoryFilesGuidanceReplacesRetrievalOnlyWhenEnabled(t *testing.T) {
-	legacy := renderDigitalHumanMemoryGuidance(true, false, false)
-	files := renderDigitalHumanMemoryGuidance(true, false, true)
-	if !strings.Contains(legacy, "retrieve_digital_human_memory") || strings.Contains(files, "retrieve_digital_human_memory") || !strings.Contains(files, "memory_search") {
-		t.Fatalf("guidance did not switch:\nlegacy: %s\nfiles: %s", legacy, files)
-	}
-	if renderDigitalHumanMemoryContext(nil, true, false) != legacy {
-		t.Fatal("legacy guidance changed")
+func TestMemoryGuidanceReadsAndChangesFiles(t *testing.T) {
+	guidance := renderDigitalHumanMemoryGuidance(true, false)
+	if strings.Contains(guidance, "retrieve_digital_human_memory") || !strings.Contains(guidance, "memory_search") || !strings.Contains(guidance, "memory_edit") {
+		t.Fatalf("guidance does not describe memory files: %s", guidance)
 	}
 }
 

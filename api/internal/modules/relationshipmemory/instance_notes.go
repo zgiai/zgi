@@ -1,18 +1,6 @@
 package relationshipmemory
 
-import (
-	"os"
-	"strconv"
-	"strings"
-	"time"
-)
-
-// DigitalHumanMemoryFilesEnabled selects the file view of DigitalHuman memory
-// (ADR 0014). It is fail-closed.
-func DigitalHumanMemoryFilesEnabled() bool {
-	enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("ZGI_DIGITAL_HUMAN_MEMORY_FILES_ENABLED")))
-	return err == nil && enabled
-}
+import "time"
 
 // InstanceNote is one of a DigitalHuman's notes on a person (ADR 0006
 // instance memory), shown to that person read-only under /user/notes/.
