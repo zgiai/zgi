@@ -23,8 +23,8 @@ display:
     en_US: DigitalHuman Memory
     zh_Hans: 数字人长期记忆
   description:
-    en_US: Recalls the DigitalHuman's durable memory as files, searches and reads it, and saves what the conversation establishes, without exposing its internal knowledge projection.
-    zh_Hans: 以文件形式召回、查找和阅读数字人的长期记忆，并保存对话中确认的内容，内部知识投影对用户不可见。
+    en_US: Designed for recalling, searching, and reading the DigitalHuman's durable memory as files, and saving what the conversation establishes, without exposing its internal knowledge projection.
+    zh_Hans: 适用于以文件形式召回、查找和阅读数字人的长期记忆，并保存对话中确认的内容，内部知识投影对用户不可见。
   when_to_use:
     en_US: Use when a response may depend on durable DigitalHuman context.
     zh_Hans: 当回答可能依赖数字人的长期事实或工作上下文时使用。

@@ -61,7 +61,7 @@ export interface MemoryTopic {
   content: string;
   /** Picks the topic's icon when the key itself is not a known topic. */
   iconKey?: string;
-  /** When and how the topic last changed, already localized, e.g. "10/26 06:28 · 你修改的". */
+  /** When and how the topic last changed, already localized: the time and who changed it. */
   meta?: string;
   /** Present while the last automatic change can still be undone. */
   undoAutomatic?: () => Promise<unknown>;
