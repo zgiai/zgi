@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -219,8 +220,19 @@ func (s *dashboardService) loadRecentWork(ctx context.Context, req model.RecentW
 
 	items := make([]model.RecentWorkItem, 0, limit)
 
-	items = append(items, s.getRecentAgents(ctx, req.AgentWorkspaceIDs, []string{dashboardAgentTypeAgent}, "agent", limit)...)
-	items = append(items, s.getRecentAgents(ctx, req.WorkflowWorkspaceIDs, dashboardWorkflowAgentTypes, "workflow", limit)...)
+	items = append(items, s.getRecentAgents(ctx, recentAgentScope{
+		workspaceIDs:      req.AgentWorkspaceIDs,
+		draftWorkspaceIDs: req.AgentDraftWorkspaceIDs,
+		logsWorkspaceIDs:  req.AgentConversationWorkspaceIDs,
+		accountID:         req.AccountID,
+	}, []string{dashboardAgentTypeAgent}, "agent", limit)...)
+	items = append(items, s.getRecentAgents(ctx, recentAgentScope{
+		workspaceIDs:      req.WorkflowWorkspaceIDs,
+		draftWorkspaceIDs: req.WorkflowDraftWorkspaceIDs,
+		logsWorkspaceIDs:  req.WorkflowConversationWorkspaceIDs,
+		accountID:         req.AccountID,
+		workflow:          true,
+	}, dashboardWorkflowAgentTypes, "workflow", limit)...)
 	items = append(items, s.getRecentDatasets(ctx, req.DatasetWorkspaceIDs, req.AccountID, limit)...)
 	items = append(items, s.getRecentAgentConversations(ctx, req.AgentConversationWorkspaceIDs, []string{dashboardAgentTypeAgent}, req.AccountID, limit)...)
 	items = append(items, s.getRecentAgentConversations(ctx, req.WorkflowConversationWorkspaceIDs, dashboardWorkflowAgentTypes, req.AccountID, limit)...)
@@ -477,17 +489,66 @@ func (s *dashboardService) countAgentAssetsWithHealth(ctx context.Context, agent
 	return count, true
 }
 
-func (s *dashboardService) getRecentAgents(ctx context.Context, workspaceIDs []string, agentTypes []string, itemType string, limit int) []model.RecentWorkItem {
-	if len(workspaceIDs) == 0 || !s.tableExists(ctx, "agents") || !s.tableExists(ctx, "workspaces") {
+// recentAgentScope describes which agent or workflow rows the account may see
+// in recent work and which detail pages it may open.
+type recentAgentScope struct {
+	workspaceIDs      []string
+	draftWorkspaceIDs []string
+	logsWorkspaceIDs  []string
+	accountID         string
+	workflow          bool
+}
+
+type recentAgentRow struct {
+	ID            string
+	Title         string
+	ResourceID    string
+	WorkspaceID   string
+	WorkspaceName string
+	UpdatedAt     time.Time
+	CreatedAt     time.Time
+	AgentType     string
+	IsPublished   bool
+}
+
+func (s *dashboardService) recentAgentPublishedExpression(ctx context.Context, workflow bool) string {
+	if workflow {
+		if !s.tableExists(ctx, "workflows") {
+			return "FALSE"
+		}
+		return "EXISTS (SELECT 1 FROM workflows AS wf WHERE wf.agent_id = a.id AND wf.version <> 'draft')"
+	}
+	if !s.tableExists(ctx, "agent_published_versions") {
+		return "FALSE"
+	}
+	return "EXISTS (SELECT 1 FROM agent_published_versions AS apv WHERE apv.agent_id = a.id AND apv.deleted_at IS NULL)"
+}
+
+func (s *dashboardService) getRecentAgents(ctx context.Context, scope recentAgentScope, agentTypes []string, itemType string, limit int) []model.RecentWorkItem {
+	if len(scope.workspaceIDs) == 0 || !s.tableExists(ctx, "agents") || !s.tableExists(ctx, "workspaces") {
 		return nil
 	}
 
-	var rows []recentWorkRow
+	// Other members' drafts only show where the account holds a management code.
+	publishedExpression := s.recentAgentPublishedExpression(ctx, scope.workflow)
+	readable := []string{publishedExpression}
+	readableArgs := make([]interface{}, 0, 2)
+	if accountID := strings.TrimSpace(scope.accountID); accountID != "" {
+		readable = append(readable, "a.created_by = ?")
+		readableArgs = append(readableArgs, accountID)
+	}
+	if len(scope.draftWorkspaceIDs) > 0 {
+		readable = append(readable, "a.tenant_id IN ?")
+		readableArgs = append(readableArgs, scope.draftWorkspaceIDs)
+	}
+
+	var rows []recentAgentRow
 	err := s.db.WithContext(ctx).
 		Table("agents AS a").
-		Select("a.id, a.name AS title, a.id AS resource_id, a.tenant_id AS workspace_id, w.name AS workspace_name, a.updated_at, a.created_at").
+		Select("a.id, a.name AS title, a.id AS resource_id, a.tenant_id AS workspace_id, w.name AS workspace_name, a.updated_at, a.created_at, a.agent_type, "+publishedExpression+" AS is_published").
 		Joins("INNER JOIN workspaces AS w ON w.id = a.tenant_id").
-		Where("a.tenant_id IN ? AND a.agent_type IN ? AND a.deleted_at IS NULL AND a.is_universal = ? AND (a.internal = ? OR a.internal IS NULL)", workspaceIDs, agentTypes, false, false).
+		Where("a.tenant_id IN ? AND a.agent_type IN ? AND a.deleted_at IS NULL AND a.is_universal = ? AND (a.internal = ? OR a.internal IS NULL)", scope.workspaceIDs, agentTypes, false, false).
+		Where("("+strings.Join(readable, " OR ")+")", readableArgs...).
 		Order("a.updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error
@@ -499,7 +560,44 @@ func (s *dashboardService) getRecentAgents(ctx context.Context, workspaceIDs []s
 		return nil
 	}
 
-	return makeRecentWorkItems(itemType, rows)
+	baseRows := make([]recentWorkRow, 0, len(rows))
+	byID := make(map[string]recentAgentRow, len(rows))
+	for _, row := range rows {
+		baseRows = append(baseRows, recentWorkRow{
+			ID:            row.ID,
+			Title:         row.Title,
+			ResourceID:    row.ResourceID,
+			WorkspaceID:   row.WorkspaceID,
+			WorkspaceName: row.WorkspaceName,
+			UpdatedAt:     row.UpdatedAt,
+			CreatedAt:     row.CreatedAt,
+		})
+		byID[row.ID] = row
+	}
+	items := makeRecentWorkItems(itemType, baseRows)
+	for i := range items {
+		row, ok := byID[strings.TrimPrefix(items[i].ID, itemType+":")]
+		if !ok {
+			continue
+		}
+		isPublished := row.IsPublished
+		canOpenEditor := containsString(scope.draftWorkspaceIDs, row.WorkspaceID)
+		canViewLogs := containsString(scope.logsWorkspaceIDs, row.WorkspaceID)
+		items[i].AgentType = row.AgentType
+		items[i].IsPublished = &isPublished
+		items[i].CanOpenEditor = &canOpenEditor
+		items[i].CanViewLogs = &canViewLogs
+	}
+	return items
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs []string, accountID string, limit int) []model.RecentWorkItem {
@@ -658,6 +756,8 @@ func dashboardStatsScopeKey(accountID string, scopes model.DashboardWorkspaceSco
 		DatasetWorkspaceIDs              []string
 		DataSourceWorkspaceIDs           []string
 		FileWorkspaceIDs                 []string
+		AgentDraftWorkspaceIDs           []string
+		WorkflowDraftWorkspaceIDs        []string
 	}{
 		AccountID:                        accountID,
 		WorkspaceIDs:                     sortedWorkspaceIDs(scopes.WorkspaceIDs),
@@ -668,6 +768,8 @@ func dashboardStatsScopeKey(accountID string, scopes model.DashboardWorkspaceSco
 		DatasetWorkspaceIDs:              sortedWorkspaceIDs(scopes.DatasetWorkspaceIDs),
 		DataSourceWorkspaceIDs:           sortedWorkspaceIDs(scopes.DataSourceWorkspaceIDs),
 		FileWorkspaceIDs:                 sortedWorkspaceIDs(scopes.FileWorkspaceIDs),
+		AgentDraftWorkspaceIDs:           sortedWorkspaceIDs(scopes.AgentDraftWorkspaceIDs),
+		WorkflowDraftWorkspaceIDs:        sortedWorkspaceIDs(scopes.WorkflowDraftWorkspaceIDs),
 	})
 }
 
@@ -681,6 +783,8 @@ func dashboardRecentWorkScopeKey(req model.RecentWorkRequest) string {
 		DatasetWorkspaceIDs              []string
 		DataSourceWorkspaceIDs           []string
 		FileWorkspaceIDs                 []string
+		AgentDraftWorkspaceIDs           []string
+		WorkflowDraftWorkspaceIDs        []string
 	}{
 		WorkspaceIDs:                     sortedWorkspaceIDs(req.WorkspaceIDs),
 		AgentWorkspaceIDs:                sortedWorkspaceIDs(req.AgentWorkspaceIDs),
@@ -690,6 +794,8 @@ func dashboardRecentWorkScopeKey(req model.RecentWorkRequest) string {
 		DatasetWorkspaceIDs:              sortedWorkspaceIDs(req.DatasetWorkspaceIDs),
 		DataSourceWorkspaceIDs:           sortedWorkspaceIDs(req.DataSourceWorkspaceIDs),
 		FileWorkspaceIDs:                 sortedWorkspaceIDs(req.FileWorkspaceIDs),
+		AgentDraftWorkspaceIDs:           sortedWorkspaceIDs(req.AgentDraftWorkspaceIDs),
+		WorkflowDraftWorkspaceIDs:        sortedWorkspaceIDs(req.WorkflowDraftWorkspaceIDs),
 	})
 }
 

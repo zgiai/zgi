@@ -48,7 +48,11 @@ type OrganizationService interface {
 	GetOrganizationMemberByAccountID(ctx context.Context, organizationID, accountID string) (*dto.OrganizationMemberWithExtensionResponse, error)
 	ExistsMemberByName(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error)
 
+	// IsOrganizationMember reports whether the account holds an active membership.
 	IsOrganizationMember(ctx context.Context, organizationID, accountID string) (bool, error)
+	// HasOrganizationMembership reports whether a membership row exists in any status.
+	// Use it only for administrative lookups of a target member, never for authorization.
+	HasOrganizationMembership(ctx context.Context, organizationID, accountID string) (bool, error)
 	GetUserOrganizationRole(ctx context.Context, organizationID, accountID string) (model.OrganizationRole, error)
 	CheckOrganizationOwner(ctx context.Context, organizationID, accountID string) (bool, error)
 	IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error)

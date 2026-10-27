@@ -39,6 +39,11 @@ type DashboardWorkspaceScopes struct {
 	DatasetWorkspaceIDs              []string
 	DataSourceWorkspaceIDs           []string
 	FileWorkspaceIDs                 []string
+	// AgentDraftWorkspaceIDs and WorkflowDraftWorkspaceIDs are the workspaces
+	// where the account holds a management code and may see other members'
+	// unpublished assets. Elsewhere only published assets and its own drafts show.
+	AgentDraftWorkspaceIDs    []string
+	WorkflowDraftWorkspaceIDs []string
 }
 
 // RecentWorkRequest describes a recent-work query for either overview or workspace scope.
@@ -54,6 +59,11 @@ type RecentWorkRequest struct {
 	DatasetWorkspaceIDs              []string
 	DataSourceWorkspaceIDs           []string
 	FileWorkspaceIDs                 []string
+	// AgentDraftWorkspaceIDs and WorkflowDraftWorkspaceIDs are the workspaces
+	// where the account holds a management code and may see other members'
+	// unpublished assets. Elsewhere only published assets and its own drafts show.
+	AgentDraftWorkspaceIDs    []string
+	WorkflowDraftWorkspaceIDs []string
 }
 
 // RecentWorkItem represents one recently updated console work item.
@@ -66,6 +76,12 @@ type RecentWorkItem struct {
 	WorkspaceID   string `json:"workspace_id,omitempty"`
 	WorkspaceName string `json:"workspace_name,omitempty"`
 	UpdatedAt     int64  `json:"updated_at"`
+	// Agent and workflow items carry what the console needs to pick a detail
+	// route the account may open; other item types omit them.
+	AgentType     string `json:"agent_type,omitempty"`
+	IsPublished   *bool  `json:"is_published,omitempty"`
+	CanOpenEditor *bool  `json:"can_open_editor,omitempty"`
+	CanViewLogs   *bool  `json:"can_view_logs,omitempty"`
 }
 
 // RecentWorkResponse represents recent work items for the console homepage.

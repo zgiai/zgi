@@ -766,7 +766,7 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		if externalInvocation {
 			c.JSON(http.StatusForbidden, response.Response{Code: "403001", Message: "Permission denied"})
 		} else {
-			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 		}
 	case errors.Is(err, runtimeservice.ErrWorkflowBindingUnavailable):
 		payload := gin.H{
@@ -796,7 +796,7 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 			response.Fail(c, response.ErrSystemError)
 			return
 		}
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 	}
 }
 

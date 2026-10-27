@@ -267,10 +267,10 @@ func (h *AgentsHandler) GetAgentsList(c *gin.Context) {
 		}
 
 		// Default error response
-		response.SpecialFail(c, gin.H{
+		writeAgentLegacyFailure(c, gin.H{
 			"code":    "399001",
 			"message": err.Error(),
-		})
+		}, err)
 		return
 	}
 
@@ -521,10 +521,10 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 	result, err := h.appService.CreateAgent(c.Request.Context(), targetWorkspaceID, req, accountID)
 	if err != nil {
 		// Basic error mapping
-		response.SpecialFail(c, gin.H{
+		writeAgentLegacyFailure(c, gin.H{
 			"code":    "399001",
 			"message": err.Error(),
-		})
+		}, err)
 		return
 	}
 
@@ -575,12 +575,12 @@ func (h *AgentsHandler) GetAgent(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "permission denied":
-			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 		default:
-			response.SpecialFail(c, gin.H{
+			writeAgentLegacyFailure(c, gin.H{
 				"code":    "399001",
 				"message": err.Error(),
-			})
+			}, err)
 		}
 		return
 	}
@@ -597,7 +597,7 @@ func (h *AgentsHandler) GetAgentConfig(c *gin.Context) {
 	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.GetAgentConfig(ctx, c.Param("agent_id"), accountID)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		return
 	}
 	response.Success(c, result)
@@ -1015,7 +1015,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 	}
 	draft, err := h.appService.GetAgentDraftRuntimeConfig(ctx, agentID.String(), accountID.String())
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		return
 	}
 	agentWorkspaceID, err := uuid.Parse(strings.TrimSpace(draft.WorkspaceID))
@@ -1042,7 +1042,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		req,
 	)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		return
 	}
 	setupPreparedAgentSSE(c, prepared)
@@ -1096,7 +1096,7 @@ func (h *AgentsHandler) ListAgentPublishedVersions(c *gin.Context) {
 	ctx := agentRuntimeRequestContext(c, accountID)
 	result, err := h.appService.ListAgentPublishedVersions(ctx, c.Param("agent_id"), accountID, page, limit)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		return
 	}
 	response.Success(c, result)
@@ -1571,7 +1571,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		req,
 	)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		return
 	}
 	setupPreparedAgentSSE(c, prepared)
@@ -1762,11 +1762,11 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 		// Map specific errors to appropriate responses
 		switch err.Error() {
 		case "agent not found":
-			response.SpecialFail(c, gin.H{"code": "404001", "message": "Agent not found"})
+			writeAgentLegacyFailure(c, agentNotFoundBody(), err)
 		case "permission denied":
-			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 		default:
-			response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+			writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		}
 		return
 	}
@@ -1808,29 +1808,20 @@ func (h *AgentsHandler) DeleteAgent(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, errAgentPermissionDenied) {
-			response.SpecialFail(c, gin.H{
-				"code":    "403001",
-				"message": "Permission denied",
-			})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 			return
 		}
 		// Map specific errors to appropriate responses
 		switch err.Error() {
 		case "agent not found":
-			response.SpecialFail(c, gin.H{
-				"code":    "404001",
-				"message": "Agent not found",
-			})
+			writeAgentLegacyFailure(c, agentNotFoundBody(), err)
 		case "permission denied":
-			response.SpecialFail(c, gin.H{
-				"code":    "403001",
-				"message": "Permission denied",
-			})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 		default:
-			response.SpecialFail(c, gin.H{
+			writeAgentLegacyFailure(c, gin.H{
 				"code":    "399001",
 				"message": err.Error(),
-			})
+			}, err)
 		}
 		return
 	}
@@ -1865,11 +1856,11 @@ func (h *AgentsHandler) PreviewAgentDeleteImpact(c *gin.Context) {
 	if err != nil {
 		switch err.Error() {
 		case "agent not found":
-			response.SpecialFail(c, gin.H{"code": "404001", "message": "Agent not found"})
+			writeAgentLegacyFailure(c, agentNotFoundBody(), err)
 		case "permission denied":
-			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 		default:
-			response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+			writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		}
 		return
 	}

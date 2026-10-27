@@ -356,7 +356,7 @@ func TestGetWorkspaceMemberPermissionsReturnsRawWorkspaceRole(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "organization_id" FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
 		WithArgs("ws-1", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT role FROM "members" WHERE organization_id = $1 AND account_id = $2`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT role, status FROM "members" WHERE organization_id = $1 AND account_id = $2`)).
 		WithArgs("org-1", "admin-1").
 		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow(model.OrganizationRoleAdmin))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
@@ -413,7 +413,7 @@ func TestGetWorkspaceMemberPermissionsCanonicalizesLegacySnapshot(t *testing.T) 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "organization_id" FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
 		WithArgs("ws-1", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT role FROM "members" WHERE organization_id = $1 AND account_id = $2`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT role, status FROM "members" WHERE organization_id = $1 AND account_id = $2`)).
 		WithArgs("org-1", "member-1").
 		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow(model.OrganizationRoleNormal))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
@@ -460,7 +460,7 @@ func TestGetWorkspaceMemberPermissionsOrganizationAdminDoesNotRequireWorkspaceMe
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "organization_id" FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).
 		WithArgs("ws-1", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-1"))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT role FROM "members" WHERE organization_id = $1 AND account_id = $2`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT role, status FROM "members" WHERE organization_id = $1 AND account_id = $2`)).
 		WithArgs("org-1", "admin-1").
 		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow(model.OrganizationRoleAdmin))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "workspaces" WHERE id = $1 ORDER BY "workspaces"."id" LIMIT $2`)).

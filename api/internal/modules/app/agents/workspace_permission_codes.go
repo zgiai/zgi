@@ -130,10 +130,12 @@ func agentRuntimeConfigManagePermissionCodes(agentType string) []model.Workspace
 	}
 }
 
+// agentRuntimeConfigReadPermissionCodes gates reading the editable draft
+// configuration. It requires a management code: view-only members see published
+// assets but never the draft configuration.
 func agentRuntimeConfigReadPermissionCodes(agentType string) []model.WorkspacePermissionCode {
 	if isWorkflowRuntimePermissionType(agentType) {
 		return []model.WorkspacePermissionCode{
-			model.WorkspacePermissionWorkflowView,
 			model.WorkspacePermissionWorkflowUpdate,
 			model.WorkspacePermissionWorkflowRunDraft,
 			model.WorkspacePermissionWorkflowPublish,
@@ -142,11 +144,20 @@ func agentRuntimeConfigReadPermissionCodes(agentType string) []model.WorkspacePe
 	}
 
 	return []model.WorkspacePermissionCode{
-		model.WorkspacePermissionAgentView,
 		model.WorkspacePermissionAgentUpdate,
 		model.WorkspacePermissionAgentPublish,
 		model.WorkspacePermissionAgentRuntimeAccessManage,
 	}
+}
+
+// agentRuntimePlatformPermissionCodes gates the runtime platform's console
+// permission recheck for long-running tool invocations. It keeps the previous
+// read set, including agent.view, so running published agents is unaffected.
+func agentRuntimePlatformPermissionCodes(agentType string) []model.WorkspacePermissionCode {
+	if isWorkflowRuntimePermissionType(agentType) {
+		return append([]model.WorkspacePermissionCode{model.WorkspacePermissionWorkflowView}, agentRuntimeConfigReadPermissionCodes(agentType)...)
+	}
+	return append([]model.WorkspacePermissionCode{model.WorkspacePermissionAgentView}, agentRuntimeConfigReadPermissionCodes(agentType)...)
 }
 
 func agentRuntimeAccessManagePermissionCodes(agentType string) []model.WorkspacePermissionCode {

@@ -59,6 +59,11 @@ export interface DashboardRecentWorkItem {
   workspace_id?: string;
   workspace_name?: string;
   updated_at: number;
+  /** Agent and workflow items only: data used to pick a detail route the account may open. */
+  agent_type?: string;
+  is_published?: boolean;
+  can_open_editor?: boolean;
+  can_view_logs?: boolean;
 }
 
 export interface DashboardRecentWork {

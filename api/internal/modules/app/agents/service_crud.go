@@ -375,21 +375,14 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 		}
 	}
 
-	if accountID != "" && callerOrganizationID != "" && s.enterpriseService != nil {
-		canView, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
-			ctx,
-			callerOrganizationID,
-			ag.TenantID.String(),
-			accountID,
-			agentAssetVisiblePermissionCodes()...,
-		)
-		if err != nil {
-			logger.Error(fmt.Sprintf("GetAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
-			return nil, fmt.Errorf("failed to verify permissions")
-		}
-		if !canView {
+	// Fail closed: a caller without account or organization context cannot read
+	// the agent, and drafts of other members require a management permission.
+	if err := s.authorizeAgentRead(ctx, callerOrganizationID, accountID, ag); err != nil {
+		if errors.Is(err, errAgentReadPermissionDenied) {
 			return nil, fmt.Errorf("permission denied")
 		}
+		logger.Error(fmt.Sprintf("GetAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
+		return nil, fmt.Errorf("failed to verify permissions")
 	}
 
 	// Check edit permission using permission service

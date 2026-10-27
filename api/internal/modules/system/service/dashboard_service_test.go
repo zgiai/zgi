@@ -53,8 +53,9 @@ func TestDashboardServiceRecentAgentsBranchesByRuntimeType(t *testing.T) {
 	svc.tableCache["workspaces"] = true
 
 	updatedAt := time.Unix(1710000000, 0).UTC()
+	svc.tableCache["workflows"] = true
 	mock.ExpectQuery(`(?s)SELECT .*FROM "?agents"? AS a.*a\.agent_type IN.*ORDER BY a\.updated_at DESC.*LIMIT`).
-		WithArgs("ws-workflow", "WORKFLOW", "CONVERSATIONAL_WORKFLOW", false, false, 3).
+		WithArgs("ws-workflow", "WORKFLOW", "CONVERSATIONAL_WORKFLOW", false, false, "acc-1", "ws-workflow", 3).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id",
 			"title",
@@ -63,15 +64,56 @@ func TestDashboardServiceRecentAgentsBranchesByRuntimeType(t *testing.T) {
 			"workspace_name",
 			"updated_at",
 			"created_at",
-		}).AddRow("workflow-1", "Workflow One", "workflow-1", "ws-workflow", "Workflow Space", updatedAt, updatedAt))
+			"agent_type",
+			"is_published",
+		}).AddRow("workflow-1", "Workflow One", "workflow-1", "ws-workflow", "Workflow Space", updatedAt, updatedAt, "WORKFLOW", false))
 
-	items := svc.getRecentAgents(context.Background(), []string{"ws-workflow"}, dashboardWorkflowAgentTypes, "workflow", 3)
+	items := svc.getRecentAgents(context.Background(), recentAgentScope{
+		workspaceIDs:      []string{"ws-workflow"},
+		draftWorkspaceIDs: []string{"ws-workflow"},
+		accountID:         "acc-1",
+		workflow:          true,
+	}, dashboardWorkflowAgentTypes, "workflow", 3)
 
 	require.Len(t, items, 1)
 	require.Equal(t, "workflow", items[0].Type)
 	require.Equal(t, "workflow:workflow-1", items[0].ID)
 	require.Equal(t, "workflow-1", items[0].ResourceID)
 	require.Equal(t, "ws-workflow", items[0].WorkspaceID)
+	require.Equal(t, "WORKFLOW", items[0].AgentType)
+	require.NotNil(t, items[0].IsPublished)
+	require.False(t, *items[0].IsPublished)
+	require.True(t, *items[0].CanOpenEditor)
+	require.False(t, *items[0].CanViewLogs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardServiceRecentAgentsHidesOtherMembersDraftsFromViewers(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["agents"] = true
+	svc.tableCache["workspaces"] = true
+	svc.tableCache["agent_published_versions"] = true
+
+	updatedAt := time.Unix(1710000000, 0).UTC()
+	// Without draft workspaces the query only admits published rows or the
+	// caller's own rows.
+	mock.ExpectQuery(`(?s)SELECT .*agent_published_versions.*FROM "?agents"? AS a.*AND \(\(EXISTS \(SELECT 1 FROM agent_published_versions AS apv.*OR a\.created_by = \$\d+\).*ORDER BY a\.updated_at DESC.*LIMIT`).
+		WithArgs("ws-agent", "AGENT", false, false, "acc-1", 5).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "title", "resource_id", "workspace_id", "workspace_name", "updated_at", "created_at", "agent_type", "is_published",
+		}).AddRow("agent-1", "Agent One", "agent-1", "ws-agent", "Agent Space", updatedAt, updatedAt, "AGENT", true))
+
+	items := svc.getRecentAgents(context.Background(), recentAgentScope{
+		workspaceIDs:     []string{"ws-agent"},
+		logsWorkspaceIDs: []string{"ws-agent"},
+		accountID:        "acc-1",
+	}, []string{dashboardAgentTypeAgent}, "agent", 5)
+
+	require.Len(t, items, 1)
+	require.True(t, *items[0].IsPublished)
+	require.False(t, *items[0].CanOpenEditor)
+	require.True(t, *items[0].CanViewLogs)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
