@@ -12,6 +12,8 @@ import {
   useDigitalHumanTemplates,
 } from '@/hooks/digital-human/use-digital-humans';
 import { useLocale } from '@/hooks/use-locale';
+import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
+import { digitalHumanSkillToMetadata } from '../digital-human-skill-picker';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
@@ -164,6 +166,7 @@ function DigitalHumanConfigureStep({
   onBack: () => void;
 }) {
   const t = useT('digitalHumans');
+  const { locale: skillLocale } = useLocale();
   const router = useRouter();
   const queryClient = useQueryClient();
   const availableModels = useAvailableModels({ use_case: 'agent-runtime' });
@@ -314,7 +317,14 @@ function DigitalHumanConfigureStep({
   ) => {
     if (items.length === 0) return [];
     const bound = await digitalHumanService.replaceDraftBindings(id, lockVersion, items);
-    return bindingDisplayNames(bound.data?.items ?? items);
+    // A skill is named as the pickers name it, not by its id.
+    return bindingDisplayNames(bound.data?.items ?? items).map((name, index) => {
+      const item = (bound.data?.items ?? items)[index];
+      const candidate = skillCandidates.find(value => value.resource_id === item?.resource_id);
+      return candidate
+        ? getAIChatSkillDisplayInfo(digitalHumanSkillToMetadata(candidate), skillLocale).label
+        : name;
+    });
   };
 
   const submit = async () => {
