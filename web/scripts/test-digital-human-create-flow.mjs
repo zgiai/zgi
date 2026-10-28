@@ -86,7 +86,13 @@ const connectorCreateModelModuleURL = asDataModule(
     `from '${connectorModelModuleURL}';`
   )
 );
-const { connectorOperationIds, createConnectorDefaultOperationIds } = await import(
+const {
+  connectorApprovalPolicy,
+  connectorOperationIds,
+  connectorSupportsReadOnlyAuto,
+  createConnectorDefaultOperationIds,
+  updateDigitalHumanApprovalPolicy,
+} = await import(
   connectorModelModuleURL
 );
 const {
@@ -2312,6 +2318,33 @@ for (const [locale, dictionary] of [
       `${locale} must not claim a capability is already connected, online, or deployed`
     );
   }
+}
+
+{
+  // ADR 0026: only an SSH Server Operations connection offers read_only_auto,
+  // and always asking is stored as no policy at all.
+  const ssh = {
+    type: 'connector',
+    resource_id: 'connection-1',
+    parent_resource_id: 'serverops_ssh',
+    access_mode: 'execute',
+    metadata: { allowed_operation_ids: ['server.command.run'] },
+  };
+  const github = { ...ssh, resource_id: 'connection-2', parent_resource_id: 'github' };
+  assert.equal(connectorSupportsReadOnlyAuto(ssh), true);
+  assert.equal(connectorSupportsReadOnlyAuto(github), false);
+  assert.equal(
+    connectorSupportsReadOnlyAuto({ ...ssh, metadata: { credential_mode: 'per_user' } }),
+    false
+  );
+  const [auto, untouched] = updateDigitalHumanApprovalPolicy([ssh, github], ssh, 'read_only_auto');
+  assert.equal(connectorApprovalPolicy(auto), 'read_only_auto');
+  assert.deepEqual(auto.metadata.allowed_operation_ids, ['server.command.run']);
+  assert.equal(untouched, github);
+  const [asked] = updateDigitalHumanApprovalPolicy([auto], auto, 'always_ask');
+  assert.equal('approval_policy' in asked.metadata, false);
+  assert.equal(connectorApprovalPolicy(asked), 'always_ask');
+  assert.deepEqual(updateDigitalHumanApprovalPolicy([github], github, 'read_only_auto'), [github]);
 }
 
 console.log('digital human create-flow contract tests passed');

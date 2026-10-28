@@ -21,6 +21,9 @@ func IntersectConstraints(a, b *AccessConstraint) (*AccessConstraint, error) {
 		out.AuthorizationCredentialVersion = a.AuthorizationCredentialVersion
 		out.AuthorizationContractDigest = a.AuthorizationContractDigest
 	}
+	if a.AuthorizationMode == AuthorizationModeReadOnlyAuto {
+		out.AuthorizationMode = AuthorizationModeReadOnlyAuto
+	}
 	for _, id := range a.AllowedOperationIDs {
 		for _, other := range b.AllowedOperationIDs {
 			if id == other {

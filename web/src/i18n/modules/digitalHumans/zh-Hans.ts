@@ -953,8 +953,13 @@ const messages: DigitalHumansMessages = {
       operationRequired: '请选择至少一个可用操作。',
       riskyOperationTitle: '确认开启“{name}”？',
       riskyOperationDescription:
-        '开启后，数字人可以以 SSH 账号身份在这台服务器上执行任意 Shell 命令，能读取、修改或删除该账号有权限的任何内容。平台不会检查命令做了什么，只在每次执行前请你确认完整命令。命令执行的后果由你承担，建议只在测试服务器或权限受限的专用账号上开启。',
+        '开启后，数字人可以以 SSH 账号身份在这台服务器上执行任意 Shell 命令，能读取、修改或删除该账号有权限的任何内容。平台不会检查命令做了什么，只在每次执行前请你确认完整命令；如果你选择只读命令直接执行，平台能证明只读的命令不再询问。命令执行的后果由你承担，建议只在测试服务器或权限受限的专用账号上开启。',
       riskyOperationConfirm: '我了解风险，开启',
+      approvalPolicyLabel: '执行前确认',
+      approvalPolicyAlwaysAsk: '每次都确认',
+      approvalPolicyReadOnlyAuto: '只读命令直接执行',
+      approvalPolicyHint:
+        '只读命令是平台能证明不会改动服务器的命令，例如查看服务状态、列目录、读日志。读取密钥、.env 等凭证文件的命令仍需确认；任何改动，以及平台无法证明只读的命令，也都需要确认。定时任务不会自行执行命令。',
       replace: '替换连接',
       perUserBadge: '每位用户自己的连接',
       perUserDescription: '每位使用者用自己的账号连接，数字人以使用者本人的身份执行。',

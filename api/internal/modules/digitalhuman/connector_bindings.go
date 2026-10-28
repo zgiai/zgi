@@ -50,6 +50,34 @@ func bindingOperations(row *ResourceBinding) ([]core.Identifier, error) {
 	return metadata.Operations, nil
 }
 
+// Connector binding approval policies (ADR 0026). always_ask, the default,
+// asks before every call; read_only_auto runs calls the connector proves
+// read-only without asking.
+const (
+	ConnectorApprovalAlwaysAsk    = "always_ask"
+	ConnectorApprovalReadOnlyAuto = "read_only_auto"
+)
+
+// bindingAuthorizationMode maps a binding's approval_policy to the authorization
+// mode of its connector constraint. Only a connector that can prove a call
+// read-only accepts read_only_auto.
+func bindingAuthorizationMode(row *ResourceBinding, definition catalog.Definition) (string, error) {
+	var metadata struct {
+		Policy string `json:"approval_policy"`
+	}
+	_ = json.Unmarshal(row.Metadata, &metadata)
+	switch metadata.Policy {
+	case "", ConnectorApprovalAlwaysAsk:
+		return core.AuthorizationModeAsk, nil
+	case ConnectorApprovalReadOnlyAuto:
+		if !definition.IsServerOpsSSHCredentials() {
+			return "", ErrResourceBindingInvalid
+		}
+		return core.AuthorizationModeReadOnlyAuto, nil
+	}
+	return "", ErrResourceBindingInvalid
+}
+
 // syncConnectorBindings runs inside the same host transaction as resource saves
 // and publication. The canonical repository also locks connection lifecycle
 // authority, so force-removal cannot race with creating a host reference.
@@ -157,9 +185,14 @@ func (r *GormRepository) syncConnectorBindings(ctx context.Context, scope Scope,
 		if err != nil {
 			return err
 		}
+		authorizationMode, err := bindingAuthorizationMode(row, definition)
+		if err != nil {
+			return err
+		}
 		target := digitalHumanConnectorTarget(id, version, row.ID, phase)
 		now := time.Now().UTC()
 		bindingConstraint := core.OwnerConstraint(owner, operations)
+		bindingConstraint.AuthorizationMode = authorizationMode
 		bindingConstraint.TargetBoundaries = []core.TargetBoundary{{
 			Type: target.Type, ID: target.ID, Scope: string(target.EffectiveScope()), VersionID: target.VersionID,
 		}}

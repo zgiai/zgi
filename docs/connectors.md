@@ -151,7 +151,8 @@ action preview, including a **Command** field with the exact command line that
 will run, rendered as code in the connector confirmation card of the
 conversation and of DigitalHuman run details. The preview is built by the same
 code that builds the executed command, so the two cannot differ. Each call
-requires fresh owner approval; no session grant is created or remembered. SSH
+requires fresh owner approval unless the connection lets proven read-only
+commands run (below); no session grant is created or remembered. SSH
 operations do not run non-interactively: scheduled and background DigitalHuman
 runs cannot use this connector, and that runtime policy does not globally
 disable other DigitalHuman background features.
@@ -179,6 +180,26 @@ default, ticking it asks the person to accept that risk, and every run shows the
 whole command for approval. Enable it only on a test server or a dedicated
 account with limited permissions. A connection verified before `1.2.0` offers it
 after reconnecting.
+
+A DigitalHuman's SSH connection card also chooses how calls ask (ADR 0026):
+
+- **Always ask me** (default): every call waits for approval.
+- **Run read-only commands without asking**: a call the platform proves
+  read-only runs at once and is still recorded in the run's process; every
+  other call waits for approval as before.
+
+The proof is a parse of a narrow shell grammar against an allowlist of read
+commands with safe arguments, such as `systemctl status`, `journalctl` without
+maintenance flags, `ls`, `cat`, `tail` without `-f`, `grep`, `find` without
+`-exec` or `-delete`, `git status/log/diff`, `docker ps/logs/inspect`, `ss`,
+`ps`, `df`, and `curl` GET requests to a local address. `$` expansion,
+backticks, subshells, `sudo`, any redirection other than `2>&1`, `>/dev/null`,
+or `< file`, and reading credential files such as `.env`, private keys, or
+`/etc/shadow` always ask. The snapshot, service status, and journal actions are
+read-only. Commands that would destroy the server or cut off access, such as
+`rm -rf /`, `mkfs`, `dd` to a disk, or `reboot`, are refused outright and never
+reach approval. Scheduled and background runs are unaffected and still cannot
+use the connection.
 
 Release `1.1.0` of the connector adds the write operations and the `privilege`
 field. Existing installations accept it through the ordinary compatible-update

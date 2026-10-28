@@ -240,6 +240,43 @@ export function updateDigitalHumanOperations(
   );
 }
 
+/** How a connection asks before a call (ADR 0026). */
+export type ConnectorApprovalPolicy = 'always_ask' | 'read_only_auto';
+
+/** Connectors whose platform can prove a call read-only. */
+const READ_ONLY_AUTO_CONNECTOR_IDS: ReadonlySet<string> = new Set(['serverops_ssh']);
+
+export function connectorSupportsReadOnlyAuto(item: DigitalHumanResourceBindingInput) {
+  return (
+    item.type === 'connector' &&
+    !isPerUserConnectorSlot(item) &&
+    READ_ONLY_AUTO_CONNECTOR_IDS.has(item.parent_resource_id ?? '')
+  );
+}
+
+export function connectorApprovalPolicy(item: {
+  metadata?: Record<string, unknown>;
+}): ConnectorApprovalPolicy {
+  return item.metadata?.approval_policy === 'read_only_auto' ? 'read_only_auto' : 'always_ask';
+}
+
+/** Always asking is the default, so it is stored as no policy at all. */
+export function updateDigitalHumanApprovalPolicy(
+  items: DigitalHumanResourceBindingInput[],
+  item: DigitalHumanResourceBindingInput,
+  policy: ConnectorApprovalPolicy
+): DigitalHumanResourceBindingInput[] {
+  if (!connectorSupportsReadOnlyAuto(item)) return items;
+  return items.map(value => {
+    if (digitalHumanResourceKey(value) !== digitalHumanResourceKey(item)) return value;
+    const { approval_policy: _previous, ...metadata } = value.metadata;
+    return {
+      ...value,
+      metadata: policy === 'read_only_auto' ? { ...metadata, approval_policy: policy } : metadata,
+    };
+  });
+}
+
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {

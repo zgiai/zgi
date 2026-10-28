@@ -85,6 +85,11 @@ func commandFromInput(input map[string]any) (string, error) {
 			return "", fmt.Errorf("%w: command contains a control or format character", errReadActionInput)
 		}
 	}
+	// A command that would destroy the server or cut off access never reaches
+	// approval (ADR 0026).
+	if ClassifyCommand(command) == CommandForbidden {
+		return "", fmt.Errorf("%w: command is forbidden because it would destroy the server or cut off access to it", errReadActionInput)
+	}
 	return command, nil
 }
 

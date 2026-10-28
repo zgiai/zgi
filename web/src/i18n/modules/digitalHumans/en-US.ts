@@ -999,8 +999,13 @@ const messages = {
       operationRequired: 'Select at least one available operation.',
       riskyOperationTitle: 'Enable “{name}”?',
       riskyOperationDescription:
-        'Once enabled, the digital human can run any shell command on this server as the SSH user, and can read, change, or delete anything that account may. The platform does not check what a command does; it only asks you to approve the exact command before each run. You are responsible for what the commands do. Enable it only on a test server or a dedicated account with limited permissions.',
+        'Once enabled, the digital human can run any shell command on this server as the SSH user, and can read, change, or delete anything that account may. The platform does not check what a command does; it only asks you to approve the exact command before each run, or lets proven read-only commands run without asking if you choose so. You are responsible for what the commands do. Enable it only on a test server or a dedicated account with limited permissions.',
       riskyOperationConfirm: 'I understand the risk, enable it',
+      approvalPolicyLabel: 'Before each call',
+      approvalPolicyAlwaysAsk: 'Always ask me',
+      approvalPolicyReadOnlyAuto: 'Run read-only commands without asking',
+      approvalPolicyHint:
+        'Read-only commands are ones the platform can prove cannot change the server, such as checking service status, listing files, or reading logs. Commands that read keys, .env, or other credential files still ask, and so does every change or anything the platform cannot prove read-only. Scheduled runs never run commands on their own.',
       replace: 'Replace connection',
       perUserBadge: 'Each user connects',
       perUserDescription: 'Each person connects their own account, and the digital human acts as them.',

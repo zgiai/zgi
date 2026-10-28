@@ -74,6 +74,10 @@ type AccessConstraint struct {
 const (
 	AuthorizationModeAsk    = "ask_each_time"
 	AuthorizationModeDirect = "direct"
+	// AuthorizationModeReadOnlyAuto runs a call the connector proves read-only
+	// without asking and asks for every other call (ADR 0026). Only a
+	// DigitalHuman SSH binding chooses it today.
+	AuthorizationModeReadOnlyAuto = "read_only_auto"
 )
 
 func OwnerConstraint(owner uuid.UUID, operations []Identifier) *AccessConstraint {
@@ -109,7 +113,8 @@ func (constraint *AccessConstraint) Validate() error {
 		constraint.AllowedOperationIDs == nil || constraint.TargetBoundaries == nil || constraint.DenyReasons == nil {
 		return invalidModel()
 	}
-	if constraint.AuthorizationMode != "" && constraint.AuthorizationMode != AuthorizationModeAsk && constraint.AuthorizationMode != AuthorizationModeDirect {
+	if constraint.AuthorizationMode != "" && constraint.AuthorizationMode != AuthorizationModeAsk && constraint.AuthorizationMode != AuthorizationModeDirect &&
+		constraint.AuthorizationMode != AuthorizationModeReadOnlyAuto {
 		return invalidModel()
 	}
 	if constraint.AuthorizationConnectionRevision < 0 || constraint.AuthorizationCredentialVersion < 0 {
@@ -161,6 +166,12 @@ func (constraint *AccessConstraint) Validate() error {
 // Missing mode is the legacy-safe ask_each_time behavior.
 func (constraint *AccessConstraint) DirectlyAuthorized() bool {
 	return constraint != nil && constraint.AuthorizationMode == AuthorizationModeDirect
+}
+
+// ReadOnlyAutoAuthorized reports whether this binding runs proven read-only
+// calls without a per-invocation prompt.
+func (constraint *AccessConstraint) ReadOnlyAutoAuthorized() bool {
+	return constraint != nil && constraint.AuthorizationMode == AuthorizationModeReadOnlyAuto
 }
 
 func (constraint *AccessConstraint) AuthorizationModeValue() string {

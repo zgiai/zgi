@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Radio, RadioGroup } from '@/components/ui/radio';
 import {
   Dialog,
   DialogBody,
@@ -47,14 +48,18 @@ import type {
   DigitalHumanResourceCandidate,
 } from '@/services/types/digital-human';
 import {
+  connectorApprovalPolicy,
   connectorOperationIds,
   connectorSelectionChanged,
   connectorSelectionInvalid,
+  connectorSupportsReadOnlyAuto,
   digitalHumanResourceKey,
   isPerUserConnectorSlot,
   RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS,
   selectDigitalHumanConnection,
+  updateDigitalHumanApprovalPolicy,
   updateDigitalHumanOperations,
+  type ConnectorApprovalPolicy,
   type DigitalHumanConnectorSelection,
 } from './digital-human-connector-model';
 
@@ -71,6 +76,10 @@ interface ConnectorCardsProps {
     operationId: string,
     checked: boolean
   ) => void;
+  onApprovalPolicy?: (
+    item: DigitalHumanResourceBindingInput,
+    policy: ConnectorApprovalPolicy
+  ) => void;
 }
 
 export function DigitalHumanConnectorOperationDetails({
@@ -82,6 +91,7 @@ export function DigitalHumanConnectorOperationDetails({
   checking,
   candidatesError,
   onOperation,
+  onApprovalPolicy,
 }: {
   item: DigitalHumanResourceBindingInput;
   candidate?: DigitalHumanResourceCandidate;
@@ -91,6 +101,7 @@ export function DigitalHumanConnectorOperationDetails({
   checking?: boolean;
   candidatesError?: boolean;
   onOperation?: (operationId: string, checked: boolean) => void;
+  onApprovalPolicy?: (policy: ConnectorApprovalPolicy) => void;
 }) {
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
@@ -156,6 +167,30 @@ export function DigitalHumanConnectorOperationDetails({
           </p>
         ) : null}
       </div>
+      {connectorSupportsReadOnlyAuto(item) ? (
+        <div className="mt-3 space-y-2 rounded-md border p-2">
+          <p className="font-medium">{t('bindings.connectors.approvalPolicyLabel')}</p>
+          <RadioGroup
+            value={connectorApprovalPolicy(item)}
+            onValueChange={value => onApprovalPolicy?.(value as ConnectorApprovalPolicy)}
+            className="gap-2"
+          >
+            {(['always_ask', 'read_only_auto'] as const).map(policy => (
+              <Radio
+                key={policy}
+                value={policy}
+                disabled={!onApprovalPolicy || disabled || checking}
+                label={t(
+                  policy === 'always_ask'
+                    ? 'bindings.connectors.approvalPolicyAlwaysAsk'
+                    : 'bindings.connectors.approvalPolicyReadOnlyAuto'
+                )}
+              />
+            ))}
+          </RadioGroup>
+          <p className="text-muted-foreground">{t('bindings.connectors.approvalPolicyHint')}</p>
+        </div>
+      ) : null}
       <ConfirmDialog
         open={riskyOperationId !== null}
         onOpenChange={open => {
@@ -185,6 +220,7 @@ export function DigitalHumanConnectorCards({
   onRemove,
   onReplace,
   onOperation,
+  onApprovalPolicy,
 }: ConnectorCardsProps) {
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
@@ -310,6 +346,9 @@ export function DigitalHumanConnectorCards({
                   onOperation
                     ? (operationId, checked) => onOperation(item, operationId, checked)
                     : undefined
+                }
+                onApprovalPolicy={
+                  onApprovalPolicy ? policy => onApprovalPolicy(item, policy) : undefined
                 }
               />
             )}
@@ -635,6 +674,11 @@ export function DigitalHumanConnectorDialog({
                   operation,
                   checked
                 )
+              )
+            }
+            onApprovalPolicy={policy =>
+              changeItems(
+                updateDigitalHumanApprovalPolicy(currentRef.current.pending, item, policy)
               )
             }
           />

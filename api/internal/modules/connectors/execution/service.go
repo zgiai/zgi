@@ -340,6 +340,12 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	if risk != RiskTrustedLow && risk != RiskHigh && risk != RiskUnclassified {
 		return ExecutionResult{}, connectorError(core.ErrorCodeAccessDenied, false)
 	}
+	// ADR 0026 applies to interactive runs only; unattended runs keep task
+	// authorization. A call already waiting on its approval card keeps that
+	// card, so the person's decision still settles it after a policy change.
+	if risk == RiskHigh && request.Interactive && request.Confirmation == nil && readOnlyAutoInvocation(request, binding, definition) {
+		risk = RiskTrustedLow
+	}
 	confirmation := request.Confirmation
 	requiresConfirmedFinalization := false
 	if confirmation != nil && confirmation.RouteReceipt != pinned.Receipt {

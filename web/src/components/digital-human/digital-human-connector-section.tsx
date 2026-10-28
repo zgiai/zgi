@@ -43,6 +43,7 @@ import {
   isPerUserConnectorSlot,
   observeConnectorDraft,
   toPerUserConnectorSlot,
+  updateDigitalHumanApprovalPolicy,
   updateDigitalHumanOperations,
   type DigitalHumanConnectorSelection,
 } from './digital-human-connector-model';
@@ -236,11 +237,9 @@ function ScopedConnectorSection({
   const [operationSaving, setOperationSaving] = useState(false);
   // An operation is ticked or cleared right on the connection's card, so an
   // operator opts into the actions that change something where they see them
-  // (ADR 0023).
-  const changeOperation = async (
-    item: DigitalHumanResourceBindingInput,
-    operationId: string,
-    checked: boolean
+  // (ADR 0023). The approval policy is chosen there too (ADR 0026).
+  const saveCardChange = async (
+    update: (items: DigitalHumanResourceBindingInput[]) => DigitalHumanResourceBindingInput[]
   ) => {
     if (!canUpdate || operationSaving || currentRef.current) return;
     setOperationSaving(true);
@@ -248,28 +247,31 @@ function ScopedConnectorSection({
       const result = await query.refetch();
       const draft = result.data?.data;
       if (!draft) return;
-      const candidate = candidatesQuery.data?.data.items.find(
-        value =>
-          value.resource_id === item.resource_id &&
-          value.parent_resource_id === item.parent_resource_id
-      );
       await mutations.replaceBindings.mutateAsync({
         digitalHumanId: id,
         expectedDraftLockVersion: draft.draft_lock_version,
         expectedDraftVersionId: draft.draft_version_id,
-        items: updateDigitalHumanOperations(
-          draft.items.map(digitalHumanBindingInput),
-          item,
-          candidate,
-          operationId,
-          checked
-        ),
+        items: update(draft.items.map(digitalHumanBindingInput)),
       });
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
       if (mountedRef.current) setOperationSaving(false);
     }
+  };
+  const changeOperation = (
+    item: DigitalHumanResourceBindingInput,
+    operationId: string,
+    checked: boolean
+  ) => {
+    const candidate = candidatesQuery.data?.data.items.find(
+      value =>
+        value.resource_id === item.resource_id &&
+        value.parent_resource_id === item.parent_resource_id
+    );
+    return saveCardChange(items =>
+      updateDigitalHumanOperations(items, item, candidate, operationId, checked)
+    );
   };
   const reload = async () => {
     const current = currentRef.current;
@@ -360,6 +362,14 @@ function ScopedConnectorSection({
               onOperation={
                 canUpdate && !preview
                   ? (item, operationId, checked) => void changeOperation(item, operationId, checked)
+                  : undefined
+              }
+              onApprovalPolicy={
+                canUpdate && !preview
+                  ? (item, policy) =>
+                      void saveCardChange(items =>
+                        updateDigitalHumanApprovalPolicy(items, item, policy)
+                      )
                   : undefined
               }
               onRemove={
