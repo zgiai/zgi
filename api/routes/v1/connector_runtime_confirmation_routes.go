@@ -13,6 +13,7 @@ import (
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/middleware"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
@@ -187,8 +188,8 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 	ctx := context.WithoutCancel(c.Request.Context())
 	// The confirmed call's operation card is labelled in the person's language,
 	// as the call itself would have been inside the run.
-	if locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")); locale != "" {
-		ctx = connectorexecution.WithPresentationLocale(ctx, string(locale))
+	if locale := confirmationPresentationLocale(c); locale != "" {
+		ctx = connectorexecution.WithPresentationLocale(ctx, locale)
 	}
 	result, err := handler.service.Continue(ctx, command)
 	if err != nil {
@@ -224,4 +225,16 @@ func (handler *connectorRuntimeConfirmationHandler) recordResolution(
 	resolution := result
 	resolution.ExecutionResult = nil
 	return handler.recorder.RecordConnectorConfirmationResolution(ctx, command, resolution)
+}
+
+// confirmationPresentationLocale prefers the console's own language cookie,
+// which follows the language the person chose in the UI, over the browser's
+// Accept-Language.
+func confirmationPresentationLocale(c *gin.Context) string {
+	if value, err := c.Cookie("locale"); err == nil {
+		if locale, ok := appcatalog.ParseLocale(value); ok {
+			return string(locale)
+		}
+	}
+	return string(apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")))
 }

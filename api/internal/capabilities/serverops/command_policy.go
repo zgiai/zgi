@@ -284,6 +284,10 @@ func readOnlySimpleCommand(simple simpleCommand) bool {
 		return false
 	}
 	args := simple.words[1:]
+	// Asking any installed program for its version only reports it.
+	if len(args) == 1 && args[0] == "--version" {
+		return true
+	}
 	if rule, known := readOnlyPrograms[name]; known {
 		return rule(args)
 	}

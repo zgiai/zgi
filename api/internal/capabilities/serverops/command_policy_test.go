@@ -36,6 +36,7 @@ func TestClassifyCommandProvesReadOnlyCommands(t *testing.T) {
 		"journalctl -u app &&\n tail -n 5 /var/log/app.log",
 		"echo \"done\";",
 		"command -v nginx || echo 'nginx binary not found'; type docker",
+		"git --version; python3 --version; systemctl --version | head -1",
 	} {
 		if got := ClassifyCommand(command); got != CommandReadOnly {
 			t.Errorf("ClassifyCommand(%q) = %s, want read_only", command, got)
@@ -83,6 +84,8 @@ func TestClassifyCommandTreatsEverythingElseAsAChange(t *testing.T) {
 		"uniq a b",
 		"crontab -r",
 		"command systemctl restart nginx",
+		"python3 --version --help",
+		"python3 -c x --version",
 		"command -p rm -rf /tmp/x",
 		"hostname evil",
 		"date -s '2020-01-01'",
