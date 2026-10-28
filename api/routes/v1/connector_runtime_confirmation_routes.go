@@ -13,6 +13,7 @@ import (
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/middleware"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 // ConnectorRuntimeConfirmationService is the transport-neutral continuation
@@ -184,6 +185,11 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 	// The person has decided: the operation and its record must not depend on
 	// the browser keeping the request open. Execution keeps its own deadline.
 	ctx := context.WithoutCancel(c.Request.Context())
+	// The confirmed call's operation card is labelled in the person's language,
+	// as the call itself would have been inside the run.
+	if locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")); locale != "" {
+		ctx = connectorexecution.WithPresentationLocale(ctx, string(locale))
+	}
 	result, err := handler.service.Continue(ctx, command)
 	if err != nil {
 		connectorRouteError(c, err)

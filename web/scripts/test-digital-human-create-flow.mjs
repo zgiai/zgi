@@ -2347,4 +2347,43 @@ for (const [locale, dictionary] of [
   assert.deepEqual(updateDigitalHumanApprovalPolicy([github], github, 'read_only_auto'), [github]);
 }
 
+{
+  // ADR 0026: the create flow keeps an SSH connection's read_only_auto choice
+  // and drops it for any other connector.
+  const sshCandidate = {
+    type: 'connector',
+    resource_id: 'ssh-1',
+    parent_resource_id: 'serverops_ssh',
+    display_name: 'Server',
+    resource_revision: 'connector:9',
+    access_modes: ['execute'],
+    metadata: { allowed_operation_ids: ['server.command.run'] },
+    status: 'ready',
+    available: true,
+  };
+  const sshSelection = {
+    ...connectorSelection('serverops_ssh', 'ssh-1', ['server.command.run'], 'connector:9'),
+    metadata: { allowed_operation_ids: ['server.command.run'], approval_policy: 'read_only_auto' },
+  };
+  const mailSelection = {
+    ...connectorSelection('mail', 'connection-3', ['messages.send'], 'connector:3'),
+    metadata: { allowed_operation_ids: ['messages.send'], approval_policy: 'read_only_auto' },
+  };
+  const [ssh, mail] = composeCreateBindings(
+    [],
+    [],
+    [sshSelection, mailSelection],
+    [sshCandidate, ...connectorCandidates]
+  );
+  assert.equal(ssh.metadata.approval_policy, 'read_only_auto');
+  assert.equal('approval_policy' in mail.metadata, false);
+  const [plain] = composeCreateBindings(
+    [],
+    [],
+    [connectorSelection('serverops_ssh', 'ssh-1', ['server.command.run'], 'connector:9')],
+    [sshCandidate]
+  );
+  assert.deepEqual(Object.keys(plain.metadata), ['allowed_operation_ids']);
+}
+
 console.log('digital human create-flow contract tests passed');

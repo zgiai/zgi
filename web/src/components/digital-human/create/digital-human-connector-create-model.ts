@@ -22,6 +22,8 @@
 import {
   connectorOperationIds,
   createConnectorDefaultOperationIds,
+  updateDigitalHumanApprovalPolicy,
+  type ConnectorApprovalPolicy,
 } from '../digital-human-connector-model';
 import type {
   DigitalHumanResourceBindingInput,
@@ -190,6 +192,22 @@ export function setCreateConnectorSelectionOperation(
       },
     };
   });
+}
+
+/** Choose how one selected connection asks before a call (ADR 0026). */
+export function setCreateConnectorSelectionApprovalPolicy(
+  selections: readonly DigitalHumanCreateConnectorSelection[],
+  key: string,
+  policy: ConnectorApprovalPolicy
+): readonly DigitalHumanCreateConnectorSelection[] {
+  return selections.map(item =>
+    createConnectorCandidateKey(item.candidate) !== key
+      ? item
+      : {
+          ...item,
+          binding: updateDigitalHumanApprovalPolicy([item.binding], item.binding, policy)[0],
+        }
+  );
 }
 
 export function createConnectorSelectionBindings(

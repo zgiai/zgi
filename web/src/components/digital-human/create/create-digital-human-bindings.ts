@@ -23,7 +23,9 @@
  */
 
 import {
+  connectorApprovalPolicy,
   connectorOperationIds,
+  connectorSupportsReadOnlyAuto,
   isDigitalHumanConnector,
 } from '../digital-human-connector-model';
 import { selectCandidateBindings } from './create-digital-human-payload';
@@ -45,7 +47,8 @@ function connectionLabel(connectorId: string, connectionId: string): string {
 /** Build the replacement row for one admitted connection, credential-free. */
 function connectorBindingFromCandidate(
   candidate: DigitalHumanResourceCandidate,
-  operationIds: readonly string[]
+  operationIds: readonly string[],
+  readOnlyAuto = false
 ): DigitalHumanResourceBindingInput {
   return {
     type: 'connector',
@@ -57,8 +60,11 @@ function connectorBindingFromCandidate(
     // Allowlist, not a spread: candidate metadata is untrusted input, so only
     // the validated operation identifiers may travel. Any other key the server
     // (now or later) puts in candidate metadata is dropped here.
+    // The approval policy is the person's own choice (ADR 0026), and only a
+    // connection that can prove a call read-only offers it.
     metadata: {
       allowed_operation_ids: [...operationIds],
+      ...(readOnlyAuto ? { approval_policy: 'read_only_auto' } : {}),
     },
   };
 }
@@ -132,7 +138,14 @@ function selectCreateConnectorBindings(
       continue;
     }
     chosenOperations.set(identity, signature);
-    items.push(connectorBindingFromCandidate(candidate, operations));
+    items.push(
+      connectorBindingFromCandidate(
+        candidate,
+        operations,
+        connectorSupportsReadOnlyAuto(binding) &&
+          connectorApprovalPolicy(binding) === 'read_only_auto'
+      )
+    );
   }
 
   return items;

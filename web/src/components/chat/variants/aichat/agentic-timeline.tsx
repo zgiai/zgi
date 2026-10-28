@@ -3883,8 +3883,21 @@ function filterTimelineForRendering(
         // presentation. Never render their generic governance audit row,
         // even when the workflow item is missing during live SSE or when an
         // older persisted message has incomplete workflow metadata.
-        !isDigitalHumanTaskGovernanceItem(item, hasDigitalHumanTaskContext)
+        !isDigitalHumanTaskGovernanceItem(item, hasDigitalHumanTaskContext) &&
+        !isConnectorRuntimeGovernanceAudit(item)
     )
+  );
+}
+
+// A Connector call is presented by its own operation and confirmation cards.
+// Its governance audit (for example a read the platform ran without asking)
+// would otherwise show as an unnamed "Run this tool" row once a resumed stream
+// no longer holds the matching tool call.
+function isConnectorRuntimeGovernanceAudit(item: AIChatAgenticTimelineItem): boolean {
+  return (
+    item.type === 'tool_governance_decision' &&
+    String(item.event.skill_id ?? '').trim() === 'connector-runtime' &&
+    !isToolGovernanceNeedsApproval(item)
   );
 }
 

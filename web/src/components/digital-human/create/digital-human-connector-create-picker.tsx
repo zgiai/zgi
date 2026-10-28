@@ -41,6 +41,7 @@ import {
   createConnectorSelectionBindings,
   createConnectorSelectionCandidates,
   removeCreateConnectorSelection,
+  setCreateConnectorSelectionApprovalPolicy,
   setCreateConnectorSelectionOperation,
   type DigitalHumanCreateConnectorSelection,
 } from './digital-human-connector-create-model';
@@ -133,6 +134,15 @@ export function DigitalHumanConnectorCreateSection({
                     createConnectorCandidateKey(item),
                     operationId,
                     checked
+                  ),
+                ])
+              }
+              onApprovalPolicy={(item, policy) =>
+                onChangeSelections([
+                  ...setCreateConnectorSelectionApprovalPolicy(
+                    selections,
+                    createConnectorCandidateKey(item),
+                    policy
                   ),
                 ])
               }
@@ -368,6 +378,15 @@ function DigitalHumanConnectorCreateDialog({
                   createConnectorCandidateKey(item.candidate),
                   operation,
                   checked
+                )
+              )
+            }
+            onApprovalPolicy={policy =>
+              setPending(current =>
+                setCreateConnectorSelectionApprovalPolicy(
+                  current,
+                  createConnectorCandidateKey(item.candidate),
+                  policy
                 )
               )
             }
