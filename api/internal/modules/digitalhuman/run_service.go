@@ -1084,6 +1084,11 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		if note := perUserConnectorNote(missing); note != "" {
 			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
 		}
+		if note, noteErr := connectorApprovalNote(ctx, repository.db, run, event); noteErr != nil {
+			logger.WarnContext(ctx, "DigitalHuman connector approval note failed", "run_id", run.ID.String(), noteErr)
+		} else if note != "" {
+			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
+		}
 	}
 	config.ConnectorInteractive = connectorInteractive(event)
 	config.ConnectorRequesterID = connectorRequester(event)

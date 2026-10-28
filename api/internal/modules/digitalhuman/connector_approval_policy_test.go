@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
@@ -47,6 +48,26 @@ func TestConnectorRequesterIsOnlyTheAccountInAConsoleConversation(t *testing.T) 
 	} {
 		if got := connectorRequester(test.event); got != test.want {
 			t.Errorf("%s: connectorRequester() = %q, want %q", name, got, test.want)
+		}
+	}
+}
+
+func TestConnectorApprovalLineDescribesWhatThisRunAllows(t *testing.T) {
+	for name, test := range map[string]struct {
+		policy                    string
+		interactive, ownerPresent bool
+		want                      string
+	}{
+		"trusted owner present":       {ConnectorApprovalTrusted, true, true, "every call runs without approval"},
+		"trusted someone else":        {ConnectorApprovalTrusted, true, false, "read-only run without approval"},
+		"trusted scheduled":           {ConnectorApprovalTrusted, false, false, "only with the owner's task grant"},
+		"trusted unattended schedule": {ConnectorApprovalTrustedUnattended, false, false, "every call runs without approval"},
+		"read-only console":           {ConnectorApprovalReadOnlyAuto, true, true, "read-only run without approval"},
+		"always ask console":          {ConnectorApprovalAlwaysAsk, true, true, ""},
+	} {
+		got := connectorApprovalLine("prod", test.policy, test.interactive, test.ownerPresent)
+		if (test.want == "" && got != "") || !strings.Contains(got, test.want) {
+			t.Errorf("%s: connectorApprovalLine() = %q, want it to contain %q", name, got, test.want)
 		}
 	}
 }
