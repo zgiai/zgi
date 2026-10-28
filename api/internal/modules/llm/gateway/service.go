@@ -923,6 +923,12 @@ func publicModelCapabilities(model *llmmodel.LLMModel) []string {
 	if model.SupportsVision {
 		result = append(result, "vision")
 	}
+	if model.SupportsStructuredOutput {
+		result = append(result, "structured_output")
+	}
+	if model.SupportsJsonMode {
+		result = append(result, "json_mode")
+	}
 	if model.SystemPrompt {
 		result = append(result, "system")
 	}

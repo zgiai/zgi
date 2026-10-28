@@ -49,7 +49,7 @@ func writeModelsCatalog(c *gin.Context, models []adapter.Model) {
 	}
 	modelList := make([]gin.H, 0, len(models))
 	for _, model := range models {
-		modelList = append(modelList, gin.H{"id": model.ID, "object": "model", "created": model.Created, "owned_by": "zgi", "supported_protocols": model.SupportedProtocols})
+		modelList = append(modelList, gin.H{"id": model.ID, "object": "model", "created": model.Created, "owned_by": "zgi", "supported_protocols": model.SupportedProtocols, "capabilities": catalogCapabilities(model)})
 	}
 	c.JSON(http.StatusOK, gin.H{"object": "list", "data": modelList})
 }
@@ -74,7 +74,7 @@ func writeModelsDetail(c *gin.Context, models []adapter.Model) {
 		case modelsProtocolAnthropic:
 			c.JSON(http.StatusOK, anthropicCatalogModelInfo(model))
 		default:
-			c.JSON(http.StatusOK, gin.H{"id": model.ID, "object": "model", "created": model.Created, "owned_by": "zgi", "supported_protocols": model.SupportedProtocols})
+			c.JSON(http.StatusOK, gin.H{"id": model.ID, "object": "model", "created": model.Created, "owned_by": "zgi", "supported_protocols": model.SupportedProtocols, "capabilities": catalogCapabilities(model)})
 		}
 		return
 	}
@@ -275,6 +275,19 @@ func writeAnthropicModels(c *gin.Context, models []adapter.Model) {
 		response.LastID = &data[len(data)-1].ID
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+// catalogCapabilities returns the model's declared capability codes for the
+// OpenAI-shaped catalog. The list used to omit them, so a client could not tell
+// which models support structured output, tools or vision before calling. The
+// fallback mirrors the Anthropic shape: a model with no declared capability still
+// serves plain messages.
+func catalogCapabilities(model adapter.Model) []string {
+	capabilities := append([]string(nil), model.Capabilities...)
+	if len(capabilities) == 0 {
+		capabilities = []string{"messages"}
+	}
+	return capabilities
 }
 
 func anthropicCatalogModelInfo(model adapter.Model) anthropicCatalogModel {
