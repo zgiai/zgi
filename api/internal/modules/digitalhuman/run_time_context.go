@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 )
 
 // defaultRunTimezone is the timezone of a run whose account sets none, the
@@ -56,4 +58,20 @@ func withRunTimezone(ctx context.Context, location *time.Location) context.Conte
 func runTimezone(ctx context.Context) string {
 	name, _ := ctx.Value(runTimezoneKey{}).(string)
 	return name
+}
+
+// addTurnContext adds guidance that changes from run to run, such as the
+// time, memory or channel context. It is sent after the history instead of in
+// the system prompt, which then stays identical across runs and can be served
+// from the provider's prompt cache (ADR 0032).
+func addTurnContext(config *chatruntime.RunConfig, guidance string) {
+	guidance = strings.TrimSpace(guidance)
+	if config == nil || guidance == "" {
+		return
+	}
+	if strings.TrimSpace(config.TurnContext) == "" {
+		config.TurnContext = guidance
+		return
+	}
+	config.TurnContext = strings.TrimSpace(config.TurnContext) + "\n\n" + guidance
 }

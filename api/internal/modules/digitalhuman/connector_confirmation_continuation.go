@@ -3,7 +3,6 @@ package digitalhuman
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -77,7 +76,7 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 	config.ConnectorRequesterID = connectorRequester(event)
 	location := s.runLocation(ctx, run)
 	config.UserTimezone = location.String()
-	config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + currentTimeGuidance(s.now(), location)
+	addTurnContext(&config, currentTimeGuidance(s.now(), location))
 	applyRunEndUserBilling(&config, run)
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{

@@ -71,15 +71,21 @@ type claudeMessage struct {
 	Content interface{} `json:"content"` // string or []claudeContentBlock
 }
 
+// claudeCacheControl ends a cacheable prompt prefix (ADR 0032).
+type claudeCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
 type claudeContentBlock struct {
-	Type      string                 `json:"type"` // "text", "image", "tool_use", "tool_result"
-	Text      string                 `json:"text,omitempty"`
-	Source    *claudeImageSource     `json:"source,omitempty"`
-	ID        string                 `json:"id,omitempty"`
-	Name      string                 `json:"name,omitempty"`
-	Input     map[string]interface{} `json:"input,omitempty"`
-	ToolUseID string                 `json:"tool_use_id,omitempty"`
-	Content   interface{}            `json:"content,omitempty"`
+	Type         string                 `json:"type"` // "text", "image", "tool_use", "tool_result"
+	Text         string                 `json:"text,omitempty"`
+	Source       *claudeImageSource     `json:"source,omitempty"`
+	ID           string                 `json:"id,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+	Input        map[string]interface{} `json:"input,omitempty"`
+	ToolUseID    string                 `json:"tool_use_id,omitempty"`
+	Content      interface{}            `json:"content,omitempty"`
+	CacheControl *claudeCacheControl    `json:"cache_control,omitempty"`
 }
 
 type claudeImageSource struct {
@@ -90,24 +96,25 @@ type claudeImageSource struct {
 }
 
 type claudeTool struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description,omitempty"`
-	InputSchema map[string]interface{} `json:"input_schema"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description,omitempty"`
+	InputSchema  map[string]interface{} `json:"input_schema"`
+	CacheControl *claudeCacheControl    `json:"cache_control,omitempty"`
 }
 
 type claudeRequest struct {
-	Model         string          `json:"model"`
-	Messages      []claudeMessage `json:"messages"`
-	MaxTokens     int             `json:"max_tokens"`
-	System        string          `json:"system,omitempty"`
-	Temperature   *float64        `json:"temperature,omitempty"`
-	TopP          *float64        `json:"top_p,omitempty"`
-	TopK          *int            `json:"top_k,omitempty"`
-	StopSequences []string        `json:"stop_sequences,omitempty"`
-	Stream        bool            `json:"stream,omitempty"`
-	Tools         []claudeTool    `json:"tools,omitempty"`
-	ToolChoice    interface{}     `json:"tool_choice,omitempty"`
-	Metadata      *claudeMetadata `json:"metadata,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []claudeMessage      `json:"messages"`
+	MaxTokens     int                  `json:"max_tokens"`
+	System        []claudeContentBlock `json:"system,omitempty"`
+	Temperature   *float64             `json:"temperature,omitempty"`
+	TopP          *float64             `json:"top_p,omitempty"`
+	TopK          *int                 `json:"top_k,omitempty"`
+	StopSequences []string             `json:"stop_sequences,omitempty"`
+	Stream        bool                 `json:"stream,omitempty"`
+	Tools         []claudeTool         `json:"tools,omitempty"`
+	ToolChoice    interface{}          `json:"tool_choice,omitempty"`
+	Metadata      *claudeMetadata      `json:"metadata,omitempty"`
 }
 
 type claudeMetadata struct {
@@ -695,9 +702,14 @@ func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRe
 		}
 	}
 
-	// Convert messages
+	// Convert messages. Only the leading system messages form Claude's system
+	// prompt. A system message later in the conversation, such as turn
+	// context or skill instructions, stays where it is as a reminder in a user
+	// turn: hoisting it would change the system prompt, which comes before
+	// every message, and invalidate the whole cached prefix (ADR 0032).
 	systemParts := make([]string, 0)
 	claudeMessages := make([]claudeMessage, 0)
+	leadingSystem := true
 
 	for _, msg := range request.Messages {
 		normalizedRole := normalizeClaudeRole(msg)
@@ -707,25 +719,30 @@ func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRe
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert system message: %w", err)
 			}
-			if systemText != "" {
-				systemParts = append(systemParts, systemText)
+			if systemText == "" {
+				continue
 			}
+			if leadingSystem {
+				systemParts = append(systemParts, systemText)
+				continue
+			}
+			claudeMessages = appendClaudeMessage(claudeMessages, "user", []claudeContentBlock{{
+				Type: "text", Text: "<system-reminder>\n" + systemText + "\n</system-reminder>",
+			}})
 			continue
 		}
+		leadingSystem = false
 
 		claudeContent, err := a.convertClaudeMessageContent(msg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert %s message: %w", normalizedRole, err)
 		}
-		claudeMessages = append(claudeMessages, claudeMessage{
-			Role:    normalizedRole,
-			Content: claudeContent,
-		})
+		claudeMessages = appendClaudeMessage(claudeMessages, normalizedRole, claudeContent)
 	}
 
 	claudeReq.Messages = claudeMessages
 	if len(systemParts) > 0 {
-		claudeReq.System = strings.Join(systemParts, "\n\n")
+		claudeReq.System = []claudeContentBlock{{Type: "text", Text: strings.Join(systemParts, "\n\n")}}
 	}
 
 	// Convert tools
@@ -752,7 +769,66 @@ func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRe
 		claudeReq.ToolChoice = convertToolChoice(request.ToolChoice)
 	}
 
+	markClaudeCacheBreakpoints(claudeReq)
 	return claudeReq, nil
+}
+
+// appendClaudeMessage merges a message into the previous one of the same role.
+// Claude alternates user and assistant turns; tool results and the reminders
+// that follow them belong to one user turn.
+func appendClaudeMessage(messages []claudeMessage, role string, content interface{}) []claudeMessage {
+	if len(messages) > 0 && messages[len(messages)-1].Role == role {
+		last := &messages[len(messages)-1]
+		last.Content = append(claudeBlocks(last.Content), claudeBlocks(content)...)
+		return messages
+	}
+	return append(messages, claudeMessage{Role: role, Content: content})
+}
+
+func claudeBlocks(content interface{}) []claudeContentBlock {
+	switch value := content.(type) {
+	case []claudeContentBlock:
+		return value
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		return []claudeContentBlock{{Type: "text", Text: value}}
+	default:
+		return nil
+	}
+}
+
+// markClaudeCacheBreakpoints caches the prompt prefix (ADR 0032). Claude
+// orders a request as tools, system, then messages. One breakpoint ends each
+// stable part, and one on the last block lets the next round of the same turn
+// read everything sent so far. A prefix shorter than the model's minimum is
+// simply not cached.
+func markClaudeCacheBreakpoints(request *claudeRequest) {
+	if request == nil {
+		return
+	}
+	ephemeral := &claudeCacheControl{Type: "ephemeral"}
+	if len(request.Tools) > 0 {
+		request.Tools[len(request.Tools)-1].CacheControl = ephemeral
+	}
+	if len(request.System) > 0 {
+		request.System[len(request.System)-1].CacheControl = ephemeral
+	}
+	if len(request.Messages) == 0 {
+		return
+	}
+	last := &request.Messages[len(request.Messages)-1]
+	blocks := claudeBlocks(last.Content)
+	for index := len(blocks) - 1; index >= 0; index-- {
+		// An empty text block cannot carry a breakpoint.
+		if blocks[index].Type == "text" && strings.TrimSpace(blocks[index].Text) == "" {
+			continue
+		}
+		blocks[index].CacheControl = ephemeral
+		last.Content = blocks
+		return
+	}
 }
 
 func normalizeClaudeRole(msg adapter.Message) string {

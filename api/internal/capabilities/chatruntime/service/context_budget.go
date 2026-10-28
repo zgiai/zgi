@@ -72,7 +72,10 @@ func (s *service) buildTokenBudgetMessages(
 	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, parentMessages)
 	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
 	turnBoundaryContext := currentTurnBoundaryMessage(parts)
-	extraContextMessages := make([]adapter.Message, 0, 3)
+	extraContextMessages := make([]adapter.Message, 0, 4)
+	if turnContext := turnContextMessage(parts); turnContext != nil {
+		extraContextMessages = append(extraContextMessages, *turnContext)
+	}
 	if memoryContext := agentMemoryContextMessage(parts); memoryContext != nil {
 		extraContextMessages = append(extraContextMessages, *memoryContext)
 	}
@@ -542,6 +545,15 @@ func queryReferencesRecentExecutionContext(query string) bool {
 		}
 	}
 	return false
+}
+
+// turnContextMessage carries the run's changing guidance after the history, so
+// the system prompt and history form a stable, cacheable prefix (ADR 0032).
+func turnContextMessage(parts *chatRequestParts) *adapter.Message {
+	if parts == nil || strings.TrimSpace(parts.TurnContext) == "" {
+		return nil
+	}
+	return &adapter.Message{Role: "system", Content: strings.TrimSpace(parts.TurnContext)}
 }
 
 func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {

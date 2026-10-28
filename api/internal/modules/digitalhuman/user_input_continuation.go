@@ -163,7 +163,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 		}
 		if preparation != nil {
 			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+				addTurnContext(&config, addendum)
 			}
 			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
 		}
@@ -175,7 +175,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 		}
 		if preparation != nil {
 			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+				addTurnContext(&config, addendum)
 			}
 			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
 		}
@@ -187,7 +187,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 		}
 		if preparation != nil {
 			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+				addTurnContext(&config, addendum)
 			}
 			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
 		}

@@ -226,7 +226,13 @@ type RunConfig struct {
 	ConnectorRequesterID string
 	// UserTimezone is the IANA timezone of the person the run serves; the
 	// time Skill defaults to it. Empty keeps the Skill's UTC default.
-	UserTimezone              string
+	UserTimezone string
+	// TurnContext is server-owned guidance that changes from run to run, such
+	// as the current time, memory, or channel context. It is sent after the
+	// conversation history rather than in SystemPrompt, so the prompt prefix
+	// stays identical across runs and provider prompt caches can reuse it
+	// (ADR 0032).
+	TurnContext               string
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
 	// AgentMemoryInstructions is the builder's guidance on what to remember.
@@ -746,6 +752,8 @@ type chatRequestParts struct {
 	Query                            string
 	Surface                          string
 	RuntimeContext                   string
+	// TurnContext is the server-owned per-run guidance of RunConfig.TurnContext.
+	TurnContext string
 	RawOperationContext              map[string]interface{}
 	OperationContext                 map[string]interface{}
 	OperationLedger                  map[string]interface{}

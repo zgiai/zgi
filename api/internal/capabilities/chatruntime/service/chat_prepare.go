@@ -574,6 +574,9 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
 	}
+	if turnContext := turnContextMessage(parts); turnContext != nil {
+		messages = append(messages, *turnContext)
+	}
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil
 }

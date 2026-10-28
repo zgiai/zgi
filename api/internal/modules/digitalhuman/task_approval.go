@@ -163,11 +163,7 @@ func (s *RuntimeService) taskApprovalContinuationConfigForRun(ctx context.Contex
 		return config, nil
 	}
 	if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-		if strings.TrimSpace(config.SystemPrompt) != "" {
-			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
-		} else {
-			config.SystemPrompt = addendum
-		}
+		addTurnContext(&config, addendum)
 	}
 	if allowTaskMutationTools {
 		config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)

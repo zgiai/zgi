@@ -1074,7 +1074,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	config.ConnectorRunID = run.ID.String()
 	location := s.runLocation(ctx, run)
 	config.UserTimezone = location.String()
-	config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + currentTimeGuidance(s.now(), location)
+	addTurnContext(&config, currentTimeGuidance(s.now(), location))
 	applyRunEndUserBilling(&config, run)
 	if repository, ok := s.store.(*GormRepository); ok {
 		missing, perUserErr := preparePerUserConnectors(ctx, repository.db, repository.connectorCatalog, run)
@@ -1082,12 +1082,12 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			logger.WarnContext(ctx, "DigitalHuman per-user connector preparation failed", "run_id", run.ID.String(), perUserErr)
 		}
 		if note := perUserConnectorNote(missing); note != "" {
-			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
+			addTurnContext(&config, note)
 		}
 		if note, noteErr := connectorApprovalNote(ctx, repository.db, run, event); noteErr != nil {
 			logger.WarnContext(ctx, "DigitalHuman connector approval note failed", "run_id", run.ID.String(), noteErr)
 		} else if note != "" {
-			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
+			addTurnContext(&config, note)
 		}
 	}
 	config.ConnectorInteractive = connectorInteractive(event)
@@ -1108,13 +1108,13 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		}
 		if channelContextPreparation != nil {
 			if addendum := strings.TrimSpace(channelContextPreparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+				addTurnContext(&config, addendum)
 			}
 			config.RuntimeTools = append(config.RuntimeTools, channelContextPreparation.Tools...)
 		}
 	}
 	if previewRun(run) {
-		config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + previewGuidance
+		addTurnContext(&config, previewGuidance)
 	}
 	if s.memory != nil && !previewRun(run) {
 		memoryPreparation, memoryErr := s.memory.Prepare(ctx, run, resolved, event)
@@ -1124,7 +1124,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		}
 		if memoryPreparation != nil {
 			if addendum := strings.TrimSpace(memoryPreparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+				addTurnContext(&config, addendum)
 			}
 			config.RuntimeTools = append(config.RuntimeTools, memoryPreparation.Tools...)
 		}
@@ -1138,7 +1138,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		}
 		if taskPreparation != nil {
 			if addendum := strings.TrimSpace(taskPreparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
+				addTurnContext(&config, addendum)
 			}
 			config.RuntimeTools = append(config.RuntimeTools, taskPreparation.Tools...)
 			bindTaskConversation = taskPreparation.BindConversation
