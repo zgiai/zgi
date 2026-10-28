@@ -240,8 +240,24 @@ export function updateDigitalHumanOperations(
   );
 }
 
-/** How a connection asks before a call (ADR 0026). */
-export type ConnectorApprovalPolicy = 'always_ask' | 'read_only_auto';
+/** How a connection asks before a call (ADR 0026, ADR 0028). */
+export type ConnectorApprovalPolicy =
+  | 'always_ask'
+  | 'read_only_auto'
+  | 'trusted'
+  | 'trusted_unattended';
+
+export const CONNECTOR_APPROVAL_POLICIES: readonly ConnectorApprovalPolicy[] = [
+  'always_ask',
+  'read_only_auto',
+  'trusted',
+  'trusted_unattended',
+];
+
+/** Policies that run changes without asking, so they need a risk acknowledgement. */
+export function connectorApprovalPolicyTrusted(policy: ConnectorApprovalPolicy) {
+  return policy === 'trusted' || policy === 'trusted_unattended';
+}
 
 /** Connectors whose platform can prove a call read-only. */
 const READ_ONLY_AUTO_CONNECTOR_IDS: ReadonlySet<string> = new Set(['serverops_ssh']);
@@ -257,7 +273,10 @@ export function connectorSupportsReadOnlyAuto(item: DigitalHumanResourceBindingI
 export function connectorApprovalPolicy(item: {
   metadata?: Record<string, unknown>;
 }): ConnectorApprovalPolicy {
-  return item.metadata?.approval_policy === 'read_only_auto' ? 'read_only_auto' : 'always_ask';
+  const value = item.metadata?.approval_policy;
+  return CONNECTOR_APPROVAL_POLICIES.includes(value as ConnectorApprovalPolicy)
+    ? (value as ConnectorApprovalPolicy)
+    : 'always_ask';
 }
 
 /** Always asking is the default, so it is stored as no policy at all. */
@@ -272,7 +291,7 @@ export function updateDigitalHumanApprovalPolicy(
     const { approval_policy: _previous, ...metadata } = value.metadata;
     return {
       ...value,
-      metadata: policy === 'read_only_auto' ? { ...metadata, approval_policy: policy } : metadata,
+      metadata: policy === 'always_ask' ? metadata : { ...metadata, approval_policy: policy },
     };
   });
 }

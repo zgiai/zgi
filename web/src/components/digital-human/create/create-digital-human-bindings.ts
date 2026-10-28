@@ -27,6 +27,7 @@ import {
   connectorOperationIds,
   connectorSupportsReadOnlyAuto,
   isDigitalHumanConnector,
+  type ConnectorApprovalPolicy,
 } from '../digital-human-connector-model';
 import { selectCandidateBindings } from './create-digital-human-payload';
 import type {
@@ -48,7 +49,7 @@ function connectionLabel(connectorId: string, connectionId: string): string {
 function connectorBindingFromCandidate(
   candidate: DigitalHumanResourceCandidate,
   operationIds: readonly string[],
-  readOnlyAuto = false
+  approvalPolicy: ConnectorApprovalPolicy = 'always_ask'
 ): DigitalHumanResourceBindingInput {
   return {
     type: 'connector',
@@ -64,7 +65,7 @@ function connectorBindingFromCandidate(
     // connection that can prove a call read-only offers it.
     metadata: {
       allowed_operation_ids: [...operationIds],
-      ...(readOnlyAuto ? { approval_policy: 'read_only_auto' } : {}),
+      ...(approvalPolicy !== 'always_ask' ? { approval_policy: approvalPolicy } : {}),
     },
   };
 }
@@ -142,8 +143,7 @@ function selectCreateConnectorBindings(
       connectorBindingFromCandidate(
         candidate,
         operations,
-        connectorSupportsReadOnlyAuto(binding) &&
-          connectorApprovalPolicy(binding) === 'read_only_auto'
+        connectorSupportsReadOnlyAuto(binding) ? connectorApprovalPolicy(binding) : 'always_ask'
       )
     );
   }

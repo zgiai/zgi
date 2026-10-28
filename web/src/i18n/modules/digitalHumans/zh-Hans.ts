@@ -958,6 +958,16 @@ const messages: DigitalHumansMessages = {
       approvalPolicyLabel: '执行前确认',
       approvalPolicyAlwaysAsk: '每次都确认',
       approvalPolicyReadOnlyAuto: '只读命令直接执行',
+      approvalPolicyTrusted: '完全信任（我在场时不询问）',
+      approvalPolicyTrustedUnattended: '完全信任，包括定时任务',
+      trustedTitle: '完全信任这个服务器连接？',
+      trustedDescription:
+        '开启后，你本人在控制台对话时，数字人执行任何命令和服务操作都不再询问，包括修改、删除、重启和部署。平台仍会拒绝 rm -rf /、mkfs、reboot 等破坏性命令，并记录每一次调用。其他人对话、渠道和 API 调用仍需审批，定时任务仍只做只读检查。重新连接或更新凭证后会自动恢复为每次确认。后果由你承担，建议只在测试服务器或权限受限的专用账号上开启。',
+      trustedUnattendedTitle: '完全信任这个连接，并允许定时任务改动服务器？',
+      trustedUnattendedDescription:
+        '除了你在场时不再询问，你的定时任务和后台任务也会在无人值守时直接执行任何命令和服务操作，包括修改、删除、重启和部署，出现问题时没有人能及时阻止。平台仍会拒绝 rm -rf /、mkfs、reboot 等破坏性命令，并记录每一次调用。其他人对话、渠道和 API 调用仍需审批。重新连接或更新凭证后会自动恢复为每次确认。后果由你承担，建议只在测试服务器或权限受限的专用账号上开启。',
+      trustedActive: '已完全信任：你在场时数字人执行命令不再询问。',
+      trustedUnattendedActive: '已完全信任（含定时任务）：数字人在你在场和定时任务中执行命令都不再询问。',
       approvalPolicyHint:
         '只读命令是平台能证明不会改动服务器的命令，例如查看服务状态、列目录、读日志。读取密钥、.env 等凭证文件的命令仍需确认；任何改动，以及平台无法证明只读的命令，也都需要确认。定时任务不会自行执行命令。',
       replace: '替换连接',

@@ -39,6 +39,10 @@ type BackgroundAuthorizationRequest struct {
 	Connection     core.PersonalConnection
 	Operation      catalog.Operation
 	ContractDigest string
+	// Trusted means the binding's owner trusted it for unattended runs (ADR
+	// 0028): the live task run and its owner are still restored, but no task
+	// grant is consumed.
+	Trusted bool
 }
 
 // WithBackgroundAuthorizer configures the service at composition time. Nil
@@ -47,10 +51,10 @@ func (s *Service) WithBackgroundAuthorizer(authorizer BackgroundAuthorizer) *Ser
 	s.backgroundAuthorizer = authorizer
 	return s
 }
-func (s *Service) authorizeBackground(ctx context.Context, pinned PinnedExecution, binding core.TargetBinding, connection core.PersonalConnection, accepted catalog.PinnedOperation) (bool, error) {
+func (s *Service) authorizeBackground(ctx context.Context, pinned PinnedExecution, binding core.TargetBinding, connection core.PersonalConnection, accepted catalog.PinnedOperation, trusted bool) (bool, error) {
 	r := pinned.Request
 	if s.backgroundAuthorizer == nil || r.Interactive || r.Confirmation != nil || r.Target.Type != core.TargetTypeDigitalHuman || r.Target.EffectiveScope() != core.ScopePublished {
 		return false, nil
 	}
-	return s.backgroundAuthorizer.AuthorizeBackground(ctx, BackgroundAuthorizationRequest{Request: r, Binding: binding, Connection: connection, Operation: accepted.Operation, ContractDigest: accepted.ContractDigest})
+	return s.backgroundAuthorizer.AuthorizeBackground(ctx, BackgroundAuthorizationRequest{Request: r, Binding: binding, Connection: connection, Operation: accepted.Operation, ContractDigest: accepted.ContractDigest, Trusted: trusted})
 }

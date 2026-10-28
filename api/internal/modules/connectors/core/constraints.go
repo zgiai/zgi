@@ -78,6 +78,13 @@ const (
 	// without asking and asks for every other call (ADR 0026). Only a
 	// DigitalHuman SSH binding chooses it today.
 	AuthorizationModeReadOnlyAuto = "read_only_auto"
+	// AuthorizationModeTrusted runs every call without asking while the owner
+	// is the person in the conversation (ADR 0028). Like direct authorization
+	// it is pinned to the connection and contract it was granted for.
+	AuthorizationModeTrusted = "trusted"
+	// AuthorizationModeTrustedUnattended also covers the owner's scheduled and
+	// background task runs.
+	AuthorizationModeTrustedUnattended = "trusted_unattended"
 )
 
 func OwnerConstraint(owner uuid.UUID, operations []Identifier) *AccessConstraint {
@@ -114,7 +121,7 @@ func (constraint *AccessConstraint) Validate() error {
 		return invalidModel()
 	}
 	if constraint.AuthorizationMode != "" && constraint.AuthorizationMode != AuthorizationModeAsk && constraint.AuthorizationMode != AuthorizationModeDirect &&
-		constraint.AuthorizationMode != AuthorizationModeReadOnlyAuto {
+		constraint.AuthorizationMode != AuthorizationModeReadOnlyAuto && !constraint.Trusted() {
 		return invalidModel()
 	}
 	if constraint.AuthorizationConnectionRevision < 0 || constraint.AuthorizationCredentialVersion < 0 {
@@ -172,6 +179,25 @@ func (constraint *AccessConstraint) DirectlyAuthorized() bool {
 // calls without a per-invocation prompt.
 func (constraint *AccessConstraint) ReadOnlyAutoAuthorized() bool {
 	return constraint != nil && constraint.AuthorizationMode == AuthorizationModeReadOnlyAuto
+}
+
+// Trusted reports whether this binding runs calls without asking while its
+// owner is present (ADR 0028).
+func (constraint *AccessConstraint) Trusted() bool {
+	return constraint != nil && (constraint.AuthorizationMode == AuthorizationModeTrusted ||
+		constraint.AuthorizationMode == AuthorizationModeTrustedUnattended)
+}
+
+// TrustedUnattended reports whether that trust also covers the owner's task
+// runs.
+func (constraint *AccessConstraint) TrustedUnattended() bool {
+	return constraint != nil && constraint.AuthorizationMode == AuthorizationModeTrustedUnattended
+}
+
+// PinnedAuthorization reports whether the mode is only valid for the
+// connection revision, credential version, and contract it was granted for.
+func (constraint *AccessConstraint) PinnedAuthorization() bool {
+	return constraint.DirectlyAuthorized() || constraint.Trusted()
 }
 
 func (constraint *AccessConstraint) AuthorizationModeValue() string {

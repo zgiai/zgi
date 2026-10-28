@@ -228,6 +228,15 @@ func TestConnectorBackgroundAuthorizerUsesOnlyRestoredTaskIdentityAndLiveSnapsho
 	if allowed, err = authorizer.AuthorizeBackground(ctx, request); err == nil || allowed {
 		t.Fatalf("infrastructure error did not fail closed: %v, %v", allowed, err)
 	}
+	// A trusted binding (ADR 0028) needs the restored task run, not a grant.
+	trusted := request
+	trusted.Trusted = true
+	if allowed, err = authorizer.AuthorizeBackground(ctx, trusted); err != nil || !allowed {
+		t.Fatalf("trusted task run = %v, %v", allowed, err)
+	}
+	if allowed, err = authorizer.AuthorizeBackground(t.Context(), trusted); err == nil || allowed {
+		t.Fatalf("trust replaced the restored task run: %v, %v", allowed, err)
+	}
 	request.Connection.OwnerAccountID = uuid.New()
 	if allowed, err = authorizer.AuthorizeBackground(ctx, request); err == nil || allowed {
 		t.Fatalf("caller identity overrode connection owner: %v, %v", allowed, err)

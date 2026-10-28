@@ -50,12 +50,15 @@ func bindingOperations(row *ResourceBinding) ([]core.Identifier, error) {
 	return metadata.Operations, nil
 }
 
-// Connector binding approval policies (ADR 0026). always_ask, the default,
-// asks before every call; read_only_auto runs calls the connector proves
-// read-only without asking.
+// Connector binding approval policies. always_ask, the default, asks before
+// every call; read_only_auto runs calls the connector proves read-only without
+// asking (ADR 0026); trusted runs every call without asking while the owner is
+// present, and trusted_unattended also in the owner's task runs (ADR 0028).
 const (
-	ConnectorApprovalAlwaysAsk    = "always_ask"
-	ConnectorApprovalReadOnlyAuto = "read_only_auto"
+	ConnectorApprovalAlwaysAsk         = "always_ask"
+	ConnectorApprovalReadOnlyAuto      = "read_only_auto"
+	ConnectorApprovalTrusted           = "trusted"
+	ConnectorApprovalTrustedUnattended = "trusted_unattended"
 )
 
 // bindingAuthorizationMode maps a binding's approval_policy to the authorization
@@ -69,11 +72,15 @@ func bindingAuthorizationMode(row *ResourceBinding, definition catalog.Definitio
 	switch metadata.Policy {
 	case "", ConnectorApprovalAlwaysAsk:
 		return core.AuthorizationModeAsk, nil
-	case ConnectorApprovalReadOnlyAuto:
+	case ConnectorApprovalReadOnlyAuto, ConnectorApprovalTrusted, ConnectorApprovalTrustedUnattended:
 		if !definition.IsServerOpsSSHCredentials() {
 			return "", ErrResourceBindingInvalid
 		}
-		return core.AuthorizationModeReadOnlyAuto, nil
+		return map[string]string{
+			ConnectorApprovalReadOnlyAuto:      core.AuthorizationModeReadOnlyAuto,
+			ConnectorApprovalTrusted:           core.AuthorizationModeTrusted,
+			ConnectorApprovalTrustedUnattended: core.AuthorizationModeTrustedUnattended,
+		}[metadata.Policy], nil
 	}
 	return "", ErrResourceBindingInvalid
 }
@@ -193,6 +200,17 @@ func (r *GormRepository) syncConnectorBindings(ctx context.Context, scope Scope,
 		now := time.Now().UTC()
 		bindingConstraint := core.OwnerConstraint(owner, operations)
 		bindingConstraint.AuthorizationMode = authorizationMode
+		if bindingConstraint.Trusted() {
+			// Trust holds only for the connection and contract it was given for:
+			// reconnecting or a new contract asks again until it is re-granted.
+			digest, digestErr := catalog.DefinitionContractDigest(definition)
+			if digestErr != nil || digest == "" {
+				return ErrResourceBindingInvalid
+			}
+			bindingConstraint.AuthorizationConnectionRevision = connection.Revision
+			bindingConstraint.AuthorizationCredentialVersion = connection.CredentialVersion
+			bindingConstraint.AuthorizationContractDigest = digest
+		}
 		bindingConstraint.TargetBoundaries = []core.TargetBoundary{{
 			Type: target.Type, ID: target.ID, Scope: string(target.EffectiveScope()), VersionID: target.VersionID,
 		}}

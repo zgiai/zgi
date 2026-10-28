@@ -343,9 +343,11 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	// ADR 0026 applies to interactive runs only; unattended runs keep task
 	// authorization. A call already waiting on its approval card keeps that
 	// card, so the person's decision still settles it after a policy change.
-	if risk == RiskHigh && request.Interactive && request.Confirmation == nil && readOnlyAutoInvocation(request, binding, definition) {
+	if risk == RiskHigh && request.Interactive && request.Confirmation == nil && (readOnlyAutoInvocation(request, binding, definition) ||
+		trustedOwnerInvocation(ctx, request, binding, connection, definition, acceptedOperation.ContractDigest)) {
 		risk = RiskTrustedLow
 	}
+	trustedUnattended := request.Confirmation == nil && trustedUnattendedInvocation(request, binding, connection, definition, acceptedOperation.ContractDigest)
 	confirmation := request.Confirmation
 	requiresConfirmedFinalization := false
 	if confirmation != nil && confirmation.RouteReceipt != pinned.Receipt {
@@ -365,8 +367,8 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	backgroundAuthorized := false
 	if (digitalHuman == digitalHumanApprovalNonInteractiveBlocked ||
 		(digitalHuman == digitalHumanApprovalFailClosed && risk == RiskTrustedLow && !request.Interactive && confirmation == nil)) &&
-		unattendedInvocationAllowed(request, definition) {
-		backgroundAuthorized, err = service.authorizeBackground(ctx, pinned, binding, connection, acceptedOperation)
+		(trustedUnattended || unattendedInvocationAllowed(request, definition)) {
+		backgroundAuthorized, err = service.authorizeBackground(ctx, pinned, binding, connection, acceptedOperation, trustedUnattended)
 		if err != nil {
 			return ExecutionResult{}, preserveError(err, core.ErrorCodeAccessDenied)
 		}

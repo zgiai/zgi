@@ -84,6 +84,9 @@ type ExecutionContext struct {
 	// InvokeFrom.
 	ConnectorTargetType  core.TargetType `json:"-"`
 	ConnectorInteractive bool            `json:"-"`
+	// ConnectorRequesterID is the account present in an interactive console
+	// conversation. Only a present owner can use a trusted binding.
+	ConnectorRequesterID string `json:"-"`
 	// ConnectorRunID identifies the DigitalHuman run a confirmation belongs to.
 	ConnectorRunID string `json:"-"`
 	// ConnectorHostAudience is the delegation audience of the caller's

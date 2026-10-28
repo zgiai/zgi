@@ -315,6 +315,12 @@ func (s *ConnectorBackgroundAuthorization) AuthorizeBackground(ctx context.Conte
 	if restored.OwnerID != request.Connection.OwnerAccountID {
 		return false, backgroundDenied(nil)
 	}
+	// The owner trusted this binding for their own task runs (ADR 0028): the
+	// restored task run and its owner are the whole authority, so no grant is
+	// consumed.
+	if request.Trusted {
+		return true, nil
+	}
 	input, _ := r.Input.(map[string]any)
 	if restored.SocialOperations && (r.OperationID == "web.search" || r.OperationID == "web.fetch" || strings.HasSuffix(r.OperationID.String(), ".web.search") || strings.HasSuffix(r.OperationID.String(), ".web.fetch")) &&
 		(restored.ResearchConnectorID != r.ConnectorID.String() || restored.ResearchConnectionID != request.Connection.ID) {

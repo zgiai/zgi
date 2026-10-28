@@ -147,6 +147,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 	s.attachAttachmentReader(&config, run, resolved, event, &scope)
 	config.ConnectorRunID = run.ID.String()
 	config.ConnectorInteractive = connectorInteractive(event)
+	config.ConnectorRequesterID = connectorRequester(event)
 	applyRunEndUserBilling(&config, run)
 	if s.linux != nil {
 		config.RuntimeToolFactory, err = s.prepareContinuationLinux(ctx, run, resolved, event, scope)

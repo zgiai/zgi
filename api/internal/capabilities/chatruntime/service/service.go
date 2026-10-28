@@ -221,6 +221,9 @@ type RunConfig struct {
 	ConnectorTargetType  connectorcore.TargetType
 	ConnectorRunID       string
 	ConnectorInteractive bool
+	// ConnectorRequesterID is the account present in an interactive console
+	// conversation; empty for every other origin (ADR 0028).
+	ConnectorRequesterID string
 	// UserTimezone is the IANA timezone of the person the run serves; the
 	// time Skill defaults to it. Empty keeps the Skill's UTC default.
 	UserTimezone              string

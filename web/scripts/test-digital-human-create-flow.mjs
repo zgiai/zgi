@@ -2384,6 +2384,20 @@ for (const [locale, dictionary] of [
     [sshCandidate]
   );
   assert.deepEqual(Object.keys(plain.metadata), ['allowed_operation_ids']);
+  const [trusted] = composeCreateBindings(
+    [],
+    [],
+    [{ ...sshSelection, metadata: { allowed_operation_ids: ['server.command.run'], approval_policy: 'trusted_unattended' } }],
+    [sshCandidate]
+  );
+  assert.equal(trusted.metadata.approval_policy, 'trusted_unattended');
+  const [forged] = composeCreateBindings(
+    [],
+    [],
+    [{ ...sshSelection, metadata: { allowed_operation_ids: ['server.command.run'], approval_policy: 'everything' } }],
+    [sshCandidate]
+  );
+  assert.equal('approval_policy' in forged.metadata, false);
 }
 
 console.log('digital human create-flow contract tests passed');

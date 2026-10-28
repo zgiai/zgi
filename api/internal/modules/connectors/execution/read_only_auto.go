@@ -1,8 +1,10 @@
 package execution
 
 import (
+	"context"
 	"encoding/json"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
@@ -52,4 +54,46 @@ func unattendedInvocationAllowed(request ExecutionRequest, definition catalog.De
 	}
 	input, ok := invocationInputMap(request.Input)
 	return ok && serverops.IsReadOnlyInvocation(string(request.OperationID), input)
+}
+
+type presentRequesterContextKey struct{}
+
+// WithPresentRequester records the account of the person present in an
+// interactive console conversation. It is server-authored context, never tool
+// input, and only a present owner is trusted (ADR 0028).
+func WithPresentRequester(ctx context.Context, accountID uuid.UUID) context.Context {
+	return context.WithValue(ctx, presentRequesterContextKey{}, accountID)
+}
+
+func presentRequester(ctx context.Context) uuid.UUID {
+	accountID, _ := ctx.Value(presentRequesterContextKey{}).(uuid.UUID)
+	return accountID
+}
+
+// trustedAuthorizationFresh reports whether a trusted binding is still pinned
+// to the current connection revision, credential, and contract.
+func trustedAuthorizationFresh(constraint *core.AccessConstraint, connection core.PersonalConnection, contractDigest string) bool {
+	if !constraint.Trusted() || constraint.AuthorizationConnectionRevision < 1 || constraint.AuthorizationCredentialVersion < 1 ||
+		constraint.AuthorizationContractDigest == "" {
+		return false
+	}
+	return constraint.AuthorizationConnectionRevision == connection.Revision &&
+		constraint.AuthorizationCredentialVersion == connection.CredentialVersion &&
+		constraint.AuthorizationContractDigest == contractDigest
+}
+
+// trustedOwnerInvocation reports whether an interactive SSH call runs without
+// asking because its binding is trusted and its owner is the person present.
+func trustedOwnerInvocation(ctx context.Context, request ExecutionRequest, binding core.TargetBinding, connection core.PersonalConnection, definition catalog.Definition, contractDigest string) bool {
+	return request.Target.Type == core.TargetTypeDigitalHuman && definition.IsServerOpsSSHCredentials() &&
+		presentRequester(ctx) == request.OwnerAccountID && request.OwnerAccountID != uuid.Nil &&
+		trustedAuthorizationFresh(binding.Constraint, connection, contractDigest)
+}
+
+// trustedUnattendedInvocation reports whether an unattended SSH call may run
+// in the owner's task run without a task grant (ADR 0028). The background
+// authorizer still restores the live task run and its owner.
+func trustedUnattendedInvocation(request ExecutionRequest, binding core.TargetBinding, connection core.PersonalConnection, definition catalog.Definition, contractDigest string) bool {
+	return !request.Interactive && request.Target.Type == core.TargetTypeDigitalHuman && definition.IsServerOpsSSHCredentials() &&
+		binding.Constraint.TrustedUnattended() && trustedAuthorizationFresh(binding.Constraint, connection, contractDigest)
 }

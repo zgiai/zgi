@@ -200,6 +200,22 @@ read-only. Commands that would destroy the server or cut off access, such as
 `rm -rf /`, `mkfs`, `dd` to a disk, or `reboot`, are refused outright and never
 reach approval.
 
+The card also offers full trust (ADR 0028), each option behind its own risk
+confirmation:
+
+- **Fully trusted (no asking while I am present)**: while the connection's owner
+  is the person in a console conversation, every call runs without asking,
+  changes included. Conversations by anyone else, channels, and the API still
+  ask.
+- **Fully trusted, including scheduled tasks**: additionally, the owner's
+  scheduled and background task runs make any call unattended, without a task
+  grant.
+
+Forbidden commands are still refused and every call is still recorded. Trust is
+pinned to the connection revision, credential, and contract it was given for:
+reconnecting, rotating the credential, or a new connector contract returns the
+connection to asking until the owner trusts it again.
+
 Scheduled and background runs have no one to approve (ADR 0027). A task grant
 on the DigitalHuman's SSH connection can cover only the snapshot, service
 status, journal, and shell command actions; the service write actions cannot be

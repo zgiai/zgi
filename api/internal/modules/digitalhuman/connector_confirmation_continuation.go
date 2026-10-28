@@ -74,6 +74,7 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 	s.attachAttachmentReader(&config, run, resolved, event, nil)
 	config.ConnectorRunID = run.ID.String()
 	config.ConnectorInteractive = connectorInteractive(event)
+	config.ConnectorRequesterID = connectorRequester(event)
 	location := s.runLocation(ctx, run)
 	config.UserTimezone = location.String()
 	config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + currentTimeGuidance(s.now(), location)

@@ -48,7 +48,9 @@ import type {
   DigitalHumanResourceCandidate,
 } from '@/services/types/digital-human';
 import {
+  CONNECTOR_APPROVAL_POLICIES,
   connectorApprovalPolicy,
+  connectorApprovalPolicyTrusted,
   connectorOperationIds,
   connectorSelectionChanged,
   connectorSelectionInvalid,
@@ -82,6 +84,13 @@ interface ConnectorCardsProps {
   ) => void;
 }
 
+const APPROVAL_POLICY_LABEL_KEYS = {
+  always_ask: 'bindings.connectors.approvalPolicyAlwaysAsk',
+  read_only_auto: 'bindings.connectors.approvalPolicyReadOnlyAuto',
+  trusted: 'bindings.connectors.approvalPolicyTrusted',
+  trusted_unattended: 'bindings.connectors.approvalPolicyTrustedUnattended',
+} as const satisfies Record<ConnectorApprovalPolicy, string>;
+
 export function DigitalHumanConnectorOperationDetails({
   item,
   candidate,
@@ -111,6 +120,16 @@ export function DigitalHumanConnectorOperationDetails({
   // A risky operation turns on only after the person reads and accepts its risk.
   const [riskyOperationId, setRiskyOperationId] = useState<string | null>(null);
   const riskyOperation = connector?.capabilities.find(value => value.id === riskyOperationId);
+  // Trusting a connection runs changes without asking, so it too turns on only
+  // after the person accepts its risk (ADR 0028).
+  const [riskyPolicy, setRiskyPolicy] = useState<ConnectorApprovalPolicy | null>(null);
+  const changeApprovalPolicy = (policy: ConnectorApprovalPolicy) => {
+    if (connectorApprovalPolicyTrusted(policy)) {
+      setRiskyPolicy(policy);
+      return;
+    }
+    onApprovalPolicy?.(policy);
+  };
   const changeOperation = (operationId: string, checked: boolean) => {
     if (checked && RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS.has(operationId)) {
       setRiskyOperationId(operationId);
@@ -172,23 +191,28 @@ export function DigitalHumanConnectorOperationDetails({
           <p className="font-medium">{t('bindings.connectors.approvalPolicyLabel')}</p>
           <RadioGroup
             value={connectorApprovalPolicy(item)}
-            onValueChange={value => onApprovalPolicy?.(value as ConnectorApprovalPolicy)}
+            onValueChange={value => changeApprovalPolicy(value as ConnectorApprovalPolicy)}
             className="gap-2"
           >
-            {(['always_ask', 'read_only_auto'] as const).map(policy => (
+            {CONNECTOR_APPROVAL_POLICIES.map(policy => (
               <Radio
                 key={policy}
                 value={policy}
                 disabled={!onApprovalPolicy || disabled || checking}
-                label={t(
-                  policy === 'always_ask'
-                    ? 'bindings.connectors.approvalPolicyAlwaysAsk'
-                    : 'bindings.connectors.approvalPolicyReadOnlyAuto'
-                )}
+                label={t(APPROVAL_POLICY_LABEL_KEYS[policy])}
               />
             ))}
           </RadioGroup>
           <p className="text-muted-foreground">{t('bindings.connectors.approvalPolicyHint')}</p>
+          {connectorApprovalPolicyTrusted(connectorApprovalPolicy(item)) ? (
+            <p role="status" className="text-destructive">
+              {t(
+                connectorApprovalPolicy(item) === 'trusted_unattended'
+                  ? 'bindings.connectors.trustedUnattendedActive'
+                  : 'bindings.connectors.trustedActive'
+              )}
+            </p>
+          ) : null}
         </div>
       ) : null}
       <ConfirmDialog
@@ -205,6 +229,28 @@ export function DigitalHumanConnectorOperationDetails({
         onConfirm={() => {
           if (riskyOperationId) onOperation?.(riskyOperationId, true);
           setRiskyOperationId(null);
+        }}
+      />
+      <ConfirmDialog
+        open={riskyPolicy !== null}
+        onOpenChange={open => {
+          if (!open) setRiskyPolicy(null);
+        }}
+        variant="danger"
+        title={t(
+          riskyPolicy === 'trusted_unattended'
+            ? 'bindings.connectors.trustedUnattendedTitle'
+            : 'bindings.connectors.trustedTitle'
+        )}
+        description={t(
+          riskyPolicy === 'trusted_unattended'
+            ? 'bindings.connectors.trustedUnattendedDescription'
+            : 'bindings.connectors.trustedDescription'
+        )}
+        confirmText={t('bindings.connectors.riskyOperationConfirm')}
+        onConfirm={() => {
+          if (riskyPolicy) onApprovalPolicy?.(riskyPolicy);
+          setRiskyPolicy(null);
         }}
       />
     </details>

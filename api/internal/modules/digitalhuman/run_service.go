@@ -1086,6 +1086,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		}
 	}
 	config.ConnectorInteractive = connectorInteractive(event)
+	config.ConnectorRequesterID = connectorRequester(event)
 	applyScheduledConnectorPolicy(&config, run, event)
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
@@ -1635,6 +1636,15 @@ func decodeAndVerifyRun(run *Run) (*ResolvedExecution, invocation.Event, error) 
 // connector calls. A channel member who asked can confirm by reply; a run
 // without a known requester stays non-interactive and cannot ask. Every pass
 // of the same run, first or continued, uses this one rule.
+// connectorRequester is the account in a console conversation. Channel,
+// API, and scheduled origins have no present owner, so they return empty.
+func connectorRequester(event invocation.Event) string {
+	if event.Origin.Kind != invocation.OriginManual || event.Sender.Type != invocation.PrincipalAccount {
+		return ""
+	}
+	return strings.TrimSpace(event.Sender.ID)
+}
+
 func connectorInteractive(event invocation.Event) bool {
 	return event.Origin.Kind == invocation.OriginManual ||
 		(event.Origin.Kind == invocation.OriginChannel && event.Sender.Type == invocation.PrincipalExternalUser && strings.TrimSpace(event.Sender.ID) != "")

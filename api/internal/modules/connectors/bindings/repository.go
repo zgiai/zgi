@@ -435,7 +435,7 @@ func (repository *GormRepository) upsertBinding(ctx context.Context, organizatio
 			// mode itself must support an intentional direct grant or revocation;
 			// otherwise a legacy ask_each_time row could never be changed.
 			narrowed.AuthorizationMode = prepared.Constraint.AuthorizationModeValue()
-			if narrowed.AuthorizationMode == core.AuthorizationModeDirect {
+			if narrowed.PinnedAuthorization() {
 				narrowed.AuthorizationConnectionRevision = prepared.Constraint.AuthorizationConnectionRevision
 				narrowed.AuthorizationCredentialVersion = prepared.Constraint.AuthorizationCredentialVersion
 				narrowed.AuthorizationContractDigest = prepared.Constraint.AuthorizationContractDigest

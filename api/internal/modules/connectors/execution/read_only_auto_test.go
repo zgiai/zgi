@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
 
@@ -96,5 +98,63 @@ func TestUnattendedSSHCallsUseTheTaskGrantOnlyForProvenReads(t *testing.T) {
 		if spy.calls != 0 || harness.provider.calls != 0 || harness.credentials.calls != 0 {
 			t.Fatalf("%s: a change consumed a task grant or reached the server", name)
 		}
+	}
+}
+
+func trustedHarness(t *testing.T, input map[string]any, interactive bool, mode string) *executionHarness {
+	t.Helper()
+	harness := readOnlyAutoHarness(t, serverops.ActionCommandRun, input, interactive, mode)
+	digest, err := catalog.DefinitionContractDigest(catalog.ServerOpsSSHDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraint := harness.bindings.binding.Constraint
+	constraint.AuthorizationConnectionRevision = harness.connections.connection.Revision
+	constraint.AuthorizationCredentialVersion = harness.connections.connection.CredentialVersion
+	constraint.AuthorizationContractDigest = digest
+	return harness
+}
+
+func TestTrustedBindingRunsChangesOnlyForItsPresentOwner(t *testing.T) {
+	change := map[string]any{"command": "systemctl restart nginx"}
+	owner := trustedHarness(t, change, true, core.AuthorizationModeTrusted)
+	ctx := WithPresentRequester(context.Background(), owner.pinned.Request.OwnerAccountID)
+	result, err := owner.service.InvokeConnector(ctx, owner.pinned)
+	if err != nil || result.State != ExecutionStateCompleted || owner.provider.calls != 1 {
+		t.Fatalf("trusted owner InvokeConnector() = %#v, %v", result, err)
+	}
+
+	for name, run := range map[string]func(*executionHarness) context.Context{
+		"no one present":  func(*executionHarness) context.Context { return context.Background() },
+		"another account": func(*executionHarness) context.Context { return WithPresentRequester(context.Background(), uuid.New()) },
+		"stale credential": func(h *executionHarness) context.Context {
+			h.connections.connection.CredentialVersion++
+			return WithPresentRequester(context.Background(), h.pinned.Request.OwnerAccountID)
+		},
+	} {
+		harness := trustedHarness(t, change, true, core.AuthorizationModeTrusted)
+		result, err := harness.service.InvokeConnector(run(harness), harness.pinned)
+		if err != nil || result.State != ExecutionStateRequiresConfirmation || harness.provider.calls != 0 {
+			t.Fatalf("%s: InvokeConnector() = %#v, %v", name, result, err)
+		}
+	}
+}
+
+func TestTrustedUnattendedBindingRunsChangesInTheOwnersTaskRun(t *testing.T) {
+	change := map[string]any{"command": "systemctl restart nginx"}
+	harness := trustedHarness(t, change, false, core.AuthorizationModeTrustedUnattended)
+	spy := &backgroundAuthorizerSpy{allow: true}
+	harness.service.WithBackgroundAuthorizer(spy)
+	result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+	if err != nil || result.State != ExecutionStateCompleted || harness.provider.calls != 1 || spy.calls != 1 || !spy.request.Trusted {
+		t.Fatalf("trusted unattended InvokeConnector() = %#v, %v (spy %#v)", result, err, spy)
+	}
+
+	interactiveOnly := trustedHarness(t, change, false, core.AuthorizationModeTrusted)
+	interactiveSpy := &backgroundAuthorizerSpy{allow: true}
+	interactiveOnly.service.WithBackgroundAuthorizer(interactiveSpy)
+	if _, err := interactiveOnly.service.InvokeConnector(context.Background(), interactiveOnly.pinned); !core.IsErrorCode(err, core.ErrorCodeConfirmationRequired) ||
+		interactiveOnly.provider.calls != 0 || interactiveSpy.calls != 0 {
+		t.Fatalf("interactive-only trust ran an unattended change: %v", err)
 	}
 }

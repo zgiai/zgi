@@ -1004,6 +1004,16 @@ const messages = {
       approvalPolicyLabel: 'Before each call',
       approvalPolicyAlwaysAsk: 'Always ask me',
       approvalPolicyReadOnlyAuto: 'Run read-only commands without asking',
+      approvalPolicyTrusted: 'Fully trusted (no asking while I am present)',
+      approvalPolicyTrustedUnattended: 'Fully trusted, including scheduled tasks',
+      trustedTitle: 'Fully trust this server connection?',
+      trustedDescription:
+        'Once enabled, while you yourself are in a console conversation, the digital human runs any command or service operation without asking, including changes, deletions, restarts, and deploys. The platform still refuses destructive commands such as rm -rf /, mkfs, and reboot, and records every call. Conversations by others, channels, and the API still ask, and scheduled tasks still only inspect. Reconnecting or updating the credential returns it to asking every time. You are responsible for the outcome; enable it only on a test server or a dedicated account with limited permissions.',
+      trustedUnattendedTitle: 'Fully trust this connection and let scheduled tasks change the server?',
+      trustedUnattendedDescription:
+        'Besides not asking while you are present, your scheduled and background tasks also run any command or service operation unattended, including changes, deletions, restarts, and deploys, with no one there to stop a mistake. The platform still refuses destructive commands such as rm -rf /, mkfs, and reboot, and records every call. Conversations by others, channels, and the API still ask. Reconnecting or updating the credential returns it to asking every time. You are responsible for the outcome; enable it only on a test server or a dedicated account with limited permissions.',
+      trustedActive: 'Fully trusted: commands run without asking while you are present.',
+      trustedUnattendedActive: 'Fully trusted, including scheduled tasks: commands run without asking while you are present and in scheduled tasks.',
       approvalPolicyHint:
         'Read-only commands are ones the platform can prove cannot change the server, such as checking service status, listing files, or reading logs. Commands that read keys, .env, or other credential files still ask, and so does every change or anything the platform cannot prove read-only. Scheduled runs never run commands on their own.',
       replace: 'Replace connection',

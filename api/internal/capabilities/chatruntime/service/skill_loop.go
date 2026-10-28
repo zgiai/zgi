@@ -2044,6 +2044,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		executionContext.ConnectorIdentityResolver = s.connectorDigitalHumanRuntime
 		executionContext.ConnectorRunID = strings.TrimSpace(prepared.RunConfig.ConnectorRunID)
 		executionContext.ConnectorInteractive = prepared.RunConfig.ConnectorInteractive
+		executionContext.ConnectorRequesterID = strings.TrimSpace(prepared.RunConfig.ConnectorRequesterID)
 		if prepared.Caller.ID != nil {
 			executionContext.AppID = prepared.Caller.ID.String()
 		}
