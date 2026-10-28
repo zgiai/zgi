@@ -32,4 +32,7 @@ assert.deepEqual(
 const panel = readFileSync('src/components/digital-human/digital-human-task-panel.tsx', 'utf8');
 assert.match(panel, /title === 'shared' \? <TaskServerWatch task=\{selected\} \/> : null/);
 
+const taskCenter = readFileSync('src/components/digital-human/digital-human-tasks.tsx', 'utf8');
+assert.match(taskCenter, /<TaskServerWatch task=\{task\} \/>/);
+
 console.log('DigitalHuman server watch checks passed');

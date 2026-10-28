@@ -63,6 +63,7 @@ import {
   TaskReportDigest,
   TaskReportReview,
 } from '@/components/digital-human/digital-human-task-destinations';
+import { TaskServerWatch } from '@/components/digital-human/digital-human-task-server-watch';
 import { RequesterOrigin, TaskRequesterLabelButton, TaskRequesterPicker, requesterName } from '@/components/digital-human/digital-human-task-requesters';
 import { DigitalHumanRunTimeline } from '@/components/digital-human/digital-human-run-timeline';
 import { NotificationChannelManager } from '@/components/notifications/notification-channel-manager';
@@ -822,6 +823,7 @@ export function TaskDetailSheet({
               <TaskReportDestinations task={task} onChange={changeChannels} />
               <TaskReportDigest task={task} onChange={changeDigest} />
               <TaskReportReview task={task} onChange={task.can_change === false ? undefined : changeReview} />
+              <TaskServerWatch task={task} />
               {/* What the task produced comes first; how it runs is folded away. */}
               <Collapsible>
                 <CollapsibleTrigger asChild>
