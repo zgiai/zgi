@@ -158,3 +158,55 @@ func TestTrustedUnattendedBindingRunsChangesInTheOwnersTaskRun(t *testing.T) {
 		t.Fatalf("interactive-only trust ran an unattended change: %v", err)
 	}
 }
+
+type commandRuleSourceStub struct {
+	rules []serverops.CommandRule
+	err   error
+}
+
+func (s commandRuleSourceStub) CommandRules(context.Context, uuid.UUID) ([]serverops.CommandRule, error) {
+	return s.rules, s.err
+}
+
+func TestOrganizationCommandRulesComeBeforeEveryApprovalPolicy(t *testing.T) {
+	rules := commandRuleSourceStub{rules: []serverops.CommandRule{
+		{Prefix: "touch /tmp/forbidden", Action: serverops.RuleForbid},
+		{Prefix: "systemctl restart", Action: serverops.RuleAsk},
+		{Prefix: "df", Action: serverops.RuleAsk},
+	}}
+
+	forbidden := trustedHarness(t, map[string]any{"command": "touch /tmp/forbidden"}, true, core.AuthorizationModeTrusted)
+	forbidden.service.WithCommandRules(rules)
+	ctx := WithPresentRequester(context.Background(), forbidden.pinned.Request.OwnerAccountID)
+	if _, err := forbidden.service.InvokeConnector(ctx, forbidden.pinned); !core.IsErrorCode(err, core.ErrorCodeCommandForbidden) || forbidden.provider.calls != 0 {
+		t.Fatalf("a forbidden command under full trust = %v (provider calls %d)", err, forbidden.provider.calls)
+	}
+
+	asked := trustedHarness(t, map[string]any{"command": "systemctl restart nginx"}, true, core.AuthorizationModeTrusted)
+	asked.service.WithCommandRules(rules)
+	result, err := asked.service.InvokeConnector(WithPresentRequester(context.Background(), asked.pinned.Request.OwnerAccountID), asked.pinned)
+	if err != nil || result.State != ExecutionStateRequiresConfirmation || asked.provider.calls != 0 {
+		t.Fatalf("an ask rule under full trust = %#v, %v", result, err)
+	}
+
+	readOnly := readOnlyAutoHarness(t, serverops.ActionCommandRun, map[string]any{"command": "df -h"}, true, core.AuthorizationModeReadOnlyAuto)
+	readOnly.service.WithCommandRules(rules)
+	if result, err := readOnly.service.InvokeConnector(context.Background(), readOnly.pinned); err != nil || result.State != ExecutionStateRequiresConfirmation {
+		t.Fatalf("an ask rule on a read-only command = %#v, %v", result, err)
+	}
+
+	unattended := trustedHarness(t, map[string]any{"command": "systemctl restart nginx"}, false, core.AuthorizationModeTrustedUnattended)
+	unattended.service.WithCommandRules(rules)
+	spy := &backgroundAuthorizerSpy{allow: true}
+	unattended.service.WithBackgroundAuthorizer(spy)
+	if _, err := unattended.service.InvokeConnector(context.Background(), unattended.pinned); !core.IsErrorCode(err, core.ErrorCodeConfirmationRequired) ||
+		unattended.provider.calls != 0 || spy.calls != 0 {
+		t.Fatalf("an ask rule in a trusted task run = %v (spy %d)", err, spy.calls)
+	}
+
+	failing := readOnlyAutoHarness(t, serverops.ActionCommandRun, map[string]any{"command": "df -h"}, true, core.AuthorizationModeReadOnlyAuto)
+	failing.service.WithCommandRules(commandRuleSourceStub{err: context.DeadlineExceeded})
+	if _, err := failing.service.InvokeConnector(context.Background(), failing.pinned); err == nil || failing.provider.calls != 0 {
+		t.Fatal("an unreadable rule store did not fail closed")
+	}
+}

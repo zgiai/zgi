@@ -216,6 +216,21 @@ pinned to the connection revision, credential, and contract it was given for:
 reconnecting, rotating the credential, or a new connector contract returns the
 connection to asking until the owner trusts it again.
 
+Organization owners and administrators can add server command rules on the
+dashboard's organization settings page (ADR 0029). A rule is a command prefix,
+such as `git push` or `systemctl restart postgresql`, with an action:
+
+- **Forbid**: the command is refused before approval, whatever the connection's
+  policy.
+- **Always ask**: the command needs a person's approval even when the
+  connection runs read-only commands without asking or is fully trusted, so it
+  never runs in a scheduled task.
+
+A rule matches the program and then its other words in order, through wrappers
+such as `sudo` and through the fixed service actions. A command that cannot be
+parsed is matched on its words, erring toward matching. Rules only tighten; they
+never let a command run without asking.
+
 Scheduled and background runs have no one to approve (ADR 0027). A task grant
 on the DigitalHuman's SSH connection can cover only the snapshot, service
 status, journal, and shell command actions; the service write actions cannot be

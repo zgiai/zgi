@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
 )
@@ -43,6 +44,19 @@ type BackgroundAuthorizationRequest struct {
 	// 0028): the live task run and its owner are still restored, but no task
 	// grant is consumed.
 	Trusted bool
+}
+
+// CommandRuleSource returns an organization's server command rules (ADR
+// 0029).
+type CommandRuleSource interface {
+	CommandRules(context.Context, uuid.UUID) ([]serverops.CommandRule, error)
+}
+
+// WithCommandRules configures the organization rules every SSH call is checked
+// against. Nil checks none.
+func (s *Service) WithCommandRules(source CommandRuleSource) *Service {
+	s.commandRules = source
+	return s
 }
 
 // WithBackgroundAuthorizer configures the service at composition time. Nil

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	connectoraudit "github.com/zgiai/zgi/api/internal/modules/connectors/audit"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
@@ -162,6 +163,7 @@ type ExecutionResult struct {
 // Service executes only a durably pinned Connector-native operation.
 type Service struct {
 	backgroundAuthorizer BackgroundAuthorizer
+	commandRules         CommandRuleSource
 	resultProjector      *apptransport.Projector
 	catalog              DefinitionCatalog
 	bindings             BindingReader
@@ -343,11 +345,22 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	// ADR 0026 applies to interactive runs only; unattended runs keep task
 	// authorization. A call already waiting on its approval card keeps that
 	// card, so the person's decision still settles it after a policy change.
-	if risk == RiskHigh && request.Interactive && request.Confirmation == nil && (readOnlyAutoInvocation(request, binding, definition) ||
+	// The organization's command rules come before every approval policy:
+	// a forbidden command never runs, and an ask rule always needs a person.
+	ruleAction, err := service.commandRuleAction(ctx, request, definition)
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	if ruleAction == serverops.RuleForbid {
+		return ExecutionResult{}, connectorError(core.ErrorCodeCommandForbidden, false)
+	}
+	adminAsks := ruleAction == serverops.RuleAsk
+	if risk == RiskHigh && request.Interactive && request.Confirmation == nil && !adminAsks && (readOnlyAutoInvocation(request, binding, definition) ||
 		trustedOwnerInvocation(ctx, request, binding, connection, definition, acceptedOperation.ContractDigest)) {
 		risk = RiskTrustedLow
 	}
-	trustedUnattended := request.Confirmation == nil && trustedUnattendedInvocation(request, binding, connection, definition, acceptedOperation.ContractDigest)
+	trustedUnattended := request.Confirmation == nil && !adminAsks &&
+		trustedUnattendedInvocation(request, binding, connection, definition, acceptedOperation.ContractDigest)
 	confirmation := request.Confirmation
 	requiresConfirmedFinalization := false
 	if confirmation != nil && confirmation.RouteReceipt != pinned.Receipt {
@@ -367,7 +380,7 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 	backgroundAuthorized := false
 	if (digitalHuman == digitalHumanApprovalNonInteractiveBlocked ||
 		(digitalHuman == digitalHumanApprovalFailClosed && risk == RiskTrustedLow && !request.Interactive && confirmation == nil)) &&
-		(trustedUnattended || unattendedInvocationAllowed(request, definition)) {
+		(trustedUnattended || (!adminAsks && unattendedInvocationAllowed(request, definition))) {
 		backgroundAuthorized, err = service.authorizeBackground(ctx, pinned, binding, connection, acceptedOperation, trustedUnattended)
 		if err != nil {
 			return ExecutionResult{}, preserveError(err, core.ErrorCodeAccessDenied)

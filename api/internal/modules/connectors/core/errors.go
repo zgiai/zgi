@@ -26,6 +26,9 @@ const (
 	ErrorCodeApplicationNotReady   ErrorCode = "connector_application_not_ready"
 	ErrorCodeRateLimited           ErrorCode = "connector_rate_limited"
 	ErrorCodeFlowExpired           ErrorCode = "connector_flow_expired"
+	// ErrorCodeCommandForbidden is a server command the organization's rules
+	// forbid (ADR 0029).
+	ErrorCodeCommandForbidden ErrorCode = "connector_command_forbidden"
 
 	// Word-order aliases keep call sites readable without changing the stable
 	// wire values.
@@ -50,7 +53,7 @@ func (code ErrorCode) Valid() bool {
 		ErrorCodeWeixinAlreadyBound,
 		ErrorCodeWeixinRegionUnsupported,
 		ErrorCodeInternal, ErrorCodeInvalidAppCredentials, ErrorCodePermissionMissing,
-		ErrorCodeResourceAccessDenied, ErrorCodeApplicationNotReady, ErrorCodeRateLimited, ErrorCodeFlowExpired,
+		ErrorCodeResourceAccessDenied, ErrorCodeApplicationNotReady, ErrorCodeRateLimited, ErrorCodeFlowExpired, ErrorCodeCommandForbidden,
 		ErrorCodeVerificationWaiting, ErrorCodeProviderResponseUnrecognized, ErrorCodeVerificationUncertain,
 		ErrorCodeMailAuthenticationRejected, ErrorCodeMailAppPasswordRequired, ErrorCodeMailTLSRequired,
 		ErrorCodeMailPolicyRestricted, ErrorCodeMailReferenceExpired, ErrorCodeMailSizeExceeded, ErrorCodeMailRecipientRejected, ErrorCodeMailSubmissionRejected,

@@ -97,3 +97,20 @@ func trustedUnattendedInvocation(request ExecutionRequest, binding core.TargetBi
 	return !request.Interactive && request.Target.Type == core.TargetTypeDigitalHuman && definition.IsServerOpsSSHCredentials() &&
 		binding.Constraint.TrustedUnattended() && trustedAuthorizationFresh(binding.Constraint, connection, contractDigest)
 }
+
+// commandRuleAction matches an SSH call against its organization's command
+// rules (ADR 0029). A rule store that cannot be read fails closed.
+func (service *Service) commandRuleAction(ctx context.Context, request ExecutionRequest, definition catalog.Definition) (serverops.RuleAction, error) {
+	if service.commandRules == nil || !definition.IsServerOpsSSHCredentials() {
+		return serverops.RuleNone, nil
+	}
+	rules, err := service.commandRules.CommandRules(ctx, request.OrganizationID)
+	if err != nil {
+		return serverops.RuleNone, connectorError(core.ErrorCodeConnectorUnavailable, true)
+	}
+	input, ok := invocationInputMap(request.Input)
+	if !ok {
+		return serverops.RuleNone, connectorError(core.ErrorCodeInvalidInput, false)
+	}
+	return serverops.MatchCommandRules(string(request.OperationID), input, rules), nil
+}

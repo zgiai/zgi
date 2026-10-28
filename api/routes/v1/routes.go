@@ -419,6 +419,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		confirmationDeps.DigitalHuman = digitalHumanRuntime.Runtime
 	}
 	RegisterConnectorRuntimeConfirmationRoutes(v1, confirmationDeps)
+	RegisterConnectorCommandRuleRoutes(v1, serviceContainer.GetConnectorCommandRules(), accountService)
 	// End users connect their own keys for per-user DigitalHuman Connector
 	// slots through the same verified key setup as members (ADR 0007).
 	if connectionService := serviceContainer.GetConnectorConnectionService(); connectionService != nil {

@@ -29,6 +29,7 @@ import (
 	connectorbackgroundauth "github.com/zgiai/zgi/api/internal/modules/connectors/backgroundauth"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
+	connectorcommandrules "github.com/zgiai/zgi/api/internal/modules/connectors/commandrules"
 	connectorconnections "github.com/zgiai/zgi/api/internal/modules/connectors/connections"
 	connectorcredentials "github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
@@ -276,6 +277,7 @@ type ServiceContainer struct {
 	digitalHumanCredentialCipher         credentialcrypto.CredentialCipher
 	connectorCandidateVerifier           *connectorproviders.Runtime
 	connectorServerOpsService            *serverops.Service
+	connectorCommandRules                *connectorcommandrules.Service
 	connectorServerOpsSSHClient          *connectorserveropsssh.Client
 	connectorRiskResolver                *connectorexecution.TrustedRiskResolver
 	connectorExecutionService            *connectorexecution.Service
@@ -1481,9 +1483,19 @@ func (c *ServiceContainer) GetConnectorExecutionService() *connectorexecution.Se
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector execution service: %v", err))
 		}
-		c.connectorExecutionService = executionService.WithBackgroundAuthorizer(connectorBackgroundAuthorizationProxy{container: c})
+		c.connectorExecutionService = executionService.WithBackgroundAuthorizer(connectorBackgroundAuthorizationProxy{container: c}).
+			WithCommandRules(c.GetConnectorCommandRules())
 	}
 	return c.connectorExecutionService
+}
+
+// GetConnectorCommandRules returns the organization server command rules
+// (ADR 0029).
+func (c *ServiceContainer) GetConnectorCommandRules() *connectorcommandrules.Service {
+	if c.connectorCommandRules == nil {
+		c.connectorCommandRules = connectorcommandrules.NewService(c.db)
+	}
+	return c.connectorCommandRules
 }
 
 // GetConnectorExecutionRouter owns the single native invocation claim.

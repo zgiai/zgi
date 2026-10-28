@@ -964,6 +964,24 @@ const messages = {
       },
       updateSuccess: 'Organization updated',
       updateError: 'Failed to update organization',
+      commandRules: {
+        title: 'Server command rules',
+        description:
+          'Apply to every command this organization’s digital humans run over SSH. Rules only tighten: a forbidden command never runs, and an always-ask command needs a person’s approval even on a connection set to run read-only commands or fully trusted, so it never runs in a scheduled task.',
+        prefix: 'Command prefix',
+        prefixPlaceholder: 'For example: git push, systemctl restart nginx, docker rm',
+        action: 'Action',
+        forbid: 'Forbid',
+        ask: 'Always ask',
+        note: 'Note (optional)',
+        add: 'Add rule',
+        matching:
+          'A rule matches the program and then its other words in order, with arguments allowed in between, so “git push” also matches “git -C /srv/app push --force”. It also applies through wrappers such as sudo or nohup and to the fixed actions such as restarting a service. A command that cannot be parsed is matched on its words, erring toward matching.',
+        empty: 'No rules yet.',
+        loadFailed: 'The command rules could not be loaded. Try again later.',
+        createFailed: 'The rule could not be added: the prefix may already exist, or the rule limit is reached.',
+        remove: 'Remove rule {prefix}',
+      },
       adminManagement: {
         title: 'Administrator Management',
         description:

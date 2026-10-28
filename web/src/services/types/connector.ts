@@ -664,6 +664,24 @@ export interface IssueConnectorBackgroundGrantRequest {
   max_invocations: number;
 }
 
+/** An organization rule for server commands (ADR 0029). */
+export type ConnectorCommandRuleAction = 'forbid' | 'ask';
+
+export interface ConnectorCommandRule {
+  id: string;
+  prefix: string;
+  action: ConnectorCommandRuleAction;
+  note: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface CreateConnectorCommandRuleRequest {
+  prefix: string;
+  action: ConnectorCommandRuleAction;
+  note?: string;
+}
+
 export interface ConnectorBackgroundGrant {
   id: string;
   employee_id: string;

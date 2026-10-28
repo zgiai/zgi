@@ -2,6 +2,8 @@ import { BaseService } from '@/lib/http/services';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   ConnectorBackgroundGrant,
+  ConnectorCommandRule,
+  CreateConnectorCommandRuleRequest,
   IssueConnectorBackgroundGrantRequest,
   ConnectorCatalogItem,
   ConnectorSocialEventPage,
@@ -57,6 +59,29 @@ class ConnectorService extends BaseService {
       {
         retryAttemptsOverride: 0,
       }
+    );
+  }
+
+  getCommandRules(): Promise<
+    ApiResponseData<{ items: ConnectorCommandRule[]; can_manage: boolean }>
+  > {
+    return this.request('get', '/connector-command-rules');
+  }
+
+  createCommandRule(
+    request: CreateConnectorCommandRuleRequest
+  ): Promise<ApiResponseData<ConnectorCommandRule>> {
+    return this.request('post', '/connector-command-rules', request, {
+      retryAttemptsOverride: 0,
+    });
+  }
+
+  deleteCommandRule(ruleId: string): Promise<ApiResponseData<unknown>> {
+    return this.request(
+      'delete',
+      `/connector-command-rules/${encodeURIComponent(ruleId)}`,
+      undefined,
+      { retryAttemptsOverride: 0 }
     );
   }
 
