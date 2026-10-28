@@ -1467,7 +1467,7 @@ func (h *OrganizationHandler) GetUnjoinedWorkspaces(c *gin.Context) {
 		response.Fail(c, response.ErrAccountNotFound)
 		return
 	}
-	isTargetMember, err := h.organizationService.IsOrganizationMember(c.Request.Context(), organizationID, accountID)
+	isTargetMember, err := h.organizationService.HasOrganizationMembership(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -1521,7 +1521,7 @@ func (h *OrganizationHandler) GetJoinedWorkspaces(c *gin.Context) {
 	if !h.requireOrganizationMemberReadOrAdminForTarget(c, organizationID, currentAccountID, accountID) {
 		return
 	}
-	isTargetMember, err := h.organizationService.IsOrganizationMember(c.Request.Context(), organizationID, accountID)
+	isTargetMember, err := h.organizationService.HasOrganizationMembership(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -1562,7 +1562,7 @@ func (h *OrganizationHandler) GetJoinedWorkspacesRoles(c *gin.Context) {
 	if !h.requireOrganizationMemberReadOrAdminForTarget(c, organizationID, currentAccountID, accountID) {
 		return
 	}
-	isTargetMember, err := h.organizationService.IsOrganizationMember(c.Request.Context(), organizationID, accountID)
+	isTargetMember, err := h.organizationService.HasOrganizationMembership(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return

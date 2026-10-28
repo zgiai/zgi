@@ -1792,14 +1792,18 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 
 	db := s.organizationRepo.GetDB()
 
-	organizationRole := model.OrganizationRoleNormal
+	var organizationMember struct {
+		Role   model.OrganizationRole         `gorm:"column:role"`
+		Status model.OrganizationMemberStatus `gorm:"column:status"`
+	}
 	if err := db.WithContext(ctx).
 		Table("members").
-		Select("role").
+		Select("role, status").
 		Where("organization_id = ? AND account_id = ?", organizationID, targetAccountID).
-		Scan(&organizationRole).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		Scan(&organizationMember).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("failed to get organization role: %w", err)
 	}
+	organizationRole := organizationMember.Role
 	if organizationRole == "" {
 		organizationRole = model.OrganizationRoleNormal
 	}
@@ -1813,6 +1817,23 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 	}
 	if workspace == nil {
 		return nil, fmt.Errorf("workspace not found")
+	}
+
+	if accountID == targetAccountID &&
+		organizationMember.Status != "" && organizationMember.Status != model.OrganizationMemberStatusActive {
+		// A disabled member keeps its workspace rows for re-enabling, but its own
+		// permission snapshot holds no effective permissions while disabled.
+		// Administrators reading the member keep seeing the stored assignment.
+		result := &shared_dto.WorkspaceMemberPermissionsResponse{
+			OrganizationID:   organizationID,
+			WorkspaceID:      workspaceID,
+			WorkspaceName:    workspace.Name,
+			AccountID:        targetAccountID,
+			OrganizationRole: string(organizationRole),
+			Permissions:      []string{},
+		}
+		workspacecache.SetWorkspaceMemberPermissions(ctx, cacheToken, result)
+		return result, nil
 	}
 
 	var workspaceRoleID *string
@@ -3155,10 +3176,52 @@ func (s *organizationService) getUserWorkspacesByOrganizationIDWithPagination(ct
 
 func (s *organizationService) checkOrganizationAdmin(ctx context.Context, accountID, organizationID string) bool {
 	join, err := s.organizationRepo.GetAccountJoin(ctx, organizationID, accountID)
-	if err != nil {
+	if err != nil || join == nil {
+		return false
+	}
+	if !organizationMemberIsActive(join) {
 		return false
 	}
 	return join.Role == model.OrganizationRoleOwner || join.Role == model.OrganizationRoleAdmin
+}
+
+// organizationMemberIsActive reports whether an organization membership may
+// exercise any organization or workspace authority. The status column defaults
+// to active, so an unset status is treated as active.
+func organizationMemberIsActive(join *model.OrganizationMember) bool {
+	if join == nil {
+		return false
+	}
+	return join.Status == "" || join.Status == model.OrganizationMemberStatusActive
+}
+
+// organizationMembershipDisabled reports whether the account has an organization
+// membership row that is not active. Disabled members must not keep workspace
+// access through their remaining workspace memberships or an existing session.
+func (s *organizationService) organizationMembershipDisabled(ctx context.Context, organizationID, accountID string) (bool, error) {
+	_, disabled, err := s.resolveOrganizationAuthority(ctx, organizationID, accountID)
+	return disabled, err
+}
+
+// resolveOrganizationAuthority loads the caller's organization membership once
+// and reports whether it grants organization-wide workspace authority and
+// whether it is disabled. A missing membership row is neither admin nor
+// disabled; workspace membership then decides access.
+func (s *organizationService) resolveOrganizationAuthority(ctx context.Context, organizationID, accountID string) (isAdmin bool, disabled bool, err error) {
+	join, err := s.organizationRepo.GetAccountJoin(ctx, organizationID, accountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("failed to check organization membership status: %w", err)
+	}
+	if join == nil {
+		return false, false, nil
+	}
+	if !organizationMemberIsActive(join) {
+		return false, true, nil
+	}
+	return join.Role == model.OrganizationRoleOwner || join.Role == model.OrganizationRoleAdmin, false, nil
 }
 
 func organizationRoleHasWorkspaceAuthority(role model.OrganizationRole) bool {
@@ -3230,7 +3293,18 @@ func (s *organizationService) IsOrganizationMember(ctx context.Context, organiza
 	if join == nil {
 		return false, nil
 	}
-	return true, nil
+	return organizationMemberIsActive(join), nil
+}
+
+func (s *organizationService) HasOrganizationMembership(ctx context.Context, organizationID, accountID string) (bool, error) {
+	join, err := s.organizationRepo.GetAccountJoin(ctx, organizationID, accountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check organization membership: %w", err)
+	}
+	return join != nil, nil
 }
 
 func (s *organizationService) ExistsMemberByName(ctx context.Context, organizationID string, name string, excludeAccountID string) (bool, error) {
@@ -3497,6 +3571,9 @@ func (s *organizationService) GetUserOrganizationsByAccount(ctx context.Context,
 	joinedTenantIDsSubquery := db.WithContext(ctx).Table("workspace_members").
 		Select("workspace_id").
 		Where("account_id = ?", accountID)
+	disabledOrganizationIDsSubquery := db.WithContext(ctx).Table("members").
+		Select("organization_id").
+		Where("account_id = ? AND status = ?", accountID, model.OrganizationMemberStatusInactive)
 
 	var organizations []*model.Organization
 	var total int64
@@ -3504,6 +3581,7 @@ func (s *organizationService) GetUserOrganizationsByAccount(ctx context.Context,
 	err := db.WithContext(ctx).Model(&model.Organization{}).
 		Joins("JOIN workspaces ON organizations.id = workspaces.organization_id").
 		Where("workspaces.id IN (?)", joinedTenantIDsSubquery).
+		Where("organizations.id NOT IN (?)", disabledOrganizationIDsSubquery).
 		Group("organizations.id").
 		Count(&total).Error
 	if err != nil {
@@ -3513,6 +3591,7 @@ func (s *organizationService) GetUserOrganizationsByAccount(ctx context.Context,
 	err = db.WithContext(ctx).
 		Joins("JOIN workspaces ON organizations.id = workspaces.organization_id").
 		Where("workspaces.id IN (?)", joinedTenantIDsSubquery).
+		Where("organizations.id NOT IN (?)", disabledOrganizationIDsSubquery).
 		Group("organizations.id").
 		Order("organizations.created_at DESC").
 		Offset(offset).
@@ -4443,7 +4522,14 @@ func (s *organizationService) CheckWorkspacePermission(ctx context.Context, orga
 		return false, nil
 	}
 
-	if s.checkOrganizationAdmin(ctx, accountID, organization.ID) {
+	isOrganizationAdmin, disabled, err := s.resolveOrganizationAuthority(ctx, organization.ID, accountID)
+	if err != nil {
+		return false, err
+	}
+	if disabled {
+		return false, nil
+	}
+	if isOrganizationAdmin {
 		return true, nil
 	}
 
@@ -4493,7 +4579,14 @@ func (s *organizationService) CheckWorkspaceOrganizationAnyPermission(
 		return false, nil
 	}
 
-	if s.checkOrganizationAdmin(ctx, accountID, organization.ID) {
+	isOrganizationAdmin, disabled, err := s.resolveOrganizationAuthority(ctx, organization.ID, accountID)
+	if err != nil {
+		return false, err
+	}
+	if disabled {
+		return false, nil
+	}
+	if isOrganizationAdmin {
 		return true, nil
 	}
 
@@ -4583,9 +4676,17 @@ func (s *organizationService) getWorkspacesByAnyPermissionInOrganization(
 		return []*model.Workspace{}, nil
 	}
 
+	isOrganizationAdmin, disabled, err := s.resolveOrganizationAuthority(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if disabled {
+		return []*model.Workspace{}, nil
+	}
+
 	db := s.organizationRepo.GetDB()
 
-	if s.checkOrganizationAdmin(ctx, accountID, organizationID) {
+	if isOrganizationAdmin {
 		var workspaces []*model.Workspace
 		if err := db.WithContext(ctx).
 			Where("organization_id = ?", organizationID).
@@ -4852,6 +4953,9 @@ func (s *organizationService) GetOrganizationDatasetsPaginated(ctx context.Conte
 }
 
 func (s *organizationService) IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
+	if disabled, err := s.organizationMembershipDisabled(ctx, organizationID, accountID); err != nil || disabled {
+		return false, nil
+	}
 	userRole, err := s.GetUserOrganizationRole(ctx, organizationID, accountID)
 	if err != nil {
 		return false, nil
@@ -4875,7 +4979,15 @@ func (s *organizationService) ListWorkspaceIDsByPermission(
 		return nil, fmt.Errorf("failed to get organization: %w", err)
 	}
 
-	if s.checkOrganizationAdmin(ctx, accountID, organizationID) {
+	isOrganizationAdmin, disabled, err := s.resolveOrganizationAuthority(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if disabled {
+		return []string{}, nil
+	}
+
+	if isOrganizationAdmin {
 		var workspaceIDs []string
 		if err := s.organizationRepo.GetDB().WithContext(ctx).
 			Model(&model.Workspace{}).

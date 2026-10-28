@@ -333,7 +333,7 @@ func TestAgentsHandlerMutationsRequireManageBeforeBindingRequest(t *testing.T) {
 
 			router.ServeHTTP(w, req)
 
-			require.Equal(t, http.StatusOK, w.Code)
+			require.Equal(t, http.StatusForbidden, w.Code)
 			var body map[string]interface{}
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 			require.Equal(t, "403001", body["code"])
@@ -365,7 +365,7 @@ func TestAgentsHandlerChatAgentRequiresManageBeforeBindingRequest(t *testing.T) 
 
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusForbidden, w.Code)
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	require.Equal(t, "403001", body["code"])
@@ -394,7 +394,7 @@ func TestAgentsHandlerWorkflowBindingCandidatesRequireManageBeforeServiceCall(t 
 
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusForbidden, w.Code)
 	var body map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	require.Equal(t, "403001", body["code"])
