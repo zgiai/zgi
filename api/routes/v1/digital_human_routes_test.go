@@ -129,7 +129,7 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 	})
 
 	routes := router.Routes()
-	if got, want := len(routes), 103; got != want {
+	if got, want := len(routes), 105; got != want {
 		t.Fatalf("registered route count = %d, want %d", got, want)
 	}
 	want := map[string]bool{
@@ -142,6 +142,8 @@ func TestRegisterDigitalHumanRoutesRegistersLifecycleAPI(t *testing.T) {
 		"GET /console/api/digital-humans":                                                                                                           false,
 		"GET /console/api/digital-humans/:id":                                                                                                       false,
 		"PATCH /console/api/digital-humans/:id":                                                                                                     false,
+		"GET /console/api/digital-humans/:id/setup":                                                                                                 false,
+		"GET /console/api/digital-human-templates":                                                                                                  false,
 		"GET /console/api/digital-humans/:id/draft":                                                                                                 false,
 		"PATCH /console/api/digital-humans/:id/draft":                                                                                               false,
 		"POST /console/api/digital-humans/:id/publish":                                                                                              false,
