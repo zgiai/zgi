@@ -87,6 +87,12 @@ func (s *service) RecordConnectorConfirmationResolution(
 		if applyErr != nil {
 			return applyErr
 		}
+		if !added {
+			// The message already carries this resolution. A DigitalHuman turn
+			// may have continued past it and be streaming or waiting on another
+			// confirmation; a repeated projection changes nothing.
+			return nil
+		}
 		switch message.Status {
 		case runtimemodel.MessageStatusWaitingApproval:
 			if command.RememberForSession {
@@ -115,10 +121,6 @@ func (s *service) RecordConnectorConfirmationResolution(
 				}
 			}
 			return nil
-		case runtimemodel.MessageStatusCompleted:
-			if !added {
-				return nil
-			}
 		}
 		return connectorResolutionError(connectorcore.ErrorCodeConflict)
 	})
