@@ -44,11 +44,29 @@ func TestRunCommandReturnsANonZeroExitAsAResult(t *testing.T) {
 	}
 }
 
+func TestRunCommandReportsItsOwnTimeoutAsAResult(t *testing.T) {
+	factory := &serviceFakeFactory{
+		result: sshRunResult{Stdout: []byte("Fetching origin\n")},
+		runErr: fmt.Errorf("serverops ssh: run command: %w", context.DeadlineExceeded),
+	}
+	result, err := newFakeService(t, factory).RunCommand(context.Background(), serviceTestConnection(), "git fetch --all")
+	if err != nil || result.ExitCode != commandTimeoutExitCode || result.Stdout != "Fetching origin\n" ||
+		!strings.Contains(result.Stderr, "stopped after 45 seconds") {
+		t.Fatalf("RunCommand() = %#v, %v", result, err)
+	}
+}
+
 func TestRunCommandKeepsTransportFailuresAsErrors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	factory := &serviceFakeFactory{runErr: fmt.Errorf("serverops ssh: run command: %w", context.DeadlineExceeded)}
-	_, err := newFakeService(t, factory).RunCommand(context.Background(), serviceTestConnection(), "sleep 600")
+	_, err := newFakeService(t, factory).RunCommand(ctx, serviceTestConnection(), "sleep 600")
 	if !errors.Is(err, ErrTimeout) {
-		t.Fatalf("error = %v, want ErrTimeout", err)
+		t.Fatalf("a cancelled caller: error = %v, want ErrTimeout", err)
+	}
+	factory = &serviceFakeFactory{runErr: errors.New("serverops ssh: connection reset")}
+	if _, err := newFakeService(t, factory).RunCommand(context.Background(), serviceTestConnection(), "uptime"); err == nil {
+		t.Fatal("a transport failure became a result")
 	}
 }
 

@@ -32,11 +32,17 @@ const (
 	// runs it waits in one HTTP request, so a longer job is started detached
 	// on the server and checked with later commands.
 	commandRunTimeout = 45 * time.Second
+	// commandTimeoutExitCode is the status timeout(1) reports for a command it
+	// stopped, so a timed-out command reads as one to the caller.
+	commandTimeoutExitCode = 124
 	// maxCommandOutputRunes bounds each returned output stream so one command
 	// cannot dominate the model context. It stays below the 16,000-character
 	// output schema so redacting a short secret cannot overflow it.
 	maxCommandOutputRunes = 15000
 )
+
+// commandTimeoutNotice ends the stderr of a command that outlived its limit.
+const commandTimeoutNotice = "\n[zgi] The command was stopped after 45 seconds and may have only partly run. Check its effects, and start long jobs detached (nohup ... > log 2>&1 &), then follow their log with later commands.\n"
 
 // CommandPattern accepts any command without a NUL byte. Its length is bounded
 // separately by maxCommandBytes.
@@ -114,10 +120,18 @@ func (s *Service) RunCommand(ctx context.Context, connection Connection, command
 	exitCode := 0
 	if runErr != nil {
 		var exitErr *ssh.ExitError
-		if !errors.As(runErr, &exitErr) {
+		switch {
+		case errors.As(runErr, &exitErr):
+			exitCode = exitErr.ExitStatus()
+		case errors.Is(runErr, context.DeadlineExceeded) && ctx.Err() == nil:
+			// The command outlived its own limit while the caller still waits:
+			// report what it printed, the conventional timeout status, and how
+			// to run it instead, rather than a connection failure.
+			exitCode = commandTimeoutExitCode
+			result.Stderr = append(result.Stderr, []byte(commandTimeoutNotice)...)
+		default:
 			return nil, runError(requestID, runErr)
 		}
-		exitCode = exitErr.ExitStatus()
 	}
 	stdout, stdoutCut := boundedCommandOutput(result.Stdout)
 	stderr, stderrCut := boundedCommandOutput(result.Stderr)

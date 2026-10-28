@@ -226,6 +226,7 @@ export function DigitalHumanConnectorOperationDetails({
         })}
         description={t('bindings.connectors.riskyOperationDescription')}
         confirmText={t('bindings.connectors.riskyOperationConfirm')}
+        cancelText={t('common.cancel')}
         onConfirm={() => {
           if (riskyOperationId) onOperation?.(riskyOperationId, true);
           setRiskyOperationId(null);
@@ -248,6 +249,7 @@ export function DigitalHumanConnectorOperationDetails({
             : 'bindings.connectors.trustedDescription'
         )}
         confirmText={t('bindings.connectors.riskyOperationConfirm')}
+        cancelText={t('common.cancel')}
         onConfirm={() => {
           if (riskyPolicy) onApprovalPolicy?.(riskyPolicy);
           setRiskyPolicy(null);
