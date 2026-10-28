@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
@@ -12,6 +13,7 @@ import (
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"gorm.io/gorm"
 )
 
 type serverWatchConnectionReader interface {
@@ -22,6 +24,7 @@ type serverWatchConnectionReader interface {
 // binding without a model (ADR 0031). It is the platform's own fixed,
 // read-only check: it never runs anything but the service status action.
 type ServerWatchProbe struct {
+	access      serverWatchOwnerAccess
 	bindings    connectorbindings.Repository
 	employees   backgroundEmployeeReader
 	connections serverWatchConnectionReader
@@ -44,7 +47,16 @@ func (p *ServerWatchProbe) Usable(ctx context.Context, target serverwatch.Target
 }
 
 func (p *ServerWatchProbe) connection(ctx context.Context, target serverwatch.Target) (connectorcore.PersonalConnection, error) {
-	if p == nil || p.bindings == nil || p.employees == nil || p.connections == nil {
+	if p == nil || p.access == nil || p.bindings == nil || p.employees == nil || p.connections == nil {
+		return connectorcore.PersonalConnection{}, serverwatch.ErrNotUsable
+	}
+	// The owner's credential is used only while the owner still has access:
+	// a disabled or removed member's watch stops before any secret is read.
+	allowed, err := p.access.OwnerHasAccess(ctx, target)
+	if err != nil {
+		return connectorcore.PersonalConnection{}, err
+	}
+	if !allowed {
 		return connectorcore.PersonalConnection{}, serverwatch.ErrNotUsable
 	}
 	detail, err := p.employees.Get(ctx, digitalhuman.Scope{OrganizationID: target.OrganizationID, WorkspaceID: target.WorkspaceID, ActorID: target.OwnerAccountID}, target.DigitalHumanID)
@@ -135,10 +147,48 @@ func hostErrorClass(err error) string {
 	}
 }
 
+// serverWatchOwnerAccess confirms the connection owner may still act in the
+// watch's workspace.
+type serverWatchOwnerAccess interface {
+	OwnerHasAccess(ctx context.Context, target serverwatch.Target) (bool, error)
+}
+
+// gormServerWatchOwnerAccess applies the account checks of a background task
+// run: an active or pending account that is a member of the workspace in a
+// normal workspace of the organization, and whose organization membership was
+// not disabled.
+type gormServerWatchOwnerAccess struct{ db *gorm.DB }
+
+func (a gormServerWatchOwnerAccess) OwnerHasAccess(ctx context.Context, target serverwatch.Target) (bool, error) {
+	if a.db == nil {
+		return false, nil
+	}
+	var members int64
+	if err := a.db.WithContext(ctx).Table("accounts AS accounts").
+		Joins("JOIN workspace_members AS members ON members.account_id = accounts.id").
+		Joins("JOIN workspaces ON workspaces.id = members.workspace_id").
+		Where("accounts.id = ? AND accounts.status IN ? AND accounts.deleted_at IS NULL AND members.workspace_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?",
+			target.OwnerAccountID, []string{"active", "pending"}, target.WorkspaceID, target.OrganizationID, "normal").
+		Count(&members).Error; err != nil {
+		return false, fmt.Errorf("check server watch owner membership: %w", err)
+	}
+	if members != 1 {
+		return false, nil
+	}
+	var disabled int64
+	if err := a.db.WithContext(ctx).Table("members").
+		Where("organization_id = ? AND account_id = ? AND status = ?", target.OrganizationID, target.OwnerAccountID, "inactive").
+		Count(&disabled).Error; err != nil {
+		return false, fmt.Errorf("check server watch owner status: %w", err)
+	}
+	return disabled == 0, nil
+}
+
 // GetServerWatchProbe returns the probe shared by the watch API and sweep.
 func (c *ServiceContainer) GetServerWatchProbe() *ServerWatchProbe {
 	service, _ := c.getServerOpsSSHClient()
 	return &ServerWatchProbe{
+		access:   gormServerWatchOwnerAccess{db: c.GetDB()},
 		bindings: c.GetConnectorBindingRepository(), employees: c.GetDigitalHumanService(), connections: c.GetConnectorConnectionRepository(),
 		credentials: c.GetConnectorCredentialResolver(), service: service,
 	}

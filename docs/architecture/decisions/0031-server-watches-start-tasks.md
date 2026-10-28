@@ -33,6 +33,7 @@ Asking a model every few minutes whether the server is fine would be slow and co
 5. A watch is skipped, and says why, when:
    - its task is paused, cancelled or archived (a task that finished its own schedule still answers its watch);
    - the task already has a queued or running run;
+   - the connection owner's account is no longer active, a member of the workspace, or enabled in the organization (checked before any credential is read);
    - the DigitalHuman no longer has an active binding on the connection;
    - the connection is not ready.
 
