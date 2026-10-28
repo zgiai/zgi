@@ -95,8 +95,12 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 // Once dispatched, a non-success result ends unattended business execution.
 // Argument validation before dispatch has no operation reference and can still
 // use ordinary tool correction. Pending confirmation follows its own protocol.
+// A change that needs a person is blocked before submission in an unattended
+// run, so it ran nothing: the run goes on and the model reports what it found
+// (see connectorNeedsPerson); the final guard still names the blocked call.
 func connectorTerminalStep(trace skills.SkillTrace, callID string, runtimeState map[string]interface{}) *skillStepResult {
-	if !trace.ConnectorNative || trace.Result["operation"] == nil || trace.Result["state"] == "requires_confirmation" {
+	if !trace.ConnectorNative || trace.Result["operation"] == nil || trace.Result["state"] == "requires_confirmation" ||
+		connectorNeedsPerson(trace.Result) {
 		return nil
 	}
 	current := map[string]interface{}{"kind": "tool_call", "runtime_source": "connector", "result": trace.Result}
@@ -186,4 +190,35 @@ func connectorOutcomeAnswer(hint string, counts map[string]int) string {
 		answer += " Unknown results do not establish success; check the execution records before deciding whether to retry."
 	}
 	return answer
+}
+
+// connectorNeedsPerson reports whether a Connector result was blocked only
+// because no person was present to approve it. Nothing was submitted, and
+// trying again cannot succeed without a person.
+func connectorNeedsPerson(result map[string]interface{}) bool {
+	if !strings.EqualFold(strings.TrimSpace(stringFromInterface(result["state"])), "blocked") {
+		return false
+	}
+	code := stringFromInterface(result["error_code"])
+	if presentation, ok := result["connector_presentation"].(connectortools.OperationPresentation); ok && code == "" {
+		code = presentation.ErrorCode
+	}
+	if presentation, ok := result["connector_presentation"].(*connectortools.OperationPresentation); ok && presentation != nil && code == "" {
+		code = presentation.ErrorCode
+	}
+	if presentation, ok := result["connector_presentation"].(map[string]interface{}); ok && code == "" {
+		code = stringFromInterface(presentation["error_code"])
+	}
+	return code == "connector_confirmation_required"
+}
+
+// connectorNeedsPersonResult is the tool result the model receives for such a
+// call: the blocked result and what to do instead of retrying.
+func connectorNeedsPersonResult(result map[string]interface{}) map[string]interface{} {
+	payload := make(map[string]interface{}, len(result)+1)
+	for key, value := range result {
+		payload[key] = value
+	}
+	payload["next_step"] = "This operation needs a person's approval and did not run. Do not try it again in this run; finish your report and list it as a recommended change for a person to approve."
+	return payload
 }

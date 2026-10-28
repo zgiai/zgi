@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func nativeOutcomeRecord(ref connectortools.OperationRef, state, outcome string) map[string]interface{} {
@@ -159,5 +160,29 @@ func TestConnectorTerminalKeepsTheReportWhenAnUnattendedChangeWasBlocked(t *test
 	decision := connectorTerminalStateDecision(evidence, "服务运行正常，日志无报错。")
 	if decision == nil || !strings.HasPrefix(decision.FinalAnswer, "服务运行正常，日志无报错。") || !strings.Contains(decision.FinalAnswer, "未执行 1 项") {
 		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestConnectorNeedsPersonLetsTheRunFinishItsReport(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.command.run", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "restart-1"}
+	record := nativeOutcomeRecord(ref, "blocked", "")
+	result := record["result"].(map[string]interface{})
+	result["connector_presentation"] = map[string]interface{}{"error_code": string(core.ErrorCodeConfirmationRequired)}
+	if !connectorNeedsPerson(result) {
+		t.Fatal("a call blocked for approval was not recognised")
+	}
+	trace := skills.SkillTrace{ConnectorNative: true, Result: result}
+	if step := connectorTerminalStep(trace, "call-1", map[string]interface{}{}); step != nil {
+		t.Fatalf("a call that needs a person ended the run: %+v", step)
+	}
+	if next := connectorNeedsPersonResult(result)["next_step"]; next == nil {
+		t.Fatal("the model is not told to report instead of retrying")
+	}
+	result["connector_presentation"] = map[string]interface{}{"error_code": string(core.ErrorCodeAccessDenied)}
+	if connectorNeedsPerson(result) {
+		t.Fatal("an access denial was treated as needing a person")
+	}
+	if step := connectorTerminalStep(trace, "call-1", map[string]interface{}{}); step == nil {
+		t.Fatal("other blocked calls must still end the unattended run")
 	}
 }
