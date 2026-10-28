@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	authservice "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
@@ -30,6 +31,7 @@ func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions = append(definitions, llmerrors.CatalogDefinitions()...)
 	definitions = append(definitions, llmerrors.BillingCatalogDefinitions()...)
 	definitions = append(definitions, musicmodule.CatalogDefinitions()...)
+	definitions = append(definitions, orgaudit.CatalogDefinitions()...)
 	definitions = append(definitions, videoservice.CatalogDefinitions()...)
 	definitions = append(definitions, authservice.CatalogDefinitions()...)
 	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)

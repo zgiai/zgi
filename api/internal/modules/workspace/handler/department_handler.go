@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -20,6 +21,7 @@ type DepartmentHandler struct {
 	accountService    interfaces.AccountService
 	enterpriseService interfaces.OrganizationService
 	consoleWebURL     string
+	audit             *orgaudit.Recorder
 }
 
 // NewDepartmentHandler creates a new department handler
@@ -271,6 +273,8 @@ func (h *DepartmentHandler) CreateDepartment(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"name": req.Name, "parent_id": req.ParentID})
+
 	dept, err := h.departmentService.CreateDepartment(c.Request.Context(), organizationID, req.Name, req.ParentID, req.SortOrder, accountID)
 	if err != nil {
 		if errors.Is(err, service.ErrDepartmentNameExists) {
@@ -285,6 +289,7 @@ func (h *DepartmentHandler) CreateDepartment(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetTarget(c, orgaudit.Target{Type: orgaudit.TargetDepartment, ID: dept.ID})
 	response.Success(c, toDepartmentResponse(dept))
 }
 
@@ -334,15 +339,19 @@ func (h *DepartmentHandler) UpdateDepartment(c *gin.Context) {
 	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
 		return
 	}
-	if _, ok := h.requireDepartmentInOrganization(c, organizationID, deptID); !ok {
+	before, ok := h.requireDepartmentInOrganization(c, organizationID, deptID)
+	if !ok {
 		return
 	}
+	orgaudit.SetBefore(c, departmentAuditFields(before))
 
 	var req UpdateDepartmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+
+	orgaudit.SetAfter(c, map[string]any{"name": req.Name, "parent_id": req.ParentID, "status": req.Status})
 
 	dept, err := h.departmentService.UpdateDepartment(c.Request.Context(), deptID, req.Name, req.ParentID, req.SortOrder, req.Status)
 	if err != nil {
@@ -377,9 +386,11 @@ func (h *DepartmentHandler) DeleteDepartment(c *gin.Context) {
 	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
 		return
 	}
-	if _, ok := h.requireDepartmentInOrganization(c, organizationID, deptID); !ok {
+	before, ok := h.requireDepartmentInOrganization(c, organizationID, deptID)
+	if !ok {
 		return
 	}
+	orgaudit.SetBefore(c, departmentAuditFields(before))
 
 	err := h.departmentService.DeleteDepartment(c.Request.Context(), deptID)
 	if err != nil {
@@ -450,6 +461,9 @@ func (h *DepartmentHandler) AddMemberToDepartment(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetTarget(c, memberAuditTarget(req.AccountID))
+	orgaudit.SetAfter(c, map[string]any{"department_id": deptID})
+
 	member, err := h.departmentService.AddMemberToDepartment(c.Request.Context(), organizationID, deptID, req.AccountID)
 	if err != nil {
 		if errors.Is(err, service.ErrDepartmentNotFound) {
@@ -484,6 +498,7 @@ func (h *DepartmentHandler) RemoveMemberFromDepartment(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetBefore(c, map[string]any{"department_id": deptID})
 	err := h.departmentService.RemoveMemberFromDepartment(c.Request.Context(), deptID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -624,6 +639,13 @@ func (h *DepartmentHandler) ChangeMemberDepartment(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
+	}
+
+	orgaudit.SetAfter(c, map[string]any{"department_id": req.DepartmentID})
+	if h.audit != nil {
+		if current, err := h.departmentService.GetMemberDepartment(c.Request.Context(), organizationID, accountID); err == nil && current != nil {
+			orgaudit.SetBefore(c, map[string]any{"department_id": current.ID, "department_name": current.Name})
+		}
 	}
 
 	member, err := h.departmentService.ChangeMemberDepartment(c.Request.Context(), organizationID, accountID, req.DepartmentID)
@@ -889,19 +911,19 @@ func (h *DepartmentHandler) RegisterRoutes(router *gin.RouterGroup) {
 	{
 		// Department management
 		organization.GET("/:organization_id/departments", h.GetDepartmentTree)
-		organization.POST("/:organization_id/departments", h.CreateDepartment)
+		organization.POST("/:organization_id/departments", h.audit.Wrap(orgaudit.ActionDepartmentCreate, h.CreateDepartment))
 		organization.GET("/:organization_id/departments/:dept_id", h.GetDepartment)
-		organization.PUT("/:organization_id/departments/:dept_id", h.UpdateDepartment)
-		organization.DELETE("/:organization_id/departments/:dept_id", h.DeleteDepartment)
+		organization.PUT("/:organization_id/departments/:dept_id", h.audit.Wrap(orgaudit.ActionDepartmentUpdate, h.UpdateDepartment))
+		organization.DELETE("/:organization_id/departments/:dept_id", h.audit.Wrap(orgaudit.ActionDepartmentDelete, h.DeleteDepartment))
 
 		// Department member management
 		organization.GET("/:organization_id/departments/:dept_id/members", h.GetDepartmentMembers)
-		organization.POST("/:organization_id/departments/:dept_id/members", h.AddMemberToDepartment)
-		organization.DELETE("/:organization_id/departments/:dept_id/members/:account_id", h.RemoveMemberFromDepartment)
+		organization.POST("/:organization_id/departments/:dept_id/members", h.audit.Wrap(orgaudit.ActionDepartmentMemberAdd, h.AddMemberToDepartment))
+		organization.DELETE("/:organization_id/departments/:dept_id/members/:account_id", h.audit.Wrap(orgaudit.ActionDepartmentMemberRemove, h.RemoveMemberFromDepartment))
 
 		// Member's department (single department mode, under /departments to avoid conflict)
 		organization.GET("/:organization_id/departments/member/:account_id", h.GetMemberDepartment)
-		organization.PUT("/:organization_id/departments/member/:account_id", h.ChangeMemberDepartment)
+		organization.PUT("/:organization_id/departments/member/:account_id", h.audit.Wrap(orgaudit.ActionDepartmentMemberChange, h.ChangeMemberDepartment))
 
 		// Member list with search (under /departments to avoid conflict with EnterpriseHandler)
 		organization.GET("/:organization_id/departments/members-without-department", h.ListMembersWithoutDepartment)

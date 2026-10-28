@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspaceHandler "github.com/zgiai/zgi/api/internal/modules/workspace/handler"
 	workspaceRepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
@@ -85,6 +86,7 @@ func registerDepartmentRoutes(router *gin.RouterGroup, deps WorkspaceRouteDeps) 
 		deps.OrganizationService,
 		deps.ConsoleWebURL,
 	)
+	deptHandler.SetAuditRecorder(orgaudit.NewRecorder(orgaudit.NewRepository(deps.DB)))
 
 	deptHandler.RegisterRoutes(router)
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
@@ -29,6 +30,7 @@ type OrganizationHandler struct {
 	workspaceService           workspace_service.WorkspaceService
 	departmentService          workspace_service.DepartmentService
 	consoleWebURL              string
+	audit                      *orgaudit.Recorder
 }
 
 func NewOrganizationHandler(
@@ -518,6 +520,7 @@ func (h *OrganizationHandler) CreateWorkspaceRole(c *gin.Context) {
 	}
 	req.OrganizationID = organizationID
 	req.CreatedBy = accountID
+	orgaudit.SetAfter(c, map[string]any{"name": req.Name, "description": req.Description, "permissions": req.Permissions})
 
 	result, err := h.organizationService.CreateCustomWorkspaceRole(c.Request.Context(), &req)
 	if err != nil {
@@ -528,6 +531,9 @@ func (h *OrganizationHandler) CreateWorkspaceRole(c *gin.Context) {
 		return
 	}
 
+	if result != nil {
+		orgaudit.SetTarget(c, orgaudit.Target{Type: orgaudit.TargetRole, ID: result.ID})
+	}
 	response.Success(c, result)
 }
 
@@ -562,6 +568,8 @@ func (h *OrganizationHandler) UpdateWorkspaceRole(c *gin.Context) {
 
 	req.OrganizationID = organizationID
 	req.RoleID = roleID
+	orgaudit.SetAfter(c, map[string]any{"name": req.Name, "description": req.Description})
+	h.auditRoleBefore(c, organizationID, roleID, accountID)
 
 	result, err := h.organizationService.UpdateCustomWorkspaceRole(c.Request.Context(), &req)
 	if err != nil {
@@ -605,6 +613,9 @@ func (h *OrganizationHandler) UpdateWorkspaceRolePermissions(c *gin.Context) {
 		response.Fail(c, response.ErrWorkspaceRoleTemplateInvalidRequest)
 		return
 	}
+
+	orgaudit.SetAfter(c, map[string]any{"permissions": body.Permissions})
+	h.auditRoleBefore(c, organizationID, roleID, accountID)
 
 	req := dto.UpdateWorkspaceRolePermissionsRequest{
 		OrganizationID: organizationID,
@@ -651,6 +662,8 @@ func (h *OrganizationHandler) ApplyWorkspaceRoleTemplate(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"role_id": roleID})
+
 	req := dto.ApplyWorkspaceRoleTemplateRequest{
 		OrganizationID: organizationID,
 		RoleID:         roleID,
@@ -666,6 +679,19 @@ func (h *OrganizationHandler) ApplyWorkspaceRoleTemplate(c *gin.Context) {
 		return
 	}
 
+	// One record per member the template was applied to, each with its own result.
+	orgaudit.MarkBatch(c)
+	if result != nil {
+		for _, item := range result.Results {
+			target := memberAuditTarget(item.AccountID)
+			target.WorkspaceID = item.WorkspaceID
+			target.Result = orgaudit.ResultSuccess
+			if item.Status != "applied" {
+				target.Result = orgaudit.ResultFailed
+			}
+			orgaudit.AddTarget(c, target)
+		}
+	}
 	response.Success(c, result)
 }
 
@@ -699,6 +725,10 @@ func (h *OrganizationHandler) ReplaceAndDeleteWorkspaceRole(c *gin.Context) {
 		return
 	}
 
+	h.auditRoleBefore(c, organizationID, roleID, accountID)
+	after := map[string]any{"replacement_role_id": body.ReplacementRoleID}
+	orgaudit.SetAfter(c, after)
+
 	result, err := h.organizationService.ReplaceAndDeleteCustomWorkspaceRole(c.Request.Context(), &dto.ReplaceWorkspaceRoleTemplateRequest{
 		OrganizationID:    organizationID,
 		RoleID:            roleID,
@@ -713,6 +743,11 @@ func (h *OrganizationHandler) ReplaceAndDeleteWorkspaceRole(c *gin.Context) {
 		return
 	}
 
+	if result != nil {
+		after["replaced_count"] = result.ReplacedCount
+		after["failed_count"] = result.FailedCount
+		after["deleted"] = result.Deleted
+	}
 	response.Success(c, result)
 }
 
@@ -739,6 +774,7 @@ func (h *OrganizationHandler) DeleteWorkspaceRole(c *gin.Context) {
 		return
 	}
 
+	h.auditRoleBefore(c, organizationID, roleID, accountID)
 	if err := h.organizationService.DeleteCustomWorkspaceRole(c.Request.Context(), organizationID, roleID, accountID); err != nil {
 		if failWorkspaceRoleRequest(c, err) {
 			return
@@ -1207,6 +1243,9 @@ func (h *OrganizationHandler) TransferOrganizationOwnership(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetTarget(c, memberAuditTarget(req.MemberID))
+	orgaudit.SetAfter(c, map[string]any{"owner_account_id": req.MemberID})
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -1234,6 +1273,8 @@ func (h *OrganizationHandler) TransferOrganizationOwnership(c *gin.Context) {
 		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
+
+	orgaudit.SetBefore(c, map[string]any{"owner_account_id": accountID})
 
 	// 3. Transfer ownership
 	if err := h.organizationService.TransferOwnership(c.Request.Context(), organizationID, accountID, req.MemberID); err != nil {
@@ -1917,6 +1958,9 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 		return
 	}
 
+	after := map[string]any{"name": req.Name, "email": req.Email, "workspace_id": strings.TrimSpace(req.WorkspaceID), "department_id": req.DepartmentID}
+	orgaudit.SetAfter(c, after)
+
 	ctx := c.Request.Context()
 	sendEmail := req.SendEmail != nil && *req.SendEmail
 	if sendEmail {
@@ -1939,6 +1983,8 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 		h.handleDirectAddMemberError(c, err)
 		return
 	}
+
+	orgaudit.SetTarget(c, memberAuditTarget(result.AccountID))
 
 	respDeptName := ""
 	invitedWorkspaceID := ""
@@ -2053,6 +2099,9 @@ func (h *OrganizationHandler) InviteCurrentOrganizationMember(c *gin.Context) {
 		return
 	}
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	after := map[string]any{"name": strings.TrimSpace(req.Name), "email": req.Email, "workspace_id": workspaceID, "department_id": req.DepartmentID}
+	orgaudit.SetOrganization(c, organizationID)
+	orgaudit.SetAfter(c, after)
 
 	password, ok := resolveOrganizationInvitePassword(c, req.Password)
 	if !ok {
@@ -2073,6 +2122,12 @@ func (h *OrganizationHandler) InviteCurrentOrganizationMember(c *gin.Context) {
 		return
 	}
 
+	if result != nil {
+		orgaudit.SetTarget(c, memberAuditTarget(result.AccountID))
+		after["organization_role"] = result.Role
+		after["created_account"] = result.CreatedAccount
+		after["already_member"] = result.AlreadyMember
+	}
 	response.Success(c, result)
 }
 
@@ -2097,6 +2152,9 @@ func (h *OrganizationHandler) ResetCurrentOrganizationMemberPassword(c *gin.Cont
 		return
 	}
 
+	orgaudit.SetOrganization(c, organizationID)
+	orgaudit.SetAfter(c, map[string]any{"email": req.Email})
+
 	password, ok := resolveOrganizationInvitePassword(c, req.Password)
 	if !ok {
 		return
@@ -2113,6 +2171,9 @@ func (h *OrganizationHandler) ResetCurrentOrganizationMemberPassword(c *gin.Cont
 		return
 	}
 
+	if result != nil {
+		orgaudit.SetTarget(c, memberAuditTarget(result.AccountID))
+	}
 	response.Success(c, result)
 }
 
@@ -2400,6 +2461,8 @@ func (h *OrganizationHandler) CreateOrResetDepartmentInviteLink(c *gin.Context) 
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"operation": "reset", "department_id": req.DepartmentID, "require_approval": req.RequireApproval, "expires_at": req.ExpiresAt})
+
 	var deptID string
 	if req.DepartmentID != nil {
 		deptID = strings.TrimSpace(*req.DepartmentID)
@@ -2423,6 +2486,7 @@ func (h *OrganizationHandler) CreateOrResetDepartmentInviteLink(c *gin.Context) 
 		return
 	}
 
+	orgaudit.SetTarget(c, orgaudit.Target{Type: orgaudit.TargetInviteLink, ID: link.ID})
 	inviteURL := h.consoleWebURL + "/invite/" + link.Token
 
 	response.Success(c, gin.H{
@@ -2461,6 +2525,8 @@ func (h *OrganizationHandler) UpdateDepartmentInviteLinkStatus(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"operation": "status", "department_id": req.DepartmentID, "status": req.Status})
+
 	var deptID string
 	if req.DepartmentID != nil {
 		deptID = strings.TrimSpace(*req.DepartmentID)
@@ -2483,6 +2549,7 @@ func (h *OrganizationHandler) UpdateDepartmentInviteLinkStatus(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetTarget(c, orgaudit.Target{Type: orgaudit.TargetInviteLink, ID: link.ID})
 	response.Success(c, gin.H{"status": link.Status})
 }
 
@@ -2494,6 +2561,8 @@ func (h *OrganizationHandler) ApproveDepartmentJoinRequest(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetTarget(c, orgaudit.Target{Type: orgaudit.TargetJoinRequest, ID: reqID})
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -2503,7 +2572,7 @@ func (h *OrganizationHandler) ApproveDepartmentJoinRequest(c *gin.Context) {
 		return
 	}
 
-	_, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, reqID, accountID)
+	joinRequest, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, reqID, accountID)
 	if err != nil {
 		if errors.Is(err, workspace_service.ErrMemberNameExists) {
 			response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
@@ -2513,6 +2582,10 @@ func (h *OrganizationHandler) ApproveDepartmentJoinRequest(c *gin.Context) {
 		return
 	}
 
+	if joinRequest != nil {
+		orgaudit.SetTarget(c, orgaudit.Target{AccountID: joinRequest.AccountID, Type: orgaudit.TargetJoinRequest, ID: reqID})
+		orgaudit.SetAfter(c, joinRequestAuditFields(joinRequest))
+	}
 	response.Success(c, gin.H{"status": "approved"})
 }
 
@@ -2548,9 +2621,11 @@ func (h *OrganizationHandler) BatchApproveDepartmentJoinRequests(c *gin.Context)
 	var successIDs []string
 	var failed []failedItem
 
+	orgaudit.MarkBatch(c)
 	for _, id := range reqBody.RequestIDs {
-		_, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, id, accountID)
+		joinRequest, err := h.organizationService.ApproveDepartmentJoinRequest(c.Request.Context(), organizationID, id, accountID)
 		if err != nil {
+			orgaudit.AddTarget(c, orgaudit.Target{Type: orgaudit.TargetJoinRequest, ID: id, Result: orgaudit.ResultFailed})
 			message := "approval failed"
 			if errors.Is(err, workspace_service.ErrMemberNameExists) {
 				message = "member name already exists"
@@ -2559,6 +2634,11 @@ func (h *OrganizationHandler) BatchApproveDepartmentJoinRequests(c *gin.Context)
 			continue
 		}
 
+		target := orgaudit.Target{Type: orgaudit.TargetJoinRequest, ID: id}
+		if joinRequest != nil {
+			target.AccountID = joinRequest.AccountID
+		}
+		orgaudit.AddTarget(c, target)
 		successIDs = append(successIDs, id)
 	}
 
@@ -2575,6 +2655,8 @@ func (h *OrganizationHandler) RejectDepartmentJoinRequest(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+
+	orgaudit.SetTarget(c, orgaudit.Target{Type: orgaudit.TargetJoinRequest, ID: reqID})
 
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -2645,12 +2727,15 @@ func (h *OrganizationHandler) BatchRejectDepartmentJoinRequests(c *gin.Context) 
 	var successIDs []string
 	var failed []failedItem
 
+	orgaudit.MarkBatch(c)
 	for _, id := range reqBody.RequestIDs {
 		err := h.organizationService.RejectDepartmentJoinRequest(c.Request.Context(), organizationID, id, accountID, reason)
 		if err != nil {
+			orgaudit.AddTarget(c, orgaudit.Target{Type: orgaudit.TargetJoinRequest, ID: id, Result: orgaudit.ResultFailed})
 			failed = append(failed, failedItem{ID: id, Error: err.Error()})
 			continue
 		}
+		orgaudit.AddTarget(c, orgaudit.Target{Type: orgaudit.TargetJoinRequest, ID: id})
 		successIDs = append(successIDs, id)
 	}
 
@@ -2819,6 +2904,8 @@ func (h *OrganizationHandler) RemoveOrganizationMember(c *gin.Context) {
 		}
 	}
 
+	h.auditOrganizationRoleBefore(c, organizationID, memberID)
+
 	// Remove member (cascading delete: organization role + all tenant memberships)
 	if err := h.organizationService.RemoveMember(c.Request.Context(), organizationID, memberID); err != nil {
 		if strings.Contains(err.Error(), "cannot remove") {
@@ -2849,11 +2936,13 @@ func (h *OrganizationHandler) LeaveOrganization(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetTarget(c, memberAuditTarget(accountID))
 	userRole, err := h.organizationService.GetUserOrganizationRole(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
+	orgaudit.SetBefore(c, map[string]any{"organization_role": userRole})
 	if userRole == model.OrganizationRoleOwner {
 		response.FailWithMessage(c, response.ErrPermissionDenied, "cannot leave as organization owner")
 		return
@@ -2973,6 +3062,8 @@ func (h *OrganizationHandler) UpdateCurrentOrganizationMemberRole(c *gin.Context
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"organization_role": req.Role})
+	h.auditOrganizationRoleBefore(c, helper.GetOrganizationID(c), memberID)
 	if err := h.organizationService.UpdateCurrentOrganizationMemberRole(c.Request.Context(), accountID, memberID, req.Role); err != nil {
 		h.handleUpdateOrganizationMemberRoleError(c, err)
 		return
@@ -3018,6 +3109,8 @@ func (h *OrganizationHandler) UpdateMemberStatus(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"status": req.Status})
+
 	// Get current operator
 	currentAccountID := c.GetString("account_id")
 	if currentAccountID == "" {
@@ -3041,6 +3134,8 @@ func (h *OrganizationHandler) UpdateMemberStatus(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrPermissionDenied, "only owner or admin can update member status")
 		return
 	}
+
+	h.auditMemberStatusBefore(c, organizationID, memberID)
 
 	// Update member status
 	updateReq := &dto.UpdateOrganizationMemberStatusRequest{
@@ -3951,6 +4046,7 @@ func (h *OrganizationHandler) RemoveOrganizationWorkspaceMember(c *gin.Context) 
 		return
 	}
 
+	h.auditWorkspaceMemberBefore(c, organizationID, workspaceID, accountID, memberID)
 	err = h.workspaceManagementService.RemoveMemberFromWorkspace(c.Request.Context(), targetWorkspace, member, currentUser)
 	if err != nil {
 		switch {
@@ -3987,6 +4083,7 @@ func (h *OrganizationHandler) LeaveOrganizationWorkspace(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	orgaudit.SetTarget(c, memberAuditTarget(accountID))
 	if !h.requireRouteWorkspaceInOrganization(c, organizationID, workspaceID) {
 		return
 	}
@@ -4045,6 +4142,8 @@ func (h *OrganizationHandler) UpdateOrganizationWorkspaceMemberRole(c *gin.Conte
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"workspace_role": req.Role, "workspace_role_id": req.RoleID})
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -4096,6 +4195,7 @@ func (h *OrganizationHandler) UpdateOrganizationWorkspaceMemberRole(c *gin.Conte
 		return
 	}
 
+	h.auditWorkspaceMemberBefore(c, organizationID, workspaceID, accountID, memberID)
 	if req.Role != nil && *req.Role != "" {
 		newRole := *req.Role
 		role := model.WorkspaceMemberRole(newRole)
@@ -4177,6 +4277,8 @@ func (h *OrganizationHandler) UpdateOrganizationWorkspaceMemberPermissions(c *gi
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"permissions": *req.Permissions})
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -4192,6 +4294,7 @@ func (h *OrganizationHandler) UpdateOrganizationWorkspaceMemberPermissions(c *gi
 		return
 	}
 
+	h.auditWorkspaceMemberBefore(c, organizationID, workspaceID, accountID, memberID)
 	if err := h.workspaceManagementService.UpdateMemberDirectPermissions(c.Request.Context(), workspaceID, memberID, *req.Permissions); err != nil {
 		switch {
 		case isNoPermissionError(err):
@@ -4233,6 +4336,8 @@ func (h *OrganizationHandler) BatchAddOrganizationMembersToWorkspace(c *gin.Cont
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+
+	orgaudit.SetAfter(c, map[string]any{"workspace_role": req.Role, "workspace_role_id": req.RoleID, "position": req.Position})
 
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -4322,6 +4427,8 @@ func (h *OrganizationHandler) BatchAddOrganizationMembersToWorkspace(c *gin.Cont
 		}
 	}
 
+	// One record per account added or failed; accounts already present changed nothing.
+	orgaudit.MarkBatch(c)
 	results := make([]map[string]interface{}, 0, len(req.AccountIDs))
 	addedCount := 0
 	skippedCount := 0
@@ -4349,6 +4456,7 @@ func (h *OrganizationHandler) BatchAddOrganizationMembersToWorkspace(c *gin.Cont
 			continue
 		}
 		if !isOrganizationMember {
+			orgaudit.AddTarget(c, orgaudit.Target{AccountID: memberAccountID, Type: orgaudit.TargetMember, ID: memberAccountID, Result: orgaudit.ResultFailed})
 			result["status"] = "failed"
 			result["message"] = "Account is not a member of the organization"
 			results = append(results, result)
@@ -4375,6 +4483,7 @@ func (h *OrganizationHandler) BatchAddOrganizationMembersToWorkspace(c *gin.Cont
 
 		err = h.workspaceManagementService.AddMember(c.Request.Context(), addReq)
 		if err != nil {
+			orgaudit.AddTarget(c, orgaudit.Target{AccountID: memberAccountID, Type: orgaudit.TargetMember, ID: memberAccountID, Result: orgaudit.ResultFailed})
 			result["status"] = "failed"
 			result["message"] = err.Error()
 			results = append(results, result)
@@ -4400,6 +4509,7 @@ func (h *OrganizationHandler) BatchAddOrganizationMembersToWorkspace(c *gin.Cont
 			result["status"] = "success"
 		}
 
+		orgaudit.AddTarget(c, memberAuditTarget(memberAccountID))
 		addedCount++
 		results = append(results, result)
 	}
@@ -4502,6 +4612,9 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetOrganization(c, link.OrganizationID)
+	orgaudit.SetTarget(c, memberAuditTarget(accountID))
+
 	if reqBody.Name != nil && *reqBody.Name != "" {
 		// Case 1: Name provided by user - Strict uniqueness check
 		exists, err := h.organizationService.ExistsMemberByName(c.Request.Context(), link.OrganizationID, *reqBody.Name, accountID)
@@ -4554,6 +4667,7 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, joinRequestAuditFields(req))
 	response.Success(c, gin.H{"status": req.Status})
 }
 
@@ -4581,6 +4695,10 @@ func (h *OrganizationHandler) TransferWorkspaceOwner(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+
+	orgaudit.SetTarget(c, memberAuditTarget(req.NewOwnerID))
+	orgaudit.SetBefore(c, map[string]any{"owner_account_id": accountID})
+	orgaudit.SetAfter(c, map[string]any{"owner_account_id": req.NewOwnerID})
 
 	isTargetMember, err := h.organizationService.IsOrganizationMember(c.Request.Context(), organizationID, req.NewOwnerID)
 	if err != nil {
@@ -4646,7 +4764,7 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 	public := router.Group("/public")
 	{
 		public.GET("/invites/:token", h.GetInviteLinkInfo)
-		public.POST("/invites/:token/accept", middleware.JWTWithOrganizationAndService(h.accountService), h.AcceptInviteLink)
+		public.POST("/invites/:token/accept", middleware.JWTWithOrganizationAndService(h.accountService), h.audit.Wrap(orgaudit.ActionMemberJoin, h.AcceptInviteLink))
 	}
 
 	organization := router.Group("/organizations", middleware.JWTWithOrganizationAndService(h.accountService))
@@ -4658,9 +4776,9 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 
 		organization.GET("/current/members", h.GetCurrentOrganizationMembers)
 		organization.GET("/current/members/:member_id", h.GetOrganizationMemberDetailByID)
-		organization.POST("/current/members/invite", h.InviteCurrentOrganizationMember)
-		organization.POST("/current/members/reset-password", h.ResetCurrentOrganizationMemberPassword)
-		organization.PATCH("/current/members/:member_id/organization-role", h.UpdateCurrentOrganizationMemberRole)
+		organization.POST("/current/members/invite", h.audit.Wrap(orgaudit.ActionMemberInvite, h.InviteCurrentOrganizationMember))
+		organization.POST("/current/members/reset-password", h.audit.Wrap(orgaudit.ActionMemberPasswordReset, h.ResetCurrentOrganizationMemberPassword))
+		organization.PATCH("/current/members/:member_id/organization-role", h.audit.Wrap(orgaudit.ActionMemberRoleUpdate, h.UpdateCurrentOrganizationMemberRole))
 		organization.GET("/info/:organization_id", h.GetOrganizationDetails)
 		organization.PATCH("/info/:organization_id", h.PatchOrganization)
 		organization.GET("/:organization_id/workspaces", h.GetOrganizationWorkspaces)
@@ -4670,16 +4788,16 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.GET("/:organization_id/workspaces/:workspace_id/member-options/:member_id", h.GetOrganizationWorkspaceMemberOptionDetailByID)
 		organization.GET("/:organization_id/workspaces/:workspace_id/members", h.GetOrganizationWorkspaceMembers)
 		organization.GET("/:organization_id/workspaces/:workspace_id/members/:member_id", h.GetOrganizationWorkspaceMemberDetailByID)
-		organization.DELETE("/:organization_id/workspaces/:workspace_id/members/:member_id", h.RemoveOrganizationWorkspaceMember)
-		organization.POST("/:organization_id/workspaces/:workspace_id/leave", h.LeaveOrganizationWorkspace)
-		organization.PUT("/:organization_id/workspaces/:workspace_id/members/:member_id/update-role", h.UpdateOrganizationWorkspaceMemberRole)
-		organization.PUT("/:organization_id/workspaces/:workspace_id/members/:member_id/permissions", h.UpdateOrganizationWorkspaceMemberPermissions)
-		organization.POST("/:organization_id/workspaces/:workspace_id/members/batch-add", h.BatchAddOrganizationMembersToWorkspace)
+		organization.DELETE("/:organization_id/workspaces/:workspace_id/members/:member_id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRemove, h.RemoveOrganizationWorkspaceMember))
+		organization.POST("/:organization_id/workspaces/:workspace_id/leave", h.audit.Wrap(orgaudit.ActionWorkspaceMemberLeave, h.LeaveOrganizationWorkspace))
+		organization.PUT("/:organization_id/workspaces/:workspace_id/members/:member_id/update-role", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRole, h.UpdateOrganizationWorkspaceMemberRole))
+		organization.PUT("/:organization_id/workspaces/:workspace_id/members/:member_id/permissions", h.audit.Wrap(orgaudit.ActionWorkspaceMemberPerms, h.UpdateOrganizationWorkspaceMemberPermissions))
+		organization.POST("/:organization_id/workspaces/:workspace_id/members/batch-add", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.BatchAddOrganizationMembersToWorkspace))
 		organization.GET("/:organization_id/workspaces/:workspace_id/accounts/:account_id/permissions", h.GetWorkspaceMemberPermissions)
 		organization.POST("/:organization_id/workspaces", h.CreateOrganizationWorkspace)
 		organization.PUT("/:organization_id/workspaces/:workspace_id", h.UpdateOrganizationWorkspace)
 		organization.DELETE("/:organization_id/workspaces/:workspace_id", h.DeleteOrganizationWorkspace)
-		organization.POST("/:organization_id/workspaces/:workspace_id/transfer-ownership", h.TransferWorkspaceOwner)
+		organization.POST("/:organization_id/workspaces/:workspace_id/transfer-ownership", h.audit.Wrap(orgaudit.ActionWorkspaceOwnerTransfer, h.TransferWorkspaceOwner))
 
 		organization.GET("/:organization_id/unjoined-workspaces/:account_id", h.GetUnjoinedWorkspaces)
 		organization.GET("/:organization_id/joined-workspaces/:account_id", h.GetJoinedWorkspaces)
@@ -4688,23 +4806,23 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.GET("/joined-groups/:account_id", h.GetJoinedOrganizations)
 		organization.GET("/:organization_id/check-manage-permission", h.CheckManagePermission)
 		organization.GET("/:organization_id/invite-link", h.GetDepartmentInviteLink)
-		organization.POST("/:organization_id/invite-link", h.CreateOrResetDepartmentInviteLink)
-		organization.PUT("/:organization_id/invite-link/status", h.UpdateDepartmentInviteLinkStatus)
+		organization.POST("/:organization_id/invite-link", h.audit.Wrap(orgaudit.ActionInviteLinkUpdate, h.CreateOrResetDepartmentInviteLink))
+		organization.PUT("/:organization_id/invite-link/status", h.audit.Wrap(orgaudit.ActionInviteLinkUpdate, h.UpdateDepartmentInviteLinkStatus))
 		organization.GET("/:organization_id/join-requests", h.ListOrganizationJoinRequests)
-		organization.POST("/:organization_id/join-requests/approve-batch", h.BatchApproveDepartmentJoinRequests)
-		organization.POST("/:organization_id/join-requests/reject-batch", h.BatchRejectDepartmentJoinRequests)
-		organization.POST("/:organization_id/join-requests/:id/approve", h.ApproveDepartmentJoinRequest)
-		organization.POST("/:organization_id/join-requests/:id/reject", h.RejectDepartmentJoinRequest)
+		organization.POST("/:organization_id/join-requests/approve-batch", h.audit.Wrap(orgaudit.ActionMemberJoinApprove, h.BatchApproveDepartmentJoinRequests))
+		organization.POST("/:organization_id/join-requests/reject-batch", h.audit.Wrap(orgaudit.ActionMemberJoinReject, h.BatchRejectDepartmentJoinRequests))
+		organization.POST("/:organization_id/join-requests/:id/approve", h.audit.Wrap(orgaudit.ActionMemberJoinApprove, h.ApproveDepartmentJoinRequest))
+		organization.POST("/:organization_id/join-requests/:id/reject", h.audit.Wrap(orgaudit.ActionMemberJoinReject, h.RejectDepartmentJoinRequest))
 		organization.GET("/:organization_id/members", h.GetOrganizationMembers)
 		organization.GET("/:organization_id/members/:member_id", h.GetOrganizationMemberDetailByID)
 		organization.GET("/:organization_id/workspaces/:workspace_id/assets", h.GetOrganizationWorkspaceAssets)
-		organization.POST("/:organization_id/members/direct-add", h.DirectAddMember)
-		organization.POST("/:organization_id/transfer-ownership", h.TransferOrganizationOwnership)
+		organization.POST("/:organization_id/members/direct-add", h.audit.Wrap(orgaudit.ActionMemberAdd, h.DirectAddMember))
+		organization.POST("/:organization_id/transfer-ownership", h.audit.Wrap(orgaudit.ActionOwnershipTransfer, h.TransferOrganizationOwnership))
 		organization.GET("/:organization_id/check-member-name", h.CheckMemberNameExists)
 		organization.PUT("/:organization_id/members/:member_id", h.UpdateOrganizationMember)
-		organization.PUT("/:organization_id/members/:member_id/status", h.UpdateMemberStatus)
-		organization.DELETE("/:organization_id/members/:member_id", h.RemoveOrganizationMember)
-		organization.POST("/:organization_id/leave", h.LeaveOrganization)
+		organization.PUT("/:organization_id/members/:member_id/status", h.audit.Wrap(orgaudit.ActionMemberStatusUpdate, h.UpdateMemberStatus))
+		organization.DELETE("/:organization_id/members/:member_id", h.audit.Wrap(orgaudit.ActionMemberRemove, h.RemoveOrganizationMember))
+		organization.POST("/:organization_id/leave", h.audit.Wrap(orgaudit.ActionMemberLeave, h.LeaveOrganization))
 
 		organization.GET("/current", h.GetCurrentOrganization)
 		organization.GET("/current-detail", h.GetCurrentOrganizationDetail)
@@ -4722,12 +4840,12 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.GET("/:organization_id/roles", h.ListWorkspaceRoles)
 		organization.GET("/:organization_id/roles/:role_id", h.GetWorkspaceRole)
 		organization.GET("/:organization_id/roles/:role_id/members", h.ListWorkspaceRoleMembers)
-		organization.POST("/:organization_id/roles", h.CreateWorkspaceRole)
-		organization.PATCH("/:organization_id/roles/:role_id", h.UpdateWorkspaceRole)
-		organization.PUT("/:organization_id/roles/:role_id/permissions", h.UpdateWorkspaceRolePermissions)
-		organization.POST("/:organization_id/roles/:role_id/apply-template", h.ApplyWorkspaceRoleTemplate)
-		organization.POST("/:organization_id/roles/:role_id/replace-and-delete", h.ReplaceAndDeleteWorkspaceRole)
-		organization.DELETE("/:organization_id/roles/:role_id", h.DeleteWorkspaceRole)
+		organization.POST("/:organization_id/roles", h.audit.Wrap(orgaudit.ActionRoleCreate, h.CreateWorkspaceRole))
+		organization.PATCH("/:organization_id/roles/:role_id", h.audit.Wrap(orgaudit.ActionRoleUpdate, h.UpdateWorkspaceRole))
+		organization.PUT("/:organization_id/roles/:role_id/permissions", h.audit.Wrap(orgaudit.ActionRolePermissionsUpdate, h.UpdateWorkspaceRolePermissions))
+		organization.POST("/:organization_id/roles/:role_id/apply-template", h.audit.Wrap(orgaudit.ActionRoleTemplateApply, h.ApplyWorkspaceRoleTemplate))
+		organization.POST("/:organization_id/roles/:role_id/replace-and-delete", h.audit.Wrap(orgaudit.ActionRoleReplaceDelete, h.ReplaceAndDeleteWorkspaceRole))
+		organization.DELETE("/:organization_id/roles/:role_id", h.audit.Wrap(orgaudit.ActionRoleDelete, h.DeleteWorkspaceRole))
 		organization.GET("/:organization_id/accounts/:account_id/permissions", h.GetMemberPermissions)
 	}
 

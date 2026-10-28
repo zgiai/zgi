@@ -487,3 +487,47 @@ export interface WorkspaceAssetMoveResponse {
   moved: boolean;
   preview: WorkspaceAssetMovePreviewResponse;
 }
+
+export type OrgAuditResult = 'success' | 'denied' | 'failed';
+
+export interface OrgAuditLog {
+  id: string;
+  organization_id: string;
+  workspace_id?: string;
+  actor_account_id?: string;
+  target_account_id?: string;
+  target_type: string;
+  target_id: string;
+  action: string;
+  result: OrgAuditResult;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  request_id: string;
+  ip: string;
+  created_at: string;
+  actor_name: string;
+  actor_email: string;
+  target_name: string;
+  target_email: string;
+}
+
+export interface OrgAuditLogPage {
+  items: OrgAuditLog[];
+  total: number;
+  page: number;
+  limit: number;
+  has_more: boolean;
+}
+
+export interface OrgAuditLogParams {
+  page?: number;
+  limit?: number;
+  actor_account_id?: string;
+  target_account_id?: string;
+  action?: string;
+  result?: OrgAuditResult;
+  /** Unix seconds, inclusive. */
+  from?: number;
+  /** Unix seconds, exclusive. */
+  to?: number;
+}
