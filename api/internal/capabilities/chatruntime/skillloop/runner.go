@@ -2495,10 +2495,13 @@ func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, 
 func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatRequest, error) {
 	request = cloneChatRequest(request)
 	sourceMessages := cloneMessagesForProvider(request.Messages)
-	request.Messages = adapter.NormalizeSystemMessages(sourceMessages)
+	// The context manager places system messages for the provider; without
+	// one, place them here (ADR 0032).
+	request.Messages = sourceMessages
 	request.Tools = providerCompatibleFunctionTools(request.Tools)
 	r.contextDecision = nil
 	if r.ContextManager == nil {
+		request.Messages = adapter.PlaceSystemMessages(sourceMessages)
 		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)
 	}
 	prepared, decision, err := r.ContextManager.PrepareBeforeModelCall(ctx, request)

@@ -57,12 +57,13 @@ func TestRunnerRetriesLengthTruncatedPlanningOnce(t *testing.T) {
 	if len(retryRequest.Messages) == 0 || retryRequest.Messages[0].Role != "system" {
 		t.Fatalf("retry messages = %#v, want a leading system message", retryRequest.Messages)
 	}
-	if !strings.Contains(messageContent(retryRequest.Messages[0].Content), "truncated") {
-		t.Fatalf("retry system message = %#v, want truncation guidance", retryRequest.Messages[0])
+	last := retryRequest.Messages[len(retryRequest.Messages)-1]
+	if !strings.Contains(messageContent(last.Content), "<system-reminder>") || !strings.Contains(messageContent(last.Content), "truncated") {
+		t.Fatalf("retry last message = %#v, want the truncation guidance as a reminder (ADR 0032)", last)
 	}
 	for index, message := range retryRequest.Messages[1:] {
 		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
-			t.Fatalf("retry message %d = %#v, want all system guidance merged at the beginning", index+1, message)
+			t.Fatalf("retry message %d = %#v, want no system message after the first", index+1, message)
 		}
 	}
 }

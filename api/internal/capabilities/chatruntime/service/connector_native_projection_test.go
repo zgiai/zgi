@@ -146,8 +146,13 @@ func TestConnectorNativeProjectionKeepsExistingCapacityAndQueryPriority(t *testi
 	if added := projectNativeDirectTools(&set, projections, nil, nil); added != skills.DefaultMaxNativeToolProjections {
 		t.Fatalf("direct capacity changed: got %d, want %d", added, skills.DefaultMaxNativeToolProjections)
 	}
-	if set.ProviderTools[0].Function.Name != operations[len(operations)-1].ToolName {
-		t.Fatal("relevance did not put the requested operation before the capacity cut")
+	// Relevance decides what survives the cut; the order is fixed (ADR 0032).
+	kept := false
+	for _, tool := range set.ProviderTools {
+		kept = kept || tool.Function.Name == operations[len(operations)-1].ToolName
+	}
+	if !kept {
+		t.Fatal("relevance did not keep the requested operation before the capacity cut")
 	}
 	for _, skip := range set.SkippedTools {
 		if skip.Reason != "tool_limit_exceeded" {

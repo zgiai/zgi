@@ -79,8 +79,10 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// System messages keep their positions here; only the request handed back
+	// is placed for the provider, so later guidance stays after the cached
+	// prefix (ADR 0032).
 	prepared := cloneRequest(request)
-	prepared.Messages = adapter.NormalizeSystemMessages(prepared.Messages)
 	round := m.state.NextRound
 	if round <= 0 {
 		round = 1
@@ -180,6 +182,7 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	}
 
 	m.state.Messages = cloneMessages(prepared.Messages)
+	prepared.Messages = adapter.PlaceSystemMessages(prepared.Messages)
 	return prepared, decision, nil
 }
 
@@ -234,6 +237,7 @@ func (m *Manager) PrepareReactiveCompact(ctx context.Context, request *adapter.C
 	m.state.Compaction.ConsecutiveFailures = 0
 	m.state.Compaction.LastFailure = ""
 	m.state.Compaction.LastCompactedAt = time.Now().UTC()
+	compacted.Messages = adapter.PlaceSystemMessages(compacted.Messages)
 	return compacted, decision, nil
 }
 

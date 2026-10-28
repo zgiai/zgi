@@ -259,20 +259,23 @@ func TestRunnerInjectsRuntimeInputBeforeModelRoundInOrder(t *testing.T) {
 		t.Fatalf("model requests = %d, want 1", len(fakeLLM.appChatRequests))
 	}
 	messages := fakeLLM.appChatRequests[0].Messages
+	var transcript strings.Builder
+	for _, message := range messages {
+		transcript.WriteString(messageContent(message.Content))
+		transcript.WriteString("\n")
+	}
+	text := transcript.String()
 	positions := map[string]int{}
 	for _, content := range []string{"original request", "runtime input instruction", "first supplement", "second supplement"} {
-		for index, message := range messages {
-			if strings.Contains(messageContent(message.Content), content) {
-				positions[content] = index
-				break
-			}
-		}
-		if _, ok := positions[content]; !ok {
+		positions[content] = strings.Index(text, content)
+		if positions[content] < 0 {
 			t.Fatalf("messages = %#v, missing %q", messages, content)
 		}
 	}
-	if !(positions["runtime input instruction"] < positions["original request"] &&
-		positions["original request"] < positions["first supplement"] &&
+	// The instruction stays where the runtime input arrived, after the
+	// original request and before the supplements it introduces (ADR 0032).
+	if !(positions["original request"] < positions["runtime input instruction"] &&
+		positions["runtime input instruction"] < positions["first supplement"] &&
 		positions["first supplement"] < positions["second supplement"]) {
 		t.Fatalf("runtime input order = %#v", positions)
 	}
@@ -782,19 +785,21 @@ func TestRunnerMovesAndMergesSystemMessagesBeforePlanning(t *testing.T) {
 	if len(messages) < 3 || messages[0].Role != "system" {
 		t.Fatalf("planning messages = %#v, want one leading system message", messages)
 	}
-	systemContent := messageContent(messages[0].Content)
-	for _, want := range []string{
-		"base system",
-		"continuation guidance",
-		"Use the already available tools only when they are needed",
-	} {
-		if !strings.Contains(systemContent, want) {
-			t.Fatalf("system content missing %q:\n%s", want, systemContent)
-		}
+	// The system prompt is the configured one alone; later guidance follows
+	// as reminders so the prompt prefix stays cacheable (ADR 0032).
+	if systemContent := messageContent(messages[0].Content); !strings.Contains(systemContent, "base system") || strings.Contains(systemContent, "continuation guidance") {
+		t.Fatalf("system content = %q, want only the configured system prompt", systemContent)
 	}
+	var later strings.Builder
 	for index, message := range messages[1:] {
 		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
-			t.Fatalf("planning message %d = %#v, want all system messages merged at the beginning", index+1, message)
+			t.Fatalf("planning message %d = %#v, want no system message after the first", index+1, message)
+		}
+		later.WriteString(messageContent(message.Content))
+	}
+	for _, want := range []string{"<system-reminder>", "continuation guidance", "Use the already available tools only when they are needed"} {
+		if !strings.Contains(later.String(), want) {
+			t.Fatalf("later messages missing %q:\n%s", want, later.String())
 		}
 	}
 	if messages[1].Role != "user" || messages[2].Role != "assistant" {

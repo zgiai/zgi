@@ -266,6 +266,7 @@ func AppendNativeToolProjections(
 		}
 	}
 	added := 0
+	firstAdded := len(toolSet.ProviderTools)
 	for _, projection := range projections {
 		requestedName := strings.TrimSpace(projection.Name)
 		binding := cloneNativeToolBinding(projection.Binding)
@@ -342,6 +343,13 @@ func AppendNativeToolProjections(
 		localNames[providerName] = struct{}{}
 		added++
 	}
+	// Relevance decides which projections fit, not where they go: the same
+	// tools in a different order would invalidate the provider's prompt cache
+	// from the tools onward on every turn (ADR 0032).
+	appended := toolSet.ProviderTools[firstAdded:]
+	sort.SliceStable(appended, func(i, j int) bool {
+		return appended[i].Function.Name < appended[j].Function.Name
+	})
 	return added
 }
 

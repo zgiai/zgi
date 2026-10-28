@@ -447,7 +447,7 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
 		return nil, err
 	}
-	prepared.LLMRequest.Messages = adapter.NormalizeSystemMessages(prepared.LLMRequest.Messages)
+	prepared.LLMRequest.Messages = adapter.PlaceSystemMessages(prepared.LLMRequest.Messages)
 	contextManager, err := s.newAgentContextManager(ctx, prepared)
 	if err != nil {
 		return nil, err

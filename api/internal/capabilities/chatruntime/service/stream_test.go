@@ -234,12 +234,17 @@ func TestOpenChatStreamMovesAndMergesSystemMessagesBeforeModelCall(t *testing.T)
 		t.Fatalf("stream requests = %d, want 1", len(llm.streamRequests))
 	}
 
+	// Later guidance stays in place as a reminder, so the system prompt is the
+	// same on every turn (ADR 0032).
 	messages := llm.streamRequests[0].Messages
-	if len(messages) != 3 {
-		t.Fatalf("messages = %#v, want one system plus two conversation messages", messages)
+	if len(messages) != 4 {
+		t.Fatalf("messages = %#v, want the system prompt, the conversation and the reminder", messages)
 	}
-	if messages[0].Role != "system" || messages[0].Content != "base instructions\n\ncontinuation guidance" {
-		t.Fatalf("messages[0] = %#v, want merged leading system message", messages[0])
+	if messages[0].Role != "system" || messages[0].Content != "base instructions" {
+		t.Fatalf("messages[0] = %#v, want the system prompt alone", messages[0])
+	}
+	if messages[3].Role != "user" || messages[3].Content != "<system-reminder>\ncontinuation guidance\n</system-reminder>" {
+		t.Fatalf("messages[3] = %#v, want the guidance as a reminder", messages[3])
 	}
 	if messages[1].Role != "user" || messages[2].Role != "assistant" {
 		t.Fatalf("conversation order = %#v, want user then assistant", messages[1:])

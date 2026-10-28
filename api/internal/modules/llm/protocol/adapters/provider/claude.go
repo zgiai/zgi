@@ -727,7 +727,7 @@ func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRe
 				continue
 			}
 			claudeMessages = appendClaudeMessage(claudeMessages, "user", []claudeContentBlock{{
-				Type: "text", Text: "<system-reminder>\n" + systemText + "\n</system-reminder>",
+				Type: "text", Text: adapter.SystemReminder(systemText),
 			}})
 			continue
 		}
