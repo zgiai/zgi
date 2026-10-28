@@ -350,23 +350,32 @@ func resumeDigitalHumanRun(
 	command connectorconfirmation.Command,
 	resolution connectorConfirmationResolution,
 ) error {
+	status, errorCode := "succeeded", ""
+	completedAt := any(gorm.Expr("CURRENT_TIMESTAMP"))
+	switch resolution.state {
+	case connectorconfirmation.StateCancelled:
+		status = "canceled"
+	case connectorconfirmation.StateFailed:
+		status, errorCode = "failed", resolution.errorCode
+	case connectorconfirmation.StateUnknown:
+		status, errorCode = "unknown", resolution.errorCode
+	}
+	return moveDigitalHumanRun(ctx, tx, command, resolution, status, errorCode, completedAt)
+}
+
+// moveDigitalHumanRun moves the pinned waiting run to status. A continuation
+// moves it back to running with no completion time.
+func moveDigitalHumanRun(
+	ctx context.Context,
+	tx *gorm.DB,
+	command connectorconfirmation.Command,
+	resolution connectorConfirmationResolution,
+	status, errorCode string,
+	completedAt any,
+) error {
 	receiptID, ok := canonicalConnectorResolutionUUID(resolution.routeReceipt)
 	if !ok {
 		return connectorResolutionError(connectorcore.ErrorCodeConflict)
-	}
-	status, errorCode := "running", ""
-	completedAt := any(nil)
-	switch resolution.state {
-	case connectorconfirmation.StateCompleted:
-		status, completedAt = "succeeded", gorm.Expr("CURRENT_TIMESTAMP")
-	case connectorconfirmation.StateCancelled:
-		status, completedAt = "canceled", gorm.Expr("CURRENT_TIMESTAMP")
-	case connectorconfirmation.StateFailed:
-		status, errorCode = "failed", resolution.errorCode
-		completedAt = gorm.Expr("CURRENT_TIMESTAMP")
-	case connectorconfirmation.StateUnknown:
-		status, errorCode = "unknown", resolution.errorCode
-		completedAt = gorm.Expr("CURRENT_TIMESTAMP")
 	}
 	result := tx.WithContext(ctx).
 		Table("digital_human_runs").

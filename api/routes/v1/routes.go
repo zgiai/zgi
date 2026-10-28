@@ -407,14 +407,18 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- ZGI Market (members of the current organization) ----------
 	RegisterZGIMarketRoutes(v1, accountService, tenantServiceImpl, chatService, zgiMarketTools)
-	RegisterConnectorRuntimeConfirmationRoutes(v1, ConnectorRuntimeConfirmationRouteDeps{
+	confirmationDeps := ConnectorRuntimeConfirmationRouteDeps{
 		Service: serviceContainer.GetConnectorRuntimeConfirmationService(),
 		Recorder: connectorRuntimeConfirmationSurfaceRecorder{
 			chatAndAgent: chatService,
 			workflow:     workflowService,
 		},
 		AccountService: accountService,
-	})
+	}
+	if digitalHumanRuntime != nil && digitalHumanRuntime.Runtime != nil {
+		confirmationDeps.DigitalHuman = digitalHumanRuntime.Runtime
+	}
+	RegisterConnectorRuntimeConfirmationRoutes(v1, confirmationDeps)
 	// End users connect their own keys for per-user DigitalHuman Connector
 	// slots through the same verified key setup as members (ADR 0007).
 	if connectionService := serviceContainer.GetConnectorConnectionService(); connectionService != nil {
