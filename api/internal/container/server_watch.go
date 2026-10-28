@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/providers/serveropsssh"
+	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 )
 
 type serverWatchConnectionReader interface {
@@ -22,6 +23,7 @@ type serverWatchConnectionReader interface {
 // read-only check: it never runs anything but the service status action.
 type ServerWatchProbe struct {
 	bindings    connectorbindings.Repository
+	employees   backgroundEmployeeReader
 	connections serverWatchConnectionReader
 	credentials interface {
 		ResolveConnectionCredentials(context.Context, connectorcore.PersonalConnection) (map[string]string, error)
@@ -42,11 +44,18 @@ func (p *ServerWatchProbe) Usable(ctx context.Context, target serverwatch.Target
 }
 
 func (p *ServerWatchProbe) connection(ctx context.Context, target serverwatch.Target) (connectorcore.PersonalConnection, error) {
-	if p == nil || p.bindings == nil || p.connections == nil {
+	if p == nil || p.bindings == nil || p.employees == nil || p.connections == nil {
+		return connectorcore.PersonalConnection{}, serverwatch.ErrNotUsable
+	}
+	detail, err := p.employees.Get(ctx, digitalhuman.Scope{OrganizationID: target.OrganizationID, WorkspaceID: target.WorkspaceID, ActorID: target.OwnerAccountID}, target.DigitalHumanID)
+	if err != nil || detail == nil || detail.Definition == nil || detail.Definition.Status != digitalhuman.StatusActive || detail.Definition.PublishedVersionID == nil {
 		return connectorcore.PersonalConnection{}, serverwatch.ErrNotUsable
 	}
 	bindings, err := p.bindings.ListBindingsByTarget(ctx, target.OrganizationID, target.OwnerAccountID, connectorcore.TargetTypeDigitalHuman,
-		target.DigitalHumanID.String(), connectorbindings.ListOptions{Scope: connectorcore.ScopePublished, Statuses: []connectorcore.BindingStatus{connectorcore.BindingStatusActive}})
+		target.DigitalHumanID.String(), connectorbindings.ListOptions{
+			Scope: connectorcore.ScopePublished, VersionID: detail.Definition.PublishedVersionID.String(),
+			Statuses: []connectorcore.BindingStatus{connectorcore.BindingStatusActive},
+		})
 	if err != nil {
 		return connectorcore.PersonalConnection{}, err
 	}
@@ -130,7 +139,7 @@ func hostErrorClass(err error) string {
 func (c *ServiceContainer) GetServerWatchProbe() *ServerWatchProbe {
 	service, _ := c.getServerOpsSSHClient()
 	return &ServerWatchProbe{
-		bindings: c.GetConnectorBindingRepository(), connections: c.GetConnectorConnectionRepository(),
+		bindings: c.GetConnectorBindingRepository(), employees: c.GetDigitalHumanService(), connections: c.GetConnectorConnectionRepository(),
 		credentials: c.GetConnectorCredentialResolver(), service: service,
 	}
 }
