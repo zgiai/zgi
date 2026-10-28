@@ -154,6 +154,12 @@ operations do not run non-interactively: scheduled and background DigitalHuman
 runs cannot use this connector, and that runtime policy does not globally
 disable other DigitalHuman background features.
 
+When the owner decides a DigitalHuman confirmation in the console, the same
+turn continues: the DigitalHuman receives the operation's result, exactly as a
+call without confirmation would, and answers in the same message. A cancelled
+or failed operation is reported as such and is not retried with the same
+arguments. Channel replies and the external API keep their fixed outcome text.
+
 Write actions are opt-in. When a server connection is added while creating a
 DigitalHuman, only the read operations are selected by default; each write
 action must be ticked explicitly. Deploys, file writes, configuration changes,
