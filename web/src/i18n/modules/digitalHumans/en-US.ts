@@ -172,11 +172,11 @@ const messages = {
       noResponsibility: 'No responsibility added yet.',
     },
     server: {
-      title: 'Step 1: Connect a server',
+      title: 'Connect a server',
       description: 'The operations specialist works on one Linux server over SSH. Choose a saved server, or add a new one here.',
       required: 'Required',
       connected: 'Selected: {name}',
-      missing: 'First choose or add a server in “Step 1: Connect a server” above. You can also create a draft and connect it later from the setup checklist; it is not published until then.',
+      missing: 'Choose or add a server under “Connect a server” below. You can also create a draft and connect it later from the setup checklist; it is not published until then.',
       chooseLabel: 'Choose a server',
       loading: 'Loading saved servers…',
       use: 'Use this server',

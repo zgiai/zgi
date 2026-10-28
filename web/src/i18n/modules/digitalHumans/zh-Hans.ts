@@ -160,11 +160,11 @@ const messages: DigitalHumansMessages = {
       noResponsibility: '还没有填写职责。',
     },
     server: {
-      title: '第 1 步：连接服务器',
+      title: '连接服务器',
       description: '运维专员通过 SSH 连接一台 Linux 服务器工作。选一台已保存的服务器，或在这里添加新的。',
       required: '必填',
       connected: '已选择：{name}',
-      missing: '请先在上方「第 1 步：连接服务器」中选择或添加一台服务器。也可以先创建草稿，之后在配置清单中连接；完成前不会发布。',
+      missing: '请在下方「连接服务器」中选择或添加一台服务器。也可以先创建草稿，之后在配置清单中连接；完成前不会发布。',
       chooseLabel: '选择服务器',
       loading: '正在读取已保存的服务器…',
       use: '使用这台服务器',

@@ -18,7 +18,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Radio, RadioGroup } from '@/components/ui/radio';
-import { connectorCatalogItems, useConnectorCatalog } from '@/hooks/connectors/use-connectors';
+import {
+  connectorCatalogItems,
+  personalConnectionItems,
+  useConnectorCatalog,
+  usePersonalConnections,
+} from '@/hooks/connectors/use-connectors';
 import { useDigitalHumanConnectorCandidates } from '@/hooks/digital-human/use-digital-humans';
 import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n';
@@ -70,6 +75,13 @@ export function DigitalHumanServerStep({
   }, [catalogQuery.data?.data, connectorId, locale]);
   const servers = (candidatesQuery.data?.data.items ?? []).filter(
     candidate => candidate.parent_resource_id === connectorId
+  );
+  // Saved servers often share a name; the account and host tell them apart.
+  const connectionsQuery = usePersonalConnections(undefined, servers.length > 0);
+  const serverAddress = new Map(
+    personalConnectionItems(connectionsQuery.data?.data).map(
+      connection => [connection.id, connection.external_account_id ?? ''] as const
+    )
   );
   const selected = selections.find(item => item.candidate.parent_resource_id === connectorId);
   const [preset, setPreset] = useState<ServerCapabilityPreset>(
@@ -180,6 +192,11 @@ export function DigitalHumanServerStep({
                 }`}
               >
                 <span className="block truncate font-medium">{server.display_name}</span>
+                {serverAddress.get(server.resource_id) ? (
+                  <span className="block truncate font-mono text-xs text-muted-foreground">
+                    {serverAddress.get(server.resource_id)}
+                  </span>
+                ) : null}
                 <span className="mt-0.5 block text-xs text-muted-foreground">
                   {isSelected
                     ? t('createFlow.server.inUse')
