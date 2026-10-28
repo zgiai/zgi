@@ -338,7 +338,9 @@ func connectorResolutionConversationMatches(
 }
 
 // resumeDigitalHumanRun moves the exact paused DigitalHuman run that owns this
-// route receipt back to running, or to its terminal state. The WHERE clause
+// route receipt to its terminal state. The decision itself executes the
+// operation and nothing re-enters the model loop afterwards, so a completed
+// operation ends the run as succeeded on every surface. The WHERE clause
 // pins the tenant, owner, host, published version, conversation, message,
 // waiting status, and the stored receipt, so a confirmation can never resume a
 // run from another owner, host, or pinned version.
@@ -355,6 +357,8 @@ func resumeDigitalHumanRun(
 	status, errorCode := "running", ""
 	completedAt := any(nil)
 	switch resolution.state {
+	case connectorconfirmation.StateCompleted:
+		status, completedAt = "succeeded", gorm.Expr("CURRENT_TIMESTAMP")
 	case connectorconfirmation.StateCancelled:
 		status, completedAt = "canceled", gorm.Expr("CURRENT_TIMESTAMP")
 	case connectorconfirmation.StateFailed:

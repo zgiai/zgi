@@ -225,7 +225,7 @@ func TestRecordConnectorConfirmationResolutionResumesPinnedDigitalHumanRun(t *te
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`(?s)UPDATE "digital_human_runs" SET .*"waiting_receipt"=.*WHERE .*digital_human_id.*digital_human_version_id.*waiting_receipt`).
 		WithArgs(
-			nil, "", "running", "", nil,
+			"", "succeeded", "", nil,
 			runID, command.OrganizationID, command.OwnerAccountID, command.OwnerAccountID,
 			digitalHumanID, versionID, conversationID, messageID, "waiting", command.RouteReceipt,
 		).
