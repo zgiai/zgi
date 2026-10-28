@@ -1576,7 +1576,10 @@ export function AIChatShell({
         })
       );
       try {
-        await controller.recoverStreamingConversation(conversationId);
+        await controller.recoverStreamingConversation(conversationId, {
+          mode: 'active',
+          refresh: true,
+        });
       } catch {
         // The receipt is already consumed even when the provider outcome is unknown.
         // A later durable-event recovery is safe; repeating the operation is not.
