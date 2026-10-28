@@ -23,6 +23,7 @@ func backgroundAuthorizationFixture(t *testing.T, surface string) (*AccessServic
 		`CREATE TABLE accounts(id TEXT PRIMARY KEY,status TEXT,deleted_at DATETIME)`,
 		`CREATE TABLE workspace_members(account_id TEXT,workspace_id TEXT)`,
 		`CREATE TABLE workspaces(id TEXT PRIMARY KEY,organization_id TEXT,status TEXT)`,
+		`CREATE TABLE members(organization_id TEXT,account_id TEXT,role TEXT,status TEXT)`,
 		`CREATE TABLE published_runtime_surfaces(id TEXT PRIMARY KEY,resource_type TEXT,resource_id TEXT,organization_id TEXT,workspace_id TEXT,surface TEXT,enabled BOOLEAN,compatibility_source TEXT,created_at DATETIME,updated_at DATETIME,deleted_at DATETIME)`,
 		`CREATE TABLE published_runtime_surface_grants(id TEXT PRIMARY KEY,surface_id TEXT,subject_type TEXT,subject_id TEXT,enabled BOOLEAN,created_at DATETIME,updated_at DATETIME,deleted_at DATETIME)`,
 	} {
@@ -104,6 +105,21 @@ func TestBackgroundAuthorizationRechecksLivePublicationRouteAndTask(t *testing.T
 			}
 			if err := s.db.Exec(`UPDATE accounts SET status='active'`).Error; err != nil {
 				t.Fatal(err)
+			}
+			// A disabled organization member keeps its workspace row but must
+			// not keep authorizing unattended work; a missing members row is
+			// legacy data that workspace membership still authorizes.
+			if err := s.db.Exec(`INSERT INTO members(organization_id,account_id,role,status) VALUES (?,?,?,?)`, run.OrganizationID, *run.ActorID, "normal", "inactive").Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AuthorizeBackgroundLinuxExecution(t.Context(), run, event); err == nil {
+				t.Fatal("disabled organization member continued")
+			}
+			if err := s.db.Exec(`UPDATE members SET status='active'`).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AuthorizeBackgroundLinuxExecution(t.Context(), run, event); err != nil {
+				t.Fatalf("re-enabled organization member: %v", err)
 			}
 			if surface == SurfaceChannel {
 				if err := s.db.Model(&channelruntime.Binding{}).Where("id = ?", event.Context["channel_binding_id"]).Update("enabled", false).Error; err != nil {

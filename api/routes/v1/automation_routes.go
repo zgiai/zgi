@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -18,6 +20,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
@@ -57,7 +60,10 @@ func RegisterAutomationRoutes(router *gin.RouterGroup, deps AutomationRouteDeps)
 		automationnotification.NewEmailSink(),
 		automationnotification.NewNotificationSMSSink(deps.NotificationSMSService),
 	)
-	runWorkflowExecutor := automationaction.NewRunWorkflowExecutorWithProvider(deps.AutomationWorkflowRunnerProvider)
+	runWorkflowExecutor := automationaction.NewRunWorkflowExecutorWithProvider(deps.AutomationWorkflowRunnerProvider).
+		WithTaskCreatorAccessChecker(func(ctx context.Context, organizationID, workspaceID, accountID string) (bool, error) {
+			return memberstatus.AccountCanUseWorkspace(ctx, deps.DB, organizationID, workspaceID, accountID)
+		})
 	runDigitalHumanExecutor := automationaction.NewRunDigitalHumanExecutor(deps.DigitalHumanRunnerProvider)
 	executor := automationruntime.NewExecutorWithActionExecutors(deps.DB, taskRepo, actionRepo, runRepo, notificationExecutor, runWorkflowExecutor, runDigitalHumanExecutor)
 	digitalHumanTaskDispatcher := digitalhumantask.NewRunDispatcher(deps.TaskManager)

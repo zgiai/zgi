@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"errors"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 
@@ -9,6 +10,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 )
+
+// ErrCurrentWorkspaceOutsideOrganization identifies an account context whose
+// current workspace does not belong to the organization a request resolved.
+var ErrCurrentWorkspaceOutsideOrganization = errors.New("current workspace is outside the resolved organization")
 
 type AccountService interface {
 	SendResetPasswordEmail(ctx context.Context, account *auth_model.Account, email string, language string) (string, error)
@@ -84,6 +89,12 @@ type AccountService interface {
 	GetCurrentWorkspace(ctx context.Context, accountID string) (*model.Workspace, error)
 
 	EnsureCurrentOrganizationID(ctx context.Context, accountID string) (string, error)
+	// CheckOrganizationAccess rejects a request scoped to organizationID when the
+	// account's membership there is disabled (organization.member.disabled), or
+	// when the account's current workspace for that organization context belongs
+	// to another organization (ErrCurrentWorkspaceOutsideOrganization). A missing
+	// membership row is not disabled, so legacy workspace-only access is kept.
+	CheckOrganizationAccess(ctx context.Context, accountID, organizationID string) error
 
 	UpdateAccountBasicInfo(ctx context.Context, account *auth_model.Account, name, email, status *string) error
 	UpdateAccountExtension(ctx context.Context, account *auth_model.Account, mobile *string, gender *string) error

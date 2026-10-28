@@ -19,6 +19,7 @@ import (
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	workspacerepo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -242,6 +243,15 @@ func (s *Service) scope(ctx context.Context, workspaceID, accountID string) (*wo
 		return nil, fmt.Errorf("load workspace organization: %w", err)
 	}
 	if !organization.IsActive() {
+		return nil, ErrForbidden
+	}
+	// Workspace rows survive a disabled organization membership; a disabled
+	// member must not reach this workspace through them.
+	disabled, err := memberstatus.OrganizationDisabled(ctx, s.db, organization.ID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("check organization member status: %w", err)
+	}
+	if disabled {
 		return nil, ErrForbidden
 	}
 	member, err := s.members.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
@@ -613,6 +623,9 @@ func (s *Service) lockScopeForUpdate(ctx context.Context, tx *gorm.DB, expected 
 		First(&organizationMember).Error
 	if organizationMemberErr != nil && !errors.Is(organizationMemberErr, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("revalidate developer access organization member: %w", organizationMemberErr)
+	}
+	if organizationMemberErr == nil && organizationMember.Status == workspacemodel.OrganizationMemberStatusInactive {
+		return nil, ErrForbidden
 	}
 
 	var member workspacemodel.WorkspaceMember

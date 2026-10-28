@@ -373,6 +373,10 @@ func (a *AccountServiceAdapter) EnsureCurrentOrganizationID(ctx context.Context,
 	return a.accountService.EnsureCurrentOrganizationID(ctx, accountID)
 }
 
+func (a *AccountServiceAdapter) CheckOrganizationAccess(ctx context.Context, accountID, organizationID string) error {
+	return a.accountService.CheckOrganizationAccess(ctx, accountID, organizationID)
+}
+
 func (a *AccountServiceAdapter) IsOrganizationMember(ctx context.Context, organizationID, accountID string) (bool, error) {
 	return a.accountService.IsOrganizationMember(ctx, organizationID, accountID)
 }

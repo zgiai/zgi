@@ -92,9 +92,14 @@ func (s *WorkspacePermissionFilterServiceImpl) getPermittedWorkspacesByUser(
 		return []*WorkspacePermissionResponse{}, nil
 	}
 
-	isOrganizationAdminOrOwner, err := s.isOrganizationAdminOrOwner(ctx, organizationID, accountID)
+	isOrganizationAdminOrOwner, disabled, err := s.organizationAuthority(ctx, organizationID, accountID)
 	if err != nil {
 		return nil, err
+	}
+	if disabled {
+		// Workspace rows survive a disabled organization membership; they must
+		// not make any of this organization's workspaces accessible.
+		return []*WorkspacePermissionResponse{}, nil
 	}
 	if isOrganizationAdminOrOwner {
 		permittedWorkspaces := make([]*WorkspacePermissionResponse, 0, len(workspaces))
@@ -167,18 +172,24 @@ func (s *WorkspacePermissionFilterServiceImpl) getPermittedWorkspacesByUser(
 	return permittedWorkspaces, nil
 }
 
-func (s *WorkspacePermissionFilterServiceImpl) isOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
+// organizationAuthority reports whether the account administers the
+// organization and whether its membership there is disabled. A missing
+// membership row is neither, so legacy workspace membership still decides.
+func (s *WorkspacePermissionFilterServiceImpl) organizationAuthority(ctx context.Context, organizationID, accountID string) (isAdmin bool, disabled bool, err error) {
 	join, err := s.organizationRepo.GetAccountJoin(ctx, organizationID, accountID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
+			return false, false, nil
 		}
-		return false, fmt.Errorf("failed to get organization account join: %w", err)
+		return false, false, fmt.Errorf("failed to get organization account join: %w", err)
 	}
-	if join == nil || join.Status != model.OrganizationMemberStatusActive {
-		return false, nil
+	if join == nil {
+		return false, false, nil
 	}
-	return join.Role == model.OrganizationRoleOwner || join.Role == model.OrganizationRoleAdmin, nil
+	if !organizationMemberIsActive(join) {
+		return false, true, nil
+	}
+	return join.Role == model.OrganizationRoleOwner || join.Role == model.OrganizationRoleAdmin, false, nil
 }
 
 func workspacePermissionCodeForFilterType(permissionType string) (model.WorkspacePermissionCode, error) {

@@ -113,3 +113,34 @@ func retireWorkspaceDeveloperAccessForOrganizationChange(ctx context.Context, tx
 	}
 	return nil
 }
+
+// deactivateOrganizationMemberDeveloperKeys turns off, without revoking, every
+// active personal API key the account holds in the organization's workspaces.
+// It runs with the transaction that disables the organization membership.
+//
+// Keys are set to inactive rather than revoked so the member can turn them
+// back on after being re-enabled. Re-enabling deliberately does not reactivate
+// them: inactive carries no record of why a key was turned off, and silently
+// reviving keys the member had switched off themselves would grant more than
+// the member asked for. Request-time validation also rejects every key of a
+// disabled member, so this write is defence in depth.
+func deactivateOrganizationMemberDeveloperKeys(ctx context.Context, tx *gorm.DB, organizationID, accountID string) error {
+	if tx == nil || organizationID == "" || accountID == "" {
+		return nil
+	}
+	// Focused service tests may use a reduced schema without the LLM tables.
+	if !tx.Migrator().HasTable(&apikeymodel.TenantAPIKey{}) {
+		return nil
+	}
+	if err := tx.WithContext(ctx).
+		Model(&apikeymodel.TenantAPIKey{}).
+		Where("organization_id = ? AND principal_type = ? AND principal_id = ? AND status = ?",
+			organizationID, accessmodel.PrincipalTypeUser, accountID, "active").
+		Updates(map[string]any{
+			"status":     "inactive",
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+		return fmt.Errorf("deactivate disabled member personal API keys: %w", err)
+	}
+	return nil
+}

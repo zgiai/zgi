@@ -11,7 +11,9 @@ import (
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
 	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -21,6 +23,23 @@ import (
 // deactivated. Callers may safely map this sentinel to a public retry-with-a-
 // new-link response while keeping infrastructure failures private.
 var ErrOrganizationInviteUnavailable = errors.New("organization invitation is unavailable")
+
+// ErrOrganizationInviteMemberDisabled identifies an invitation accepted by an
+// account whose membership in the invited organization is disabled. An
+// invitation must not bypass the administrator's decision to disable it. The
+// returned error also carries the organization.member.disabled AppError code.
+var ErrOrganizationInviteMemberDisabled = errors.New("invited account is disabled in the organization")
+
+func ensureInvitedMemberNotDisabledTx(ctx context.Context, tx *gorm.DB, organizationID, accountID, operation string) error {
+	disabled, err := memberstatus.OrganizationDisabled(ctx, tx, organizationID, accountID)
+	if err != nil {
+		return err
+	}
+	if !disabled {
+		return nil
+	}
+	return apperror.Wrap(ErrOrganizationInviteMemberDisabled, memberstatus.AppCodeMemberDisabled, apperror.WithOperation(operation))
+}
 
 func (s *organizationService) ValidateInviteLinkForRegistration(ctx context.Context, token string) (*model.OrganizationInviteLink, error) {
 	if s == nil || s.db == nil {
@@ -69,6 +88,9 @@ func (s *organizationService) acceptInviteByTokenTransaction(ctx context.Context
 			return err
 		}
 		if err := lockInvitedAccountTx(ctx, tx, accountID); err != nil {
+			return err
+		}
+		if err := ensureInvitedMemberNotDisabledTx(ctx, tx, link.OrganizationID, accountID, "organization.invite.accept"); err != nil {
 			return err
 		}
 
@@ -299,6 +321,12 @@ func newOrganizationInviteJoinRequest(link *model.OrganizationInviteLink, accoun
 }
 
 func (s *organizationService) applyApprovedInviteEffectsTx(ctx context.Context, tx *gorm.DB, req *model.OrganizationJoinRequest) error {
+	// A request created before the member was disabled must not restore
+	// department or workspace access, or switch the account into the
+	// organization, when it is approved or replayed later.
+	if err := ensureInvitedMemberNotDisabledTx(ctx, tx, req.OrganizationID, req.AccountID, "organization.invite.apply"); err != nil {
+		return err
+	}
 	req.Name = normalizeOrganizationMemberName(req.Name)
 	member, err := organizationMemberExistsTx(ctx, tx, req.OrganizationID, req.AccountID)
 	if err != nil {
