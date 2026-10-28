@@ -1085,10 +1085,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
 		}
 	}
-	// A channel member who asked can confirm by reply; a run without a known
-	// requester stays non-interactive and cannot ask.
-	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual ||
-		(event.Origin.Kind == invocation.OriginChannel && event.Sender.Type == invocation.PrincipalExternalUser && strings.TrimSpace(event.Sender.ID) != "")
+	config.ConnectorInteractive = connectorInteractive(event)
 	applyScheduledConnectorPolicy(&config, run, event)
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
@@ -1632,6 +1629,15 @@ func decodeAndVerifyRun(run *Run) (*ResolvedExecution, invocation.Event, error) 
 		return nil, invocation.Event{}, ErrRunConflict
 	}
 	return &ResolvedExecution{Spec: spec, Snapshot: snapshot}, event, nil
+}
+
+// connectorInteractive reports whether a person can confirm the run's
+// connector calls. A channel member who asked can confirm by reply; a run
+// without a known requester stays non-interactive and cannot ask. Every pass
+// of the same run, first or continued, uses this one rule.
+func connectorInteractive(event invocation.Event) bool {
+	return event.Origin.Kind == invocation.OriginManual ||
+		(event.Origin.Kind == invocation.OriginChannel && event.Sender.Type == invocation.PrincipalExternalUser && strings.TrimSpace(event.Sender.ID) != "")
 }
 
 func runtimeScope(run *Run) chatruntime.Scope {

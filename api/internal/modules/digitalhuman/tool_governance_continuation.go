@@ -72,6 +72,7 @@ func (s *RuntimeService) ContinueToolGovernance(ctx context.Context, scope Scope
 	}
 	caller.RunID = cloneUUIDPointer(&run.ID)
 	config.ConnectorRunID = run.ID.String()
+	config.ConnectorInteractive = connectorInteractive(event)
 	applyRunEndUserBilling(&config, run)
 	result, err := runtime.RunConfiguredToolGovernanceDecisionStream(ctx, chatScope, caller, config, conversationID, messageID, strings.TrimSpace(correlation), request, onEvent)
 	if err != nil {

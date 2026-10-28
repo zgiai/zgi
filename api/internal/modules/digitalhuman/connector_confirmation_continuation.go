@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -74,7 +73,7 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 	}
 	s.attachAttachmentReader(&config, run, resolved, event, nil)
 	config.ConnectorRunID = run.ID.String()
-	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual
+	config.ConnectorInteractive = connectorInteractive(event)
 	location := s.runLocation(ctx, run)
 	config.UserTimezone = location.String()
 	config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + currentTimeGuidance(s.now(), location)
