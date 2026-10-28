@@ -313,6 +313,11 @@ func init() {
 	readOnlyPrograms["dmesg"] = rejectFlags("-c", "-C", "-D", "-E", "-n", "--clear", "--read-clear", "--console-off", "--console-on", "--console-level")
 	readOnlyPrograms["hostname"] = func(args []string) bool { return len(positional(args)) == 0 }
 	readOnlyPrograms["mount"] = func(args []string) bool { return len(args) == 0 }
+	// command runs its argument unless it only looks the name up.
+	readOnlyPrograms["command"] = func(args []string) bool {
+		return len(args) >= 2 && (args[0] == "-v" || args[0] == "-V")
+	}
+	readOnlyPrograms["type"] = anyArgs
 	readOnlyPrograms["crontab"] = func(args []string) bool { return len(args) == 1 && args[0] == "-l" }
 	readOnlyPrograms["top"] = func(args []string) bool { return hasFlag(args, "-b") && hasFlag(args, "-n") }
 	readOnlyPrograms["nginx"] = func(args []string) bool {
@@ -686,8 +691,8 @@ func forbiddenSimpleCommand(words []string) bool {
 	}
 	name, _ := programName(words[0])
 	args := words[1:]
-	if name == "sudo" {
-		// Judge the command sudo runs.
+	if name == "sudo" || name == "command" || name == "exec" || name == "nohup" {
+		// Judge the command these wrappers run.
 		rest := args
 		for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
 			if rest[0] == "-u" || rest[0] == "-g" {
