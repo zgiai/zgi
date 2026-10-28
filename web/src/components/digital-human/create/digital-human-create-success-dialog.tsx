@@ -40,6 +40,7 @@ export function DigitalHumanCreateSuccessDialog({
   onChannels,
   onAutonomy,
   onBackToList,
+  server,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -54,6 +55,12 @@ export function DigitalHumanCreateSuccessDialog({
   onChannels: () => void;
   onAutonomy: () => void;
   onBackToList: () => void;
+  /** The operations specialist's first steps with its new server. */
+  server?: {
+    onTryIt: () => void;
+    onDailyInspection: () => void;
+    dailyState: 'idle' | 'working' | 'done' | 'failed';
+  };
 }) {
   const t = useT('digitalHumans');
   const summary = responsibility.trim();
@@ -110,6 +117,46 @@ export function DigitalHumanCreateSuccessDialog({
                 {t('createFlow.success.strengths')}
               </p>
               <DigitalHumanTagList tags={tags} />
+            </div>
+          ) : null}
+
+          {server ? (
+            <div className="space-y-3 rounded-xl border border-primary/30 bg-primary/[0.03] p-4">
+              <div>
+                <p className="text-sm font-semibold">{t('createFlow.server.tryTitle')}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t('createFlow.server.tryDescription')}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button className="sm:flex-1" onClick={server.onTryIt}>
+                  {t('createFlow.server.tryAction')}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="sm:flex-1"
+                  disabled={server.dailyState === 'working' || server.dailyState === 'done'}
+                  onClick={server.onDailyInspection}
+                >
+                  {t(
+                    server.dailyState === 'done'
+                      ? 'createFlow.server.dailyDone'
+                      : server.dailyState === 'working'
+                        ? 'createFlow.server.dailyWorking'
+                        : 'createFlow.server.dailyAction'
+                  )}
+                </Button>
+              </div>
+              <p
+                role={server.dailyState === 'failed' ? 'alert' : undefined}
+                className={`text-xs leading-5 ${server.dailyState === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}
+              >
+                {t(
+                  server.dailyState === 'failed'
+                    ? 'createFlow.server.dailyFailed'
+                    : 'createFlow.server.dailyHint'
+                )}
+              </p>
             </div>
           ) : null}
 

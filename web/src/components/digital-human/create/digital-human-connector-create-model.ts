@@ -235,3 +235,85 @@ export function createConnectorSelectionsDirty(
 ): boolean {
   return selections.length > 0;
 }
+
+/**
+ * What a server connection lets the operations specialist do, as three
+ * presets instead of one checkbox per operation.
+ */
+export type ServerCapabilityPreset = 'inspect' | 'manage' | 'full';
+
+const SERVER_PRESET_OPERATIONS: Record<ServerCapabilityPreset, readonly string[]> = {
+  inspect: ['server.system.snapshot', 'server.service.status', 'server.journal.tail'],
+  manage: [
+    'server.system.snapshot',
+    'server.service.status',
+    'server.journal.tail',
+    'server.service.restart',
+    'server.service.start',
+    'server.service.stop',
+    'server.service.reload',
+  ],
+  full: [
+    'server.system.snapshot',
+    'server.service.status',
+    'server.journal.tail',
+    'server.service.restart',
+    'server.service.start',
+    'server.service.stop',
+    'server.service.reload',
+    'server.command.run',
+  ],
+};
+
+/** The operations a preset grants, limited to what the connection allows. */
+export function serverPresetOperationIds(
+  preset: ServerCapabilityPreset,
+  candidate: Pick<DigitalHumanResourceCandidate, 'metadata'>
+): string[] {
+  const allowed = connectorOperationIds(candidate);
+  return SERVER_PRESET_OPERATIONS[preset].filter(id => allowed.includes(id));
+}
+
+/** The preset a selection's operations amount to: the narrowest that covers them. */
+export function serverPresetOf(
+  selection: DigitalHumanCreateConnectorSelection
+): ServerCapabilityPreset {
+  const operations = connectorOperationIds(selection.binding);
+  if (operations.includes('server.command.run')) return 'full';
+  const inspect = SERVER_PRESET_OPERATIONS.inspect;
+  return operations.some(id => !inspect.includes(id)) ? 'manage' : 'inspect';
+}
+
+/**
+ * Use one server for the specialist: it replaces any earlier connection of the
+ * same connector, with the preset's operations and the approval policy.
+ */
+export function selectServerConnection(
+  selections: readonly DigitalHumanCreateConnectorSelection[],
+  candidate: DigitalHumanResourceCandidate,
+  preset: ServerCapabilityPreset,
+  policy: ConnectorApprovalPolicy
+): readonly DigitalHumanCreateConnectorSelection[] {
+  const others = selections.filter(
+    item => item.candidate.parent_resource_id !== candidate.parent_resource_id
+  );
+  const added = addCreateConnectorSelection(others, candidate);
+  const key = createConnectorCandidateKey(candidate);
+  const operations = serverPresetOperationIds(preset, candidate);
+  if (operations.length === 0) return selections;
+  return setCreateConnectorSelectionApprovalPolicy(
+    added.map(item =>
+      createConnectorCandidateKey(item.candidate) !== key
+        ? item
+        : {
+            ...item,
+            binding: {
+              ...item.binding,
+              metadata: { ...item.binding.metadata, allowed_operation_ids: operations },
+            },
+          }
+    ),
+    key,
+    policy
+  );
+}

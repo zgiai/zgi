@@ -34,6 +34,7 @@ import {
   type DigitalHumanCreateConnectorSelection,
 } from './digital-human-connector-create-model';
 import { DigitalHumanCreateSuccessDialog } from './digital-human-create-success-dialog';
+import { enableDailyServerInspection } from './server-onboarding';
 import {
   DigitalHumanTemplateForm,
   type DigitalHumanTemplateFormValue,
@@ -50,6 +51,8 @@ import {
 
 const CREATE_PATH = '/console/digital-humans/create';
 const LIST_PATH = '/console/digital-humans';
+/** The SSH Server Operations connector a server template needs. */
+const SERVER_CONNECTOR_ID = 'serverops_ssh';
 
 function initials(value: string): string {
   return value.trim().slice(0, 2).toUpperCase();
@@ -244,6 +247,11 @@ function DigitalHumanConfigureStep({
     });
   };
 
+  // A template that needs a server gets its own step (the operations specialist).
+  const serverConnectorId = template?.connectors.find(
+    connector => connector.required && connector.connector_id === SERVER_CONNECTOR_ID
+  )?.connector_id;
+
   // A template that needs a skill the workspace lacks, or a connection, would
   // create a digital human that cannot do its work (ADR 0022).
   const requirementGap = skillCandidatesQuery.isLoading
@@ -261,7 +269,9 @@ function DigitalHumanConfigureStep({
               skills: requirementGap.missingSkillIds.join(', '),
             })
           : '',
-        requirementGap.connectorMissing ? t('createFlow.form.connectorRequired') : '',
+        requirementGap.connectorMissing
+          ? t(serverConnectorId ? 'createFlow.server.missing' : 'createFlow.form.connectorRequired')
+          : '',
       ]
         .filter(Boolean)
         .join(' ')
@@ -391,6 +401,32 @@ function DigitalHumanConfigureStep({
   };
 
   const draftBase = created ? `${LIST_PATH}/${created.id}` : LIST_PATH;
+  const serverSelection = connectorSelections.find(
+    item => item.candidate.parent_resource_id === serverConnectorId
+  );
+  const [dailyState, setDailyState] = useState<'idle' | 'working' | 'done' | 'failed'>('idle');
+  // One click turns on the daily read-only inspection: a bounded task grant
+  // and a task every morning (ADR 0027).
+  const turnOnDailyInspection = async () => {
+    if (!created || !serverConnectorId || !serverSelection || dailyState === 'working') return;
+    setDailyState('working');
+    try {
+      await enableDailyServerInspection(
+        created.id,
+        serverConnectorId,
+        serverSelection,
+        {
+          name: t('createFlow.server.dailyTaskName'),
+          goal: t('createFlow.server.dailyTaskGoal'),
+          criteria: [t('createFlow.server.dailyTaskCriteria')],
+        },
+        Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      );
+      setDailyState('done');
+    } catch {
+      setDailyState('failed');
+    }
+  };
   const notice = created?.notice ?? null;
 
   return (
@@ -406,6 +442,7 @@ function DigitalHumanConfigureStep({
         onRetrySkills={() => void skillCandidatesQuery.refetch()}
         connectorSelections={connectorSelections}
         onChangeConnectorSelections={setConnectorSelections}
+        serverConnectorId={serverConnectorId}
         value={{ ...value, model: effectiveModel }}
         onChange={handleChange}
         models={availableModels.models}
@@ -439,6 +476,18 @@ function DigitalHumanConfigureStep({
         onChannels={() => router.push(`${draftBase}/channels`)}
         onAutonomy={() => router.push(`${draftBase}/configuration`)}
         onBackToList={() => router.push(LIST_PATH)}
+        server={
+          serverConnectorId && serverSelection
+            ? {
+                onTryIt: () =>
+                  router.push(
+                    `${draftBase}/chat?draft=${encodeURIComponent(t('createFlow.server.tryPrompt'))}`
+                  ),
+                onDailyInspection: () => void turnOnDailyInspection(),
+                dailyState,
+              }
+            : undefined
+        }
       />
 
       <ConfirmDialog

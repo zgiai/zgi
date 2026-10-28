@@ -102,6 +102,9 @@ const {
   createConnectorSelectionBindings,
   createConnectorSelectionCandidates,
   removeCreateConnectorSelection,
+  selectServerConnection,
+  serverPresetOf,
+  serverPresetOperationIds,
   setCreateConnectorSelectionOperation,
   toggleCreateConnectorSelection,
 } = await import(connectorCreateModelModuleURL);
@@ -2398,6 +2401,43 @@ for (const [locale, dictionary] of [
     [sshCandidate]
   );
   assert.equal('approval_policy' in forged.metadata, false);
+}
+
+{
+  // The server step: presets limit operations to what the connection allows,
+  // and choosing a server replaces an earlier one of the same connector.
+  const allOps = [
+    'server.system.snapshot',
+    'server.service.status',
+    'server.journal.tail',
+    'server.service.restart',
+    'server.service.start',
+    'server.service.stop',
+    'server.service.reload',
+    'server.command.run',
+  ];
+  const server = (id, ops = allOps) => ({
+    type: 'connector',
+    resource_id: id,
+    parent_resource_id: 'serverops_ssh',
+    display_name: id,
+    resource_revision: `connector:${id}`,
+    access_modes: ['execute'],
+    metadata: { allowed_operation_ids: ops },
+    status: 'ready',
+    available: true,
+  });
+  assert.deepEqual(serverPresetOperationIds('inspect', server('a')), allOps.slice(0, 3));
+  assert.deepEqual(serverPresetOperationIds('full', server('b', allOps.slice(0, 4))), allOps.slice(0, 4));
+  let picked = selectServerConnection([], server('a'), 'manage', 'read_only_auto');
+  assert.equal(picked.length, 1);
+  assert.equal(serverPresetOf(picked[0]), 'manage');
+  assert.equal(picked[0].binding.metadata.approval_policy, 'read_only_auto');
+  picked = selectServerConnection(picked, server('b'), 'full', 'always_ask');
+  assert.deepEqual(picked.map(item => item.binding.resource_id), ['b']);
+  assert.equal(serverPresetOf(picked[0]), 'full');
+  assert.equal('approval_policy' in picked[0].binding.metadata, false);
+  assert.equal(serverPresetOf(selectServerConnection([], server('c'), 'inspect', 'always_ask')[0]), 'inspect');
 }
 
 console.log('digital human create-flow contract tests passed');

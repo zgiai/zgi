@@ -20,6 +20,7 @@ import type { DigitalHumanResourceCandidate } from '@/services/types/digital-hum
 import type { ModelItem } from '@/services/types/model';
 import { cn } from '@/lib/utils';
 import { DigitalHumanConnectorCreateSection } from './digital-human-connector-create-picker';
+import { DigitalHumanServerStep } from './digital-human-server-step';
 import type { DigitalHumanCreateConnectorSelection } from './digital-human-connector-create-model';
 import { DigitalHumanTemplatePreview } from './digital-human-template-preview';
 
@@ -46,6 +47,8 @@ interface DigitalHumanTemplateFormProps {
   connectorSelections: readonly DigitalHumanCreateConnectorSelection[];
   /** Commits the selection made in the Connector picker. */
   onChangeConnectorSelections: (selections: DigitalHumanCreateConnectorSelection[]) => void;
+  /** The server connector the template needs, shown as its own step. */
+  serverConnectorId?: string;
   value: DigitalHumanTemplateFormValue;
   onChange: (patch: Partial<DigitalHumanTemplateFormValue>) => void;
   models: ModelItem[];
@@ -84,6 +87,7 @@ export function DigitalHumanTemplateForm({
   onRetrySkills,
   connectorSelections,
   onChangeConnectorSelections,
+  serverConnectorId,
   value,
   onChange,
   models,
@@ -344,10 +348,19 @@ export function DigitalHumanTemplateForm({
 
             {/* The same generic Connector picker for every template and the
                 custom entry: it only records the choice; creation binds it. */}
+            {serverConnectorId ? (
+              <DigitalHumanServerStep
+                connectorId={serverConnectorId}
+                selections={connectorSelections}
+                onChangeSelections={onChangeConnectorSelections}
+                disabled={submitting}
+              />
+            ) : null}
             <DigitalHumanConnectorCreateSection
               selections={connectorSelections}
               onChangeSelections={onChangeConnectorSelections}
               disabled={submitting}
+              hiddenConnectorIds={serverConnectorId ? [serverConnectorId] : []}
             />
 
             <DigitalHumanSkillPickerDialog

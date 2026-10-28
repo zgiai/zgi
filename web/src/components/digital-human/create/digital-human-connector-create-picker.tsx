@@ -50,6 +50,8 @@ interface DigitalHumanConnectorCreateSectionProps {
   selections: readonly DigitalHumanCreateConnectorSelection[];
   onChangeSelections: (selections: DigitalHumanCreateConnectorSelection[]) => void;
   disabled?: boolean;
+  /** Connectors a dedicated step above already presents, such as the server. */
+  hiddenConnectorIds?: readonly string[];
 }
 
 /**
@@ -61,12 +63,20 @@ export function DigitalHumanConnectorCreateSection({
   selections,
   onChangeSelections,
   disabled = false,
+  hiddenConnectorIds = [],
 }: DigitalHumanConnectorCreateSectionProps) {
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const items = useMemo(() => createConnectorSelectionBindings(selections), [selections]);
-  const candidates = useMemo(() => createConnectorSelectionCandidates(selections), [selections]);
+  const visible = useMemo(
+    () =>
+      selections.filter(
+        item => !hiddenConnectorIds.includes(item.candidate.parent_resource_id ?? '')
+      ),
+    [hiddenConnectorIds, selections]
+  );
+  const items = useMemo(() => createConnectorSelectionBindings(visible), [visible]);
+  const candidates = useMemo(() => createConnectorSelectionCandidates(visible), [visible]);
 
   return (
     <div className="space-y-2">
@@ -82,7 +92,7 @@ export function DigitalHumanConnectorCreateSection({
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h2 className="font-medium">{connectorT('title')}</h2>
               <Badge variant="subtle">
-                {t('bindings.selectedCount', { count: selections.length })}
+                {t('bindings.selectedCount', { count: visible.length })}
               </Badge>
             </div>
           </div>
@@ -102,7 +112,7 @@ export function DigitalHumanConnectorCreateSection({
           </Button>
         </div>
         <div className="min-h-0 flex-1 p-3">
-          {selections.length === 0 ? (
+          {visible.length === 0 ? (
             <button
               type="button"
               className="flex min-h-[130px] w-full flex-col items-center justify-center rounded-xl border border-dashed bg-muted/10 px-5 py-6 text-center transition-colors motion-reduce:transition-none hover:border-primary/40 hover:bg-primary/[0.03] disabled:pointer-events-none"
