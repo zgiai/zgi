@@ -289,8 +289,23 @@ func connectorConfirmationContinuationMessage(message *runtimemodel.Message, cla
 		"Answer in the user's language.",
 		"Do not expose internal IDs, UUIDs, receipts, correlation values, or raw JSON field names.",
 	}, " ")
+	// The note is stored with the turn while the replaced tool result is not,
+	// so it repeats the result for every later pass and turn.
 	return adapter.Message{
-		Role:    "system",
-		Content: instructions + "\n\nOriginal user request:\n" + userQuery + "\n\nOutcome:\n" + outcome,
+		Role: "system",
+		Content: instructions + "\n\nOriginal user request:\n" + userQuery + "\n\nOutcome:\n" + outcome +
+			"\n\nResult of that call:\n" + boundedConnectorToolResult(claim.ToolResult),
 	}
+}
+
+// maxConnectorContinuationResultRunes bounds the repeated result; connector
+// providers already bound their own output.
+const maxConnectorContinuationResultRunes = 12000
+
+func boundedConnectorToolResult(content string) string {
+	runes := []rune(strings.TrimSpace(content))
+	if len(runes) <= maxConnectorContinuationResultRunes {
+		return string(runes)
+	}
+	return string(runes[:maxConnectorContinuationResultRunes]) + "…(truncated)"
 }

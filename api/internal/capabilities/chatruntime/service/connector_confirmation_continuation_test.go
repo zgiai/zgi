@@ -63,10 +63,18 @@ func TestConnectorConfirmationModelToolResultMatchesAnUnconfirmedCall(t *testing
 }
 
 func TestConnectorConfirmationContinuationMessageNamesTheOutcome(t *testing.T) {
-	claim := &ConnectorConfirmationContinuation{State: connectorconfirmation.StateCancelled, Title: "Restart nginx"}
+	claim := &ConnectorConfirmationContinuation{
+		State: connectorconfirmation.StateCancelled, Title: "Restart nginx",
+		ToolResult: `[{"type":"json","data":{"state":"cancelled"}}]`,
+	}
 	message := connectorConfirmationContinuationMessage(nil, claim)
 	content, _ := message.Content.(string)
-	if message.Role != "system" || !strings.Contains(content, "cancelled Restart nginx") || !strings.Contains(content, "Do not repeat the same connector call") {
+	if message.Role != "system" || !strings.Contains(content, "cancelled Restart nginx") ||
+		!strings.Contains(content, "Do not repeat the same connector call") ||
+		!strings.Contains(content, `"state":"cancelled"`) {
 		t.Fatalf("continuation message = %#v", message)
+	}
+	if got := boundedConnectorToolResult(strings.Repeat("x", maxConnectorContinuationResultRunes+5)); !strings.HasSuffix(got, "(truncated)") {
+		t.Fatalf("unbounded result: %d runes", len([]rune(got)))
 	}
 }

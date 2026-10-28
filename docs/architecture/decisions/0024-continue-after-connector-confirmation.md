@@ -34,6 +34,7 @@ An operation that needs no confirmation already gives its result to the model as
 ### 2. The model sees what an unconfirmed call would have shown it
 
 - **Same projection.** The replaced tool result is the connector's model-visible result for that operation, the same value a call without confirmation returns. No new field, provider payload, or credential is exposed.
+- **The continuation note repeats the result**, bounded to 12,000 characters. The turn's stored transcript keeps the paused tool result of the call, so later passes and later turns read the outcome from the note.
 - **Cancelled and failed calls** give the model their state and error code. The note says the operation was not, or did not successfully, run, and must not be retried with the same arguments in this turn.
 - **Chat metadata is unchanged.** Provider output still never enters message metadata or the stream events; it lives only in the in-memory continuation and the turn's transcript, like an unconfirmed call's result.
 
