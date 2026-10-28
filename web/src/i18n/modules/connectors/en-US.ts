@@ -751,6 +751,13 @@ const messages = {
     passphrase: 'Private key passphrase (optional)',
     passphraseHint:
       'Leave empty for an unencrypted key. A blank passphrase is omitted and never sent.',
+    privilege: 'Command privilege',
+    privilegeHint:
+      'Service actions (restart, start, stop, reload) need permission to run systemctl on the server. Inspection always runs as the SSH user.',
+    privilegeUser: 'Run as the SSH user',
+    privilegeSudo: 'Use sudo (no password)',
+    privilegeSudoHint:
+      'Requires passwordless sudo for systemctl on the server. If sudo asks for a password, the action fails instead of waiting.',
     hostVerification: 'Host identity verification',
     hostVerificationHint:
       'The first test reads the server fingerprint automatically. After confirmation, later connections verify it strictly.',

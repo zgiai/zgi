@@ -5,13 +5,20 @@ import (
 	"time"
 )
 
-// Read-only action identities. These are the capability's only action ids: a
-// caller selects an action by one of these constants instead of passing or
-// parsing a command string.
+// Action identities. These are the capability's only action ids: a caller
+// selects an action by one of these constants instead of passing or parsing a
+// command string. The first three are read-only; the four service actions
+// change the state of exactly one systemd service unit through one fixed
+// systemctl verb each.
 const (
 	ActionSystemSnapshot = "server.system.snapshot"
 	ActionServiceStatus  = "server.service.status"
 	ActionJournalTail    = "server.journal.tail"
+
+	ActionServiceRestart = "server.service.restart"
+	ActionServiceStart   = "server.service.start"
+	ActionServiceStop    = "server.service.stop"
+	ActionServiceReload  = "server.service.reload"
 
 	// SystemdServiceNamePattern accepts only an explicit systemd service unit
 	// name. It excludes whitespace, "/", shell metacharacters, and bare command
@@ -19,6 +26,24 @@ const (
 	// the service_name argument.
 	SystemdServiceNamePattern = `^[A-Za-z0-9][A-Za-z0-9:_.@\-]{0,126}\.service$`
 )
+
+// Privilege is the closed, non-secret choice of how a connection runs the
+// service write actions. It is part of the connection, chosen when the
+// connection is set up, and never part of an action's input.
+type Privilege string
+
+const (
+	// PrivilegeNone runs every command as the SSH user itself.
+	PrivilegeNone Privilege = ""
+	// PrivilegeSudo runs the service write actions behind "sudo -n", so a
+	// password prompt fails instead of hanging. Read actions never use sudo.
+	PrivilegeSudo Privilege = "sudo"
+)
+
+// Valid reports whether the privilege is one of the closed values.
+func (p Privilege) Valid() bool {
+	return p == PrivilegeNone || p == PrivilegeSudo
+}
 
 // Runtime limits. Zero values become the documented defaults; negative values
 // and values above the hard caps are rejected, never clamped.
@@ -157,11 +182,15 @@ func newError(code error, requestID string, cause error) *Error {
 type Limits struct {
 	// ConnectTimeout bounds one dial plus SSH handshake. Zero means 10s.
 	ConnectTimeout time.Duration
-	// CommandTimeout bounds one remote read command. Zero means 20s.
+	// CommandTimeout bounds one remote command. Zero means 20s.
 	CommandTimeout time.Duration
 	// MaxOutputBytes bounds the combined stdout/stderr budget. Zero means 1 MiB.
 	MaxOutputBytes int
 }
+
+// maxRemoteErrorRunes bounds the remote error text a failed service write
+// action carries in its operator-only cause.
+const maxRemoteErrorRunes = 512
 
 // Connection is the request-scoped SSH target plus its credential material.
 //
@@ -188,6 +217,10 @@ type Connection struct {
 	// returns an observed fingerprint; every other action refuses a capture
 	// connection, and every mixed or empty combination fails closed.
 	CaptureHostKey bool
+	// Privilege selects how the service write actions run. It is non-secret,
+	// only PrivilegeNone and PrivilegeSudo are accepted, and read actions
+	// ignore it: they always run as the SSH user.
+	Privilege Privilege
 }
 
 // Attempt is the non-secret execution metadata of one call.
@@ -232,6 +265,17 @@ type ServiceStatus struct {
 	ActiveState string
 	SubState    string
 	Description string
+}
+
+// ServiceChange is the validated result of one service write action: the unit
+// state read again after the fixed systemctl verb succeeded.
+type ServiceChange struct {
+	Attempt
+	Action      string
+	ServiceName string
+	LoadState   string
+	ActiveState string
+	SubState    string
 }
 
 // JournalTail is the validated result of one journal tail read.

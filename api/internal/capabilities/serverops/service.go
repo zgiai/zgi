@@ -228,6 +228,48 @@ func (s *Service) JournalTail(ctx context.Context, connection Connection, servic
 	}, nil
 }
 
+// ChangeService runs one service write action (restart, start, stop, or reload)
+// on one systemd service unit and returns the unit state read right after it.
+//
+// The action id and unit name are validated before any credential is parsed or
+// any factory is invoked. The command is the fixed systemctl verb of the action,
+// behind "sudo -n" only when the connection's privilege is PrivilegeSudo, and is
+// followed by the same unprivileged show read the service status action uses.
+// A non-zero exit of the change classifies as ErrProviderRejected with the
+// bounded remote error text in the operator-only cause.
+func (s *Service) ChangeService(ctx context.Context, connection Connection, action, serviceName string) (*ServiceChange, error) {
+	if !connection.Privilege.Valid() {
+		return nil, newError(ErrConnectionInvalid, "", errServerOpsConnection)
+	}
+	command, validatedName, err := buildServiceChangeCommand(action, map[string]any{"service_name": serviceName}, connection.Privilege)
+	if err != nil {
+		return nil, newError(ErrInvalidInput, "", err)
+	}
+	executionRunner, requestID, err := s.prepareRunner(connection)
+	if err != nil {
+		return nil, err
+	}
+	result, runErr := executionRunner.run(ctx, command)
+	if runErr != nil {
+		return nil, serviceChangeRunError(requestID, runErr, result.Stderr)
+	}
+	if result.Truncated {
+		return nil, newError(ErrResponseInvalid, requestID, fmt.Errorf("%w: service state output was truncated", errReadActionOutput))
+	}
+	status, err := parseServiceStatusOutput(result.Stdout)
+	if err != nil {
+		return nil, newError(ErrResponseInvalid, requestID, err)
+	}
+	return &ServiceChange{
+		Attempt:     Attempt{RequestID: requestID, AttemptCount: 1},
+		Action:      action,
+		ServiceName: validatedName,
+		LoadState:   status.LoadState,
+		ActiveState: status.ActiveState,
+		SubState:    status.SubState,
+	}, nil
+}
+
 // ValidateCredential parses the credential material locally. It never dials,
 // never runs a command, and never retains the secret copies. A canceled context
 // fails fast before the factory is invoked.
@@ -298,7 +340,7 @@ func (s *Service) ValidateConnection(ctx context.Context, connection Connection)
 
 // prepareRunner builds one fresh runner and one request id. Connection and
 // credential failures never reach this point, and no raw secret survives it.
-// Capture mode is a probe-only opt-in: a read action must never run with
+// Capture mode is a probe-only opt-in: an action must never run with
 // host-key verification switched to discovery, so a capture connection is
 // rejected before any credential work or factory call.
 func (s *Service) prepareRunner(connection Connection) (runner, string, error) {
@@ -380,6 +422,9 @@ func (s *Service) connectionConfig(connection Connection) (sshClientConfig, erro
 		return sshClientConfig{}, errServerOpsConnection
 	}
 	if connection.Port < 1 || connection.Port > 65535 {
+		return sshClientConfig{}, errServerOpsConnection
+	}
+	if !connection.Privilege.Valid() {
 		return sshClientConfig{}, errServerOpsConnection
 	}
 	hasPassword := len(connection.Password) > 0

@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, Info } from 'lucide-react';
+import { AlertTriangle, Info, Terminal } from 'lucide-react';
 import { useLocale } from 'next-intl';
 import { OperationResultCard } from '@/components/aichat/operation-cards';
 import type { OperationCardMetaItem, OperationCardTextBlock } from '@/components/aichat/operation-cards/types';
@@ -36,16 +36,36 @@ export function ConnectorRuntimePreviewSummary({
     });
   }
   preview?.fields.forEach((field, index) => {
-    metrics.push({
-      id: `preview-field-${index}`,
-      label: field.label_i18n[locale] ?? field.label,
-      value: field.value,
-    });
+    const label = field.label_i18n[locale] ?? field.label;
+    if (field.format === 'command') {
+      // The exact command line gets a full-width code block so a long line
+      // wraps instead of being squeezed into a metric cell.
+      details.push({
+        id: `preview-command-${index}`,
+        icon: <Terminal className="size-3.5" aria-hidden="true" />,
+        title: label,
+        description: (
+          <pre
+            aria-label={label}
+            className="max-w-full whitespace-pre-wrap break-all rounded bg-muted px-2 py-1.5 font-mono text-xs text-foreground"
+          >
+            <code>{field.value}</code>
+          </pre>
+        ),
+        tone: 'neutral',
+      });
+    } else {
+      metrics.push({
+        id: `preview-field-${index}`,
+        label,
+        value: field.value,
+      });
+    }
     if (field.truncated) {
       details.push({
         id: `preview-truncated-${index}`,
         icon: <AlertTriangle className="size-3.5" />,
-        title: field.label_i18n[locale] ?? field.label,
+        title: label,
         description: t('runtime.confirmation.previewTruncated'),
         tone: 'warning',
       });

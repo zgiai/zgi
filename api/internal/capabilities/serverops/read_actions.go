@@ -1,5 +1,5 @@
 // This file implements the private, pure read-action layer for the three
-// accepted server operations actions: it strictly validates action input,
+// accepted read-only server operations actions: it strictly validates action input,
 // builds fixed read-only remote commands, and parses bounded command output into
 // private typed values.
 //
@@ -359,10 +359,23 @@ func buildServiceStatusCommand(input map[string]any) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	command := "LC_ALL=C\nexport LC_ALL\nprintf '" + serviceStatusHeader + "\\n'\n" +
-		"systemctl show --no-pager --property=LoadState --property=ActiveState --property=SubState --property=Description -- " +
-		shellSingleQuote(serviceName) + "\n"
+	command := "LC_ALL=C\nexport LC_ALL\n" + serviceStatusReadScript(serviceName)
 	return command, serviceName, nil
+}
+
+// serviceStatusShowLine is the single fixed systemctl show command line for one
+// validated unit. It is shared by the service status read, the state read that
+// follows every service write action, and the rendered approval preview, so the
+// three can never drift apart.
+func serviceStatusShowLine(serviceName string) string {
+	return "systemctl show --no-pager --property=LoadState --property=ActiveState --property=SubState --property=Description -- " +
+		shellSingleQuote(serviceName)
+}
+
+// serviceStatusReadScript prints the exact status protocol header followed by
+// the fixed show line, so parseServiceStatusOutput accepts its output.
+func serviceStatusReadScript(serviceName string) string {
+	return "printf '" + serviceStatusHeader + "\\n'\n" + serviceStatusShowLine(serviceName) + "\n"
 }
 
 // parseServiceStatusOutput validates the header plus exactly one each of
@@ -479,11 +492,17 @@ func buildJournalTailCommand(input map[string]any) (string, journalTailInput, er
 	}
 
 	validated = journalTailInput{ServiceName: serviceName, Lines: lines, SinceMinutes: sinceMinutes}
-	command := "LC_ALL=C\nexport LC_ALL\n" +
-		"journalctl --no-pager --quiet --output=cat --unit=" + shellSingleQuote(serviceName) +
-		" --lines=" + strconv.Itoa(lines) +
-		" --since=-" + strconv.Itoa(sinceMinutes) + "min\n"
+	command := "LC_ALL=C\nexport LC_ALL\n" + journalTailLine(validated) + "\n"
 	return command, validated, nil
+}
+
+// journalTailLine is the single fixed journalctl command line for one fully
+// validated journal input. It is shared by the executed command and the
+// rendered approval preview.
+func journalTailLine(validated journalTailInput) string {
+	return "journalctl --no-pager --quiet --output=cat --unit=" + shellSingleQuote(validated.ServiceName) +
+		" --lines=" + strconv.Itoa(validated.Lines) +
+		" --since=-" + strconv.Itoa(validated.SinceMinutes) + "min"
 }
 
 // parseJournalTailOutput normalizes CRLF, removes only one terminal newline

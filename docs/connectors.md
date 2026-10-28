@@ -103,18 +103,69 @@ never placed in URLs or browser storage. The connection becomes usable only
 after the user confirms the server identity and the strict credential save
 succeeds.
 
+The setup panel also asks for the connection's command privilege, stored as the
+optional, non-secret credential field `privilege`:
+
+- **Run as the SSH user** (the field is omitted): every command runs as the SSH user.
+- **Use sudo (no password)** (`privilege: "sudo"`): the service write actions run
+  behind `sudo -n`, so a server that asks for a password fails the action instead
+  of waiting. The server must allow that user to run `systemctl` through sudo
+  without a password. The read actions never use sudo.
+
+The privilege is part of the connection; changing it means reconnecting with the
+new choice. It is recorded with the verified connection as non-secret evidence,
+so the confirmation preview can show it without reading the credential.
+
 One DigitalHuman can bind multiple independently named, verified server connections
 and select an operation subset for each. When a request could match more than one
 bound server, the operations specialist template instructs the agent to ask the
 owner to clarify the target instead of choosing one. That is template guidance,
 not a platform-enforced deterministic selection, so name the intended target in
-the request. The current release provides exactly three read-only operations:
-system snapshot, systemd service status, and a bounded journal tail. Every
-invocation shows a complete target and action preview and requires fresh owner
-approval; no session grant is created or remembered. SSH operations that require
-fresh owner approval do not run non-interactively; that runtime policy does not
-globally disable other DigitalHuman background features. Deploy, restart, file
-writes, and arbitrary shell commands are not available.
+the request.
+
+The connector offers seven fixed operations, each for at most one systemd unit
+named `*.service`:
+
+| Operation | Effect | Command that runs |
+| --- | --- | --- |
+| `server.system.snapshot` | read | fixed read-only snapshot of hostname, `/etc/os-release`, `uname -sr`, `/proc/uptime`, `/proc/loadavg`, `/proc/meminfo`, and `df -P -k` |
+| `server.service.status` | read | `systemctl show --no-pager --property=LoadState --property=ActiveState --property=SubState --property=Description -- '<unit>'` |
+| `server.journal.tail` | read | `journalctl --no-pager --quiet --output=cat --unit='<unit>' --lines=<1-200, default 100> --since=-<1-1440, default 60>min` |
+| `server.service.restart` | write | `systemctl restart -- '<unit>'` |
+| `server.service.start` | write | `systemctl start -- '<unit>'` |
+| `server.service.stop` | write | `systemctl stop -- '<unit>'` |
+| `server.service.reload` | write | `systemctl reload -- '<unit>'` |
+
+With the sudo privilege, a write command becomes, for example,
+`sudo -n systemctl restart -- 'nginx.service'`. After a write command succeeds,
+the action reads the unit again (unprivileged) and returns its `load_state`,
+`active_state`, and `sub_state`. A failed write command returns a provider
+error; its bounded error text is kept for operators and is never shown with
+credentials. No operation accepts a command, argument, path, or other free-form
+input.
+
+Every invocation, read or write, is high risk. It shows a complete target and
+action preview, including a **Command** field with the exact command line that
+will run, rendered as code in the connector confirmation card of the
+conversation and of DigitalHuman run details. The preview is built by the same
+code that builds the executed command, so the two cannot differ. Each call
+requires fresh owner approval; no session grant is created or remembered. SSH
+operations do not run non-interactively: scheduled and background DigitalHuman
+runs cannot use this connector, and that runtime policy does not globally
+disable other DigitalHuman background features.
+
+Write actions are opt-in. When a server connection is added while creating a
+DigitalHuman, only the read operations are selected by default; each write
+action must be ticked explicitly. Deploys, file writes, configuration changes,
+and arbitrary shell commands are not available.
+
+Release `1.1.0` of the connector adds the write operations and the `privilege`
+field. Existing installations accept it through the ordinary compatible-update
+check at startup: the accepted `1.0.0` contract stays valid and pinned, its
+three read operations are unchanged, and the one reviewed authentication change
+(adding the optional `privilege` field) is pinned by digest. Existing connections
+keep working with their read operations; reconnect a connection to verify it for
+the new write operations or to choose sudo.
 
 ### Feishu / Lark application Connector
 

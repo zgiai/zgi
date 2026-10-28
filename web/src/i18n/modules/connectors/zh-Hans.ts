@@ -679,6 +679,13 @@ const messages: ConnectorMessages = {
       '粘贴该用户的 PEM 或 OpenSSH 私钥。测试期间会保留在表单中，仅在最终保存或关闭面板后清除。',
     passphrase: '私钥口令（可选）',
     passphraseHint: '未加密的私钥请留空。空白口令会被省略，不会发送。',
+    privilege: '命令权限',
+    privilegeHint:
+      '服务操作（重启、启动、停止、重载）需要在服务器上有执行 systemctl 的权限。检查类操作始终以 SSH 用户身份运行。',
+    privilegeUser: '以 SSH 用户身份运行',
+    privilegeSudo: '使用 sudo（免密码）',
+    privilegeSudoHint:
+      '需要服务器为 systemctl 配置免密码 sudo。如果 sudo 要求输入密码，操作会直接失败而不会等待。',
     hostVerification: '主机身份验证',
     hostVerificationHint: '首次测试会自动读取服务器指纹，确认后保存并在后续连接中严格比对。',
     showVerificationSettings: '高级设置',

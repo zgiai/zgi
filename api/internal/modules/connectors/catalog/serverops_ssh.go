@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -23,15 +24,22 @@ import (
 // catalog admission alone never dials.
 //
 // The contract exposes exactly the three read-only serverops capability actions
-// through a distinct ssh_credentials setup dialect. It declares no arbitrary
-// command, deployment, restart, configuration-change, or write operation, and
-// it cannot be used to reach a host on its own.
+// and the four controlled service write actions (restart, start, stop, reload of
+// one systemd unit) through a distinct ssh_credentials setup dialect. It
+// declares no arbitrary command, deployment, or configuration-change operation,
+// and it cannot be used to reach a host on its own.
 //
-// Read-only is the operation Effect, not a risk claim. Every operation is
-// declared OperationRiskHintHigh: DigitalHuman execution requires a mandatory
-// per-use confirmation for this surface and fails closed whenever platform
-// policy has not explicitly classified an operation, so a sensitive remote
-// server read over SSH must not be presented as low-risk.
+// Effect is not a risk claim. Every operation, read or write, is declared
+// OperationRiskHintHigh: DigitalHuman execution requires a mandatory per-use
+// confirmation for this surface and fails closed whenever platform policy has
+// not explicitly classified an operation, so a sensitive remote server read
+// over SSH must not be presented as low-risk either.
+//
+// Release history. 1.0.0 published the three read actions and seven credential
+// fields. 1.1.0 (ADR 0023) adds the four write actions and the optional,
+// non-secret privilege field. Both releases stay accepted contracts, so a
+// stored 1.0.0 definition keeps validating and is replaced through the ordinary
+// compatible-update check; see serverOpsSSHAcceptedContracts.
 
 // SSH Server Operations stable identities. The connector id is the exact
 // member-facing identity; the provider/driver/auth identities are the frozen
@@ -62,7 +70,13 @@ const (
 	serverOpsSSHPrivateKeyField  = "private_key"
 	serverOpsSSHPassphraseField  = "passphrase"
 	serverOpsSSHFingerprintField = "host_key_sha256"
+	serverOpsSSHPrivilegeField   = "privilege"
 )
+
+// ServerOpsSSHPrivilegeSudo is the only accepted privilege value. Omitting the
+// privilege field runs every command as the SSH user; "sudo" runs the service
+// write actions behind "sudo -n". Read actions never use sudo.
+const ServerOpsSSHPrivilegeSudo = string(serverops.PrivilegeSudo)
 
 // SSH credential bounds. They mirror the serverops connection bounds, except
 // that private_key is bounded to 16 KiB here rather than the 1 MiB transport
@@ -76,6 +90,7 @@ const (
 	serverOpsSSHPrivateKeyMaxBytes  = 16 * 1024
 	serverOpsSSHPassphraseMaxBytes  = 4096
 	serverOpsSSHFingerprintMaxBytes = 128
+	serverOpsSSHPrivilegeMaxBytes   = 4
 	serverOpsSSHMinPort             = 1
 	serverOpsSSHMaxPort             = 65535
 	// serverOpsSSHFingerprintPrefix is the only accepted host-key fingerprint
@@ -96,6 +111,9 @@ func (d Definition) IsServerOpsSSHCredentials() bool {
 		d.DriverID == ServerOpsSSHDriverID &&
 		d.AuthMethodID == ServerOpsSSHAuthMethodID
 }
+
+// serverOpsSSHPluginVersion is the current published SSH contract release.
+const serverOpsSSHPluginVersion = "1.1.0"
 
 // ServerOpsSSHDefinition returns the static SSH Server Operations contract.
 // Each call builds an independent value, and JSON round-tripping normalizes the
@@ -119,6 +137,14 @@ func ServerOpsSSHDefinition() Definition {
 			CredentialSubject: ServerOpsSSHCredentialSubject,
 		}
 	}
+	// writeOperation changes the state of one systemd unit. It is an update of
+	// existing server state, never idempotent, and High risk, so it inherits the
+	// mandatory fresh per-call confirmation and the background-run refusal.
+	writeOperation := func(id, toolName, en, zh string, input, output map[string]any) Operation {
+		op := operation(id, toolName, en, zh, input, output)
+		op.Effect, op.Idempotent = OperationEffectUpdate, false
+		return op
+	}
 	text := func(maxLength int) map[string]any {
 		return map[string]any{"type": "string", "maxLength": maxLength}
 	}
@@ -135,12 +161,12 @@ func ServerOpsSSHDefinition() Definition {
 	}
 
 	d := Definition{
-		ID: ServerOpsSSHConnectorID, PluginID: ServerOpsSSHPluginID, PluginVersion: "1.0.0",
+		ID: ServerOpsSSHConnectorID, PluginID: ServerOpsSSHPluginID, PluginVersion: serverOpsSSHPluginVersion,
 		SourceDialect: SourceDialectAgentPluginsV1, SourceSchemaVersion: SourceSchemaVersion1,
 		ProviderID: ServerOpsSSHProviderID, DriverID: ServerOpsSSHDriverID, AuthMethodID: ServerOpsSSHAuthMethodID,
 		Name: "SSH Server Operations", NameI18n: LocalizedText{"en-US": "SSH Server Operations", "zh-Hans": "SSH 服务器运维"},
-		Description:     "After per-use approval, read-only inspection of one Linux server over SSH.",
-		DescriptionI18n: LocalizedText{"en-US": "After per-use approval, read-only inspection of one Linux server over SSH.", "zh-Hans": "逐次审批后，通过 SSH 对单台 Linux 服务器进行只读检查。"},
+		Description:     "After per-use approval, inspect one Linux server over SSH and restart, start, stop, or reload its systemd services.",
+		DescriptionI18n: LocalizedText{"en-US": "After per-use approval, inspect one Linux server over SSH and restart, start, stop, or reload its systemd services.", "zh-Hans": "逐次审批后，通过 SSH 检查单台 Linux 服务器，并重启、启动、停止或重载其 systemd 服务。"},
 		Icon:            "serverops-ssh", Classification: ClassificationConnector,
 		CapabilityTypes: []CapabilityType{CapabilityTypeAction},
 		SetupMethod:     SetupMethodSSHCredentials, Ownership: OwnershipPersonal,
@@ -160,6 +186,7 @@ func ServerOpsSSHDefinition() Definition {
 			{Name: serverOpsSSHPrivateKeyField, Label: "SSH private key", LabelI18n: LocalizedText{"en-US": "SSH private key", "zh-Hans": "SSH 私钥"}, Required: false, Secret: true, Type: "string", MaxLength: serverOpsSSHPrivateKeyMaxBytes},
 			{Name: serverOpsSSHPassphraseField, Label: "Private key passphrase", LabelI18n: LocalizedText{"en-US": "Private key passphrase", "zh-Hans": "私钥口令"}, Required: false, Secret: true, Type: "string", MaxLength: serverOpsSSHPassphraseMaxBytes},
 			{Name: serverOpsSSHFingerprintField, Label: "Host key SHA-256 fingerprint", LabelI18n: LocalizedText{"en-US": "Host key SHA-256 fingerprint", "zh-Hans": "主机密钥 SHA-256 指纹"}, Required: true, Secret: false, Type: "string", MaxLength: serverOpsSSHFingerprintMaxBytes},
+			{Name: serverOpsSSHPrivilegeField, Label: "Command privilege", LabelI18n: LocalizedText{"en-US": "Command privilege", "zh-Hans": "命令权限"}, Required: false, Secret: false, Type: "string", Enum: []string{ServerOpsSSHPrivilegeSudo}, MaxLength: serverOpsSSHPrivilegeMaxBytes},
 		},
 	}
 
@@ -220,6 +247,30 @@ func ServerOpsSSHDefinition() Definition {
 				"truncated":    map[string]any{"type": "boolean"},
 			}, "provider", "operation", "service_name", "lines", "truncated"),
 		),
+		writeOperation(
+			serverops.ActionServiceRestart, "serverops_ssh_service_restart",
+			"Restart a systemd service", "重启 systemd 服务",
+			objectSchema(map[string]any{"service_name": serviceNameInput()}, "service_name"),
+			serviceChangeOutput(serverops.ActionServiceRestart),
+		),
+		writeOperation(
+			serverops.ActionServiceStart, "serverops_ssh_service_start",
+			"Start a systemd service", "启动 systemd 服务",
+			objectSchema(map[string]any{"service_name": serviceNameInput()}, "service_name"),
+			serviceChangeOutput(serverops.ActionServiceStart),
+		),
+		writeOperation(
+			serverops.ActionServiceStop, "serverops_ssh_service_stop",
+			"Stop a systemd service", "停止 systemd 服务",
+			objectSchema(map[string]any{"service_name": serviceNameInput()}, "service_name"),
+			serviceChangeOutput(serverops.ActionServiceStop),
+		),
+		writeOperation(
+			serverops.ActionServiceReload, "serverops_ssh_service_reload",
+			"Reload a systemd service", "重载 systemd 服务",
+			objectSchema(map[string]any{"service_name": serviceNameInput()}, "service_name"),
+			serviceChangeOutput(serverops.ActionServiceReload),
+		),
 	}
 
 	// JSON Schema expects JSON number/array types, including for static
@@ -229,6 +280,93 @@ func ServerOpsSSHDefinition() Definition {
 	return d
 }
 
+// serviceChangeOutput is the output schema of one service write action: the
+// unit state read again after the change.
+func serviceChangeOutput(action string) map[string]any {
+	text := func(maxLength int) map[string]any {
+		return map[string]any{"type": "string", "maxLength": maxLength}
+	}
+	return objectSchema(map[string]any{
+		"provider":     map[string]any{"const": ServerOpsSSHConnectorID},
+		"operation":    map[string]any{"const": action},
+		"service_name": text(256),
+		"load_state":   text(64),
+		"active_state": text(64),
+		"sub_state":    text(64),
+	}, "provider", "operation", "service_name", "load_state", "active_state", "sub_state")
+}
+
+// The published 1.0.0 contract and the reviewed 1.0.0 -> 1.1.0 authentication
+// change are pinned by frozen digests. They were taken from the accepted
+// definitions, not derived at run time, so a change to the reconstruction below
+// can never silently widen what a stored contract may be.
+const (
+	serverOpsSSHReleaseV100ContractDigest = "cf58703826e9ff787bc85410eb656ecd553e0a1eafcd518d5cfe89a0e0576627"
+	serverOpsSSHReleaseV100AuthDigest     = "ff4c3728d1efb628765e64769ba46a90115a3ccbf645e2575fe36fcce4870a44"
+	serverOpsSSHReleaseV110AuthDigest     = "f55fe95e4a857bab4ec485d3c44d9a5d5b39192250fca03799c5239b6838bfbf"
+)
+
+// serverOpsSSHReleaseV100Definition reconstructs the published 1.0.0 contract:
+// the current contract without the privilege field and the four write actions.
+// It is accepted only while it matches the frozen 1.0.0 digest.
+func serverOpsSSHReleaseV100Definition() Definition {
+	d := ServerOpsSSHDefinition()
+	d.PluginVersion = "1.0.0"
+	d.Description = "After per-use approval, read-only inspection of one Linux server over SSH."
+	d.DescriptionI18n = LocalizedText{"en-US": d.Description, "zh-Hans": "逐次审批后，通过 SSH 对单台 Linux 服务器进行只读检查。"}
+	fields := make([]CredentialField, 0, len(d.CredentialFields))
+	for _, field := range d.CredentialFields {
+		if field.Name != serverOpsSSHPrivilegeField {
+			fields = append(fields, field)
+		}
+	}
+	d.CredentialFields = fields
+	operations := make([]Operation, 0, len(d.Operations))
+	for _, operation := range d.Operations {
+		if !serverops.IsServiceWriteAction(operation.ID) {
+			operations = append(operations, operation)
+		}
+	}
+	d.Operations = operations
+	return d
+}
+
+// serverOpsSSHAcceptedContracts returns every accepted SSH contract, newest
+// first. The 1.0.0 reconstruction is included only while it still matches the
+// frozen digest; a drifted reconstruction is dropped, so the validator fails
+// closed for a stored 1.0.0 definition instead of accepting an unreviewed shape.
+func serverOpsSSHAcceptedContracts() []Definition {
+	accepted := []Definition{ServerOpsSSHDefinition()}
+	previous := serverOpsSSHReleaseV100Definition()
+	digest, err := digestJSON(struct {
+		Version  int `json:"version"`
+		Contract any `json:"contract"`
+	}{4, canonicalDefinitionContractV2(previous)})
+	if err == nil && digest == serverOpsSSHReleaseV100ContractDigest {
+		accepted = append(accepted, previous)
+	}
+	return accepted
+}
+
+// reviewedServerOpsSSHPrivilegeExpansion admits the one reviewed SSH
+// authentication change: the 1.0.0 credential contract to the 1.1.0 contract
+// that adds the optional, non-secret privilege field. Both complete
+// authentication contracts are pinned by frozen digests, so no other credential
+// change is admitted; the ordinary checks still protect identities, surfaces,
+// and every existing operation.
+func reviewedServerOpsSSHPrivilegeExpansion(current, candidate Definition) bool {
+	if !current.IsServerOpsSSHCredentials() || !candidate.IsServerOpsSSHCredentials() ||
+		current.PluginVersion == candidate.PluginVersion {
+		return false
+	}
+	oldDigest, err := digestJSON(canonicalAuthentication(current))
+	if err != nil || oldDigest != serverOpsSSHReleaseV100AuthDigest {
+		return false
+	}
+	newDigest, err := digestJSON(canonicalAuthentication(candidate))
+	return err == nil && newDigest == serverOpsSSHReleaseV110AuthDigest
+}
+
 // validateServerOpsSSHContract is the tightly scoped provider-shape validator
 // for the exact SSH built-in. It freezes the identity, version, setup
 // descriptor, credential-field contract, and operation contract against the
@@ -236,7 +374,18 @@ func ServerOpsSSHDefinition() Definition {
 // stays free to change because it is frozen by the accepted version digest and
 // the ordinary update check.
 func validateServerOpsSSHContract(d Definition) error {
-	canonical := ServerOpsSSHDefinition()
+	var err error
+	for _, canonical := range serverOpsSSHAcceptedContracts() {
+		if err = validateServerOpsSSHContractAgainst(d, canonical); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+// validateServerOpsSSHContractAgainst checks d against one accepted contract as
+// a whole: fields and operations are never mixed across releases.
+func validateServerOpsSSHContractAgainst(d, canonical Definition) error {
 	if d.ID != canonical.ID || d.PluginID != canonical.PluginID || d.ContractVersion != canonical.ContractVersion ||
 		d.ExtensionSchemaVersion != canonical.ExtensionSchemaVersion ||
 		d.ProviderID != canonical.ProviderID || d.DriverID != canonical.DriverID ||
@@ -253,7 +402,7 @@ func validateServerOpsSSHContract(d Definition) error {
 				continue
 			}
 			if found || field.Required != expected.Required || field.Secret != expected.Secret ||
-				field.Type != expected.Type || field.MaxLength != expected.MaxLength || len(field.Enum) != 0 ||
+				field.Type != expected.Type || field.MaxLength != expected.MaxLength || !slices.Equal(field.Enum, expected.Enum) ||
 				strings.TrimSpace(field.Label) == "" || !validLocalizedText(field.LabelI18n) ||
 				!validLocalizedText(field.PlaceholderI18n) {
 				return invalid("serverops_ssh_credentials")
@@ -308,6 +457,7 @@ func validateServerOpsSSHValues(values map[string]string, fingerprintRequired bo
 	allowed := map[string]bool{
 		serverOpsSSHHostField: true, serverOpsSSHPortField: true, serverOpsSSHUsernameField: true,
 		serverOpsSSHPasswordField: true, serverOpsSSHPrivateKeyField: true, serverOpsSSHPassphraseField: true, serverOpsSSHFingerprintField: true,
+		serverOpsSSHPrivilegeField: true,
 	}
 	for name := range values {
 		if !allowed[name] {
@@ -343,6 +493,11 @@ func validateServerOpsSSHValues(values map[string]string, fingerprintRequired bo
 		if !hasPrivateKey || !validServerOpsSSHPassphrase(passphrase) {
 			return invalid("credential_passphrase")
 		}
+	}
+	// The privilege is optional only by omission: omitted runs as the SSH user,
+	// and the only supplied value accepted is exactly "sudo".
+	if privilege, present := values[serverOpsSSHPrivilegeField]; present && privilege != ServerOpsSSHPrivilegeSudo {
+		return invalid("credential_privilege")
 	}
 	if fingerprintRequired {
 		fingerprint, ok := values[serverOpsSSHFingerprintField]

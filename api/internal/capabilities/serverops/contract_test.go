@@ -23,6 +23,7 @@ var (
 	_ func(*Service, context.Context, Connection) (*SystemSnapshot, error)                      = (*Service).SystemSnapshot
 	_ func(*Service, context.Context, Connection, string) (*ServiceStatus, error)               = (*Service).ServiceStatus
 	_ func(*Service, context.Context, Connection, string, JournalOptions) (*JournalTail, error) = (*Service).JournalTail
+	_ func(*Service, context.Context, Connection, string, string) (*ServiceChange, error)       = (*Service).ChangeService
 )
 
 // The only parameters the Skill may declare, and the kind each one has.
@@ -153,7 +154,7 @@ func skillAssertBoundedIntegerParameter(t *testing.T, parameter ParameterDescrip
 	}
 }
 
-func TestSkillContractHasExactlyThreeReadOnlyTools(t *testing.T) {
+func TestSkillContractHasExactlyThreeReadAndFourWriteTools(t *testing.T) {
 	skill := Skill()
 	if SkillID != "server-operations" || skill.ID != SkillID {
 		t.Fatalf("SkillID = %q, skill.ID = %q, want %q", SkillID, skill.ID, "server-operations")
@@ -161,18 +162,23 @@ func TestSkillContractHasExactlyThreeReadOnlyTools(t *testing.T) {
 	if strings.TrimSpace(skill.Summary) == "" {
 		t.Fatal("the Skill summary must not be empty")
 	}
-	if len(skill.Tools) != 3 {
-		t.Fatalf("Skill exposes %d tools, want exactly 3", len(skill.Tools))
+	if len(skill.Tools) != 7 {
+		t.Fatalf("Skill exposes %d tools, want exactly 7", len(skill.Tools))
 	}
 
 	want := []struct {
 		name     ToolName
 		actionID string
 		returns  string
+		readOnly bool
 	}{
-		{ToolSystemSnapshot, ActionSystemSnapshot, "SystemSnapshot"},
-		{ToolServiceStatus, ActionServiceStatus, "ServiceStatus"},
-		{ToolJournalTail, ActionJournalTail, "JournalTail"},
+		{ToolSystemSnapshot, ActionSystemSnapshot, "SystemSnapshot", true},
+		{ToolServiceStatus, ActionServiceStatus, "ServiceStatus", true},
+		{ToolJournalTail, ActionJournalTail, "JournalTail", true},
+		{ToolServiceRestart, ActionServiceRestart, "ServiceChange", false},
+		{ToolServiceStart, ActionServiceStart, "ServiceChange", false},
+		{ToolServiceStop, ActionServiceStop, "ServiceChange", false},
+		{ToolServiceReload, ActionServiceReload, "ServiceChange", false},
 	}
 	seen := make(map[ToolName]bool, len(want))
 	for index, expected := range want {
@@ -186,8 +192,11 @@ func TestSkillContractHasExactlyThreeReadOnlyTools(t *testing.T) {
 		if tool.Returns != expected.returns {
 			t.Errorf("tool %q returns %q, want the existing %q result type", tool.Name, tool.Returns, expected.returns)
 		}
-		if !tool.ReadOnly {
-			t.Errorf("tool %q must be read-only", tool.Name)
+		if tool.ReadOnly != expected.readOnly {
+			t.Errorf("tool %q read-only = %v, want %v", tool.Name, tool.ReadOnly, expected.readOnly)
+		}
+		if tool.ReadOnly == IsServiceWriteAction(tool.ActionID) {
+			t.Errorf("tool %q read-only flag disagrees with its action %q", tool.Name, tool.ActionID)
 		}
 		if tool.RequiredApproval != ApprovalPerUseUserApproval {
 			t.Errorf("tool %q approval = %q, want %q", tool.Name, tool.RequiredApproval, ApprovalPerUseUserApproval)
@@ -244,6 +253,27 @@ func TestSkillContractParametersMatchRuntimeValidation(t *testing.T) {
 	}
 	if _, _, err := buildServiceStatusCommand(map[string]any{"service_name": "nginx.service", "lines": 5}); err == nil {
 		t.Fatal("service status must reject a parameter the contract does not declare")
+	}
+
+	// Every write tool declares exactly the service_name parameter, and the
+	// runtime accepts exactly that for each write action and nothing more.
+	for _, name := range []ToolName{ToolServiceRestart, ToolServiceStart, ToolServiceStop, ToolServiceReload} {
+		tool := skillToolByName(t, skill.Tools, name)
+		if len(tool.Parameters) != 1 {
+			t.Fatalf("%s declares %d parameters, want exactly service_name", name, len(tool.Parameters))
+		}
+		skillAssertServiceNameParameter(t, skillParameterByName(t, tool, "service_name"))
+		if _, _, err := buildServiceChangeCommand(tool.ActionID, map[string]any{"service_name": "nginx.service"}, PrivilegeNone); err != nil {
+			t.Fatalf("%s: the declared service_name example is rejected by the runtime: %v", name, err)
+		}
+		for _, serviceName := range []any{"nginx", "nginx.service; uptime", " nginx.service", "nginx.service ", "-nginx.service"} {
+			if _, _, err := buildServiceChangeCommand(tool.ActionID, map[string]any{"service_name": serviceName}, PrivilegeNone); err == nil {
+				t.Fatalf("%s: runtime accepted %v outside the declared service_name pattern", name, serviceName)
+			}
+		}
+		if _, _, err := buildServiceChangeCommand(tool.ActionID, map[string]any{"service_name": "nginx.service", "command": "uptime"}, PrivilegeNone); err == nil {
+			t.Fatalf("%s must reject a parameter the contract does not declare", name)
+		}
 	}
 
 	// The runtime applies the declared journal defaults.
@@ -409,7 +439,7 @@ func TestSkillContractToolLookup(t *testing.T) {
 			t.Fatalf("lookup for %q = %#v, want %#v", tool.Name, looked, tool)
 		}
 	}
-	for _, unknown := range []ToolName{"", "execute_action", "delete_service", "system.snapshot", "server.system.snapshot"} {
+	for _, unknown := range []ToolName{"", "execute_action", "delete_service", "system.snapshot", "server.system.snapshot", "service_enable", "service_mask", "server.service.restart"} {
 		if _, ok := SkillTool(unknown); ok {
 			t.Errorf("%q must not resolve to a tool", unknown)
 		}
@@ -477,7 +507,7 @@ func TestSkillContractDoesNotRegisterOrHoldState(t *testing.T) {
 	// The manifest describes the capability; it never builds or runs a command.
 	for _, forbidden := range []string{
 		"buildSystemSnapshotCommand", "buildServiceStatusCommand", "buildJournalTailCommand",
-		"shellSingleQuote", "newSSHClient", "prepareRunner", "newService",
+		"buildServiceChangeCommand", "serviceChangeLine", "CommandLine", "shellSingleQuote", "newSSHClient", "prepareRunner", "newService",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Errorf("contract.go must not reference the execution path (%q)", forbidden)

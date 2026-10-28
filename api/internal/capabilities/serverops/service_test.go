@@ -173,6 +173,7 @@ func TestServiceExportedMethodSetIsExact(t *testing.T) {
 		"SystemSnapshot":     true,
 		"ServiceStatus":      true,
 		"JournalTail":        true,
+		"ChangeService":      true,
 		"ValidateCredential": true,
 		"ValidateConnection": true,
 	}

@@ -39,6 +39,7 @@ import {
   serverOpsSSHProbeFieldError,
   type ServerOpsSSHFieldError,
   type ServerOpsSSHAuthMethod,
+  type ServerOpsSSHPrivilege,
   type ServerOpsSSHHostKeyObservation,
 } from './serverops-ssh-setup-state';
 
@@ -144,6 +145,7 @@ function ScopedServerOpsSSHSetupPanel({
   const organization = useOrganizationStore.use.currentOrganization()?.id;
   const [values, setValues] = useState(createServerOpsSSHFormValues);
   const [authMethod, setAuthMethod] = useState<ServerOpsSSHAuthMethod>('password');
+  const [privilege, setPrivilege] = useState<ServerOpsSSHPrivilege>('user');
   const [showVerificationSettings, setShowVerificationSettings] = useState(false);
   const [stage, setStage] = useState<ServerOpsSSHStage>('form');
   const [observation, setObservation] = useState<ServerOpsSSHObservationState>();
@@ -368,7 +370,8 @@ function ScopedServerOpsSSHSetupPanel({
         ...values,
         [SERVEROPS_SSH_HOST_KEY_FIELD]: fingerprint,
       },
-      authMethod
+      authMethod,
+      privilege
     );
     idempotencyKey.current = globalThis.crypto.randomUUID();
     setStage('submitting');
@@ -548,6 +551,16 @@ function ScopedServerOpsSSHSetupPanel({
                   </dt>
                   <dd className="mt-0.5 font-mono text-xs break-all">
                     {`${values[SERVEROPS_SSH_USERNAME_FIELD]}@${values[SERVEROPS_SSH_HOST_FIELD]}:${values[SERVEROPS_SSH_PORT_FIELD]}`}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-xs text-muted-foreground">{t('serveropsSsh.privilege')}</dt>
+                  <dd className="mt-0.5 text-xs">
+                    {t(
+                      privilege === 'sudo'
+                        ? 'serveropsSsh.privilegeSudo'
+                        : 'serveropsSsh.privilegeUser'
+                    )}
                   </dd>
                 </div>
                 <div className="min-w-0">
@@ -826,6 +839,48 @@ function ScopedServerOpsSSHSetupPanel({
                     </div>
                   </>
                 )}
+              </div>
+
+              <div className="space-y-3 rounded-xl border bg-muted/10 p-3">
+                <div className="space-y-1">
+                  <Label id="serverops-ssh-privilege-label">{t('serveropsSsh.privilege')}</Label>
+                  <p
+                    id="serverops-ssh-privilege-hint"
+                    className="text-xs leading-5 text-muted-foreground"
+                  >
+                    {t('serveropsSsh.privilegeHint')}
+                  </p>
+                </div>
+                <div
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                  role="radiogroup"
+                  aria-labelledby="serverops-ssh-privilege-label"
+                  aria-describedby="serverops-ssh-privilege-hint"
+                >
+                  {(['user', 'sudo'] as const).map(option => (
+                    <Button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={privilege === option}
+                      variant={privilege === option ? 'default' : 'outline'}
+                      className="h-auto w-full whitespace-normal py-2"
+                      disabled={busy}
+                      onClick={() => setPrivilege(option)}
+                    >
+                      {t(
+                        option === 'sudo'
+                          ? 'serveropsSsh.privilegeSudo'
+                          : 'serveropsSsh.privilegeUser'
+                      )}
+                    </Button>
+                  ))}
+                </div>
+                {privilege === 'sudo' ? (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t('serveropsSsh.privilegeSudoHint')}
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-3 rounded-xl border bg-muted/10 p-3">

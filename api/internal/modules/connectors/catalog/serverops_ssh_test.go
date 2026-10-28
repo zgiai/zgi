@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -89,7 +90,10 @@ func TestServerOpsSSHDefinitionIsAdmittedDigitalHumanReadOnlyContract(t *testing
 		t.Fatalf("key fields = %#v, want none", definition.KeyFields)
 	}
 
-	wantActions := []string{serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail}
+	wantActions := []string{
+		serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail,
+		serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload,
+	}
 	if len(definition.Operations) != len(wantActions) {
 		t.Fatalf("operations = %d, want %d", len(definition.Operations), len(wantActions))
 	}
@@ -103,7 +107,28 @@ func TestServerOpsSSHDefinitionIsAdmittedDigitalHumanReadOnlyContract(t *testing
 			t.Fatalf("duplicate tool name %q", operation.ToolName)
 		}
 		seenTools[operation.ToolName] = true
-		if operation.Effect != OperationEffectRead || operation.RiskHint != OperationRiskHintHigh || !operation.Idempotent {
+		if serverops.IsServiceWriteAction(action) {
+			if operation.Effect != OperationEffectUpdate || operation.RiskHint != OperationRiskHintHigh || operation.Idempotent {
+				t.Fatalf("write operation %q is not update/high-risk/non-idempotent: %+v", operation.ID, operation)
+			}
+			properties, _ := operation.InputSchema["properties"].(map[string]any)
+			serviceName, _ := properties["service_name"].(map[string]any)
+			if len(properties) != 1 || serviceName["pattern"] != serverops.SystemdServiceNamePattern {
+				t.Fatalf("write operation %q input = %#v, want exactly the strict service_name", operation.ID, properties)
+			}
+			outputProperties, _ := operation.OutputSchema["properties"].(map[string]any)
+			for _, name := range []string{"provider", "operation", "service_name", "load_state", "active_state", "sub_state"} {
+				if _, ok := outputProperties[name]; !ok {
+					t.Fatalf("write operation %q output lacks %q", operation.ID, name)
+				}
+			}
+			if len(outputProperties) != 6 {
+				t.Fatalf("write operation %q output = %#v", operation.ID, outputProperties)
+			}
+			if operationConst, _ := outputProperties["operation"].(map[string]any); operationConst["const"] != action {
+				t.Fatalf("write operation %q output const = %#v", operation.ID, operationConst)
+			}
+		} else if operation.Effect != OperationEffectRead || operation.RiskHint != OperationRiskHintHigh || !operation.Idempotent {
 			t.Fatalf("operation %q is not read-only/high-risk/idempotent: %+v", operation.ID, operation)
 		}
 		assertServerOpsSSHOperationIsNotLowRisk(t, operation)
@@ -200,6 +225,7 @@ func TestServerOpsSSHCredentialFieldContractAndSecretFlags(t *testing.T) {
 		{serverOpsSSHPrivateKeyField, false, true, 16 * 1024},
 		{serverOpsSSHPassphraseField, false, true, serverOpsSSHPassphraseMaxBytes},
 		{serverOpsSSHFingerprintField, true, false, serverOpsSSHFingerprintMaxBytes},
+		{serverOpsSSHPrivilegeField, false, false, serverOpsSSHPrivilegeMaxBytes},
 	}
 	if len(definition.CredentialFields) != len(expected) {
 		t.Fatalf("credential fields = %d, want %d", len(definition.CredentialFields), len(expected))
@@ -213,15 +239,20 @@ func TestServerOpsSSHCredentialFieldContractAndSecretFlags(t *testing.T) {
 		if !ok {
 			t.Fatalf("credential field %q is missing", want.name)
 		}
+		wantEnum := []string(nil)
+		if want.name == serverOpsSSHPrivilegeField {
+			wantEnum = []string{"sudo"}
+		}
 		if field.Required != want.required || field.Secret != want.secret || field.Type != "string" ||
-			field.MaxLength != want.max || len(field.Enum) != 0 || strings.TrimSpace(field.Label) == "" {
+			field.MaxLength != want.max || !slices.Equal(field.Enum, wantEnum) ||
+			strings.TrimSpace(field.Label) == "" {
 			t.Fatalf("credential field %q = %+v, want required=%v secret=%v max=%d", want.name, field, want.required, want.secret, want.max)
 		}
 	}
 	if byName[serverOpsSSHPrivateKeyField].MaxLength != 16*1024 {
 		t.Fatalf("private_key bound = %d, want 16 KiB", byName[serverOpsSSHPrivateKeyField].MaxLength)
 	}
-	for _, nonSecret := range []string{serverOpsSSHHostField, serverOpsSSHPortField, serverOpsSSHUsernameField, serverOpsSSHFingerprintField} {
+	for _, nonSecret := range []string{serverOpsSSHHostField, serverOpsSSHPortField, serverOpsSSHUsernameField, serverOpsSSHFingerprintField, serverOpsSSHPrivilegeField} {
 		if byName[nonSecret].Secret {
 			t.Fatalf("field %q must be non-secret", nonSecret)
 		}
@@ -268,6 +299,23 @@ func TestServerOpsSSHCredentialValues(t *testing.T) {
 		values[serverOpsSSHPassphraseField] = passphrase
 		if err := ValidateCredentialValues(definition, values); !errors.Is(err, ErrInvalidDefinition) {
 			t.Fatalf("%s error = %v, want %v", name, err, ErrInvalidDefinition)
+		}
+	}
+
+	// The privilege is optional by omission; the only supplied value is "sudo".
+	withSudo := serverOpsSSHValidValues()
+	withSudo[serverOpsSSHPrivilegeField] = "sudo"
+	if err := ValidateCredentialValues(definition, withSudo); err != nil {
+		t.Fatalf("sudo privilege rejected: %v", err)
+	}
+	if err := ValidateServerOpsSSHProbeValues(withSudo); err != nil {
+		t.Fatalf("sudo privilege rejected by the probe contract: %v", err)
+	}
+	for _, privilege := range []string{"", " ", "root", "SUDO", " sudo", "sudo ", "sudo -n", "doas"} {
+		values := serverOpsSSHValidValues()
+		values[serverOpsSSHPrivilegeField] = privilege
+		if err := ValidateCredentialValues(definition, values); !errors.Is(err, ErrInvalidDefinition) {
+			t.Fatalf("privilege %q error = %v, want %v", privilege, err, ErrInvalidDefinition)
 		}
 	}
 
@@ -485,6 +533,16 @@ func TestServerOpsSSHMutationRejected(t *testing.T) {
 		{name: "host made secret", mutate: func(d *Definition) { d.CredentialFields[0].Secret = true }},
 		{name: "credential type changed", mutate: func(d *Definition) { d.CredentialFields[1].Type = "integer" }},
 		{name: "credential enum added", mutate: func(d *Definition) { d.CredentialFields[1].Enum = []string{"22", "2222"} }},
+		{name: "privilege enum widened", mutate: func(d *Definition) { d.CredentialFields[7].Enum = []string{"sudo", "root"} }},
+		{name: "privilege made secret", mutate: func(d *Definition) { d.CredentialFields[7].Secret = true }},
+		{name: "privilege made required", mutate: func(d *Definition) { d.CredentialFields[7].Required = true }},
+		{name: "privilege removed", mutate: func(d *Definition) { d.CredentialFields = d.CredentialFields[:7] }},
+		{name: "write operation made idempotent", mutate: func(d *Definition) { d.Operations[3].Idempotent = true }},
+		{name: "write operation effect read", mutate: func(d *Definition) { d.Operations[4].Effect = OperationEffectRead }},
+		{name: "write operation input widened", mutate: func(d *Definition) {
+			d.Operations[5].InputSchema = objectSchema(map[string]any{"service_name": map[string]any{"type": "string"}, "verb": map[string]any{"type": "string"}}, "service_name")
+		}},
+		{name: "write operations removed", mutate: func(d *Definition) { d.Operations = d.Operations[:3] }},
 		{name: "operation id rewritten", mutate: func(d *Definition) { d.Operations[0].ID = "server.command.run" }},
 		{name: "operation tool rewritten", mutate: func(d *Definition) { d.Operations[0].ToolName = "run_command" }},
 		{name: "operation effect write", mutate: func(d *Definition) { d.Operations[0].Effect = OperationEffectCreate }},
@@ -551,7 +609,7 @@ func TestServerOpsSSHIsAdmittedLastAndExistingBuiltinsAreUnchanged(t *testing.T)
 		t.Fatalf("last built-in is not the admitted SSH contract: %+v", admitted)
 	}
 	// Admitting the catalog entry must not drift the frozen contract digest.
-	const wantServerOpsSSHDigest = "cf58703826e9ff787bc85410eb656ecd553e0a1eafcd518d5cfe89a0e0576627"
+	const wantServerOpsSSHDigest = "f3230d005f3cbf27affb0aee459bc8526a2984e140c2f5aab9589bd642a2e29d"
 	if digest, err := DefinitionContractDigest(admitted); err != nil || digest != wantServerOpsSSHDigest {
 		t.Fatalf("serverops_ssh contract digest = %q, %v; want %q", digest, err, wantServerOpsSSHDigest)
 	}
@@ -608,7 +666,7 @@ func TestServerOpsSSHStoredV4ContractRoundTripPinsDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !loaded.IsServerOpsSSHCredentials() || loaded.ContractVersion != 4 || len(loaded.CredentialFields) != 7 || len(loaded.Operations) != 3 {
+	if !loaded.IsServerOpsSSHCredentials() || loaded.ContractVersion != 4 || len(loaded.CredentialFields) != 8 || len(loaded.Operations) != 7 {
 		t.Fatalf("stored contract changed authentication family: %+v", loaded)
 	}
 	if err := CheckCompatibleUpdate(definition, loaded); err != nil {
@@ -619,5 +677,73 @@ func TestServerOpsSSHStoredV4ContractRoundTripPinsDigest(t *testing.T) {
 	row.ContractDigest = strings.Repeat("0", 64)
 	if _, err := row.definition(); !errors.Is(err, ErrIncompatibleStoredDefinition) {
 		t.Fatalf("tampered digest error = %v, want %v", err, ErrIncompatibleStoredDefinition)
+	}
+}
+
+// serverOpsSSHRelease100Fixture is the published 1.0.0 contract, pinned to its
+// frozen digest so a later reconstruction change cannot drift it.
+func serverOpsSSHRelease100Fixture(t *testing.T) Definition {
+	t.Helper()
+	d := serverOpsSSHReleaseV100Definition()
+	digest, err := DefinitionContractDigest(d)
+	if err != nil || digest != "cf58703826e9ff787bc85410eb656ecd553e0a1eafcd518d5cfe89a0e0576627" {
+		t.Fatalf("accepted 1.0.0 fixture drifted: %s, %v", digest, err)
+	}
+	if d.PluginVersion != "1.0.0" || len(d.CredentialFields) != 7 || len(d.Operations) != 3 {
+		t.Fatalf("1.0.0 fixture shape = %s/%d/%d", d.PluginVersion, len(d.CredentialFields), len(d.Operations))
+	}
+	return d
+}
+
+// TestServerOpsSSHReleaseUpdateIsAcceptedThroughTheOrdinaryCheck pins the
+// 1.0.0 -> 1.1.0 release: the stored 1.0.0 contract keeps validating, the new
+// release is a compatible update of it (additive write operations plus the one
+// reviewed authentication change), the bootstrap admits it through the existing
+// lifecycle, and nothing older or mixed is admitted.
+func TestServerOpsSSHReleaseUpdateIsAcceptedThroughTheOrdinaryCheck(t *testing.T) {
+	previous := serverOpsSSHRelease100Fixture(t)
+	current := ServerOpsSSHDefinition()
+	if current.PluginVersion != "1.1.0" {
+		t.Fatalf("current release = %q, want 1.1.0", current.PluginVersion)
+	}
+	if err := Validate(previous); err != nil {
+		t.Fatalf("stored 1.0.0 contract no longer validates: %v", err)
+	}
+	oldAuth, _ := digestJSON(canonicalAuthentication(previous))
+	newAuth, _ := digestJSON(canonicalAuthentication(current))
+	if oldAuth != serverOpsSSHReleaseV100AuthDigest || newAuth != serverOpsSSHReleaseV110AuthDigest {
+		t.Fatalf("reviewed authentication drifted: old=%s new=%s", oldAuth, newAuth)
+	}
+	if err := CheckCompatibleUpdate(previous, current); err != nil {
+		t.Fatalf("1.0.0 -> 1.1.0 update rejected: %v", err)
+	}
+	// Downgrades and same-version content changes stay incompatible.
+	if err := CheckCompatibleUpdate(current, previous); !errors.Is(err, ErrIncompatibleDefinitionUpdate) {
+		t.Fatalf("downgrade error = %v, want incompatible update", err)
+	}
+	sameVersion := cloneDefinition(current)
+	sameVersion.PluginVersion = previous.PluginVersion
+	if reviewedServerOpsSSHPrivilegeExpansion(previous, sameVersion) {
+		t.Fatal("the reviewed authentication change must require a new release")
+	}
+	assertFeishuTemplateBootstrap(t, previous, current)
+
+	// Releases are never mixed: old credentials with new operations and new
+	// credentials with old operations are both rejected.
+	oldFieldsNewOps := cloneDefinition(current)
+	oldFieldsNewOps.CredentialFields = cloneDefinition(previous).CredentialFields
+	newFieldsOldOps := cloneDefinition(current)
+	newFieldsOldOps.Operations = cloneDefinition(previous).Operations
+	for name, candidate := range map[string]Definition{"old fields new ops": oldFieldsNewOps, "new fields old ops": newFieldsOldOps} {
+		if err := Validate(candidate); !errors.Is(err, ErrInvalidDefinition) {
+			t.Fatalf("%s: Validate() error = %v, want %v", name, err, ErrInvalidDefinition)
+		}
+	}
+
+	// Any other authentication change on the same upgrade stays incompatible.
+	widened := cloneDefinition(current)
+	widened.CredentialFields[7].MaxLength = 8
+	if reviewedServerOpsSSHPrivilegeExpansion(previous, widened) {
+		t.Fatal("an unreviewed authentication contract was admitted")
 	}
 }

@@ -388,6 +388,13 @@ for (const field of ['connector_name', 'action_name', 'risk_classification']) {
 for (const field of ['fields', 'truncated', 'previewUnavailable']) {
   assert.match(previewSummarySource, new RegExp(field));
 }
+// A command line preview field is rendered as a wrapping code block.
+assert.match(previewSummarySource, /field\.format === 'command'/);
+assert.match(
+  previewSummarySource,
+  /<pre[\s\S]*whitespace-pre-wrap[\s\S]*<code>\{field\.value\}<\/code>/
+);
+assert.match(contractSource, /format\?: 'command';/);
 assert.match(confirmationSource, /runtime\.confirmation\.title/);
 assert.doesNotMatch(confirmationSource, /external_destination/);
 assert.match(dialogBridgeSource, /ConnectorRuntimeDialogApprovalBridge/);

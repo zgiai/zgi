@@ -617,6 +617,8 @@ export interface ConnectorConfirmationPreview {
     label_i18n: Record<string, string>;
     value: string;
     truncated: boolean;
+    /** Presentation hint: `command` is the exact command line, shown as code. */
+    format?: 'command';
   }>;
 }
 

@@ -22,6 +22,7 @@ export const SERVEROPS_SSH_PRIVATE_KEY_FIELD = 'private_key';
 export const SERVEROPS_SSH_PASSWORD_FIELD = 'password';
 export const SERVEROPS_SSH_PASSPHRASE_FIELD = 'passphrase';
 export const SERVEROPS_SSH_HOST_KEY_FIELD = 'host_key_sha256';
+export const SERVEROPS_SSH_PRIVILEGE_FIELD = 'privilege';
 
 export const SERVEROPS_SSH_DEFAULT_PORT = '22';
 
@@ -54,6 +55,13 @@ export type ServerOpsSSHFieldError =
   | 'host_key_sha256';
 
 export type ServerOpsSSHAuthMethod = 'password' | 'private_key';
+
+/**
+ * How the service write actions run. `user` omits the privilege field, so every
+ * command runs as the SSH user; `sudo` sends exactly "sudo", so the backend runs
+ * the write actions behind `sudo -n`. Read actions never use sudo.
+ */
+export type ServerOpsSSHPrivilege = 'user' | 'sudo';
 
 export function createServerOpsSSHFormValues(): Record<string, string> {
   return {
@@ -235,11 +243,13 @@ export function isServerOpsSSHCredentialFormValid(
 /**
  * Build the exact request value map. A blank or whitespace-only optional
  * passphrase is omitted entirely, because the backend rejects a supplied blank
- * value; submitted values are never trimmed or otherwise normalized.
+ * value; submitted values are never trimmed or otherwise normalized. The
+ * privilege is sent only for sudo; running as the SSH user omits the field.
  */
 export function buildServerOpsSSHCredentialPayload(
   values: Record<string, string>,
-  authMethod: ServerOpsSSHAuthMethod = 'private_key'
+  authMethod: ServerOpsSSHAuthMethod = 'private_key',
+  privilege: ServerOpsSSHPrivilege = 'user'
 ): Record<string, string> {
   const payload: Record<string, string> = {
     [SERVEROPS_SSH_HOST_FIELD]: values[SERVEROPS_SSH_HOST_FIELD] ?? '',
@@ -255,6 +265,9 @@ export function buildServerOpsSSHCredentialPayload(
     if (passphrase && passphrase.trim() !== '') {
       payload[SERVEROPS_SSH_PASSPHRASE_FIELD] = passphrase;
     }
+  }
+  if (privilege === 'sudo') {
+    payload[SERVEROPS_SSH_PRIVILEGE_FIELD] = 'sudo';
   }
   return payload;
 }

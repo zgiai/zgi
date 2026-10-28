@@ -296,6 +296,9 @@ func (entry registration) safeEvidence(value *core.ProviderEvidence, input Crede
 	if value != nil && entry.definition.IsMessagingCredentials() {
 		return entry.safeMessagingEvidence(value, input)
 	}
+	if entry.definition.IsServerOpsSSHCredentials() {
+		return entry.safeServerOpsEvidence(value, input)
+	}
 	if value == nil || !entry.definition.IsAppCredentials() {
 		return nil
 	}
