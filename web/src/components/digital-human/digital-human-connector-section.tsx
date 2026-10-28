@@ -43,6 +43,7 @@ import {
   isPerUserConnectorSlot,
   observeConnectorDraft,
   toPerUserConnectorSlot,
+  updateDigitalHumanOperations,
   type DigitalHumanConnectorSelection,
 } from './digital-human-connector-model';
 import {
@@ -232,6 +233,44 @@ function ScopedConnectorSection({
       if (mountedRef.current) setModeSaving(false);
     }
   };
+  const [operationSaving, setOperationSaving] = useState(false);
+  // An operation is ticked or cleared right on the connection's card, so an
+  // operator opts into the actions that change something where they see them
+  // (ADR 0023).
+  const changeOperation = async (
+    item: DigitalHumanResourceBindingInput,
+    operationId: string,
+    checked: boolean
+  ) => {
+    if (!canUpdate || operationSaving || currentRef.current) return;
+    setOperationSaving(true);
+    try {
+      const result = await query.refetch();
+      const draft = result.data?.data;
+      if (!draft) return;
+      const candidate = candidatesQuery.data?.data.items.find(
+        value =>
+          value.resource_id === item.resource_id &&
+          value.parent_resource_id === item.parent_resource_id
+      );
+      await mutations.replaceBindings.mutateAsync({
+        digitalHumanId: id,
+        expectedDraftLockVersion: draft.draft_lock_version,
+        expectedDraftVersionId: draft.draft_version_id,
+        items: updateDigitalHumanOperations(
+          draft.items.map(digitalHumanBindingInput),
+          item,
+          candidate,
+          operationId,
+          checked
+        ),
+      });
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      if (mountedRef.current) setOperationSaving(false);
+    }
+  };
   const reload = async () => {
     const current = currentRef.current;
     if (!current || current.status === 'saving') return;
@@ -315,7 +354,14 @@ function ScopedConnectorSection({
               candidates={candidatesQuery.data?.data.items ?? []}
               candidatesLoading={candidatesQuery.isLoading}
               candidatesError={candidatesQuery.isError}
-              disabled={opening || !canUpdate || mutations.replaceBindings.isPending}
+              disabled={
+                opening || !canUpdate || operationSaving || mutations.replaceBindings.isPending
+              }
+              onOperation={
+                canUpdate && !preview
+                  ? (item, operationId, checked) => void changeOperation(item, operationId, checked)
+                  : undefined
+              }
               onRemove={
                 canUpdate ? (item, trigger) => void open(item.id, undefined, trigger) : undefined
               }
