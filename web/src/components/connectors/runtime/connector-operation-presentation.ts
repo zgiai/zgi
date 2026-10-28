@@ -62,10 +62,19 @@ function validTarget(value: unknown): boolean {
   const target = record(value);
   if (
     !target ||
-    !['chat', 'agent', 'workflow'].includes(String(target.type)) ||
+    !['chat', 'agent', 'workflow', 'digital_human'].includes(String(target.type)) ||
     !safeText(target.id, 256)
   ) {
     return false;
+  }
+  // A DigitalHuman operation always runs against one published version through
+  // one binding instance.
+  if (target.type === 'digital_human') {
+    return (
+      target.scope === 'published' &&
+      validUUID(target.version_id) &&
+      validUUID(target.binding_instance_id)
+    );
   }
   const scope = target.scope || (target.type === 'chat' ? 'live' : 'draft');
   if (target.type === 'chat') {
