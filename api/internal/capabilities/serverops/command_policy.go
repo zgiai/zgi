@@ -15,6 +15,7 @@ package serverops
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -293,12 +294,60 @@ func sensitivePath(value string) bool {
 	return strings.HasSuffix(cleaned, ".pem") || strings.HasSuffix(cleaned, ".key")
 }
 
-// globSafePrograms report only names, sizes, types or checksums of the files
-// they are given, never their content, so a wildcard argument cannot expose a
-// secret through them.
-var globSafePrograms = map[string]bool{
-	"ls": true, "du": true, "df": true, "stat": true, "file": true, "wc": true, "readlink": true,
-	"realpath": true, "basename": true, "dirname": true, "md5sum": true, "sha1sum": true, "sha256sum": true,
+// globFlags lists, for each program that reports only names, sizes, types or
+// checksums of the files it is given, the flags that keep it that way. With a
+// wildcard argument only these flags are accepted: an option such as
+// --files0-from or file -f reads a file as a list of paths and prints that
+// content back in its errors.
+type globFlags struct {
+	short string
+	long  []string
+}
+
+var globSafePrograms = map[string]globFlags{
+	"ls":        {short: "1aAdFghilnortSsRtuUvx", long: []string{"--all", "--almost-all", "--directory", "--human-readable", "--full-time", "--color", "--sort", "--time-style", "--classify"}},
+	"du":        {short: "abcdhkLmPSsx", long: []string{"--all", "--apparent-size", "--bytes", "--total", "--max-depth", "--human-readable", "--summarize", "--one-file-system", "--si"}},
+	"df":        {short: "ahHiklPTt", long: []string{"--all", "--human-readable", "--inodes", "--local", "--portability", "--print-type", "--type", "--total", "--si"}},
+	"stat":      {short: "cLft", long: []string{"--format", "--printf", "--dereference", "--file-system", "--terse"}},
+	"file":      {short: "bhiLNz", long: []string{"--brief", "--mime", "--mime-type", "--no-dereference", "--dereference"}},
+	"wc":        {short: "clmLw", long: []string{"--bytes", "--chars", "--lines", "--words", "--max-line-length"}},
+	"readlink":  {short: "efmnqsvz", long: []string{"--canonicalize", "--canonicalize-existing", "--canonicalize-missing", "--no-newline"}},
+	"realpath":  {short: "eLmPqsz", long: []string{"--canonicalize-existing", "--canonicalize-missing", "--relative-to", "--no-symlinks"}},
+	"basename":  {short: "asz", long: []string{"--multiple", "--suffix", "--zero"}},
+	"dirname":   {short: "z", long: []string{"--zero"}},
+	"md5sum":    {short: "bt", long: []string{"--binary", "--text", "--tag"}},
+	"sha1sum":   {short: "bt", long: []string{"--binary", "--text", "--tag"}},
+	"sha256sum": {short: "bt", long: []string{"--binary", "--text", "--tag"}},
+}
+
+// globSafeArgs reports whether a wildcard command keeps to its program's
+// metadata-only flags.
+func globSafeArgs(name string, args []string) bool {
+	flags, known := globSafePrograms[name]
+	if !known {
+		return false
+	}
+	for _, arg := range args {
+		switch {
+		case !strings.HasPrefix(arg, "-") || arg == "-" || arg == "--":
+		case strings.HasPrefix(arg, "--"):
+			flag, _, _ := strings.Cut(arg, "=")
+			if !slices.Contains(flags.long, flag) {
+				return false
+			}
+		default:
+			letters := shortFlagLetters(arg)
+			if letters == "" || strings.Trim(arg[1+len(letters):], "0123456789") != "" {
+				return false
+			}
+			for _, letter := range letters {
+				if !strings.ContainsRune(flags.short, letter) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func readOnlySimpleCommand(simple simpleCommand) bool {
@@ -316,10 +365,10 @@ func readOnlySimpleCommand(simple simpleCommand) bool {
 	if !ok || strings.Contains(simple.words[0], "=") {
 		return false
 	}
-	if simple.globbed && !globSafePrograms[name] {
+	args := simple.words[1:]
+	if simple.globbed && !globSafeArgs(name, args) {
 		return false
 	}
-	args := simple.words[1:]
 	// Asking any installed program for its version only reports it.
 	if len(args) == 1 && args[0] == "--version" {
 		return true
@@ -337,8 +386,8 @@ var readOnlyPrograms = map[string]func([]string) bool{}
 func init() {
 	anyArgs := func([]string) bool { return true }
 	for _, name := range []string{
-		"ls", "cat", "head", "wc", "cut", "tr", "echo", "printf", "pwd", "whoami", "id", "uptime",
-		"uname", "nproc", "lscpu", "lsblk", "findmnt", "free", "df", "du", "stat", "file", "readlink",
+		"ls", "cat", "head", "cut", "tr", "echo", "printf", "pwd", "whoami", "id", "uptime",
+		"uname", "nproc", "lscpu", "lsblk", "findmnt", "free", "df", "stat", "readlink",
 		"realpath", "basename", "dirname", "md5sum", "sha1sum", "sha256sum", "which", "ps", "pgrep",
 		"netstat", "lsof", "w", "who", "last",
 		"true", "false", "column", "nl", "rev", "comm", "diff", "base64", "od", "hexdump",
@@ -357,7 +406,12 @@ func init() {
 	readOnlyPrograms["diff"] = rejectFlags("-r", "--recursive")
 	readOnlyPrograms["uniq"] = func(args []string) bool { return len(positional(args)) <= 1 }
 	readOnlyPrograms["tail"] = rejectFlags("-f", "-F", "--follow")
-	readOnlyPrograms["sort"] = rejectFlags("-o", "--output")
+	// --files0-from reads a file as a list of paths and prints unknown ones.
+	readOnlyPrograms["wc"] = rejectFlags("--files0-from")
+	// du -X/--exclude-from and file -f read their own file of patterns or names.
+	readOnlyPrograms["du"] = rejectFlags("--files0-from", "-X", "--exclude-from")
+	readOnlyPrograms["file"] = rejectFlags("-f", "--files-from", "-m", "--magic-file")
+	readOnlyPrograms["sort"] = rejectFlags("-o", "--output", "--files0-from")
 	readOnlyPrograms["date"] = rejectFlags("-s", "--set")
 	readOnlyPrograms["dmesg"] = rejectFlags("-c", "-C", "-D", "-E", "-n", "--clear", "--read-clear", "--console-off", "--console-on", "--console-level")
 	readOnlyPrograms["hostname"] = func(args []string) bool { return len(positional(args)) == 0 }

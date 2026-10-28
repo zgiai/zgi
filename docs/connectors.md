@@ -204,7 +204,8 @@ or `< file`, and reading credential files such as `.env`, private keys, or
 `/etc/shadow` always ask. Arguments count, not only the program: `ss -K`,
 `getent shadow`, `jq env`, and recursive `grep` or `diff` ask, and a shell
 wildcard is read-only only for programs that report names, sizes or checksums
-(`ls`, `du`, `stat`, `wc`, …), never for one that prints file content. The snapshot, service status, and journal actions are
+(`ls`, `du`, `stat`, `wc`, …) with their display flags, never for one that
+prints file content or reads a list of paths from a file (`--files0-from`). The snapshot, service status, and journal actions are
 read-only. Commands that would destroy the server or cut off access, such as
 `rm -rf /`, `mkfs`, `dd` to a disk, or `reboot`, are refused outright and never
 reach approval.

@@ -60,7 +60,7 @@ A read-only command that names a sensitive file is a change, because it would ha
 - `/proc/*/environ`;
 - credential files such as `.pgpass`, `.netrc`, cloud credentials, Docker and Kubernetes configs.
 
-Paths are compared after normalizing slashes and dot segments, and shadow files also by name. A shell wildcard proves nothing about which file the remote shell reads, so a wildcard argument is read-only only for programs that report names, sizes, types or checksums (`ls`, `du`, `stat`, `wc`, checksums), and a wildcard in an input redirection always asks.
+Paths are compared after normalizing slashes and dot segments, and shadow files also by name. A shell wildcard proves nothing about which file the remote shell reads, so a wildcard argument is read-only only for programs that report names, sizes, types or checksums (`ls`, `du`, `stat`, `wc`, checksums), and only with their display flags: an option that reads a file as a list of paths or names, such as `--files0-from`, `du -X`, `file -f` or `md5sum -c`, asks, because the program prints that content back in its errors. A wildcard in an input redirection always asks, and `--files0-from` asks even without one.
 
 The allowlist checks arguments, not only programs. For example, `ss -K` (which closes sockets) and `ss -D` ask. `getent` reads only databases without secrets (not `shadow` or `gshadow`). `jq` cannot read the environment. `grep` and `diff` cannot recurse into a directory, because that reads every file under it.
 
