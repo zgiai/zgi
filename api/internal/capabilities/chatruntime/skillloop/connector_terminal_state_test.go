@@ -171,7 +171,7 @@ func TestConnectorNeedsPersonLetsTheRunFinishItsReport(t *testing.T) {
 	if !connectorNeedsPerson(result) {
 		t.Fatal("a call blocked for approval was not recognised")
 	}
-	trace := skills.SkillTrace{ConnectorNative: true, Result: result}
+	trace := skills.SkillTrace{Kind: "tool_call", Status: "error", ConnectorNative: true, Result: result}
 	if step := connectorTerminalStep(trace, "call-1", map[string]interface{}{}); step != nil {
 		t.Fatalf("a call that needs a person ended the run: %+v", step)
 	}
