@@ -68,6 +68,10 @@ func IsReadOnlyInvocation(action string, input map[string]any) bool {
 type simpleCommand struct {
 	words  []string
 	inputs []string
+	// globbed is set when an unquoted word or input holds a shell wildcard:
+	// the remote shell expands it, so its literal text proves nothing about
+	// which files are read.
+	globbed bool
 }
 
 // parseCommandLine splits a command into simple commands. It reports false for
@@ -216,6 +220,10 @@ func parseCommandLine(command string) ([]simpleCommand, bool) {
 			if !ok {
 				return nil, false
 			}
+			// A wildcard in a redirection cannot be proven to name one safe file.
+			if strings.ContainsAny(target, "*?[") {
+				return nil, false
+			}
 			current.inputs = append(current.inputs, target)
 			index = next - 1
 		case strings.ContainsRune("$`\\(){}", r):
@@ -223,6 +231,9 @@ func parseCommandLine(command string) ([]simpleCommand, bool) {
 		case (r == '#' || r == '!') && !inWord:
 			return nil, false
 		default:
+			if strings.ContainsRune("*?[", r) {
+				current.globbed = true
+			}
 			word.WriteRune(r)
 			inWord, pending = true, false
 		}
@@ -258,14 +269,36 @@ var sensitivePathMarkers = []string{
 	".git-credentials", ".aws/credentials", ".docker/config.json", ".kube/config",
 }
 
+// sensitiveFileNames are matched on the file name, so a relative path or one
+// with extra slashes or dot segments still asks.
+var sensitiveFileNames = map[string]bool{
+	"shadow": true, "shadow-": true, "gshadow": true, "gshadow-": true, "master.passwd": true,
+}
+
 func sensitivePath(value string) bool {
 	lower := strings.ToLower(value)
+	// A flag such as --file=/etc/shadow carries its path after the =.
+	if index := strings.IndexByte(lower, '='); index >= 0 && strings.HasPrefix(lower, "-") {
+		lower = lower[index+1:]
+	}
+	cleaned := path.Clean(lower)
 	for _, marker := range sensitivePathMarkers {
-		if strings.Contains(lower, marker) {
+		if strings.Contains(lower, marker) || strings.Contains(cleaned, marker) {
 			return true
 		}
 	}
-	return strings.HasSuffix(lower, ".pem") || strings.HasSuffix(lower, ".key")
+	if sensitiveFileNames[path.Base(cleaned)] {
+		return true
+	}
+	return strings.HasSuffix(cleaned, ".pem") || strings.HasSuffix(cleaned, ".key")
+}
+
+// globSafePrograms report only names, sizes, types or checksums of the files
+// they are given, never their content, so a wildcard argument cannot expose a
+// secret through them.
+var globSafePrograms = map[string]bool{
+	"ls": true, "du": true, "df": true, "stat": true, "file": true, "wc": true, "readlink": true,
+	"realpath": true, "basename": true, "dirname": true, "md5sum": true, "sha1sum": true, "sha256sum": true,
 }
 
 func readOnlySimpleCommand(simple simpleCommand) bool {
@@ -281,6 +314,9 @@ func readOnlySimpleCommand(simple simpleCommand) bool {
 	}
 	name, ok := programName(simple.words[0])
 	if !ok || strings.Contains(simple.words[0], "=") {
+		return false
+	}
+	if simple.globbed && !globSafePrograms[name] {
 		return false
 	}
 	args := simple.words[1:]
@@ -304,12 +340,21 @@ func init() {
 		"ls", "cat", "head", "wc", "cut", "tr", "echo", "printf", "pwd", "whoami", "id", "uptime",
 		"uname", "nproc", "lscpu", "lsblk", "findmnt", "free", "df", "du", "stat", "file", "readlink",
 		"realpath", "basename", "dirname", "md5sum", "sha1sum", "sha256sum", "which", "ps", "pgrep",
-		"ss", "netstat", "lsof", "w", "who", "last", "getent", "grep", "egrep", "fgrep", "zgrep",
+		"netstat", "lsof", "w", "who", "last",
 		"true", "false", "column", "nl", "rev", "comm", "diff", "base64", "od", "hexdump",
-		"jq", "numfmt", "seq", "zcat", "vmstat", "iostat", "mpstat",
+		"numfmt", "seq", "zcat", "vmstat", "iostat", "mpstat",
 	} {
 		readOnlyPrograms[name] = anyArgs
 	}
+	// ss -K closes the sockets it matches and -D writes a dump file.
+	readOnlyPrograms["ss"] = rejectFlags("-K", "--kill", "-D", "--diag")
+	readOnlyPrograms["getent"] = readOnlyGetent
+	readOnlyPrograms["jq"] = readOnlyJQ
+	// Recursing reads every file under a directory, secrets included.
+	for _, name := range []string{"grep", "egrep", "fgrep", "zgrep"} {
+		readOnlyPrograms[name] = rejectFlags("-r", "-R", "--recursive", "--dereference-recursive", "-d", "--directories")
+	}
+	readOnlyPrograms["diff"] = rejectFlags("-r", "--recursive")
 	readOnlyPrograms["uniq"] = func(args []string) bool { return len(positional(args)) <= 1 }
 	readOnlyPrograms["tail"] = rejectFlags("-f", "-F", "--follow")
 	readOnlyPrograms["sort"] = rejectFlags("-o", "--output")
@@ -349,6 +394,30 @@ func init() {
 	readOnlyPrograms["timedatectl"] = statusOnly
 	readOnlyPrograms["hostnamectl"] = statusOnly
 	readOnlyPrograms["loginctl"] = statusOnly
+}
+
+// getentDatabases are the getent databases without secrets; shadow and
+// gshadow hold password hashes.
+var getentDatabases = map[string]bool{
+	"passwd": true, "group": true, "hosts": true, "ahosts": true, "ahostsv4": true, "ahostsv6": true,
+	"services": true, "protocols": true, "networks": true, "rpc": true, "ethers": true, "initgroups": true, "netgroup": true,
+}
+
+func readOnlyGetent(args []string) bool {
+	databases := positional(args)
+	return len(databases) > 0 && getentDatabases[databases[0]]
+}
+
+// jqEnvironment matches the jq builtins that read the process environment.
+var jqEnvironment = regexp.MustCompile(`\benv\b|\$ENV|\$__prog_args`)
+
+func readOnlyJQ(args []string) bool {
+	for _, arg := range args {
+		if jqEnvironment.MatchString(arg) {
+			return false
+		}
+	}
+	return true
 }
 
 // positional returns the arguments that are not flags.
