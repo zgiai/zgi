@@ -7,13 +7,6 @@ supported_callers:
   - digital_human
 max_calls_per_turn: 5
 timeout_seconds: 5
-connector_requirements:
-  - connector_id: serverops_ssh
-    operation_ids:
-      - server.system.snapshot
-      - server.service.status
-      - server.journal.tail
-    required: true
 display:
   icon: server-cog
   category: workflow_automation

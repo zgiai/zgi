@@ -77,7 +77,7 @@ The approval for every SSH call already exists:
 
 ### 4. The operations specialist's working method
 
-- **The `ops-runbook` skill** carries the method. It declares its connector requirement (`connector_requirements`).
+- **The `ops-runbook` skill** carries the method. It is a plain prompt skill without a connector requirement. The SSH connector serves DigitalHumans only, so the organization's skill settings would mark a skill requiring it unavailable and it could never be enabled. The template's setup requirements already demand the connection.
   - **Before any change:** confirm the target, inspect first, state the plan.
   - **One change at a time:** each step states the exact command and why, waits for the approval, then reads the state again to verify.
   - **Report:** observations kept apart from inferences.
