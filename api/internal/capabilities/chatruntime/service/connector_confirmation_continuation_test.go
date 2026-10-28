@@ -71,7 +71,7 @@ func TestConnectorConfirmationContinuationMessageNamesTheOutcome(t *testing.T) {
 	content, _ := message.Content.(string)
 	if message.Role != "system" || !strings.Contains(content, "cancelled Restart nginx") ||
 		!strings.Contains(content, "Do not repeat the same connector call") ||
-		!strings.Contains(content, `"state":"cancelled"`) {
+		!strings.Contains(content, "state: cancelled") {
 		t.Fatalf("continuation message = %#v", message)
 	}
 	if got := boundedConnectorToolResult(strings.Repeat("x", maxConnectorContinuationResultRunes+5)); !strings.HasSuffix(got, "(truncated)") {
@@ -99,5 +99,17 @@ func TestMarkDecidedConnectorToolResultsMarksEveryEarlierDecision(t *testing.T) 
 	}
 	if request.Messages[1].Content != `[{"type":"json","data":{"exit_code":0}}]` || request.Messages[2].Content != `{"status":"success"}` {
 		t.Fatalf("messages = %#v", request.Messages)
+	}
+}
+
+func TestConnectorConfirmationNoteResultPutsTheOutcomeFirst(t *testing.T) {
+	toolResult := `[{"type":"json","data":{"command":"curl -sS http://127.0.0.1:2670/health","confirmation_decision":"completed","exit_code":0,"operation":"server.command.run","provider":"serverops_ssh","stderr":"","stdout":"unhealthy\n","truncated":false}}]`
+	note := connectorConfirmationNoteResult(toolResult)
+	stdout, command := strings.Index(note, "stdout: unhealthy"), strings.Index(note, "command: curl")
+	if stdout < 0 || command < 0 || stdout > command || strings.Contains(note, "provider") || strings.Contains(note, `"meta"`) {
+		t.Fatalf("note = %q", note)
+	}
+	if got := connectorConfirmationNoteResult("not json"); got != "not json" {
+		t.Fatalf("fallback = %q", got)
 	}
 }

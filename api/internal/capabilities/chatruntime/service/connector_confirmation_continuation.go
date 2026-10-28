@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -230,6 +231,8 @@ func connectorConfirmationModelToolResult(result connectorconfirmation.Result) s
 		if messages[index].Data != nil {
 			messages[index].Data["confirmation_decision"] = string(result.State)
 		}
+		// The host metadata carries internal identifiers the model never needs.
+		messages[index].Meta = nil
 	}
 	payload, err := json.Marshal(messages)
 	if err != nil {
@@ -338,8 +341,68 @@ func connectorConfirmationContinuationMessage(message *runtimemodel.Message, cla
 	return adapter.Message{
 		Role: "system",
 		Content: instructions + "\n\nOriginal user request:\n" + userQuery + "\n\nOutcome:\n" + outcome +
-			"\n\nResult of that call:\n" + boundedConnectorToolResult(claim.ToolResult),
+			"\n\nResult of that call:\n" + boundedConnectorToolResult(connectorConfirmationNoteResult(claim.ToolResult)),
 	}
+}
+
+// connectorConfirmationNoteLeadingKeys are the result fields a note shows
+// first. When a long turn keeps only the start of an older note, the outcome
+// (exit code and output) must survive and the echoed input must not crowd it
+// out, so the command comes last.
+var connectorConfirmationNoteLeadingKeys = []string{
+	"confirmation_decision", "state", "error_code", "exit_code", "stdout", "stderr", "truncated",
+}
+
+// connectorConfirmationNoteResult renders the model-visible result as plain
+// "field: value" lines, outcome first and echoed command last. A result that
+// is not the expected JSON is kept as it is.
+func connectorConfirmationNoteResult(toolResult string) string {
+	var messages []struct {
+		Text string                 `json:"text"`
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(toolResult), &messages); err != nil || len(messages) == 0 {
+		return toolResult
+	}
+	render := func(value interface{}) string {
+		if text, ok := value.(string); ok {
+			return text
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Sprint(value)
+		}
+		return string(encoded)
+	}
+	var builder strings.Builder
+	for _, message := range messages {
+		if message.Data == nil {
+			builder.WriteString(message.Text)
+			builder.WriteString("\n")
+			continue
+		}
+		written := map[string]bool{"provider": true, "operation": true, "command": true}
+		for _, key := range connectorConfirmationNoteLeadingKeys {
+			if value, ok := message.Data[key]; ok {
+				builder.WriteString(key + ": " + render(value) + "\n")
+				written[key] = true
+			}
+		}
+		rest := make([]string, 0, len(message.Data))
+		for key := range message.Data {
+			if !written[key] {
+				rest = append(rest, key)
+			}
+		}
+		sort.Strings(rest)
+		for _, key := range rest {
+			builder.WriteString(key + ": " + render(message.Data[key]) + "\n")
+		}
+		if command, ok := message.Data["command"]; ok {
+			builder.WriteString("command: " + render(command) + "\n")
+		}
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 // maxConnectorContinuationResultRunes bounds the repeated result; connector

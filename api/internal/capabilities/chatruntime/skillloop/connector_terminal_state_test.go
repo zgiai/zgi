@@ -130,3 +130,21 @@ func TestConnectorTerminalAnswerNamesTheFailedOperationAndReason(t *testing.T) {
 		t.Fatalf("decision = %+v", decision)
 	}
 }
+
+func TestConnectorTerminalKeepsTheAnswerWhenThePersonOnlyCancelled(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.command.run", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "probe-1"}
+	success := nativeOutcomeRecord(ref, "completed", "successful")
+	other := ref
+	other.LogicalOperationID = "probe-2"
+	cancelled := nativeOutcomeRecord(other, "cancelled", "")
+	evidence := map[string]any{"user_request": "看下日志", "skill_invocations": []map[string]any{success, cancelled}}
+	decision := connectorTerminalStateDecision(evidence, "2670 的健康检查返回 503。")
+	if decision == nil || !strings.HasPrefix(decision.FinalAnswer, "2670 的健康检查返回 503。") || !strings.Contains(decision.FinalAnswer, "已取消 1 项") {
+		t.Fatalf("decision = %+v", decision)
+	}
+	failed := nativeOutcomeRecord(other, "completed", "failed")
+	evidence["skill_invocations"] = []map[string]any{success, failed}
+	if decision := connectorTerminalStateDecision(evidence, "全部完成"); decision == nil || strings.Contains(decision.FinalAnswer, "全部完成") {
+		t.Fatalf("a failed outcome kept the model's claim: %+v", decision)
+	}
+}
