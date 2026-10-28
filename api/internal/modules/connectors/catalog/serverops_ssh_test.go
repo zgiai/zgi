@@ -138,8 +138,8 @@ func TestServerOpsSSHDefinitionIsAdmittedDigitalHumanReadOnlyContract(t *testing
 		if operation.CredentialSubject != ServerOpsSSHCredentialSubject || len(operation.RequiredScopes) != 0 {
 			t.Fatalf("operation %q permissions = %q/%v", operation.ID, operation.CredentialSubject, operation.RequiredScopes)
 		}
-		if operation.SkillID != serverops.SkillID {
-			t.Fatalf("operation %q SkillID = %q, want %q", operation.ID, operation.SkillID, serverops.SkillID)
+		if operation.SkillID != "connector-runtime" {
+			t.Fatalf("operation %q SkillID = %q, want the runtime-managed connector Skill", operation.ID, operation.SkillID)
 		}
 		if len(operation.InputSchema) == 0 || len(operation.OutputSchema) == 0 {
 			t.Fatalf("operation %q is missing a complete schema contract", operation.ID)
@@ -609,7 +609,7 @@ func TestServerOpsSSHIsAdmittedLastAndExistingBuiltinsAreUnchanged(t *testing.T)
 		t.Fatalf("last built-in is not the admitted SSH contract: %+v", admitted)
 	}
 	// Admitting the catalog entry must not drift the frozen contract digest.
-	const wantServerOpsSSHDigest = "f3230d005f3cbf27affb0aee459bc8526a2984e140c2f5aab9589bd642a2e29d"
+	const wantServerOpsSSHDigest = "31a8781b0636ffe3d24180577f3c642fd39a8b533219fa6bd6166103f674bb72"
 	if digest, err := DefinitionContractDigest(admitted); err != nil || digest != wantServerOpsSSHDigest {
 		t.Fatalf("serverops_ssh contract digest = %q, %v; want %q", digest, err, wantServerOpsSSHDigest)
 	}

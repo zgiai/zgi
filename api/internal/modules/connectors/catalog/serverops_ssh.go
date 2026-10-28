@@ -125,7 +125,10 @@ const serverOpsSSHPluginVersion = "1.1.0"
 func ServerOpsSSHDefinition() Definition {
 	operation := func(id, toolName, en, zh string, input, output map[string]any) Operation {
 		return Operation{
-			ID: id, ToolName: toolName, SkillID: serverops.SkillID,
+			// The operations belong to the runtime-managed connector Skill, as every
+			// other connector's do, so the DigitalHuman's connector binding
+			// authorizes them; a Skill of their own was never enabled anywhere.
+			ID: id, ToolName: toolName, SkillID: "connector-runtime",
 			Name: en, NameI18n: LocalizedText{"en-US": en, "zh-Hans": zh},
 			Description: en, DescriptionI18n: LocalizedText{"en-US": en, "zh-Hans": zh},
 			InputSchema: input, OutputSchema: output,
@@ -324,6 +327,8 @@ func serverOpsSSHReleaseV100Definition() Definition {
 	operations := make([]Operation, 0, len(d.Operations))
 	for _, operation := range d.Operations {
 		if !serverops.IsServiceWriteAction(operation.ID) {
+			// 1.0.0 grouped its operations under a Skill of their own.
+			operation.SkillID = serverops.SkillID
 			operations = append(operations, operation)
 		}
 	}
@@ -365,6 +370,31 @@ func reviewedServerOpsSSHPrivilegeExpansion(current, candidate Definition) bool 
 	}
 	newDigest, err := digestJSON(canonicalAuthentication(candidate))
 	return err == nil && newDigest == serverOpsSSHReleaseV110AuthDigest
+}
+
+// reviewedServerOpsSSHSkillRelabel admits the one reviewed SSH operation change
+// from the published 1.0.0 contract: its operations move from the
+// "server-operations" Skill, which nothing ever enabled, to the runtime-managed
+// "connector-runtime" Skill every other connector uses, so a DigitalHuman's
+// connector binding authorizes them. Everything else about each operation must
+// stay exactly the same.
+func reviewedServerOpsSSHSkillRelabel(current Definition, operation, replacement Operation) bool {
+	if current.ID != ServerOpsSSHConnectorID || current.PluginVersion != "1.0.0" ||
+		operation.SkillID != serverops.SkillID || replacement.SkillID != "connector-runtime" {
+		return false
+	}
+	digest, err := digestJSON(struct {
+		Version  int `json:"version"`
+		Contract any `json:"contract"`
+	}{4, canonicalDefinitionContractV2(current)})
+	if err != nil || digest != serverOpsSSHReleaseV100ContractDigest {
+		return false
+	}
+	relabeled := replacement
+	relabeled.SkillID = operation.SkillID
+	left, leftErr := digestJSON(canonicalOperationContract(operation))
+	right, rightErr := digestJSON(canonicalOperationContract(relabeled))
+	return leftErr == nil && rightErr == nil && left == right
 }
 
 // validateServerOpsSSHContract is the tightly scoped provider-shape validator

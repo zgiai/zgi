@@ -290,7 +290,7 @@ func CheckCompatibleUpdate(current, candidate Definition) error {
 		if err != nil {
 			return err
 		}
-		if left != right {
+		if left != right && !reviewedServerOpsSSHSkillRelabel(current, operation, replacement) {
 			return incompatible("operation_contract", operation.ID)
 		}
 		if current.UsesCredentials() {
