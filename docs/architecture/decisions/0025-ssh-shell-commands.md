@@ -29,7 +29,7 @@ The product decision is to offer the capability, state the risk plainly, and let
 
 - **Operation:** `server.command.run`, tool `serverops_ssh_command_run`, in plugin release `1.2.0`.
 - **Input:** one `command` string, at most 8,192 bytes. It must be valid text and have no NUL, control characters other than tab and newline, or invisible format characters such as bidirectional overrides. This keeps what the approver reads identical to what runs.
-- **Execution:** the command runs exactly as written, as the SSH user, in that user's remote shell, with the connection's command timeout. The connection's `sudo` privilege does not apply; a command that needs root writes `sudo -n` itself.
+- **Execution:** the command runs exactly as written, as the SSH user, in that user's remote shell, for at most 50 seconds. The approval that runs it waits in one HTTP request, so longer work (builds, installs, deploys) is started detached on the server with a log and an exit-code file, and checked with later commands; the runbook skill teaches this. The connection's `sudo` privilege does not apply; a command that needs root writes `sudo -n` itself.
 - **Result:** exit code, stdout, stderr, and a truncation flag. A non-zero exit is a result, not an error. Each stream keeps its last 15,000 characters, and secrets of the connection are redacted from it like any SSH output.
 
 ### 2. Risk is disclosed, not filtered

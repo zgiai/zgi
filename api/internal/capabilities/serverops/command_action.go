@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -27,6 +28,10 @@ const ActionCommandRun = "server.command.run"
 const (
 	// maxCommandBytes bounds one submitted command.
 	maxCommandBytes = 8192
+	// commandRunTimeout is how long one command may run. The approval that
+	// runs it waits in one HTTP request, so a longer job is started detached
+	// on the server and checked with later commands.
+	commandRunTimeout = 50 * time.Second
 	// maxCommandOutputRunes bounds each returned output stream so one command
 	// cannot dominate the model context. It stays below the 16,000-character
 	// output schema so redacting a short secret cannot overflow it.
@@ -92,7 +97,11 @@ func (s *Service) RunCommand(ctx context.Context, connection Connection, command
 	if err != nil {
 		return nil, newError(ErrInvalidInput, "", err)
 	}
-	executionRunner, requestID, err := s.prepareRunner(connection)
+	runService := *s
+	if runService.limits.CommandTimeout < commandRunTimeout {
+		runService.limits.CommandTimeout = commandRunTimeout
+	}
+	executionRunner, requestID, err := runService.prepareRunner(connection)
 	if err != nil {
 		return nil, err
 	}

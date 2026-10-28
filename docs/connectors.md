@@ -167,8 +167,9 @@ DigitalHuman, only the read operations are selected by default; each write
 action must be ticked explicitly.
 
 Release `1.2.0` adds **Run a shell command** (`server.command.run`, ADR 0025).
-It runs one command exactly as written, as the SSH user, and returns the exit
-code, stdout, and stderr (each keeping its last 15,000 characters, with the
+It runs one command exactly as written, as the SSH user, for at most 50
+seconds (longer jobs are started detached and checked with later commands),
+and returns the exit code, stdout, and stderr (each keeping its last 15,000 characters, with the
 connection's secrets redacted). The command is at most 8,192 bytes and may not
 contain control characters other than tab and newline, or invisible format
 characters. The connection's sudo privilege does not apply; a command that needs

@@ -21,6 +21,9 @@ func TestRunCommandRunsTheCommandExactlyAsWritten(t *testing.T) {
 	if len(runners) != 1 || runners[0].observedCommand() != command {
 		t.Fatalf("the command was rewritten: %#v", runners)
 	}
+	if config := factory.configsSnapshot()[0]; config.CommandTimeout != commandRunTimeout {
+		t.Fatalf("command timeout = %v, want %v", config.CommandTimeout, commandRunTimeout)
+	}
 	if result.Command != command || result.ExitCode != 0 || result.Stdout != "Filesystem Size\n" ||
 		result.Stderr != "warning\n" || result.Truncated || result.RequestID != serviceTestRequestID {
 		t.Fatalf("result = %#v", result)
