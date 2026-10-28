@@ -73,3 +73,28 @@ func TestReadOnlyAutoKeepsAPendingApprovalCard(t *testing.T) {
 		t.Fatalf("confirmed InvokeConnector() = %#v, %v", result, err)
 	}
 }
+
+func TestUnattendedSSHCallsUseTheTaskGrantOnlyForProvenReads(t *testing.T) {
+	read := readOnlyAutoHarness(t, serverops.ActionCommandRun, map[string]any{"command": "df -h"}, false, core.AuthorizationModeAsk)
+	readSpy := &backgroundAuthorizerSpy{allow: true}
+	read.service.WithBackgroundAuthorizer(readSpy)
+	result, err := read.service.InvokeConnector(context.Background(), read.pinned)
+	if err != nil || result.State != ExecutionStateCompleted || readSpy.calls != 1 || read.provider.calls != 1 {
+		t.Fatalf("granted unattended read = %#v, %v (grant lookups %d)", result, err, readSpy.calls)
+	}
+
+	for name, harness := range map[string]*executionHarness{
+		"change command": readOnlyAutoHarness(t, serverops.ActionCommandRun, map[string]any{"command": "systemctl restart nginx"}, false, core.AuthorizationModeReadOnlyAuto),
+		"service write":  readOnlyAutoHarness(t, serverops.ActionServiceRestart, map[string]any{"service_name": "nginx.service"}, false, core.AuthorizationModeReadOnlyAuto),
+	} {
+		spy := &backgroundAuthorizerSpy{allow: true}
+		harness.service.WithBackgroundAuthorizer(spy)
+		result, err := harness.service.InvokeConnector(context.Background(), harness.pinned)
+		if !core.IsErrorCode(err, core.ErrorCodeConfirmationRequired) || result.State != ExecutionStateBlocked {
+			t.Fatalf("%s: unattended InvokeConnector() = %#v, %v", name, result, err)
+		}
+		if spy.calls != 0 || harness.provider.calls != 0 || harness.credentials.calls != 0 {
+			t.Fatalf("%s: a change consumed a task grant or reached the server", name)
+		}
+	}
+}

@@ -152,10 +152,10 @@ will run, rendered as code in the connector confirmation card of the
 conversation and of DigitalHuman run details. The preview is built by the same
 code that builds the executed command, so the two cannot differ. Each call
 requires fresh owner approval unless the connection lets proven read-only
-commands run (below); no session grant is created or remembered. SSH
-operations do not run non-interactively: scheduled and background DigitalHuman
-runs cannot use this connector, and that runtime policy does not globally
-disable other DigitalHuman background features.
+commands run (below); no session grant is created or remembered. Scheduled
+and background DigitalHuman runs reach a server only for inspection (ADR 0027):
+the owner must give the connection a task grant, and each call must be proven
+read-only when it runs. Changes are never unattended.
 
 When the owner decides a DigitalHuman confirmation in the console, the same
 turn continues: the DigitalHuman receives the operation's result, exactly as a
@@ -198,8 +198,16 @@ or `< file`, and reading credential files such as `.env`, private keys, or
 `/etc/shadow` always ask. The snapshot, service status, and journal actions are
 read-only. Commands that would destroy the server or cut off access, such as
 `rm -rf /`, `mkfs`, `dd` to a disk, or `reboot`, are refused outright and never
-reach approval. Scheduled and background runs are unaffected and still cannot
-use the connection.
+reach approval.
+
+Scheduled and background runs have no one to approve (ADR 0027). A task grant
+on the DigitalHuman's SSH connection can cover only the snapshot, service
+status, journal, and shell command actions; the service write actions cannot be
+granted. With such a grant, an unattended call runs only when it is proven
+read-only, by the same rules as above, and consumes one use of the grant. A
+change, or a command that cannot be proven read-only, is blocked before the
+grant is consulted, so an unattended specialist inspects and reports and leaves
+every change for a person to approve.
 
 Release `1.1.0` of the connector adds the write operations and the `privilege`
 field. Existing installations accept it through the ordinary compatible-update

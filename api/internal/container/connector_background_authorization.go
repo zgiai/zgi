@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/backgroundauth"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
@@ -476,6 +477,10 @@ func backgroundOperationsAllowed(operations []string, definition catalog.Definit
 	seen := make(map[string]bool, len(operations))
 	for _, operation := range operations {
 		id := connectorcore.Identifier(operation)
+		// An unattended run may only inspect a server (ADR 0027).
+		if definition.IsServerOpsSSHCredentials() && !serverops.UnattendedAction(operation) {
+			return false
+		}
 		if !id.Valid() || seen[operation] || !defined[operation] || !usable[operation] ||
 			!connectorcore.ConstraintsAllow(connection.Constraint, binding.Constraint, owner, id, binding.Target, now) {
 			return false

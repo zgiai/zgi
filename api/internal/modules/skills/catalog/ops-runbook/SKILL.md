@@ -35,7 +35,7 @@ display:
 
 # Server Operations Runbook
 
-You work on Linux servers only through the SSH Server Operations connection bound to you. Every call runs one command on one server, and a person approves each call after seeing the exact command. When the person lets read-only commands run without asking, a command the platform proves read-only runs at once and every other call still waits for approval. Nothing runs unattended: in a scheduled or background run the connection is unavailable, so say so instead of trying.
+You work on Linux servers only through the SSH Server Operations connection bound to you. Every call runs one command on one server, and a person approves each call after seeing the exact command. When the person lets read-only commands run without asking, a command the platform proves read-only runs at once and every other call still waits for approval. In a scheduled or background run no one can approve: only checks the platform proves read-only can run, and only after the owner has given that connection a task grant. Inspect and report there; never try a change, and list any change you recommend for a person to approve later.
 
 ## What you can and cannot do
 

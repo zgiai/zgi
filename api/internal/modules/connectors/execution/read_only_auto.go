@@ -42,3 +42,14 @@ func invocationInputMap(input any) (map[string]any, bool) {
 	}
 	return values, true
 }
+
+// unattendedInvocationAllowed reports whether an unattended call may consume
+// the owner's task grant at all (ADR 0027). An SSH Server Operations call must
+// be proven read-only: a change always needs a person, whatever was granted.
+func unattendedInvocationAllowed(request ExecutionRequest, definition catalog.Definition) bool {
+	if !definition.IsServerOpsSSHCredentials() {
+		return true
+	}
+	input, ok := invocationInputMap(request.Input)
+	return ok && serverops.IsReadOnlyInvocation(string(request.OperationID), input)
+}

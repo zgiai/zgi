@@ -144,3 +144,19 @@ export function grantsForEmployee(
       return Date.parse(right.grant.created_at) - Date.parse(left.grant.created_at);
     });
 }
+
+/**
+ * Server changes always need a person, so a task grant for SSH Server
+ * Operations covers inspection only; each command must also prove read-only
+ * when it runs (ADR 0027).
+ */
+const UNATTENDED_SSH_OPERATION_IDS: ReadonlySet<string> = new Set([
+  'server.system.snapshot',
+  'server.service.status',
+  'server.journal.tail',
+  'server.command.run',
+]);
+
+export function backgroundGrantOperationAllowed(connectorId: string, operationId: string) {
+  return connectorId !== 'serverops_ssh' || UNATTENDED_SSH_OPERATION_IDS.has(operationId);
+}

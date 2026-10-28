@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
+  backgroundGrantOperationAllowed,
   backgroundGrantQueryKey,
   buildBackgroundGrantIssueRequest,
   grantsForEmployee,
@@ -137,5 +138,14 @@ assert.match(componentSource, /canCreate \? \(/);
 assert.doesNotMatch(componentSource, /<textarea|JSON\.stringify/);
 assert.equal((hookSource.match(/retry: false/g) ?? []).length, 3);
 assert.match(hookSource, /backgroundGrantQueryKey\(scope\)/);
+
+// ADR 0027: a task grant for SSH covers inspection only.
+for (const id of ['server.system.snapshot', 'server.service.status', 'server.journal.tail', 'server.command.run']) {
+  assert.equal(backgroundGrantOperationAllowed('serverops_ssh', id), true, id);
+}
+for (const id of ['server.service.restart', 'server.service.start', 'server.service.stop', 'server.service.reload']) {
+  assert.equal(backgroundGrantOperationAllowed('serverops_ssh', id), false, id);
+}
+assert.equal(backgroundGrantOperationAllowed('x-social', 'x-social.post.create'), true);
 
 console.log('Digital human background grant model and scope contracts passed');

@@ -769,3 +769,15 @@ func forbiddenRaw(command string) bool {
 	}
 	return false
 }
+
+// UnattendedAction reports whether an unattended run may ever call the action
+// (ADR 0027). The fixed reads may; the command action may, but each command
+// must still classify read-only when it runs. Service changes never may.
+func UnattendedAction(action string) bool {
+	switch action {
+	case ActionSystemSnapshot, ActionServiceStatus, ActionJournalTail, ActionCommandRun:
+		return true
+	default:
+		return false
+	}
+}

@@ -363,8 +363,9 @@ func (service *Service) invokePinned(ctx context.Context, pinned PinnedExecution
 		digitalHuman = digitalHumanApprovalNonInteractiveBlocked
 	}
 	backgroundAuthorized := false
-	if digitalHuman == digitalHumanApprovalNonInteractiveBlocked ||
-		(digitalHuman == digitalHumanApprovalFailClosed && risk == RiskTrustedLow && !request.Interactive && confirmation == nil) {
+	if (digitalHuman == digitalHumanApprovalNonInteractiveBlocked ||
+		(digitalHuman == digitalHumanApprovalFailClosed && risk == RiskTrustedLow && !request.Interactive && confirmation == nil)) &&
+		unattendedInvocationAllowed(request, definition) {
 		backgroundAuthorized, err = service.authorizeBackground(ctx, pinned, binding, connection, acceptedOperation)
 		if err != nil {
 			return ExecutionResult{}, preserveError(err, core.ErrorCodeAccessDenied)
