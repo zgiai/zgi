@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
+	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -196,4 +198,71 @@ func TestEnforceChatCapabilitiesFailsOpen(t *testing.T) {
 // assertion fails and the request must fall through untouched.
 type noCapabilityService struct {
 	types.GatewayService
+}
+
+// chatHandlerStub serves the chat entry points the handler test exercises and
+// records whether the request reached the gateway at all.
+type chatHandlerStub struct {
+	types.GatewayService
+
+	caps      types.ModelCapabilities
+	capsErr   error
+	chatCalls int
+}
+
+func (s *chatHandlerStub) ModelCapabilities(context.Context, string) (types.ModelCapabilities, error) {
+	return s.caps, s.capsErr
+}
+
+func (s *chatHandlerStub) ChatCompletion(context.Context, *apikeymodel.TenantAPIKey, *adapter.ChatRequest) (*adapter.ChatResponse, error) {
+	s.chatCalls++
+	return &adapter.ChatResponse{ID: "chatcmpl-test", Object: "chat.completion", Model: "test-model"}, nil
+}
+
+func TestChatCompletionsRejectsUndeclaredCapabilityBeforeGateway(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv(gateway.CapabilityGateEnv, "")
+
+	service := &chatHandlerStub{caps: types.ModelCapabilities{Known: true}}
+	handler := &LLMHandler{gatewayService: service}
+	body := `{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}}}`
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
+
+	handler.ChatCompletions(c)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if service.chatCalls != 0 {
+		t.Fatalf("gateway ChatCompletion called %d times, want 0", service.chatCalls)
+	}
+}
+
+func TestChatCompletionsAllowsDeclaredCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv(gateway.CapabilityGateEnv, "")
+
+	service := &chatHandlerStub{caps: types.ModelCapabilities{Known: true, StructuredOutput: true}}
+	handler := &LLMHandler{gatewayService: service}
+	body := `{"model":"gpt-5.2","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}}}`
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("llm_api_key", &apikeymodel.TenantAPIKey{})
+
+	handler.ChatCompletions(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if service.chatCalls != 1 {
+		t.Fatalf("gateway ChatCompletion called %d times, want 1", service.chatCalls)
+	}
 }
