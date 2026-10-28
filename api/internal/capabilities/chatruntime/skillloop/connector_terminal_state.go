@@ -77,13 +77,16 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 	if len(parts) > 0 {
 		finalAnswer = strings.Join(parts, "\n") + "\n" + finalAnswer
 	}
-	// When every operation that did not succeed was cancelled by the person,
-	// nothing ran that the model could misreport, so the facts are appended to
-	// its own answer instead of replacing it: declining one step must not erase
-	// the evidence and analysis gathered by every other step. A failed,
-	// unknown, rejected, or in-progress outcome keeps the strict replacement.
-	onlyCancelled := counts["cancelled"] > 0 && counts["successful"]+counts["cancelled"] == len(states) && missing == 0
-	if candidate := strings.TrimSpace(answer); onlyCancelled && candidate != "" {
+	// When every operation that did not succeed was cancelled by the person or
+	// stopped before it was submitted (for example a change an unattended run
+	// may not make), nothing ran that the model could misreport, so the facts
+	// are appended to its own answer instead of replacing it: one step that did
+	// not run must not erase the evidence and analysis gathered by every other
+	// step. A failed, unknown, rejected, or in-progress outcome keeps the strict
+	// replacement.
+	notRun := counts["cancelled"] + counts["unavailable"]
+	onlyNotRun := notRun > 0 && counts["successful"]+notRun == len(states) && missing == 0
+	if candidate := strings.TrimSpace(answer); onlyNotRun && candidate != "" {
 		finalAnswer = candidate + "\n\n" + finalAnswer
 	}
 	return &terminalStateGuardDecision{Path: terminalStateGuardAccepted, Reason: "Connector outcomes do not prove every operation succeeded", FinalAnswer: finalAnswer}

@@ -613,6 +613,14 @@ func readOnlyCurl(args []string) bool {
 	urls := 0
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
+		// Discarding the body keeps only the status line, as in a health check.
+		if (arg == "-o" || arg == "--output") && index+1 < len(args) && args[index+1] == "/dev/null" {
+			index++
+			continue
+		}
+		if arg == "--output=/dev/null" {
+			continue
+		}
 		for _, flag := range curlWriting {
 			if arg == flag || strings.HasPrefix(arg, flag+"=") {
 				return false

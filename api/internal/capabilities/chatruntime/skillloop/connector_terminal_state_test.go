@@ -148,3 +148,16 @@ func TestConnectorTerminalKeepsTheAnswerWhenThePersonOnlyCancelled(t *testing.T)
 		t.Fatalf("a failed outcome kept the model's claim: %+v", decision)
 	}
 }
+
+func TestConnectorTerminalKeepsTheReportWhenAnUnattendedChangeWasBlocked(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.journal.tail", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "read-1"}
+	success := nativeOutcomeRecord(ref, "completed", "successful")
+	other := ref
+	other.OperationID, other.LogicalOperationID = "server.command.run", "change-1"
+	blocked := nativeOutcomeRecord(other, "blocked", "")
+	evidence := map[string]any{"user_request": "巡检服务", "skill_invocations": []map[string]any{success, blocked}}
+	decision := connectorTerminalStateDecision(evidence, "服务运行正常，日志无报错。")
+	if decision == nil || !strings.HasPrefix(decision.FinalAnswer, "服务运行正常，日志无报错。") || !strings.Contains(decision.FinalAnswer, "未执行 1 项") {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
