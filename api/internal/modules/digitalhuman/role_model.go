@@ -9,22 +9,27 @@ import (
 	"gorm.io/gorm"
 )
 
-// PersonaTemplate is a workspace-scoped identity preset. Its name is the
-// runtime identity name, not a second piece of template-only metadata.
+// PersonaTemplate is a workspace's saved DigitalHuman template (ADR 0022). Its
+// name is the template's title; IdentityName, when set, is the name in
+// conversation that applying it gives a DigitalHuman.
 type PersonaTemplate struct {
-	ID             uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
-	OrganizationID uuid.UUID      `gorm:"type:uuid;not null" json:"organization_id"`
-	WorkspaceID    uuid.UUID      `gorm:"type:uuid;not null" json:"workspace_id"`
-	Name           string         `gorm:"type:varchar(80);not null" json:"name"`
-	Persona        string         `gorm:"type:text;not null" json:"persona"`
-	Goals          datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"goals"`
-	Rules          datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"rules"`
-	Revision       int64          `gorm:"not null;default:1" json:"revision"`
-	CreatedBy      *uuid.UUID     `gorm:"type:uuid" json:"created_by,omitempty"`
-	UpdatedBy      *uuid.UUID     `gorm:"type:uuid" json:"updated_by,omitempty"`
-	CreatedAt      time.Time      `gorm:"not null" json:"created_at"`
-	UpdatedAt      time.Time      `gorm:"not null" json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                 uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
+	OrganizationID     uuid.UUID      `gorm:"type:uuid;not null" json:"organization_id"`
+	WorkspaceID        uuid.UUID      `gorm:"type:uuid;not null" json:"workspace_id"`
+	Name               string         `gorm:"type:varchar(80);not null" json:"name"`
+	IdentityName       string         `gorm:"type:varchar(80);not null;default:''" json:"identity_name"`
+	Description        string         `gorm:"type:text;not null;default:''" json:"description"`
+	Persona            string         `gorm:"type:text;not null" json:"persona"`
+	Goals              datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"goals"`
+	Rules              datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"rules"`
+	MemoryInstructions string         `gorm:"type:text;not null;default:''" json:"memory_instructions"`
+	SkillIDs           datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"skill_ids"`
+	Revision           int64          `gorm:"not null;default:1" json:"revision"`
+	CreatedBy          *uuid.UUID     `gorm:"type:uuid" json:"created_by,omitempty"`
+	UpdatedBy          *uuid.UUID     `gorm:"type:uuid" json:"updated_by,omitempty"`
+	CreatedAt          time.Time      `gorm:"not null" json:"created_at"`
+	UpdatedAt          time.Time      `gorm:"not null" json:"updated_at"`
+	DeletedAt          gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (PersonaTemplate) TableName() string { return "digital_human_persona_templates" }

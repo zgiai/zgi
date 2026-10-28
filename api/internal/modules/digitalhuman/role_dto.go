@@ -6,18 +6,28 @@ import (
 )
 
 type CreatePersonaTemplateRequest struct {
-	Name    string   `json:"name"`
-	Persona string   `json:"persona"`
-	Goals   []string `json:"goals"`
-	Rules   []string `json:"rules"`
+	Name string `json:"name"`
+	// IdentityName defaults to Name, as before templates had a title of
+	// their own.
+	IdentityName       *string  `json:"identity_name,omitempty"`
+	Description        string   `json:"description"`
+	Persona            string   `json:"persona"`
+	Goals              []string `json:"goals"`
+	Rules              []string `json:"rules"`
+	MemoryInstructions string   `json:"memory_instructions"`
+	SkillIDs           []string `json:"skill_ids"`
 }
 
 type UpdatePersonaTemplateRequest struct {
-	ExpectedRevision int64     `json:"expected_revision"`
-	Name             *string   `json:"name,omitempty"`
-	Persona          *string   `json:"persona,omitempty"`
-	Goals            *[]string `json:"goals,omitempty"`
-	Rules            *[]string `json:"rules,omitempty"`
+	ExpectedRevision   int64     `json:"expected_revision"`
+	Name               *string   `json:"name,omitempty"`
+	IdentityName       *string   `json:"identity_name,omitempty"`
+	Description        *string   `json:"description,omitempty"`
+	Persona            *string   `json:"persona,omitempty"`
+	Goals              *[]string `json:"goals,omitempty"`
+	Rules              *[]string `json:"rules,omitempty"`
+	MemoryInstructions *string   `json:"memory_instructions,omitempty"`
+	SkillIDs           *[]string `json:"skill_ids,omitempty"`
 }
 
 type PersonaTemplateListResult struct {

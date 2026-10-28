@@ -5,10 +5,13 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Loader2 } from 'lucide-react';
 import {
   useDigitalHumanMutations,
   useDigitalHumanSkillCandidates,
+  useDigitalHumanTemplates,
 } from '@/hooks/digital-human/use-digital-humans';
+import { useLocale } from '@/hooks/use-locale';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
@@ -40,9 +43,10 @@ import {
   CUSTOM_TEMPLATE_ID,
   findDigitalHumanTemplate,
   isCustomTemplateId,
+  templateRequirementGap,
+  templateStartingName,
   type DigitalHumanTemplate,
 } from './digital-human-templates';
-import { useRoleTextResolver } from './use-role-texts';
 
 const CREATE_PATH = '/console/digital-humans/create';
 const LIST_PATH = '/console/digital-humans';
@@ -70,9 +74,14 @@ export function DigitalHumanCreateFlow() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const templateParam = searchParams.get('template');
-  const template = findDigitalHumanTemplate(templateParam);
+  const { locale } = useLocale();
+  const catalogQuery = useDigitalHumanTemplates({ locale });
+  const catalog = catalogQuery.data?.data;
+  const templates = catalog?.templates ?? [];
+  const sharedRules = catalog?.shared_rules ?? [];
+  const template = findDigitalHumanTemplate(templates, templateParam);
   const isCustom = isCustomTemplateId(templateParam);
-  const invalidTemplate = Boolean(templateParam) && !template && !isCustom;
+  const invalidTemplate = Boolean(templateParam) && Boolean(catalog) && !template && !isCustom;
 
   const selectTemplate = (templateId: string) => {
     router.push(`${CREATE_PATH}?template=${encodeURIComponent(templateId)}`);
@@ -82,14 +91,24 @@ export function DigitalHumanCreateFlow() {
     router.push(CREATE_PATH);
   };
 
-  if (template || isCustom) {
+  // The form starts from the template, and the blank entry from the shared
+  // rules, so it waits for the catalog.
+  if ((template || isCustom) && catalog) {
     return (
       <DigitalHumanConfigureStep
         // Remount per template so the form always starts from that template.
         key={templateParam ?? CUSTOM_TEMPLATE_ID}
         template={template}
+        sharedRules={sharedRules}
         onBack={backToGallery}
       />
+    );
+  }
+  if (templateParam && !catalog && !catalogQuery.isError) {
+    return (
+      <div className="flex min-h-72 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </div>
     );
   }
 
@@ -103,7 +122,13 @@ export function DigitalHumanCreateFlow() {
           {t('createFlow.invalidRole')}
         </p>
       ) : null}
-      <DigitalHumanTemplateGallery onSelectTemplate={selectTemplate} />
+      <DigitalHumanTemplateGallery
+        templates={templates}
+        loading={catalogQuery.isLoading}
+        error={catalogQuery.isError}
+        onRetry={() => void catalogQuery.refetch()}
+        onSelectTemplate={selectTemplate}
+      />
     </div>
   );
 }
@@ -128,24 +153,22 @@ interface CreatedState {
  */
 function DigitalHumanConfigureStep({
   template,
+  sharedRules,
   onBack,
 }: {
   template: DigitalHumanTemplate | null;
+  sharedRules: readonly string[];
   onBack: () => void;
 }) {
   const t = useT('digitalHumans');
-  const texts = useRoleTextResolver();
   const router = useRouter();
   const queryClient = useQueryClient();
   const availableModels = useAvailableModels({ use_case: 'agent-runtime' });
   const skillCandidatesQuery = useDigitalHumanSkillCandidates();
   const mutations = useDigitalHumanMutations();
 
-  const templateTitle = template ? texts(template.titleKey) : t('createFlow.gallery.customEntry');
-  const tags = useMemo(
-    () => (template ? template.tagKeys.map(key => texts(key)) : []),
-    [template, texts]
-  );
+  const templateTitle = template ? template.title : t('createFlow.gallery.customEntry');
+  const tags = useMemo(() => template?.tags ?? [], [template]);
   const skillCandidates: DigitalHumanResourceCandidate[] = useMemo(
     () => skillCandidatesQuery.data?.data?.items ?? [],
     [skillCandidatesQuery.data?.data?.items]
@@ -169,10 +192,13 @@ function DigitalHumanConfigureStep({
   >([]);
 
   const [initialValue] = useState<DigitalHumanTemplateFormValue>(() => ({
-    name: template ? texts(template.titleKey) : '',
-    responsibility: template ? texts(template.responsibilityKey) : '',
+    name: template ? templateStartingName(template) : '',
+    responsibility: template ? template.responsibility : '',
     icon: template
-      ? createTextIconValue(initials(texts(template.titleKey)), template.iconBackground)
+      ? createTextIconValue(
+          initials(templateStartingName(template)),
+          template.icon_background || ICON_BG
+        )
       : createTextIconValue('', ICON_BG),
     model: '',
   }));
@@ -217,6 +243,29 @@ function DigitalHumanConfigureStep({
       };
     });
   };
+
+  // A template that needs a skill the workspace lacks, or a connection, would
+  // create a digital human that cannot do its work (ADR 0022).
+  const requirementGap = skillCandidatesQuery.isLoading
+    ? null
+    : templateRequirementGap(
+        template,
+        skillCandidates,
+        selectedSkillIds,
+        connectorSelections.length
+      );
+  const requirementNotice = requirementGap
+    ? [
+        requirementGap.missingSkillIds.length > 0
+          ? t('createFlow.form.requiredSkillsMissing', {
+              skills: requirementGap.missingSkillIds.join(', '),
+            })
+          : '',
+        requirementGap.connectorMissing ? t('createFlow.form.connectorRequired') : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : null;
 
   const requestBack = () => {
     if (dirty && !created) {
@@ -265,6 +314,10 @@ function DigitalHumanConfigureStep({
       router.push(`${LIST_PATH}/${created.id}/configuration`);
       return;
     }
+    if (requirementNotice) {
+      setSubmitError(requirementNotice);
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     let items: DigitalHumanResourceBindingInput[];
@@ -284,7 +337,7 @@ function DigitalHumanConfigureStep({
         icon: value.icon,
         model: effectiveModel,
         template,
-        texts,
+        sharedRules,
       });
       const response = await mutations.create.mutateAsync(payload);
       const detail = response.data;
@@ -360,10 +413,7 @@ function DigitalHumanConfigureStep({
         onSubmit={() => void submit()}
         onBack={requestBack}
         submitLabel={created ? t('createFlow.success.continueSetup') : undefined}
-        notice={
-          notice ??
-          (created ? t('createFlow.form.draftCreatedNotice') : null)
-        }
+        notice={notice ?? (created ? t('createFlow.form.draftCreatedNotice') : requirementNotice)}
       />
 
       <DigitalHumanCreateSuccessDialog
@@ -377,7 +427,7 @@ function DigitalHumanConfigureStep({
         icon={value.icon}
         onContinueSetup={() => router.push(`${draftBase}/configuration`)}
         onChannels={() => router.push(`${draftBase}/channels`)}
-        onAutonomy={() => router.push(`${draftBase}/configuration#configuration-behavior`)}
+        onAutonomy={() => router.push(`${draftBase}/configuration`)}
         onBackToList={() => router.push(LIST_PATH)}
       />
 

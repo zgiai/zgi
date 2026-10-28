@@ -89,6 +89,10 @@ const messages: DigitalHumansMessages = {
     invalidRole: '该模板不存在，请从列表中选择。',
     backToGallery: '返回模板选择',
     gallery: {
+      builtinTitle: '内置模板',
+      workspaceTitle: '工作空间模板',
+      loadFailed: '模板加载失败。',
+      retry: '重试',
       customEntry: '自定义数字人',
       customHint: '自行填写名称和职责，创建一个基础数字人。',
       details: '查看详情',
@@ -98,6 +102,9 @@ const messages: DigitalHumansMessages = {
       empty: '暂时没有可用模板，可以先从空白创建。',
     },
     detail: {
+      requiredSkill: '{name}（必需）',
+      memory: '记忆说明',
+      connector: '连接',
       responsibility: '我负责什么',
       goals: '工作目标',
       rules: '安全规则',
@@ -107,6 +114,8 @@ const messages: DigitalHumansMessages = {
       close: '关闭',
     },
     form: {
+      requiredSkillsMissing: '这个模板需要的技能还不可用：{skills}。请先在工作空间中启用并选择它。',
+      connectorRequired: '这个模板需要在连接中心验证并选择至少一个连接后才能工作。',
       name: '名称',
       namePlaceholder: '请输入数字人名称',
       responsibility: '我负责什么',
@@ -148,69 +157,6 @@ const messages: DigitalHumansMessages = {
       title: '预览',
       published: '已发布',
       noResponsibility: '还没有填写职责。',
-    },
-    sharedRules: {
-      credentials: '不要求用户在对话、名称或职责描述中直接粘贴密码、Token、私钥等敏感凭证。',
-      authorization: '未获得用户明确授权，不执行可能中断服务、修改数据、删除资源或扩大权限的操作。',
-      verifyResult: '不把「已经执行」等同于「已经成功」，必须核对结果、状态或日志后再给出结论。',
-      stateBlockers:
-        '信息不足、环境不匹配或风险不可控时停止操作，清楚说明阻塞原因和下一步需要的信息。',
-    },
-    templates: {
-      fileGeneration: {
-        title: '文件生成助手',
-        shortDescription: '把需求整理成可交付的文档、表格或演示文件。',
-        responsibility:
-          '负责先确认交付文件的类型与结构，再生成可下载的文件，并说明文件内容与后续修改方式。',
-        persona:
-          '你是一名以交付为导向、具备文件生成技能的助手。生成前先确认文件类型（文档、表格或演示）与结构要点，需求模糊时先给出一版结构让用户确认；生成后说明文件包含什么、写到了哪里、如何修改；格式不支持时明确说明并给出最接近的可替代方案。',
-        tags: {
-          fileOutput: '文件产出',
-          structure: '结构设计',
-          deliveryNotes: '交付说明',
-        },
-        goals: {
-          confirmFormat: '生成前确认文件类型与结构。',
-          produceFile: '产出可直接下载使用的文件。',
-          explainOutput: '说明文件内容与后续修改方式。',
-          fallbackFormat: '格式不可用时给出可替代方案。',
-        },
-        rules: {
-          confirmBeforeGenerating: '生成前必须确认文件类型与结构，不承诺无法生成的格式。',
-        },
-        skills: {
-          fileGenerator: '文件生成（文档、表格、演示）',
-        },
-      },
-      opsSpecialist: {
-        title: '运维专员',
-        shortDescription:
-          '对你已在连接中心验证并绑定到这个数字人的 SSH 服务器执行只读检查：系统快照、systemd 服务状态和有界日志尾部；不部署、不重启、不修改配置。',
-        responsibility:
-          '对你已在连接中心创建并验证、并绑定到这个数字人的一台或多台具名 Linux 服务器进行只读检查。绑定了多台服务器而请求没有指明目标时，先询问要检查哪一台，不要自行猜测。只使用该绑定连接中已批准的只读动作，且每次调用都需要单独批准：系统快照、systemd 服务状态、有界日志尾部。必须把已观察事实与推断、建议分开表述。不执行部署、重启、写入、配置修改，也不运行任意命令。连接只有在通过验证并绑定后才可用，一次调用的批准不会延续到下一次。',
-        persona:
-          '你是一名谨慎、证据优先的 Linux 服务器运维专员。你只能通过用户在连接中心创建并验证、且已绑定给你的 SSH 服务器连接工作；未绑定或未验证的连接不可用，在此之前不得声称能够访问服务器。开始前先确定目标：绑定了多台不同服务器而请求没有指明目标时，先询问用户指的是哪一台，不要自行猜测。只使用该绑定连接中已批准的只读动作，且每次只发起一次调用：系统快照、单次 systemd 服务状态读取、有界日志尾部（行数和时间窗口均受限）。每次调用都需要当次批准；不得假设之前的批准仍然有效或已被记住。不得部署、重启、写入、修改配置、开启交互式会话或运行任意命令。把观察与推断分开：先说明执行了什么动作、返回了哪些事实，再明确标注推断或建议，并在证据不足或请求超出已批准的只读范围时说明。',
-        tags: {
-          serverInspection: '服务器巡检',
-          evidenceFirst: '证据优先',
-          readOnlySafety: '只读安全',
-        },
-        goals: {
-          confirmTarget: '确认请求针对的是哪台已绑定服务器；目标不明确时先询问。',
-          collectSnapshot:
-            '通过已批准的只读动作采集证据：系统快照、systemd 服务状态和有界日志尾部。',
-          assessEnvironment: '基于已观察事实识别资源与服务风险，并把推断明确标注为推断。',
-          recommendNext: '给出可复核的下一步，并说明还缺少哪些证据。',
-        },
-        rules: {
-          verifiedReadOnly:
-            '只执行该绑定连接中已批准的只读动作，且每次调用都重新获得批准。不部署、不重启、不写入、不修改配置，也不运行任意命令。',
-          targetBoundary:
-            '执行前确认目标服务器；绑定了多台具名服务器而请求不明确时，先询问是哪一台。不得把一台服务器的结果当作另一台的证据。',
-          noOverclaim:
-            '只根据实际执行并观察到的动作报告服务状态、日志内容或结论。不把推断表述为已观察事实，也不声称批准已被记住。',
-        },
-      },
     },
     success: {
       title: '{name} 已发布',
@@ -607,27 +553,35 @@ const messages: DigitalHumansMessages = {
     saveHint: '保存后的修改仍处于草稿中，需要发布后才会用于运行。',
   },
   personaTemplates: {
-    title: '人设模板',
-    description: '复用一套名称、人设、目标与行为规则。应用模板会将内容复制到当前草稿。',
+    title: '模板',
+    description: '内置模板和工作空间保存的模板。应用模板会把内容复制到当前草稿。',
     use: '使用模板',
     save: '保存为模板',
     apply: '应用',
+    builtin: '内置',
     search: '按名称搜索模板',
     paginationInfo: '第 {start}-{end} 项，共 {total} 个模板',
-    loading: '正在加载人设模板…',
-    emptyTitle: '还没有人设模板',
-    emptyDescription: '把当前设定保存为第一套模板，之后创建或调整数字人会更快。',
+    loading: '正在加载模板…',
+    emptyTitle: '还没有保存的模板',
+    emptyDescription: '把当前设定保存为模板后，创建新数字人时也能直接选用。',
     createFirst: '保存当前为模板',
     noResultsTitle: '没有找到匹配模板',
     noResultsDescription: '尝试更换关键词，或清空搜索后查看全部模板。',
-    saveDescription: '当前名称会直接作为模板标题，不需要再填写额外的模板名称或说明。',
-    editTitle: '编辑人设模板',
+    saveDescription: '保存人设、目标、规则、记忆说明和已绑定的技能。连接需要每个数字人单独绑定，不会保存。',
+    templateName: '模板名称',
+    templateNameDescription: '在模板列表中显示的名称，例如“客服模板（华东）”。',
+    templateDescription: '简介',
+    templateDescriptionHint: '一句话说明这个模板适合做什么。',
+    identityNameDescription: '选填。应用模板时设为数字人在对话中的称呼；留空则不改变现有称呼。',
+    editTitle: '编辑模板',
     editDescription: '修改只影响之后的应用，已经使用过该模板的数字人不会随之变化。',
-    snapshotHint: '此模板包含 {goalCount} 条目标和 {ruleCount} 条行为规则。',
+    snapshotHint: '此模板包含 {goalCount} 条目标、{ruleCount} 条行为规则和 {skillCount} 个技能。',
+    keepsMemory: '也会保存记忆说明。',
     applyTitle: '替换当前设定？',
     applyDescription:
-      '应用“{name}”会替换当前草稿中的名称、人设、目标与规则；自动保存前仍可继续编辑。',
-    deleteTitle: '删除这个人设模板？',
+      '应用“{name}”会替换当前草稿中的人设、目标、规则和记忆说明（模板带有称呼时也会替换称呼）；自动保存前仍可继续编辑。',
+    suggestSkills: '这个模板建议绑定技能：{skills}。可以在“能力与资源”中添加。',
+    deleteTitle: '删除这个模板？',
     deleteDescription: '“{name}”将不能再被复用，已经使用过它的数字人不会受到影响。',
   },
   draftPersistence: {

@@ -16,7 +16,7 @@ import type {
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidate,
 } from '../../../services/types/digital-human';
-import type { DigitalHumanTemplate, RoleTextResolver } from './digital-human-templates';
+import type { DigitalHumanTemplate } from './digital-human-templates';
 
 /** Fallback text-avatar glyph when neither the avatar nor the name yields one. */
 const FALLBACK_ICON_TEXT = 'AI';
@@ -32,32 +32,24 @@ export interface DigitalHumanCreateFormState {
 }
 
 export interface CreateDigitalHumanPayloadInput extends DigitalHumanCreateFormState {
-  /** `null` means the custom (blank) entry: no template persona, goals, or rules. */
+  /** `null` means the custom (blank) entry: the responsibility is the persona. */
   template: DigitalHumanTemplate | null;
-  texts: RoleTextResolver;
+  /** The safety rules every digital human starts with, from the catalog. */
+  sharedRules: readonly string[];
 }
 
 /**
- * Compose the persona written into the new digital human.
+ * Compose the persona written into the new digital human (ADR 0022).
  *
- * The format is fixed on purpose: the template persona first, then an explicit
- * "Responsibilities" section that carries the user-confirmed responsibility, so a later
- * reader can tell template text from user intent.
+ * It is the template's persona. A responsibility the user changed is added as
+ * a plain paragraph, so the persona stays in one language and holds no
+ * instructions meant for anyone but the digital human.
  */
-export function buildPersona(
-  template: DigitalHumanTemplate,
-  responsibility: string,
-  texts: RoleTextResolver
-): string {
+export function buildPersona(template: DigitalHumanTemplate, responsibility: string): string {
+  const persona = template.persona.trim();
   const duty = responsibility.trim();
-  return [
-    texts(template.personaKey).trim(),
-    '',
-    '## 职责范围',
-    `- 角色定位：${texts(template.titleKey)}`,
-    `- 用户确认的职责描述：${duty}`,
-    '- 若职责描述与角色定位冲突，以用户确认的职责描述为准，并在首次协作时先与用户核对。',
-  ].join('\n');
+  if (!duty || duty === template.responsibility.trim()) return persona;
+  return [persona, duty].filter(Boolean).join('\n\n');
 }
 
 /** Map the avatar selection onto the wire format the create API expects. */
@@ -90,31 +82,31 @@ export function serializeDigitalHumanIcon(
 export function createDigitalHumanPayload(
   input: CreateDigitalHumanPayloadInput
 ): CreateDigitalHumanRequest {
-  const { template, texts } = input;
+  const { template } = input;
   const name = input.name.trim();
   const responsibility = input.responsibility.trim();
-  const defaults = template?.defaults;
-
   return {
     name,
     description: responsibility,
     ...serializeDigitalHumanIcon(
       input.icon,
       name,
-      template?.iconBackground ?? FALLBACK_ICON_BACKGROUND
+      template?.icon_background ?? FALLBACK_ICON_BACKGROUND
     ),
     identity_name: name,
-    persona: template ? buildPersona(template, responsibility, texts) : responsibility,
-    goals: template ? template.goalKeys.map(key => texts(key)) : [],
-    rules: template ? template.ruleKeys.map(key => texts(key)) : [],
+    persona: template ? buildPersona(template, responsibility) : responsibility,
+    goals: template ? [...template.goals] : [],
+    // The blank entry starts with the shared safety rules too.
+    rules: template ? [...template.rules] : [...input.sharedRules],
     default_model: input.model,
-    autonomy_level: defaults?.autonomyLevel ?? 'supervised',
-    visibility: defaults?.visibility ?? 'workspace',
-    memory_policy: {
-      enabled: defaults?.memoryEnabled ?? false,
-      ownership: 'digital_human',
-    },
-    trigger_policy: { manual: defaults?.manualTrigger ?? true },
+    autonomy_level: 'supervised',
+    visibility: 'workspace',
+    // Only what the runtime reads: memory is always on (ADR 0019), and the
+    // template's memory instructions guide it.
+    memory_policy: template?.memory_instructions.trim()
+      ? { instructions: template.memory_instructions.trim() }
+      : {},
+    trigger_policy: { manual: true },
   };
 }
 
@@ -150,11 +142,11 @@ export function templateDefaultSkillIds(
 ): string[] {
   if (!template) return [];
   const offered = new Map(
-    candidates.filter(candidate => candidate.available !== false).map(candidate => [candidate.resource_id, candidate])
+    candidates
+      .filter(candidate => candidate.available !== false)
+      .map(candidate => [candidate.resource_id, candidate])
   );
-  return template.skills
-    .map(skill => skill.id)
-    .filter(id => offered.has(id));
+  return template.skills.map(skill => skill.id).filter(id => offered.has(id));
 }
 
 /**

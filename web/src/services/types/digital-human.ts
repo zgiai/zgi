@@ -260,10 +260,16 @@ export interface PublishDigitalHumanRequest {
 
 export interface DigitalHumanPersonaTemplate {
   id: string;
+  /** The template's own title. */
   name: string;
+  /** The name in conversation applying it gives; empty leaves the name as it is. */
+  identity_name: string;
+  description: string;
   persona: string;
   goals: string[];
   rules: string[];
+  memory_instructions: string;
+  skill_ids: string[];
   revision: number;
   created_at: string;
   updated_at: string;
@@ -279,17 +285,61 @@ export interface DigitalHumanPersonaTemplateList {
 
 export interface CreateDigitalHumanPersonaTemplateRequest {
   name: string;
+  identity_name: string;
+  description: string;
   persona: string;
   goals: string[];
   rules: string[];
+  memory_instructions: string;
+  skill_ids: string[];
 }
 
 export interface UpdateDigitalHumanPersonaTemplateRequest {
   expected_revision: number;
   name?: string;
+  identity_name?: string;
+  description?: string;
   persona?: string;
   goals?: string[];
   rules?: string[];
+  memory_instructions?: string;
+  skill_ids?: string[];
+}
+
+/** A skill a template binds; a required one must be offered by the workspace. */
+export interface DigitalHumanTemplateSkill {
+  id: string;
+  required: boolean;
+}
+
+/**
+ * A DigitalHuman template (ADR 0022): built in, or saved by the workspace.
+ * Connector connections are never part of it.
+ */
+export interface DigitalHumanTemplate {
+  id: string;
+  source: 'builtin' | 'workspace';
+  title: string;
+  description: string;
+  /** Saved templates only: the name in conversation applying it gives. */
+  identity_name?: string;
+  responsibility: string;
+  persona: string;
+  goals: string[];
+  rules: string[];
+  tags: string[];
+  skills: DigitalHumanTemplateSkill[];
+  requires_connector: boolean;
+  memory_instructions: string;
+  icon_background?: string;
+  revision?: number;
+}
+
+export interface DigitalHumanTemplateCatalog {
+  version: number;
+  /** The safety rules every built-in template starts with. */
+  shared_rules: string[];
+  templates: DigitalHumanTemplate[];
 }
 
 export type DigitalHumanBindingType =

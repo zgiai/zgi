@@ -3,6 +3,7 @@
 import type { FileUploadSelection } from '@/services/upload.service';
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ClipboardEvent,
@@ -60,14 +61,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import {
   useDigitalHuman,
   useDigitalHumanMutations,
-  useDigitalHumanPersonaTemplates,
+  useDigitalHumanDraftBindings,
+  useDigitalHumanTemplates,
 } from '@/hooks/digital-human/use-digital-humans';
+import { useLocale } from '@/hooks/use-locale';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type {
-  DigitalHumanPersonaTemplate,
+  CreateDigitalHumanPersonaTemplateRequest,
+  DigitalHumanTemplate,
   UpdateDigitalHumanDraftRequest,
 } from '@/services/types/digital-human';
 
@@ -166,6 +170,14 @@ function ConfigurationEditor({
   const [model, setModel] = useState(detail?.draft.default_model ?? '');
   const [memorySettings, setMemorySettings] = useState(() =>
     memorySettingsOf(detail?.draft.memory_policy)
+  );
+  const draftBindings = useDigitalHumanDraftBindings(id).data?.data?.items;
+  const draftSkillIds = useMemo(
+    () =>
+      (draftBindings ?? [])
+        .filter(binding => binding.binding_type === 'skill')
+        .map(binding => binding.resource_id),
+    [draftBindings]
   );
   const [executionEnabled, setExecutionEnabled] = useState(
     detail?.draft.execution_runtime?.enabled ?? false
@@ -404,11 +416,28 @@ function ConfigurationEditor({
                   persona={displayedPersona}
                   goals={displayedGoals.map(item => item.trim()).filter(Boolean)}
                   rules={displayedRules.map(item => item.trim()).filter(Boolean)}
-                  onApply={(nextIdentityName, nextPersona, nextGoals, nextRules) => {
-                    setIdentityName(nextIdentityName);
-                    setPersona(nextPersona);
-                    setGoals(nextGoals.length > 0 ? nextGoals : ['']);
-                    setRules(nextRules.length > 0 ? nextRules : ['']);
+                  memoryInstructions={memorySettings.instructions}
+                  skillIds={draftSkillIds}
+                  onApply={template => {
+                    // A template sets the name only when it has one of its own.
+                    if (template.identity_name?.trim()) setIdentityName(template.identity_name.trim());
+                    setPersona(template.persona);
+                    setGoals(template.goals.length > 0 ? template.goals : ['']);
+                    setRules(template.rules.length > 0 ? template.rules : ['']);
+                    if (template.memory_instructions.trim()) {
+                      setMemorySettings(current => ({
+                        ...current,
+                        instructions: template.memory_instructions.trim(),
+                      }));
+                    }
+                    // Skills are bindings with their own authorization, so a
+                    // template only suggests the ones not bound yet.
+                    const missing = template.skills
+                      .map(skill => skill.id)
+                      .filter(id => !draftSkillIds.includes(id));
+                    if (missing.length > 0) {
+                      toast.info(t('personaTemplates.suggestSkills', { skills: missing.join(', ') }));
+                    }
                   }}
                 />
               ) : null}
@@ -840,13 +869,17 @@ function PersonaTemplateActions({
   persona,
   goals,
   rules,
+  memoryInstructions,
+  skillIds,
   onApply,
 }: {
   identityName: string;
   persona: string;
   goals: string[];
   rules: string[];
-  onApply: (identityName: string, persona: string, goals: string[], rules: string[]) => void;
+  memoryInstructions: string;
+  skillIds: string[];
+  onApply: (template: DigitalHumanTemplate) => void;
 }) {
   const t = useT('digitalHumans');
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -869,15 +902,42 @@ function PersonaTemplateActions({
       <PersonaTemplateEditor
         open={createOpen}
         onOpenChange={setCreateOpen}
-        initialIdentityName={identityName}
-        initialPersona={persona}
-        initialGoals={goals}
-        initialRules={rules}
+        initial={{
+          name: '',
+          identity_name: identityName,
+          description: '',
+          persona,
+          goals,
+          rules,
+          memory_instructions: memoryInstructions,
+          skill_ids: skillIds,
+        }}
       />
     </div>
   );
 }
 
+// The fields a saved template's editor starts from.
+type PersonaTemplateDraft = Omit<CreateDigitalHumanPersonaTemplateRequest, never>;
+
+// savedTemplateDraft turns a catalog entry of the workspace back into what
+// its editor edits.
+function savedTemplateDraft(template: DigitalHumanTemplate): PersonaTemplateDraft {
+  return {
+    name: template.title,
+    identity_name: template.identity_name ?? '',
+    description: template.description,
+    persona: template.persona,
+    goals: template.goals,
+    rules: template.rules,
+    memory_instructions: template.memory_instructions,
+    skill_ids: template.skills.map(skill => skill.id),
+  };
+}
+
+// The library lists the same catalog as the creation page (ADR 0022): the
+// built-in templates, then the workspace's saved ones, which can also be
+// edited and deleted here.
 function PersonaTemplateLibrary({
   open,
   onOpenChange,
@@ -886,29 +946,29 @@ function PersonaTemplateLibrary({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onApply: (identityName: string, persona: string, goals: string[], rules: string[]) => void;
+  onApply: (template: DigitalHumanTemplate) => void;
   onCreate: () => void;
 }) {
   const pageSize = 4;
   const t = useT('digitalHumans');
+  const { locale } = useLocale();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const templatesQuery = useDigitalHumanPersonaTemplates(
-    { page, pageSize, search: search.trim() },
-    open
-  );
+  const catalogQuery = useDigitalHumanTemplates({ locale, search: search.trim() }, open);
   const mutations = useDigitalHumanMutations();
-  const [editingTemplate, setEditingTemplate] = useState<DigitalHumanPersonaTemplate | null>(null);
-  const templates = templatesQuery.data?.data?.items ?? [];
-  const total = templatesQuery.data?.data?.total ?? 0;
+  const [editingTemplate, setEditingTemplate] = useState<DigitalHumanTemplate | null>(null);
+  const allTemplates = catalogQuery.data?.data?.templates ?? [];
+  const total = allTemplates.length;
+  const savedCount = allTemplates.filter(template => template.source === 'workspace').length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const templates = allTemplates.slice((page - 1) * pageSize, page * pageSize);
   useEffect(() => {
-    if (templatesQuery.data && !templatesQuery.isLoading && page > totalPages) {
+    if (catalogQuery.data && !catalogQuery.isLoading && page > totalPages) {
       setPage(totalPages);
     }
-  }, [page, templatesQuery.data, templatesQuery.isLoading, totalPages]);
-  const apply = (template: DigitalHumanPersonaTemplate) => {
-    onApply(template.name, template.persona, template.goals ?? [], template.rules ?? []);
+  }, [page, catalogQuery.data, catalogQuery.isLoading, totalPages]);
+  const apply = (template: DigitalHumanTemplate) => {
+    onApply(template);
     onOpenChange(false);
   };
   return (
@@ -932,55 +992,68 @@ function PersonaTemplateLibrary({
             <div className="grid min-h-0 flex-1 auto-rows-[minmax(176px,1fr)] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
               {templates.map(template => (
                 <div
-                  key={template.id}
+                  key={`${template.source}:${template.id}`}
                   className="flex min-h-44 flex-col rounded-xl border bg-card p-4 transition-colors hover:border-border-strong"
                 >
-                  <div className="font-medium">{template.name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 truncate font-medium">{template.title}</span>
+                    {template.source === 'builtin' ? (
+                      <Badge variant="subtle" className="shrink-0">
+                        {t('personaTemplates.builtin')}
+                      </Badge>
+                    ) : null}
+                  </div>
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                    {template.goals?.[0] || template.persona}
+                    {template.description || template.goals[0] || template.persona}
                   </p>
                   <div className="mt-3 line-clamp-3 text-sm">{template.persona}</div>
                   <div className="mt-auto flex justify-end gap-1 pt-4">
-                    <ConfirmDialog
-                      title={t('personaTemplates.deleteTitle')}
-                      description={t('personaTemplates.deleteDescription', { name: template.name })}
-                      confirmText={t('common.delete')}
-                      cancelText={t('common.cancel')}
-                      variant="danger"
-                      loading={mutations.deletePersonaTemplate.isPending}
-                      onConfirm={() =>
-                        void mutations.deletePersonaTemplate.mutateAsync({
-                          templateId: template.id,
-                          expectedRevision: template.revision,
-                        })
-                      }
-                      trigger={
+                    {template.source === 'workspace' ? (
+                      <>
+                        <ConfirmDialog
+                          title={t('personaTemplates.deleteTitle')}
+                          description={t('personaTemplates.deleteDescription', {
+                            name: template.title,
+                          })}
+                          confirmText={t('common.delete')}
+                          cancelText={t('common.cancel')}
+                          variant="danger"
+                          loading={mutations.deletePersonaTemplate.isPending}
+                          onConfirm={() =>
+                            void mutations.deletePersonaTemplate.mutateAsync({
+                              templateId: template.id,
+                              expectedRevision: template.revision ?? 0,
+                            })
+                          }
+                          trigger={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground hover:text-destructive"
+                            >
+                              <Trash2 className="size-4" />
+                              {t('common.delete')}
+                            </Button>
+                          }
+                        />
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() => {
+                            setEditingTemplate(template);
+                            onOpenChange(false);
+                          }}
                         >
-                          <Trash2 className="size-4" />
-                          {t('common.delete')}
+                          <Pencil className="size-4" />
+                          {t('common.edit')}
                         </Button>
-                      }
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setEditingTemplate(template);
-                        onOpenChange(false);
-                      }}
-                    >
-                      <Pencil className="size-4" />
-                      {t('common.edit')}
-                    </Button>
+                      </>
+                    ) : null}
                     <ConfirmDialog
                       title={t('personaTemplates.applyTitle')}
-                      description={t('personaTemplates.applyDescription', { name: template.name })}
+                      description={t('personaTemplates.applyDescription', { name: template.title })}
                       confirmText={t('personaTemplates.apply')}
                       cancelText={t('common.cancel')}
                       onConfirm={() => apply(template)}
@@ -993,45 +1066,44 @@ function PersonaTemplateLibrary({
                   </div>
                 </div>
               ))}
-              {templatesQuery.isLoading ? (
+              {catalogQuery.isLoading ? (
                 <div className="col-span-full flex min-h-full items-center justify-center text-sm text-muted-foreground">
                   <Loader2 className="mr-2 size-4 animate-spin" />
                   {t('personaTemplates.loading')}
                 </div>
               ) : null}
-              {!templatesQuery.isLoading && templates.length === 0 ? (
+              {!catalogQuery.isLoading && templates.length === 0 ? (
                 <div className="col-span-full flex min-h-full flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/20 px-6 py-12 text-center">
                   <span className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                     <Sparkles className="size-5" />
                   </span>
                   <p className="mt-4 text-sm font-medium text-foreground">
-                    {search.trim()
-                      ? t('personaTemplates.noResultsTitle')
-                      : t('personaTemplates.emptyTitle')}
+                    {t('personaTemplates.noResultsTitle')}
                   </p>
                   <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-                    {search.trim()
-                      ? t('personaTemplates.noResultsDescription')
-                      : t('personaTemplates.emptyDescription')}
+                    {t('personaTemplates.noResultsDescription')}
                   </p>
-                  {!search.trim() && total === 0 ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="mt-5"
-                      onClick={() => {
-                        onOpenChange(false);
-                        onCreate();
-                      }}
-                    >
-                      <Plus className="size-4" />
-                      {t('personaTemplates.createFirst')}
-                    </Button>
-                  ) : null}
                 </div>
               ) : null}
             </div>
-            {!templatesQuery.isLoading && totalPages > 1 ? (
+            {!catalogQuery.isLoading && savedCount === 0 && !search.trim() ? (
+              <div className="flex shrink-0 items-center justify-between gap-3 rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                <span>{t('personaTemplates.emptyDescription')}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onCreate();
+                  }}
+                >
+                  <Plus className="size-4" />
+                  {t('personaTemplates.createFirst')}
+                </Button>
+              </div>
+            ) : null}
+            {!catalogQuery.isLoading && totalPages > 1 ? (
               <div className="shrink-0 border-t pt-4">
                 <Pagination
                   currentPage={page}
@@ -1059,63 +1131,65 @@ function PersonaTemplateLibrary({
           if (!nextOpen) setEditingTemplate(null);
         }}
         template={editingTemplate}
-        initialIdentityName={editingTemplate?.name ?? ''}
-        initialPersona={editingTemplate?.persona ?? ''}
-        initialGoals={editingTemplate?.goals ?? []}
-        initialRules={editingTemplate?.rules ?? []}
+        initial={editingTemplate ? savedTemplateDraft(editingTemplate) : null}
       />
     </>
   );
 }
 
+// Saves the current draft, or edits a saved template. Besides what is shown,
+// a saved template keeps the draft's memory instructions and bound skills
+// (ADR 0022); connector connections stay with each DigitalHuman.
 function PersonaTemplateEditor({
   open,
   onOpenChange,
-  initialIdentityName,
-  initialPersona,
-  initialGoals,
-  initialRules,
+  initial,
   template,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initialIdentityName: string;
-  initialPersona: string;
-  initialGoals: string[];
-  initialRules: string[];
-  template?: DigitalHumanPersonaTemplate | null;
+  initial: PersonaTemplateDraft | null;
+  template?: DigitalHumanTemplate | null;
 }) {
   const t = useT('digitalHumans');
   const mutations = useDigitalHumanMutations();
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState(initialIdentityName);
-  const [persona, setPersona] = useState(initialPersona);
-  const [goals, setGoals] = useState<string[]>(initialGoals.length > 0 ? initialGoals : ['']);
-  const [rules, setRules] = useState<string[]>(initialRules.length > 0 ? initialRules : ['']);
+  const [name, setName] = useState('');
+  const [identityName, setIdentityName] = useState('');
+  const [description, setDescription] = useState('');
+  const [persona, setPersona] = useState('');
+  const [goals, setGoals] = useState<string[]>(['']);
+  const [rules, setRules] = useState<string[]>(['']);
   useEffect(() => {
-    if (!open) return;
-    setName(template?.name ?? initialIdentityName);
-    setPersona(template?.persona ?? initialPersona);
-    const nextGoals = template?.goals ?? initialGoals;
-    setGoals(nextGoals.length > 0 ? nextGoals : ['']);
-    const nextRules = template?.rules ?? initialRules;
-    setRules(nextRules.length > 0 ? nextRules : ['']);
-  }, [initialGoals, initialIdentityName, initialPersona, initialRules, open, template]);
+    if (!open || !initial) return;
+    setName(initial.name);
+    setIdentityName(initial.identity_name);
+    setDescription(initial.description);
+    setPersona(initial.persona);
+    setGoals(initial.goals.length > 0 ? initial.goals : ['']);
+    setRules(initial.rules.length > 0 ? initial.rules : ['']);
+    // Seeding happens once per opening; later renders pass a fresh object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, template]);
   const save = async () => {
     if (!name.trim() || !persona.trim()) {
       toast.error(t('errors.required'));
       return;
     }
-    const payload = {
+    const payload: CreateDigitalHumanPersonaTemplateRequest = {
       name: name.trim(),
+      identity_name: identityName.trim(),
+      description: description.trim(),
       persona: persona.trim(),
       goals: goals.map(item => item.trim()).filter(Boolean),
       rules: rules.map(item => item.trim()).filter(Boolean),
+      memory_instructions: initial?.memory_instructions.trim() ?? '',
+      skill_ids: initial?.skill_ids ?? [],
     };
     if (template) {
       await mutations.updatePersonaTemplate.mutateAsync({
         templateId: template.id,
-        request: { expected_revision: template.revision, ...payload },
+        request: { expected_revision: template.revision ?? 0, ...payload },
       });
     } else {
       await mutations.createPersonaTemplate.mutateAsync(payload);
@@ -1145,16 +1219,36 @@ function PersonaTemplateEditor({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <Field
-            label={t('fields.identityName')}
-            description={t('settings.identityNameDescription')}
+            label={t('personaTemplates.templateName')}
+            description={t('personaTemplates.templateNameDescription')}
             required
           >
             <Input
               ref={nameInputRef}
               value={name}
               onChange={event => setName(event.target.value)}
-              aria-label={t('fields.identityName')}
+              aria-label={t('personaTemplates.templateName')}
               aria-required="true"
+            />
+          </Field>
+          <Field
+            label={t('personaTemplates.templateDescription')}
+            description={t('personaTemplates.templateDescriptionHint')}
+          >
+            <Input
+              value={description}
+              onChange={event => setDescription(event.target.value)}
+              aria-label={t('personaTemplates.templateDescription')}
+            />
+          </Field>
+          <Field
+            label={t('fields.identityName')}
+            description={t('personaTemplates.identityNameDescription')}
+          >
+            <Input
+              value={identityName}
+              onChange={event => setIdentityName(event.target.value)}
+              aria-label={t('fields.identityName')}
             />
           </Field>
           <Field
@@ -1222,7 +1316,9 @@ function PersonaTemplateEditor({
             {t('personaTemplates.snapshotHint', {
               goalCount: goals.filter(item => item.trim()).length,
               ruleCount: rules.filter(item => item.trim()).length,
+              skillCount: initial?.skill_ids.length ?? 0,
             })}
+            {initial?.memory_instructions.trim() ? ` ${t('personaTemplates.keepsMemory')}` : ''}
           </p>
         </DialogBody>
         <DialogFooter>

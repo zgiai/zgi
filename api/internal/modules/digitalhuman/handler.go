@@ -37,6 +37,7 @@ type HandlerService interface {
 	CreatePersonaTemplate(context.Context, Scope, CreatePersonaTemplateRequest) (*PersonaTemplate, error)
 	GetPersonaTemplate(context.Context, Scope, uuid.UUID) (*PersonaTemplate, error)
 	ListPersonaTemplates(context.Context, Scope, ListQuery) (*PersonaTemplateListResult, error)
+	ListTemplates(context.Context, Scope, string, string) (*TemplateCatalog, error)
 	UpdatePersonaTemplate(context.Context, Scope, uuid.UUID, UpdatePersonaTemplateRequest) (*PersonaTemplate, error)
 	DeletePersonaTemplate(context.Context, Scope, uuid.UUID, int64) error
 	ListDraftResourceBindings(context.Context, Scope, uuid.UUID) (*DraftResourceBindings, error)
@@ -96,6 +97,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
 
 	router.GET("/digital-human-memory-templates", h.ListMemoryInstructionsTemplates)
+	router.GET("/digital-human-templates", h.ListTemplates)
 
 	templates := router.Group("/digital-human-persona-templates")
 	templates.POST("", h.CreatePersonaTemplate)
@@ -470,6 +472,21 @@ func (h *Handler) CreatePersonaTemplate(c *gin.Context) {
 		return
 	}
 	writeDigitalHumanData(c, http.StatusCreated, result)
+}
+
+// ListTemplates returns the built-in and saved DigitalHuman templates
+// (ADR 0022).
+func (h *Handler) ListTemplates(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListTemplates(c.Request.Context(), scope, c.Query("locale"), c.Query("search"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
 func (h *Handler) ListPersonaTemplates(c *gin.Context) {

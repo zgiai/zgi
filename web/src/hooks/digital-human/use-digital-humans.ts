@@ -97,6 +97,22 @@ export function useDigitalHumanVersionRestorePreview(
   });
 }
 
+// The template catalog: built-in templates in the current language, then the
+// workspace's saved ones (ADR 0022). It shares the saved templates' key, so
+// saving, editing, or deleting one refreshes it.
+export function useDigitalHumanTemplates(
+  params: { locale: string; search?: string },
+  enabled = true
+) {
+  const queryParams = { locale: params.locale, search: params.search?.trim() || undefined };
+  return useQuery({
+    queryKey: DIGITAL_HUMAN_KEYS.personaTemplates({ catalog: queryParams }),
+    queryFn: () => digitalHumanService.listTemplates(queryParams),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
 export function useDigitalHumanPersonaTemplates(
   params: { page: number; pageSize: number; search?: string },
   enabled = true

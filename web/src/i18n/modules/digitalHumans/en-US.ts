@@ -94,6 +94,10 @@ const messages = {
     invalidRole: 'That template does not exist. Choose one from the list.',
     backToGallery: 'Back to templates',
     gallery: {
+      builtinTitle: 'Built-in templates',
+      workspaceTitle: 'Workspace templates',
+      loadFailed: 'Templates could not be loaded.',
+      retry: 'Retry',
       customEntry: 'Custom digital human',
       customHint: 'Fill in a name and responsibilities to create a basic digital human.',
       details: 'View details',
@@ -103,6 +107,9 @@ const messages = {
       empty: 'No templates are available yet. Start from a blank digital human instead.',
     },
     detail: {
+      requiredSkill: '{name} (required)',
+      memory: 'Memory instructions',
+      connector: 'Connection',
       responsibility: 'What I own',
       goals: 'Working goals',
       rules: 'Safety rules',
@@ -112,6 +119,8 @@ const messages = {
       close: 'Close',
     },
     form: {
+      requiredSkillsMissing: 'This template needs skills that are not available yet: {skills}. Enable and select them first.',
+      connectorRequired: 'This template works only after you verify and select at least one connection from Connector Center.',
       name: 'Name',
       namePlaceholder: 'Enter a digital human name',
       responsibility: 'What I am responsible for',
@@ -160,76 +169,6 @@ const messages = {
       title: 'Preview',
       published: 'Published',
       noResponsibility: 'No responsibility added yet.',
-    },
-    sharedRules: {
-      credentials:
-        'Never ask the user to paste passwords, tokens, private keys, or other secrets into the conversation, the name, or the responsibility description.',
-      authorization:
-        'Without explicit user authorisation, do not perform operations that may interrupt a service, modify data, delete resources, or widen permissions.',
-      verifyResult:
-        'Never treat "executed" as "succeeded". Check the result, status, or logs before reporting an outcome.',
-      stateBlockers:
-        'When information is missing, the environment does not match, or the risk is unacceptable, stop and state the blocker and what is needed next.',
-    },
-    templates: {
-      fileGeneration: {
-        title: 'File generation assistant',
-        shortDescription: 'Turns a request into a deliverable document, spreadsheet, or deck.',
-        responsibility:
-          'Confirm the deliverable type and structure first, then produce a downloadable file and explain what it contains and how to update it.',
-        persona:
-          'You are a delivery-focused assistant with a file generation skill. Confirm the file type (document, spreadsheet, or deck) and the structure before generating, and offer a structure outline when the request is vague. After generating, explain what the file contains, where it was written, and how to revise it. When a format is not supported, say so and propose the closest supported alternative.',
-        tags: {
-          fileOutput: 'File output',
-          structure: 'Structure design',
-          deliveryNotes: 'Delivery notes',
-        },
-        goals: {
-          confirmFormat: 'Confirm the file type and structure before generating.',
-          produceFile: 'Produce a downloadable, ready-to-use file.',
-          explainOutput: 'Explain what the file contains and how to revise it.',
-          fallbackFormat: 'Offer a supported alternative when a format is unavailable.',
-        },
-        rules: {
-          confirmBeforeGenerating:
-            'Confirm the file type and structure before generating, and never promise a format that cannot be produced.',
-        },
-        skills: {
-          fileGenerator: 'File generation (documents, spreadsheets, decks)',
-        },
-      },
-      opsSpecialist: {
-        title: 'Operations specialist',
-        shortDescription:
-          'Read-only inspection of the SSH servers you verify in Connector Center and bind to this digital human: a system snapshot, systemd service status, and a bounded journal tail. No deploy, restart, or configuration changes.',
-        responsibility:
-          'Inspect the one or more named Linux servers you create and verify in Connector Center and bind to this digital human. When more than one server is bound and a request does not name a target, ask which server to check before acting. Use only the read-only actions approved for the bound connection, each with its own per-invocation approval: a system snapshot, a systemd service status read, and a bounded journal tail. Report observed facts separately from inference and recommendations. It does not deploy, restart, write, change configuration, or run arbitrary commands. A connection is usable only after it is verified and bound, and an approval for one call never carries over to another.',
-        persona:
-          'You are a cautious, evidence-first operations specialist for Linux servers. Work only through SSH server connections the user created and verified in Connector Center and bound to you; a connection that is not bound or not verified is not usable, so never imply you can reach a server before that. Before acting, establish the target: when several distinct servers are bound and the request does not name one, ask the user which server they mean instead of guessing. Use only the read-only actions approved for the bound connection, one invocation at a time: a system snapshot, a single systemd service status read, and a bounded journal tail with its limited line count and time window. Every invocation needs its own approval; never assume an earlier approval still applies or has been remembered. Never deploy, restart, write, change configuration, open an interactive session, or run arbitrary commands. Separate observation from inference: state the action you ran and the facts it returned first, then clearly label any inference or recommendation, and say when the evidence is missing or the request falls outside the approved read-only scope.',
-        tags: {
-          serverInspection: 'Server inspection',
-          evidenceFirst: 'Evidence first',
-          readOnlySafety: 'Read-only safety',
-        },
-        goals: {
-          confirmTarget:
-            'Confirm which bound server the request targets, and ask when it is ambiguous.',
-          collectSnapshot:
-            'Collect read-only evidence through the approved actions: system snapshot, systemd service status, and bounded journal tail.',
-          assessEnvironment:
-            'Identify resource and service risks from observed facts, and label inference as inference.',
-          recommendNext:
-            'Recommend verifiable next steps and state which evidence is still missing.',
-        },
-        rules: {
-          verifiedReadOnly:
-            'Use only the read-only actions approved for the bound connection, with a fresh approval for every invocation. Never deploy, restart, write, change configuration, or run arbitrary commands.',
-          targetBoundary:
-            "Confirm the target server before acting; when several named servers are bound and the request is ambiguous, ask which one. Never use one server's result as evidence for another.",
-          noOverclaim:
-            'Report a service status, journal tail, or conclusion only from an action you actually ran and observed. Never present inference as an observed fact, and never claim an approval has been remembered.',
-        },
-      },
     },
     success: {
       title: '{name} is published',
@@ -641,31 +580,41 @@ const messages = {
     saveHint: 'Saved changes remain in the draft until you publish a new version.',
   },
   personaTemplates: {
-    title: 'Persona templates',
+    title: 'Templates',
     description:
-      'Reuse a name, persona, goals, and operating rules. Applying a template copies its content into the current draft.',
+      'Built-in templates and the ones your workspace saved. Applying a template copies its content into the current draft.',
     use: 'Use template',
     save: 'Save as template',
     apply: 'Apply',
+    builtin: 'Built-in',
     search: 'Search templates by name',
     paginationInfo: 'Showing {start}-{end} of {total} templates',
-    loading: 'Loading persona templates…',
-    emptyTitle: 'No persona templates yet',
+    loading: 'Loading templates…',
+    emptyTitle: 'No saved templates yet',
     emptyDescription:
-      'Save the current instructions as your first template to configure future digital humans faster.',
+      'Save the current setup as a template to also start new digital humans from it.',
     createFirst: 'Save current as template',
     noResultsTitle: 'No matching templates',
     noResultsDescription: 'Try another keyword or clear the search to see every template.',
     saveDescription:
-      'The current identity name becomes the template title, so no extra template name or description is required.',
-    editTitle: 'Edit persona template',
+      'Saves the persona, goals, rules, memory instructions, and bound skills. Connections are bound per digital human and are not saved.',
+    templateName: 'Template name',
+    templateNameDescription: 'How the template is listed, such as “Support (East region)”.',
+    templateDescription: 'Summary',
+    templateDescriptionHint: 'One sentence on what this template is for.',
+    identityNameDescription:
+      'Optional. Applying the template sets this as the name in conversation; leave it empty to keep the current name.',
+    editTitle: 'Edit template',
     editDescription:
       'Changes affect future applications only. Digital humans that already used this template will not change.',
-    snapshotHint: 'This template contains {goalCount} goals and {ruleCount} operating rules.',
+    snapshotHint:
+      'This template contains {goalCount} goals, {ruleCount} operating rules, and {skillCount} skills.',
+    keepsMemory: 'It also keeps the memory instructions.',
     applyTitle: 'Replace the current instructions?',
     applyDescription:
-      'Applying “{name}” replaces the name, persona, goals, and rules in the current draft. You can continue editing before the draft is saved.',
-    deleteTitle: 'Delete this persona template?',
+      'Applying “{name}” replaces the persona, goals, rules, and memory instructions in the current draft (and the name, when the template has one). You can continue editing before the draft is saved.',
+    suggestSkills: 'This template suggests these skills: {skills}. Add them under Capabilities.',
+    deleteTitle: 'Delete this template?',
     deleteDescription:
       '“{name}” will no longer be available for reuse. Digital humans that already used it are not affected.',
   },
