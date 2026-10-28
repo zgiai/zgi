@@ -65,6 +65,14 @@ func (h *LLMHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// 3b. Refuse capabilities the selected model never declared. This runs
+	// before billing and before any upstream call: forwarding such a request
+	// costs a channel-wide retry and surfaces the upstream's deterministic
+	// refusal as a retryable 5xx that hides the reason.
+	if !h.enforceChatCapabilities(c, &req) {
+		return
+	}
+
 	// Publish the server-generated billing/audit ID without trusting or replacing
 	// the caller's transport request ID. Set it before SSE headers are committed.
 	c.Request = c.Request.WithContext(types.WithInvocationIDObserver(c.Request.Context(), func(id string) {
