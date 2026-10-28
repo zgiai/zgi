@@ -29,4 +29,16 @@ assert.match(
   'Editor memory status rows should not duplicate memory content in their title.'
 );
 
+// Every surface that shows the memory notice can open the memory page.
+for (const surface of [
+  'src/app/console/work/chat/page.tsx',
+  'src/components/aichat/contextual/contextual-ai-chat-dock.tsx',
+]) {
+  assert.match(
+    readFileSync(surface, 'utf8'),
+    /<AIChatMemoryOpenerProvider>/,
+    `${surface} should give the memory notice its View action.`
+  );
+}
+
 console.log('AIChat memory event interaction checks passed.');
