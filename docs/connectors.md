@@ -88,6 +88,12 @@ setup panel is available in Connector Center and can be opened in place from an
 Agent or DigitalHuman connection picker, so users do not have to leave the
 current task to create a credential.
 
+For a new connection the panel recommends a platform-generated key (ADR 0030).
+The browser generates an Ed25519 pair, keeps the private key hidden in the
+private-key field, and shows the public key with a one-line command that adds
+it to the login user's `~/.ssh/authorized_keys`. The server can keep password
+login disabled, and the connection is revoked by deleting that line.
+
 Host identity verification is automatic by default. The first test connects
 with the submitted credential, reads the server's SHA256 host-key fingerprint,
 and asks the user to confirm the observed identity before saving. The confirmed

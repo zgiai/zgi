@@ -739,9 +739,20 @@ const messages = {
     portHint: 'Whole-number TCP port between 1 and 65535. The default is 22.',
     username: 'Username',
     authMethod: 'SSH authentication method',
-    authMethodHint: 'Choose the login method supported by the server. Use exactly one method.',
+    authMethodHint:
+      'A platform-generated key is the simplest: install its public key once and no password is stored. Use exactly one method.',
     passwordMethod: 'Password login',
     privateKeyMethod: 'SSH private key',
+    generatedMethod: 'Generated key (recommended)',
+    generatedHint:
+      'The platform generated a new key for this connection. Its private half is never shown and is stored encrypted after the test passes. Add the public key below to the server, then test the connection.',
+    generatedPublicKey: 'Public key',
+    generatedInstall: 'Or run this on the server as the login user:',
+    generatedCopy: 'Copy',
+    generatedCopied: 'Copied',
+    generatedRegenerate: 'Generate another key',
+    generating: 'Generating a key…',
+    generateFailed: 'This browser cannot generate the key. Use a password or paste a private key instead.',
     password: 'Login password',
     passwordHint:
       'Used only to verify this connection. It is never displayed or returned after saving.',
