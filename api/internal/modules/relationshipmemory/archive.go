@@ -74,7 +74,7 @@ func (s *Service) AddArchiveEntry(ctx context.Context, relationshipID uuid.UUID,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		relationship, err := lockActiveRelationship(tx, relationshipID)
+		relationship, err := lockActiveRelationship(tx, relationshipID, req.Metadata)
 		if err != nil {
 			return err
 		}
@@ -216,7 +216,7 @@ func (s *Service) UpdateArchiveEntry(ctx context.Context, relationshipID, entryI
 	}
 	var after UserMemoryArchiveEntry
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		relationship, err := lockActiveRelationship(tx, relationshipID)
+		relationship, err := lockActiveRelationship(tx, relationshipID, metadata)
 		if err != nil {
 			return err
 		}
@@ -244,7 +244,7 @@ func (s *Service) UpdateArchiveEntry(ctx context.Context, relationshipID, entryI
 // DeleteArchiveEntry removes one entry.
 func (s *Service) DeleteArchiveEntry(ctx context.Context, relationshipID, entryID uuid.UUID, metadata MutationMetadata) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		relationship, err := lockActiveRelationship(tx, relationshipID)
+		relationship, err := lockActiveRelationship(tx, relationshipID, metadata)
 		if err != nil {
 			return err
 		}
@@ -262,7 +262,12 @@ func (s *Service) DeleteArchiveEntry(ctx context.Context, relationshipID, entryI
 	})
 }
 
-func lockActiveRelationship(tx *gorm.DB, relationshipID uuid.UUID) (*UserMemoryRelationship, error) {
+// lockActiveRelationship locks the relationship an archive change writes to
+// and applies the same fences as a file change: memory must be on unless a
+// manager acts, automatic capture must be on for an automatic writer, and a
+// writer that read memory at an earlier epoch (before it was cleared or
+// turned off) is refused before anything is archived.
+func lockActiveRelationship(tx *gorm.DB, relationshipID uuid.UUID, meta MutationMetadata) (*UserMemoryRelationship, error) {
 	var relationship UserMemoryRelationship
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&relationship, "id = ?", relationshipID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -270,8 +275,13 @@ func lockActiveRelationship(tx *gorm.DB, relationshipID uuid.UUID) (*UserMemoryR
 		}
 		return nil, err
 	}
-	if relationship.Status != RelationshipActive {
+	source := normalizedSourceKind(meta.SourceKind)
+	if relationship.Status != RelationshipActive || (!relationship.MemoryEnabled && source != SourceManager) ||
+		(source == SourceAutomatic && !relationship.AutoCaptureEnabled) {
 		return nil, ErrAccessDenied
+	}
+	if meta.ExpectedMemoryEpoch != nil && relationship.MemoryEpoch != *meta.ExpectedMemoryEpoch {
+		return nil, ErrRevisionConflict
 	}
 	return &relationship, nil
 }

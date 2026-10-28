@@ -191,6 +191,11 @@ func (s *Service) RevertVersion(ctx context.Context, relationshipID, versionID u
 // back. A deleted Digital Human memory needs its category, which history
 // recorded before it kept categories cannot supply.
 func versionRestorable(version MemoryFileVersion, current map[string]UserMemoryItem, needsCategory bool) bool {
+	// Archive changes share the history, but an archive entry is not a file
+	// and cannot be written back as one; it is managed in the archive.
+	if strings.HasPrefix(version.MemoryKey, archiveKeyPrefix) {
+		return false
+	}
 	if _, exists := current[version.MemoryKey]; exists || version.BeforeRevision == nil || !needsCategory {
 		return true
 	}
