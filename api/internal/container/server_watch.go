@@ -106,7 +106,7 @@ func (p *ServerWatchProbe) Probe(ctx context.Context, target serverwatch.Target,
 			release()
 			return serverwatch.Observation{}, serverwatch.ErrNotUsable
 		}
-		status, statusErr := p.service.ServiceStatus(ctx, ssh, name)
+		status, statusErr := p.service.ServiceStatus(ctx, ssh, serverwatch.ServiceUnit(name))
 		release()
 		switch {
 		case statusErr == nil && status.LoadState == "not-found":

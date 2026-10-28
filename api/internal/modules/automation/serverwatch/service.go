@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"gorm.io/gorm"
 )
@@ -33,6 +35,17 @@ const (
 	OutcomeConnectionUnusable = "connection_unusable"
 	OutcomeCheckFailed        = "check_failed"
 )
+
+var serviceUnitPattern = regexp.MustCompile(serverops.SystemdServiceNamePattern)
+
+// ServiceUnit is the systemd unit a watched service is read as: people
+// usually type "nginx" for "nginx.service".
+func ServiceUnit(name string) string {
+	if strings.HasSuffix(name, ".service") {
+		return name
+	}
+	return name + ".service"
+}
 
 // ErrNotUsable is returned by Connections and Prober when the DigitalHuman has
 // no active binding on the connection or the connection is not ready.
@@ -340,7 +353,7 @@ func normalizeServices(values []string) ([]string, error) {
 		if name == "" || seen[name] {
 			continue
 		}
-		if len(name) > 128 || strings.ContainsAny(name, " \t\n/'\"\\;|&$`") || strings.HasPrefix(name, "-") {
+		if !serviceUnitPattern.MatchString(ServiceUnit(name)) {
 			return nil, digitalhuman.ErrInvalidRequest
 		}
 		seen[name] = true

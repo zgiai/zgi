@@ -76,3 +76,9 @@ func TestNormalizeServicesRejectsShellSyntax(t *testing.T) {
 		t.Fatal("more than the limit accepted")
 	}
 }
+
+func TestServiceUnitAddsTheServiceSuffix(t *testing.T) {
+	if ServiceUnit("nginx") != "nginx.service" || ServiceUnit("php-fpm.service") != "php-fpm.service" {
+		t.Fatal("ServiceUnit() did not name the systemd unit")
+	}
+}
