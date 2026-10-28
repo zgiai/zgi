@@ -37,6 +37,9 @@ func connectorApprovalNote(ctx context.Context, db *gorm.DB, run *Run, event inv
 		_ = json.Unmarshal(row.Metadata, &metadata)
 		ownerPresent := row.AuthorizedBy != nil && *row.AuthorizedBy != uuid.Nil && requester == row.AuthorizedBy.String()
 		if line := connectorApprovalLine(row.DisplayName, metadata.Policy, interactive, ownerPresent); line != "" {
+			if interactive {
+				line += " " + connectorScheduledApproval(metadata.Policy)
+			}
 			lines = append(lines, line)
 		}
 	}
@@ -63,4 +66,13 @@ func connectorApprovalLine(name, policy string, interactive, ownerPresent bool) 
 		return "- " + name + ": no one can approve here, so only checks the platform proves read-only can run, and only with the owner's task grant."
 	}
 	return ""
+}
+
+// connectorScheduledApproval says what the owner's scheduled task runs may do
+// with the connection, so the model can answer for them too.
+func connectorScheduledApproval(policy string) string {
+	if policy == ConnectorApprovalTrustedUnattended {
+		return "In the owner's scheduled and background task runs, every call also runs without approval."
+	}
+	return "In scheduled and background task runs, only checks the platform proves read-only can run, and only with the owner's task grant."
 }

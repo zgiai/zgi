@@ -71,3 +71,10 @@ func TestConnectorApprovalLineDescribesWhatThisRunAllows(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectorScheduledApprovalFollowsThePolicy(t *testing.T) {
+	if !strings.Contains(connectorScheduledApproval(ConnectorApprovalTrustedUnattended), "every call also runs without approval") ||
+		!strings.Contains(connectorScheduledApproval(ConnectorApprovalTrusted), "only with the owner's task grant") {
+		t.Fatal("scheduled approval description does not follow the policy")
+	}
+}
