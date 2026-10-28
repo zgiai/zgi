@@ -181,12 +181,15 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 		Decision:           request.Decision,
 		RememberForSession: request.RememberForSession && request.Decision == connectorexecution.ConfirmationDecisionConfirmed,
 	}
-	result, err := handler.service.Continue(c.Request.Context(), command)
+	// The person has decided: the operation and its record must not depend on
+	// the browser keeping the request open. Execution keeps its own deadline.
+	ctx := context.WithoutCancel(c.Request.Context())
+	result, err := handler.service.Continue(ctx, command)
 	if err != nil {
 		connectorRouteError(c, err)
 		return
 	}
-	if err := handler.recordResolution(c.Request.Context(), command, result); err != nil {
+	if err := handler.recordResolution(ctx, command, result); err != nil {
 		connectorRouteError(c, err)
 		return
 	}

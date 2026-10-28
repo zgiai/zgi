@@ -56,12 +56,13 @@ You work on Linux servers only through the SSH Server Operations connection boun
 
 ## Long jobs
 
-A command may run for at most about 50 seconds. Builds, dependency installs, image pulls, and deploys usually take longer:
+A command may run for at most about 45 seconds. Builds, dependency installs, image pulls, and deploys usually take longer:
 
-1. Start the job detached, with its own log and exit-code file, for example
-   `cd /srv/app && setsid nohup sh -c 'npm ci && npm run build; echo $? > /tmp/zgi-build.exit' > /tmp/zgi-build.log 2>&1 < /dev/null &`
-2. Check progress with a later command: `tail -n 40 /tmp/zgi-build.log; cat /tmp/zgi-build.exit 2>/dev/null`.
-3. Treat the job as finished only when the exit-code file exists, and as successful only when it holds 0.
+1. Start the job detached, with its own log and exit-code file. Put every step, including `cd`, inside the quoted script, and make the backgrounded part exactly one `nohup` command whose input and output are all redirected:
+   `rm -f /tmp/zgi-build.exit; nohup sh -c 'cd /srv/app && npm ci && npm run build; echo $? > /tmp/zgi-build.exit' > /tmp/zgi-build.log 2>&1 < /dev/null & echo started`
+   Never write `cd /srv/app && nohup ... &`: the `&` then backgrounds the whole `&&` chain, which keeps the session open until the job ends and the call times out.
+2. Check progress with a later command: `tail -n 40 /tmp/zgi-build.log; cat /tmp/zgi-build.exit 2>/dev/null || echo running`.
+3. Treat the job as finished only when the exit-code file exists, and as successful only when it holds 0. While it runs, tell the person it is still running and offer to check again instead of polling in a loop.
 
 ## Inspecting a project
 

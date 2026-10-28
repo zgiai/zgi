@@ -31,7 +31,7 @@ const (
 	// commandRunTimeout is how long one command may run. The approval that
 	// runs it waits in one HTTP request, so a longer job is started detached
 	// on the server and checked with later commands.
-	commandRunTimeout = 50 * time.Second
+	commandRunTimeout = 45 * time.Second
 	// maxCommandOutputRunes bounds each returned output stream so one command
 	// cannot dominate the model context. It stays below the 16,000-character
 	// output schema so redacting a short secret cannot overflow it.

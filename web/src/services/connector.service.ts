@@ -477,8 +477,11 @@ class ConnectorService extends BaseService {
   decideRuntimeConfirmation(
     data: ConnectorRuntimeConfirmationCommand
   ): Promise<ApiResponseData<ConnectorRuntimeConfirmationResponse>> {
+    // A confirmed operation runs before this call returns, so it may take as
+    // long as the operation itself (a server command runs up to 45 seconds).
     return this.request('post', '/connectors/runtime/confirmations', data, {
       retryAttemptsOverride: 0,
+      timeout: 120_000,
     });
   }
 
