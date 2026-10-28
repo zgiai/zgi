@@ -692,6 +692,10 @@ const messages: WebappMessages = {
         adminDescription: '模型渠道或上游服务异常。请切换模型，或前往模型与渠道检查可用状态。',
         memberDescription: '模型渠道或上游服务异常。请切换其他模型，或联系管理员检查渠道。',
       },
+      inputTooLong: {
+        title: '输入内容过长',
+        description: '输入内容超出了当前模型可处理的范围。请精简内容、分多条发送，或将长文本作为文件上传。',
+      },
     },
     send: '发送',
     runtimeInput: {

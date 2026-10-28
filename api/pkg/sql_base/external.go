@@ -1053,9 +1053,13 @@ func (c *externalClient) ExecuteSQL(ctx context.Context, query string, params []
 func (c *externalClient) executeSQL(ctx context.Context, query string, params []interface{}) (*QueryResult, error) {
 	url := fmt.Sprintf("%s/query", c.baseURL)
 
+	// postgres-meta does not return the command tag, so plain mutations are
+	// wrapped to return their written row count instead.
+	executedQuery, countsAffected := wrapMutationForAffectedRows(query)
+
 	// Prepare the request body
 	requestBody := map[string]interface{}{
-		"query": query,
+		"query": executedQuery,
 	}
 
 	// Add parameters if provided
@@ -1113,6 +1117,20 @@ func (c *externalClient) executeSQL(ctx context.Context, query string, params []
 	// First try to decode as a direct array of results (postgres-meta format)
 	var resultArray []map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&resultArray); err == nil {
+		if countsAffected {
+			affected, ok := parseWrappedAffectedRows(resultArray)
+			if !ok {
+				// The mutation has already run; failing here would invite a
+				// duplicate retry, so report the gap loudly and keep going.
+				logger.WarnContext(ctx, "SQL base mutation affected row count unreadable",
+					zap.Int("result_rows", len(resultArray)))
+			}
+			return &QueryResult{
+				RowsAffected: affected,
+				Columns:      []string{},
+				Rows:         [][]interface{}{},
+			}, nil
+		}
 		// Handle empty array response (INSERT/UPDATE/DELETE)
 		if len(resultArray) == 0 {
 			return &QueryResult{

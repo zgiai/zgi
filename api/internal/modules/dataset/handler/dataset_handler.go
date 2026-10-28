@@ -24,6 +24,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	"github.com/zgiai/zgi/api/middleware"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -44,6 +45,14 @@ type DatasetHandler struct {
 	folderService       service.DatasetFolderService        // Add folder service
 	batchTaskManager    *service.BatchHitTestingTaskManager // Add batch task manager
 	permissionService   interfaces.ResourcePermissionService
+	errorProjector      *apptransport.Projector
+}
+
+// SetErrorProjector attaches the application error projector used for
+// cataloged knowledge-base errors. Without it those errors fall back to the
+// legacy generic response.
+func (h *DatasetHandler) SetErrorProjector(projector *apptransport.Projector) {
+	h.errorProjector = projector
 }
 
 const datasetNameMaxLength = 40
@@ -880,12 +889,42 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 		if !strings.Contains(err.Error(), "knowledge graph visibility is not ready") {
 			logger.Error("HitTesting failed", err)
 		}
-		respondHitTestingError(c, dataset, err)
+		h.respondHitTestingError(c, dataset, err)
 		return
 	}
 
 	// Return successful response
 	response.Success(c, result)
+}
+
+// respondHitTestingError answers cataloged retrieval failures through the
+// application error projector and leaves every other failure on the legacy
+// mapping below.
+func (h *DatasetHandler) respondHitTestingError(c *gin.Context, dataset *model.Dataset, err error) {
+	if h.errorProjector != nil && service.IsEmbeddingModelUnavailable(err) {
+		respondEmbeddingModelUnavailable(c, h.errorProjector, dataset, err)
+		return
+	}
+	respondHitTestingError(c, dataset, err)
+}
+
+// respondEmbeddingModelUnavailable reports that the knowledge base's embedding
+// model has no usable route, in the same string-code JSON shape this endpoint
+// already uses for graph_visibility_not_ready.
+func respondEmbeddingModelUnavailable(c *gin.Context, projector *apptransport.Projector, dataset *model.Dataset, err error) {
+	modelName := ""
+	if dataset != nil && dataset.EmbeddingModel != nil {
+		modelName = strings.TrimSpace(*dataset.EmbeddingModel)
+	}
+	appErr := service.EmbeddingModelUnavailableError(err, modelName)
+	locale := apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language"))
+	presentation := projector.Project(appErr, locale).Presentation
+	c.JSON(presentation.HTTPStatus, gin.H{
+		"code":      presentation.Code.String(),
+		"message":   presentation.Message,
+		"retryable": presentation.Retryable,
+		"params":    gin.H{"model": modelName},
+	})
 }
 
 func respondHitTestingError(c *gin.Context, dataset *model.Dataset, err error) {
@@ -914,7 +953,8 @@ func respondHitTestingError(c *gin.Context, dataset *model.Dataset, err error) {
 		logger.Warn("Unhandled hit testing error", map[string]interface{}{
 			"error_message": errMsg,
 		})
-		response.FailWithMessage(c, response.ErrSystemError, errMsg)
+		// The diagnostic text can carry upstream causes; never return it.
+		response.Fail(c, response.ErrSystemError)
 	}
 }
 

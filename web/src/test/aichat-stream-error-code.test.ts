@@ -14,6 +14,10 @@ assert.equal(resolveAIChatErrorCode(undefined, 'llm.model.not_found'), 'llm.mode
 assert.equal(resolveAIChatErrorCode(310021, 'billing.organization.balance_insufficient'), 310021);
 assert.equal(resolveAIChatErrorCode('model_service_timeout', 'llm.provider.timeout'), 'model_service_timeout');
 
+// A chat-runtime catalog code with its own runtime copy is lifted too.
+assert.equal(resolveAIChatErrorCode(399001, 'aichat.query.too_long'), 'aichat.query.too_long');
+assert.equal(isAIChatApplicationErrorCode('aichat.query.too_long'), false);
+
 // Without a catalog identity nothing changes.
 assert.equal(resolveAIChatErrorCode(399001, undefined), 399001);
 assert.equal(resolveAIChatErrorCode(399001, 'not-a-catalog-code'), 399001);

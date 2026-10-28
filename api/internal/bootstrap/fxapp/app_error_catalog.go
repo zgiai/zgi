@@ -5,6 +5,7 @@ import (
 	agents "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorpreferences "github.com/zgiai/zgi/api/internal/modules/connectors/preferences"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
@@ -25,6 +26,7 @@ func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions = append(definitions, agents.CatalogDefinitions()...)
 	definitions = append(definitions, connectorpreferences.CatalogDefinitions()...)
 	definitions = append(definitions, connectorcore.CatalogDefinitions()...)
+	definitions = append(definitions, datasetservice.CatalogDefinitions()...)
 	definitions = append(definitions, digitalhuman.CatalogDefinitions()...)
 	definitions = append(definitions, imageservice.CatalogDefinitions()...)
 	definitions = append(definitions, inbox.CatalogDefinitions()...)

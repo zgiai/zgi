@@ -34,6 +34,7 @@ type AgentRuntimeRunItem struct {
 	CreatedAt      int64   `json:"created_at"`
 	FinishedAt     *int64  `json:"finished_at"`
 	Error          string  `json:"error,omitempty"`
+	ErrorCode      string  `json:"error_code,omitempty"`
 	Source         string  `json:"source"`
 	SourceWebAppID *string `json:"source_web_app_id,omitempty"`
 }
@@ -56,6 +57,7 @@ type AgentRuntimeRunDetail struct {
 	CreatedAt       int64                  `json:"created_at"`
 	FinishedAt      *int64                 `json:"finished_at"`
 	Error           string                 `json:"error,omitempty"`
+	ErrorCode       string                 `json:"error_code,omitempty"`
 	Source          string                 `json:"source"`
 	SourceWebAppID  *string                `json:"source_web_app_id,omitempty"`
 	CallerType      string                 `json:"caller_type,omitempty"`

@@ -849,6 +849,18 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		response.Fail(c, response.ErrPermissionDenied)
 	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
+	case apperror.IsCode(err, runtimeservice.CodeQueryTooLong):
+		// Keep the legacy invalid-parameter envelope; only the message is the
+		// localized catalog copy, and the catalog code travels in the header.
+		message := response.ErrInvalidParam.Message
+		if h.errorProjector != nil {
+			projected := h.errorProjector.ProjectLegacyMessage(err, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")), runtimeservice.LegacyQueryTooLong)
+			if projected.Resolution == apptransport.ResolutionMatched {
+				message = projected.Message
+				c.Header(apptransport.HeaderApplicationErrorCode, projected.AppCode.String())
+			}
+		}
+		response.FailWithMessage(c, response.ErrInvalidParam, message)
 	case errors.Is(err, runtimeservice.ErrInvalidInput), errors.Is(err, runtimeservice.ErrInvalidModelParam):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, runtimeservice.ErrConversationRunning),

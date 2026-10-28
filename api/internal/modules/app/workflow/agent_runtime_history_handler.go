@@ -744,6 +744,17 @@ func runtimeErrorString(message *runtimemodel.Message) string {
 	return *message.Error
 }
 
+// runtimeErrorCode returns the stable catalog code a failed turn recorded in
+// its metadata, so run logs can identify the failure beyond the stored text.
+// Numeric legacy product codes are not exposed here; they are not catalog codes.
+func runtimeErrorCode(message *runtimemodel.Message) string {
+	if message == nil || message.Error == nil {
+		return ""
+	}
+	code, _ := runtimeMetadata(message)["error_code"].(string)
+	return strings.TrimSpace(code)
+}
+
 func runtimeTotalSteps(metadata map[string]interface{}) int {
 	count := metadataInt(metadata, "skill_step_count")
 	if count == 0 {

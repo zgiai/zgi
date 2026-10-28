@@ -571,6 +571,9 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			}
 			contextMetadata["continuation_task_state_included"] = true
 		}
+		if unbound := databaseBindingsRemovedMessage(parts, branch); unbound != nil {
+			messages = append(messages, *unbound)
+		}
 		if turnBoundaryContext := currentTurnBoundaryMessage(parts); turnBoundaryContext != nil {
 			messages = append(messages, *turnBoundaryContext)
 		}
@@ -813,6 +816,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	parts.ConnectorSkillIDs = nil
 	parts.MarketSkillIDs = nil
 	parts.ConnectorToolsEnabled = false
+	parts.DatabaseBindingsAbsent = config != nil && isAutonomousSubjectCaller(caller.Type) && !runConfigHasDatabaseBindings(config)
 	if s.skillRuntime == nil {
 		parts.SkillMode = skillModeDisabled
 		parts.SkillIDs = nil

@@ -346,10 +346,12 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 
 	var finalExecution *dto.GraphExecution
 	var graphRetrievalErr error
+	var methodErrs []error
 	for i := 0; i < pending; i++ {
 		res := <-resultChan
 		if res.err != nil {
 			exceptions = append(exceptions, res.err.Error())
+			methodErrs = append(methodErrs, res.err)
 			if res.graph {
 				graphRetrievalErr = res.err
 				finalExecution = res.graphExecution
@@ -380,7 +382,9 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 			"graph_results":    len(graphDocuments),
 		})
 		if len(semanticDocuments) == 0 && len(graphDocuments) == 0 {
-			return nil, nil, fmt.Errorf("all retrieval methods failed: %v", exceptions)
+			// Join keeps each cause's identity (for example an unrouted embedding
+			// model), so callers can classify the failure instead of parsing text.
+			return nil, nil, fmt.Errorf("all retrieval methods failed: %w", errors.Join(methodErrs...))
 		}
 	}
 
@@ -596,11 +600,11 @@ func (s *RetrievalService) hybridVectorBM25Search(ctx context.Context, dataset *
 
 	var vectorDocuments []retrieval.SearchResult
 	var bm25Documents []retrieval.SearchResult
-	var errors []string
+	var branchErrs []error
 	for i := 0; i < pending; i++ {
 		res := <-resultChan
 		if res.err != nil {
-			errors = append(errors, fmt.Sprintf("%s: %v", res.source, res.err))
+			branchErrs = append(branchErrs, fmt.Errorf("%s: %w", res.source, res.err))
 			continue
 		}
 		if res.source == "vector" {
@@ -610,13 +614,13 @@ func (s *RetrievalService) hybridVectorBM25Search(ctx context.Context, dataset *
 		}
 	}
 
-	if len(vectorDocuments) == 0 && len(bm25Documents) == 0 && len(errors) > 0 {
-		return nil, fmt.Errorf("vector+BM25 retrieval failed: %s", strings.Join(errors, "; "))
+	if len(vectorDocuments) == 0 && len(bm25Documents) == 0 && len(branchErrs) > 0 {
+		return nil, fmt.Errorf("vector+BM25 retrieval failed: %w", errors.Join(branchErrs...))
 	}
-	if len(errors) > 0 {
+	if len(branchErrs) > 0 {
 		logger.Warn("Vector+BM25 retrieval continuing with partial results", map[string]interface{}{
 			"dataset_id":     dataset.ID,
-			"errors":         errors,
+			"errors":         errors.Join(branchErrs...).Error(),
 			"vector_results": len(vectorDocuments),
 			"bm25_results":   len(bm25Documents),
 		})

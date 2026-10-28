@@ -723,7 +723,7 @@ func (c *internalClient) executeSQL(ctx context.Context, query string, params []
 	}
 
 	result := &QueryResult{
-		RowsAffected: int64(len(resp.Data)),
+		RowsAffected: rowsAffectedFromResponse(resp),
 		Columns:      []string{},
 		Rows:         [][]interface{}{},
 	}
@@ -751,6 +751,19 @@ func (c *internalClient) executeSQL(ctx context.Context, query string, params []
 	result.Rows = rows
 
 	return result, nil
+}
+
+// rowsAffectedFromResponse prefers the command tag count. Without a tag (no
+// command reported) it falls back to the returned row count, which is what a
+// SELECT reports anyway.
+func rowsAffectedFromResponse(resp *metaTypes.QueryResponse) int64 {
+	if resp == nil {
+		return 0
+	}
+	if resp.Command != "" {
+		return resp.RowsAffected
+	}
+	return int64(len(resp.Data))
 }
 
 func (c *internalClient) recordAudit(ctx context.Context, auditCtx *audit.Context, query string, params []interface{}, result *QueryResult, execErr error, start, end time.Time, guardResult guard.Result, guarded bool) {
