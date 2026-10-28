@@ -69,6 +69,9 @@ import {
   useDigitalHumanTemplates,
 } from '@/hooks/digital-human/use-digital-humans';
 import { useLocale } from '@/hooks/use-locale';
+import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
+import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
@@ -594,7 +597,22 @@ function ConfigurationEditor({
                 title={t('capabilities.title')}
                 description={editingEnabled ? t('capabilities.draftHint') : undefined}
               >
-                <DigitalHumanResourceBindings id={id} />
+                <DigitalHumanResourceBindings
+                  id={id}
+                  codeExecution={{
+                    enabled: displayedExecutionEnabled,
+                    // Switch it on in the draft, then show where it lives.
+                    onEnable:
+                      editingEnabled && canEnableExecution
+                        ? () => {
+                            setExecutionEnabled(true);
+                            document
+                              .getElementById('configuration-runtime')
+                              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }
+                        : undefined,
+                  }}
+                />
                 <DigitalHumanWorkJournal
                   id={id}
                   canEdit={editingEnabled}
@@ -1171,6 +1189,14 @@ function PersonaTemplateEditor({
   const [persona, setPersona] = useState('');
   const [goals, setGoals] = useState<string[]>(['']);
   const [rules, setRules] = useState<string[]>(['']);
+  const { locale } = useLocale();
+  // The skills the template carries: the draft's by default, each removable.
+  const [skillIds, setSkillIds] = useState<string[]>([]);
+  const skillsQuery = useAIChatSkills({ enabled: open });
+  const skillLabel = (id: string) => {
+    const skill = (skillsQuery.data ?? []).find(item => item.skill_id === id);
+    return skill ? getAIChatSkillDisplayInfo(skill, locale).label : id;
+  };
   useEffect(() => {
     if (!open || !initial) return;
     setName(initial.name);
@@ -1179,6 +1205,7 @@ function PersonaTemplateEditor({
     setPersona(initial.persona);
     setGoals(initial.goals.length > 0 ? initial.goals : ['']);
     setRules(initial.rules.length > 0 ? initial.rules : ['']);
+    setSkillIds([...initial.skill_ids]);
     // Seeding happens once per opening; later renders pass a fresh object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, template]);
@@ -1195,7 +1222,7 @@ function PersonaTemplateEditor({
       goals: goals.map(item => item.trim()).filter(Boolean),
       rules: rules.map(item => item.trim()).filter(Boolean),
       memory_instructions: initial?.memory_instructions.trim() ?? '',
-      skill_ids: initial?.skill_ids ?? [],
+      skill_ids: skillIds,
     };
     if (template) {
       await mutations.updatePersonaTemplate.mutateAsync({
@@ -1323,11 +1350,45 @@ function PersonaTemplateEditor({
               placeholder={t('settings.goalsPlaceholder')}
             />
           </Field>
+          {initial && initial.skill_ids.length > 0 ? (
+            <Field
+              label={t('personaTemplates.skillsLabel')}
+              description={t('personaTemplates.skillsDescription')}
+            >
+              <div className="space-y-1.5">
+                {initial.skill_ids.map(id => {
+                  const deleted =
+                    skillsQuery.isSuccess &&
+                    !(skillsQuery.data ?? []).some(item => item.skill_id === id);
+                  return (
+                    <label key={id} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={skillIds.includes(id)}
+                        onCheckedChange={checked =>
+                          setSkillIds(current =>
+                            checked === true
+                              ? [...new Set([...current, id])]
+                              : current.filter(value => value !== id)
+                          )
+                        }
+                      />
+                      <span className="min-w-0 truncate">{skillLabel(id)}</span>
+                      {deleted ? (
+                        <span className="text-xs text-warning">
+                          {t('personaTemplates.skillDeleted')}
+                        </span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            </Field>
+          ) : null}
           <p className="text-xs text-muted-foreground">
             {t('personaTemplates.snapshotHint', {
               goalCount: goals.filter(item => item.trim()).length,
               ruleCount: rules.filter(item => item.trim()).length,
-              skillCount: initial?.skill_ids.length ?? 0,
+              skillCount: skillIds.length,
             })}
             {initial?.memory_instructions.trim() ? ` ${t('personaTemplates.keepsMemory')}` : ''}
           </p>

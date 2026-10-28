@@ -1723,6 +1723,13 @@ export function useAgentRuntimePageModel(agentId: string) {
         normalizedSelectedSkillIds,
         onOpenChange: setSkillDialogOpen,
         onConfirmSkills: handleConfirmSkills,
+        codeExecution: {
+          enabled: executionRuntime?.enabled ?? false,
+          onEnable:
+            isRuntimeConfigReadOnly || executionRuntimeCapability?.can_enable === false
+              ? undefined
+              : () => setExecutionRuntime({ ...(executionRuntime ?? {}), enabled: true }),
+        },
       },
       knowledge: {
         agentId,

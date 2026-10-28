@@ -172,6 +172,7 @@ const messages = {
       noResponsibility: 'No responsibility added yet.',
     },
     server: {
+      codeExecutionAfterCreate: 'Turn it on under Configuration → Code execution after creating.',
       title: 'Connect a server',
       description: 'The operations specialist works on one Linux server over SSH. Choose a saved server, or add a new one here.',
       required: 'Required',
@@ -663,6 +664,9 @@ const messages = {
     },
   },
   personaTemplates: {
+    skillsLabel: 'Skills saved with the template',
+    skillsDescription: 'A digital human created from this template starts with these skills selected; unchecked ones are not saved.',
+    skillDeleted: 'Deleted',
     title: 'Templates',
     description:
       'Built-in templates and the ones your workspace saved. Applying a template copies its content into the current draft.',

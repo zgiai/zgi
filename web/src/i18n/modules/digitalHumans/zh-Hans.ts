@@ -160,6 +160,7 @@ const messages: DigitalHumansMessages = {
       noResponsibility: '还没有填写职责。',
     },
     server: {
+      codeExecutionAfterCreate: '创建后在「配置 → 代码执行」中开启。',
       title: '连接服务器',
       description: '运维专员通过 SSH 连接一台 Linux 服务器工作。选一台已保存的服务器，或在这里添加新的。',
       required: '必填',
@@ -636,6 +637,9 @@ const messages: DigitalHumansMessages = {
     },
   },
   personaTemplates: {
+    skillsLabel: '随模板保存的技能',
+    skillsDescription: '用这个模板创建数字人时会默认选中这些技能；取消勾选的不会保存到模板里。',
+    skillDeleted: '已删除',
     title: '模板',
     description: '内置模板和工作空间保存的模板。应用模板会把内容复制到当前草稿。',
     use: '使用模板',

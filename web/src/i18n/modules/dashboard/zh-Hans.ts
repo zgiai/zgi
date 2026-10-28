@@ -1,6 +1,20 @@
 import type { DashboardMessages } from './en-US';
 
 const messages: DashboardMessages = {
+  skillAvailability: {
+    deleted: '模板里的这些自定义技能已被删除，不会绑定：{skills}。需要的话请重新导入或改用其他技能。',
+    expectedDisabled: '模板需要的这些技能在组织中还没开启：',
+    disabledCount: '还有 {count} 个技能未开启，展开后可以直接开启',
+    enable: '开启',
+    enabling: '正在开启…',
+    needsReview: '开启这个技能会影响已有绑定，请到「技能」页面确认后再开启。',
+    noPermission: '你没有权限开启技能，请联系组织管理员开启：{skills}',
+    needsCodeExecution: '这些自定义技能需要执行脚本，请先开启代码执行环境：{skills}。',
+    enableCodeExecution: '开启代码执行',
+    openCodeExecution: '去开启代码执行',
+    manage: '管理技能',
+    market: '去市场添加技能',
+  },
   backToConsole: '返回',
   groups: {
     billing: '费用中心',

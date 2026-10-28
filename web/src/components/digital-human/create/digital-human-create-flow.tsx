@@ -443,6 +443,19 @@ function DigitalHumanConfigureStep({
         connectorSelections={connectorSelections}
         onChangeConnectorSelections={setConnectorSelections}
         serverConnectorId={serverConnectorId}
+        expectedSkillIds={template?.skills.map(skill => skill.id) ?? []}
+        codeExecution={{
+          enabled: false,
+          settingsHint: t('createFlow.server.codeExecutionAfterCreate'),
+        }}
+        onSkillEnabled={async skillId => {
+          await skillCandidatesQuery.refetch();
+          // A deliberate selection keeps its choices and gains the skill the
+          // person just enabled; an untouched one follows the template.
+          setSkillSelection(current =>
+            current && !current.includes(skillId) ? [...current, skillId] : current
+          );
+        }}
         value={{ ...value, model: effectiveModel }}
         onChange={handleChange}
         models={availableModels.models}

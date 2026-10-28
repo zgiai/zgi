@@ -1,4 +1,18 @@
 const messages = {
+  skillAvailability: {
+    deleted: 'These custom skills in the template were deleted and will not be bound: {skills}. Import them again or use other skills if you need them.',
+    expectedDisabled: 'The template needs these skills, which are not enabled for the organization yet:',
+    disabledCount: '{count} more skills are not enabled; expand to enable them here',
+    enable: 'Enable',
+    enabling: 'Enabling…',
+    needsReview: 'Enabling this skill affects existing bindings. Confirm it on the Skills page first.',
+    noPermission: 'You are not allowed to enable skills. Ask an organization administrator to enable: {skills}',
+    needsCodeExecution: 'These custom skills run scripts and need the code execution environment: {skills}.',
+    enableCodeExecution: 'Turn on code execution',
+    openCodeExecution: 'Open code execution settings',
+    manage: 'Manage skills',
+    market: 'Add skills from the market',
+  },
   backToConsole: 'Back',
   groups: {
     billing: 'Billing',
