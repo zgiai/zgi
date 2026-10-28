@@ -581,6 +581,10 @@ const messages = {
     saveHint: 'Saved changes remain in the draft until you publish a new version.',
   },
   setup: {
+    skillNotEnabled: 'Your organization has not enabled this skill yet. An administrator enables it under Skills; then it can be bound.',
+    enableSkill: 'Enable skill',
+    shortSkill: 'Required skill',
+    shortConnector: 'Server connection',
     title: 'Finish setup to publish',
     description: 'This digital human comes from a template and still needs {count} required items. Publish once they are done.',
     skillTitle: 'Bind the skill “{name}”',

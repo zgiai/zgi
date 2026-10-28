@@ -554,6 +554,10 @@ const messages: DigitalHumansMessages = {
     saveHint: '保存后的修改仍处于草稿中，需要发布后才会用于运行。',
   },
   setup: {
+    skillNotEnabled: '组织还没有启用这个技能。需要管理员先在「技能」中启用，之后才能绑定。',
+    enableSkill: '去启用',
+    shortSkill: '必需技能',
+    shortConnector: '服务器连接',
     title: '完成配置后才能发布',
     description: '这个数字人来自模板，还有 {count} 项必需配置没有完成。完成后即可发布。',
     skillTitle: '绑定技能「{name}」',

@@ -31,7 +31,10 @@ import {
   memorySettingsOf,
   withMemorySettings,
 } from '@/components/digital-human/digital-human-memory-instructions';
-import { DigitalHumanSetupChecklist } from '@/components/digital-human/digital-human-setup-checklist';
+import {
+  DigitalHumanSetupChecklist,
+  useDigitalHumanSetupStatus,
+} from '@/components/digital-human/digital-human-setup-checklist';
 import { DigitalHumanWorkJournal } from '@/components/digital-human/digital-human-work-journal';
 import { appendWorkJournalPrompt } from '@/components/digital-human/digital-human-work-journal-model';
 import { DigitalHumanDraftPreview } from '@/components/digital-human/digital-human-draft-preview';
@@ -173,6 +176,7 @@ function ConfigurationEditor({
     memorySettingsOf(detail?.draft.memory_policy)
   );
   const draftBindings = useDigitalHumanDraftBindings(id).data?.data?.items;
+  const setupStatus = useDigitalHumanSetupStatus(id);
   const draftSkillIds = useMemo(
     () =>
       (draftBindings ?? [])
@@ -337,6 +341,11 @@ function ConfigurationEditor({
   const initialSetupChecks = [
     { label: t('fields.identityName'), ready: Boolean(identityName.trim()) },
     { label: t('fields.persona'), ready: Boolean(persona.trim()) },
+    // What the template requires counts too: publishing waits for it.
+    ...(setupStatus?.items ?? []).map(item => ({
+      label: item.kind === 'skill' ? t('setup.shortSkill') : t('setup.shortConnector'),
+      ready: item.met,
+    })),
   ];
   const initialSetupReadyCount = initialSetupChecks.filter(check => check.ready).length;
   return (

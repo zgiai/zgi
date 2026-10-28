@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle2, Circle, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -31,16 +32,11 @@ const ITEM_TARGETS: Record<DigitalHumanSetupItem['kind'], string> = {
 };
 
 /**
- * What a digital human started from a template still needs before it can
- * publish (ADR 0023). Each item opens the place to do it, and turns done as
- * soon as the draft's bindings meet it; the list hides once complete.
+ * The setup status of a digital human's draft (ADR 0023). It follows the
+ * draft's bindings: any change refetches it.
  */
-export function DigitalHumanSetupChecklist({ id }: { id: string }) {
-  const t = useT('digitalHumans');
-  const searchParams = useSearchParams();
-  const containerRef = useRef<HTMLElement>(null);
+export function useDigitalHumanSetupStatus(id: string) {
   const bindings = useDigitalHumanDraftBindings(id).data?.data;
-  // The checklist follows the draft's bindings: any change refetches it.
   const bindingsVersion = useMemo(
     () =>
       bindings
@@ -51,6 +47,19 @@ export function DigitalHumanSetupChecklist({ id }: { id: string }) {
     [bindings]
   );
   const setup = useDigitalHumanSetup(id, bindingsVersion).data?.data;
+  return setup;
+}
+
+/**
+ * What a digital human started from a template still needs before it can
+ * publish (ADR 0023). Each item opens the place to do it, and turns done as
+ * soon as the draft's bindings meet it; the list hides once complete.
+ */
+export function DigitalHumanSetupChecklist({ id }: { id: string }) {
+  const t = useT('digitalHumans');
+  const searchParams = useSearchParams();
+  const containerRef = useRef<HTMLElement>(null);
+  const setup = useDigitalHumanSetupStatus(id);
   const skillCandidates = useDigitalHumanSkillCandidates().data?.data?.items;
   const skillNames = useMemo(
     () => new Map((skillCandidates ?? []).map(item => [item.resource_id, item.display_name])),
@@ -84,7 +93,9 @@ export function DigitalHumanSetupChecklist({ id }: { id: string }) {
         : t('setup.connectorTitle', { name: item.id });
 
   const itemDescription = (item: DigitalHumanSetupItem) => {
-    if (item.kind === 'skill') return t('setup.skillDescription');
+    if (item.kind === 'skill') {
+      return skillNotEnabled(item) ? t('setup.skillNotEnabled') : t('setup.skillDescription');
+    }
     const required = t('setup.connectorRequires', {
       operations: operationNames(item.operation_ids),
     });
@@ -93,6 +104,11 @@ export function DigitalHumanSetupChecklist({ id }: { id: string }) {
       : '';
     return required + optional;
   };
+
+  // A skill the organization has not enabled is not offered for binding; an
+  // administrator enables it on the skills page first.
+  const skillNotEnabled = (item: DigitalHumanSetupItem) =>
+    item.kind === 'skill' && Boolean(skillCandidates) && !skillNames.has(item.id);
 
   const open = (item: DigitalHumanSetupItem) => {
     document.getElementById(ITEM_TARGETS[item.kind])?.scrollIntoView({ block: 'center' });
@@ -138,11 +154,15 @@ export function DigitalHumanSetupChecklist({ id }: { id: string }) {
                 {itemDescription(item)}
               </p>
             </div>
-            {!item.met ? (
+            {item.met ? null : skillNotEnabled(item) ? (
+              <Button asChild size="sm" variant="outline">
+                <Link href="/console/skills">{t('setup.enableSkill')}</Link>
+              </Button>
+            ) : (
               <Button type="button" size="sm" variant="outline" onClick={() => open(item)}>
                 {item.kind === 'skill' ? t('setup.bindSkill') : t('setup.connect')}
               </Button>
-            ) : null}
+            )}
           </li>
         ))}
       </ul>
