@@ -258,7 +258,7 @@ func savedTemplate(item *PersonaTemplate) (Template, error) {
 	return Template{
 		ID: item.ID.String(), Source: TemplateSourceWorkspace, Title: item.Name, Description: item.Description,
 		IdentityName: item.IdentityName, Responsibility: item.Description, Persona: item.Persona,
-		Goals: nonNilStrings(goals), Rules: nonNilStrings(rules), Tags: []string{}, Skills: skills,
+		Goals: nonNilStrings(goals), Rules: nonNilStrings(rules), Tags: []string{}, Skills: skills, Connectors: []TemplateConnector{},
 		MemoryInstructions: item.MemoryInstructions, Revision: item.Revision,
 	}, nil
 }

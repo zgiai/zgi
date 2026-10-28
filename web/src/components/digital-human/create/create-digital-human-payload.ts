@@ -87,6 +87,8 @@ export function createDigitalHumanPayload(
   const responsibility = input.responsibility.trim();
   return {
     name,
+    // A built-in template's required items gate publishing (ADR 0023).
+    ...(template?.source === 'builtin' ? { template_id: template.id } : {}),
     description: responsibility,
     ...serializeDigitalHumanIcon(
       input.icon,

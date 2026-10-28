@@ -36,6 +36,7 @@ import type {
   DigitalHumanMemoryPreviewRequest,
   DigitalHumanMemoryInstructionsCatalog,
   DigitalHumanTemplateCatalog,
+  DigitalHumanSetupStatus,
   DigitalHumanMemoryPreviewResult,
   DigitalHumanMemoryBulkResult,
   DigitalHumanResourceBindingInput,
@@ -456,6 +457,10 @@ class DigitalHumanService extends BaseService {
     data: DigitalHumanMemoryProposalRequest
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
     return this.request('post', `/digital-humans/${id}/memory/proposals`, data);
+  }
+
+  getSetup(id: string): Promise<ApiResponseData<DigitalHumanSetupStatus>> {
+    return this.request('get', `/digital-humans/${id}/setup`);
   }
 
   listTemplates(params: {

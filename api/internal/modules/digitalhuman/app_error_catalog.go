@@ -20,6 +20,8 @@ var (
 	AppCodePublishedImmutable = apperror.MustCode("digital_human.version.immutable")
 	// AppCodePublishInvalid identifies a draft that is not ready for publication.
 	AppCodePublishInvalid = apperror.MustCode("digital_human.publish.invalid")
+	// AppCodeSetupIncomplete identifies a draft missing what its template requires.
+	AppCodeSetupIncomplete = apperror.MustCode("digital_human.setup.incomplete")
 	// AppCodeVersionRestoreImpactChanged identifies a stale version restore preview.
 	AppCodeVersionRestoreImpactChanged = apperror.MustCode("digital_human.version.restore_impact_changed")
 	// AppCodeDeleteBlocked identifies deletion prevented by durable references.
@@ -77,6 +79,9 @@ func CatalogDefinitions() []appcatalog.Definition {
 		digitalHumanDefinition(AppCodePublishInvalid, appcatalog.CategoryValidation, 400,
 			"Complete the conversation name, persona, and default model before publishing.",
 			"请先完善对话名称、人设和默认模型，再发布数字人。"),
+		digitalHumanDefinition(AppCodeSetupIncomplete, appcatalog.CategoryValidation, 400,
+			"Finish the setup checklist before publishing: bind the required skills and connections.",
+			"请先完成配置清单：绑定必需的技能和连接后再发布。"),
 		digitalHumanDefinition(AppCodeVersionRestoreImpactChanged, appcatalog.CategoryConflict, 409,
 			"The draft or restore impact changed. Review the latest impact and try again.",
 			"草稿或恢复影响已发生变化，请确认最新影响后重试。"),

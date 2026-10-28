@@ -243,7 +243,7 @@ export function DigitalHumanTemplateGallery({
                   </DigitalHumanDetailSection>
                 ) : null}
 
-                {detailTemplate.requires_connector ? (
+                {detailTemplate.connectors.some(connector => connector.required) ? (
                   <DigitalHumanDetailSection title={t('createFlow.detail.connector')}>
                     <p className="text-xs leading-5 text-muted-foreground">
                       {t('createFlow.form.connectorRequired')}

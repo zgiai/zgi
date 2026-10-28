@@ -72,12 +72,15 @@ type Definition struct {
 	Visibility          Visibility    `gorm:"type:varchar(16);not null;default:'workspace'" json:"visibility"`
 	DraftVersionID      *uuid.UUID    `gorm:"type:uuid;column:draft_version_id" json:"draft_version_id,omitempty"`
 	PublishedVersionID  *uuid.UUID    `gorm:"type:uuid;column:published_version_id" json:"published_version_id,omitempty"`
-	Revision            int64         `gorm:"not null;default:1" json:"revision"`
-	CreatedBy           *uuid.UUID    `gorm:"type:uuid;column:created_by" json:"created_by,omitempty"`
-	UpdatedBy           *uuid.UUID    `gorm:"type:uuid;column:updated_by" json:"updated_by,omitempty"`
-	CreatedAt           time.Time     `gorm:"not null" json:"created_at"`
-	UpdatedAt           time.Time     `gorm:"not null" json:"updated_at"`
-	DeletedAt           *time.Time    `gorm:"column:deleted_at" json:"-"`
+	// SetupRequirements are the required items of the built-in template it was
+	// created from (ADR 0023); publishing waits until the draft meets them.
+	SetupRequirements datatypes.JSON `gorm:"type:jsonb;not null;default:'{}';column:setup_requirements" json:"setup_requirements"`
+	Revision          int64          `gorm:"not null;default:1" json:"revision"`
+	CreatedBy         *uuid.UUID     `gorm:"type:uuid;column:created_by" json:"created_by,omitempty"`
+	UpdatedBy         *uuid.UUID     `gorm:"type:uuid;column:updated_by" json:"updated_by,omitempty"`
+	CreatedAt         time.Time      `gorm:"not null" json:"created_at"`
+	UpdatedAt         time.Time      `gorm:"not null" json:"updated_at"`
+	DeletedAt         *time.Time     `gorm:"column:deleted_at" json:"-"`
 }
 
 // TableName returns the DigitalHuman aggregate table.

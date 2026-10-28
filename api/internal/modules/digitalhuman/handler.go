@@ -38,6 +38,7 @@ type HandlerService interface {
 	GetPersonaTemplate(context.Context, Scope, uuid.UUID) (*PersonaTemplate, error)
 	ListPersonaTemplates(context.Context, Scope, ListQuery) (*PersonaTemplateListResult, error)
 	ListTemplates(context.Context, Scope, string, string) (*TemplateCatalog, error)
+	SetupStatus(context.Context, Scope, uuid.UUID) (*SetupStatus, error)
 	UpdatePersonaTemplate(context.Context, Scope, uuid.UUID, UpdatePersonaTemplateRequest) (*PersonaTemplate, error)
 	DeletePersonaTemplate(context.Context, Scope, uuid.UUID, int64) error
 	ListDraftResourceBindings(context.Context, Scope, uuid.UUID) (*DraftResourceBindings, error)
@@ -95,6 +96,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:id/memory/preview", h.PreviewMemory)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
+	group.GET("/:id/setup", h.SetupStatus)
 
 	router.GET("/digital-human-memory-templates", h.ListMemoryInstructionsTemplates)
 	router.GET("/digital-human-templates", h.ListTemplates)
@@ -472,6 +474,14 @@ func (h *Handler) CreatePersonaTemplate(c *gin.Context) {
 		return
 	}
 	writeDigitalHumanData(c, http.StatusCreated, result)
+}
+
+// SetupStatus returns the setup checklist of a DigitalHuman's draft
+// (ADR 0023).
+func (h *Handler) SetupStatus(c *gin.Context) {
+	h.withScopedID(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
+		return h.service.SetupStatus(ctx, scope, id)
+	})
 }
 
 // ListTemplates returns the built-in and saved DigitalHuman templates

@@ -314,10 +314,6 @@ function DigitalHumanConfigureStep({
       router.push(`${LIST_PATH}/${created.id}/configuration`);
       return;
     }
-    if (requirementNotice) {
-      setSubmitError(requirementNotice);
-      return;
-    }
     setSubmitting(true);
     setSubmitError(null);
     let items: DigitalHumanResourceBindingInput[];
@@ -355,6 +351,14 @@ function DigitalHumanConfigureStep({
         );
       } catch {
         notice = t('createFlow.form.bindingFailed');
+      }
+
+      // Something the template requires is still missing: the digital human
+      // stays a draft, and its setup checklist leads the way (ADR 0023).
+      if (!notice && requirementGap) {
+        await queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.detail(id) });
+        router.push(`${LIST_PATH}/${id}/configuration?setup=1`);
+        return;
       }
 
       if (!notice) {
@@ -412,8 +416,14 @@ function DigitalHumanConfigureStep({
         submitting={submitting}
         onSubmit={() => void submit()}
         onBack={requestBack}
-        submitLabel={created ? t('createFlow.success.continueSetup') : undefined}
         notice={notice ?? (created ? t('createFlow.form.draftCreatedNotice') : requirementNotice)}
+        submitLabel={
+          created
+            ? t('createFlow.success.continueSetup')
+            : requirementGap
+              ? t('createFlow.form.createDraft')
+              : undefined
+        }
       />
 
       <DigitalHumanCreateSuccessDialog

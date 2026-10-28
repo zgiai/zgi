@@ -19,7 +19,10 @@
  * Connector model, so create-time selection and draft editing cannot drift.
  */
 
-import { connectorOperationIds } from '../digital-human-connector-model';
+import {
+  connectorOperationIds,
+  createConnectorDefaultOperationIds,
+} from '../digital-human-connector-model';
 import type {
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidate,
@@ -92,7 +95,9 @@ function snapshotCandidate(
 }
 
 /**
- * Add a connection with every operation the candidate currently allows.
+ * Add a connection with its default operations: everything the candidate
+ * currently allows except the opt-in write operations, which remain available
+ * to tick.
  *
  * An unavailable connection, a connection with no operations, or a repeat of an
  * already selected connection leaves the list unchanged.
@@ -117,7 +122,7 @@ export function addCreateConnectorSelection(
         display_name: snapshot.display_name,
         access_mode: 'execute',
         resource_revision: snapshot.resource_revision,
-        metadata: { allowed_operation_ids: connectorOperationIds(snapshot) },
+        metadata: { allowed_operation_ids: createConnectorDefaultOperationIds(snapshot) },
       },
       candidate: snapshot,
     },

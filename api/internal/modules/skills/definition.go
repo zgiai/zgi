@@ -103,7 +103,7 @@ const (
 // action policy, and credential checks remain server-side execution concerns.
 type SkillConnectorRequirement struct {
 	ConnectorID  string   `json:"connector_id" yaml:"connector_id"`
-	OperationIDs []string `json:"operation_ids,omitempty" yaml:"required_operations,omitempty"`
+	OperationIDs []string `json:"operation_ids,omitempty" yaml:"operation_ids,omitempty"`
 	Required     bool     `json:"required" yaml:"required"`
 }
 

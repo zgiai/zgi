@@ -63,6 +63,9 @@ type CreateRequest struct {
 	TriggerPolicy      map[string]any          `json:"trigger_policy"`
 	PresentationPolicy PresentationPolicy      `json:"presentation_policy"`
 	ExecutionRuntime   *ExecutionRuntimeConfig `json:"execution_runtime,omitempty"`
+	// TemplateID names the built-in template it starts from; its required
+	// items become the DigitalHuman's setup requirements (ADR 0023).
+	TemplateID string `json:"template_id,omitempty"`
 }
 
 // UpdateRequest updates aggregate metadata with optimistic concurrency control.

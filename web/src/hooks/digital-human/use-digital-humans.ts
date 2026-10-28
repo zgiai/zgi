@@ -97,6 +97,17 @@ export function useDigitalHumanVersionRestorePreview(
   });
 }
 
+// What a DigitalHuman from a template still needs before it can publish
+// (ADR 0023). It is refetched whenever the draft's bindings change.
+export function useDigitalHumanSetup(id: string, bindingsVersion: unknown, enabled = true) {
+  return useQuery({
+    queryKey: [...DIGITAL_HUMAN_KEYS.detail(id), 'setup', bindingsVersion],
+    queryFn: () => digitalHumanService.getSetup(id),
+    enabled: enabled && Boolean(id),
+    staleTime: 5_000,
+  });
+}
+
 // The template catalog: built-in templates in the current language, then the
 // workspace's saved ones (ADR 0022). It shares the saved templates' key, so
 // saving, editing, or deleting one refreshes it.

@@ -31,6 +31,7 @@ import {
   memorySettingsOf,
   withMemorySettings,
 } from '@/components/digital-human/digital-human-memory-instructions';
+import { DigitalHumanSetupChecklist } from '@/components/digital-human/digital-human-setup-checklist';
 import { DigitalHumanWorkJournal } from '@/components/digital-human/digital-human-work-journal';
 import { appendWorkJournalPrompt } from '@/components/digital-human/digital-human-work-journal-model';
 import { DigitalHumanDraftPreview } from '@/components/digital-human/digital-human-draft-preview';
@@ -556,6 +557,7 @@ function ConfigurationEditor({
             </nav>
             {/* Leave room for the floating preview button. */}
             <div className={cn('space-y-4 p-4 md:p-5', previewAvailable && !inlinePreview && 'pb-20 md:pb-20')}>
+              {editingEnabled ? <DigitalHumanSetupChecklist id={id} /> : null}
               <ConfigurationSection id="configuration-model" title={t('settings.modelTitle')} description={t('settings.modelDescription')}>
                 <ModelSelector
                   modelType="text-chat"

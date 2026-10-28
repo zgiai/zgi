@@ -71,7 +71,12 @@ func TestBuiltinTemplatesCarryMemoryInstructionsAndNeeds(t *testing.T) {
 	if file := byID["file_generation"]; len(file.Skills) != 1 || file.Skills[0].ID != "file-generator" || !file.Skills[0].Required {
 		t.Fatalf("file template skills = %#v", file.Skills)
 	}
-	if ops := byID["ops_specialist"]; !ops.RequiresConnector || len(ops.Skills) != 0 {
+	ops := byID["ops_specialist"]
+	if len(ops.Connectors) != 1 || ops.Connectors[0].ConnectorID != "serverops_ssh" || !ops.Connectors[0].Required ||
+		len(ops.Connectors[0].RequiredOperationIDs) != 3 || len(ops.Connectors[0].OptionalOperationIDs) != 4 {
+		t.Fatalf("operations template connectors = %#v", ops.Connectors)
+	}
+	if len(ops.Skills) != 1 || ops.Skills[0].ID != "ops-runbook" || !ops.Skills[0].Required || ops.MemoryInstructions == "" {
 		t.Fatalf("operations template = %#v", ops)
 	}
 }

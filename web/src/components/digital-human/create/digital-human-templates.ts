@@ -67,7 +67,8 @@ export function templateRequirementGap(
   const missingSkillIds = template.skills
     .filter(skill => skill.required && (!offered.has(skill.id) || !selected.has(skill.id)))
     .map(skill => skill.id);
-  const connectorMissing = template.requires_connector && connectorCount === 0;
+  const connectorMissing =
+    template.connectors.some(connector => connector.required) && connectorCount === 0;
   return missingSkillIds.length > 0 || connectorMissing
     ? { missingSkillIds, connectorMissing }
     : null;

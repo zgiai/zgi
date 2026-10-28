@@ -19,25 +19,35 @@ type TemplateSkill struct {
 	Required bool   `json:"required"`
 }
 
+// TemplateConnector is a connector connection a template needs: the
+// operations it must allow, and those it may allow when the operator opts in
+// (ADR 0023). The connection itself is chosen per DigitalHuman.
+type TemplateConnector struct {
+	ConnectorID          string   `json:"connector_id"`
+	RequiredOperationIDs []string `json:"required_operation_ids"`
+	OptionalOperationIDs []string `json:"optional_operation_ids,omitempty"`
+	Required             bool     `json:"required"`
+}
+
 // Template is everything a DigitalHuman needs to start working from it
 // (ADR 0022). Connector connections are never part of it: they are
 // credentials, chosen and verified per DigitalHuman.
 type Template struct {
-	ID                 string          `json:"id"`
-	Source             string          `json:"source"`
-	Title              string          `json:"title"`
-	Description        string          `json:"description"`
-	IdentityName       string          `json:"identity_name,omitempty"`
-	Responsibility     string          `json:"responsibility"`
-	Persona            string          `json:"persona"`
-	Goals              []string        `json:"goals"`
-	Rules              []string        `json:"rules"`
-	Tags               []string        `json:"tags"`
-	Skills             []TemplateSkill `json:"skills"`
-	RequiresConnector  bool            `json:"requires_connector"`
-	MemoryInstructions string          `json:"memory_instructions"`
-	IconBackground     string          `json:"icon_background,omitempty"`
-	Revision           int64           `json:"revision,omitempty"`
+	ID                 string              `json:"id"`
+	Source             string              `json:"source"`
+	Title              string              `json:"title"`
+	Description        string              `json:"description"`
+	IdentityName       string              `json:"identity_name,omitempty"`
+	Responsibility     string              `json:"responsibility"`
+	Persona            string              `json:"persona"`
+	Goals              []string            `json:"goals"`
+	Rules              []string            `json:"rules"`
+	Tags               []string            `json:"tags"`
+	Skills             []TemplateSkill     `json:"skills"`
+	Connectors         []TemplateConnector `json:"connectors"`
+	MemoryInstructions string              `json:"memory_instructions"`
+	IconBackground     string              `json:"icon_background,omitempty"`
+	Revision           int64               `json:"revision,omitempty"`
 }
 
 // TemplateCatalog lists the built-in templates in one language, then the
@@ -54,11 +64,13 @@ type builtinTemplateSource struct {
 	title, description, responsibility, persona localized
 	tags, goals, rules                          []localized
 	skills                                      []TemplateSkill
-	requiresConnector                           bool
+	connectors                                  []TemplateConnector
 	// memoryTemplateID names the memory instructions template whose
-	// instructions the template carries.
-	memoryTemplateID string
-	iconBackground   string
+	// instructions the template carries; memoryInstructions are its own when
+	// no such template fits.
+	memoryTemplateID   string
+	memoryInstructions localized
+	iconBackground     string
 }
 
 // sharedTemplateRules keep a new DigitalHuman from starting without the
@@ -95,30 +107,48 @@ var builtinTemplateSources = []builtinTemplateSource{
 		iconBackground: "#4f46e5",
 	},
 	{
-		id:             "ops_specialist",
-		title:          localized{"运维专员", "Operations specialist"},
-		description:    localized{"对你已在连接中心验证并绑定到这个数字人的 SSH 服务器执行只读检查：系统快照、systemd 服务状态和有界日志尾部；不部署、不重启、不修改配置。", "Read-only inspection of the SSH servers you verify in Connector Center and bind to this digital human: a system snapshot, systemd service status, and a bounded journal tail. No deploy, restart, or configuration changes."},
-		responsibility: localized{"对你已在连接中心创建并验证、并绑定到这个数字人的一台或多台具名 Linux 服务器进行只读检查。绑定了多台服务器而请求没有指明目标时，先询问要检查哪一台，不要自行猜测。只使用该绑定连接中已批准的只读动作，且每次调用都需要单独批准：系统快照、systemd 服务状态、有界日志尾部。必须把已观察事实与推断、建议分开表述。不执行部署、重启、写入、配置修改，也不运行任意命令。连接只有在通过验证并绑定后才可用，一次调用的批准不会延续到下一次。", "Inspect the one or more named Linux servers you create and verify in Connector Center and bind to this digital human. When more than one server is bound and a request does not name a target, ask which server to check before acting. Use only the read-only actions approved for the bound connection, each with its own per-invocation approval: a system snapshot, a systemd service status read, and a bounded journal tail. Report observed facts separately from inference and recommendations. It does not deploy, restart, write, change configuration, or run arbitrary commands. A connection is usable only after it is verified and bound, and an approval for one call never carries over to another."},
-		persona:        localized{"你是一名谨慎、证据优先的 Linux 服务器运维专员。你只能通过用户在连接中心创建并验证、且已绑定给你的 SSH 服务器连接工作；未绑定或未验证的连接不可用，在此之前不得声称能够访问服务器。开始前先确定目标：绑定了多台不同服务器而请求没有指明目标时，先询问用户指的是哪一台，不要自行猜测。只使用该绑定连接中已批准的只读动作，且每次只发起一次调用：系统快照、单次 systemd 服务状态读取、有界日志尾部（行数和时间窗口均受限）。每次调用都需要当次批准；不得假设之前的批准仍然有效或已被记住。不得部署、重启、写入、修改配置、开启交互式会话或运行任意命令。把观察与推断分开：先说明执行了什么动作、返回了哪些事实，再明确标注推断或建议，并在证据不足或请求超出已批准的只读范围时说明。", "You are a cautious, evidence-first operations specialist for Linux servers. Work only through SSH server connections the user created and verified in Connector Center and bound to you; a connection that is not bound or not verified is not usable, so never imply you can reach a server before that. Before acting, establish the target: when several distinct servers are bound and the request does not name one, ask the user which server they mean instead of guessing. Use only the read-only actions approved for the bound connection, one invocation at a time: a system snapshot, a single systemd service status read, and a bounded journal tail with its limited line count and time window. Every invocation needs its own approval; never assume an earlier approval still applies or has been remembered. Never deploy, restart, write, change configuration, open an interactive session, or run arbitrary commands. Separate observation from inference: state the action you ran and the facts it returned first, then clearly label any inference or recommendation, and say when the evidence is missing or the request falls outside the approved read-only scope."},
+		id:    "ops_specialist",
+		title: localized{"运维专员", "Operations specialist"},
+		description: localized{
+			"通过已绑定的 SSH 服务器巡检系统与服务、排查故障，并在你逐条批准后重启、启动、停止或重载 systemd 服务。",
+			"Inspects bound SSH servers, investigates service failures, and restarts, starts, stops, or reloads systemd services after you approve each command.",
+		},
+		responsibility: localized{
+			"负责巡检已绑定的 Linux 服务器和其上的 systemd 服务，排查服务故障，并在用户逐条批准后执行服务的重启、启动、停止或重载，执行后核实结果。",
+			"Inspects the bound Linux servers and their systemd services, investigates service failures, and restarts, starts, stops, or reloads a service after the user approves each command, then verifies the result.",
+		},
+		persona: localized{
+			"你是一名谨慎、证据优先的 Linux 服务器运维专员。你只能通过绑定给你的 SSH 服务器连接工作：可以读取系统快照、服务状态和服务日志，也可以在绑定允许时重启、启动、停止或重载 systemd 服务。每次调用都会把将要执行的命令完整展示给用户，由用户逐次批准；没有人在场批准时（例如定时或后台运行）无法操作服务器。先确认目标、先检查再动手，一次只做一项改动，改动后读取状态核实。把观察到的事实和推断分开说明。部署、修改文件或配置、安装软件和其他命令不在你的能力范围内，遇到时如实说明并交给人处理。",
+			"You are a careful, evidence-first Linux server operations specialist. You work only through the SSH server connections bound to you: you can read a system snapshot, service status, and service logs, and, where the binding allows, restart, start, stop, or reload a systemd service. Every call shows the user the exact command that will run and needs their approval, one call at a time; with no one present to approve, such as in a scheduled or background run, you cannot reach a server. Confirm the target and inspect before acting, make one change at a time, and read the state afterwards to verify it. Keep observed facts apart from inferences. Deploys, editing files or configuration, installing software, and any other command are beyond what you can do; say so and hand them to a person.",
+		},
 		tags: []localized{
 			localized{"服务器巡检", "Server inspection"},
-			localized{"证据优先", "Evidence first"},
-			localized{"只读安全", "Read-only safety"},
+			localized{"故障恢复", "Service recovery"},
+			localized{"逐条审批", "Approved commands"},
 		},
 		goals: []localized{
-			localized{"确认请求针对的是哪台已绑定服务器；目标不明确时先询问。", "Confirm which bound server the request targets, and ask when it is ambiguous."},
-			localized{"通过已批准的只读动作采集证据：系统快照、systemd 服务状态和有界日志尾部。", "Collect read-only evidence through the approved actions: system snapshot, systemd service status, and bounded journal tail."},
-			localized{"基于已观察事实识别资源与服务风险，并把推断明确标注为推断。", "Identify resource and service risks from observed facts, and label inference as inference."},
-			localized{"给出可复核的下一步，并说明还缺少哪些证据。", "Recommend verifiable next steps and state which evidence is still missing."},
+			localized{"确认请求针对的是哪台已绑定服务器和哪个服务；目标不明确时先询问。", "Confirm which bound server and which service the request concerns, and ask when it is ambiguous."},
+			localized{"先通过系统快照、服务状态和服务日志收集证据，再判断原因。", "Gather evidence from the system snapshot, service status, and service logs before judging the cause."},
+			localized{"需要改动时，说明要执行的命令、原因和预期结果，获得批准后执行并核实。", "When a change is needed, state the command, the reason, and the expected result, then run it once approved and verify it."},
+			localized{"报告做了什么、结果如何、依据是什么，以及还需要人处理的事项。", "Report what was done, the result, the evidence, and what still needs a person."},
 		},
 		rules: []localized{
-			localized{"只执行该绑定连接中已批准的只读动作，且每次调用都重新获得批准。不部署、不重启、不写入、不修改配置，也不运行任意命令。", "Use only the read-only actions approved for the bound connection, with a fresh approval for every invocation. Never deploy, restart, write, change configuration, or run arbitrary commands."},
-			localized{"执行前确认目标服务器；绑定了多台具名服务器而请求不明确时，先询问是哪一台。不得把一台服务器的结果当作另一台的证据。", "Confirm the target server before acting; when several named servers are bound and the request is ambiguous, ask which one. Never use one server's result as evidence for another."},
-			localized{"只根据实际执行并观察到的动作报告服务状态、日志内容或结论。不把推断表述为已观察事实，也不声称批准已被记住。", "Report a service status, journal tail, or conclusion only from an action you actually ran and observed. Never present inference as an observed fact, and never claim an approval has been remembered."},
+			localized{"一次只做一项改动；改动失败或状态异常时停止继续改动，并报告。", "Make one change at a time; when a change fails or the state is unexpected, stop changing things and report."},
+			localized{"执行前确认目标服务器和服务；绑定了多台服务器而请求不明确时先询问。不得把一台服务器的结果当作另一台的证据。", "Confirm the target server and service before acting; when several servers are bound and the request is ambiguous, ask. Never use one server's result as evidence for another."},
+			localized{"只根据实际执行并观察到的结果报告服务状态或结论；没有状态读取证明前，不声称服务已恢复。", "Report a service state or conclusion only from calls you actually ran; never claim a service is restored without a status read that shows it."},
 		},
-		skills:            []TemplateSkill{},
-		requiresConnector: true,
-		iconBackground:    "#0f766e",
+		skills: []TemplateSkill{{ID: "ops-runbook", Required: true}},
+		connectors: []TemplateConnector{{
+			ConnectorID:          "serverops_ssh",
+			RequiredOperationIDs: []string{"server.system.snapshot", "server.service.status", "server.journal.tail"},
+			OptionalOperationIDs: []string{"server.service.restart", "server.service.start", "server.service.stop", "server.service.reload"},
+			Required:             true,
+		}},
+		memoryInstructions: localized{
+			"这是一个服务器运维数字人。对每台服务器，记下它的用途、上面需要关注的服务、反复出现的故障和已经验证有效的处理办法，以及需要人处理的遗留问题；情况变化后更新。不要记录密码、密钥、令牌或完整日志内容。",
+			"This is a server operations digital human. For each server, note its role, the services that matter on it, recurring failures and the fixes that proved effective, and open issues a person must handle; update them as things change. Never record passwords, keys, tokens, or full log contents.",
+		},
+		iconBackground: "#0f766e",
 	},
 	{
 		id:             "support_desk",
@@ -254,8 +284,28 @@ func BuiltinTemplates(locale string) TemplateCatalog {
 			Title: source.title.in(chinese), Description: source.description.in(chinese),
 			Responsibility: source.responsibility.in(chinese), Persona: source.persona.in(chinese),
 			Goals: localizedList(source.goals, chinese), Rules: rules, Tags: localizedList(source.tags, chinese),
-			Skills: append([]TemplateSkill{}, source.skills...), RequiresConnector: source.requiresConnector,
-			MemoryInstructions: memory[source.memoryTemplateID], IconBackground: source.iconBackground,
+			Skills: append([]TemplateSkill{}, source.skills...), Connectors: cloneTemplateConnectors(source.connectors),
+			MemoryInstructions: templateMemoryInstructions(source, memory, chinese), IconBackground: source.iconBackground,
+		})
+	}
+	return out
+}
+
+func templateMemoryInstructions(source builtinTemplateSource, memory map[string]string, chinese bool) string {
+	if source.memoryTemplateID != "" {
+		return memory[source.memoryTemplateID]
+	}
+	return source.memoryInstructions.in(chinese)
+}
+
+func cloneTemplateConnectors(connectors []TemplateConnector) []TemplateConnector {
+	out := make([]TemplateConnector, 0, len(connectors))
+	for _, connector := range connectors {
+		out = append(out, TemplateConnector{
+			ConnectorID:          connector.ConnectorID,
+			RequiredOperationIDs: append([]string{}, connector.RequiredOperationIDs...),
+			OptionalOperationIDs: append([]string{}, connector.OptionalOperationIDs...),
+			Required:             connector.Required,
 		})
 	}
 	return out

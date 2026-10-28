@@ -12,7 +12,7 @@
  * built-in template copy itself is owned and tested by the API.
  *
  * Creation no longer reads, selects, or binds the old integration connections:
- * a template that needs a server connection declares `requires_connector` and
+ * a template that needs a server connection declares it in `connectors` and
  * binds no skill by default. Phase one reaches servers through the
  * DigitalHuman-only serverops_ssh connector the user verifies in Connector
  * Center and binds in the generic create form.
@@ -86,7 +86,9 @@ const connectorCreateModelModuleURL = asDataModule(
     `from '${connectorModelModuleURL}';`
   )
 );
-const { connectorOperationIds } = await import(connectorModelModuleURL);
+const { connectorOperationIds, createConnectorDefaultOperationIds } = await import(
+  connectorModelModuleURL
+);
 const {
   addCreateConnectorSelection,
   createConnectorCandidateKey,
@@ -152,7 +154,7 @@ const fileGeneration = {
   rules: [...SHARED_RULES, '生成前确认文件格式。'],
   tags: ['文件', '整理', '交付'],
   skills: [{ id: 'file-generator', required: true }],
-  requires_connector: false,
+  connectors: [],
   memory_instructions: '  记住用户偏好的文件格式。  ',
   icon_background: '#0f766e',
 };
@@ -168,7 +170,14 @@ const opsSpecialist = {
   rules: [...SHARED_RULES, '每次调用都需要单独批准。'],
   tags: ['运维', '只读', '证据'],
   skills: [],
-  requires_connector: true,
+  connectors: [
+    {
+      connector_id: 'serverops_ssh',
+      required_operation_ids: ['server.system.snapshot', 'server.service.status', 'server.journal.tail'],
+      optional_operation_ids: ['server.service.restart'],
+      required: true,
+    },
+  ],
   memory_instructions: '',
   icon_background: '#1d4ed8',
 };
@@ -185,7 +194,7 @@ const workspaceTemplate = {
   rules: ['只引用真实进度。'],
   tags: ['周报'],
   skills: [{ id: 'file-generator', required: false }],
-  requires_connector: false,
+  connectors: [],
   memory_instructions: '   ',
   revision: 3,
 };
@@ -286,7 +295,7 @@ assert.equal(
   'a selected connection satisfies the template'
 );
 assert.deepEqual(
-  templateRequirementGap({ ...fileGeneration, requires_connector: true }, [], [], 0),
+  templateRequirementGap({ ...fileGeneration, connectors: opsSpecialist.connectors }, [], [], 0),
   { missingSkillIds: ['file-generator'], connectorMissing: true },
   'every missing requirement is reported together'
 );
@@ -432,10 +441,13 @@ const templatePayload = createDigitalHumanPayload({
 });
 
 assert.deepEqual(
-  Object.keys(templatePayload).sort(),
+  Object.keys(templatePayload).filter(key => key !== 'template_id').sort(),
   EXPECTED_PAYLOAD_KEYS,
   'the create request must only carry the agreed fields, never credentials or capability claims'
 );
+// A built-in template names itself so the API keeps its required items as
+// setup requirements (ADR 0023); the blank entry and saved templates do not.
+assert.equal(templatePayload.template_id, fileGeneration.id);
 assert.equal(templatePayload.name, '小研');
 assert.equal(templatePayload.identity_name, '小研');
 assert.equal(templatePayload.description, duty);
@@ -482,7 +494,7 @@ for (const template of TEMPLATES) {
     template,
     sharedRules: SHARED_RULES,
   });
-  assert.deepEqual(Object.keys(payload).sort(), EXPECTED_PAYLOAD_KEYS);
+  assert.deepEqual(Object.keys(payload).filter(key => key !== 'template_id').sort(), EXPECTED_PAYLOAD_KEYS);
   assert.equal(payload.persona, template.persona, `${template.id} persona must be the template persona`);
   assert.deepEqual(payload.goals, template.goals, `${template.id} must write its goals`);
   assert.deepEqual(payload.rules, template.rules, `${template.id} must write its rules`);
@@ -508,7 +520,7 @@ const opsPayload = createDigitalHumanPayload({
   template: opsSpecialist,
   sharedRules: SHARED_RULES,
 });
-assert.deepEqual(Object.keys(opsPayload).sort(), EXPECTED_PAYLOAD_KEYS);
+assert.deepEqual(Object.keys(opsPayload).filter(key => key !== 'template_id').sort(), EXPECTED_PAYLOAD_KEYS);
 assert.deepEqual(opsPayload.memory_policy, {});
 assert.ok(
   opsPayload.persona.startsWith(opsSpecialist.persona),
@@ -538,7 +550,7 @@ const customPayload = createDigitalHumanPayload({
   template: null,
   sharedRules: SHARED_RULES,
 });
-assert.deepEqual(Object.keys(customPayload).sort(), EXPECTED_PAYLOAD_KEYS);
+assert.deepEqual(Object.keys(customPayload).filter(key => key !== 'template_id').sort(), EXPECTED_PAYLOAD_KEYS);
 assert.equal(customPayload.persona, '整理每周进度。');
 assert.deepEqual(customPayload.goals, []);
 assert.deepEqual(customPayload.rules, SHARED_RULES, 'the custom entry starts with the shared rules');
@@ -1031,6 +1043,49 @@ assert.equal(
   addCreateConnectorSelection(connectorPicks, connectorCandidates[1]).length,
   connectorPicks.length,
   'selecting the exact same connection twice must not duplicate it'
+);
+
+// An SSH connection starts with its read actions only; the service write
+// actions stay selectable but must be ticked on purpose.
+const sshReadOperations = ['server.system.snapshot', 'server.service.status', 'server.journal.tail'];
+const sshWriteOperations = [
+  'server.service.restart',
+  'server.service.start',
+  'server.service.stop',
+  'server.service.reload',
+];
+const sshCandidate = {
+  ...connectorCandidates[0],
+  resource_id: 'ssh-connection-1',
+  parent_resource_id: 'serverops_ssh',
+  metadata: { allowed_operation_ids: [...sshReadOperations, ...sshWriteOperations] },
+};
+const sshPicks = addCreateConnectorSelection([], sshCandidate);
+assert.deepEqual(
+  connectorOperationIds(sshPicks[0].binding),
+  sshReadOperations,
+  'a new SSH selection must preselect only its read actions'
+);
+assert.deepEqual(
+  connectorOperationIds(sshPicks[0].candidate),
+  [...sshReadOperations, ...sshWriteOperations],
+  'the write actions must stay offered by the candidate snapshot'
+);
+const sshWithRestart = setCreateConnectorSelectionOperation(
+  sshPicks,
+  createConnectorCandidateKey(sshPicks[0].candidate),
+  'server.service.restart',
+  true
+);
+assert.deepEqual(
+  connectorOperationIds(sshWithRestart[0].binding),
+  [...sshReadOperations, 'server.service.restart'],
+  'a write action must remain selectable after the default'
+);
+assert.deepEqual(
+  createConnectorDefaultOperationIds({ metadata: { allowed_operation_ids: sshWriteOperations } }),
+  sshWriteOperations,
+  'a connection offering only write actions keeps them so the binding stays usable'
 );
 
 // Operation narrowing is a strict subset of the candidate's allowed set and can
@@ -2022,8 +2077,13 @@ assert.match(
 );
 assert.match(
   flowSource,
+  /if \(!notice && requirementGap\) \{[\s\S]*?configuration\?setup=1/,
+  'with a template requirement missing, creation stops at a draft and opens the setup checklist (ADR 0023)'
+);
+assert.doesNotMatch(
+  flowSource,
   /if \(requirementNotice\) \{\s*setSubmitError\(requirementNotice\);/,
-  'creation must be refused while a template requirement is missing'
+  'a missing requirement no longer refuses creation; publishing waits instead'
 );
 assert.match(gallerySource, /sm:group-focus-within:opacity-100/);
 assert.match(
@@ -2107,7 +2167,7 @@ assert.match(
 );
 assert.match(
   gallerySource,
-  /detailTemplate\.requires_connector \?[\s\S]*createFlow\.detail\.connector[\s\S]*createFlow\.form\.connectorRequired/,
+  /detailTemplate\.connectors\.some\(connector => connector\.required\) \?[\s\S]*createFlow\.detail\.connector[\s\S]*createFlow\.form\.connectorRequired/,
   'the detail drawer must say a connector template needs a verified connection'
 );
 assert.match(
@@ -2132,7 +2192,7 @@ const templateTypesSource = await readSource('../src/services/types/digital-huma
 const templateTypeBlock =
   templateTypesSource.match(/export interface DigitalHumanTemplate \{[\s\S]*?\n\}/)?.[0] ?? '';
 assert.ok(templateTypeBlock, 'the template type must live with the service types');
-assert.match(templateTypeBlock, /requires_connector: boolean;/);
+assert.match(templateTypeBlock, /connectors: DigitalHumanTemplateConnector\[\];/);
 assert.match(templateTypeBlock, /memory_instructions: string;/);
 assert.doesNotMatch(
   templateTypeBlock,

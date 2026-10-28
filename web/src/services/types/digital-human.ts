@@ -151,6 +151,8 @@ export interface DigitalHumanList {
 
 export interface CreateDigitalHumanRequest {
   file_upload_policy?: FileUploadSelection | null;
+  /** The built-in template it starts from; its required items gate publishing. */
+  template_id?: string;
   name: string;
   avatar?: string;
   icon_type?: 'text' | 'image';
@@ -313,6 +315,18 @@ export interface DigitalHumanTemplateSkill {
 }
 
 /**
+ * A connector connection a template needs (ADR 0023): the operations it must
+ * allow, and those the operator may opt into. The connection is chosen per
+ * DigitalHuman.
+ */
+export interface DigitalHumanTemplateConnector {
+  connector_id: string;
+  required_operation_ids: string[];
+  optional_operation_ids?: string[];
+  required: boolean;
+}
+
+/**
  * A DigitalHuman template (ADR 0022): built in, or saved by the workspace.
  * Connector connections are never part of it.
  */
@@ -329,10 +343,26 @@ export interface DigitalHumanTemplate {
   rules: string[];
   tags: string[];
   skills: DigitalHumanTemplateSkill[];
-  requires_connector: boolean;
+  connectors: DigitalHumanTemplateConnector[];
   memory_instructions: string;
   icon_background?: string;
   revision?: number;
+}
+
+/** One item of a DigitalHuman's setup checklist (ADR 0023). */
+export interface DigitalHumanSetupItem {
+  kind: 'skill' | 'connector';
+  id: string;
+  operation_ids?: string[];
+  optional_operation_ids?: string[];
+  met: boolean;
+}
+
+/** What a DigitalHuman from a template still needs before it can publish. */
+export interface DigitalHumanSetupStatus {
+  template_id?: string;
+  complete: boolean;
+  items: DigitalHumanSetupItem[];
 }
 
 export interface DigitalHumanTemplateCatalog {
