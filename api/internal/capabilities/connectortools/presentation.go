@@ -183,6 +183,21 @@ func safePresentationSummary(code string, display *execution.OperationDisplay) s
 			return "暂时无法确认操作结果，请先核查服务商侧状态，避免重复执行。"
 		}
 		return "The operation result cannot be confirmed yet. Check the provider before retrying."
+	case core.ErrorCodePermissionMissing:
+		if chinese {
+			return "外部系统拒绝了这个账号执行该操作的权限，请由管理员授予所需权限后再试。"
+		}
+		return "The external system denied this account permission for the operation. Ask an administrator to grant it, then try again."
+	case core.ErrorCodeCommandForbidden:
+		if chinese {
+			return "组织的命令规则禁止这条命令，它没有执行。如需执行，请联系组织管理员。"
+		}
+		return "The organization's command rules forbid this command, so it did not run. Ask an organization administrator if it is needed."
+	case core.ErrorCodeConfirmationRequired:
+		if chinese {
+			return "这个操作需要有人批准，没有人在场时不会执行，也没有执行。"
+		}
+		return "This operation needs a person's approval, so it did not run without one."
 	default:
 		if chinese {
 			return "连接器操作未能完成，请检查连接状态后重试。"

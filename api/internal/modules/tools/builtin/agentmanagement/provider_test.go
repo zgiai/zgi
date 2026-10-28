@@ -2642,6 +2642,8 @@ func TestUpdateAgentConfigChangesModelWithProvider(t *testing.T) {
 		"model",
 		"model_parameters",
 		"enabled_skill_ids",
+		// Turning memory on also turns on automatic memory.
+		"agent_memory_auto_extraction_enabled",
 		"agent_memory_enabled",
 		"file_upload_enabled",
 		"home_title",

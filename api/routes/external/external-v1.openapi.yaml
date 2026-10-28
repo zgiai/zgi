@@ -586,6 +586,93 @@ paths:
           $ref: '#/components/responses/MemoryUndoEnvelope'
         default:
           $ref: '#/components/responses/Error'
+  /agents/memory/history:
+    get:
+      tags: [Memory]
+      summary: List memory history
+      operationId: listAgentMemoryHistory
+      description: >-
+        Lists the user's memory changes, newest first. Each commit lists the files it changed with their content before
+        and after, the user's words the change was based on, and why it was made. Content and quotes are purged after 30
+        days or when all memory is cleared; the records are kept for 180 days. Needs the relationship memory store.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+        - name: key
+          in: query
+          description: Limit the history to one memory slot.
+          schema: {type: string}
+        - name: limit
+          in: query
+          description: Commits per page, 1 to 50.
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: before
+          in: query
+          description: The previous page's `next_before`; returns older commits.
+          schema: {type: string, format: date-time}
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryHistoryEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory/history/{version_id}/revert:
+    post:
+      tags: [Memory]
+      summary: Revert a memory change
+      operationId: revertAgentMemoryVersion
+      description: >-
+        Writes back the content a slot had before this change, as a new change. Only the latest change to a slot whose
+        content is still kept can be reverted (`revertible` in the history); otherwise the request fails with a conflict.
+      parameters:
+        - name: version_id
+          in: path
+          required: true
+          description: A version id from the history.
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryRevertEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory/archive:
+    get:
+      tags: [Memory]
+      summary: List the memory archive
+      operationId: listAgentMemoryArchive
+      description: >-
+        Lists the user's memory archive, newest first: older memory moved out of full memory files, which the Agent
+        searches when its files do not answer a question about the user. The archive keeps up to 500 entries and drops
+        the oldest beyond that. It is cleared with all memory and included in the export. Needs the relationship memory
+        store.
+      parameters:
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryArchiveEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
+  /agents/memory/archive/{entry_id}:
+    delete:
+      tags: [Memory]
+      summary: Delete a memory archive entry
+      operationId: deleteAgentMemoryArchiveEntry
+      description: Removes one entry from the user's memory archive. Allowed while memory is off.
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          description: An entry id from the archive.
+          schema: {type: string, format: uuid}
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/MemoryArchiveDeleteEnvelope'
+        default:
+          $ref: '#/components/responses/Error'
 components:
   securitySchemes:
     bearerAuth:
@@ -753,6 +840,30 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/MemoryUndoEnvelope'
+    MemoryHistoryEnvelope:
+      description: Memory history page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryHistoryEnvelope'
+    MemoryRevertEnvelope:
+      description: Revert result
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryRevertEnvelope'
+    MemoryArchiveEnvelope:
+      description: Memory archive
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryArchiveEnvelope'
+    MemoryArchiveDeleteEnvelope:
+      description: Deleted archive entry
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MemoryArchiveDeleteEnvelope'
     Error:
       description: Error response. The HTTP status reflects the error class.
       content:
@@ -1888,6 +1999,99 @@ components:
           required: [data]
           properties:
             data: {$ref: '#/components/schemas/MemoryUndoResult'}
+    MemoryHistoryVersion:
+      type: object
+      required: [id, key, action, before, after, content_purged, revertible]
+      properties:
+        id: {type: string, format: uuid}
+        key: {type: string}
+        definition_id: {type: string, format: uuid}
+        action: {type: string, enum: [create, update, delete, clear, undo]}
+        before_revision: {type: integer, format: int64}
+        after_revision: {type: integer, format: int64}
+        before: {type: string, description: Content before the change; empty when purged or absent.}
+        after: {type: string, description: Content after the change; empty when purged or removed.}
+        evidence: {type: string, description: The user's words the change was based on.}
+        reason: {type: string, description: Why the change was made.}
+        content_purged: {type: boolean}
+        revertible: {type: boolean}
+    MemoryHistoryCommit:
+      type: object
+      required: [id, source_kind, actor_type, source, created_at, versions]
+      properties:
+        id: {type: string, format: uuid}
+        source_kind: {type: string, description: 'explicit, automatic, or manager.'}
+        actor_type: {type: string}
+        source: {type: string}
+        conversation_id: {type: string, format: uuid}
+        message_id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        versions:
+          type: array
+          items: {$ref: '#/components/schemas/MemoryHistoryVersion'}
+    MemoryHistoryEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [commits]
+              properties:
+                commits:
+                  type: array
+                  items: {$ref: '#/components/schemas/MemoryHistoryCommit'}
+                next_before: {type: string, format: date-time}
+    MemoryArchiveEntry:
+      type: object
+      required: [id, content, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        content: {type: string, description: The archived text.}
+        tags: {type: string, description: Kind of memory the text came from.}
+        source_key: {type: string, description: The memory slot the text was moved out of.}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    MemoryArchiveEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  items: {$ref: '#/components/schemas/MemoryArchiveEntry'}
+    MemoryArchiveDeleteEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [entry_id]
+              properties:
+                entry_id: {type: string, format: uuid}
+    MemoryRevertEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: object
+              required: [version_id]
+              properties:
+                version_id: {type: string, format: uuid}
+                item:
+                  description: The slot after the revert, or null when the revert removed it.
+                  nullable: true
+                  type: object
     SuccessEnvelope:
       type: object
       description: Standard JSON success envelope. Compatibility discovery and upload endpoints return direct objects instead.

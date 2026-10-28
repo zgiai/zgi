@@ -139,7 +139,7 @@ func (h *RuntimeHandler) RegenerateMessage(c *gin.Context) {
 	run, _, err := service.SubmitRegeneration(c.Request.Context(), scope, digitalHumanID, RegenerateInvocationRequest{
 		MessageID: messageID, Query: request.Query, Surface: request.Surface,
 		RuntimeContext: request.RuntimeContext, OperationContext: request.OperationContext,
-		Model: request.Model, Provider: request.Provider, Parameters: request.Parameters, UseMemory: request.UseMemory,
+		Model: request.Model, Provider: request.Provider, Parameters: request.Parameters,
 	})
 	if err != nil {
 		h.base.writeError(c, applicationError(err, "digital_human.message.regenerate"))

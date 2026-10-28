@@ -833,6 +833,12 @@ func (r *Runner) handleCallSkillTool(
 			// output. Surface it once and end the unattended run so the model
 			// cannot automatically retry a consequential operation.
 			invocation.Trace.Result = blockedResult
+			if connectorNeedsPerson(blockedResult) {
+				// A change no one was present to approve ran nothing and
+				// cannot succeed on a retry: the model finishes its report.
+				r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
+				return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, connectorNeedsPersonResult(blockedResult)), true, true)
+			}
 			toolMessage := skills.ToolResultMessage(callID, blockedResult)
 			r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, invocation.Trace))
 			terminal := terminalSkillStep(invocation.Trace, toolMessage, true, true)

@@ -191,8 +191,10 @@ export function selectDigitalHumanConnection(
   // Selecting an already selected connection must not merge two permission sets.
   if (existing) throw new Error('Connection is already selected');
   const allowed = connectorOperationIds(candidate);
+  // A new connection starts with what it allows minus the opt-in write
+  // operations (ADR 0023); a replaced one keeps its earlier choice.
   const operations = !replaced
-    ? allowed
+    ? createConnectorDefaultOperationIds(candidate)
     : replaced.type === 'connector'
       ? connectorOperationIds(replaced).filter(id => allowed.includes(id))
       : [];
@@ -236,6 +238,62 @@ export function updateDigitalHumanOperations(
           },
         }
   );
+}
+
+/** How a connection asks before a call (ADR 0026, ADR 0028). */
+export type ConnectorApprovalPolicy =
+  | 'always_ask'
+  | 'read_only_auto'
+  | 'trusted'
+  | 'trusted_unattended';
+
+export const CONNECTOR_APPROVAL_POLICIES: readonly ConnectorApprovalPolicy[] = [
+  'always_ask',
+  'read_only_auto',
+  'trusted',
+  'trusted_unattended',
+];
+
+/** Policies that run changes without asking, so they need a risk acknowledgement. */
+export function connectorApprovalPolicyTrusted(policy: ConnectorApprovalPolicy) {
+  return policy === 'trusted' || policy === 'trusted_unattended';
+}
+
+/** Connectors whose platform can prove a call read-only. */
+const READ_ONLY_AUTO_CONNECTOR_IDS: ReadonlySet<string> = new Set(['serverops_ssh']);
+
+export function connectorSupportsReadOnlyAuto(item: DigitalHumanResourceBindingInput) {
+  return (
+    item.type === 'connector' &&
+    !isPerUserConnectorSlot(item) &&
+    READ_ONLY_AUTO_CONNECTOR_IDS.has(item.parent_resource_id ?? '')
+  );
+}
+
+export function connectorApprovalPolicy(item: {
+  metadata?: Record<string, unknown>;
+}): ConnectorApprovalPolicy {
+  const value = item.metadata?.approval_policy;
+  return CONNECTOR_APPROVAL_POLICIES.includes(value as ConnectorApprovalPolicy)
+    ? (value as ConnectorApprovalPolicy)
+    : 'always_ask';
+}
+
+/** Always asking is the default, so it is stored as no policy at all. */
+export function updateDigitalHumanApprovalPolicy(
+  items: DigitalHumanResourceBindingInput[],
+  item: DigitalHumanResourceBindingInput,
+  policy: ConnectorApprovalPolicy
+): DigitalHumanResourceBindingInput[] {
+  if (!connectorSupportsReadOnlyAuto(item)) return items;
+  return items.map(value => {
+    if (digitalHumanResourceKey(value) !== digitalHumanResourceKey(item)) return value;
+    const { approval_policy: _previous, ...metadata } = value.metadata;
+    return {
+      ...value,
+      metadata: policy === 'always_ask' ? metadata : { ...metadata, approval_policy: policy },
+    };
+  });
 }
 
 function stableValue(value: unknown): unknown {
@@ -294,4 +352,40 @@ export function connectorSelectionInvalid(
       operations.some(id => !connectorOperationIds(candidate).includes(id))
     );
   });
+}
+
+/**
+ * Operations that change a server and therefore start unticked.
+ *
+ * Resource candidates carry only operation ids, not their catalog effect, so
+ * the write operations are named explicitly: the four SSH Server Operations
+ * service actions. They stay selectable; the user must tick them on purpose.
+ */
+const CREATE_CONNECTOR_OPT_IN_OPERATION_IDS: ReadonlySet<string> = new Set([
+  'server.service.restart',
+  'server.service.start',
+  'server.service.stop',
+  'server.service.reload',
+  'server.command.run',
+]);
+
+/**
+ * Operations that only turn on after the person acknowledges their risk, such
+ * as running any shell command on a server.
+ */
+export const RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS: ReadonlySet<string> = new Set([
+  'server.command.run',
+]);
+
+/**
+ * The operations a newly added connection starts with: every allowed operation
+ * except the opt-in write operations. A connection that offers only opt-in
+ * operations keeps them all, because an empty set would be unusable.
+ */
+export function createConnectorDefaultOperationIds(
+  candidate: Pick<DigitalHumanResourceCandidate, 'metadata'>
+): string[] {
+  const allowed = connectorOperationIds(candidate);
+  const defaults = allowed.filter(id => !CREATE_CONNECTOR_OPT_IN_OPERATION_IDS.has(id));
+  return defaults.length > 0 ? defaults : allowed;
 }

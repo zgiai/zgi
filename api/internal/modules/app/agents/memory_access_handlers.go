@@ -65,6 +65,54 @@ func (h *AgentsHandler) UndoWebAppMemoryOperation(c *gin.Context) {
 	}
 }
 
+func (h *AgentsHandler) GetWebAppMemoryHistory(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.getDirectMemoryHistory(c, access)
+	}
+}
+
+func (h *AgentsHandler) RevertWebAppMemoryVersion(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.revertDirectMemoryVersion(c, access)
+	}
+}
+
+func (h *AgentsHandler) GetAPIKeyAgentMemoryHistory(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.getDirectMemoryHistory(c, access)
+	}
+}
+
+func (h *AgentsHandler) RevertAPIKeyAgentMemoryVersion(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.revertDirectMemoryVersion(c, access)
+	}
+}
+
+func (h *AgentsHandler) GetWebAppMemoryArchive(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.getDirectMemoryArchive(c, access)
+	}
+}
+
+func (h *AgentsHandler) DeleteWebAppMemoryArchiveEntry(c *gin.Context) {
+	if access, ok := h.webAppMemoryAccess(c); ok {
+		h.deleteDirectMemoryArchiveEntry(c, access)
+	}
+}
+
+func (h *AgentsHandler) GetAPIKeyAgentMemoryArchive(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.getDirectMemoryArchive(c, access)
+	}
+}
+
+func (h *AgentsHandler) DeleteAPIKeyAgentMemoryArchiveEntry(c *gin.Context) {
+	if access, ok := h.apiKeyMemoryAccess(c); ok {
+		h.deleteDirectMemoryArchiveEntry(c, access)
+	}
+}
+
 func (h *AgentsHandler) GetWebAppMemorySettings(c *gin.Context) {
 	if access, ok := h.webAppMemoryAccess(c); ok {
 		h.getDirectMemorySettings(c, access)
@@ -165,10 +213,6 @@ func (h *AgentsHandler) webAppMemoryAccess(c *gin.Context) (memoryAccessScope, b
 
 func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, bool) {
 	_, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal")
-	if runtimeWorkspaceRequest && !relationshipmemory.RuntimeEnabled() {
-		response.Fail(c, response.ErrPermissionDenied)
-		return memoryAccessScope{}, false
-	}
 	agentID, err := uuid.Parse(strings.TrimSpace(c.GetString("agent_id")))
 	if err != nil || agentID == uuid.Nil {
 		response.Fail(c, response.ErrInvalidParam)
@@ -257,7 +301,8 @@ func (h *AgentsHandler) apiKeyMemoryAccess(c *gin.Context) (memoryAccessScope, b
 func agentMemoryRuntimeStoreSlots(slots []runtimeservice.AgentMemorySlotConfig) []agentmemory.RuntimeSlot {
 	out := make([]agentmemory.RuntimeSlot, 0, len(slots))
 	for _, slot := range slots {
-		out = append(out, agentmemory.RuntimeSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder})
+		out = append(out, agentmemory.RuntimeSlot{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars,
+			Enabled: slot.Enabled, SortOrder: slot.SortOrder, ReadOnly: slot.ReadOnly, ManualOnly: slot.ManualOnly})
 	}
 	return out
 }
@@ -272,9 +317,6 @@ type agentUserMemoryService interface {
 }
 
 func (h *AgentsHandler) memoryService() agentUserMemoryService {
-	if !relationshipmemory.RuntimeEnabled() {
-		return agentmemory.NewService(h.db)
-	}
 	return relationshipmemory.NewAgentAdapter(h.db)
 }
 
@@ -388,6 +430,66 @@ func (h *AgentsHandler) undoDirectMemory(c *gin.Context, access memoryAccessScop
 	response.Success(c, result)
 }
 
+// getDirectMemoryHistory lists the user's memory changes (ADR 0013). History
+// is kept by the relationship store only.
+func (h *AgentsHandler) getDirectMemoryHistory(c *gin.Context, access memoryAccessScope) {
+	request, ok := relationshipmemory.HistoryRequestFromQuery(c)
+	if !ok {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	page, err := relationshipmemory.NewAgentAdapter(h.db).History(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID, request)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, page)
+}
+
+// revertDirectMemoryVersion undoes the latest change to one memory file.
+func (h *AgentsHandler) revertDirectMemoryVersion(c *gin.Context, access memoryAccessScope) {
+	if !access.writesEnabled {
+		response.FailWithMessage(c, response.ErrInvalidParam, "Agent Memory is disabled")
+		return
+	}
+	versionID, err := uuid.Parse(strings.TrimSpace(c.Param("version_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	item, err := relationshipmemory.NewAgentAdapter(h.db).RevertVersion(c.Request.Context(), access.workspaceID, access.agentID, access.writeSlots, access.userScope, access.userID, versionID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"version_id": versionID, "item": item})
+}
+
+// getDirectMemoryArchive lists the user's memory archive (ADR 0014).
+func (h *AgentsHandler) getDirectMemoryArchive(c *gin.Context, access memoryAccessScope) {
+	entries, err := relationshipmemory.NewAgentAdapter(h.db).Archive(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entries": entries})
+}
+
+// deleteDirectMemoryArchiveEntry removes one entry from the user's archive.
+// Deleting is allowed while memory is off, so users can always remove data.
+func (h *AgentsHandler) deleteDirectMemoryArchiveEntry(c *gin.Context, access memoryAccessScope) {
+	entryID, err := uuid.Parse(strings.TrimSpace(c.Param("entry_id")))
+	if err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if err := relationshipmemory.NewAgentAdapter(h.db).DeleteArchiveEntry(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID, entryID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entry_id": entryID})
+}
+
 type directMemorySettingsRequest struct {
 	MemoryEnabled      *bool `json:"memory_enabled"`
 	AutoCaptureEnabled *bool `json:"auto_capture_enabled"`
@@ -395,10 +497,6 @@ type directMemorySettingsRequest struct {
 }
 
 func (h *AgentsHandler) getDirectMemorySettings(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	settings, err := relationshipmemory.NewAgentAdapter(h.db).GetSettings(c.Request.Context(), access.workspaceID, access.agentID, access.userScope, access.userID)
 	if err != nil {
 		h.failRuntime(c, err)
@@ -408,10 +506,6 @@ func (h *AgentsHandler) getDirectMemorySettings(c *gin.Context, access memoryAcc
 }
 
 func (h *AgentsHandler) patchDirectMemorySettings(c *gin.Context, access memoryAccessScope) {
-	if !relationshipmemory.RuntimeEnabled() {
-		response.FailWithMessage(c, response.ErrInvalidParam, "User relationship memory is not enabled")
-		return
-	}
 	var req directMemorySettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)

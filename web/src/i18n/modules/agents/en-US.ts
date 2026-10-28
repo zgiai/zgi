@@ -2123,8 +2123,6 @@ const messages = {
       memoryRevisionChanged:
         'Memory settings changed elsewhere. Your draft was kept; refresh and review it before saving again.',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
-      fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
-      fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',
       systemPromptTooLongBeforeSave:
         'Shorten the system prompt to {limit} characters or less before saving.',
       systemPromptTooLongBeforePublish:
@@ -2573,157 +2571,28 @@ const messages = {
       unavailable: 'The Linux environment is not available for this organization.',
     },
     memory: {
-      agentTitle: 'Memory',
-      agentDescription:
-        'Define what the Agent should remember for each user. Each memory item has a stable ID and an optional display name.',
-      autoExtractionTitle: 'Organize and update memory automatically',
+      agentTitle: 'Remember each user',
+      agentDescription: 'Remember what matters about each user across conversations.',
+      autoExtractionTitle: 'Remember automatically',
+      autoExtractionSummary: 'Note lasting details from conversations without being asked.',
       autoExtractionDescription:
-        'Once enabled, the Agent identifies user information, preferences, and requests worth keeping from conversations and updates memory automatically, helping future responses feel more relevant. This may add model calls during a conversation or after it becomes idle, increasing token usage.',
-      emptySlots: 'No memory items configured yet.',
-      addSlot: 'Add memory item',
-      addCustomSlot: 'Custom item',
-      applyTemplate: 'Apply template',
-      addDialogTitle: 'Add memory item',
-      addDialogDescription:
-        'Set an optional display name, a stable ID, and instructions for this memory item.',
-      addDialogConfirm: 'Add item',
-      addDialogCancel: 'Cancel',
-      maxItemsReached: 'Up to 5 memory items',
-      removeSlot: 'Remove memory item',
-      viewValues: 'View memory',
-      nameLabel: 'Memory name (optional)',
-      nameHelp:
-        'Helps people identify this item. The memory ID is shown when left blank. Up to 80 characters.',
-      keyLabel: 'Memory ID',
-      keyHelp: 'Stable identifier used by the Agent. It is locked after the item is saved.',
-      keyLockedHelp:
-        'This memory ID has been saved and cannot be changed. Delete it and create a new item to use another ID.',
-      idValue: 'ID: {id}',
-      descriptionLabel: 'Description',
-      descriptionHelp:
-        'Tell the model what this memory type should store and when to update it. Up to 200 characters.',
-      slotKeyPlaceholder: 'memory_key',
-      slotNamePlaceholder: 'For example: Answer preferences',
-      slotDescriptionPlaceholder: 'Describe what this memory item stores',
-      maxChars: 'Maximum characters',
-      maxCharsHelp: 'Limit the content length for this memory item.',
-      templateDialogTitle: 'Memory templates',
-      templateDialogDescription:
-        'Apply a built-in slot set, or add individual slots from a template.',
-      templateMerge: 'Merge template',
-      templateReplace: 'Replace current items',
-      templateApplied: 'Memory template applied',
-      templateReplaceApplied: 'Memory template replaced current items',
-      templateSlotAdded: 'Memory item added',
-      templateAddSlot: 'Add',
-      templateSlotExists: 'Added',
-      templateTooMany: 'An Agent can have up to 5 memory items. Remove one first.',
-      templateSlotCount: '{count} items',
-      templateReplaceConfirmTitle: 'Replace memory items?',
-      templateReplaceConfirmDescription:
-        'This replaces the current memory item configuration with the selected template. Existing memory values for removed keys may no longer be used.',
-      templateReplaceConfirmAction: 'Replace',
-      templateReplaceConfirmCancel: 'Cancel',
-      templates: {
-        general_assistant: {
-          name: 'General assistant',
-          description:
-            'For general assistants: remember profile, answer preferences, standing rules, and ongoing project context.',
-        },
-        project_collaboration: {
-          name: 'Project collaboration',
-          description:
-            'For project collaboration: remember project context, long-term workflow, and delivery preferences.',
-        },
-        support_operations: {
-          name: 'Support operations',
-          description:
-            'For support and operations: remember customer background, communication preferences, business context, and standing rules.',
-        },
-      },
-      templateSlots: {
-        profile: {
-          name: 'User profile',
-          description:
-            'Store stable facts about the user only: user name, how the user wants to be addressed, job role, team role. Do not store agent name, assistant persona, roleplay style, what the user calls the agent, contact details, accounts, IDs, passwords, or temporary states.',
-        },
-        preferences: {
-          name: 'Answer preferences',
-          description:
-            'Store durable answer preferences: language, example stack, length, layout, explanation depth, tone, and style. Do not store one-off formatting requests, temporary moods, current task content, or a durable identity the agent should play.',
-        },
-        standing_instructions: {
-          name: 'Standing instructions',
-          description:
-            'Store long-term interaction rules, collaboration workflows, task procedures, how to address the user, what the user calls the agent, or agent persona instructions, such as conclusion first, risk review, or roleplay as a specific assistant. Do not store project facts or one-off task steps.',
-        },
-        project_context: {
-          name: 'Project context',
-          description:
-            'Store ongoing project, goals, key background, workflow, and durable constraints. Update only when the user describes project or goal changes; do not infer from role changes.',
-        },
-        delivery_preferences: {
-          name: 'Delivery preferences',
-          description:
-            'Store durable delivery preferences: output structure, review depth, file format, acceptance criteria. Do not store one-off formatting requests for a single task.',
-        },
-        customer_profile: {
-          name: 'Customer profile',
-          description:
-            'Store stable customer identity, account background, product usage, contract or relationship status. Never store passwords, payment data, IDs, or one-off ticket details.',
-        },
-        communication_preferences: {
-          name: 'Communication preferences',
-          description:
-            'Store durable customer communication preferences: tone, channel, escalation wording, response cadence. Do not store temporary emotions or one-off service handling.',
-        },
-        business_context: {
-          name: 'Business context',
-          description:
-            'Store long-term business process background, support scope, policy rules, and operational constraints tied to this customer/user. Do not store general product knowledge or temporary conclusions.',
-        },
-      },
-      deleteConfirmTitle: 'Delete memory item?',
-      deleteConfirmDescription:
-        'After this Agent is published, memory stored under this item will be cleared automatically. Please proceed carefully.',
-      deleteConfirmAction: 'Delete item',
-      deleteConfirmCancel: 'Cancel',
-      validation: {
-        required: 'Memory ID is required.',
-        pattern:
-          'Use lowercase letters, numbers, and underscores. The memory ID must start with a letter.',
-        duplicate: 'This memory ID is already used.',
-        too_many: 'An Agent can have up to 5 memory items.',
-      },
+        'When on, the Agent notes user information, preferences, and requests worth keeping as the conversation happens, so later answers fit the user better. Noting them adds some model calls within the turn.',
+      templateApplied: 'Memory instructions filled in from the template',
+      instructionsPlaceholder:
+        "For example: This is a support assistant. Remember the customer's plan and communication preferences; do not record how a single ticket was handled.",
+      tryHint: 'Try it in the debug chat on the right, e.g. "remember I prefer short answers".',
+      viewValues: 'My test memory',
     },
     memoryValues: {
       title: 'Agent memory',
       description:
-        'View and edit your own memory values for draft debugging. Only configured memory items can be changed.',
-      scopeAccount: 'Account user',
-      scopeEndUser: 'End user',
-      userIdPlaceholder: 'User ID',
-      userRequired: 'Enter a user ID first.',
-      load: 'Load',
+        'What this Agent remembers about you from your debug chats. You can change or delete any of it.',
       loading: 'Loading memory...',
       empty: 'No memory has been written for this user yet.',
-      noDescription: 'No description',
-      updatedAt: 'Updated: {time}',
-      contentPlaceholder: 'Enter memory content',
-      overLimit: 'Content exceeds this memory item limit.',
-      save: 'Save',
-      clear: 'Clear',
       close: 'Close',
-      saveSuccess: 'Memory saved',
       saveFailed: 'Failed to save memory',
-      clearSuccess: 'Memory cleared',
       clearFailed: 'Failed to clear memory',
       loadFailed: 'Failed to load memory',
-      clearConfirmTitle: 'Clear this memory?',
-      clearConfirmDescription:
-        'The current content will be forgotten for this user. The event log will not keep the original content.',
-      clearConfirmAction: 'Clear memory',
-      clearConfirmCancel: 'Cancel',
     },
     preview: {
       title: 'Debug',

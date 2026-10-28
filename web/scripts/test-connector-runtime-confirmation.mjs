@@ -35,6 +35,39 @@ const confirmationResult = {
 };
 
 assert.deepEqual(parseConnectorRuntimeExecutionResult(confirmationResult), confirmationResult);
+// A DigitalHuman chat confirmation names its published version and binding
+// instance; the Chat host must accept it, and must refuse partial targets.
+const digitalHumanConfirmationResult = {
+  state: 'requires_confirmation',
+  confirmation: {
+    ...confirmationResult.confirmation,
+    target: {
+      type: 'digital_human',
+      id: 'c37fb786-4671-4f69-b85e-31bada025c2c',
+      scope: 'published',
+      version_id: '25860bdd-ace2-40cb-9e3a-ea5c399bd5bc',
+      binding_instance_id: '7f2e831c-221e-4e30-a6e2-ee298d4c5f9c',
+    },
+  },
+};
+assert.deepEqual(
+  parseConnectorRuntimeExecutionResult(digitalHumanConfirmationResult),
+  digitalHumanConfirmationResult
+);
+for (const target of [
+  { ...digitalHumanConfirmationResult.confirmation.target, scope: 'draft' },
+  { ...digitalHumanConfirmationResult.confirmation.target, version_id: undefined },
+  { ...digitalHumanConfirmationResult.confirmation.target, binding_instance_id: undefined },
+  { ...confirmationResult.confirmation.target, scope: 'published' },
+]) {
+  assert.equal(
+    parseConnectorRuntimeExecutionResult({
+      ...digitalHumanConfirmationResult,
+      confirmation: { ...digitalHumanConfirmationResult.confirmation, target },
+    }),
+    null
+  );
+}
 const terminalPresentationResult = {
   state: 'completed',
   connector_presentation: {
@@ -388,6 +421,13 @@ for (const field of ['connector_name', 'action_name', 'risk_classification']) {
 for (const field of ['fields', 'truncated', 'previewUnavailable']) {
   assert.match(previewSummarySource, new RegExp(field));
 }
+// A command line preview field is rendered as a wrapping code block.
+assert.match(previewSummarySource, /field\.format === 'command'/);
+assert.match(
+  previewSummarySource,
+  /<pre[\s\S]*whitespace-pre-wrap[\s\S]*<code>\{field\.value\}<\/code>/
+);
+assert.match(contractSource, /format\?: 'command';/);
 assert.match(confirmationSource, /runtime\.confirmation\.title/);
 assert.doesNotMatch(confirmationSource, /external_destination/);
 assert.match(dialogBridgeSource, /ConnectorRuntimeDialogApprovalBridge/);

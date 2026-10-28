@@ -19,11 +19,11 @@ import type {
   AgentBindingHealth,
   AgentWorkflowBindingCandidatesResponse,
   UpdateAgentRuntimeConfigRequest,
-  AgentMemorySlotConfig,
   AgentMemoryValuesResponse,
   UpdateAgentMemoryValueRequest,
   AgentMemoryValue,
   AgentMemoryConfigResponse,
+  AgentMemoryTemplatesResponse,
   PublishAgentResponse,
   PublishAgentRequest,
   AgentPublishedVersionsResponse,
@@ -302,39 +302,27 @@ class AgentService extends BaseService {
     );
   }
 
-  getAgentMemorySlots(
-    agentId: string
-  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
-    return this.request('get', `/agents/${agentId}/memory/slots`, undefined, {
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  updateAgentMemorySlots(
-    agentId: string,
-    slots: AgentMemorySlotConfig[]
-  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
-    return this.request(
-      'put',
-      `/agents/${agentId}/memory/slots`,
-      { slots },
-      {
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  }
-
   updateAgentMemoryConfig(
     agentId: string,
     payload: {
       enabled: boolean;
       auto_extraction_enabled: boolean;
-      slots: AgentMemorySlotConfig[];
       config_revision?: string;
+      instructions?: string;
     }
   ): Promise<ApiResponseData<AgentMemoryConfigResponse>> {
     return this.request('put', `/agents/${agentId}/memory/config`, payload, {
       headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentMemoryTemplates(
+    agentId: string,
+    language: string
+  ): Promise<ApiResponseData<AgentMemoryTemplatesResponse>> {
+    return this.request('get', `/agents/${agentId}/memory/templates`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params: { language },
     });
   }
 

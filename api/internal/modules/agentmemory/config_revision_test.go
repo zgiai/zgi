@@ -24,6 +24,20 @@ func TestConfigRevisionNormalizesLegacySlotShape(t *testing.T) {
 	}
 }
 
+func TestConfigRevisionKeepsRevisionsOfSlotsWithoutWriteRules(t *testing.T) {
+	// The revision of a slot without write rules must not change, or every
+	// published Agent's memory fence would stop matching.
+	plain := []RuntimeSlot{{Key: "profile", Name: "Profile", Description: "Stable user profile", MaxChars: 2000, Enabled: true}}
+	if got := ConfigRevision(true, false, plain); got != "a42104b798f466e34fa26fd6aaccd78850fd77dc7dc13d7430c72e91286b75c6" {
+		t.Fatalf("revision of a plain slot changed: %s", got)
+	}
+	readOnly := []RuntimeSlot{{Key: "profile", Name: "Profile", Description: "Stable user profile", MaxChars: 2000, Enabled: true, ReadOnly: true}}
+	manualOnly := []RuntimeSlot{{Key: "profile", Name: "Profile", Description: "Stable user profile", MaxChars: 2000, Enabled: true, ManualOnly: true}}
+	if ConfigRevision(true, false, readOnly) == ConfigRevision(true, false, plain) || ConfigRevision(true, false, manualOnly) == ConfigRevision(true, false, plain) {
+		t.Fatal("write rules do not change the revision")
+	}
+}
+
 func TestConfigRevisionIncludesDisabledSlots(t *testing.T) {
 	base := []RuntimeSlot{{Key: "profile", Enabled: true}}
 	withDisabled := append([]RuntimeSlot(nil), base...)

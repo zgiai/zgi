@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 )
 
 // The console manages many bound apps (ADR 0012): it pages and filters
@@ -342,7 +341,7 @@ func candidateOf(id uuid.UUID, agent runtimeAgentRecord, tags []CatalogTag) Agen
 		Name: agent.Name, Description: agent.Description, Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent),
 		Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
 		FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-		AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAppCapabilities(agent, presentation),
+		AgentMemoryEnabled: presentation.AgentMemoryEnabled, Capabilities: runtimeAppCapabilities(agent, presentation),
 		Tags: tags,
 	}
 }

@@ -49,7 +49,9 @@ type Service struct {
 		GetFileURL(context.Context, string) (string, error)
 	}
 	projectionRepairer DigitalHumanMemoryProjectionRepairer
-	now                func() time.Time
+	// previewExtractor runs the memory preview; it is optional.
+	previewExtractor MemoryExtractor
+	now              func() time.Time
 }
 
 // SetConnectorCatalog lets draft saves and publication admit Connector
@@ -96,6 +98,9 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	if err != nil {
 		return nil, applicationError(err, "digital_human.create")
 	}
+	if err := validateMemoryPolicy(request.MemoryPolicy); err != nil {
+		return nil, applicationError(err, "digital_human.create")
+	}
 	memoryPolicy, err := marshalPolicy(request.MemoryPolicy)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.create")
@@ -108,6 +113,10 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 	if err != nil {
 		return nil, applicationError(err, "digital_human.create")
 	}
+	setupRequirements, err := encodeSetupRequirements(setupRequirementsFromTemplate(request.TemplateID))
+	if err != nil {
+		return nil, applicationError(err, "digital_human.create")
+	}
 	now := s.now()
 	definitionID := uuid.New()
 	draftID := uuid.New()
@@ -116,7 +125,8 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 		ID: definitionID, WebAppID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID,
 		Name: request.Name, Avatar: request.Avatar, IconType: request.IconType, Icon: request.Icon, Description: request.Description,
 		Status: StatusDraft, AutonomyLevel: request.AutonomyLevel, Visibility: request.Visibility,
-		Revision: 1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
+		SetupRequirements: setupRequirements,
+		Revision:          1, CreatedBy: &actorID, UpdatedBy: &actorID, CreatedAt: now, UpdatedAt: now,
 	}
 	// New digital humans start with uploads off, like Agents; one created
 	// before this keeps its saved policy.
@@ -324,6 +334,15 @@ func (s *Service) Publish(ctx context.Context, scope Scope, id uuid.UUID, reques
 		}
 		if err := validatePublishable(draft); err != nil {
 			return err
+		}
+		// A DigitalHuman from a template publishes only once its draft has
+		// what the template requires (ADR 0023).
+		setup, err := setupStatusOf(ctx, tx, scope, definition, draft.ID)
+		if err != nil {
+			return err
+		}
+		if !setup.Complete {
+			return ErrSetupIncomplete
 		}
 		identity, err := identitySnapshot(definition)
 		if err != nil {
@@ -632,6 +651,9 @@ func applyDraftUpdate(draft *Version, request UpdateDraftRequest) error {
 		changed = true
 	}
 	if request.MemoryPolicy != nil {
+		if err := validateMemoryPolicy(*request.MemoryPolicy); err != nil {
+			return err
+		}
 		encoded, err := marshalPolicy(*request.MemoryPolicy)
 		if err != nil {
 			return err
@@ -936,6 +958,8 @@ func applicationError(err error, operation string) error {
 		code = AppCodePublishedImmutable
 	case errors.Is(err, ErrPublishInvalid):
 		code = AppCodePublishInvalid
+	case errors.Is(err, ErrSetupIncomplete):
+		code = AppCodeSetupIncomplete
 	case errors.Is(err, ErrVersionRestoreImpactChanged):
 		code = AppCodeVersionRestoreImpactChanged
 	case errors.Is(err, ErrDeleteBlocked):

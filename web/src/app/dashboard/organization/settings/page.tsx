@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { useT } from '@/i18n';
+import { ConnectorCommandRulesCard } from '@/components/organization/connector-command-rules-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -452,6 +453,7 @@ export default function OrganizationSettingsPage() {
             </div>
           </section>
         ) : null}
+        {canViewAdminManagement ? <ConnectorCommandRulesCard /> : null}
       </div>
 
       <ConfirmDialog

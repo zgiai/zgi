@@ -144,7 +144,12 @@ func (s *service) runPreparedToolLoop(
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
 	if len(runtimeTools) > 0 {
 		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
-		additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.PolicyMessage(enabledAgentMemorySlots(prepared.parts.AgentMemorySlots), proactiveAllowed))
+		if hasAgentMemoryRuntimeTool(runtimeTools) {
+			additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.FilePolicyMessage(proactiveAllowed))
+			if instructions := agentmemoryruntime.InstructionsMessage(prepared.parts.AgentMemoryInstructions); instructions != nil {
+				additionalSystemMessages = append(additionalSystemMessages, *instructions)
+			}
+		}
 	}
 	executionContext := s.skillExecutionContext(prepared)
 	scriptModel, _ := s.newSkillScriptModelChannel(
@@ -2039,6 +2044,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		executionContext.ConnectorIdentityResolver = s.connectorDigitalHumanRuntime
 		executionContext.ConnectorRunID = strings.TrimSpace(prepared.RunConfig.ConnectorRunID)
 		executionContext.ConnectorInteractive = prepared.RunConfig.ConnectorInteractive
+		executionContext.ConnectorRequesterID = strings.TrimSpace(prepared.RunConfig.ConnectorRequesterID)
 		if prepared.Caller.ID != nil {
 			executionContext.AppID = prepared.Caller.ID.String()
 		}
@@ -3453,7 +3459,6 @@ func contextualConsoleAgentsSkillMessageForResolved(prepared *PreparedChat, reso
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "delete_agents", "purpose": "delete multiple resolved visible/listed Agents as one governed frozen batch"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "get_agent_config", "purpose": "read one Agent's draft runtime config"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_config", "purpose": "patch supported draft runtime config fields; use add/remove binding fields for specific skill/knowledge/database/workflow bind or unbind changes"},
-		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_memory_slots", "purpose": "replace one Agent's draft memory slot list"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_knowledge_candidates", "purpose": "list knowledge bases in the target Agent workspace before binding"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_database_candidates", "purpose": "list databases in the target Agent workspace before binding tables"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_database_tables", "purpose": "list tables for one resolved database candidate before binding"},

@@ -463,10 +463,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		}
 		systemPrompt = rendered
 	}
-	systemPrompt, memoryMetadata, err := s.appendUserMemoryContext(ctx, scope, parts, systemPrompt)
-	if err != nil {
-		return nil, err
-	}
+	var err error
 	var resolvedSpec ModelSpec
 	var resolvedSpecOK bool
 	if s.modelSpecResolver != nil {
@@ -515,6 +512,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		branch := contextState.RawMessages
+		parts.AgentMemoryRecentUserMessages = recentUserQueries(branch, agentMemoryEvidenceWindow)
 		registerAttachmentReadFiles(parts, branch)
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
@@ -524,7 +522,6 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		result.RawMessages = contextState.RawMessages
-		result.Metadata = mergeUserMemoryMetadata(result.Metadata, memoryMetadata)
 		result.Metadata = mergeUserMemoryMetadata(result.Metadata, agentMemoryMetadata)
 		return result, nil
 	}
@@ -534,7 +531,6 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	if memoryContext := agentMemoryContextMessage(parts); memoryContext != nil {
 		messages = append(messages, *memoryContext)
 	}
-	contextMetadata = mergeUserMemoryMetadata(contextMetadata, memoryMetadata)
 	contextMetadata = mergeUserMemoryMetadata(contextMetadata, agentMemoryMetadata)
 	if parentID != nil && *parentID != uuid.Nil {
 		parent, err := s.repos.Message.GetScoped(ctx, *parentID, scope.OrganizationID, scope.AccountID)
@@ -546,6 +542,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			return nil, err
 		}
 		branch := state.RawMessages
+		parts.AgentMemoryRecentUserMessages = recentUserQueries(branch, agentMemoryEvidenceWindow)
 		registerAttachmentReadFiles(parts, branch)
 		if !shouldIsolateHistoryForCurrentTurn(parts) {
 			groups, err := s.historyMessageGroupsForCurrentRequest(ctx, branch, parts)
@@ -756,23 +753,11 @@ func executionModeRequiresFunctionCalling(mode string) bool {
 	}
 }
 
-func applyManagedUserMemoryPolicy(_ Caller, parts *chatRequestParts) {
-	if parts == nil {
-		return
-	}
-	// Account-scoped user memory is temporarily disabled for AIChat surfaces.
-	// Keep the policy centralized so new turns, regenerations, and continuations
-	// cannot re-enable the synchronous memory planner through persisted metadata
-	// or request/config overrides. Agent memory is managed independently.
-	parts.UseMemory = false
-}
-
 func applyCallerMemoryPolicy(caller Caller, parts *chatRequestParts) {
-	applyManagedUserMemoryPolicy(caller, parts)
+	applyAIChatMemoryPolicy(caller, parts)
 	if parts == nil || !isDigitalHumanCaller(caller.Type) {
 		return
 	}
-	parts.UseMemory = false
 	parts.AgentMemoryEnabled = false
 	parts.AgentMemoryAutoExtractionEnabled = false
 	parts.AgentMemoryToolsEnabled = false
@@ -798,7 +783,6 @@ func applyAgentMemoryToolsPolicy(parts *chatRequestParts) {
 		return
 	}
 	parts.AgentMemoryToolsEnabled = parts.AgentMemoryEnabled &&
-		len(enabledAgentMemorySlots(parts.AgentMemorySlots)) > 0 &&
 		globalAgentMemoryInlineToolsEnabled() &&
 		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
 }
@@ -906,62 +890,6 @@ func renderAIChatSystemPrompt(surface string) (string, error) {
 	return tmpl.Render(map[string]interface{}{
 		"Surface": normalizeAIChatSurface(surface),
 	})
-}
-
-func (s *service) appendUserMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string) (string, map[string]interface{}, error) {
-	if parts == nil || !parts.UseMemory {
-		return systemPrompt, nil, nil
-	}
-	if s.memoryService == nil {
-		return systemPrompt, map[string]interface{}{"user_memory": map[string]interface{}{"enabled": true, "available": false}}, nil
-	}
-	if manager, ok := s.memoryService.(interface {
-		EnsureRuntimeEnabled(context.Context, uuid.UUID) error
-	}); ok {
-		if err := manager.EnsureRuntimeEnabled(ctx, scope.AccountID); err != nil {
-			return "", nil, err
-		}
-	}
-	enabled, err := s.memoryService.IsEnabled(ctx, scope.AccountID)
-	if err != nil {
-		return "", nil, err
-	}
-	if !enabled {
-		return systemPrompt, map[string]interface{}{"user_memory": map[string]interface{}{"enabled": false, "available": false}}, nil
-	}
-	rendered, err := s.memoryService.RenderContext(ctx, scope.AccountID, userMemoryContextBudgetChars)
-	if err != nil {
-		return "", nil, err
-	}
-	metadata := map[string]interface{}{
-		"user_memory": map[string]interface{}{
-			"enabled":   true,
-			"available": strings.TrimSpace(rendered) != "",
-		},
-	}
-	if strings.TrimSpace(rendered) == "" {
-		return systemPrompt, metadata, nil
-	}
-	return strings.TrimSpace(systemPrompt) + "\n\n" + rendered, metadata, nil
-}
-
-func (s *service) isUserMemoryEnabled(ctx context.Context, accountID uuid.UUID) (bool, error) {
-	if s.memoryService == nil {
-		return false, nil
-	}
-	return s.memoryService.IsEnabled(ctx, accountID)
-}
-
-func boolMetadata(metadata map[string]interface{}, key string) bool {
-	if metadata == nil {
-		return false
-	}
-	value, ok := metadata[key]
-	if !ok {
-		return false
-	}
-	typed, ok := value.(bool)
-	return ok && typed
 }
 
 func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map[string]interface{}) map[string]interface{} {

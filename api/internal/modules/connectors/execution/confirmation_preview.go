@@ -29,7 +29,14 @@ type ConfirmationPreviewField struct {
 	LabelI18n catalog.LocalizedText `json:"label_i18n"`
 	Value     string                `json:"value"`
 	Truncated bool                  `json:"truncated"`
+	// Format is an optional presentation hint. ConfirmationPreviewFormatCommand
+	// marks a command line the client renders as code.
+	Format string `json:"format,omitempty"`
 }
+
+// ConfirmationPreviewFormatCommand marks a preview field whose value is the
+// exact command line an action runs.
+const ConfirmationPreviewFormatCommand = "command"
 
 // ConfirmationTargetReader resolves local, scoped conversation handles without
 // logging in, invoking the provider, or exposing a context token.
@@ -213,15 +220,18 @@ var serverOpsSSHServiceNamePattern = regexp.MustCompile(serverops.SystemdService
 
 // buildServerOpsSSHConfirmationPreview builds the closed, complete preview for
 // the SSH Server Operations connector. The preview is derived only from the
-// frozen operation arguments and the already-verified non-secret connection
-// identity; credentials, private keys, passphrases, and remote output are never
-// read or emitted.
+// frozen operation arguments, the already-verified non-secret connection
+// identity, and the connection's non-secret privilege evidence; credentials,
+// private keys, passphrases, and remote output are never read or emitted.
 //
-// The snapshot action declares no arguments, so an empty arguments map would
-// otherwise produce an unusable preview. It instead shows the fixed action and
-// pinned target. Every other action must supply exactly its declared arguments:
-// an unknown key, a wrong type, an out-of-range integer, or a malformed
-// service_name marks the preview incomplete rather than being normalized.
+// Every action, read or write, carries a Command field: the exact command line
+// it runs, rendered by serverops.CommandLine from the same pieces the
+// capability executes, so the approver sees what will run. A write action also
+// shows its Action. The snapshot action declares no arguments, so it shows the
+// fixed action and pinned target. Every other action must supply exactly its
+// declared arguments: an unknown key, a wrong type, an out-of-range integer, a
+// malformed service_name, or privilege evidence that does not belong to this
+// connection marks the preview incomplete rather than being normalized.
 func buildServerOpsSSHConfirmationPreview(request ExecutionRequest, connection core.PersonalConnection) *ConfirmationPreview {
 	preview := &ConfirmationPreview{Kind: "resource", Fields: []ConfirmationPreviewField{}, Complete: true}
 	preview.AccountName, _ = previewText(connection.Name, 128)
@@ -244,6 +254,11 @@ func buildServerOpsSSHConfirmationPreview(request ExecutionRequest, connection c
 	parameters := make(map[string]serverops.ParameterDescriptor, len(tool.Parameters))
 	for _, parameter := range tool.Parameters {
 		parameters[parameter.Name] = parameter
+	}
+	privilege, privilegeOK := serverOpsSSHPrivilege(connection, identity)
+	if !privilegeOK {
+		preview.Complete = false
+		return preview
 	}
 
 	switch tool.ActionID {
@@ -284,10 +299,63 @@ func buildServerOpsSSHConfirmationPreview(request ExecutionRequest, connection c
 			serverOpsSSHPreviewField("Lines", "行数", strconv.FormatInt(lines, 10)),
 			serverOpsSSHPreviewField("Since minutes", "时间范围（分钟）", strconv.FormatInt(sinceMinutes, 10)),
 		)
+	case serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload:
+		if !serverOpsSSHOnlyKeys(input, "service_name") {
+			preview.Complete = false
+			return preview
+		}
+		name, nameOK := serverOpsSSHServiceName(input, parameters)
+		if !nameOK {
+			preview.Complete = false
+			return preview
+		}
+		preview.Fields = append(preview.Fields,
+			serverOpsSSHPreviewField("Action", "动作", tool.ActionID),
+			serverOpsSSHPreviewField("Service", "服务", name),
+		)
+	case serverops.ActionCommandRun:
+		// The free-form command (ADR 0025) is shown whole in the Command field
+		// below; it runs as the SSH user, never with the connection privilege.
+		if !serverOpsSSHOnlyKeys(input, "command") {
+			preview.Complete = false
+			return preview
+		}
+		preview.Fields = append(preview.Fields,
+			serverOpsSSHPreviewField("Action", "动作", tool.ActionID),
+			serverOpsSSHPreviewField("Runs as", "执行身份", identity),
+		)
 	default:
 		preview.Complete = false
+		return preview
 	}
+
+	// The command line is rendered from the same validated input and the same
+	// builders the capability executes. Any disagreement fails closed.
+	command, err := serverops.CommandLine(tool.ActionID, input, privilege)
+	if err != nil {
+		preview.Complete = false
+		return preview
+	}
+	commandField := serverOpsSSHPreviewField("Command", "执行命令", command)
+	commandField.Format = ConfirmationPreviewFormatCommand
+	preview.Fields = append(preview.Fields, commandField)
 	return preview
+}
+
+// serverOpsSSHPrivilege returns the connection's privilege from its verified,
+// non-secret evidence. A connection verified before the privilege existed has
+// no SSH evidence and runs as the SSH user. Evidence that names another
+// identity or an unsupported privilege is rejected.
+func serverOpsSSHPrivilege(connection core.PersonalConnection, identity string) (serverops.Privilege, bool) {
+	if connection.ProviderEvidence == nil || connection.ProviderEvidence.ServerOps == nil {
+		return serverops.PrivilegeNone, true
+	}
+	evidence := connection.ProviderEvidence.ServerOps
+	privilege := serverops.Privilege(evidence.Privilege)
+	if evidence.Version != 1 || evidence.Identity == "" || evidence.Identity != identity || !privilege.Valid() {
+		return serverops.PrivilegeNone, false
+	}
+	return privilege, true
 }
 
 // serverOpsSSHTool resolves the declared tool contract for one action. The

@@ -13,7 +13,7 @@ import (
 // JSON, a tool name, or a completed model call cannot attest business success.
 func connectorTerminalStateDecision(evidence map[string]interface{}, answer string) *terminalStateGuardDecision {
 	states := map[string]string{}
-	details := map[string]string{}
+	details := map[string]connectortools.InvocationEvidence{}
 	for index, record := range terminalStateGuardInvocations(evidence) {
 		proof, native := connectortools.Evidence(record)
 		if !native {
@@ -31,10 +31,8 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 		}
 		states[key] = state
 		if state != "successful" && state != "pending" && proof.Title != "" {
-			details[key] = proof.Title
-			if proof.Summary != "" {
-				details[key] += "：" + proof.Summary
-			}
+			proof.Status = state
+			details[key] = proof
 		}
 	}
 	counts := map[string]int{}
@@ -62,20 +60,34 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 	}
 	hint := evidenceStringFromAny(evidence["latest_user_request"]) + evidenceStringFromAny(evidence["user_request"]) + answer
 	finalAnswer := connectorOutcomeAnswer(hint, counts)
-	if counts["rejected"] > 0 || counts["in_progress"] > 0 {
-		parts := []string{}
-		for _, record := range terminalStateGuardInvocations(evidence) {
-			proof, native := connectortools.Evidence(record)
-			if native {
-				if detail := details[proof.Key()]; detail != "" {
-					parts = append(parts, detail)
-					delete(details, proof.Key())
-				}
-			}
+	// Name every operation that did not succeed and why, in the order it ran,
+	// so the fixed answer still tells the person what to fix.
+	chinese := connectorAnswerIsChinese(hint)
+	parts := []string{}
+	for _, record := range terminalStateGuardInvocations(evidence) {
+		proof, native := connectortools.Evidence(record)
+		if !native {
+			continue
 		}
-		if len(parts) > 0 {
-			finalAnswer = strings.Join(parts, "\n") + "\n" + finalAnswer
+		if detail, exists := details[proof.Key()]; exists {
+			parts = append(parts, connectorOutcomeDetail(detail, chinese))
+			delete(details, proof.Key())
 		}
+	}
+	if len(parts) > 0 {
+		finalAnswer = strings.Join(parts, "\n") + "\n" + finalAnswer
+	}
+	// When every operation that did not succeed was cancelled by the person or
+	// stopped before it was submitted (for example a change an unattended run
+	// may not make), nothing ran that the model could misreport, so the facts
+	// are appended to its own answer instead of replacing it: one step that did
+	// not run must not erase the evidence and analysis gathered by every other
+	// step. A failed, unknown, rejected, or in-progress outcome keeps the strict
+	// replacement.
+	notRun := counts["cancelled"] + counts["unavailable"]
+	onlyNotRun := notRun > 0 && counts["successful"]+notRun == len(states) && missing == 0
+	if candidate := strings.TrimSpace(answer); onlyNotRun && candidate != "" {
+		finalAnswer = candidate + "\n\n" + finalAnswer
 	}
 	return &terminalStateGuardDecision{Path: terminalStateGuardAccepted, Reason: "Connector outcomes do not prove every operation succeeded", FinalAnswer: finalAnswer}
 }
@@ -83,8 +95,12 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 // Once dispatched, a non-success result ends unattended business execution.
 // Argument validation before dispatch has no operation reference and can still
 // use ordinary tool correction. Pending confirmation follows its own protocol.
+// A change that needs a person is blocked before submission in an unattended
+// run, so it ran nothing: the run goes on and the model reports what it found
+// (see connectorNeedsPerson); the final guard still names the blocked call.
 func connectorTerminalStep(trace skills.SkillTrace, callID string, runtimeState map[string]interface{}) *skillStepResult {
-	if !trace.ConnectorNative || trace.Result["operation"] == nil || trace.Result["state"] == "requires_confirmation" {
+	if !trace.ConnectorNative || trace.Result["operation"] == nil || trace.Result["state"] == "requires_confirmation" ||
+		connectorNeedsPerson(trace.Result) {
 		return nil
 	}
 	current := map[string]interface{}{"kind": "tool_call", "runtime_source": "connector", "result": trace.Result}
@@ -106,14 +122,38 @@ func connectorTerminalStep(trace skills.SkillTrace, callID string, runtimeState 
 	return &result
 }
 
-func connectorOutcomeAnswer(hint string, counts map[string]int) string {
-	chinese := false
+func connectorAnswerIsChinese(hint string) bool {
 	for _, r := range hint {
 		if unicode.Is(unicode.Han, r) {
-			chinese = true
-			break
+			return true
 		}
 	}
+	return false
+}
+
+// connectorOutcomeDetail is one line for an operation that did not succeed:
+// its title and the safe, localized reason of its error code, or the
+// presentation summary when there is no code.
+func connectorOutcomeDetail(proof connectortools.InvocationEvidence, chinese bool) string {
+	locale := "en-US"
+	if chinese {
+		locale = "zh-Hans"
+	}
+	reason := ""
+	if proof.ErrorCode != "" {
+		reason = connectortools.SafeTerminalSummary(proof.Status, proof.ErrorCode, locale)
+	}
+	if reason == "" {
+		reason = proof.Summary
+	}
+	if reason == "" {
+		return proof.Title
+	}
+	return proof.Title + "：" + reason
+}
+
+func connectorOutcomeAnswer(hint string, counts map[string]int) string {
+	chinese := connectorAnswerIsChinese(hint)
 	if counts["rejected"] > 0 && counts["unknown"] == 0 && counts["in_progress"] == 0 {
 		if chinese {
 			return "有操作在提交前被拒绝，本轮已停止后续操作。"
@@ -150,4 +190,35 @@ func connectorOutcomeAnswer(hint string, counts map[string]int) string {
 		answer += " Unknown results do not establish success; check the execution records before deciding whether to retry."
 	}
 	return answer
+}
+
+// connectorNeedsPerson reports whether a Connector result was blocked only
+// because no person was present to approve it. Nothing was submitted, and
+// trying again cannot succeed without a person.
+func connectorNeedsPerson(result map[string]interface{}) bool {
+	if !strings.EqualFold(strings.TrimSpace(stringFromInterface(result["state"])), "blocked") {
+		return false
+	}
+	code := stringFromInterface(result["error_code"])
+	if presentation, ok := result["connector_presentation"].(connectortools.OperationPresentation); ok && code == "" {
+		code = presentation.ErrorCode
+	}
+	if presentation, ok := result["connector_presentation"].(*connectortools.OperationPresentation); ok && presentation != nil && code == "" {
+		code = presentation.ErrorCode
+	}
+	if presentation, ok := result["connector_presentation"].(map[string]interface{}); ok && code == "" {
+		code = stringFromInterface(presentation["error_code"])
+	}
+	return code == "connector_confirmation_required"
+}
+
+// connectorNeedsPersonResult is the tool result the model receives for such a
+// call: the blocked result and what to do instead of retrying.
+func connectorNeedsPersonResult(result map[string]interface{}) map[string]interface{} {
+	payload := make(map[string]interface{}, len(result)+1)
+	for key, value := range result {
+		payload[key] = value
+	}
+	payload["next_step"] = "This operation needs a person's approval and did not run. Do not try it again in this run; finish your report and list it as a recommended change for a person to approve."
+	return payload
 }

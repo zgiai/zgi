@@ -228,6 +228,15 @@ func TestConnectorBackgroundAuthorizerUsesOnlyRestoredTaskIdentityAndLiveSnapsho
 	if allowed, err = authorizer.AuthorizeBackground(ctx, request); err == nil || allowed {
 		t.Fatalf("infrastructure error did not fail closed: %v, %v", allowed, err)
 	}
+	// A trusted binding (ADR 0028) needs the restored task run, not a grant.
+	trusted := request
+	trusted.Trusted = true
+	if allowed, err = authorizer.AuthorizeBackground(ctx, trusted); err != nil || !allowed {
+		t.Fatalf("trusted task run = %v, %v", allowed, err)
+	}
+	if allowed, err = authorizer.AuthorizeBackground(t.Context(), trusted); err == nil || allowed {
+		t.Fatalf("trust replaced the restored task run: %v, %v", allowed, err)
+	}
 	request.Connection.OwnerAccountID = uuid.New()
 	if allowed, err = authorizer.AuthorizeBackground(ctx, request); err == nil || allowed {
 		t.Fatalf("caller identity overrode connection owner: %v, %v", allowed, err)
@@ -445,3 +454,27 @@ func backgroundTaskEvent(t *testing.T, organizationID, workspaceID, employeeID, 
 
 func stringPointer(value string) *string     { return &value }
 func uuidPointer(value uuid.UUID) *uuid.UUID { return &value }
+
+func TestBackgroundGrantsForSSHOnlyCoverInspection(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	ownerID := uuid.New()
+	target := connectorcore.TargetRef{Type: connectorcore.TargetTypeDigitalHuman, ID: uuid.NewString(), Scope: connectorcore.ScopePublished,
+		VersionID: uuid.NewString(), BindingInstanceID: uuid.NewString()}
+	definition := catalog.ServerOpsSSHDefinition()
+	operations := []connectorcore.Identifier{}
+	for _, operation := range definition.Operations {
+		operations = append(operations, connectorcore.Identifier(operation.ID))
+	}
+	constraint := connectorcore.OwnerConstraint(ownerID, operations)
+	constraint.TargetBoundaries = []connectorcore.TargetBoundary{{Type: target.Type, ID: target.ID, Scope: string(target.Scope), VersionID: target.VersionID}}
+	binding := connectorcore.TargetBinding{Constraint: constraint, Target: target}
+	connection := connectorcore.PersonalConnection{Constraint: connectorcore.OwnerConstraint(ownerID, operations), UsableOperationIDs: operations}
+	if !backgroundOperationsAllowed([]string{"server.system.snapshot", "server.journal.tail", "server.command.run"}, definition, binding, connection, ownerID, now) {
+		t.Fatal("an inspection grant was refused")
+	}
+	for _, write := range []string{"server.service.restart", "server.service.start", "server.service.stop", "server.service.reload"} {
+		if backgroundOperationsAllowed([]string{"server.system.snapshot", write}, definition, binding, connection, ownerID, now) {
+			t.Fatalf("a task grant covered %s", write)
+		}
+	}
+}

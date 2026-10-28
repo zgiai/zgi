@@ -258,7 +258,8 @@ func CheckCompatibleUpdate(current, candidate Definition) error {
 		left, leftErr := digestJSON(canonicalAuthentication(credentialBase(current)))
 		right, rightErr := digestJSON(canonicalAuthentication(credentialBase(candidate)))
 		if leftErr != nil || rightErr != nil || (left != right &&
-			!reviewedFeishuTemplateReduction(current, candidate) && !reviewedFeishuTemplateExpansion(current, candidate)) {
+			!reviewedFeishuTemplateReduction(current, candidate) && !reviewedFeishuTemplateExpansion(current, candidate) &&
+			!reviewedServerOpsSSHPrivilegeExpansion(current, candidate)) {
 			return incompatible("authentication_contract", "")
 		}
 	}
@@ -289,7 +290,7 @@ func CheckCompatibleUpdate(current, candidate Definition) error {
 		if err != nil {
 			return err
 		}
-		if left != right {
+		if left != right && !reviewedServerOpsSSHSkillRelabel(current, operation, replacement) {
 			return incompatible("operation_contract", operation.ID)
 		}
 		if current.UsesCredentials() {

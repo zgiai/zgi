@@ -37,6 +37,8 @@ type HandlerService interface {
 	CreatePersonaTemplate(context.Context, Scope, CreatePersonaTemplateRequest) (*PersonaTemplate, error)
 	GetPersonaTemplate(context.Context, Scope, uuid.UUID) (*PersonaTemplate, error)
 	ListPersonaTemplates(context.Context, Scope, ListQuery) (*PersonaTemplateListResult, error)
+	ListTemplates(context.Context, Scope, string, string) (*TemplateCatalog, error)
+	SetupStatus(context.Context, Scope, uuid.UUID) (*SetupStatus, error)
 	UpdatePersonaTemplate(context.Context, Scope, uuid.UUID, UpdatePersonaTemplateRequest) (*PersonaTemplate, error)
 	DeletePersonaTemplate(context.Context, Scope, uuid.UUID, int64) error
 	ListDraftResourceBindings(context.Context, Scope, uuid.UUID) (*DraftResourceBindings, error)
@@ -44,7 +46,9 @@ type HandlerService interface {
 	ListMemories(context.Context, Scope, uuid.UUID, MemoryListQuery) (*MemoryListResult, error)
 	UpdateMemoryState(context.Context, Scope, uuid.UUID, UpdateMemoryStateRequest) (*MemoryState, error)
 	ApplyMemoryProposal(context.Context, Scope, uuid.UUID, MemoryProposalRequest) (*MemoryMutationResult, error)
-	RescopeMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryRescopeRequest) (*MemoryMutationResult, error)
+	SetMemoryVisibility(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryVisibilityRequest) (*MemoryMutationResult, error)
+	ApplyMemoryBulk(context.Context, Scope, uuid.UUID, MemoryBulkRequest) (*MemoryBulkResult, error)
+	PreviewMemory(context.Context, Scope, uuid.UUID, MemoryPreviewRequest) (*MemoryPreviewResult, error)
 	UndoMemory(context.Context, Scope, uuid.UUID, uuid.UUID, MemoryUndoRequest) (*MemoryMutationResult, error)
 	RepairMemoryProjection(context.Context, Scope, uuid.UUID) (*MemoryProjectionRepairResult, error)
 }
@@ -87,9 +91,15 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.GET("/:id/memory", h.ListMemories)
 	group.PATCH("/:id/memory/state", h.UpdateMemoryState)
 	group.POST("/:id/memory/proposals", h.ApplyMemoryProposal)
-	group.POST("/:id/memory/:memory_id/rescope", h.RescopeMemory)
+	group.POST("/:id/memory/:memory_id/visibility", h.SetMemoryVisibility)
+	group.POST("/:id/memory/bulk", h.ApplyMemoryBulk)
+	group.POST("/:id/memory/preview", h.PreviewMemory)
 	group.POST("/:id/memory/operations/:operation_id/undo", h.UndoMemory)
 	group.POST("/:id/memory/repair", h.RepairMemoryProjection)
+	group.GET("/:id/setup", h.SetupStatus)
+
+	router.GET("/digital-human-memory-templates", h.ListMemoryInstructionsTemplates)
+	router.GET("/digital-human-templates", h.ListTemplates)
 
 	templates := router.Group("/digital-human-persona-templates")
 	templates.POST("", h.CreatePersonaTemplate)
@@ -154,27 +164,70 @@ func (h *Handler) ApplyMemoryProposal(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusOK, result)
 }
 
-// RescopeMemory moves one memory to another class or business scope.
-func (h *Handler) RescopeMemory(c *gin.Context) {
+// SetMemoryVisibility makes one memory visible to everyone or internal only.
+func (h *Handler) SetMemoryVisibility(c *gin.Context) {
 	scope, id, ok := h.scopeAndID(c)
 	if !ok {
 		return
 	}
 	memoryID, err := uuid.Parse(strings.TrimSpace(c.Param("memory_id")))
 	if err != nil || memoryID == uuid.Nil {
-		h.writeError(c, applicationError(ErrInvalidRequest, "digital_human.memory.rescope"))
+		h.writeError(c, applicationError(ErrInvalidRequest, "digital_human.memory.visibility"))
 		return
 	}
-	var request MemoryRescopeRequest
+	var request MemoryVisibilityRequest
 	if !h.decode(c, &request) {
 		return
 	}
-	result, err := h.service.RescopeMemory(c.Request.Context(), scope, id, memoryID, request)
+	result, err := h.service.SetMemoryVisibility(c.Request.Context(), scope, id, memoryID, request)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// ApplyMemoryBulk changes the visibility of, or invalidates, several memories.
+func (h *Handler) ApplyMemoryBulk(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var request MemoryBulkRequest
+	if !h.decode(c, &request) {
+		return
+	}
+	result, err := h.service.ApplyMemoryBulk(c.Request.Context(), scope, id, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// PreviewMemory shows which memory a sample conversation would produce under
+// the draft's or the given memory instructions. It writes nothing.
+func (h *Handler) PreviewMemory(c *gin.Context) {
+	scope, id, ok := h.scopeAndID(c)
+	if !ok {
+		return
+	}
+	var request MemoryPreviewRequest
+	if !h.decode(c, &request) {
+		return
+	}
+	result, err := h.service.PreviewMemory(c.Request.Context(), scope, id, request)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
+// ListMemoryInstructionsTemplates returns the memory instruction templates in
+// the requested locale.
+func (h *Handler) ListMemoryInstructionsTemplates(c *gin.Context) {
+	writeDigitalHumanData(c, http.StatusOK, MemoryInstructionsTemplates(c.Query("locale")))
 }
 
 // UndoMemory restores a still-current memory mutation within the undo window.
@@ -423,6 +476,29 @@ func (h *Handler) CreatePersonaTemplate(c *gin.Context) {
 	writeDigitalHumanData(c, http.StatusCreated, result)
 }
 
+// SetupStatus returns the setup checklist of a DigitalHuman's draft
+// (ADR 0023).
+func (h *Handler) SetupStatus(c *gin.Context) {
+	h.withScopedID(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
+		return h.service.SetupStatus(ctx, scope, id)
+	})
+}
+
+// ListTemplates returns the built-in and saved DigitalHuman templates
+// (ADR 0022).
+func (h *Handler) ListTemplates(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListTemplates(c.Request.Context(), scope, c.Query("locale"), c.Query("search"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	writeDigitalHumanData(c, http.StatusOK, result)
+}
+
 func (h *Handler) ListPersonaTemplates(c *gin.Context) {
 	scope, ok := h.scope(c)
 	if !ok {
@@ -654,10 +730,9 @@ func parseMemoryListQuery(c *gin.Context) (MemoryListQuery, error) {
 	}
 	return MemoryListQuery{
 		Page: base.Page, PageSize: base.PageSize, Search: base.Search,
-		Class:     memoryruntime.MemoryClass(c.Query("memory_class")),
-		Type:      memoryruntime.MemoryType(c.Query("memory_type")),
-		ScopeType: memoryruntime.MemoryScopeType(c.Query("scope_type")),
-		ScopeID:   c.Query("scope_id"), Status: MemoryStatus(c.Query("status")), Source: c.Query("source"),
+		Type:   memoryruntime.MemoryType(c.Query("memory_type")),
+		Status: MemoryStatus(c.Query("status")), Source: c.Query("source"),
+		Visibility: MemoryVisibility(c.Query("visibility")), Origin: MemoryOrigin(c.Query("origin")), OriginChannelID: c.Query("origin_channel_id"),
 	}, nil
 }
 

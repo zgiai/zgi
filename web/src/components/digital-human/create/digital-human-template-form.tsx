@@ -20,6 +20,11 @@ import type { DigitalHumanResourceCandidate } from '@/services/types/digital-hum
 import type { ModelItem } from '@/services/types/model';
 import { cn } from '@/lib/utils';
 import { DigitalHumanConnectorCreateSection } from './digital-human-connector-create-picker';
+import { DigitalHumanServerStep } from './digital-human-server-step';
+import {
+  SkillAvailabilityNotice,
+  type SkillCodeExecution,
+} from '@/components/skills/skill-availability-notice';
 import type { DigitalHumanCreateConnectorSelection } from './digital-human-connector-create-model';
 import { DigitalHumanTemplatePreview } from './digital-human-template-preview';
 
@@ -46,6 +51,14 @@ interface DigitalHumanTemplateFormProps {
   connectorSelections: readonly DigitalHumanCreateConnectorSelection[];
   /** Commits the selection made in the Connector picker. */
   onChangeConnectorSelections: (selections: DigitalHumanCreateConnectorSelection[]) => void;
+  /** The server connector the template needs, shown as its own step. */
+  serverConnectorId?: string;
+  /** Skills the template asks for, reported when missing or deleted. */
+  expectedSkillIds?: readonly string[];
+  /** Where a selected custom skill's scripts get an execution environment. */
+  codeExecution?: SkillCodeExecution;
+  /** Refreshes the candidates after a skill was enabled from the form. */
+  onSkillEnabled?: (skillId: string) => void | Promise<unknown>;
   value: DigitalHumanTemplateFormValue;
   onChange: (patch: Partial<DigitalHumanTemplateFormValue>) => void;
   models: ModelItem[];
@@ -84,6 +97,10 @@ export function DigitalHumanTemplateForm({
   onRetrySkills,
   connectorSelections,
   onChangeConnectorSelections,
+  serverConnectorId,
+  expectedSkillIds,
+  codeExecution,
+  onSkillEnabled,
   value,
   onChange,
   models,
@@ -338,16 +355,37 @@ export function DigitalHumanTemplateForm({
                       ))}
                     </div>
                   )}
+                  {skillsLoading ? null : (
+                    <div className="mt-3">
+                      <SkillAvailabilityNotice
+                        offeredIds={skillCandidates.map(candidate => candidate.resource_id)}
+                        expectedIds={expectedSkillIds}
+                        selectedIds={selectedSkillIds}
+                        codeExecution={codeExecution}
+                        onEnabled={onSkillEnabled}
+                        showDisabledList={false}
+                      />
+                    </div>
+                  )}
                 </div>
               </section>
             </div>
 
             {/* The same generic Connector picker for every template and the
                 custom entry: it only records the choice; creation binds it. */}
+            {serverConnectorId ? (
+              <DigitalHumanServerStep
+                connectorId={serverConnectorId}
+                selections={connectorSelections}
+                onChangeSelections={onChangeConnectorSelections}
+                disabled={submitting}
+              />
+            ) : null}
             <DigitalHumanConnectorCreateSection
               selections={connectorSelections}
               onChangeSelections={onChangeConnectorSelections}
               disabled={submitting}
+              hiddenConnectorIds={serverConnectorId ? [serverConnectorId] : []}
             />
 
             <DigitalHumanSkillPickerDialog
@@ -361,6 +399,14 @@ export function DigitalHumanTemplateForm({
               loading={skillsLoading}
               error={skillsError}
               onRetry={onRetrySkills}
+              expectedIds={expectedSkillIds}
+              codeExecution={codeExecution}
+              onSkillEnabled={async skillId => {
+                await onSkillEnabled?.(skillId);
+                setPendingSkillIds(current =>
+                  current.includes(skillId) ? current : [...current, skillId]
+                );
+              }}
             />
 
             <section className="rounded-xl border">

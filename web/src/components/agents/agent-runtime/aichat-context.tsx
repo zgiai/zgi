@@ -685,7 +685,7 @@ function buildAgentRuntimeAIChatContextItems(
       )}`,
       description: summarizeNames(
         enabledMemorySlots.map(slot => `${slot.key}: ${slot.description}`),
-        'No enabled memory slots.'
+        'No enabled memory blocks.'
       ),
       source: 'Agent Runtime',
       metadata: {

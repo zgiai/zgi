@@ -85,6 +85,7 @@ const messages: AutomationMessages = {
   triggerSource: {
     scheduler: '定时触发',
     manual_run: '手动触发',
+    server_event: '服务器告警',
     retry: '重试',
   },
   schedule: {

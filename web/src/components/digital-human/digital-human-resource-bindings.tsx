@@ -41,6 +41,10 @@ import {
   type DigitalHumanSkillSourceFilter,
 } from '@/components/digital-human/digital-human-skill-picker';
 import {
+  SkillAvailabilityNotice,
+  type SkillCodeExecution,
+} from '@/components/skills/skill-availability-notice';
+import {
   ResourceSelectionCardIcon,
   ResourceSelectionDialog,
   ResourceSelectionEmptyState,
@@ -81,7 +85,14 @@ interface BindingSectionDefinition {
   icon: ComponentType<{ className?: string }>;
 }
 
-export function DigitalHumanResourceBindings({ id }: { id: string }) {
+export function DigitalHumanResourceBindings({
+  id,
+  codeExecution,
+}: {
+  id: string;
+  /** The digital human's code execution environment, for script skills. */
+  codeExecution?: SkillCodeExecution;
+}) {
   const t = useT('digitalHumans');
   const { locale } = useLocale();
   const permissions = useAccountPermissions();
@@ -558,6 +569,20 @@ export function DigitalHumanResourceBindings({ id }: { id: string }) {
           }}
           onChangeSearch={setSearch}
         >
+          {activeDefinition.key === 'skills' ? (
+            <div className="mb-3">
+              <SkillAvailabilityNotice
+                offeredIds={(candidatesQuery.data?.data?.items ?? []).map(
+                  candidate => candidate.resource_id
+                )}
+                selectedIds={pendingItems
+                  .filter(item => item.type === 'skill')
+                  .map(item => item.resource_id)}
+                codeExecution={codeExecution}
+                onEnabled={() => candidatesQuery.refetch()}
+              />
+            </div>
+          ) : null}
           <ResourceCandidateContent
             section={activeDefinition.key}
             databaseStep={databaseStep}

@@ -1,6 +1,7 @@
 package bindings
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -27,5 +28,31 @@ func TestDigitalHumanExplicitEditRejectsOtherSurfacesAndNewBindings(t *testing.T
 				t.Fatalf("host-only edit admitted invalid context: %v", err)
 			}
 		})
+	}
+}
+
+func TestReplacedDigitalHumanConstraintTakesTheEditedApprovalPolicy(t *testing.T) {
+	owner := uuid.New()
+	before := core.OwnerConstraint(owner, []core.Identifier{"server.system.snapshot", "server.command.run"})
+	edited := core.OwnerConstraint(owner, []core.Identifier{"server.command.run"})
+	edited.AuthorizationMode = core.AuthorizationModeReadOnlyAuto
+	replaced, err := replacedDigitalHumanConstraint(before, edited)
+	if err != nil || replaced.AuthorizationMode != core.AuthorizationModeReadOnlyAuto ||
+		len(replaced.AllowedOperationIDs) != 1 || replaced.AllowedOperationIDs[0] != "server.command.run" {
+		t.Fatalf("replacedDigitalHumanConstraint() = %#v, %v", replaced, err)
+	}
+	edited.AuthorizationMode = core.AuthorizationModeAsk
+	if replaced, err = replacedDigitalHumanConstraint(replaced, edited); err != nil || replaced.AuthorizationMode != core.AuthorizationModeAsk {
+		t.Fatalf("switching back to ask = %#v, %v", replaced, err)
+	}
+	edited.AuthorizationMode = core.AuthorizationModeTrustedUnattended
+	edited.AuthorizationConnectionRevision, edited.AuthorizationCredentialVersion, edited.AuthorizationContractDigest = 3, 2, strings.Repeat("a", 64)
+	if replaced, err = replacedDigitalHumanConstraint(before, edited); err != nil || !replaced.TrustedUnattended() ||
+		replaced.AuthorizationConnectionRevision != 3 || replaced.AuthorizationCredentialVersion != 2 || replaced.AuthorizationContractDigest != edited.AuthorizationContractDigest {
+		t.Fatalf("trust lost its pinned snapshot: %#v, %v", replaced, err)
+	}
+	edited.AuthorizationMode = core.AuthorizationModeDirect
+	if replaced, err = replacedDigitalHumanConstraint(before, edited); err != nil || replaced.AuthorizationMode != core.AuthorizationModeAsk {
+		t.Fatalf("an edit granted direct authorization: %#v, %v", replaced, err)
 	}
 }

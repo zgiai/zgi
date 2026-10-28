@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Builds on: ADR 0002, ADR 0004, ADR 0006, ADR 0007, ADR 0008
+- Amended: 2026-10-27, after memory lost its classes, types, and scopes (ADR 0015, ADR 0017, ADR 0019)
 
 ## Context
 
@@ -13,7 +14,7 @@ DigitalHumans and agents produce files and documents, but nothing keeps them as 
 - No model tool publishes or shares a result on purpose. Sharing happens only as a side effect of a run's reply.
 - Task reports (ADR 0008) reserve a `files` column, but it is always empty.
 - The organization has a file manager (`upload_files`) and a knowledge base (`datalibrary`). Neither models versions, provenance, task visibility, or revocable sharing.
-- DigitalHumans already keep cross-session behavior in memory (ADR 0002, ADR 0004). Memory has classes (self and business), types (identity, experience, decision, fact, and others), business scopes (workspace, project, customer, campaign, channel), and a source-trust policy.
+- DigitalHumans already keep cross-session behavior in memory (ADR 0002, ADR 0004). Since ADR 0015 and ADR 0019, a DigitalHuman's own memory is one set of files (`/me/`) with a visibility (everyone or internal) and evidence rules; it has no classes or business scopes.
 - External end users (ADR 0006) need the same results without ever seeing another user's or the team's.
 
 ## Decision
@@ -25,12 +26,12 @@ Cross-session persistence covers three different things, kept in three places:
 | Kind | What it is | Used by | Lives in |
 |---|---|---|---|
 | Artifact | A deliverable with versions, comments, and shares | People who read, review, and distribute it | The new artifact center |
-| Rule | A constraint on how the DigitalHuman works, such as "write weekly reports in this structure" | The DigitalHuman in later runs | Memory, under the existing trust policy |
+| Rule | A constraint on how the DigitalHuman works, such as "write weekly reports in this structure" | The DigitalHuman in later runs | The DigitalHuman's own memory, under its evidence and visibility rules |
 | Knowledge | Reference material | Retrieval | The knowledge base |
 
 They are connected by explicit conversions, never merged:
 
-- **Use as template:** an accepted artifact version creates a rule memory that references it. The rule passes the same source-trust policy as any other memory.
+- **Use as template:** an accepted artifact version adds a line to the DigitalHuman's own memory (`/me/`) that names the artifact and version, such as "Weekly reports follow the structure of artifact X, version 3." The line is ordinary memory: it takes the artifact's visibility (internal unless the artifact is application public), needs the same evidence as any other write, and operators see and remove it on the long-term memory page. The artifact version stays the source; the memory only points to it.
 - **Add to knowledge base:** an artifact version is copied into the knowledge base as a document asset.
 - **Save to files:** an artifact version is copied into the file manager.
 
@@ -65,7 +66,6 @@ An artifact is scoped by:
 - **Application:** its type (`digital_human` or `agent`) and identifier.
 - **Owner:** an account, an API end user, the workspace, or the application itself.
 - **Visibility:** owner only, team, or application public.
-- **An optional business scope:** project, customer, or campaign, reusing the memory scope vocabulary.
 
 Artifacts are stored by owner, not by conversation, so they persist across sessions: the same owner reaches them from any conversation.
 
@@ -169,7 +169,7 @@ DigitalHumans write and revise documents. People mostly read, comment, and send 
 4. **Breadth:**
    - the console-wide center and "My artifacts" in the WebApp;
    - external API endpoints and the `artifact.published` webhook;
-   - conversion to rule memory, to knowledge, and to files;
+   - conversion to a template line in the DigitalHuman's memory, to knowledge, and to files;
    - image and PDF comments, occasional human editing, full-text search;
    - the application public tier, privacy mode, and quotas.
 

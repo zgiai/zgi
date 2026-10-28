@@ -26,7 +26,7 @@ type providerEvidenceRecord struct {
 
 func (providerEvidenceRecord) TableName() string { return "connector_connection_provider_evidence" }
 func writeProviderEvidence(ctx context.Context, tx *gorm.DB, c core.PersonalConnection) error {
-	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) && !isSocialEvidenceConnection(c) {
+	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) && !isSocialEvidenceConnection(c) && !isServerOpsSSHConnection(c) {
 		return nil
 	}
 	if c.ProviderEvidence == nil {
@@ -36,6 +36,10 @@ func writeProviderEvidence(ctx context.Context, tx *gorm.DB, c core.PersonalConn
 	if isSocialEvidenceConnection(c) {
 		if !validSocialEvidence(c, value.Social) {
 			return invalidInputError("social account evidence identity")
+		}
+	} else if isServerOpsSSHConnection(c) {
+		if !validServerOpsEvidence(c, value.ServerOps) {
+			return invalidInputError("server operations evidence identity")
 		}
 	} else if isMailConnection(c) {
 		if value.Mail == nil || c.ExternalAccountID == nil || value.Mail.AuthenticatedLogin != *c.ExternalAccountID || value.Mail.Provider != c.ConnectorID.String() || value.Mail.IdentityKind != "authenticated_login" || !value.Mail.CredentialVerified || len(value.Mail.Operations) > 4 {
@@ -56,7 +60,7 @@ func writeProviderEvidence(ctx context.Context, tx *gorm.DB, c core.PersonalConn
 	return tx.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "connection_id"}}, DoUpdates: clause.AssignmentColumns([]string{"credential_version", "evidence", "verified_at"})}).Create(&record).Error
 }
 func loadProviderEvidence(ctx context.Context, db *gorm.DB, c core.PersonalConnection) (core.PersonalConnection, error) {
-	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) && !isSocialEvidenceConnection(c) {
+	if c.AuthMethodID != "feishu.app_credentials" && !isMailConnection(c) && !isMessagingConnection(c) && !isSocialEvidenceConnection(c) && !isServerOpsSSHConnection(c) {
 		return c, nil
 	}
 	var record providerEvidenceRecord
@@ -74,8 +78,25 @@ func loadProviderEvidence(ctx context.Context, db *gorm.DB, c core.PersonalConne
 	if isSocialEvidenceConnection(c) && !validSocialEvidence(c, value.Social) {
 		return core.PersonalConnection{}, internalError("invalid social account evidence")
 	}
+	if isServerOpsSSHConnection(c) && !validServerOpsEvidence(c, value.ServerOps) {
+		return core.PersonalConnection{}, internalError("invalid server operations evidence")
+	}
 	c.ProviderEvidence = value.Clone()
 	return c, nil
+}
+
+// isServerOpsSSHConnection reports whether c is the exact SSH Server
+// Operations integration identity.
+func isServerOpsSSHConnection(c core.PersonalConnection) bool {
+	return c.ConnectorID.String() == catalog.ServerOpsSSHConnectorID && c.ProviderID.String() == catalog.ServerOpsSSHProviderID &&
+		c.DriverID.String() == catalog.ServerOpsSSHDriverID && c.AuthMethodID.String() == catalog.ServerOpsSSHAuthMethodID
+}
+
+// validServerOpsEvidence accepts only the non-secret SSH evidence of this
+// connection: its own account identity and a supported privilege.
+func validServerOpsEvidence(c core.PersonalConnection, e *core.ServerOpsEvidence) bool {
+	return e != nil && e.Version == 1 && c.ExternalAccountID != nil && e.Identity == *c.ExternalAccountID &&
+		(e.Privilege == "" || e.Privilege == catalog.ServerOpsSSHPrivilegeSudo)
 }
 
 func isSocialEvidenceConnection(c core.PersonalConnection) bool {

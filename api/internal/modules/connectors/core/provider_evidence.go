@@ -8,6 +8,7 @@ type ProviderEvidence struct {
 	Social                   *SocialEvidence    `json:"social,omitempty"`
 	Mail                     *MailEvidence      `json:"mail,omitempty"`
 	Messaging                *MessagingEvidence `json:"messaging,omitempty"`
+	ServerOps                *ServerOpsEvidence `json:"server_ops,omitempty"`
 	Region                   string             `json:"region"`
 	AppID                    string             `json:"app_id"`
 	AppName                  string             `json:"app_name"`
@@ -39,8 +40,21 @@ func (value *ProviderEvidence) Clone() *ProviderEvidence {
 		copy.Operations = append([]OperationEvidence{}, value.Messaging.Operations...)
 		result.Messaging = &copy
 	}
+	if value.ServerOps != nil {
+		copy := *value.ServerOps
+		result.ServerOps = &copy
+	}
 	result.GrantedScopes = append([]string{}, value.GrantedScopes...)
 	return &result
+}
+
+// ServerOpsEvidence records the non-secret facts of a verified SSH Server
+// Operations credential that an approval preview needs: the account identity
+// and the chosen privilege ("" or "sudo"). It never carries a secret.
+type ServerOpsEvidence struct {
+	Version   int    `json:"version"`
+	Identity  string `json:"identity"`
+	Privilege string `json:"privilege"`
 }
 
 // SocialEvidence records provider-observed managed accounts at credential

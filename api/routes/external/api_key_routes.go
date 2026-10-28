@@ -8,7 +8,6 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
@@ -22,7 +21,6 @@ import (
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -36,7 +34,7 @@ import (
 )
 
 // RegisterAPIKeyRoutes registers external API routes with API key authentication
-func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memory.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, connectorDispatcher connectordispatch.Dispatcher, connectorRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorCatalog connectorexecution.DefinitionCatalog, extras ...APIKeyRouteExtras) {
+func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, fileService interfaces.FileService, contentExtractor workflow_file.ContentExtractor, quotaService interfaces.QuotaService, enterpriseService interfaces.OrganizationService, llmClient client.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, resourcePermissionService interfaces.ResourcePermissionService, engineFactory *graph_engine.EngineFactory, manifestResolver skills.ToolGovernanceManifestResolver, connectorDispatcher connectordispatch.Dispatcher, connectorRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorCatalog connectorexecution.DefinitionCatalog, extras ...APIKeyRouteExtras) {
 	// Create repositories
 	workflowRepo := workflow.NewWorkflowRepository(db)
 	workflowRunLogRepo := workflow.NewWorkflowRunLogRepository(db)
@@ -72,12 +70,8 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		internalWorkflowHandler.SetDiagnoser(diagnosis.NewDiagnoser(context.Background(), llmClientTyped))
 	}
 
-	agentMemoryService := agentmemory.NewService(db)
 	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
-	var runtimeAgentMemory any = agentMemoryService
-	if relationshipmemory.RuntimeEnabled() {
-		runtimeAgentMemory = userRelationshipMemory
-	}
+	var runtimeAgentMemory any = userRelationshipMemory
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,
@@ -87,7 +81,6 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		contentExtractor,
 		enterpriseService,
 		newExternalSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolver),
-		memoryService,
 		runtimeAgentMemory,
 		connectorRuntime, connectorConfirmationStore,
 		zgimarket.RuntimeResolver(),
@@ -96,7 +89,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 	if graphFlowService != nil {
 		defaultModelResolver = graphFlowService.DefaultModelSvc
 	}
-	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	agentService := agents.NewAgentsService(agentsRepo, accountService, nil, workflowService, chatRuntimeService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	agentHandler := agents.NewAgentsHandler(agentService, nil, accountService, enterpriseService, db, chatRuntimeService)
 	agentHandler.SetFileService(fileService)
 	agentHandler.SetWorkflowContinuationRunner(internalWorkflowHandler)
@@ -198,6 +191,10 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		externalGroup.DELETE("/agents/memory/:key", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryValue))
 		externalGroup.DELETE("/agents/memory", withAgentAPIKeyContext(agentHandler.DeleteAllAPIKeyAgentMemory))
 		externalGroup.POST("/agents/memory/operations/:operation_id/undo", withAgentAPIKeyContext(agentHandler.UndoAPIKeyAgentMemoryOperation))
+		externalGroup.GET("/agents/memory/history", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemoryHistory))
+		externalGroup.POST("/agents/memory/history/:version_id/revert", withAgentAPIKeyContext(agentHandler.RevertAPIKeyAgentMemoryVersion))
+		externalGroup.GET("/agents/memory/archive", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemoryArchive))
+		externalGroup.DELETE("/agents/memory/archive/:entry_id", withAgentAPIKeyContext(agentHandler.DeleteAPIKeyAgentMemoryArchiveEntry))
 		externalGroup.GET("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.GetAPIKeyAgentMemorySettings))
 		externalGroup.PATCH("/agents/memory/settings", withAgentAPIKeyContext(agentHandler.PatchAPIKeyAgentMemorySettings))
 		externalGroup.GET("/agents/conversations", withAgentAPIKeyContext(agentHandler.ListAPIKeyAgentRuntimeConversations))

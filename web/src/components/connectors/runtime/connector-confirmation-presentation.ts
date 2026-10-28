@@ -39,7 +39,8 @@ export function parseConnectorConfirmationPresentation(
     const labels = object(field?.label_i18n);
     if (
       !field ||
-      !only(field, ['label', 'label_i18n', 'value', 'truncated']) ||
+      !only(field, ['label', 'label_i18n', 'value', 'truncated', 'format']) ||
+      (field.format !== undefined && field.format !== 'command') ||
       !text(field.label, 128) ||
       !text(field.value, 8192) ||
       typeof field.truncated !== 'boolean' ||
@@ -54,6 +55,7 @@ export function parseConnectorConfirmationPresentation(
       label_i18n: labels as Record<string, string>,
       value: field.value,
       truncated: field.truncated,
+      ...(field.format === 'command' ? { format: 'command' as const } : {}),
     });
   }
   return {

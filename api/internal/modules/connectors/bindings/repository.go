@@ -200,11 +200,10 @@ func (repository *GormRepository) upsertBindingWithLifecycle(ctx context.Context
 			}
 			// Only the explicitly selected operation subset is replaceable. Existing
 			// expiry, deny reasons, owner and host boundaries remain restrictive.
-			constraint, err := core.IntersectConstraints(before.Constraint, prepared.Constraint)
+			constraint, err := replacedDigitalHumanConstraint(before.Constraint, prepared.Constraint)
 			if err != nil {
 				return err
 			}
-			constraint.AllowedOperationIDs = append([]core.Identifier{}, prepared.Constraint.AllowedOperationIDs...)
 			prepared.Constraint = constraint
 			if err := requireAuthorizedDigitalHumanConnection(ctx, tx, prepared); err != nil {
 				return err
@@ -436,7 +435,7 @@ func (repository *GormRepository) upsertBinding(ctx context.Context, organizatio
 			// mode itself must support an intentional direct grant or revocation;
 			// otherwise a legacy ask_each_time row could never be changed.
 			narrowed.AuthorizationMode = prepared.Constraint.AuthorizationModeValue()
-			if narrowed.AuthorizationMode == core.AuthorizationModeDirect {
+			if narrowed.PinnedAuthorization() {
 				narrowed.AuthorizationConnectionRevision = prepared.Constraint.AuthorizationConnectionRevision
 				narrowed.AuthorizationCredentialVersion = prepared.Constraint.AuthorizationCredentialVersion
 				narrowed.AuthorizationContractDigest = prepared.Constraint.AuthorizationContractDigest

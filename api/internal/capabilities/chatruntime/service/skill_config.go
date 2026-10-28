@@ -254,7 +254,6 @@ func filterDigitalHumanSkillIDs(input []string) []string {
 	forbidden := map[string]struct{}{
 		skills.SkillAgentManagement: {},
 		skills.SkillAgentMemory:     {},
-		skills.SkillUserMemory:      {},
 	}
 	out := make([]string, 0, len(input))
 	for _, id := range input {
@@ -919,7 +918,7 @@ func runConfigHasWorkflowBindings(runConfig *RunConfig) bool {
 }
 
 func runConfigHasAgentMemory(runConfig *RunConfig) bool {
-	return runConfig != nil && runConfig.AgentMemoryEnabled && len(enabledAgentMemorySlots(runConfig.AgentMemorySlots)) > 0
+	return runConfig != nil && runConfig.AgentMemoryEnabled
 }
 
 func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {

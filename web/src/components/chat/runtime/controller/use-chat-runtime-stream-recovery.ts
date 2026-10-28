@@ -19,6 +19,7 @@ import {
 import type { AIChatRuntimeTransport } from '@/components/chat/transports/aichat-transport';
 import {
   createStreamingAIChatMessage,
+  replaceAIChatConversation,
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
 import {
@@ -62,9 +63,32 @@ export function useChatRuntimeStreamRecovery({
   return useCallback(
     async (
       conversationId: string,
-      options: { conversation?: AIChatConversation; mode?: AIChatRecoveryMode } = {}
+      options: {
+        conversation?: AIChatConversation;
+        mode?: AIChatRecoveryMode;
+        refresh?: boolean;
+      } = {}
     ) => {
       if (!conversationId) return;
+      // A server-side continuation (for example after a connector decision)
+      // changes the conversation outside this client, so the cached runtime
+      // status cannot decide whether a stream is running.
+      if (options.refresh && !options.conversation) {
+        try {
+          const conversation = await transportRef.current.refreshConversation(conversationId);
+          setControllerState(current => ({
+            ...current,
+            conversations: replaceAIChatConversation(current.conversations, conversation),
+          }));
+          if (conversation.runtime_status !== 'streaming' || !conversation.active_message_id) {
+            refreshMessagesSilently(conversationId);
+            return;
+          }
+          options = { ...options, conversation };
+        } catch {
+          // Fall back to the cached conversation; a later refresh still recovers.
+        }
+      }
 
       const connect = (attempt: number) => {
         const currentState = stateRef.current;

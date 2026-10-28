@@ -1,154 +1,75 @@
 /**
  * Digital human templates for the creation flow.
  *
- * Each template declares the workspace skills it offers at creation. Skill ids
- * are resolved against the backend's real binding candidates when the digital
- * human is created, so a template never claims a capability the workspace cannot
- * actually provide and only ever binds user-selected skills the backend judged
- * available.
- *
- * The operations template seeds no skill because no server-operations skill
- * exists yet; it still lets the user bind one or more Connector connections in
- * the generic create form, and each connection stays usable only after it is
- * verified in Connector Center and bound to the digital human.
+ * Templates come from the API (ADR 0022): built-in ones in the current
+ * language, then the workspace's saved ones. Each declares the skills it binds
+ * and whether it needs a Connector connection; skill ids are resolved against
+ * the backend's real binding candidates when the digital human is created, so a
+ * template never claims a capability the workspace cannot provide.
  *
  * IMPORTANT: this module must stay free of runtime imports (type-only imports
  * are erased) so `scripts/test-digital-human-create-flow.mjs` can load it with
  * Node's type stripping.
  */
 
-export type DigitalHumanTemplateId = 'fileGeneration' | 'opsSpecialist';
+import type {
+  DigitalHumanResourceCandidate,
+  DigitalHumanTemplate,
+} from '../../../services/types/digital-human';
 
-export interface DigitalHumanTemplateSkill {
-  /** Real skill id, matched against `draft/binding-candidates?type=skill`. */
-  id: string;
-  /** i18n key describing what the skill gives the digital human. */
-  labelKey: string;
-}
-
-export interface DigitalHumanTemplateDefaults {
-  autonomyLevel: 'supervised';
-  visibility: 'workspace';
-  memoryEnabled: boolean;
-  manualTrigger: boolean;
-}
-
-export interface DigitalHumanTemplate {
-  id: DigitalHumanTemplateId;
-  titleKey: string;
-  shortDescriptionKey: string;
-  responsibilityKey: string;
-  personaKey: string;
-  /** Ordered i18n leaf keys; the order defines what the UI shows and writes. */
-  tagKeys: readonly string[];
-  goalKeys: readonly string[];
-  /**
-   * Complete ordered rule set: the shared safety rules first, then the
-   * template-specific rules.
-   */
-  ruleKeys: readonly string[];
-  /** Skills bound right after creation. */
-  skills: readonly DigitalHumanTemplateSkill[];
-  /** Text-avatar background colour, written into the create request. */
-  iconBackground: string;
-  defaults: DigitalHumanTemplateDefaults;
-}
-
-/**
- * Resolves one translated string by key.
- *
- * Text resolution is injected so the template and payload modules stay pure and
- * unit-testable without a React or i18n runtime.
- */
-export type RoleTextResolver = (key: string) => string;
+export type { DigitalHumanTemplate };
 
 export const CUSTOM_TEMPLATE_ID = 'custom';
-
-const TEMPLATES_PREFIX = 'createFlow.templates';
-const SHARED_RULES_PREFIX = 'createFlow.sharedRules';
-
-function templateKey(id: DigitalHumanTemplateId, field: string): string {
-  return `${TEMPLATES_PREFIX}.${id}.${field}`;
-}
-
-/**
- * Safety rules every template inherits, so a freshly created digital human never
- * starts without the credential and confirmation guardrails.
- */
-export const SHARED_RULE_KEYS: readonly string[] = [
-  `${SHARED_RULES_PREFIX}.credentials`,
-  `${SHARED_RULES_PREFIX}.authorization`,
-  `${SHARED_RULES_PREFIX}.verifyResult`,
-  `${SHARED_RULES_PREFIX}.stateBlockers`,
-];
-
-const DEFAULT_TEMPLATE_DEFAULTS: DigitalHumanTemplateDefaults = {
-  autonomyLevel: 'supervised',
-  visibility: 'workspace',
-  memoryEnabled: false,
-  manualTrigger: true,
-};
-
-interface TemplateSeed {
-  id: DigitalHumanTemplateId;
-  iconBackground: string;
-  skills: readonly DigitalHumanTemplateSkill[];
-  tagNames: readonly string[];
-  goalNames: readonly string[];
-  ruleNames: readonly string[];
-}
-
-const TEMPLATE_SEEDS: readonly TemplateSeed[] = [
-  {
-    id: 'fileGeneration',
-    iconBackground: '#4f46e5',
-    skills: [
-      {
-        id: 'file-generator',
-        labelKey: templateKey('fileGeneration', 'skills.fileGenerator'),
-      },
-    ],
-    tagNames: ['fileOutput', 'structure', 'deliveryNotes'],
-    goalNames: ['confirmFormat', 'produceFile', 'explainOutput', 'fallbackFormat'],
-    ruleNames: ['confirmBeforeGenerating'],
-  },
-  {
-    // No server-operations skill exists, so the template seeds none. The user can
-    // still bind one or more Connector connections in the generic create form;
-    // each connection stays usable only after it is verified and bound.
-    id: 'opsSpecialist',
-    iconBackground: '#0f766e',
-    skills: [],
-    tagNames: ['serverInspection', 'evidenceFirst', 'readOnlySafety'],
-    goalNames: ['confirmTarget', 'collectSnapshot', 'assessEnvironment', 'recommendNext'],
-    ruleNames: ['verifiedReadOnly', 'targetBoundary', 'noOverclaim'],
-  },
-];
-
-export const DIGITAL_HUMAN_TEMPLATES: readonly DigitalHumanTemplate[] = TEMPLATE_SEEDS.map(seed => ({
-  id: seed.id,
-  titleKey: templateKey(seed.id, 'title'),
-  shortDescriptionKey: templateKey(seed.id, 'shortDescription'),
-  responsibilityKey: templateKey(seed.id, 'responsibility'),
-  personaKey: templateKey(seed.id, 'persona'),
-  tagKeys: seed.tagNames.map(name => templateKey(seed.id, `tags.${name}`)),
-  goalKeys: seed.goalNames.map(name => templateKey(seed.id, `goals.${name}`)),
-  ruleKeys: [
-    ...SHARED_RULE_KEYS,
-    ...seed.ruleNames.map(name => templateKey(seed.id, `rules.${name}`)),
-  ],
-  skills: seed.skills,
-  iconBackground: seed.iconBackground,
-  defaults: DEFAULT_TEMPLATE_DEFAULTS,
-}));
 
 export function isCustomTemplateId(value: string | null | undefined): boolean {
   return value === CUSTOM_TEMPLATE_ID;
 }
 
 export function findDigitalHumanTemplate(
+  templates: readonly DigitalHumanTemplate[],
   value: string | null | undefined
 ): DigitalHumanTemplate | null {
   if (!value) return null;
-  return DIGITAL_HUMAN_TEMPLATES.find(template => template.id === value) ?? null;
+  return templates.find(template => template.id === value) ?? null;
+}
+
+/** The name a new digital human starts with: a saved one's, else the title. */
+export function templateStartingName(template: DigitalHumanTemplate): string {
+  return template.identity_name?.trim() || template.title;
+}
+
+/** What keeps a template from creating a working digital human. */
+export interface TemplateRequirementGap {
+  /** Required skills the workspace does not offer. */
+  missingSkillIds: string[];
+  /** The template needs a Connector connection and none is selected. */
+  connectorMissing: boolean;
+}
+
+/**
+ * Check a template's needs against what the workspace offers and what the
+ * user selected. Creation is refused while anything is missing, so a digital
+ * human never starts claiming a capability it does not have.
+ */
+export function templateRequirementGap(
+  template: DigitalHumanTemplate | null,
+  candidates: readonly DigitalHumanResourceCandidate[],
+  selectedSkillIds: readonly string[],
+  connectorCount: number
+): TemplateRequirementGap | null {
+  if (!template) return null;
+  const offered = new Set(
+    candidates
+      .filter(candidate => candidate.available !== false)
+      .map(candidate => candidate.resource_id)
+  );
+  const selected = new Set(selectedSkillIds);
+  const missingSkillIds = template.skills
+    .filter(skill => skill.required && (!offered.has(skill.id) || !selected.has(skill.id)))
+    .map(skill => skill.id);
+  const connectorMissing =
+    template.connectors.some(connector => connector.required) && connectorCount === 0;
+  return missingSkillIds.length > 0 || connectorMissing
+    ? { missingSkillIds, connectorMissing }
+    : null;
 }

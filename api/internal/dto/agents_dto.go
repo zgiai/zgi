@@ -251,31 +251,33 @@ type AgentRuntimeSurfaceGrantSubjectDetail struct {
 }
 
 type AgentRuntimeModeConfig struct {
-	FileUploadPolicy                 *chatfile.Policy            `json:"file_upload_policy,omitempty"`
-	EnabledSkillIDs                  []string                    `json:"enabled_skill_ids"`
-	ExecutionRuntime                 *AgentExecutionRuntime      `json:"execution_runtime,omitempty"`
-	UseMemory                        bool                        `json:"use_memory"`
-	AgentMemoryEnabled               bool                        `json:"agent_memory_enabled"`
-	AgentMemoryAutoExtractionEnabled bool                        `json:"agent_memory_auto_extraction_enabled"`
-	AgentMemorySlots                 []AgentMemorySlotConfig     `json:"agent_memory_slots,omitempty"`
-	FileUploadEnabled                bool                        `json:"file_upload_enabled"`
-	HomeTitle                        string                      `json:"home_title"`
-	OpeningStatement                 string                      `json:"opening_statement"`
-	InputPlaceholder                 string                      `json:"input_placeholder"`
-	ThemeColor                       string                      `json:"theme_color"`
-	SuggestedQuestions               []string                    `json:"suggested_questions"`
-	KnowledgeDatasetIDs              []string                    `json:"knowledge_dataset_ids"`
-	KnowledgeBoundByAccountID        string                      `json:"knowledge_bound_by_account_id,omitempty"`
-	KnowledgeBoundAtUnix             int64                       `json:"knowledge_bound_at_unix,omitempty"`
-	KnowledgeRetrievalConfig         map[string]interface{}      `json:"knowledge_retrieval_config"`
-	DatabaseBindings                 []AgentDatabaseBinding      `json:"database_bindings,omitempty"`
-	DatabaseBoundByAccountID         string                      `json:"database_bound_by_account_id,omitempty"`
-	DatabaseBoundAtUnix              int64                       `json:"database_bound_at_unix,omitempty"`
-	WorkflowBindings                 []AgentWorkflowBinding      `json:"workflow_bindings,omitempty"`
-	WorkflowBoundByAccountID         string                      `json:"workflow_bound_by_account_id,omitempty"`
-	WorkflowBoundAtUnix              int64                       `json:"workflow_bound_at_unix,omitempty"`
-	ConnectorBindings                []AgentConnectorBinding     `json:"connector_bindings,omitempty"`
-	BindingAuthorizations            []AgentBindingAuthorization `json:"binding_authorizations,omitempty"`
+	FileUploadPolicy                 *chatfile.Policy        `json:"file_upload_policy,omitempty"`
+	EnabledSkillIDs                  []string                `json:"enabled_skill_ids"`
+	ExecutionRuntime                 *AgentExecutionRuntime  `json:"execution_runtime,omitempty"`
+	UseMemory                        bool                    `json:"use_memory"`
+	AgentMemoryEnabled               bool                    `json:"agent_memory_enabled"`
+	AgentMemoryAutoExtractionEnabled bool                    `json:"agent_memory_auto_extraction_enabled"`
+	AgentMemorySlots                 []AgentMemorySlotConfig `json:"agent_memory_slots,omitempty"`
+	// AgentMemoryInstructions is the builder's guidance on what to remember.
+	AgentMemoryInstructions   string                      `json:"agent_memory_instructions,omitempty"`
+	FileUploadEnabled         bool                        `json:"file_upload_enabled"`
+	HomeTitle                 string                      `json:"home_title"`
+	OpeningStatement          string                      `json:"opening_statement"`
+	InputPlaceholder          string                      `json:"input_placeholder"`
+	ThemeColor                string                      `json:"theme_color"`
+	SuggestedQuestions        []string                    `json:"suggested_questions"`
+	KnowledgeDatasetIDs       []string                    `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID string                      `json:"knowledge_bound_by_account_id,omitempty"`
+	KnowledgeBoundAtUnix      int64                       `json:"knowledge_bound_at_unix,omitempty"`
+	KnowledgeRetrievalConfig  map[string]interface{}      `json:"knowledge_retrieval_config"`
+	DatabaseBindings          []AgentDatabaseBinding      `json:"database_bindings,omitempty"`
+	DatabaseBoundByAccountID  string                      `json:"database_bound_by_account_id,omitempty"`
+	DatabaseBoundAtUnix       int64                       `json:"database_bound_at_unix,omitempty"`
+	WorkflowBindings          []AgentWorkflowBinding      `json:"workflow_bindings,omitempty"`
+	WorkflowBoundByAccountID  string                      `json:"workflow_bound_by_account_id,omitempty"`
+	WorkflowBoundAtUnix       int64                       `json:"workflow_bound_at_unix,omitempty"`
+	ConnectorBindings         []AgentConnectorBinding     `json:"connector_bindings,omitempty"`
+	BindingAuthorizations     []AgentBindingAuthorization `json:"binding_authorizations,omitempty"`
 }
 
 // AgentExecutionRuntime records the requested execution environment for an Agent.
@@ -548,13 +550,18 @@ type AgentWorkflowStartInput struct {
 }
 
 type AgentMemorySlotConfig struct {
-	ID               string `json:"id,omitempty"`
-	Key              string `json:"key"`
-	Name             string `json:"name,omitempty"`
-	Description      string `json:"description"`
-	MaxChars         int    `json:"max_chars"`
-	Enabled          bool   `json:"enabled"`
-	SortOrder        int    `json:"sort_order"`
+	ID          string `json:"id,omitempty"`
+	Key         string `json:"key"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description"`
+	MaxChars    int    `json:"max_chars"`
+	Enabled     bool   `json:"enabled"`
+	SortOrder   int    `json:"sort_order"`
+	// ReadOnly blocks are written only by builders and users, never the model.
+	ReadOnly bool `json:"read_only"`
+	// AutoWrite allows automatic writes when the Agent enables them. Absent
+	// means true, as in configurations that predate it.
+	AutoWrite        *bool  `json:"auto_write,omitempty"`
 	CreatedAt        int64  `json:"created_at,omitempty"`
 	UpdatedAt        int64  `json:"updated_at,omitempty"`
 	CreatedAtUnix    int64  `json:"created_at_unix,omitempty"`
@@ -585,10 +592,11 @@ type AgentMemoryValuesResponse struct {
 }
 
 type AgentMemoryConfigRequest struct {
-	Enabled               bool                    `json:"enabled"`
-	AutoExtractionEnabled bool                    `json:"auto_extraction_enabled"`
-	Slots                 []AgentMemorySlotConfig `json:"slots"`
-	ConfigRevision        string                  `json:"config_revision,omitempty"`
+	Enabled               bool   `json:"enabled"`
+	AutoExtractionEnabled bool   `json:"auto_extraction_enabled"`
+	ConfigRevision        string `json:"config_revision,omitempty"`
+	// Instructions replaces the memory instructions when present.
+	Instructions *string `json:"instructions,omitempty"`
 }
 
 type AgentMemoryConfigResponse struct {
@@ -596,6 +604,7 @@ type AgentMemoryConfigResponse struct {
 	AutoExtractionEnabled bool                    `json:"auto_extraction_enabled"`
 	Slots                 []AgentMemorySlotConfig `json:"slots"`
 	ConfigRevision        string                  `json:"config_revision"`
+	Instructions          string                  `json:"instructions"`
 }
 
 type UpdateAgentMemoryValueRequest struct {
@@ -621,6 +630,7 @@ type AgentConfigRequest struct {
 	AgentMemoryAutoExtractionEnabled bool                             `json:"agent_memory_auto_extraction_enabled"`
 	AgentMemorySlots                 *[]AgentMemorySlotConfig         `json:"agent_memory_slots,omitempty"`
 	AgentMemoryConfigRevision        string                           `json:"agent_memory_config_revision,omitempty"`
+	AgentMemoryInstructions          string                           `json:"agent_memory_instructions"`
 	FileUpload                       bool                             `json:"file_upload_enabled"`
 	HomeTitle                        string                           `json:"home_title"`
 	OpeningStatement                 string                           `json:"opening_statement"`
@@ -674,6 +684,7 @@ type AgentConfigResponse struct {
 	AgentMemoryAutoExtractionEnabled bool                             `json:"agent_memory_auto_extraction_enabled"`
 	AgentMemorySlots                 []AgentMemorySlotConfig          `json:"agent_memory_slots"`
 	AgentMemoryConfigRevision        string                           `json:"agent_memory_config_revision,omitempty"`
+	AgentMemoryInstructions          string                           `json:"agent_memory_instructions"`
 	FileUpload                       bool                             `json:"file_upload_enabled"`
 	HomeTitle                        string                           `json:"home_title"`
 	OpeningStatement                 string                           `json:"opening_statement"`

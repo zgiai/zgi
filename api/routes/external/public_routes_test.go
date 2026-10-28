@@ -58,7 +58,7 @@ func TestPublicDocumentationExposesDigitalHumanExternalContract(t *testing.T) {
 func TestAgentGovernanceContinuationIsRegisteredBehindAPIKeyAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	RegisterAPIKeyRoutes(router.Group("/api"), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAPIKeyRoutes(router.Group("/api"), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	path := "/api/v1/agents/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue"
 	found := false
 	for _, route := range router.Routes() {

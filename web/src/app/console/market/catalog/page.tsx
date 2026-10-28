@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { KeyRound, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,7 +44,13 @@ function flatten(categories: MarketCategory[]): MarketCategory[] {
 export default function ZgiMarketCatalogPage() {
   const t = useT();
   const { locale } = useLocale();
-  const [kind, setKind] = useState<MarketListingKind | ''>('');
+  // A link can open the catalog on one kind, e.g. ?kind=skill from a skill picker.
+  const requestedKind = useSearchParams().get('kind');
+  const [kind, setKind] = useState<MarketListingKind | ''>(() =>
+    marketListingKinds.includes(requestedKind as MarketListingKind)
+      ? (requestedKind as MarketListingKind)
+      : ''
+  );
   const [category, setCategory] = useState(allCategories);
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);

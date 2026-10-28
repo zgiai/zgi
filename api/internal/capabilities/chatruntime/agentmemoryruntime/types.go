@@ -8,16 +8,15 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 )
 
-const (
-	ToolMutate = "mutate_user_relationship_memory"
-
-	legacyToolUpdate = "update_agent_memory"
-	legacyToolClear  = "clear_agent_memory"
-)
-
 var ErrInvalidInput = errors.New("invalid input")
 
 var zeroUUID = uuid.Nil
+
+// scopeMissing reports whether a request lacks the memory it is for. Personal
+// memory (AI chat, ADR 0021) has no workspace.
+func scopeMissing(workspaceID, agentID uuid.UUID, personal bool) bool {
+	return (workspaceID == zeroUUID && !personal) || agentID == zeroUUID
+}
 
 type Slot struct {
 	Key         string `json:"key"`
@@ -26,6 +25,10 @@ type Slot struct {
 	MaxChars    int    `json:"max_chars"`
 	Enabled     bool   `json:"enabled"`
 	SortOrder   int    `json:"sort_order"`
+	// ReadOnly blocks are shown to the model but never written by it.
+	ReadOnly bool `json:"read_only,omitempty"`
+	// ManualOnly blocks take explicit user requests only.
+	ManualOnly bool `json:"manual_only,omitempty"`
 }
 
 type State struct {
@@ -43,18 +46,6 @@ type State struct {
 	ContextError                 string
 }
 
-type ToolOperation struct {
-	Action   string `json:"action"`
-	Key      string `json:"key"`
-	Content  string `json:"content,omitempty"`
-	Evidence string `json:"evidence"`
-	Mode     string `json:"mode"`
-}
-
-type ToolArguments struct {
-	Operations []ToolOperation `json:"operations"`
-}
-
 type MemoryService interface {
 	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
@@ -68,11 +59,13 @@ type RelationshipSettingsService interface {
 }
 
 type ContextRequest struct {
-	SystemPrompt   string
-	Enabled        bool
-	Slots          []Slot
-	MemoryService  MemoryService
-	WorkspaceID    uuid.UUID
+	SystemPrompt  string
+	Enabled       bool
+	Slots         []Slot
+	MemoryService MemoryService
+	WorkspaceID   uuid.UUID
+	// Personal memory has no workspace (AI chat, ADR 0021).
+	Personal       bool
 	AgentID        uuid.UUID
 	UserID         uuid.UUID
 	UserScope      string
@@ -89,8 +82,10 @@ type ContextResult struct {
 }
 
 type MutationRequest struct {
-	MemoryService     MemoryService
-	WorkspaceID       uuid.UUID
+	MemoryService MemoryService
+	WorkspaceID   uuid.UUID
+	// Personal memory has no workspace (AI chat, ADR 0021).
+	Personal          bool
 	AgentID           uuid.UUID
 	UserID            uuid.UUID
 	UserScope         string
@@ -99,6 +94,14 @@ type MutationRequest struct {
 	MutationMetadata  agentmemory.MutationMetadata
 	LatestUserMessage string
 	ProactiveAllowed  bool
+	// RecentUserMessages are earlier user messages in the conversation that
+	// memory_edit evidence may quote; CallID keeps one call's operations apart
+	// from another's in the same turn.
+	RecentUserMessages []string
+	CallID             string
+	// Archive keeps text moved out of a full file in the user's archive
+	// (ADR 0014); nil when the memory store has no archive.
+	Archive func(ctx context.Context, content, sourceKey string) error
 }
 
 type MutationResult struct {
@@ -122,6 +125,8 @@ func RuntimeSlots(input []Slot) []agentmemory.RuntimeSlot {
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   slot.SortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  slot.ManualOnly,
 		})
 	}
 	return out

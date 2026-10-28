@@ -17,7 +17,6 @@ import (
 	credentialcrypto "github.com/zgiai/zgi/api/internal/infra/credentialcrypto"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -30,6 +29,7 @@ import (
 	connectorbackgroundauth "github.com/zgiai/zgi/api/internal/modules/connectors/backgroundauth"
 	connectorbindings "github.com/zgiai/zgi/api/internal/modules/connectors/bindings"
 	connectorcatalog "github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
+	connectorcommandrules "github.com/zgiai/zgi/api/internal/modules/connectors/commandrules"
 	connectorconnections "github.com/zgiai/zgi/api/internal/modules/connectors/connections"
 	connectorcredentials "github.com/zgiai/zgi/api/internal/modules/connectors/credentials"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
@@ -68,6 +68,7 @@ import (
 	pluginrunner_service "github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
 	promptsmodule "github.com/zgiai/zgi/api/internal/modules/prompts"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/shared/adapters"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/socialops"
@@ -98,7 +99,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
 	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
 	filegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/filegenerator"
@@ -277,6 +277,7 @@ type ServiceContainer struct {
 	digitalHumanCredentialCipher         credentialcrypto.CredentialCipher
 	connectorCandidateVerifier           *connectorproviders.Runtime
 	connectorServerOpsService            *serverops.Service
+	connectorCommandRules                *connectorcommandrules.Service
 	connectorServerOpsSSHClient          *connectorserveropsssh.Client
 	connectorRiskResolver                *connectorexecution.TrustedRiskResolver
 	connectorExecutionService            *connectorexecution.Service
@@ -300,8 +301,7 @@ type ServiceContainer struct {
 	// Legacy external integrations
 
 	// Account memory
-	memoryService      *memory.Service
-	agentMemoryService *agentmemory.Service
+	agentMemoryService *relationshipmemory.AgentAdapter
 
 	// Knowledge retrieval for builtin knowledge tools
 	knowledgeRetrievalService *dataset_service.KnowledgeRetrievalService
@@ -1483,9 +1483,19 @@ func (c *ServiceContainer) GetConnectorExecutionService() *connectorexecution.Se
 		if err != nil {
 			panic(fmt.Sprintf("initialize Connector execution service: %v", err))
 		}
-		c.connectorExecutionService = executionService.WithBackgroundAuthorizer(connectorBackgroundAuthorizationProxy{container: c})
+		c.connectorExecutionService = executionService.WithBackgroundAuthorizer(connectorBackgroundAuthorizationProxy{container: c}).
+			WithCommandRules(c.GetConnectorCommandRules())
 	}
 	return c.connectorExecutionService
+}
+
+// GetConnectorCommandRules returns the organization server command rules
+// (ADR 0029).
+func (c *ServiceContainer) GetConnectorCommandRules() *connectorcommandrules.Service {
+	if c.connectorCommandRules == nil {
+		c.connectorCommandRules = connectorcommandrules.NewService(c.db)
+	}
+	return c.connectorCommandRules
 }
 
 // GetConnectorExecutionRouter owns the single native invocation claim.
@@ -1523,13 +1533,6 @@ func (c *ServiceContainer) GetToolEngine() *tools.ToolEngine {
 	return c.toolEngine
 }
 
-func (c *ServiceContainer) GetMemoryService() *memory.Service {
-	if c.memoryService == nil {
-		c.memoryService = memory.NewService(c.db)
-	}
-	return c.memoryService
-}
-
 func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.KnowledgeRetrievalService {
 	if c.knowledgeRetrievalService == nil {
 		c.knowledgeRetrievalService = dataset_service.NewKnowledgeRetrievalService(
@@ -1543,9 +1546,9 @@ func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.Knowl
 	return c.knowledgeRetrievalService
 }
 
-func (c *ServiceContainer) GetAgentMemoryService() *agentmemory.Service {
+func (c *ServiceContainer) GetAgentMemoryService() *relationshipmemory.AgentAdapter {
 	if c.agentMemoryService == nil {
-		c.agentMemoryService = agentmemory.NewService(c.db)
+		c.agentMemoryService = relationshipmemory.NewAgentAdapter(c.db)
 	}
 	return c.agentMemoryService
 }

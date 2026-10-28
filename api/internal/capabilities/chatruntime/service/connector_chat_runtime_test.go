@@ -295,7 +295,7 @@ func TestConnectorRuntimeOptionalDependencyIsInjected(t *testing.T) {
 	t.Parallel()
 
 	resolver := &chatRuntimeResolverStub{}
-	svc := NewServiceWithSkillRuntime(nil, nil, nil, nil, nil, nil, nil, nil, nil, resolver).(*service)
+	svc := NewServiceWithSkillRuntime(nil, nil, nil, nil, nil, nil, nil, nil, resolver).(*service)
 	if svc.connectorChatRuntime != resolver {
 		t.Fatalf("Connector runtime dependency = %#v", svc.connectorChatRuntime)
 	}
@@ -727,7 +727,7 @@ func TestDigitalHumanRuntimeOptionalDependencyIsInjected(t *testing.T) {
 	t.Parallel()
 
 	resolver := &digitalHumanRuntimeResolverStub{}
-	svc := NewServiceWithSkillRuntime(nil, nil, nil, nil, nil, nil, nil, nil, nil, resolver).(*service)
+	svc := NewServiceWithSkillRuntime(nil, nil, nil, nil, nil, nil, nil, nil, resolver).(*service)
 	if svc.connectorDigitalHumanRuntime != resolver {
 		t.Fatalf("DigitalHuman runtime dependency = %#v", svc.connectorDigitalHumanRuntime)
 	}

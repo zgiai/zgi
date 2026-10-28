@@ -1,18 +1,6 @@
-import type {
-  AgentMemorySlotConfig,
-  UpdateAgentRuntimeConfigRequest,
-} from '@/services/types/agent';
+import type { UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
 import { ICON_BG } from '@/lib/config';
 import type { DbTable } from '@/services/types/db';
-
-export type AgentMemorySlotValidationError =
-  | 'required'
-  | 'pattern'
-  | 'duplicate'
-  | 'too_many'
-  | null;
-
-const AGENT_MEMORY_SLOT_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 export function toModelParams(
   params: Record<string, unknown> | undefined
@@ -38,6 +26,8 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
     max_chars: slot.max_chars,
     enabled: slot.enabled,
     sort_order: slot.sort_order,
+    read_only: slot.read_only ?? false,
+    auto_write: slot.auto_write ?? true,
   }));
 
   return JSON.stringify({
@@ -62,23 +52,10 @@ export function buildAgentRuntimeSignature(payload: UpdateAgentRuntimeConfigRequ
   });
 }
 
-export function validateAgentMemorySlots(
-  slots: AgentMemorySlotConfig[]
-): AgentMemorySlotValidationError[] {
-  const normalizedKeys = slots.map(slot => slot.key.trim().toLowerCase());
-  const keyCounts = normalizedKeys.reduce<Record<string, number>>((acc, key) => {
-    if (key) acc[key] = (acc[key] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  return normalizedKeys.map(key => {
-    if (slots.length > 5) return 'too_many';
-    if (!key) return 'required';
-    if (!AGENT_MEMORY_SLOT_KEY_PATTERN.test(key)) return 'pattern';
-    if ((keyCounts[key] ?? 0) > 1) return 'duplicate';
-    return null;
-  });
-}
+// The memory instructions limit; the backend enforces the same.
+export const AGENT_MEMORY_LIMITS = {
+  maxInstructionsChars: 2000,
+} as const;
 
 export function pickAgentInitials(name?: string): string {
   const trimmed = name?.trim();

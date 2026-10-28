@@ -13,7 +13,6 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/util"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -27,7 +26,6 @@ type apiKeyAgentChatRequest struct {
 	FileIDs        []string               `json:"file_ids,omitempty"`
 	ResponseMode   string                 `json:"response_mode,omitempty"`
 	Parameters     map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory      bool                   `json:"use_memory,omitempty"`
 	User           string                 `json:"user,omitempty"`
 	MaxTaskTokens  int                    `json:"max_task_tokens,omitempty"`
 }
@@ -78,9 +76,6 @@ func (h *AgentsHandler) GetAPIKeyAgentRuntimeConfig(c *gin.Context) {
 		return
 	}
 	memoryEnabled := published.Config.AgentMemoryEnabled
-	if _, runtimeWorkspaceRequest := c.Get("runtime_workspace_principal"); runtimeWorkspaceRequest {
-		memoryEnabled = memoryEnabled && relationshipmemory.RuntimeEnabled()
-	}
 	response.Success(c, apiKeyAgentRuntimeConfigResponse{
 		FileUploadPolicy:     chatfile.Clone(published.Config.FileUploadPolicy),
 		AgentID:              published.AgentID,
@@ -187,7 +182,6 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		FileIDs:        req.FileIDs,
 		ResponseMode:   "streaming",
 		Parameters:     nil,
-		UseMemory:      false,
 		MaxTaskTokens:  req.MaxTaskTokens,
 	}
 	prepared, err := h.chatRuntimeService.PrepareConfiguredChat(
@@ -585,11 +579,6 @@ func runtimeWorkspaceRunConfig(config runtimeservice.RunConfig) runtimeservice.R
 	// Runtime Workspace credentials are not an execution entry. Never carry a
 	// caller-scoped Linux/CLI factory through this compatibility projection.
 	config.RuntimeToolFactory = nil
-	if !relationshipmemory.RuntimeEnabled() {
-		config.AgentMemoryEnabled = false
-		config.AgentMemoryAutoExtractionEnabled = false
-		config.AgentMemorySlots = nil
-	}
 	return config
 }
 

@@ -517,7 +517,7 @@ func TestRuntimeServiceExecuteUsesDigitalHumanCallerAndNoLegacyMemory(t *testing
 	if chat.caller.Type != runtimemodel.ConversationCallerDigitalHuman || chat.caller.ID == nil || *chat.caller.ID != digitalHumanID {
 		t.Fatalf("caller = %#v", chat.caller)
 	}
-	if chat.request.UseMemory || chat.config.UseMemory || chat.config.AgentMemoryEnabled || chat.config.AgentMemoryAutoExtractionEnabled {
+	if chat.config.AgentMemoryEnabled || chat.config.AgentMemoryAutoExtractionEnabled {
 		t.Fatal("DigitalHuman execution enabled a legacy memory path")
 	}
 	if chat.request.SourceMessageID == nil || *chat.request.SourceMessageID != run.ID {
@@ -775,7 +775,7 @@ func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T
 	now := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
 	memory := &fakeMemoryRuntimeProvider{preparation: &MemoryRuntimePreparation{
 		SystemPromptAddendum: "Authorized active long-term memory:\n- launch is September 8",
-		Tools:                []skillloop.RuntimeTool{{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: digitalHumanMemoryToolName}}}},
+		Tools:                []skillloop.RuntimeTool{{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: memoryEditToolName}}}},
 	}}
 	service := NewRuntimeService(store, fakeExecutionResolver{now: now}, fakeBrainAdapter{}, chat, dispatcher, WithMemoryRuntime(memory))
 	service.now = func() time.Time { return now }
@@ -789,7 +789,7 @@ func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T
 	if memory.calls != 1 || memory.finalizeCalls != 1 || !strings.Contains(chat.config.SystemPrompt, "launch is September 8") || len(chat.config.RuntimeTools) != 1 {
 		t.Fatalf("memory preparation calls=%d finalization calls=%d config=%#v", memory.calls, memory.finalizeCalls, chat.config)
 	}
-	if chat.config.UseMemory || chat.config.AgentMemoryEnabled || chat.config.AgentMemoryAutoExtractionEnabled {
+	if chat.config.AgentMemoryEnabled || chat.config.AgentMemoryAutoExtractionEnabled {
 		t.Fatal("subject memory enabled a legacy memory path")
 	}
 }
@@ -1413,7 +1413,7 @@ func (fakeBrainAdapter) RunConfig(resolved *ResolvedExecution) (chatruntime.RunC
 	return chatruntime.RunConfig{
 		SystemPrompt: resolved.Snapshot.Persona, Model: resolved.Snapshot.Model,
 		BillingAppID: resolved.Snapshot.Subject.ID.String(), BillingAppType: runtimemodel.ConversationCallerDigitalHuman,
-		UseMemory: false, AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
+		AgentMemoryEnabled: false, AgentMemoryAutoExtractionEnabled: false,
 	}, nil
 }
 

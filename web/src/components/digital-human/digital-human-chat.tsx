@@ -27,6 +27,7 @@ import {
 import { useDigitalHuman } from '@/hooks/digital-human/use-digital-humans';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useT } from '@/i18n';
+import { AgentMemoryOpenerContext } from '@/components/memory/agent-memory-opener';
 import { cn } from '@/lib/utils';
 import { digitalHumanService } from '@/services/digital-human.service';
 import { digitalHumanChatFollowUpHref } from '@/components/digital-human/digital-human-task-reports';
@@ -52,6 +53,9 @@ export function DigitalHumanChat({ id }: { id: string }) {
   const taskRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const published = detail?.published;
   const transport = useMemo(() => createDigitalHumanRuntimeTransport(id), [id]);
+  const memoryHref = `/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`;
+  // Memory notices in replies open the person's memory with this DigitalHuman.
+  const memoryOpener = useMemo(() => ({ open: () => router.push(memoryHref) }), [router, memoryHref]);
   const taskClient = useMemo<DigitalHumanTaskPanelClient>(
     () => ({
       list: params => digitalHumanService.listMyTasks(id, params),
@@ -301,80 +305,79 @@ export function DigitalHumanChat({ id }: { id: string }) {
   return (
     <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
       <div className="min-w-0 flex-1">
-        <AIChatShell
-          controller={controller}
-          modelSelectorValue={modelSelectorValue}
-          onModelChange={() => undefined}
-          beforeSend={() => {
-            if (published) return true;
-            toast.error(t('configuration.notPublished'));
-            return false;
-          }}
-          showModelSelector={false}
-          variant="full"
-          requireModel={false}
-          showMemoryToggle={false}
-          forcedUseMemory={false}
-          enableUpload={published?.file_upload_policy == null || published.file_upload_policy.allowed_file_types.length > 0}
-          fileUploadPolicy={published?.file_upload_policy}
-          uploadScope={{ type: 'console' }}
-          showFileLibraryPicker={false}
-          allowWorkspaceSwitch={false}
-          enableMessageReplay
-          showAssistantModelMeta={false}
-          surface="digital-human"
-          runtimeSurface="external_page_chat"
-          defaultSidebarOpen
-          routeConversationId={initialConversationId}
-          isConversationTransitioning={isRestoringConversationRoute}
-          conversationListTitle={t('chat.conversations')}
-          conversationListDescription={t('chat.conversationListDescription')}
-          homeBrand={
-            <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm">
-              <Bot className="size-7" />
-            </div>
-          }
-          homeTitle={t('chat.homeTitle', { name: detail?.definition.name ?? t('title') })}
-          homeDescription={t('chat.homeDescription')}
-          suggestions={[
-            t('chat.suggestions.introduce'),
-            t('chat.suggestions.capabilities'),
-            t('chat.suggestions.plan'),
-          ]}
-          inputPlaceholder={t('chat.placeholder')}
-          onSelectConversation={selectConversation}
-          onStartNewConversation={handleStartNewConversation}
-          headerRightAction={
-            <div className="flex items-center gap-1">
-              {canRun ? <DigitalHumanMemberConnections id={id} /> : null}
-              {canRun ? (
-                // Below xl the task panel is a sheet. A floating button sat
-                // under the composer on phones, so it lives in the header.
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="xl:hidden"
-                  onClick={() => setMobileTasksOpen(true)}
-                  aria-label={t('tasks.myTitle')}
-                  title={t('tasks.myTitle')}
-                >
-                  <ListTodo className="size-4 sm:mr-2" />
-                  <span className="hidden sm:inline">{t('tasks.myTitle')}</span>
+        <AgentMemoryOpenerContext.Provider value={memoryOpener}>
+          <AIChatShell
+            controller={controller}
+            modelSelectorValue={modelSelectorValue}
+            onModelChange={() => undefined}
+            beforeSend={() => {
+              if (published) return true;
+              toast.error(t('configuration.notPublished'));
+              return false;
+            }}
+            showModelSelector={false}
+            variant="full"
+            requireModel={false}
+            forcedUseMemory={false}
+            enableUpload={published?.file_upload_policy == null || published.file_upload_policy.allowed_file_types.length > 0}
+            fileUploadPolicy={published?.file_upload_policy}
+            uploadScope={{ type: 'console' }}
+            showFileLibraryPicker={false}
+            allowWorkspaceSwitch={false}
+            enableMessageReplay
+            showAssistantModelMeta={false}
+            surface="digital-human"
+            runtimeSurface="external_page_chat"
+            defaultSidebarOpen
+            routeConversationId={initialConversationId}
+            isConversationTransitioning={isRestoringConversationRoute}
+            conversationListTitle={t('chat.conversations')}
+            conversationListDescription={t('chat.conversationListDescription')}
+            homeBrand={
+              <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm">
+                <Bot className="size-7" />
+              </div>
+            }
+            homeTitle={t('chat.homeTitle', { name: detail?.definition.name ?? t('title') })}
+            homeDescription={t('chat.homeDescription')}
+            suggestions={[
+              t('chat.suggestions.introduce'),
+              t('chat.suggestions.capabilities'),
+              t('chat.suggestions.plan'),
+            ]}
+            inputPlaceholder={t('chat.placeholder')}
+            onSelectConversation={selectConversation}
+            onStartNewConversation={handleStartNewConversation}
+            headerRightAction={
+              <div className="flex items-center gap-1">
+                {canRun ? <DigitalHumanMemberConnections id={id} /> : null}
+                {canRun ? (
+                  // Below xl the task panel is a sheet. A floating button sat
+                  // under the composer on phones, so it lives in the header.
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="xl:hidden"
+                    onClick={() => setMobileTasksOpen(true)}
+                    aria-label={t('tasks.myTitle')}
+                    title={t('tasks.myTitle')}
+                  >
+                    <ListTodo className="size-4 sm:mr-2" />
+                    <span className="hidden sm:inline">{t('tasks.myTitle')}</span>
+                  </Button>
+                ) : null}
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href={memoryHref}>
+                    <Brain className="mr-2 size-4" />
+                    {t('chat.manageMemory')}
+                  </Link>
                 </Button>
-              ) : null}
-              <Button variant="ghost" size="sm" asChild>
-                <Link
-                  href={`/profile/memory?consumer_type=digital_human&consumer_id=${encodeURIComponent(id)}`}
-                >
-                  <Brain className="mr-2 size-4" />
-                  {t('chat.manageMemory')}
-                </Link>
-              </Button>
-            </div>
-          }
-          onTaskMutation={handleTaskMutation}
-          initialInput={initialDraft}
-        />
+              </div>
+            }
+            onTaskMutation={handleTaskMutation}
+            initialInput={initialDraft}
+          />
+        </AgentMemoryOpenerContext.Provider>
       </div>
       {canRun ? (
         // The panel widens while a task or report is open beside the chat.

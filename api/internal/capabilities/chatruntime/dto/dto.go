@@ -36,7 +36,6 @@ type ChatRequest struct {
 	RoutingStrategy                  string                 `json:"routing_strategy,omitempty"`
 	ResponseMode                     string                 `json:"response_mode,omitempty"`
 	Parameters                       map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory                        bool                   `json:"use_memory,omitempty"`
 	// MaxTaskTokens caps the total provider-reported model tokens for this
 	// API-originated task. Zero keeps the legacy unlimited behaviour and is
 	// never populated by Workflow callers.
@@ -80,7 +79,6 @@ type RegenerateMessageRequest struct {
 	Provider         *string                `json:"provider,omitempty"`
 	RoutingStrategy  *string                `json:"routing_strategy,omitempty"`
 	Parameters       map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory        *bool                  `json:"use_memory,omitempty"`
 }
 
 type ToolGovernanceDecisionRequest struct {

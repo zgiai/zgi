@@ -194,6 +194,14 @@ function ConnectorRuntimePendingSurface({
   className?: string;
 }) {
   const receipt = useConnectorRuntimeReceipt(result.confirmation.route_receipt);
+  // The summary reads the owner-scoped preview itself: the card's own read
+  // fills only the card, so without this the command never showed.
+  const { check: readPreview } = receipt;
+  useEffect(() => {
+    void readPreview().catch(() => {
+      // The card reports a failed status read and offers a retry.
+    });
+  }, [readPreview]);
   return (
     <div className="space-y-2">
       <ConnectorRuntimePreviewSummary

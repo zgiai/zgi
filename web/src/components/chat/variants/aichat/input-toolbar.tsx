@@ -1,6 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import {
+  Brain,
   ChevronDown,
   FileText,
   FolderOpen,
@@ -37,7 +39,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useT, type ScopedTranslations } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { formatExtensionsForDisplay } from '@/utils/file-helpers';
-import { AIChatMemoryModule } from '@/components/chat/variants/aichat/memory-module';
+import { AI_CHAT_MEMORY_HREF } from '@/components/memory/ai-chat-memory-opener';
 import type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
 import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model';
@@ -77,7 +79,8 @@ interface AIChatInputToolbarProps {
   modelUseCase?: ModelUseCase;
   modelAvailabilityUseCase?: AvailableModelUseCase;
   preferredModelUseCase?: ModelUseCase;
-  showMemoryToggle?: boolean;
+  /** Shows the way to the person's AI chat memory (ADR 0021). */
+  showMemoryEntry?: boolean;
   showComposerExpandButton?: boolean;
   isComposerExpanded?: boolean;
   showToolGovernancePermissionControl?: boolean;
@@ -101,7 +104,6 @@ interface AIChatInputToolbarProps {
   onSelectFromFiles: () => void;
   onOpenConnectedApps?: (anchorElement: HTMLElement) => void;
   onOpenSkillManagement?: () => void;
-  onMemoryEnabledChange: (enabled: boolean) => void;
   onToggleComposerExpanded?: () => void;
   onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
   onSend: () => void | Promise<void>;
@@ -193,7 +195,7 @@ export function AIChatInputToolbar({
   modelUseCase = 'agent',
   modelAvailabilityUseCase,
   preferredModelUseCase,
-  showMemoryToggle = true,
+  showMemoryEntry = false,
   showComposerExpandButton = false,
   isComposerExpanded = false,
   showToolGovernancePermissionControl = false,
@@ -217,7 +219,6 @@ export function AIChatInputToolbar({
   onSelectFromFiles,
   onOpenConnectedApps,
   onOpenSkillManagement,
-  onMemoryEnabledChange,
   onToggleComposerExpanded,
   onToolGovernancePermissionTierChange,
   onSend,
@@ -348,8 +349,17 @@ export function AIChatInputToolbar({
       <div className="flex shrink-0 items-center gap-1">
         {speechAutoPlay ? <AIChatSpeechAutoPlayControl {...speechAutoPlay} /> : null}
         {voiceInput ? <AIChatVoiceInputControl {...voiceInput} /> : null}
-        {showMemoryToggle ? (
-          <AIChatMemoryModule disabled={isSending} onEnabledChange={onMemoryEnabledChange} />
+        {showMemoryEntry ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button asChild isIcon variant="ghost" className="size-8 rounded-full">
+                <Link href={AI_CHAT_MEMORY_HREF} aria-label={t('consoleChat.memory.open')}>
+                  <Brain className="size-4" />
+                </Link>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{t('consoleChat.memory.hint')}</TooltipContent>
+          </Tooltip>
         ) : null}
         {enableUpload ? (
           <DropdownMenu>

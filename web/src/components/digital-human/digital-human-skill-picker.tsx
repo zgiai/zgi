@@ -22,6 +22,10 @@ import {
 } from '@/components/ui/select';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import {
+  SkillAvailabilityNotice,
+  type SkillCodeExecution,
+} from '@/components/skills/skill-availability-notice';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { DigitalHumanResourceCandidate } from '@/services/types/digital-human';
 
@@ -340,6 +344,9 @@ export function DigitalHumanSkillPickerDialog({
   loading,
   error,
   onRetry,
+  expectedIds,
+  codeExecution,
+  onSkillEnabled,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -352,6 +359,11 @@ export function DigitalHumanSkillPickerDialog({
   loading: boolean;
   error: boolean;
   onRetry: () => void;
+  /** Skills a template asks for, reported when missing. */
+  expectedIds?: readonly string[];
+  codeExecution?: SkillCodeExecution;
+  /** Refresh candidates (and select) after a skill was enabled here. */
+  onSkillEnabled?: (skillId: string) => void | Promise<unknown>;
 }) {
   const t = useT('digitalHumans');
   const [search, setSearch] = useState('');
@@ -384,6 +396,15 @@ export function DigitalHumanSkillPickerDialog({
       }
       onChangeSearch={setSearch}
     >
+      <div className="mb-3">
+        <SkillAvailabilityNotice
+          offeredIds={candidates.map(candidate => candidate.resource_id)}
+          expectedIds={expectedIds}
+          selectedIds={selectedIds}
+          codeExecution={codeExecution}
+          onEnabled={onSkillEnabled}
+        />
+      </div>
       <DigitalHumanSkillDialogBody
         candidates={visible}
         selectedIds={selectedIds}

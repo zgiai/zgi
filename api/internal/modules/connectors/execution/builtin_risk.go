@@ -36,16 +36,17 @@ func BuiltinRiskPolicies() []TrustedOperationRiskPolicy {
 }
 
 // serverOpsSSHRiskPolicies classifies exactly the three read-only SSH Server
-// Operations actions as RiskHigh, pinned to the complete stable leaf identity
-// frozen by catalog.ServerOpsSSHDefinition.
+// Operations actions and the four service write actions as RiskHigh, pinned to
+// the complete stable leaf identity frozen by catalog.ServerOpsSSHDefinition.
 //
 // Read-only is the operation Effect, not a risk claim. An SSH read exposes
 // sensitive remote host state (kernel and service inventory, unit state, and
 // journal content that routinely contains secrets), so the platform does not
-// present it as a trusted low-risk read. RiskHigh makes the DigitalHuman surface
-// require a mandatory per-call approval for every use; an operation, tool,
-// driver, auth method, or connector that does not match this exact identity
-// stays unclassified and therefore fails closed.
+// present it as a trusted low-risk read. A service write changes a production
+// server. RiskHigh makes the DigitalHuman surface require a mandatory fresh
+// per-call approval for every use and refuse every run without an interactive
+// approver; an operation, tool, driver, auth method, or connector that does not
+// match this exact identity stays unclassified and therefore fails closed.
 func serverOpsSSHRiskPolicies() []TrustedOperationRiskPolicy {
 	rows := []struct {
 		operation, tool string
@@ -53,6 +54,11 @@ func serverOpsSSHRiskPolicies() []TrustedOperationRiskPolicy {
 		{serverops.ActionSystemSnapshot, "serverops_ssh_system_snapshot"},
 		{serverops.ActionServiceStatus, "serverops_ssh_service_status"},
 		{serverops.ActionJournalTail, "serverops_ssh_journal_tail"},
+		{serverops.ActionServiceRestart, "serverops_ssh_service_restart"},
+		{serverops.ActionServiceStart, "serverops_ssh_service_start"},
+		{serverops.ActionServiceStop, "serverops_ssh_service_stop"},
+		{serverops.ActionServiceReload, "serverops_ssh_service_reload"},
+		{serverops.ActionCommandRun, "serverops_ssh_command_run"},
 	}
 	result := make([]TrustedOperationRiskPolicy, 0, len(rows))
 	for _, row := range rows {

@@ -77,7 +77,7 @@ func TestAPIEndUserSubjectValidatesOpaqueUserLimit(t *testing.T) {
 	}
 }
 
-func TestDecideAccessNeverResolvesChannelsTasksOrAIChat(t *testing.T) {
+func TestDecideAccessNeverResolvesChannelsOrTasks(t *testing.T) {
 	subject := usersubject.AccountSubject(uuid.New())
 	tests := []struct {
 		name     string
@@ -87,7 +87,6 @@ func TestDecideAccessNeverResolvesChannelsTasksOrAIChat(t *testing.T) {
 		{"channel private", InvocationIdentity{Surface: SurfaceChannel, ConversationType: ConversationPrivate, UserSubject: &subject}, "external_identity_unresolved"},
 		{"channel group", InvocationIdentity{Surface: SurfaceChannel, ConversationType: ConversationGroup, UserSubject: &subject}, "external_identity_unresolved"},
 		{"digital human task", InvocationIdentity{Surface: SurfaceDigitalHumanTask, ConversationType: ConversationTask, UserSubject: &subject}, "automated_invocation_has_no_user_subject"},
-		{"aichat", InvocationIdentity{Surface: SurfaceAIChat, UserSubject: &subject}, "aichat_memory_disabled"},
 		{"missing subject", InvocationIdentity{Surface: SurfaceAgentAPI}, "user_subject_missing"},
 	}
 	for _, test := range tests {
@@ -115,6 +114,8 @@ func TestDecideAccessRequiresARecognizedSurfaceAndMatchingSubjectKind(t *testing
 		{"unknown surface", InvocationIdentity{Surface: MemorySurface("unknown"), UserSubject: &account}, "surface_not_allowed"},
 		{"account on API", InvocationIdentity{Surface: SurfaceAgentAPI, UserSubject: &account}, "subject_kind_mismatch"},
 		{"API user on console", InvocationIdentity{Surface: SurfaceAgentConsole, UserSubject: &apiUser}, "subject_kind_mismatch"},
+		// AI chat memory is the person's own account's alone (ADR 0021).
+		{"API user in AI chat", InvocationIdentity{Surface: SurfaceAIChat, UserSubject: &apiUser}, "subject_kind_mismatch"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -127,5 +128,8 @@ func TestDecideAccessRequiresARecognizedSurfaceAndMatchingSubjectKind(t *testing
 
 	if decision := DecideAccess(InvocationIdentity{Surface: SurfaceAgentAPI, UserSubject: &apiUser}); !decision.Read || decision.Reason != "allowed" {
 		t.Fatalf("Agent API decision = %#v, want allowed", decision)
+	}
+	if decision := DecideAccess(InvocationIdentity{Surface: SurfaceAIChat, UserSubject: &account}); !decision.Read || !decision.AutoCapture || decision.Reason != "allowed" {
+		t.Fatalf("AI chat decision = %#v, want allowed", decision)
 	}
 }

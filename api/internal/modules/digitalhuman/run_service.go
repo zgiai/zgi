@@ -339,9 +339,6 @@ func (s *RuntimeService) SubmitRegeneration(ctx context.Context, scope Scope, di
 	if request.Parameters != nil {
 		contextValues["regenerate_parameters"] = request.Parameters
 	}
-	if request.UseMemory != nil {
-		contextValues["regenerate_use_memory"] = *request.UseMemory
-	}
 	if surface == SurfaceWebApp && scope.WebAppID != nil && *scope.WebAppID != uuid.Nil {
 		contextValues["web_app_id"] = scope.WebAppID.String()
 	}
@@ -1087,11 +1084,14 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		if note := perUserConnectorNote(missing); note != "" {
 			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
 		}
+		if note, noteErr := connectorApprovalNote(ctx, repository.db, run, event); noteErr != nil {
+			logger.WarnContext(ctx, "DigitalHuman connector approval note failed", "run_id", run.ID.String(), noteErr)
+		} else if note != "" {
+			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt + "\n\n" + note)
+		}
 	}
-	// A channel member who asked can confirm by reply; a run without a known
-	// requester stays non-interactive and cannot ask.
-	config.ConnectorInteractive = event.Origin.Kind == invocation.OriginManual ||
-		(event.Origin.Kind == invocation.OriginChannel && event.Sender.Type == invocation.PrincipalExternalUser && strings.TrimSpace(event.Sender.ID) != "")
+	config.ConnectorInteractive = connectorInteractive(event)
+	config.ConnectorRequesterID = connectorRequester(event)
 	applyScheduledConnectorPolicy(&config, run, event)
 	var channelContextPreparation *ChannelContextPreparation
 	if s.channelContext != nil {
@@ -1146,7 +1146,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 	}
 	chatRequest := runtimedto.ChatRequest{
 		Query: run.Query, Model: config.Model, Provider: config.ModelProvider,
-		Surface: runtimedto.RuntimeSurfaceExternalPageChat, UseMemory: false,
+		Surface:         runtimedto.RuntimeSurfaceExternalPageChat,
 		SourceMessageID: &run.ID,
 		OperationContext: map[string]any{
 			"digital_human_run_id": run.ID.String(), "invocation_event_id": event.ID,
@@ -1637,6 +1637,24 @@ func decodeAndVerifyRun(run *Run) (*ResolvedExecution, invocation.Event, error) 
 	return &ResolvedExecution{Spec: spec, Snapshot: snapshot}, event, nil
 }
 
+// connectorInteractive reports whether a person can confirm the run's
+// connector calls. A channel member who asked can confirm by reply; a run
+// without a known requester stays non-interactive and cannot ask. Every pass
+// of the same run, first or continued, uses this one rule.
+// connectorRequester is the account in a console conversation. Channel,
+// API, and scheduled origins have no present owner, so they return empty.
+func connectorRequester(event invocation.Event) string {
+	if event.Origin.Kind != invocation.OriginManual || event.Sender.Type != invocation.PrincipalAccount {
+		return ""
+	}
+	return strings.TrimSpace(event.Sender.ID)
+}
+
+func connectorInteractive(event invocation.Event) bool {
+	return event.Origin.Kind == invocation.OriginManual ||
+		(event.Origin.Kind == invocation.OriginChannel && event.Sender.Type == invocation.PrincipalExternalUser && strings.TrimSpace(event.Sender.ID) != "")
+}
+
 func runtimeScope(run *Run) chatruntime.Scope {
 	workspaceID := run.WorkspaceID
 	actorID := uuid.Nil
@@ -1714,9 +1732,6 @@ func regenerateRequestFromContext(values map[string]any) runtimedto.RegenerateMe
 	}
 	if parameters, ok := values["regenerate_parameters"].(map[string]any); ok {
 		request.Parameters = parameters
-	}
-	if useMemory, ok := values["regenerate_use_memory"].(bool); ok {
-		request.UseMemory = &useMemory
 	}
 	request.Surface, _ = values["surface"].(string)
 	return request

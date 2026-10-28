@@ -20,6 +20,9 @@ var (
 	ErrPublishedImmutable = errors.New("published digital human version is immutable")
 	// ErrPublishInvalid indicates that the current draft cannot be published.
 	ErrPublishInvalid = errors.New("digital human draft is not publishable")
+	// ErrSetupIncomplete indicates that the draft lacks what its template
+	// requires (ADR 0023).
+	ErrSetupIncomplete = errors.New("digital human setup is incomplete")
 	// ErrVersionRestoreImpactChanged indicates that a restore preview is stale or invalid.
 	ErrVersionRestoreImpactChanged = errors.New("digital human version restore impact changed")
 	// ErrDeleteBlocked indicates that durable references prevent deletion.

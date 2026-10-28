@@ -356,13 +356,13 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		WorkflowBoundByAccountID:         cfg.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:              cfg.WorkflowBoundAtUnix,
 		BindingAuthorizations:            agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
-		UseMemory:                        false,
 		AgentMemoryEnabled:               cfg.AgentMemoryEnabled,
 		AgentMemoryAutoExtractionEnabled: cfg.AgentMemoryAutoExtractionEnabled,
 		AgentMemorySlots:                 agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
 		AgentMemoryUserScope:             agentMemoryUserScope,
 		AgentMemoryConfigScope:           memoryConfigScope,
 		AgentMemoryConfigRevision:        cfg.AgentMemoryConfigRevision,
+		AgentMemoryInstructions:          cfg.AgentMemoryInstructions,
 		BillingAppID:                     agentID,
 		BillingAppType:                   runtimemodel.ConversationCallerAgent,
 	}
@@ -464,6 +464,8 @@ func agentMemoryRuntimeSlots(slots []dto.AgentMemorySlotConfig) []runtimeservice
 			MaxChars:    slot.MaxChars,
 			Enabled:     slot.Enabled,
 			SortOrder:   slot.SortOrder,
+			ReadOnly:    slot.ReadOnly,
+			ManualOnly:  !*agentMemoryAutoWrite(slot.AutoWrite),
 		})
 	}
 	return out

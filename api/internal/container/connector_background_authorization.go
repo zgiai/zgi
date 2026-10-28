@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
+	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/backgroundauth"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
@@ -314,6 +315,12 @@ func (s *ConnectorBackgroundAuthorization) AuthorizeBackground(ctx context.Conte
 	if restored.OwnerID != request.Connection.OwnerAccountID {
 		return false, backgroundDenied(nil)
 	}
+	// The owner trusted this binding for their own task runs (ADR 0028): the
+	// restored task run and its owner are the whole authority, so no grant is
+	// consumed.
+	if request.Trusted {
+		return true, nil
+	}
 	input, _ := r.Input.(map[string]any)
 	if restored.SocialOperations && (r.OperationID == "web.search" || r.OperationID == "web.fetch" || strings.HasSuffix(r.OperationID.String(), ".web.search") || strings.HasSuffix(r.OperationID.String(), ".web.fetch")) &&
 		(restored.ResearchConnectorID != r.ConnectorID.String() || restored.ResearchConnectionID != request.Connection.ID) {
@@ -476,6 +483,10 @@ func backgroundOperationsAllowed(operations []string, definition catalog.Definit
 	seen := make(map[string]bool, len(operations))
 	for _, operation := range operations {
 		id := connectorcore.Identifier(operation)
+		// An unattended run may only inspect a server (ADR 0027).
+		if definition.IsServerOpsSSHCredentials() && !serverops.UnattendedAction(operation) {
+			return false
+		}
 		if !id.Valid() || seen[operation] || !defined[operation] || !usable[operation] ||
 			!connectorcore.ConstraintsAllow(connection.Constraint, binding.Constraint, owner, id, binding.Target, now) {
 			return false

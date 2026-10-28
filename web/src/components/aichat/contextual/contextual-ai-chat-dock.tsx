@@ -46,6 +46,7 @@ import {
   type ContextualAIChatClientActionRequest,
   type ZGIConsoleNavigationAccessContext,
 } from './context-envelope';
+import { AIChatMemoryOpenerProvider } from '@/components/memory/ai-chat-memory-opener';
 import { useContextualAIChat } from './contextual-ai-chat-context';
 import type {
   AIChatClientActionRequiredEventData,
@@ -888,25 +889,28 @@ function ContextualAIChatPanel({
         </div>
       </div>
       <div className="min-h-0 flex-1">
-        <Chat
-          mode="aichat"
-          controller={controller}
-          modelSelectorValue={modelSelectorValue}
-          isModelInitializing={isModelInitializing}
-          onModelChange={onModelChange}
-          variant="embedded"
-          showMemoryToggle={false}
-          runtimeSurface="contextual_sidebar"
-          embeddedConversationMode="drawer"
-          embeddedConversationControlsMode="external"
-          embeddedConversationControlsPortalId={controlsPortalId}
-          allowWorkspaceSwitch
-          homeTitle={homeTitle}
-          homeDescription={homeDescription}
-          inputPlaceholder={inputPlaceholder}
-          suggestions={suggestions}
-          enableToolGovernance={enableToolGovernance}
-        />
+        {/* The memory notice in a reply opens the AI chat memory page. */}
+        <AIChatMemoryOpenerProvider>
+          <Chat
+            mode="aichat"
+            controller={controller}
+            modelSelectorValue={modelSelectorValue}
+            isModelInitializing={isModelInitializing}
+            onModelChange={onModelChange}
+            variant="embedded"
+            showMemoryEntry
+            runtimeSurface="contextual_sidebar"
+            embeddedConversationMode="drawer"
+            embeddedConversationControlsMode="external"
+            embeddedConversationControlsPortalId={controlsPortalId}
+            allowWorkspaceSwitch
+            homeTitle={homeTitle}
+            homeDescription={homeDescription}
+            inputPlaceholder={inputPlaceholder}
+            suggestions={suggestions}
+            enableToolGovernance={enableToolGovernance}
+          />
+        </AIChatMemoryOpenerProvider>
       </div>
     </div>
   );

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	toolprovider "github.com/zgiai/zgi/api/internal/capabilities/connectortools"
-	"github.com/zgiai/zgi/api/internal/capabilities/serverops"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectordispatch "github.com/zgiai/zgi/api/internal/modules/connectors/dispatch"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/execution"
@@ -87,21 +86,21 @@ func TestNativeConnectorSchemaDigitalHumanOnlySSHContract(t *testing.T) {
 		t.Fatal("SSH contract declares no operation")
 	}
 	for _, operation := range ssh.Operations {
-		if operation.SkillID != serverops.SkillID {
-			t.Fatalf("operation %s SkillID = %q, want %q", operation.ID, operation.SkillID, serverops.SkillID)
+		if operation.SkillID != skills.SkillConnectorRuntime {
+			t.Fatalf("operation %s SkillID = %q, want %q", operation.ID, operation.SkillID, skills.SkillConnectorRuntime)
 		}
 	}
 
 	runtime, dispatcher := nativeConnectorSchemaRuntime(t, *ssh)
-	resolved := nativeConnectorSchemaSkillsForSkill(*ssh, serverops.SkillID)
+	resolved := nativeConnectorSchemaSkillsForSkill(*ssh, skills.SkillConnectorRuntime)
 	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{})
 	if len(toolSet.SkippedSkills) != 0 || len(toolSet.ActiveSkillIDs) != 1 ||
-		toolSet.ActiveSkillIDs[0] != serverops.SkillID || len(toolSet.ProviderTools) != len(ssh.Operations) {
+		toolSet.ActiveSkillIDs[0] != skills.SkillConnectorRuntime || len(toolSet.ProviderTools) != len(ssh.Operations) {
 		t.Fatalf("DigitalHuman SSH projection: active=%v skipped=%#v tools=%d want=%d", toolSet.ActiveSkillIDs, toolSet.SkippedSkills, len(toolSet.ProviderTools), len(ssh.Operations))
 	}
 	for _, operation := range ssh.Operations {
 		binding, exists := toolSet.ToolBindings[operation.ToolName]
-		if !exists || binding.ToolName != operation.ToolName || binding.SkillID != serverops.SkillID {
+		if !exists || binding.ToolName != operation.ToolName || binding.SkillID != skills.SkillConnectorRuntime {
 			t.Fatalf("operation %s lost its SSH Skill binding: %#v", operation.ToolName, toolSet.ToolBindings)
 		}
 		var schema any

@@ -3,15 +3,17 @@
 // Operations contract (catalog.ServerOpsSSHDefinition).
 //
 // The adapter owns exactly three things: the credential-to-Connection
-// translation, the DigitalHuman-scope/argument gate, and the response mapping
-// for the three read-only serverops actions. There is no deploy, write, or
-// arbitrary command path. It holds no credential, opens no network connection
-// of its own, and delegates every remote interaction to the injected serverops
-// capability. The container registers it through GetConnectorCandidateVerifier
-// with serverops.New(serverops.Limits{}), which is constructor-only and never
-// dials. Platform RiskHigh policy classifies the three operations, so every
-// DigitalHuman use requires fresh per-invocation approval, and the DigitalHuman
-// surface gate is open only for DigitalHuman.
+// translation (including the connection's non-secret privilege), the
+// DigitalHuman-scope/argument gate, and the response mapping for the three
+// read-only serverops actions and the four controlled service write actions.
+// There is no deploy or arbitrary command path. It holds no credential, opens no
+// network connection of its own, and delegates every remote interaction to the
+// injected serverops capability. The container registers it through
+// GetConnectorCandidateVerifier with serverops.New(serverops.Limits{}), which is
+// constructor-only and never dials. Platform RiskHigh policy classifies all
+// seven operations, so every DigitalHuman use requires fresh per-invocation
+// approval with the exact command shown, a run without an interactive approver
+// is refused, and the DigitalHuman surface gate is open only for DigitalHuman.
 package serveropsssh
 
 import (
@@ -38,8 +40,10 @@ const (
 	fieldPrivateKey    = "private_key"
 	fieldPassphrase    = "passphrase"
 	fieldHostKeySHA256 = "host_key_sha256"
+	fieldPrivilege     = "privilege"
 
 	fieldServiceName  = "service_name"
+	fieldCommand      = "command"
 	fieldLines        = "lines"
 	fieldSinceMinutes = "since_minutes"
 )
@@ -50,13 +54,15 @@ var secretFieldNames = [...]string{fieldPassword, fieldPrivateKey, fieldPassphra
 
 // Service is the narrow server operations capability the adapter consumes. The
 // production implementation is *serverops.Service; tests inject a fake. Keeping
-// the seam to these four read-only methods prevents the adapter from reaching
-// any other capability behavior.
+// the seam to these five methods prevents the adapter from reaching any other
+// capability behavior.
 type Service interface {
 	ValidateConnection(context.Context, serverops.Connection) (*serverops.ValidationProfile, error)
 	SystemSnapshot(context.Context, serverops.Connection) (*serverops.SystemSnapshot, error)
 	ServiceStatus(context.Context, serverops.Connection, string) (*serverops.ServiceStatus, error)
 	JournalTail(context.Context, serverops.Connection, string, serverops.JournalOptions) (*serverops.JournalTail, error)
+	ChangeService(context.Context, serverops.Connection, string, string) (*serverops.ServiceChange, error)
+	RunCommand(context.Context, serverops.Connection, string) (*serverops.CommandRun, error)
 }
 
 // HostKeyObservation is the secret-free result of one read-only host-key probe.
@@ -115,8 +121,9 @@ func (c *Client) ConnectorID() string { return catalog.ServerOpsSSHConnectorID }
 // VerifyCredentials validates the exact catalog credential shape and then runs
 // the capability's fixed, read-only connectivity probe. It yields the non-secret
 // stable account identity built by identityFrom (username, net.JoinHostPort host
-// and port), the remote host's own reported hostname, and all three catalog
-// operation ids.
+// and port), the remote host's own reported hostname, all catalog operation ids,
+// and the connection's non-secret privilege as evidence, so a confirmation
+// preview can render the exact command without reading the credential.
 func (c *Client) VerifyCredentials(ctx context.Context, input providers.CredentialInput) (providers.Verification, error) {
 	if c == nil || c.service == nil || catalog.ValidateCredentialValues(c.definition, input.Values) != nil {
 		return providers.Verification{}, providers.Invalid()
@@ -139,11 +146,15 @@ func (c *Client) VerifyCredentials(ctx context.Context, input providers.Credenti
 	for _, operation := range c.definition.Operations {
 		operations = append(operations, operation.ID)
 	}
+	identity := identityFrom(input.Values)
 	return providers.Verification{
-		AccountID:   identityFrom(input.Values),
+		AccountID:   identity,
 		DisplayName: c.redactText(profile.Hostname, input.Values),
 		Operations:  operations,
 		RequestID:   providers.SafeRequestID(profile.RequestID, ""),
+		Evidence: &core.ProviderEvidence{ServerOps: &core.ServerOpsEvidence{
+			Version: 1, Identity: identity, Privilege: input.Values[fieldPrivilege],
+		}},
 	}, nil
 }
 
@@ -184,11 +195,12 @@ func (c *Client) ProbeHostKey(ctx context.Context, values map[string]string) (Ho
 	}, nil
 }
 
-// InvokeCredentials executes exactly one of the three read-only actions. It
+// InvokeCredentials executes exactly one of the eight serverops actions. It
 // accepts a call only for a valid owner-scoped DigitalHuman ResourceScope and
-// one of the three exact serverops action ids, rejects any extra or invalid
-// argument before a Connection is built or any SSH call is made, and delegates
-// to the matching capability method.
+// one of the exact serverops action ids, rejects any extra or invalid argument
+// before a Connection is built or any SSH call is made, and delegates to the
+// matching capability method. A service write action runs with the
+// connection's own privilege; the read actions never use it.
 func (c *Client) InvokeCredentials(ctx context.Context, operation string, input providers.CredentialInput, args map[string]any) (providers.Response, error) {
 	if c == nil || c.service == nil {
 		return providers.Response{}, providers.Invalid()
@@ -246,6 +258,24 @@ func (c *Client) InvokeCredentials(ctx context.Context, operation string, input 
 			return providers.Response{}, responseFailure()
 		}
 		output, requestID = journalTailOutput(result), result.RequestID
+	case serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload:
+		result, callErr := c.service.ChangeService(ctx, connection, operation, providers.Text(values, fieldServiceName))
+		if callErr != nil {
+			return providers.Response{}, capabilityFailure(callErr)
+		}
+		if result == nil || result.Action != operation {
+			return providers.Response{}, responseFailure()
+		}
+		output, requestID = serviceChangeOutput(result), result.RequestID
+	case serverops.ActionCommandRun:
+		result, callErr := c.service.RunCommand(ctx, connection, providers.Text(values, fieldCommand))
+		if callErr != nil {
+			return providers.Response{}, capabilityFailure(callErr)
+		}
+		if result == nil {
+			return providers.Response{}, responseFailure()
+		}
+		output, requestID = commandRunOutput(result), result.RequestID
 	default:
 		return providers.Response{}, providers.Invalid()
 	}
@@ -264,13 +294,13 @@ func (c *Client) InvokeCredentials(ctx context.Context, operation string, input 
 	return providers.Response{Value: output, RequestID: providers.SafeRequestID(requestID, "")}, nil
 }
 
-// knownOperation reports whether operation is one of the three exact actions.
+// knownOperation reports whether operation is one of the eight exact actions.
 func knownOperation(operation string) bool {
 	switch operation {
-	case serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail:
+	case serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail, serverops.ActionCommandRun:
 		return true
 	default:
-		return false
+		return serverops.IsServiceWriteAction(operation)
 	}
 }
 
@@ -330,6 +360,7 @@ func connectionFrom(values map[string]string) (serverops.Connection, func(), err
 		PrivateKey:    privateKey,
 		Passphrase:    passphrase,
 		HostKeySHA256: values[fieldHostKeySHA256],
+		Privilege:     serverops.Privilege(values[fieldPrivilege]),
 	}
 	release := func() {
 		clear(password)
@@ -384,6 +415,8 @@ func capabilityFailure(err error) error {
 		code = core.ErrorCodeInvalidAppCredentials
 	case errors.Is(capabilityErr, serverops.ErrAuthInvalid):
 		code = core.ErrorCodeInvalidAppCredentials
+	case errors.Is(capabilityErr, serverops.ErrPermissionDenied):
+		code = core.ErrorCodePermissionMissing
 	case errors.Is(capabilityErr, serverops.ErrProviderRejected):
 		code = core.ErrorCodeProviderUnavailable
 	case errors.Is(capabilityErr, serverops.ErrResponseInvalid):
@@ -445,6 +478,33 @@ func serviceStatusOutput(result *serverops.ServiceStatus) map[string]any {
 		"active_state": result.ActiveState,
 		"sub_state":    result.SubState,
 		"description":  result.Description,
+	}
+}
+
+// serviceChangeOutput maps a validated service write result onto the frozen
+// schema: the unit state read right after the change.
+func serviceChangeOutput(result *serverops.ServiceChange) map[string]any {
+	return map[string]any{
+		"provider":     catalog.ServerOpsSSHConnectorID,
+		"operation":    result.Action,
+		"service_name": result.ServiceName,
+		"load_state":   result.LoadState,
+		"active_state": result.ActiveState,
+		"sub_state":    result.SubState,
+	}
+}
+
+// commandRunOutput maps one command run onto the frozen schema. Its output is
+// remote text and is redacted with the rest of the result.
+func commandRunOutput(result *serverops.CommandRun) map[string]any {
+	return map[string]any{
+		"provider":  catalog.ServerOpsSSHConnectorID,
+		"operation": serverops.ActionCommandRun,
+		"command":   result.Command,
+		"exit_code": result.ExitCode,
+		"stdout":    result.Stdout,
+		"stderr":    result.Stderr,
+		"truncated": result.Truncated,
 	}
 }
 

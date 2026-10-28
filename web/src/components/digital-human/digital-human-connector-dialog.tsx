@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Radio, RadioGroup } from '@/components/ui/radio';
 import {
   Dialog,
   DialogBody,
@@ -47,13 +48,20 @@ import type {
   DigitalHumanResourceCandidate,
 } from '@/services/types/digital-human';
 import {
+  CONNECTOR_APPROVAL_POLICIES,
+  connectorApprovalPolicy,
+  connectorApprovalPolicyTrusted,
   connectorOperationIds,
   connectorSelectionChanged,
   connectorSelectionInvalid,
+  connectorSupportsReadOnlyAuto,
   digitalHumanResourceKey,
   isPerUserConnectorSlot,
+  RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS,
   selectDigitalHumanConnection,
+  updateDigitalHumanApprovalPolicy,
   updateDigitalHumanOperations,
+  type ConnectorApprovalPolicy,
   type DigitalHumanConnectorSelection,
 } from './digital-human-connector-model';
 
@@ -70,7 +78,18 @@ interface ConnectorCardsProps {
     operationId: string,
     checked: boolean
   ) => void;
+  onApprovalPolicy?: (
+    item: DigitalHumanResourceBindingInput,
+    policy: ConnectorApprovalPolicy
+  ) => void;
 }
+
+const APPROVAL_POLICY_LABEL_KEYS = {
+  always_ask: 'bindings.connectors.approvalPolicyAlwaysAsk',
+  read_only_auto: 'bindings.connectors.approvalPolicyReadOnlyAuto',
+  trusted: 'bindings.connectors.approvalPolicyTrusted',
+  trusted_unattended: 'bindings.connectors.approvalPolicyTrustedUnattended',
+} as const satisfies Record<ConnectorApprovalPolicy, string>;
 
 export function DigitalHumanConnectorOperationDetails({
   item,
@@ -81,6 +100,7 @@ export function DigitalHumanConnectorOperationDetails({
   checking,
   candidatesError,
   onOperation,
+  onApprovalPolicy,
 }: {
   item: DigitalHumanResourceBindingInput;
   candidate?: DigitalHumanResourceCandidate;
@@ -90,12 +110,33 @@ export function DigitalHumanConnectorOperationDetails({
   checking?: boolean;
   candidatesError?: boolean;
   onOperation?: (operationId: string, checked: boolean) => void;
+  onApprovalPolicy?: (policy: ConnectorApprovalPolicy) => void;
 }) {
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
   const selected = connectorOperationIds(item);
   const available = candidate ? connectorOperationIds(candidate) : [];
   const operations = [...new Set([...selected, ...(onOperation ? available : [])])];
+  // A risky operation turns on only after the person reads and accepts its risk.
+  const [riskyOperationId, setRiskyOperationId] = useState<string | null>(null);
+  const riskyOperation = connector?.capabilities.find(value => value.id === riskyOperationId);
+  // Trusting a connection runs changes without asking, so it too turns on only
+  // after the person accepts its risk (ADR 0028).
+  const [riskyPolicy, setRiskyPolicy] = useState<ConnectorApprovalPolicy | null>(null);
+  const changeApprovalPolicy = (policy: ConnectorApprovalPolicy) => {
+    if (connectorApprovalPolicyTrusted(policy)) {
+      setRiskyPolicy(policy);
+      return;
+    }
+    onApprovalPolicy?.(policy);
+  };
+  const changeOperation = (operationId: string, checked: boolean) => {
+    if (checked && RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS.has(operationId)) {
+      setRiskyOperationId(operationId);
+      return;
+    }
+    onOperation?.(operationId, checked);
+  };
   return (
     <details className="text-xs">
       <summary className="cursor-pointer py-1 font-medium">
@@ -121,7 +162,7 @@ export function DigitalHumanConnectorOperationDetails({
                     !candidate?.available ||
                     (!checked && !available.includes(operationId))
                   }
-                  onCheckedChange={value => onOperation(operationId, value === true)}
+                  onCheckedChange={value => changeOperation(operationId, value === true)}
                 />
               ) : null}
               <span className="min-w-0">
@@ -145,6 +186,75 @@ export function DigitalHumanConnectorOperationDetails({
           </p>
         ) : null}
       </div>
+      {connectorSupportsReadOnlyAuto(item) ? (
+        <div className="mt-3 space-y-2 rounded-md border p-2">
+          <p className="font-medium">{t('bindings.connectors.approvalPolicyLabel')}</p>
+          <RadioGroup
+            value={connectorApprovalPolicy(item)}
+            onValueChange={value => changeApprovalPolicy(value as ConnectorApprovalPolicy)}
+            className="gap-2"
+          >
+            {CONNECTOR_APPROVAL_POLICIES.map(policy => (
+              <Radio
+                key={policy}
+                value={policy}
+                disabled={!onApprovalPolicy || disabled || checking}
+                label={t(APPROVAL_POLICY_LABEL_KEYS[policy])}
+              />
+            ))}
+          </RadioGroup>
+          <p className="text-muted-foreground">{t('bindings.connectors.approvalPolicyHint')}</p>
+          {connectorApprovalPolicyTrusted(connectorApprovalPolicy(item)) ? (
+            <p role="status" className="text-destructive">
+              {t(
+                connectorApprovalPolicy(item) === 'trusted_unattended'
+                  ? 'bindings.connectors.trustedUnattendedActive'
+                  : 'bindings.connectors.trustedActive'
+              )}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      <ConfirmDialog
+        open={riskyOperationId !== null}
+        onOpenChange={open => {
+          if (!open) setRiskyOperationId(null);
+        }}
+        variant="danger"
+        title={t('bindings.connectors.riskyOperationTitle', {
+          name: riskyOperation?.name || riskyOperationId || '',
+        })}
+        description={t('bindings.connectors.riskyOperationDescription')}
+        confirmText={t('bindings.connectors.riskyOperationConfirm')}
+        cancelText={t('common.cancel')}
+        onConfirm={() => {
+          if (riskyOperationId) onOperation?.(riskyOperationId, true);
+          setRiskyOperationId(null);
+        }}
+      />
+      <ConfirmDialog
+        open={riskyPolicy !== null}
+        onOpenChange={open => {
+          if (!open) setRiskyPolicy(null);
+        }}
+        variant="danger"
+        title={t(
+          riskyPolicy === 'trusted_unattended'
+            ? 'bindings.connectors.trustedUnattendedTitle'
+            : 'bindings.connectors.trustedTitle'
+        )}
+        description={t(
+          riskyPolicy === 'trusted_unattended'
+            ? 'bindings.connectors.trustedUnattendedDescription'
+            : 'bindings.connectors.trustedDescription'
+        )}
+        confirmText={t('bindings.connectors.riskyOperationConfirm')}
+        cancelText={t('common.cancel')}
+        onConfirm={() => {
+          if (riskyPolicy) onApprovalPolicy?.(riskyPolicy);
+          setRiskyPolicy(null);
+        }}
+      />
     </details>
   );
 }
@@ -158,6 +268,7 @@ export function DigitalHumanConnectorCards({
   onRemove,
   onReplace,
   onOperation,
+  onApprovalPolicy,
 }: ConnectorCardsProps) {
   const t = useT('digitalHumans');
   const connectorT = useT('connectors');
@@ -283,6 +394,9 @@ export function DigitalHumanConnectorCards({
                   onOperation
                     ? (operationId, checked) => onOperation(item, operationId, checked)
                     : undefined
+                }
+                onApprovalPolicy={
+                  onApprovalPolicy ? policy => onApprovalPolicy(item, policy) : undefined
                 }
               />
             )}
@@ -608,6 +722,11 @@ export function DigitalHumanConnectorDialog({
                   operation,
                   checked
                 )
+              )
+            }
+            onApprovalPolicy={policy =>
+              changeItems(
+                updateDigitalHumanApprovalPolicy(currentRef.current.pending, item, policy)
               )
             }
           />

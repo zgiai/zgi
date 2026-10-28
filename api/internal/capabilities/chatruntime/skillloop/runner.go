@@ -409,6 +409,7 @@ type skillStepResult struct {
 	toolMessage         adapter.Message
 	toolResult          map[string]interface{}
 	artifacts           []map[string]interface{}
+	events              []RuntimeToolEvent
 	answer              string
 	answerStreamed      bool
 	usedSkill           bool
@@ -1066,6 +1067,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				for _, artifact := range result.artifacts {
 					r.recordArtifact(artifact)
 					r.emitEvent(prepared, EventSkillArtifactCreated, artifact)
+				}
+				for _, event := range result.events {
+					r.emitEvent(prepared, event.Type, runtimeToolEventPayload(prepared, event.Payload))
 				}
 			}
 			if result.trace.Kind == "" && userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
@@ -1965,7 +1969,7 @@ func isAgentManagementMutationTool(skillID string, toolName string) bool {
 	case "update_agent_identity", "update_agent_config",
 		"replace_agent_skill_bindings", "replace_agent_knowledge_bindings",
 		"replace_agent_database_bindings", "replace_agent_workflow_bindings",
-		"replace_agent_memory_slots":
+		"replace_agent_memory_blocks", "replace_agent_memory_slots":
 		return true
 	default:
 		return false

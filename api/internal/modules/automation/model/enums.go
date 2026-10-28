@@ -107,6 +107,8 @@ const (
 	AutomationTriggerSourceScheduler AutomationTriggerSource = "scheduler"
 	AutomationTriggerSourceManualRun AutomationTriggerSource = "manual_run"
 	AutomationTriggerSourceRetry     AutomationTriggerSource = "retry"
+	// AutomationTriggerSourceServerEvent is a run a server watch started (ADR 0031).
+	AutomationTriggerSourceServerEvent AutomationTriggerSource = "server_event"
 )
 
 // AutomationActionRunStatus represents the status of an action execution.

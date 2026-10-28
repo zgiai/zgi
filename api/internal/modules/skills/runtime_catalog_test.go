@@ -1208,19 +1208,6 @@ func TestAgentMemorySystemSkillIsNotLoadable(t *testing.T) {
 	}
 }
 
-func TestUserMemorySystemSkillIsNotLoadable(t *testing.T) {
-	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
-	_, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillUserMemory})
-	if !errors.Is(err, ErrSkillNotFound) {
-		t.Fatalf("ResolveEnabledSkills(user-memory) error = %v, want ErrSkillNotFound", err)
-	}
-	for _, toolName := range []string{"read_user_memory", "add_user_memory", "update_user_memory", "delete_user_memory", "list_temporary_memories"} {
-		if got := ExpectedSkillToolArguments(SkillUserMemory, toolName); got != nil {
-			t.Fatalf("ExpectedSkillToolArguments(user-memory/%s) = %#v, want nil", toolName, got)
-		}
-	}
-}
-
 func TestCustomSkillCannotDeclareTools(t *testing.T) {
 	root := t.TempDir()
 	content := `---

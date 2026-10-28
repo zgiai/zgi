@@ -74,6 +74,10 @@ const (
 	streamEventRuntimeInputFollowUpStarted = "runtime_input_follow_up_started"
 	streamEventRuntimeInputCanceled        = "runtime_input_canceled"
 	streamEventRuntimeInputFailed          = "runtime_input_failed"
+	streamEventMemoryCreate                = "memory_create"
+	streamEventMemoryUpdate                = "memory_update"
+	streamEventMemoryDelete                = "memory_delete"
+	streamEventMemoryClear                 = "memory_clear"
 
 	skillModeDisabled = "disabled"
 	skillModeAuto     = "auto"
@@ -93,8 +97,7 @@ const (
 	executionRouteFunctionCallingUnavailable = "function_calling_unavailable"
 	executionRoutePersistedMode              = "persisted_mode"
 
-	userMemoryContextBudgetChars = 4000
-	maxAgentMemoryContextTokens  = 2048
+	maxAgentMemoryContextTokens = 2048
 )
 
 var defaultSystemSkillIDs = []string{
@@ -199,7 +202,6 @@ type RunConfig struct {
 	WorkflowBoundByAccountID         string
 	WorkflowBoundAtUnix              int64
 	BindingAuthorizations            []ResourceBindingAuthorization
-	UseMemory                        bool
 	AgentMemoryEnabled               bool
 	AgentMemoryAutoExtractionEnabled bool
 	AgentMemorySlots                 []AgentMemorySlotConfig
@@ -219,13 +221,18 @@ type RunConfig struct {
 	ConnectorTargetType  connectorcore.TargetType
 	ConnectorRunID       string
 	ConnectorInteractive bool
+	// ConnectorRequesterID is the account present in an interactive console
+	// conversation; empty for every other origin (ADR 0028).
+	ConnectorRequesterID string
 	// UserTimezone is the IANA timezone of the person the run serves; the
 	// time Skill defaults to it. Empty keeps the Skill's UTC default.
 	UserTimezone              string
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
-	BillingAppID              string
-	BillingAppType            string
+	// AgentMemoryInstructions is the builder's guidance on what to remember.
+	AgentMemoryInstructions string
+	BillingAppID            string
+	BillingAppType          string
 	// BillingRuntimeWorkspaceID and BillingEndUserSubjectID name the Runtime
 	// Workspace end user a run is made for when its scope does not, such as
 	// a DigitalHuman run; model calls are metered and quota-checked for them.
@@ -497,19 +504,10 @@ type Service interface {
 	MigrateWebAppConversation(ctx context.Context, scope Scope, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 }
 
-type UserMemoryService interface {
-	IsEnabled(ctx context.Context, accountID uuid.UUID) (bool, error)
-	RenderContext(ctx context.Context, accountID uuid.UUID, budget int) (string, error)
-}
-
 type AgentMemoryContextService interface {
 	ReadRuntimeFence(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, configScope, configRevision string) (int64, error)
 	ReadUserMemory(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.SlotValueResponse, error)
 	MutateValues(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, req agentmemory.MutateValuesRequest, meta agentmemory.MutationMetadata) (*agentmemory.MutateValuesResponse, error)
-}
-
-type AgentMemoryExtractionScheduler interface {
-	ScheduleExtraction(ctx context.Context, req agentmemory.ScheduleExtractionRequest) (*agentmemory.AgentMemoryExtractionJob, error)
 }
 
 type service struct {
@@ -524,9 +522,7 @@ type service struct {
 	contentExtractor               ContentExtractionService
 	workspacePerms                 WorkspacePermissionService
 	skillRuntime                   *skills.Runtime
-	memoryService                  UserMemoryService
 	agentMemoryService             AgentMemoryContextService
-	agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	connectorChatRuntime           connectorruntimeauth.ChatRuntimeResolver
 	connectorAgentRuntime          connectorruntimeauth.AgentRuntimeResolver
 	connectorDigitalHumanRuntime   connectorruntimeauth.DigitalHumanRuntimeResolver
@@ -566,7 +562,7 @@ func NewServiceWithDependencies(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 ) Service {
-	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil, nil)
+	return NewServiceWithSkillRuntime(repos, llmClient, titleGen, modelSpecResolver, fileService, contentExtractor, workspacePerms, nil)
 }
 
 func NewServiceWithSkillRuntime(
@@ -578,11 +574,9 @@ func NewServiceWithSkillRuntime(
 	contentExtractor ContentExtractionService,
 	workspacePerms WorkspacePermissionService,
 	skillRuntime *skills.Runtime,
-	memoryService UserMemoryService,
 	optionalServices ...interface{},
 ) Service {
 	var agentMemoryService AgentMemoryContextService
-	var agentMemoryExtractionScheduler AgentMemoryExtractionScheduler
 	var connectorChatRuntime connectorruntimeauth.ChatRuntimeResolver
 	var connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver
 	var connectorDigitalHumanRuntime connectorruntimeauth.DigitalHumanRuntimeResolver
@@ -597,14 +591,10 @@ func NewServiceWithSkillRuntime(
 		if typed, ok := item.(MarketToolResolver); ok && marketTools == nil {
 			marketTools = typed
 		}
-		// Optional services may intentionally implement more than one contract
-		// (the memory backend provides both context and extraction scheduling),
+		// Optional services may intentionally implement more than one contract,
 		// so these assertions must not be mutually exclusive.
 		if typed, ok := item.(AgentMemoryContextService); ok && agentMemoryService == nil {
 			agentMemoryService = typed
-		}
-		if typed, ok := item.(AgentMemoryExtractionScheduler); ok && agentMemoryExtractionScheduler == nil {
-			agentMemoryExtractionScheduler = typed
 		}
 		if typed, ok := item.(RuntimeInputFollowUpDispatcher); ok && runtimeInputDispatcher == nil {
 			runtimeInputDispatcher = typed
@@ -637,9 +627,7 @@ func NewServiceWithSkillRuntime(
 		contentExtractor:               contentExtractor,
 		workspacePerms:                 workspacePerms,
 		skillRuntime:                   skillRuntime,
-		memoryService:                  memoryService,
 		agentMemoryService:             agentMemoryService,
-		agentMemoryExtractionScheduler: agentMemoryExtractionScheduler,
 		connectorChatRuntime:           connectorChatRuntime,
 		connectorAgentRuntime:          connectorAgentRuntime,
 		connectorDigitalHumanRuntime:   connectorDigitalHumanRuntime,
@@ -686,9 +674,6 @@ type PreparedChat struct {
 	// pausedAnswer is the answer the paused turn had when the continuation
 	// was prepared, captured before the resumed run can change it.
 	pausedAnswer *string
-
-	UserMemoryPreflightDone  bool
-	UserMemoryPreflightUsage *adapter.Usage
 
 	usageExecutionStarted  bool
 	usageExecutionBaseline *adapter.Usage
@@ -793,7 +778,6 @@ type chatRequestParts struct {
 	MarketSkillIDs                   []string
 	RequiredInitialConnectorBindings []connectorbindings.InitialChatConnection
 	ConnectorToolsEnabled            bool
-	UseMemory                        bool
 	SkillIDs                         []string
 	ToolSkillIDs                     []string
 	SkillMode                        string
@@ -822,13 +806,21 @@ type chatRequestParts struct {
 	ConnectorInteractive      bool
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
+	AgentMemoryInstructions   string
 	AgentMemoryAgentID        string
 	AgentMemoryRuntimeState   *AgentMemoryRuntimeState
-	AgentMemoryContext        string
-	RuntimeTools              []skillloop.RuntimeTool
-	SourceMessageID           *uuid.UUID
-	BillingSource             string
-	ModelTurnIntent           *AIChatModelTurnIntent
-	ModelTurnIntentError      string
-	HistoryPolicy             *runtimedto.ConversationHistoryPolicy
+	// AgentMemoryRecentUserMessages are the user's earlier messages on this
+	// branch, which memory_edit evidence may quote (ADR 0013).
+	AgentMemoryRecentUserMessages []string
+	// UserInputAnswers are the user's answers to questions asked in this
+	// turn. They are the user's words for the turn as much as the query, so
+	// memory evidence may quote them.
+	UserInputAnswers     []string
+	AgentMemoryContext   string
+	RuntimeTools         []skillloop.RuntimeTool
+	SourceMessageID      *uuid.UUID
+	BillingSource        string
+	ModelTurnIntent      *AIChatModelTurnIntent
+	ModelTurnIntentError string
+	HistoryPolicy        *runtimedto.ConversationHistoryPolicy
 }

@@ -146,11 +146,10 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenKnowledge(t *testing.T) {
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
 		{ID: skills.SkillInternalKnowledge, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentKnowledge}},
-		{ID: skills.SkillUserMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
 	}
 
 	got := effectiveAgentSkillIDs(
-		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge, skills.SkillUserMemory, skills.SkillInternalKnowledge},
+		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge, skills.SkillInternalKnowledge},
 		catalog,
 		[]string{skills.SkillCalculator},
 		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
@@ -342,11 +341,10 @@ func TestEffectiveAgentSkillIDsSkipsWorkflowWithoutBindings(t *testing.T) {
 func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillAgentMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
-		{ID: skills.SkillUserMemory, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 	}
 
 	got := effectiveAgentSkillIDs(
-		[]string{skills.SkillUserMemory},
+		[]string{},
 		catalog,
 		[]string{},
 		&RunConfig{
@@ -361,15 +359,6 @@ func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	want := []string{}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
-	}
-}
-
-func TestRunConfigAllowsUserMemoryRejectsAgent(t *testing.T) {
-	if runConfigAllowsUserMemory(RunConfig{UseMemory: true, BillingAppType: runtimemodel.ConversationCallerAgent}) {
-		t.Fatal("runConfigAllowsUserMemory() = true for agent, want false")
-	}
-	if !runConfigAllowsUserMemory(RunConfig{UseMemory: true, BillingAppType: runtimemodel.ConversationCallerAIChat}) {
-		t.Fatal("runConfigAllowsUserMemory() = false for aichat, want true")
 	}
 }
 
@@ -1053,26 +1042,6 @@ func TestValidateSkillIDsForCallerRejectsSystemAssetSkill(t *testing.T) {
 	}
 }
 
-func TestApplyRunConfigToPartsPreservesAIChatUseMemoryRequest(t *testing.T) {
-	parts := &chatRequestParts{UseMemory: true}
-
-	applyRunConfigToParts(RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat}, parts)
-
-	if !parts.UseMemory {
-		t.Fatal("applyRunConfigToParts() cleared AIChat request use memory")
-	}
-}
-
-func TestApplyRunConfigToPartsDisablesAccountMemoryForAgentCaller(t *testing.T) {
-	parts := &chatRequestParts{UseMemory: true}
-
-	applyRunConfigToParts(RunConfig{BillingAppType: runtimemodel.ConversationCallerAgent}, parts)
-
-	if parts.UseMemory {
-		t.Fatal("applyRunConfigToParts() left account memory enabled for agent caller")
-	}
-}
-
 func TestApplyRunConfigToPartsCarriesConnectorHostCoordinates(t *testing.T) {
 	runID := uuid.NewString()
 	versionID := uuid.NewString()
@@ -1089,37 +1058,6 @@ func TestApplyRunConfigToPartsCarriesConnectorHostCoordinates(t *testing.T) {
 	if parts.ConnectorTargetType != connectorcore.TargetTypeDigitalHuman || parts.ConnectorTargetScope != "published" ||
 		parts.ConnectorTargetVersionID != versionID || parts.ConnectorRunID != runID || !parts.ConnectorInteractive {
 		t.Fatalf("Connector host carrier not propagated: %#v", parts)
-	}
-}
-
-func TestApplyManagedUserMemoryPolicyDisablesAccountMemoryForAIChatSurfaces(t *testing.T) {
-	for _, surface := range []string{aiChatSurfaceWorkChat, aiChatSurfaceContextualSidebar} {
-		t.Run(surface, func(t *testing.T) {
-			parts := &chatRequestParts{
-				Surface:                      surface,
-				FunctionCallingKnown:         true,
-				ModelSupportsFunctionCalling: true,
-				UseMemory:                    true,
-			}
-
-			applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
-			if parts.UseMemory {
-				t.Fatal("applyManagedUserMemoryPolicy() left account memory enabled, want disabled")
-			}
-		})
-	}
-}
-
-func TestApplyManagedUserMemoryPolicyKeepsAgentAccountMemoryDisabled(t *testing.T) {
-	parts := &chatRequestParts{
-		FunctionCallingKnown:         true,
-		ModelSupportsFunctionCalling: true,
-		UseMemory:                    true,
-	}
-
-	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAgent}, parts)
-	if parts.UseMemory {
-		t.Fatal("applyManagedUserMemoryPolicy() enabled account memory for an Agent caller")
 	}
 }
 
@@ -1710,7 +1648,6 @@ func TestVisibleSkillMetadataHidesNonUserSelectableSystemSkills(t *testing.T) {
 		{ID: skills.SkillAgentDatabase},
 		{ID: skills.SkillAgentWorkflow},
 		{ID: skills.SkillAgentMemory},
-		{ID: skills.SkillUserMemory},
 		{ID: skills.SkillConsoleNavigator},
 		{ID: skills.SkillFileManager},
 		{ID: skills.SkillFileReader},
@@ -2009,47 +1946,6 @@ func TestEmitAgentMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
 	if _, exists := got.Payload["content"]; exists {
 		t.Fatalf("payload = %#v, memory content must not enter SSE", got.Payload)
 	}
-}
-
-func TestEmitUserMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
-	prepared := preparedTimelineTestChat()
-	var got *StreamEvent
-	(&service{}).emitUserMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
-		Kind:   "user_memory",
-		Status: "success",
-	}, map[string]interface{}{
-		"action":   "update",
-		"entry_id": "entry-1",
-		"content":  "Call the user Captain.",
-	}, func(event StreamEvent) error {
-		got = &event
-		return nil
-	})
-	if got == nil {
-		t.Fatal("memory mutation event was not emitted")
-	}
-	if got.EventType != streamEventMemoryUpdate {
-		t.Fatalf("event type = %q, want %q", got.EventType, streamEventMemoryUpdate)
-	}
-	if got.Payload["memory_scope"] != "account" || got.Payload["action"] != "update" || got.Payload["entry_id"] != "entry-1" {
-		t.Fatalf("payload = %#v, want account memory update payload", got.Payload)
-	}
-}
-
-func TestEmitUserMemoryMutationEventSkipsPreparePreflightWithoutMessage(t *testing.T) {
-	prepared := preparedTimelineTestChat()
-	prepared.Message = nil
-
-	(&service{}).emitUserMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
-		Kind:   "user_memory",
-		Status: "success",
-	}, map[string]interface{}{
-		"action":   "update",
-		"entry_id": "entry-1",
-	}, func(StreamEvent) error {
-		t.Fatal("memory mutation event was emitted without a persisted message")
-		return nil
-	})
 }
 
 func TestProcessTimelineRecorderAggregatesIntermediateAnswerChunks(t *testing.T) {

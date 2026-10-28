@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentRuntimeHeader } from './header';
 import { AgentRuntimeOrchestrationPanel } from './orchestration-panel';
 import { AgentRuntimePreviewPanel } from './preview-panel';
 import { AgentRuntimePromptPanel } from './prompt-panel';
 import { AgentRuntimeVersionPopover } from './published-versions-dialog';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
+import { AgentMemoryOpenerContext } from '@/components/memory/agent-memory-opener';
 import { cn } from '@/lib/utils';
 import type { AgentRuntimePageModel } from './hooks/use-agent-runtime-page-model';
 
@@ -50,6 +51,9 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
   const showDraftPreview = model.preview.canUseDraftPreview;
   const showInlinePreview = showDraftPreview && bodyWidth >= INLINE_PREVIEW_MIN_WIDTH;
   const { previewSheetOpen, setPreviewSheetOpen } = model;
+  const openMemoryValues = model.orchestration.onOpenMemoryValues;
+  // Memory notices in the debug chat open the builder's test memory.
+  const memoryOpener = useMemo(() => ({ open: openMemoryValues }), [openMemoryValues]);
 
   useEffect(() => {
     if (showInlinePreview && previewSheetOpen) {
@@ -58,11 +62,13 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
   }, [previewSheetOpen, setPreviewSheetOpen, showInlinePreview]);
 
   const renderPreviewPanel = (surfaceMode: 'inline' | 'sheet' = 'inline') => (
-    <AgentRuntimePreviewPanel
-      {...model.preview}
-      surfaceMode={surfaceMode}
-      onClose={() => setPreviewSheetOpen(false)}
-    />
+    <AgentMemoryOpenerContext.Provider value={memoryOpener}>
+      <AgentRuntimePreviewPanel
+        {...model.preview}
+        surfaceMode={surfaceMode}
+        onClose={() => setPreviewSheetOpen(false)}
+      />
+    </AgentMemoryOpenerContext.Provider>
   );
 
   return (

@@ -12,6 +12,7 @@ import (
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/modules/automation/serverwatch"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
@@ -113,10 +114,6 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- Memory (common) ----------
-	RegisterMemoryRoutes(v1, MemoryRouteDeps{
-		MemoryService:  serviceContainer.GetMemoryService(),
-		AccountService: accountService,
-	})
 	RegisterRelationshipMemoryRoutes(v1, db, accountService)
 
 	// ---------- Dataset ----------
@@ -263,7 +260,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// An agent or a digital human that is deleted gives up its market binding. Registered before
 	// their routes, the middleware sees both deletes.
 	v1.Use(zgimarket.ReleaseOnDelete(zgiMarketTools))
-	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager(), applicationErrorCatalog)
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), serviceContainer.GetScheduler(), config.Current().TaskQueue.WorkflowTestTaskBackend, serviceContainer.GetConnectorAgentRuntimeResolver(), serviceContainer.GetConnectorConfirmationContinuationStore(), serviceContainer.GetConnectorSurfaceDispatcher(), serviceContainer.GetConnectorPluginManager(), applicationErrorCatalog)
 
 	// ---------- DigitalHuman ----------
 	// Artifacts outlive the runs that produce them (ADR 0009).
@@ -330,6 +327,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// Draft saves and publication admit Connector bindings against the same
 	// plugin catalog the runtime uses.
 	consoleDigitalHumanService.SetConnectorCatalog(serviceContainer.GetConnectorPluginManager())
+	consoleDigitalHumanService.SetMemoryPreviewExtractor(digitalhuman.NewLLMMemoryExtractor(serviceContainer.GetLLMClient()))
 	if digitalHumanRuntime.MemoryProjectionRepairer != nil {
 		consoleDigitalHumanService.SetMemoryProjectionRepairer(digitalHumanRuntime.MemoryProjectionRepairer)
 	}
@@ -337,7 +335,16 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	if socialOperationsSetupErr != nil {
 		panic(fmt.Sprintf("initialize social operations setup: %v", socialOperationsSetupErr))
 	}
+	// A server watch starts its task when a watched service goes down (ADR 0031).
+	serverWatchProbe := serviceContainer.GetServerWatchProbe()
+	serverWatches := serverwatch.NewService(db, serverWatchProbe, serverWatchProbe, automationBundle.DigitalHumanTasks)
+	if automationDispatchEnabled() {
+		if err := serviceContainer.GetScheduler().RegisterTask(&serverwatch.SweepTask{}, serverwatch.NewSweepHandler(serverWatches)); err != nil {
+			panic("register server watch sweep: " + err.Error())
+		}
+	}
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
+		ServerWatches:    serverWatches,
 		SocialOperations: socialOperationsSetup,
 		WorkJournal:      serviceContainer.GetWorkJournalManagement(),
 		Service:          consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,
@@ -394,7 +401,6 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		FileService:                serviceContainer.GetFileService(),
 		ContentExtractor:           serviceContainer.GetContentExtractor(),
 		WorkspacePermissionService: serviceContainer.GetOrganizationService(),
-		MemoryService:              serviceContainer.GetMemoryService(),
 		AgentMemoryService:         serviceContainer.GetAgentMemoryService(),
 		SkillRuntime: newSkillRuntimeWithSandbox(
 			serviceContainer.GetToolEngine(),
@@ -412,14 +418,19 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- ZGI Market (members of the current organization) ----------
 	RegisterZGIMarketRoutes(v1, accountService, tenantServiceImpl, chatService, zgiMarketTools)
-	RegisterConnectorRuntimeConfirmationRoutes(v1, ConnectorRuntimeConfirmationRouteDeps{
+	confirmationDeps := ConnectorRuntimeConfirmationRouteDeps{
 		Service: serviceContainer.GetConnectorRuntimeConfirmationService(),
 		Recorder: connectorRuntimeConfirmationSurfaceRecorder{
 			chatAndAgent: chatService,
 			workflow:     workflowService,
 		},
 		AccountService: accountService,
-	})
+	}
+	if digitalHumanRuntime != nil && digitalHumanRuntime.Runtime != nil {
+		confirmationDeps.DigitalHuman = digitalHumanRuntime.Runtime
+	}
+	RegisterConnectorRuntimeConfirmationRoutes(v1, confirmationDeps)
+	RegisterConnectorCommandRuleRoutes(v1, serviceContainer.GetConnectorCommandRules(), accountService)
 	// End users connect their own keys for per-user DigitalHuman Connector
 	// slots through the same verified key setup as members (ADR 0007).
 	if connectionService := serviceContainer.GetConnectorConnectionService(); connectionService != nil {

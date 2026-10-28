@@ -2,7 +2,6 @@ package relationshipmemory
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -61,18 +60,23 @@ type EnsureRelationshipRequest struct {
 	ConsumerType         string
 	ConsumerID           uuid.UUID
 	ConsumerNameSnapshot string
-	AutoCaptureEnabled   bool
 }
 
 func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationshipRequest) (*UserMemoryRelationship, error) {
-	if s == nil || s.db == nil || req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil || req.Subject.ID == uuid.Nil || req.ConsumerID == uuid.Nil {
+	aiChat := req.ConsumerType == ConsumerAIChat
+	if s == nil || s.db == nil || req.Subject.ID == uuid.Nil || req.ConsumerID == uuid.Nil || (!aiChat && (req.OrganizationID == uuid.Nil || req.WorkspaceID == uuid.Nil)) {
 		return nil, ErrAccessDenied
 	}
 	if req.Subject.Kind != usersubject.Account && req.Subject.Kind != usersubject.APIEndUser {
 		return nil, fmt.Errorf("%w: invalid subject kind", ErrPolicyRejected)
 	}
-	if req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman {
+	if req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman && !aiChat {
 		return nil, fmt.Errorf("%w: invalid consumer type", ErrPolicyRejected)
+	}
+	// AI chat memory belongs to the person's account alone and to no
+	// organization (ADR 0021).
+	if aiChat && (req.Subject.Kind != usersubject.Account || req.ConsumerID != AIChatConsumerID || req.OrganizationID != uuid.Nil || req.WorkspaceID != uuid.Nil) {
+		return nil, fmt.Errorf("%w: invalid AI chat memory scope", ErrPolicyRejected)
 	}
 	var relationship UserMemoryRelationship
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -91,8 +95,12 @@ func (s *Service) EnsureRelationship(ctx context.Context, req EnsureRelationship
 			ConsumerNameSnapshot: strings.TrimSpace(req.ConsumerNameSnapshot),
 			Status:               RelationshipActive,
 			MemoryEnabled:        true,
-			AutoCaptureEnabled:   req.AutoCaptureEnabled,
-			SettingsRevision:     1,
+			// Automatic memory follows the Agent or DigitalHuman (ADR 0019): the
+			// person's switch starts on and only matters once they turn it off.
+			// The consumer's own setting and the deployment fuse still decide
+			// whether anything runs.
+			AutoCaptureEnabled: true,
+			SettingsRevision:   1,
 		}
 		conflict := clause.OnConflict{
 			Columns:   []clause.Column{{Name: "workspace_id"}, {Name: "subject_id"}, {Name: "consumer_type"}, {Name: "consumer_id"}},
@@ -153,8 +161,15 @@ func (s *Service) ListAccountRelationships(ctx context.Context, req ListRelation
 	if req.OrganizationID == uuid.Nil || req.AccountID == uuid.Nil {
 		return nil, ErrAccessDenied
 	}
-	if req.ConsumerType != "" && req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman {
+	if req.ConsumerType != "" && req.ConsumerType != ConsumerAgent && req.ConsumerType != ConsumerDigitalHuman && req.ConsumerType != ConsumerAIChat {
 		return nil, fmt.Errorf("%w: invalid consumer type", ErrPolicyRejected)
+	}
+	// The person's AI chat is always one of their assistants, so its settings
+	// are there before the first conversation.
+	if (req.ConsumerType == "" || req.ConsumerType == ConsumerAIChat) && req.Status != RelationshipArchived && req.WorkspaceID == nil {
+		if _, err := s.EnsureRelationship(ctx, EnsureRelationshipRequest{Subject: usersubject.AccountSubject(req.AccountID), ConsumerType: ConsumerAIChat, ConsumerID: AIChatConsumerID, ConsumerNameSnapshot: "AI Chat"}); err != nil {
+			return nil, err
+		}
 	}
 	if req.Status != "" && req.Status != RelationshipActive && req.Status != RelationshipArchived {
 		return nil, fmt.Errorf("%w: invalid relationship status", ErrPolicyRejected)
@@ -171,7 +186,7 @@ func (s *Service) ListAccountRelationships(ctx context.Context, req ListRelation
 	}
 	query := s.db.WithContext(ctx).Table("user_memory_relationships AS relationships").
 		Joins("JOIN user_subjects AS subjects ON subjects.id = relationships.subject_id").
-		Where("relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", req.OrganizationID, usersubject.Account, req.AccountID)
+		Where("(relationships.organization_id = ? OR relationships.consumer_type = ?) AND subjects.kind = ? AND subjects.account_id = ?", req.OrganizationID, ConsumerAIChat, usersubject.Account, req.AccountID)
 	if req.WorkspaceID != nil {
 		query = query.Where("relationships.workspace_id = ?", *req.WorkspaceID)
 	}
@@ -188,11 +203,11 @@ func (s *Service) ListAccountRelationships(ctx context.Context, req ListRelation
 	var items []RelationshipSummary
 	if err := query.Select(`relationships.*,
 		COALESCE(workspaces.name, '') AS workspace_name,
-		(relationships.status = 'active' AND EXISTS (
+		(relationships.status = 'active' AND (relationships.consumer_type = 'ai_chat' OR EXISTS (
 			SELECT 1 FROM workspace_members
 			WHERE workspace_members.workspace_id = relationships.workspace_id
 				AND workspace_members.account_id = ?
-		)) AS can_manage,
+		))) AS can_manage,
 		(SELECT COUNT(*) FROM user_memory_items
 			WHERE user_memory_items.relationship_id = relationships.id) AS item_count`, req.AccountID).
 		Joins("LEFT JOIN workspaces ON workspaces.id = relationships.workspace_id").
@@ -211,7 +226,7 @@ func (s *Service) GetAccountRelationship(ctx context.Context, organizationID, ac
 	var relationship UserMemoryRelationship
 	err := s.db.WithContext(ctx).Table("user_memory_relationships AS relationships").
 		Joins("JOIN user_subjects AS subjects ON subjects.id = relationships.subject_id").
-		Where("relationships.id = ? AND relationships.organization_id = ? AND subjects.kind = ? AND subjects.account_id = ?", relationshipID, organizationID, usersubject.Account, accountID).
+		Where("relationships.id = ? AND (relationships.organization_id = ? OR relationships.consumer_type = ?) AND subjects.kind = ? AND subjects.account_id = ?", relationshipID, organizationID, ConsumerAIChat, usersubject.Account, accountID).
 		Select("relationships.*").Take(&relationship).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrRelationshipNotFound
@@ -240,7 +255,10 @@ func (s *Service) GetAccountRelationship(ctx context.Context, organizationID, ac
 	_ = s.db.WithContext(ctx).Table("workspaces").Select("name").Where("id = ?", relationship.WorkspaceID).Scan(&workspaceName).Error
 	var membershipCount int64
 	_ = s.db.WithContext(ctx).Table("workspace_members").Where("workspace_id = ? AND account_id = ?", relationship.WorkspaceID, accountID).Count(&membershipCount).Error
-	return &RelationshipDetail{RelationshipSummary: RelationshipSummary{UserMemoryRelationship: relationship, WorkspaceName: workspaceName, CanManage: relationship.Status == RelationshipActive && membershipCount > 0, ItemCount: int64(len(items))}, Items: items}, nil
+	// The person always manages their own AI chat memory; other memory needs
+	// them to still be in the consumer's workspace.
+	canManage := relationship.Status == RelationshipActive && (relationship.ConsumerType == ConsumerAIChat || membershipCount > 0)
+	return &RelationshipDetail{RelationshipSummary: RelationshipSummary{UserMemoryRelationship: relationship, WorkspaceName: workspaceName, CanManage: canManage, ItemCount: int64(len(items))}, Items: items}, nil
 }
 
 type UpdateSettingsRequest struct {
@@ -328,6 +346,9 @@ type MutationMetadata struct {
 	OperationID           uuid.UUID
 	ExpectedMemoryEpoch   *int64
 	EvidenceFromUserInput bool
+	// Evidence and Reason are recorded on the change's history version.
+	Evidence string
+	Reason   string
 }
 
 type PutItemRequest struct {
@@ -408,20 +429,32 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 		if req.ExpectedRevision != currentRevision {
 			return ErrRevisionConflict
 		}
-		if !exists && relationship.ConsumerType == ConsumerDigitalHuman {
+		// Category items count; memory files are bounded by their total below.
+		if !exists && relationship.ConsumerType == ConsumerDigitalHuman && req.Contract.DefinitionMode != "files" {
 			var count int64
-			if err := tx.Model(&UserMemoryItem{}).Where("relationship_id = ?", relationshipID).Count(&count).Error; err != nil {
+			// Notes are the DigitalHuman's, not the person's, and have their own
+			// limit (ADR 0015).
+			if err := tx.Model(&UserMemoryItem{}).Where("relationship_id = ? AND memory_key NOT LIKE ?", relationshipID, NoteKeyPrefix+"%").Count(&count).Error; err != nil {
 				return err
 			}
-			if count >= digitalHumanItemLimit {
+			if !IsNoteKey(req.Key) && count >= digitalHumanItemLimit {
 				return ErrCapacityExceeded
+			}
+		}
+		if req.Contract.DefinitionMode == "files" && !IsNoteKey(req.Key) {
+			if err := s.checkFilesTotal(ctx, tx, relationshipID, req.Key, req.Content); err != nil {
+				return err
 			}
 		}
 		nextRevision := currentRevision + 1
 		lastOperationID := operationID
+		definitionID, err := definitionIDFor(ctx, tx, &relationship, req.Key)
+		if err != nil {
+			return err
+		}
 		if exists {
 			result := tx.Model(&UserMemoryItem{}).Where("id = ? AND revision = ?", before.ID, before.Revision).Updates(map[string]any{
-				"display_name": req.DisplayName, "category": req.Category, "content_payload": encoded.Payload,
+				"display_name": req.DisplayName, "category": req.Category, "content_payload": encoded.Payload, "definition_id": definitionID,
 				"content_encoding": encoded.Encoding, "content_key_id": encoded.KeyID, "revision": nextRevision,
 				"source_kind": normalizedSourceKind(req.Metadata.SourceKind), "source_conversation_id": req.Metadata.SourceConversationID,
 				"source_message_id": req.Metadata.SourceMessageID, "source_completed_at": req.Metadata.SourceCompletedAt,
@@ -434,7 +467,7 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 				return ErrRevisionConflict
 			}
 		} else {
-			after = UserMemoryItem{ID: uuid.New(), RelationshipID: relationshipID, MemoryKey: req.Key, DisplayName: req.DisplayName, Category: req.Category, ContentPayload: encoded.Payload, ContentEncoding: encoded.Encoding, ContentKeyID: encoded.KeyID, Revision: nextRevision, SourceKind: normalizedSourceKind(req.Metadata.SourceKind), SourceConversationID: req.Metadata.SourceConversationID, SourceMessageID: req.Metadata.SourceMessageID, SourceCompletedAt: req.Metadata.SourceCompletedAt, ExtractorVersion: req.Metadata.ExtractorVersion, LastOperationID: &lastOperationID}
+			after = UserMemoryItem{ID: uuid.New(), RelationshipID: relationshipID, MemoryKey: req.Key, DefinitionID: definitionID, DisplayName: req.DisplayName, Category: req.Category, ContentPayload: encoded.Payload, ContentEncoding: encoded.Encoding, ContentKeyID: encoded.KeyID, Revision: nextRevision, SourceKind: normalizedSourceKind(req.Metadata.SourceKind), SourceConversationID: req.Metadata.SourceConversationID, SourceMessageID: req.Metadata.SourceMessageID, SourceCompletedAt: req.Metadata.SourceCompletedAt, ExtractorVersion: req.Metadata.ExtractorVersion, LastOperationID: &lastOperationID}
 			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&after)
 			if result.Error != nil {
 				return result.Error
@@ -444,6 +477,13 @@ func (s *Service) PutItem(ctx context.Context, relationshipID uuid.UUID, req Put
 			}
 		}
 		if err := tx.First(&after, "relationship_id = ? AND memory_key = ?", relationshipID, req.Key).Error; err != nil {
+			return err
+		}
+		versionAction, previous := VersionCreate, (*UserMemoryItem)(nil)
+		if exists {
+			versionAction, previous = VersionUpdate, &before
+		}
+		if err := s.recordVersion(ctx, tx, &relationship, req.Metadata, versionAction, req.Key, definitionID, previous, &after); err != nil {
 			return err
 		}
 		undo := UserMemoryUndoRecord{OperationID: operationID, RelationshipID: relationshipID, MemoryKey: req.Key, PreviousExists: exists, PreviousContentEncoding: ContentEncodingPlain, ResultingRevision: after.Revision, ExpiresAt: s.now().Add(undoTTL), CreatedAt: s.now()}
@@ -486,11 +526,40 @@ func validateMutation(req PutItemRequest) error {
 	if (normalizedSourceKind(req.Metadata.SourceKind) == SourceAutomatic || strings.EqualFold(strings.TrimSpace(req.Metadata.ActorType), "model")) && !req.Metadata.EvidenceFromUserInput {
 		return fmt.Errorf("%w: current-user evidence is required", ErrPolicyRejected)
 	}
-	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > maxMemoryContentChars {
-		return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
+	if IsNoteKey(req.Key) {
+		// A DigitalHuman's note on the person is tagged like its own memory
+		// (ADR 0015) whatever the person's own memory looks like.
+		if utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > maxMemoryContentChars {
+			return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
+		}
+		if _, ok := noteCategories[req.Category]; !ok || !ValidNoteName(NoteName(req.Key)) {
+			return fmt.Errorf("%w: invalid note", ErrPolicyRejected)
+		}
+		if agentmemory.ContainsSensitiveContent(req.Content) {
+			return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+		}
+		return nil
 	}
-	if agentmemory.ContainsSensitiveContent(req.Content) {
-		return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+	// Memory files (ADR 0017, ADR 0019 for DigitalHumans) take any valid name;
+	// one person's files together are bounded, which PutItem checks against
+	// the stored files.
+	if req.Contract.DefinitionMode == "files" {
+		if !agentmemory.ValidMemoryKey(req.Key) || req.Content == "" || utf8.RuneCountInString(req.Content) > agentmemory.MaxMemoryChars {
+			return fmt.Errorf("%w: invalid file name or content length", ErrPolicyRejected)
+		}
+		if agentmemory.ContainsSensitiveContent(req.Content) {
+			return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+		}
+		return nil
+	}
+	// Agent blocks are bounded by their own limit, up to the largest a block
+	// may be configured with; Digital Human items keep the fixed limit.
+	contentLimit := maxMemoryContentChars
+	if req.Contract.DefinitionMode == "slots" {
+		contentLimit = agentmemory.MaxSlotChars
+	}
+	if req.Key == "" || utf8.RuneCountInString(req.Key) > maxMemoryKeyChars || req.Content == "" || utf8.RuneCountInString(req.Content) > contentLimit {
+		return fmt.Errorf("%w: invalid key or content length", ErrPolicyRejected)
 	}
 	if req.Contract.DefinitionMode == "slots" {
 		for _, definition := range req.Contract.Definitions {
@@ -498,10 +567,22 @@ func validateMutation(req PutItemRequest) error {
 				if definition.MaxChars > 0 && utf8.RuneCountInString(req.Content) > definition.MaxChars {
 					return fmt.Errorf("%w: content exceeds definition limit", ErrPolicyRejected)
 				}
+				// A block described as holding contact details may keep them;
+				// secrets and identifiers are never saved.
+				sensitive := agentmemory.ContainsSensitiveContent(req.Content)
+				if agentmemory.DescriptionAllowsContact(definition.Description) {
+					sensitive = agentmemory.ContainsSecretContent(req.Content)
+				}
+				if sensitive {
+					return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
+				}
 				return nil
 			}
 		}
 		return fmt.Errorf("%w: key is not in the published contract", ErrPolicyRejected)
+	}
+	if agentmemory.ContainsSensitiveContent(req.Content) {
+		return fmt.Errorf("%w: sensitive content cannot be saved", ErrPolicyRejected)
 	}
 	if req.Contract.DefinitionMode == "dynamic" {
 		if _, ok := allowedDigitalHumanCategories[req.Category]; !ok {
@@ -600,6 +681,9 @@ func (s *Service) DeleteItem(ctx context.Context, relationshipID uuid.UUID, key 
 				}
 				return ErrRevisionConflict
 			}
+			if err := s.recordVersion(ctx, tx, &relationship, metadata, VersionDelete, key, item.DefinitionID, &item, nil); err != nil {
+				return err
+			}
 		}
 		now := s.now()
 		if err := tx.Model(&UserMemoryRelationship{}).Where("id = ?", relationshipID).Updates(map[string]any{"memory_epoch": gorm.Expr("memory_epoch + 1"), "extraction_cutoff_at": now, "updated_at": now}).Error; err != nil {
@@ -660,6 +744,31 @@ func (s *Service) ClearItems(ctx context.Context, relationshipID uuid.UUID, meta
 			return ErrAccessDenied
 		}
 		now := s.now()
+		var cleared []UserMemoryItem
+		if err := tx.Where("relationship_id = ?", relationshipID).Order("memory_key").Find(&cleared).Error; err != nil {
+			return err
+		}
+		for index := range cleared {
+			if err := s.recordVersion(ctx, tx, &relationship, meta, VersionClear, cleared[index].MemoryKey, cleared[index].DefinitionID, &cleared[index], nil); err != nil {
+				return err
+			}
+		}
+		// Clearing all memory clears the archive too.
+		var archived []UserMemoryArchiveEntry
+		if err := tx.Where("relationship_id = ?", relationshipID).Find(&archived).Error; err != nil {
+			return err
+		}
+		for index := range archived {
+			if err := s.recordArchiveVersion(ctx, tx, &relationship, meta, VersionClear, &archived[index], nil); err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("relationship_id = ?", relationshipID).Delete(&UserMemoryArchiveEntry{}).Error; err != nil {
+			return err
+		}
+		if err := s.purgeVersionContent(tx, relationshipID); err != nil {
+			return err
+		}
 		if err := tx.Where("relationship_id = ?", relationshipID).Delete(&UserMemoryItem{}).Error; err != nil {
 			return err
 		}
@@ -749,12 +858,20 @@ func (s *Service) Undo(ctx context.Context, relationshipID, operationID uuid.UUI
 			return currentErr
 		}
 		beforeRevision := undo.ResultingRevision
+		var undone *UserMemoryItem
+		if currentExists {
+			snapshot := current
+			undone = &snapshot
+		}
 		if !undo.PreviousExists {
 			if !currentExists || current.Revision != undo.ResultingRevision {
 				return ErrRevisionConflict
 			}
 			beforeRevision = current.Revision
 			if err := tx.Delete(&current).Error; err != nil {
+				return err
+			}
+			if err := s.recordVersion(ctx, tx, &relationship, meta, VersionUndo, undo.MemoryKey, current.DefinitionID, undone, nil); err != nil {
 				return err
 			}
 		} else {
@@ -789,6 +906,24 @@ func (s *Service) Undo(ctx context.Context, relationshipID, operationID uuid.UUI
 				}
 			}
 			current.Revision = nextRevision
+			restored := current
+			restored.ContentPayload, restored.ContentEncoding, restored.ContentKeyID = undo.PreviousContentPayload, undo.PreviousContentEncoding, undo.PreviousContentKeyID
+			definitionID := current.DefinitionID
+			if definitionID == nil {
+				resolved, err := definitionIDFor(ctx, tx, &relationship, undo.MemoryKey)
+				if err != nil {
+					return err
+				}
+				if resolved != nil {
+					if err := tx.Model(&UserMemoryItem{}).Where("id = ?", current.ID).Update("definition_id", resolved).Error; err != nil {
+						return err
+					}
+				}
+				definitionID = resolved
+			}
+			if err := s.recordVersion(ctx, tx, &relationship, meta, VersionUndo, undo.MemoryKey, definitionID, undone, &restored); err != nil {
+				return err
+			}
 			decoded, err := s.codec.Decode(ctx, EncodedContent{Payload: undo.PreviousContentPayload, Encoding: undo.PreviousContentEncoding, KeyID: undo.PreviousContentKeyID})
 			if err != nil {
 				return err
@@ -815,9 +950,10 @@ func (s *Service) Undo(ctx context.Context, relationshipID, operationID uuid.UUI
 }
 
 type ExportResponse struct {
-	Relationship UserMemoryRelationship `json:"relationship"`
-	ExportedAt   time.Time              `json:"exported_at"`
-	Items        []UserMemoryItem       `json:"items"`
+	Relationship UserMemoryRelationship   `json:"relationship"`
+	ExportedAt   time.Time                `json:"exported_at"`
+	Items        []UserMemoryItem         `json:"items"`
+	Archive      []UserMemoryArchiveEntry `json:"archive"`
 }
 
 func (s *Service) Export(ctx context.Context, relationshipID uuid.UUID) (*ExportResponse, error) {
@@ -836,7 +972,11 @@ func (s *Service) Export(ctx context.Context, relationshipID uuid.UUID) (*Export
 		}
 		items[index].ContentPayload = decoded
 	}
-	return &ExportResponse{Relationship: relationship, ExportedAt: s.now().UTC(), Items: items}, nil
+	archive, err := s.ArchiveEntries(ctx, relationshipID, maxArchiveEntries)
+	if err != nil {
+		return nil, err
+	}
+	return &ExportResponse{Relationship: relationship, ExportedAt: s.now().UTC(), Items: items, Archive: archive}, nil
 }
 
 func (s *Service) RenderContext(ctx context.Context, relationshipID uuid.UUID, contract ConsumerMemoryContract) (string, []UserMemoryItem, error) {
@@ -868,6 +1008,9 @@ func (s *Service) RenderContext(ctx context.Context, relationshipID uuid.UUID, c
 		query = query.Where("memory_key IN ?", keys)
 	} else if contract.DefinitionMode == "dynamic" {
 		query = query.Where("category IN ?", contract.AllowedCategories)
+	} else if contract.DefinitionMode == "files" {
+		// A DigitalHuman's notes on the person are its own, not the person's.
+		query = query.Where("memory_key NOT LIKE ?", NoteKeyPrefix+"%")
 	}
 	if err := query.Order("updated_at DESC, memory_key ASC").Find(&items).Error; err != nil {
 		return "", nil, err
@@ -916,38 +1059,8 @@ type ScheduleRequest struct {
 	ForceAt            time.Time
 }
 
-func (s *Service) ScheduleExtraction(ctx context.Context, req ScheduleRequest) (*UserMemoryExtractionJob, error) {
-	snapshot, err := json.Marshal(req.Definitions)
-	if err != nil {
-		return nil, err
-	}
-	var relationship UserMemoryRelationship
-	var job UserMemoryExtractionJob
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&relationship, "id = ?", req.RelationshipID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrRelationshipNotFound
-			}
-			return err
-		}
-		if relationship.Status != RelationshipActive || !relationship.MemoryEnabled || !relationship.AutoCaptureEnabled || relationship.MemoryEpoch != req.MemoryEpoch {
-			return ErrAccessDenied
-		}
-		job = UserMemoryExtractionJob{ID: uuid.New(), RelationshipID: req.RelationshipID, ConversationID: req.ConversationID, MessageWatermarkID: req.MessageWatermarkID, MemoryEpoch: req.MemoryEpoch, ConfigRevision: req.ConfigRevision, DefinitionSnapshot: snapshot, ExtractorVersion: req.ExtractorVersion, IdempotencyKey: req.IdempotencyKey, Status: "pending", ScheduledAt: req.ScheduledAt, ForceAt: req.ForceAt}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&job).Error; err != nil {
-			return err
-		}
-		return tx.Where("idempotency_key = ?", req.IdempotencyKey).First(&job).Error
-	})
-	if err != nil {
-		return nil, err
-	}
-	recordExtractionJob(ctx, relationship.ConsumerType, "scheduled")
-	return &job, nil
-}
-
 func consumerTypeForContract(contract ConsumerMemoryContract) string {
-	if contract.DefinitionMode == "slots" {
+	if contract.DefinitionMode == "slots" || contract.DefinitionMode == "files" {
 		return ConsumerAgent
 	}
 	if contract.DefinitionMode == "dynamic" {

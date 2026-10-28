@@ -21,11 +21,13 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/contracts/chatfile"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	fileprocessservice "github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
@@ -819,44 +821,6 @@ func (h *AgentsHandler) ListAgentDatabaseTableBindingCandidates(c *gin.Context) 
 	response.Success(c, result)
 }
 
-func (h *AgentsHandler) ListAgentMemorySlots(c *gin.Context) {
-	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
-	if err != nil {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-	result, err := h.appService.ListAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String())
-	if err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	response.Success(c, gin.H{"slots": result})
-}
-
-func (h *AgentsHandler) ReplaceAgentMemorySlots(c *gin.Context) {
-	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
-	if err != nil {
-		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
-		return
-	}
-	var req struct {
-		Slots []dto.AgentMemorySlotConfig `json:"slots" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
-		return
-	}
-	result, err := h.appService.ReplaceAgentMemorySlots(c.Request.Context(), c.Param("agent_id"), accountID.String(), req.Slots)
-	if err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	response.Success(c, gin.H{"slots": result})
-}
-
 func (h *AgentsHandler) UpdateAgentMemoryConfig(c *gin.Context) {
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
@@ -877,6 +841,28 @@ func (h *AgentsHandler) UpdateAgentMemoryConfig(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+// GetAgentMemoryTemplates returns the memory template catalog (ADR 0013) in
+// the caller's language, and whether this deployment allows automatic memory,
+// so the builder can say when the Agent's own switch has no effect.
+func (h *AgentsHandler) GetAgentMemoryTemplates(c *gin.Context) {
+	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	if err != nil {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if _, ok := h.requireAgentManageAccess(c, accountID.String()); !ok {
+		return
+	}
+	locale := strings.TrimSpace(c.Query("language"))
+	if locale == "" {
+		locale = c.GetHeader("Accept-Language")
+	}
+	response.Success(c, gin.H{
+		"catalog":                        agentmemory.Templates(locale),
+		"automatic_extraction_available": relationshipmemory.AutomaticExtractionEnabled(),
+	})
 }
 
 func (h *AgentsHandler) ListAgentMemoryValues(c *gin.Context) {

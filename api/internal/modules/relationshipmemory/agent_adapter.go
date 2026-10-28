@@ -2,8 +2,6 @@ package relationshipmemory
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +21,10 @@ type AgentAdapter struct {
 	service *Service
 }
 
+// maxAgentFileOperations bounds the files one memory_edit call or
+// consolidation pass may write.
+const maxAgentFileOperations = 16
+
 func NewAgentAdapter(db *gorm.DB) *AgentAdapter { return &AgentAdapter{service: NewService(db)} }
 
 type AgentRelationshipSettings struct {
@@ -40,7 +42,12 @@ type publishedAgentMemoryContract struct {
 }
 
 func (a *AgentAdapter) GetSettings(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*AgentRelationshipSettings, error) {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
+	if errors.Is(err, ErrRelationshipNotFound) {
+		// A user who has not talked to the Agent yet has the settings a new
+		// relationship starts with; reading them creates nothing.
+		return &AgentRelationshipSettings{MemoryEnabled: true, AutoCaptureEnabled: true, SettingsRevision: 1}, nil
+	}
 	if err != nil {
 		return nil, mapAgentMemoryError(err)
 	}
@@ -48,9 +55,11 @@ func (a *AgentAdapter) GetSettings(ctx context.Context, workspaceID, agentID uui
 }
 
 func (a *AgentAdapter) UpdateSettings(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, memoryEnabled, autoCaptureEnabled *bool, expectedRevision int64) (*AgentRelationshipSettings, error) {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	// Settings may be chosen before the first conversation, so changing them
+	// creates the relationship.
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
 	if err != nil {
-		return nil, mapAgentMemoryError(err)
+		return nil, err
 	}
 	actorType := "api_key_controller"
 	var actorID *uuid.UUID
@@ -67,8 +76,13 @@ func (a *AgentAdapter) UpdateSettings(ctx context.Context, workspaceID, agentID 
 }
 
 func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (*UserMemoryRelationship, error) {
-	if !RuntimeEnabled() {
-		return nil, agentmemory.ErrUnauthorized
+	if agentID == AIChatConsumerID {
+		// Only the person's own account has AI chat memory.
+		if userID == uuid.Nil || userScope != agentmemory.UserScopeAccount {
+			return nil, agentmemory.ErrUnauthorized
+		}
+		relationship, err := a.service.EnsureRelationship(ctx, EnsureRelationshipRequest{Subject: usersubject.AccountSubject(userID), ConsumerType: ConsumerAIChat, ConsumerID: AIChatConsumerID, ConsumerNameSnapshot: "AI Chat"})
+		return relationship, mapAgentMemoryError(err)
 	}
 	if workspaceID == uuid.Nil || agentID == uuid.Nil || userID == uuid.Nil {
 		return nil, agentmemory.ErrUnauthorized
@@ -106,7 +120,7 @@ func (a *AgentAdapter) relationship(ctx context.Context, workspaceID, agentID uu
 		return nil, err
 	}
 	if scope.OrganizationID == nil || *scope.OrganizationID == uuid.Nil {
-		if existing, findErr := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID); findErr == nil && existing.Status == RelationshipActive {
+		if existing, findErr := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID); findErr == nil && existing.Status == RelationshipActive {
 			_ = a.service.ArchiveConsumer(ctx, workspaceID, ConsumerAgent, agentID)
 		}
 		return nil, agentmemory.ErrUnauthorized
@@ -131,47 +145,49 @@ func agentEndUserIdentity(registered *usersubject.Subject, agentID uuid.UUID) (u
 	return registered.Kind, registered.IssuerType, &issuerID, nil
 }
 
-func agentContract(slots []agentmemory.RuntimeSlot) ConsumerMemoryContract {
-	definitions := make([]MemoryDefinition, 0, len(slots))
-	for _, slot := range slots {
-		definitions = append(definitions, MemoryDefinition{Key: slot.Key, DisplayName: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled})
+// consumerTypeOf names the consumer behind an Agent ID the chat runtime
+// passes. AI chat uses this adapter with AIChatConsumerID and no workspace
+// (ADR 0021).
+func consumerTypeOf(agentID uuid.UUID) string {
+	if agentID == AIChatConsumerID {
+		return ConsumerAIChat
 	}
-	return ConsumerMemoryContract{Enabled: true, DefinitionMode: "slots", Definitions: definitions, RenderBudgetChars: defaultRenderBudget}
+	return ConsumerAgent
 }
 
-func (a *AgentAdapter) PrivacySlots(ctx context.Context, workspaceID, agentID uuid.UUID, publishedSlots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {
-	var (
-		relationship *UserMemoryRelationship
-		err          error
-	)
-	if len(publishedSlots) == 0 {
-		// A disabled/empty published contract may still need to expose migrated
-		// values for export and deletion, but must not create a new relationship.
-		relationship, err = a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
-		if errors.Is(err, ErrRelationshipNotFound) {
-			return []agentmemory.RuntimeSlot{}, nil
-		}
-	} else {
-		relationship, err = a.relationship(ctx, workspaceID, agentID, userScope, userID)
+// aiChatContract is AI chat's memory: the Agent's files, always on, and
+// automatic unless the person or the deployment turns it off.
+func aiChatContract() ConsumerMemoryContract {
+	return ConsumerMemoryContract{Enabled: true, DefinitionMode: "files", AutoCaptureAllowed: true, ConfigRevision: AIChatConfigRevision, RenderBudgetChars: defaultRenderBudget}
+}
+
+// agentContract is the contract of every Agent's memory: files the model
+// names itself (ADR 0017).
+func agentContract() ConsumerMemoryContract {
+	return ConsumerMemoryContract{Enabled: true, DefinitionMode: "files", RenderBudgetChars: defaultRenderBudget}
+}
+
+// agentFiles reads a relationship's memory files, decoded, in name order.
+func (a *AgentAdapter) agentFiles(ctx context.Context, relationshipID uuid.UUID) ([]UserMemoryItem, error) {
+	return a.service.MemoryFiles(ctx, relationshipID)
+}
+
+func (a *AgentAdapter) PrivacySlots(ctx context.Context, workspaceID, agentID uuid.UUID, _ []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID) ([]agentmemory.RuntimeSlot, error) {
+	// Export and deletion must not create a relationship.
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
+	if errors.Is(err, ErrRelationshipNotFound) {
+		return []agentmemory.RuntimeSlot{}, nil
 	}
 	if err != nil {
 		return nil, mapAgentMemoryError(err)
 	}
-	var items []UserMemoryItem
-	if err := a.service.db.WithContext(ctx).Where("relationship_id = ?", relationship.ID).Find(&items).Error; err != nil {
+	items, err := a.agentFiles(ctx, relationship.ID)
+	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]struct{}, len(publishedSlots))
-	result := append([]agentmemory.RuntimeSlot(nil), publishedSlots...)
-	for _, slot := range result {
-		seen[slot.Key] = struct{}{}
-	}
+	result := make([]agentmemory.RuntimeSlot, 0, len(items))
 	for _, item := range items {
-		if _, exists := seen[item.MemoryKey]; exists {
-			continue
-		}
-		result = append(result, agentmemory.RuntimeSlot{Key: item.MemoryKey, Name: item.DisplayName, MaxChars: maxMemoryContentChars, Enabled: true, SortOrder: len(result)})
-		seen[item.MemoryKey] = struct{}{}
+		result = append(result, agentmemory.RuntimeSlot{Key: item.MemoryKey, Name: item.MemoryKey, MaxChars: agentmemory.MaxMemoryChars, Enabled: true, SortOrder: len(result)})
 	}
 	return result, nil
 }
@@ -189,17 +205,6 @@ func (a *AgentAdapter) readUserMemory(ctx context.Context, workspaceID, agentID 
 		if !published.Enabled {
 			return []agentmemory.SlotValueResponse{}, nil
 		}
-		allowed := make(map[string]struct{}, len(published.Slots))
-		for _, slot := range published.Slots {
-			allowed[slot.Key] = struct{}{}
-		}
-		filtered := make([]agentmemory.RuntimeSlot, 0, len(slots))
-		for _, slot := range slots {
-			if _, ok := allowed[slot.Key]; ok {
-				filtered = append(filtered, slot)
-			}
-		}
-		slots = filtered
 	}
 	var (
 		relationship *UserMemoryRelationship
@@ -208,7 +213,7 @@ func (a *AgentAdapter) readUserMemory(ctx context.Context, workspaceID, agentID 
 	if enforcePublishedContract {
 		relationship, err = a.relationship(ctx, workspaceID, agentID, userScope, userID)
 	} else {
-		relationship, err = a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+		relationship, err = a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 		if errors.Is(err, ErrRelationshipNotFound) {
 			return []agentmemory.SlotValueResponse{}, nil
 		}
@@ -219,19 +224,12 @@ func (a *AgentAdapter) readUserMemory(ctx context.Context, workspaceID, agentID 
 	if relationship.Status != RelationshipActive || (enforcePublishedContract && !relationship.MemoryEnabled) {
 		return []agentmemory.SlotValueResponse{}, nil
 	}
-	var items []UserMemoryItem
-	if err := a.service.db.WithContext(ctx).Where("relationship_id = ?", relationship.ID).Find(&items).Error; err != nil {
+	items, err := a.agentFiles(ctx, relationship.ID)
+	if err != nil {
 		return nil, err
 	}
-	byKey := make(map[string]UserMemoryItem, len(items))
 	operationIDs := make([]uuid.UUID, 0, len(items))
 	for _, item := range items {
-		decoded, decodeErr := a.service.codec.Decode(ctx, EncodedContent{Payload: item.ContentPayload, Encoding: item.ContentEncoding, KeyID: item.ContentKeyID})
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		item.ContentPayload = decoded
-		byKey[item.MemoryKey] = item
 		if item.LastOperationID != nil {
 			operationIDs = append(operationIDs, *item.LastOperationID)
 		}
@@ -246,17 +244,15 @@ func (a *AgentAdapter) readUserMemory(ctx context.Context, workspaceID, agentID 
 			undoExpiries[record.OperationID] = record.ExpiresAt
 		}
 	}
-	values := make([]agentmemory.SlotValueResponse, 0, len(slots))
-	for _, slot := range slots {
-		response := agentmemory.SlotValueResponse{SlotResponse: agentmemory.SlotResponse{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder}}
-		if item, exists := byKey[slot.Key]; exists {
-			if item.LastOperationID != nil {
-				if expiresAt, ok := undoExpiries[*item.LastOperationID]; ok {
-					item.UndoableUntil = &expiresAt
-				}
+	values := make([]agentmemory.SlotValueResponse, 0, len(items))
+	for _, item := range items {
+		response := agentmemory.SlotValueResponse{SlotResponse: slotResponse(slots, item.MemoryKey)}
+		if item.LastOperationID != nil {
+			if expiresAt, ok := undoExpiries[*item.LastOperationID]; ok {
+				item.UndoableUntil = &expiresAt
 			}
-			applyAgentItem(&response, item)
 		}
+		applyAgentItem(&response, item)
 		values = append(values, response)
 	}
 	return values, nil
@@ -280,9 +276,6 @@ func (a *AgentAdapter) ReadRuntimeFence(ctx context.Context, workspaceID, agentI
 	return relationship.MemoryEpoch, nil
 }
 
-// RelationshipRuntimeSettings lets the Agent runtime honor the per-user
-// relationship switches before it renders context, exposes mutation tools, or
-// schedules background extraction.
 func (a *AgentAdapter) RelationshipRuntimeSettings(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) (bool, bool, error) {
 	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
 	if err != nil {
@@ -292,7 +285,7 @@ func (a *AgentAdapter) RelationshipRuntimeSettings(ctx context.Context, workspac
 	if err != nil {
 		return false, false, err
 	}
-	active := relationship.Status == RelationshipActive && relationship.MemoryEnabled && contract.Enabled && len(contract.Slots) > 0
+	active := relationship.Status == RelationshipActive && relationship.MemoryEnabled && contract.Enabled
 	return active, active && relationship.AutoCaptureEnabled && contract.AutoCaptureEnabled, nil
 }
 
@@ -306,10 +299,9 @@ func (a *AgentAdapter) UpdateValue(ctx context.Context, workspaceID, agentID uui
 			return nil, agentmemory.ErrConflict
 		}
 	}
-	if !published.Enabled || len(published.Slots) == 0 {
+	if !published.Enabled {
 		return nil, mapAgentMemoryError(ErrPolicyRejected)
 	}
-	slots = published.Slots
 	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
 	if err != nil {
 		return nil, err
@@ -334,7 +326,7 @@ func (a *AgentAdapter) UpdateValue(ctx context.Context, workspaceID, agentID uui
 		value := userID
 		metadata.ActorID = &value
 	}
-	item, err := a.service.PutItem(ctx, relationship.ID, PutItemRequest{Key: req.Key, DisplayName: slotName(slots, req.Key), Content: req.Content, ExpectedRevision: expected, Contract: agentContract(slots), Metadata: metadata})
+	item, err := a.service.PutItem(ctx, relationship.ID, PutItemRequest{Key: strings.TrimSpace(req.Key), DisplayName: strings.TrimSpace(req.Key), Content: req.Content, ExpectedRevision: expected, Contract: agentContract(), Metadata: metadata})
 	if err != nil {
 		return nil, mapAgentMemoryError(err)
 	}
@@ -344,7 +336,7 @@ func (a *AgentAdapter) UpdateValue(ctx context.Context, workspaceID, agentID uui
 }
 
 func (a *AgentAdapter) ClearValue(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID uuid.UUID, key string, meta agentmemory.MutationMetadata) (*agentmemory.SlotValueResponse, error) {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if errors.Is(err, ErrRelationshipNotFound) {
 		response := agentmemory.SlotValueResponse{SlotResponse: slotResponse(slots, key)}
 		return &response, nil
@@ -384,7 +376,7 @@ func (a *AgentAdapter) ClearValue(ctx context.Context, workspaceID, agentID uuid
 }
 
 func (a *AgentAdapter) ClearAllValues(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, _ agentmemory.MutationMetadata) error {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if errors.Is(err, ErrRelationshipNotFound) {
 		return nil
 	}
@@ -403,7 +395,7 @@ func (a *AgentAdapter) ExportUserMemory(ctx context.Context, workspaceID, agentI
 }
 
 func (a *AgentAdapter) UndoAutomaticOperation(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, operationID uuid.UUID, slots []agentmemory.RuntimeSlot) (*agentmemory.UndoResponse, error) {
-	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, ConsumerAgent, agentID)
+	relationship, err := a.service.FindRelationship(ctx, workspaceID, userID, consumerTypeOf(agentID), agentID)
 	if err != nil {
 		return nil, mapAgentMemoryError(err)
 	}
@@ -425,7 +417,7 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 	if err != nil {
 		return nil, mapAgentMemoryError(err)
 	}
-	if !published.Enabled || len(published.Slots) == 0 {
+	if !published.Enabled {
 		return nil, mapAgentMemoryError(ErrPolicyRejected)
 	}
 	if meta.ConfigScope == agentmemory.ConfigScopePublished {
@@ -435,12 +427,7 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 	} else if meta.ConfigScope != agentmemory.ConfigScopeDraft || strings.TrimSpace(meta.ConfigRevision) == "" {
 		return nil, agentmemory.ErrInvalidInput
 	}
-	slots = published.Slots
-	allowedSlots := make(map[string]struct{}, len(slots))
-	for _, slot := range slots {
-		allowedSlots[slot.Key] = struct{}{}
-	}
-	if len(req.Operations) == 0 || len(req.Operations) > 5 {
+	if len(req.Operations) == 0 || len(req.Operations) > maxAgentFileOperations {
 		return nil, agentmemory.ErrInvalidInput
 	}
 	seenKeys := make(map[string]struct{}, len(req.Operations))
@@ -459,7 +446,7 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 		if operation.Action == agentmemory.MutationActionClear && strings.TrimSpace(operation.Content) != "" {
 			return nil, agentmemory.ErrInvalidInput
 		}
-		if _, ok := allowedSlots[operation.Key]; !ok {
+		if !agentmemory.ValidMemoryKey(operation.Key) {
 			return nil, agentmemory.ErrInvalidInput
 		}
 		if _, duplicate := seenKeys[operation.Key]; duplicate {
@@ -476,6 +463,8 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 		return nil, err
 	}
 	results := make([]agentmemory.ValueMutationResult, 0, len(req.Operations))
+	// One tool call or extraction pass is one commit in the version history.
+	ctx = WithCommitScope(ctx)
 	err = a.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var locked UserMemoryRelationship
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", relationship.ID).Error; err != nil {
@@ -502,9 +491,17 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 			// intentionally advances the epoch to invalidate other in-flight jobs,
 			// but must not invalidate later operations in this same atomic batch.
 			metadata.ExpectedMemoryEpoch = nil
-			metadata.SourceMessageID = operation.SourceMessageID
-			metadata.SourceCompletedAt = operation.SourceCompletedAt
+			// An operation's own source wins; without one, the batch's source
+			// (the turn that wrote it) is kept, so later passes can tell how
+			// recent the file is.
+			if operation.SourceMessageID != nil {
+				metadata.SourceMessageID = operation.SourceMessageID
+			}
+			if operation.SourceCompletedAt != nil {
+				metadata.SourceCompletedAt = operation.SourceCompletedAt
+			}
 			metadata.EvidenceFromUserInput = metadata.EvidenceFromUserInput || operation.SourceMessageID != nil
+			metadata.Evidence, metadata.Reason = operation.Evidence, operation.Reason
 			if operation.Action == agentmemory.MutationActionClear {
 				deleted, err := transactionService.DeleteItem(ctx, relationship.ID, operation.Key, operation.ExpectedRevision, metadata)
 				if err != nil {
@@ -522,7 +519,7 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 				results = append(results, result)
 				continue
 			}
-			item, err := transactionService.PutItem(ctx, relationship.ID, PutItemRequest{Key: operation.Key, DisplayName: slotName(slots, operation.Key), Content: operation.Content, ExpectedRevision: operation.ExpectedRevision, Contract: agentContract(slots), Metadata: metadata})
+			item, err := transactionService.PutItem(ctx, relationship.ID, PutItemRequest{Key: operation.Key, DisplayName: operation.Key, Content: operation.Content, ExpectedRevision: operation.ExpectedRevision, Contract: agentContract(), Metadata: metadata})
 			if err != nil {
 				return err
 			}
@@ -539,126 +536,6 @@ func (a *AgentAdapter) MutateValues(ctx context.Context, workspaceID, agentID uu
 		return nil, mapAgentMemoryError(err)
 	}
 	return &agentmemory.MutateValuesResponse{Status: "success", Operations: results}, nil
-}
-
-func (a *AgentAdapter) ScheduleExtraction(ctx context.Context, req agentmemory.ScheduleExtractionRequest) (*agentmemory.AgentMemoryExtractionJob, error) {
-	workspaceID, wErr := uuid.Parse(req.WorkspaceID)
-	agentID, aErr := uuid.Parse(req.AgentID)
-	userID, uErr := uuid.Parse(req.UserID)
-	conversationID, cErr := uuid.Parse(req.ConversationID)
-	watermarkID, mErr := uuid.Parse(req.MessageWatermarkID)
-	if wErr != nil || aErr != nil || uErr != nil || cErr != nil || mErr != nil {
-		return nil, agentmemory.ErrInvalidInput
-	}
-	// P0 extraction is tied to immutable published Agent definitions. Draft
-	// console conversations may still use explicit inline memory operations.
-	if req.ConfigScope != agentmemory.ConfigScopePublished {
-		return nil, agentmemory.ErrInvalidInput
-	}
-	if err := a.validatePublishedConfigRevision(ctx, a.service.db, workspaceID, agentID, req.ConfigRevision); err != nil {
-		return nil, err
-	}
-	published, err := a.loadPublishedAgentMemoryContract(ctx, a.service.db, workspaceID, agentID)
-	if err != nil {
-		return nil, mapAgentMemoryError(err)
-	}
-	if !published.Enabled || !published.AutoCaptureEnabled || len(published.Slots) == 0 {
-		return nil, mapAgentMemoryError(ErrPolicyRejected)
-	}
-	req.Slots = published.Slots
-	relationship, err := a.relationship(ctx, workspaceID, agentID, req.UserScope, userID)
-	if err != nil {
-		return nil, err
-	}
-	keyMaterial := strings.Join([]string{workspaceID.String(), agentID.String(), req.UserScope, userID.String(), conversationID.String(), watermarkID.String(), req.ExtractorVersion, req.ConfigScope, req.ConfigRevision}, ":")
-	digest := sha256.Sum256([]byte(keyMaterial))
-	now := time.Now()
-	job, err := a.service.ScheduleExtraction(ctx, ScheduleRequest{RelationshipID: relationship.ID, ConversationID: conversationID, MessageWatermarkID: watermarkID, MemoryEpoch: relationship.MemoryEpoch, ConfigRevision: req.ConfigRevision, Definitions: req.Slots, ExtractorVersion: fallback(req.ExtractorVersion, "agent-memory-v2"), IdempotencyKey: hex.EncodeToString(digest[:]), ScheduledAt: now.Add(time.Minute), ForceAt: now.Add(10 * time.Minute)})
-	if err != nil {
-		return nil, mapAgentMemoryError(err)
-	}
-	return &agentmemory.AgentMemoryExtractionJob{ID: job.ID, WorkspaceID: workspaceID, AgentID: agentID, UserScope: req.UserScope, UserID: userID, ConversationID: conversationID, MessageWatermarkID: watermarkID, MemoryEpoch: job.MemoryEpoch, ConfigScope: req.ConfigScope, ConfigRevision: req.ConfigRevision, RuntimeSlots: job.DefinitionSnapshot, ExtractorVersion: job.ExtractorVersion, IdempotencyKey: job.IdempotencyKey, Status: job.Status, ScheduledAt: job.ScheduledAt, ForceAt: job.ForceAt, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt}, nil
-}
-
-// ListDueExtractionJobs and the following lifecycle methods intentionally use
-// the legacy Agent job DTO. This keeps the mature extraction worker reusable
-// while the durable job and user values live exclusively in the relationship
-// memory tables.
-func (a *AgentAdapter) ListDueExtractionJobs(ctx context.Context, limit int) ([]*agentmemory.AgentMemoryExtractionJob, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	var jobs []UserMemoryExtractionJob
-	err := a.service.db.WithContext(ctx).Table("user_memory_extraction_jobs AS jobs").
-		Select("jobs.*").
-		Joins("JOIN user_memory_relationships AS relationships ON relationships.id = jobs.relationship_id").
-		Where("relationships.consumer_type = ? AND relationships.status = ? AND relationships.memory_enabled = ? AND relationships.auto_capture_enabled = ?", ConsumerAgent, RelationshipActive, true, true).
-		Where("jobs.status IN ? AND jobs.scheduled_at <= ?", []string{agentmemory.ExtractionJobPending, agentmemory.ExtractionJobFailed}, time.Now()).
-		Order("jobs.scheduled_at ASC").Limit(limit).Scan(&jobs).Error
-	if err != nil {
-		return nil, err
-	}
-	result := make([]*agentmemory.AgentMemoryExtractionJob, 0, len(jobs))
-	for index := range jobs {
-		converted, convertErr := a.agentExtractionJob(ctx, &jobs[index])
-		if convertErr != nil {
-			return nil, convertErr
-		}
-		result = append(result, converted)
-	}
-	return result, nil
-}
-
-func (a *AgentAdapter) ClaimExtractionJob(ctx context.Context, id uuid.UUID) (*agentmemory.AgentMemoryExtractionJob, error) {
-	var claimed UserMemoryExtractionJob
-	cancelled := false
-	err := a.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var job UserMemoryExtractionJob
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&job, "id = ?", id).Error; err != nil {
-			return err
-		}
-		var relationship UserMemoryRelationship
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&relationship, "id = ?", job.RelationshipID).Error; err != nil {
-			return err
-		}
-		if err := a.validatePublishedConfigRevision(ctx, tx, relationship.WorkspaceID, relationship.ConsumerID, job.ConfigRevision); err != nil {
-			if !errors.Is(err, agentmemory.ErrConflict) && !errors.Is(err, agentmemory.ErrInvalidInput) {
-				return err
-			}
-			now := time.Now()
-			if updateErr := tx.Model(&job).Updates(map[string]any{"status": agentmemory.ExtractionJobCancelled, "error_code": "config_revision_changed", "finished_at": now, "updated_at": now}).Error; updateErr != nil {
-				return updateErr
-			}
-			cancelled = true
-			return nil
-		}
-		if relationship.ConsumerType != ConsumerAgent || relationship.Status != RelationshipActive || !relationship.MemoryEnabled || !relationship.AutoCaptureEnabled || relationship.MemoryEpoch != job.MemoryEpoch {
-			now := time.Now()
-			if updateErr := tx.Model(&job).Updates(map[string]any{"status": agentmemory.ExtractionJobCancelled, "error_code": "memory_epoch_changed", "finished_at": now, "updated_at": now}).Error; updateErr != nil {
-				return updateErr
-			}
-			cancelled = true
-			return nil
-		}
-		result := tx.Model(&UserMemoryExtractionJob{}).
-			Where("id = ? AND memory_epoch = ? AND status IN ?", id, job.MemoryEpoch, []string{agentmemory.ExtractionJobPending, agentmemory.ExtractionJobQueued, agentmemory.ExtractionJobFailed}).
-			Updates(map[string]any{"status": agentmemory.ExtractionJobRunning, "attempt_count": gorm.Expr("attempt_count + 1"), "error_code": "", "started_at": time.Now(), "finished_at": nil, "updated_at": time.Now()})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return agentmemory.ErrConflict
-		}
-		return tx.First(&claimed, "id = ?", id).Error
-	})
-	if err != nil {
-		return nil, err
-	}
-	if cancelled {
-		recordExtractionJob(ctx, ConsumerAgent, agentmemory.ExtractionJobCancelled)
-		return nil, agentmemory.ErrConflict
-	}
-	return a.agentExtractionJob(ctx, &claimed)
 }
 
 func (a *AgentAdapter) validatePublishedConfigRevision(ctx context.Context, db *gorm.DB, workspaceID, agentID uuid.UUID, expected string) error {
@@ -680,6 +557,9 @@ func (a *AgentAdapter) validatePublishedConfigRevision(ctx context.Context, db *
 }
 
 func (a *AgentAdapter) loadPublishedAgentMemoryContract(ctx context.Context, db *gorm.DB, workspaceID, agentID uuid.UUID) (*publishedAgentMemoryContract, error) {
+	if agentID == AIChatConsumerID {
+		return &publishedAgentMemoryContract{Enabled: true, AutoCaptureEnabled: true, ConfigRevision: AIChatConfigRevision}, nil
+	}
 	var row struct {
 		ConfigSnapshot []byte
 	}
@@ -714,111 +594,106 @@ func normalizePublishedAgentMemoryContract(contract *publishedAgentMemoryContrac
 	contract.Slots = enabledSlots
 }
 
-func (a *AgentAdapter) FinishExtractionJob(ctx context.Context, id uuid.UUID, status, errorCode string) error {
-	now := time.Now()
-	err := a.service.db.WithContext(ctx).Model(&UserMemoryExtractionJob{}).Where("id = ?", id).
-		Updates(map[string]any{"status": status, "error_code": errorCode, "finished_at": now, "updated_at": now}).Error
-	result := status
-	if err != nil {
-		result = "storage_error"
-	}
-	recordExtractionJob(ctx, ConsumerAgent, result)
-	return err
-}
-
-func (a *AgentAdapter) RescheduleExtractionJob(ctx context.Context, id uuid.UUID, errorCode string, scheduledAt time.Time) error {
-	now := time.Now()
-	err := a.service.db.WithContext(ctx).Model(&UserMemoryExtractionJob{}).Where("id = ?", id).
-		Updates(map[string]any{"status": agentmemory.ExtractionJobFailed, "error_code": errorCode, "scheduled_at": scheduledAt, "finished_at": now, "updated_at": now}).Error
-	result := agentmemory.ExtractionJobFailed
-	if err != nil {
-		result = "storage_error"
-	}
-	recordExtractionJob(ctx, ConsumerAgent, result)
-	return err
-}
-
-func (a *AgentAdapter) DeleteTerminalExtractionJobs(ctx context.Context, finishedBefore time.Time, limit int) (int64, error) {
-	if limit <= 0 {
-		limit = 500
-	}
-	var ids []uuid.UUID
-	if err := a.service.db.WithContext(ctx).Model(&UserMemoryExtractionJob{}).
-		Where("status IN ? AND finished_at < ?", []string{agentmemory.ExtractionJobCompleted, agentmemory.ExtractionJobCancelled, agentmemory.ExtractionJobExhausted}, finishedBefore).
-		Order("finished_at ASC").Limit(limit).Pluck("id", &ids).Error; err != nil {
-		return 0, err
-	}
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	result := a.service.db.WithContext(ctx).Where("id IN ?", ids).Delete(&UserMemoryExtractionJob{})
-	return result.RowsAffected, result.Error
-}
-
-// ExtractionBounds provides the worker with the relationship epoch/cutoff and
-// the last completed watermark without exposing relationship tables to it.
-func (a *AgentAdapter) ExtractionBounds(ctx context.Context, job *agentmemory.AgentMemoryExtractionJob, watermarkCreatedAt time.Time) (*time.Time, *time.Time, error) {
-	if job == nil {
-		return nil, nil, agentmemory.ErrInvalidInput
-	}
-	relationship, err := a.relationship(ctx, job.WorkspaceID, job.AgentID, job.UserScope, job.UserID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if relationship.MemoryEpoch != job.MemoryEpoch || relationship.Status != RelationshipActive || !relationship.MemoryEnabled || !relationship.AutoCaptureEnabled {
-		return nil, nil, agentmemory.ErrConflict
-	}
-	cutoff := relationship.ExtractionCutoffAt
-	if cutoff == nil && relationship.MemoryEpoch > 0 && !relationship.UpdatedAt.IsZero() {
-		value := relationship.UpdatedAt
-		cutoff = &value
-	}
-	var previous struct{ CreatedAt *time.Time }
-	if err := a.service.db.WithContext(ctx).Table("user_memory_extraction_jobs AS jobs").
-		Select("MAX(messages.created_at) AS created_at").
-		Joins("JOIN chat_runtime_messages AS messages ON messages.id = jobs.message_watermark_id").
-		Where("jobs.id <> ? AND jobs.relationship_id = ? AND jobs.conversation_id = ? AND jobs.memory_epoch = ? AND jobs.status = ? AND messages.created_at < ?", job.ID, relationship.ID, job.ConversationID, job.MemoryEpoch, agentmemory.ExtractionJobCompleted, watermarkCreatedAt).
-		Scan(&previous).Error; err != nil {
-		return nil, nil, err
-	}
-	return cutoff, previous.CreatedAt, nil
-}
-
 func (a *AgentAdapter) CleanupExpiredRelationshipMemory(ctx context.Context, now time.Time, auditRetention time.Duration) error {
 	return a.service.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("expires_at <= ?", now).Delete(&UserMemoryUndoRecord{}).Error; err != nil {
 			return err
 		}
-		return tx.Where("created_at < ?", now.Add(-auditRetention)).Delete(&UserMemoryEvent{}).Error
+		// Background consolidation is gone (ADR 0020); jobs it left behind
+		// are dropped once they are as old as the audit trail kept elsewhere.
+		if err := tx.Where("created_at < ?", now.Add(-extractionJobRetention)).Delete(&UserMemoryExtractionJob{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("created_at < ?", now.Add(-auditRetention)).Delete(&UserMemoryEvent{}).Error; err != nil {
+			return err
+		}
+		history := NewService(tx, a.service.codec)
+		history.now = func() time.Time { return now }
+		return history.CleanupExpiredHistory(ctx)
 	})
 }
 
-func (a *AgentAdapter) agentExtractionJob(ctx context.Context, job *UserMemoryExtractionJob) (*agentmemory.AgentMemoryExtractionJob, error) {
-	if job == nil {
-		return nil, gorm.ErrRecordNotFound
+// ArchiveText keeps text in an Agent user's archive (ADR 0014), for
+// consolidation moving overflow out of a full file.
+func (a *AgentAdapter) ArchiveText(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, content, tags, sourceKey string, meta agentmemory.MutationMetadata) error {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return err
 	}
-	var relationship UserMemoryRelationship
-	if err := a.service.db.WithContext(ctx).First(&relationship, "id = ?", job.RelationshipID).Error; err != nil {
+	metadata := relationshipMetadata(meta, uuid.Nil)
+	metadata.Reason = "moved out of a full file"
+	if _, err := a.service.AddArchiveEntry(ctx, relationship.ID, ArchiveRequest{Content: content, Tags: tags, SourceKey: sourceKey, Metadata: metadata}); err != nil {
+		return mapAgentMemoryError(err)
+	}
+	return nil
+}
+
+// ForgottenLines returns what an Agent user removed from their memory. A user
+// without relationship memory has forgotten nothing here.
+func (a *AgentAdapter) ForgottenLines(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]string, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
 		return nil, err
 	}
-	var subject usersubject.Subject
-	if err := a.service.db.WithContext(ctx).First(&subject, "id = ?", relationship.SubjectID).Error; err != nil {
+	return a.service.ForgottenLines(ctx, relationship.ID)
+}
+
+// SearchArchive finds an Agent user's archive entries for a query.
+func (a *AgentAdapter) SearchArchive(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, query string, limit int) ([]UserMemoryArchiveEntry, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
 		return nil, err
 	}
-	userScope := agentmemory.UserScopeAccount
-	if subject.Kind == usersubject.APIEndUser {
-		userScope = agentmemory.UserScopeEndUser
+	return a.service.SearchArchive(ctx, relationship.ID, query, limit)
+}
+
+// Archive lists an Agent user's archive, newest first.
+func (a *AgentAdapter) Archive(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID) ([]UserMemoryArchiveEntry, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
 	}
-	return &agentmemory.AgentMemoryExtractionJob{
-		ID: job.ID, WorkspaceID: relationship.WorkspaceID, AgentID: relationship.ConsumerID,
-		UserScope: userScope, UserID: subject.ID, ConversationID: job.ConversationID,
-		MessageWatermarkID: job.MessageWatermarkID, MemoryEpoch: job.MemoryEpoch,
-		ConfigScope: agentmemory.ConfigScopePublished, ConfigRevision: job.ConfigRevision,
-		RuntimeSlots: job.DefinitionSnapshot, ExtractorVersion: job.ExtractorVersion,
-		IdempotencyKey: job.IdempotencyKey, Status: job.Status, AttemptCount: job.AttemptCount,
-		ErrorCode: job.ErrorCode, ScheduledAt: job.ScheduledAt, ForceAt: job.ForceAt,
-		StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
-	}, nil
+	entries, err := a.service.ArchiveEntries(ctx, relationship.ID, 0)
+	if err != nil {
+		return nil, mapAgentMemoryError(err)
+	}
+	return entries, nil
+}
+
+// DeleteArchiveEntry removes one entry from an Agent user's archive.
+func (a *AgentAdapter) DeleteArchiveEntry(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID, entryID uuid.UUID) error {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return err
+	}
+	return mapAgentMemoryError(a.service.DeleteArchiveEntry(ctx, relationship.ID, entryID, agentManagementMetadata(userScope, userID)))
+}
+
+// History returns the memory history of one Agent user.
+func (a *AgentAdapter) History(ctx context.Context, workspaceID, agentID uuid.UUID, userScope string, userID uuid.UUID, req HistoryRequest) (*HistoryPage, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	page, err := a.service.History(ctx, relationship.ID, req)
+	if err != nil {
+		return nil, mapAgentMemoryError(err)
+	}
+	return page, nil
+}
+
+// RevertVersion undoes the latest change to one of an Agent user's memory
+// files, within the published slots.
+func (a *AgentAdapter) RevertVersion(ctx context.Context, workspaceID, agentID uuid.UUID, slots []agentmemory.RuntimeSlot, userScope string, userID, versionID uuid.UUID) (*UserMemoryItem, error) {
+	relationship, err := a.relationship(ctx, workspaceID, agentID, userScope, userID)
+	if err != nil {
+		return nil, err
+	}
+	item, err := a.service.RevertVersion(ctx, relationship.ID, versionID, agentContract(), agentManagementMetadata(userScope, userID))
+	if err != nil {
+		return nil, mapAgentMemoryError(err)
+	}
+	return item, nil
 }
 
 func relationshipMetadata(meta agentmemory.MutationMetadata, operationID uuid.UUID) MutationMetadata {
@@ -836,14 +711,11 @@ func agentManagementMetadata(userScope string, userID uuid.UUID) MutationMetadat
 func slotResponse(slots []agentmemory.RuntimeSlot, key string) agentmemory.SlotResponse {
 	for _, slot := range slots {
 		if slot.Key == strings.TrimSpace(key) {
-			return agentmemory.SlotResponse{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: slot.Enabled, SortOrder: slot.SortOrder}
+			return agentmemory.SlotResponse{Key: slot.Key, Name: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars,
+				Enabled: slot.Enabled, SortOrder: slot.SortOrder, ReadOnly: slot.ReadOnly, AutoWrite: !slot.ManualOnly}
 		}
 	}
-	return agentmemory.SlotResponse{Key: strings.TrimSpace(key), Name: strings.TrimSpace(key), MaxChars: maxMemoryContentChars, Enabled: true}
-}
-
-func slotName(slots []agentmemory.RuntimeSlot, key string) string {
-	return slotResponse(slots, key).Name
+	return agentmemory.SlotResponse{Key: strings.TrimSpace(key), Name: strings.TrimSpace(key), MaxChars: maxMemoryContentChars, Enabled: true, AutoWrite: true}
 }
 
 func applyAgentItem(response *agentmemory.SlotValueResponse, item UserMemoryItem) {

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -71,18 +71,11 @@ func (r *GormRepository) SetMemoryDatasetID(ctx context.Context, state *MemorySt
 	return nil
 }
 
-func (r *GormRepository) MemoryByKeyForUpdate(
-	ctx context.Context,
-	scope Scope,
-	digitalHumanID uuid.UUID,
-	class memoryruntime.MemoryClass,
-	scopeType memoryruntime.MemoryScopeType,
-	scopeID, key string,
-) (*DigitalHumanMemory, error) {
+func (r *GormRepository) MemoryByKeyForUpdate(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, key string) (*DigitalHumanMemory, error) {
 	var memory DigitalHumanMemory
 	err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(
-		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND memory_class = ? AND scope_type = ? AND scope_id = ? AND memory_key = ?",
-		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, class, scopeType, scopeID, key,
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND memory_key = ?",
+		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, key,
 	).Take(&memory).Error
 	if err != nil {
 		return nil, err
@@ -100,6 +93,62 @@ func (r *GormRepository) MemoryByIDForUpdate(ctx context.Context, scope Scope, d
 		return nil, err
 	}
 	return &memory, nil
+}
+
+// MemoryByID reads one of the DigitalHuman's memories without locking it.
+func (r *GormRepository) MemoryByID(ctx context.Context, scope Scope, digitalHumanID, memoryID uuid.UUID) (*DigitalHumanMemory, error) {
+	var memory DigitalHumanMemory
+	err := r.db.WithContext(ctx).Where(
+		"id = ? AND organization_id = ? AND workspace_id = ? AND digital_human_id = ?",
+		memoryID, scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
+	).Take(&memory).Error
+	if err != nil {
+		return nil, err
+	}
+	return &memory, nil
+}
+
+// MemoryFacets counts the DigitalHuman's memories of one status by type,
+// visibility, origin, and channel, so a long list can show its groups and
+// filters without loading every entry.
+func (r *GormRepository) MemoryFacets(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, status MemoryStatus) (*MemoryFacets, error) {
+	var rows []struct {
+		MemoryType      string
+		Visibility      string
+		Origin          string
+		OriginChannelID string
+		Count           int64
+	}
+	db := r.db.WithContext(ctx).Model(&DigitalHumanMemory{}).Where(
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ?", scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
+	)
+	if status != "" {
+		db = db.Where("status = ?", status)
+	}
+	if err := db.Select("memory_type, visibility, origin, origin_channel_id, count(*) AS count").
+		Group("memory_type, visibility, origin, origin_channel_id").Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("count DigitalHuman memory facets: %w", err)
+	}
+	facets := &MemoryFacets{Types: map[string]int64{}, Visibility: map[string]int64{}, Origins: map[string]int64{}, Channels: []MemoryChannelFacet{}}
+	channels := map[string]int64{}
+	for _, row := range rows {
+		facets.Types[row.MemoryType] += row.Count
+		facets.Visibility[row.Visibility] += row.Count
+		facets.Origins[row.Origin] += row.Count
+		if row.OriginChannelID != "" {
+			channels[row.OriginChannelID] += row.Count
+		}
+	}
+	for id, count := range channels {
+		facets.Channels = append(facets.Channels, MemoryChannelFacet{ID: id, Count: count})
+	}
+	sort.Slice(facets.Channels, func(i, j int) bool {
+		if facets.Channels[i].Count != facets.Channels[j].Count {
+			return facets.Channels[i].Count > facets.Channels[j].Count
+		}
+		return facets.Channels[i].ID < facets.Channels[j].ID
+	})
+	return facets, nil
 }
 
 func (r *GormRepository) CreateMemory(ctx context.Context, memory *DigitalHumanMemory) error {
@@ -140,23 +189,23 @@ func (r *GormRepository) ListMemories(ctx context.Context, scope Scope, digitalH
 	db := r.db.WithContext(ctx).Model(&DigitalHumanMemory{}).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ?", scope.OrganizationID, scope.WorkspaceID, digitalHumanID,
 	)
-	if query.Class != "" {
-		db = db.Where("memory_class = ?", query.Class)
-	}
 	if query.Type != "" {
 		db = db.Where("memory_type = ?", query.Type)
-	}
-	if query.ScopeType != "" {
-		db = db.Where("scope_type = ?", query.ScopeType)
-	}
-	if query.ScopeID != "" {
-		db = db.Where("scope_id = ?", query.ScopeID)
 	}
 	if query.Status != "" {
 		db = db.Where("status = ?", query.Status)
 	}
 	if query.Source != "" {
 		db = db.Where("source_principal_id = ?", query.Source)
+	}
+	if query.Visibility != "" {
+		db = db.Where("visibility = ?", query.Visibility)
+	}
+	if query.Origin != "" {
+		db = db.Where("origin = ?", query.Origin)
+	}
+	if query.OriginChannelID != "" {
+		db = db.Where("origin_channel_id = ?", query.OriginChannelID)
 	}
 	if query.Search != "" {
 		like := "%" + strings.ToLower(query.Search) + "%"
@@ -230,8 +279,9 @@ func applyMemoryUndoStatus(items []*DigitalHumanMemory, records []MemoryUndoReco
 }
 
 // ActiveMemories returns active memories for the DigitalHuman. Without a read
-// scope every class and business scope is returned, so legacy business rows
-// stay visible; with one, recall follows the run's source trust (ADR 0004).
+// scope every entry is returned; with one, recall follows the run's source
+// trust: internal entries are hidden from external end users, whose own notes
+// are appended (ADR 0015).
 func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int, readScope *memoryReadScope) ([]*DigitalHumanMemory, error) {
 	db := r.db.WithContext(ctx).Where(
 		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND status = ?",
@@ -244,6 +294,33 @@ func (r *GormRepository) ActiveMemories(ctx context.Context, scope Scope, digita
 	items := make([]*DigitalHumanMemory, 0, limit)
 	if err := db.Order("updated_at DESC, id DESC").Limit(limit).Find(&items).Error; err != nil {
 		return nil, fmt.Errorf("retrieve DigitalHuman memories: %w", err)
+	}
+	// An end user's run also reads the DigitalHuman's notes on them, kept in
+	// their relationship memory (ADR 0015).
+	if readScope != nil && readScope.instanceID != "" {
+		notes, err := r.instanceNotes(ctx, scope, digitalHumanID, readScope.instanceID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, notes...)
+	}
+	return items, nil
+}
+
+// ArchivedMemories returns the newest archived entries the run may read
+// (ADR 0014 consumer-owned archive), such as entries consolidation retired.
+func (r *GormRepository) ArchivedMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int, readScope *memoryReadScope) ([]*DigitalHumanMemory, error) {
+	db := r.db.WithContext(ctx).Where(
+		"organization_id = ? AND workspace_id = ? AND digital_human_id = ? AND status = ?",
+		scope.OrganizationID, scope.WorkspaceID, digitalHumanID, MemoryStatusArchived,
+	)
+	if readScope != nil {
+		clause, args := readScope.sqlPredicate()
+		db = db.Where(clause, args...)
+	}
+	items := make([]*DigitalHumanMemory, 0, limit)
+	if err := db.Order("updated_at DESC, id DESC").Limit(limit).Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("retrieve archived DigitalHuman memories: %w", err)
 	}
 	return items, nil
 }

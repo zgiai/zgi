@@ -3,14 +3,19 @@
  *
  * These run without rendering anything: they prove what a template selection
  * creates, which real skills it declares and resolves from backend candidates,
- * that every template key resolves in both locales, and that the UI layer keeps
- * its guarantees (single submit, auto publish, no fake capability claims).
+ * what a template still needs before creation may proceed, and that the UI
+ * layer keeps its guarantees (single submit, auto publish, no fake capability
+ * claims).
+ *
+ * Templates are plain data served by the API (ADR 0022), so this suite builds
+ * small fixture templates instead of reading a hard-coded client catalog. The
+ * built-in template copy itself is owned and tested by the API.
  *
  * Creation no longer reads, selects, or binds the old integration connections:
- * the operations template declares no skill and binds nothing by default. Phase
- * one reaches servers through the DigitalHuman-only serverops_ssh connector the
- * user verifies in Connector Center and binds in the generic create form, so the
- * copy describes only approved per-invocation read-only actions.
+ * a template that needs a server connection declares it in `connectors` and
+ * binds no skill by default. Phase one reaches servers through the
+ * DigitalHuman-only serverops_ssh connector the user verifies in Connector
+ * Center and binds in the generic create form.
  *
  * Run with: pnpm test:digital-human-create-flow
  */
@@ -25,13 +30,7 @@ import ts from 'typescript';
 
 import enUS from '../src/i18n/modules/digitalHumans/en-US.ts';
 import zhHans from '../src/i18n/modules/digitalHumans/zh-Hans.ts';
-import {
-  CUSTOM_TEMPLATE_ID,
-  DIGITAL_HUMAN_TEMPLATES,
-  SHARED_RULE_KEYS,
-  findDigitalHumanTemplate,
-  isCustomTemplateId,
-} from '../src/components/digital-human/create/digital-human-templates.ts';
+import * as templateModule from '../src/components/digital-human/create/digital-human-templates.ts';
 import {
   bindingDisplayNames,
   buildPersona,
@@ -41,6 +40,14 @@ import {
   serializeDigitalHumanIcon,
   templateDefaultSkillIds,
 } from '../src/components/digital-human/create/create-digital-human-payload.ts';
+
+const {
+  CUSTOM_TEMPLATE_ID,
+  findDigitalHumanTemplate,
+  isCustomTemplateId,
+  templateRequirementGap,
+  templateStartingName,
+} = templateModule;
 
 // Node cannot resolve the extensionless TypeScript specifiers the create-time
 // bindings helper uses to share the Connector model, so that pure module is
@@ -79,7 +86,15 @@ const connectorCreateModelModuleURL = asDataModule(
     `from '${connectorModelModuleURL}';`
   )
 );
-const { connectorOperationIds } = await import(connectorModelModuleURL);
+const {
+  connectorApprovalPolicy,
+  connectorOperationIds,
+  connectorSupportsReadOnlyAuto,
+  createConnectorDefaultOperationIds,
+  updateDigitalHumanApprovalPolicy,
+} = await import(
+  connectorModelModuleURL
+);
 const {
   addCreateConnectorSelection,
   createConnectorCandidateKey,
@@ -87,6 +102,9 @@ const {
   createConnectorSelectionBindings,
   createConnectorSelectionCandidates,
   removeCreateConnectorSelection,
+  selectServerConnection,
+  serverPresetOf,
+  serverPresetOperationIds,
   setCreateConnectorSelectionOperation,
   toggleCreateConnectorSelection,
 } = await import(connectorCreateModelModuleURL);
@@ -108,9 +126,6 @@ const EXPECTED_PAYLOAD_KEYS = [
   'visibility',
 ];
 
-/** Skills that really exist in the workspace, per the binding candidates API. */
-const REAL_SKILL_IDS = ['file-generator'];
-
 function resolvePath(dictionary, key) {
   return key
     .split('.')
@@ -118,21 +133,6 @@ function resolvePath(dictionary, key) {
       (node, part) => (node === undefined || node === null ? undefined : node[part]),
       dictionary
     );
-}
-
-/** Dictionary-backed resolver; a typo in a template key fails this suite. */
-function createResolver(dictionary, locale) {
-  const missing = [];
-  const resolve = key => {
-    const value = resolvePath(dictionary, key);
-    if (typeof value !== 'string' || !value.trim()) {
-      missing.push(`${locale}:${key}`);
-      return '';
-    }
-    return value;
-  };
-  resolve.missing = missing;
-  return resolve;
 }
 
 function collectLeafPaths(value, prefix = '') {
@@ -146,98 +146,168 @@ function collectLeafPaths(value, prefix = '') {
 }
 
 // ---------------------------------------------------------------------------
-// Template catalogue
+// Fixture templates (ADR 0022: templates are plain data from the API)
 // ---------------------------------------------------------------------------
 
-assert.equal(DIGITAL_HUMAN_TEMPLATES.length, 2, 'the release ships the file and operations templates');
-assert.equal(
-  new Set(DIGITAL_HUMAN_TEMPLATES.map(template => template.id)).size,
-  DIGITAL_HUMAN_TEMPLATES.length,
-  'template ids must be unique'
-);
-assert.ok(
-  DIGITAL_HUMAN_TEMPLATES.every(template => !isCustomTemplateId(template.id)),
-  'the custom entry must never be registered as a template'
-);
-assert.equal(CUSTOM_TEMPLATE_ID, 'custom', 'the custom id is part of the create-page URL contract');
+/** The safety rules every digital human starts with, as the catalog serves them. */
+const SHARED_RULES = ['不得索取或保存凭据。', '不确定时先询问用户。'];
 
-for (const template of DIGITAL_HUMAN_TEMPLATES) {
-  assert.ok(template.tagKeys.length >= 3, `${template.id} needs at least three tags`);
-  assert.ok(template.goalKeys.length >= 3, `${template.id} needs at least three goals`);
+const fileGeneration = {
+  id: 'fileGeneration',
+  source: 'builtin',
+  title: '文件生成助手',
+  description: '把资料整理成可交付文件。',
+  responsibility: '把用户提供的资料整理成可交付的文件。',
+  persona: '你是一名严谨的文件整理助手。',
+  goals: ['产出结构清晰的文件', '保留来源', '按时交付'],
+  rules: [...SHARED_RULES, '生成前确认文件格式。'],
+  tags: ['文件', '整理', '交付'],
+  skills: [{ id: 'file-generator', required: true }],
+  connectors: [],
+  memory_instructions: '  记住用户偏好的文件格式。  ',
+  icon_background: '#0f766e',
+};
+
+const opsSpecialist = {
+  id: 'opsSpecialist',
+  source: 'builtin',
+  title: '运维专员',
+  description: '对已绑定的服务器做只读检查。',
+  responsibility: '对已绑定的服务器做只读检查。',
+  persona: '你是一名谨慎、证据优先的运维专员。',
+  goals: ['确认目标服务器', '只读检查', '区分观察与推断'],
+  rules: [...SHARED_RULES, '每次调用都需要单独批准。'],
+  tags: ['运维', '只读', '证据'],
+  skills: [],
+  connectors: [
+    {
+      connector_id: 'serverops_ssh',
+      required_operation_ids: ['server.system.snapshot', 'server.service.status', 'server.journal.tail'],
+      optional_operation_ids: ['server.service.restart'],
+      required: true,
+    },
+  ],
+  memory_instructions: '',
+  icon_background: '#1d4ed8',
+};
+
+const workspaceTemplate = {
+  id: 'tpl-workspace-1',
+  source: 'workspace',
+  title: '周报模板',
+  description: '团队保存的周报助手。',
+  identity_name: '  小周  ',
+  responsibility: '整理每周进度。',
+  persona: '你负责整理团队周报。',
+  goals: ['汇总进度'],
+  rules: ['只引用真实进度。'],
+  tags: ['周报'],
+  skills: [{ id: 'file-generator', required: false }],
+  connectors: [],
+  memory_instructions: '   ',
+  revision: 3,
+};
+
+const TEMPLATES = [fileGeneration, opsSpecialist, workspaceTemplate];
+
+// ---------------------------------------------------------------------------
+// Template module surface
+// ---------------------------------------------------------------------------
+
+assert.equal(CUSTOM_TEMPLATE_ID, 'custom', 'the custom id is part of the create-page URL contract');
+for (const removed of ['DIGITAL_HUMAN_TEMPLATES', 'SHARED_RULE_KEYS', 'templateKey']) {
   assert.ok(
-    template.skills.length >= 1 || template.id === 'opsSpecialist',
-    `${template.id} must declare at least one real skill, or be the opsSpecialist design target`
-  );
-  for (const skill of template.skills) {
-    assert.ok(
-      REAL_SKILL_IDS.includes(skill.id),
-      `${template.id} must only reference skills the workspace really offers (${skill.id})`
-    );
-  }
-  // The create-time integration connection field is gone: no template may keep a
-  // `connections` list, and a template that cannot bind a skill yet must declare
-  // no skill at all rather than smuggle a capability in.
-  assert.ok(
-    !Object.prototype.hasOwnProperty.call(template, 'connections'),
-    `${template.id} must not declare a connection field`
-  );
-  for (const sharedRuleKey of SHARED_RULE_KEYS) {
-    assert.ok(
-      template.ruleKeys.includes(sharedRuleKey),
-      `${template.id} must inherit the shared safety rule ${sharedRuleKey}`
-    );
-  }
-  assert.ok(template.ruleKeys.length >= 4, `${template.id} must write at least four rules`);
-  assert.equal(
-    new Set(template.ruleKeys).size,
-    template.ruleKeys.length,
-    `${template.id} must not repeat a rule`
-  );
-  assert.equal(template.defaults.autonomyLevel, 'supervised');
-  assert.equal(template.defaults.visibility, 'workspace');
-  assert.equal(template.defaults.memoryEnabled, false);
-  assert.equal(template.defaults.manualTrigger, true);
-  assert.match(
-    template.iconBackground,
-    /^#[0-9a-f]{6}$/i,
-    `${template.id} needs a text-avatar colour`
+    !(removed in templateModule),
+    `the client must not keep a hard-coded template catalog (${removed})`
   );
 }
+assert.equal(isCustomTemplateId('custom'), true);
+assert.equal(isCustomTemplateId('fileGeneration'), false);
+assert.equal(isCustomTemplateId(null), false);
+assert.equal(isCustomTemplateId(undefined), false);
 
-const fileGeneration = findDigitalHumanTemplate('fileGeneration');
-assert.equal(fileGeneration?.id, 'fileGeneration');
+assert.equal(findDigitalHumanTemplate(TEMPLATES, 'fileGeneration'), fileGeneration);
+assert.equal(findDigitalHumanTemplate(TEMPLATES, 'tpl-workspace-1'), workspaceTemplate);
+assert.equal(findDigitalHumanTemplate(TEMPLATES, 'not-a-template'), null);
 assert.equal(
-  DIGITAL_HUMAN_TEMPLATES[1]?.id,
-  'opsSpecialist',
-  'the operations template must be the second registered template'
+  findDigitalHumanTemplate(TEMPLATES, CUSTOM_TEMPLATE_ID),
+  null,
+  'the custom entry is never a template'
 );
-const opsSpecialist = findDigitalHumanTemplate('opsSpecialist');
-assert.equal(opsSpecialist?.id, 'opsSpecialist', 'the operations template must be registered');
+assert.equal(findDigitalHumanTemplate(TEMPLATES, null), null);
+assert.equal(findDigitalHumanTemplate(TEMPLATES, undefined), null);
+assert.equal(findDigitalHumanTemplate([], 'fileGeneration'), null, 'an empty catalog finds nothing');
+
+// A saved template starts with its own name; a built-in one with its title.
+assert.equal(templateStartingName(workspaceTemplate), '小周');
+assert.equal(templateStartingName(fileGeneration), '文件生成助手');
+assert.equal(
+  templateStartingName({ ...workspaceTemplate, identity_name: '   ' }),
+  '周报模板',
+  'a blank saved name falls back to the title'
+);
+
+// ---------------------------------------------------------------------------
+// Template requirements
+// ---------------------------------------------------------------------------
+
+const fileCandidate = {
+  type: 'skill',
+  resource_id: 'file-generator',
+  display_name: 'file-generator',
+  resource_revision: 'sha256:bbb',
+  access_modes: ['write', 'read'],
+  metadata: {},
+  status: 'active',
+  available: true,
+};
+
+assert.equal(templateRequirementGap(null, [], [], 0), null, 'the custom entry needs nothing');
 assert.deepEqual(
-  fileGeneration?.skills.map(skill => skill.id),
-  ['file-generator'],
-  'file generation must keep binding its real skill'
+  templateRequirementGap(fileGeneration, [], ['file-generator'], 0),
+  { missingSkillIds: ['file-generator'], connectorMissing: false },
+  'a required skill the workspace does not offer blocks creation'
 );
 assert.deepEqual(
-  opsSpecialist?.skills,
-  [],
-  'the operations template must not fake a skill that does not exist'
-);
-assert.ok(
-  opsSpecialist !== null && !Object.prototype.hasOwnProperty.call(opsSpecialist, 'connections'),
-  'the operations template must not declare a connection field'
-);
-assert.deepEqual(
-  DIGITAL_HUMAN_TEMPLATES.filter(template => template.skills.length === 0).map(
-    template => template.id
+  templateRequirementGap(
+    fileGeneration,
+    [{ ...fileCandidate, available: false }],
+    ['file-generator'],
+    0
   ),
-  ['opsSpecialist'],
-  'only the operations template ships without a bindable skill'
+  { missingSkillIds: ['file-generator'], connectorMissing: false },
+  'an unavailable candidate does not satisfy a required skill'
 );
-assert.equal(findDigitalHumanTemplate('webResearch'), null, 'the removed search template must be gone');
-assert.equal(findDigitalHumanTemplate('not-a-template'), null);
-assert.equal(findDigitalHumanTemplate(null), null);
-assert.equal(findDigitalHumanTemplate(undefined), null);
+assert.deepEqual(
+  templateRequirementGap(fileGeneration, [fileCandidate], [], 0),
+  { missingSkillIds: ['file-generator'], connectorMissing: false },
+  'a required skill the user deselected blocks creation'
+);
+assert.equal(
+  templateRequirementGap(fileGeneration, [fileCandidate], ['file-generator'], 0),
+  null,
+  'an offered and selected required skill satisfies the template'
+);
+assert.equal(
+  templateRequirementGap(workspaceTemplate, [], [], 0),
+  null,
+  'an optional skill never blocks creation'
+);
+assert.deepEqual(
+  templateRequirementGap(opsSpecialist, [], [], 0),
+  { missingSkillIds: [], connectorMissing: true },
+  'a template that needs a connection blocks creation until one is selected'
+);
+assert.equal(
+  templateRequirementGap(opsSpecialist, [], [], 1),
+  null,
+  'a selected connection satisfies the template'
+);
+assert.deepEqual(
+  templateRequirementGap({ ...fileGeneration, connectors: opsSpecialist.connectors }, [], [], 0),
+  { missingSkillIds: ['file-generator'], connectorMissing: true },
+  'every missing requirement is reported together'
+);
 
 // ---------------------------------------------------------------------------
 // Locale coverage
@@ -247,26 +317,35 @@ for (const [locale, dictionary] of [
   ['en-US', enUS],
   ['zh-Hans', zhHans],
 ]) {
-  const texts = createResolver(dictionary, locale);
-  for (const template of DIGITAL_HUMAN_TEMPLATES) {
-    for (const key of [
-      template.titleKey,
-      template.shortDescriptionKey,
-      template.responsibilityKey,
-      template.personaKey,
-    ]) {
-      assert.ok(texts(key).length > 0, `${locale} is missing ${key}`);
-    }
-    for (const key of [
-      ...template.tagKeys,
-      ...template.goalKeys,
-      ...template.ruleKeys,
-      ...template.skills.map(skill => skill.labelKey),
-    ]) {
-      assert.ok(texts(key).length > 0, `${locale} is missing ${key}`);
-    }
+  for (const key of [
+    'createFlow.gallery.builtinTitle',
+    'createFlow.gallery.workspaceTitle',
+    'createFlow.gallery.loadFailed',
+    'createFlow.gallery.retry',
+    'createFlow.detail.requiredSkill',
+    'createFlow.detail.memory',
+    'createFlow.detail.connector',
+    'createFlow.form.requiredSkillsMissing',
+    'createFlow.form.connectorRequired',
+  ]) {
+    const value = resolvePath(dictionary, key);
+    assert.ok(typeof value === 'string' && value.trim(), `${locale} is missing ${key}`);
   }
-  assert.deepEqual(texts.missing, [], `${locale} is missing create-flow copy`);
+  assert.equal(
+    dictionary.createFlow.templates,
+    undefined,
+    `${locale} must not keep client-side template copy (ADR 0022)`
+  );
+  assert.equal(
+    dictionary.createFlow.sharedRules,
+    undefined,
+    `${locale} must not keep client-side shared rules (ADR 0022)`
+  );
+  assert.equal(
+    dictionary.createFlow.form.templateNotEnabled,
+    undefined,
+    `${locale} must not expose the removed template capability warning`
+  );
 }
 
 assert.deepEqual(
@@ -307,23 +386,30 @@ for (const [locale, dictionary] of [
 // Persona composition
 // ---------------------------------------------------------------------------
 
-const zhTexts = createResolver(zhHans, 'zh-Hans');
+assert.equal(
+  buildPersona(fileGeneration, fileGeneration.responsibility),
+  fileGeneration.persona,
+  'an unchanged responsibility leaves the template persona as is'
+);
+assert.equal(
+  buildPersona(fileGeneration, `  ${fileGeneration.responsibility}  `),
+  fileGeneration.persona,
+  'whitespace around an unchanged responsibility does not count as a change'
+);
+assert.equal(
+  buildPersona(fileGeneration, '   '),
+  fileGeneration.persona,
+  'an empty responsibility adds nothing'
+);
 const duty = '负责把每周进度整理成可交付文件。';
-const persona = buildPersona(fileGeneration, duty, zhTexts);
-
-assert.ok(
-  persona.startsWith(zhHans.createFlow.templates.fileGeneration.persona),
-  'the persona must start with the template persona'
+const persona = buildPersona(fileGeneration, duty);
+assert.equal(
+  persona,
+  `${fileGeneration.persona}\n\n${duty}`,
+  'a changed responsibility is added verbatim as a plain paragraph'
 );
-assert.ok(persona.includes('## 职责范围'), 'the persona must label the responsibility section');
-assert.ok(
-  persona.includes(`- 用户确认的职责描述：${duty}`),
-  'the persona must carry the user-confirmed responsibility verbatim'
-);
-assert.ok(
-  persona.includes(`- 角色定位：${zhHans.createFlow.templates.fileGeneration.title}`),
-  'the persona must carry the template title'
-);
+assert.ok(!persona.includes('##'), 'the persona must not carry fixed headings');
+assert.ok(!persona.includes('职责范围'), 'the persona must not carry the old Chinese section labels');
 
 // ---------------------------------------------------------------------------
 // Icon serialization
@@ -357,40 +443,42 @@ assert.deepEqual(
 const templatePayload = createDigitalHumanPayload({
   name: '  小研  ',
   responsibility: `  ${duty}  `,
-  icon: { type: 'text', icon: 'XY', iconBackground: '#0f766e' },
+  icon: { type: 'text', icon: 'XY', iconBackground: '' },
   model: 'deepseek-chat',
   template: fileGeneration,
-  texts: zhTexts,
+  sharedRules: SHARED_RULES,
 });
 
 assert.deepEqual(
-  Object.keys(templatePayload).sort(),
+  Object.keys(templatePayload).filter(key => key !== 'template_id').sort(),
   EXPECTED_PAYLOAD_KEYS,
   'the create request must only carry the agreed fields, never credentials or capability claims'
 );
+// A built-in template names itself so the API keeps its required items as
+// setup requirements (ADR 0023); the blank entry and saved templates do not.
+assert.equal(templatePayload.template_id, fileGeneration.id);
 assert.equal(templatePayload.name, '小研');
 assert.equal(templatePayload.identity_name, '小研');
 assert.equal(templatePayload.description, duty);
 assert.equal(templatePayload.default_model, 'deepseek-chat');
 assert.equal(templatePayload.autonomy_level, 'supervised');
 assert.equal(templatePayload.visibility, 'workspace');
-assert.deepEqual(templatePayload.memory_policy, { enabled: false, ownership: 'digital_human' });
+assert.deepEqual(
+  templatePayload.memory_policy,
+  { instructions: '记住用户偏好的文件格式。' },
+  'the template memory instructions guide memory; nothing else is written'
+);
 assert.deepEqual(templatePayload.trigger_policy, { manual: true });
-assert.ok(templatePayload.persona.includes(duty));
-assert.deepEqual(
-  templatePayload.goals,
-  fileGeneration.goalKeys.map(key => zhTexts(key)),
-  'goals must come from the template'
+assert.equal(templatePayload.persona, `${fileGeneration.persona}\n\n${duty}`);
+assert.equal(
+  JSON.parse(templatePayload.icon).icon_background,
+  '#0f766e',
+  'the template avatar colour is the text-avatar fallback'
 );
-assert.deepEqual(
-  templatePayload.rules,
-  fileGeneration.ruleKeys.map(key => zhTexts(key)),
-  'rules must be the shared safety rules plus the template rule'
-);
-assert.ok(
-  templatePayload.rules.includes(zhHans.createFlow.sharedRules.credentials),
-  'every digital human must carry the credential rule'
-);
+assert.deepEqual(templatePayload.goals, fileGeneration.goals, 'goals must come from the template');
+assert.notEqual(templatePayload.goals, fileGeneration.goals, 'goals must be copied, not shared');
+assert.deepEqual(templatePayload.rules, fileGeneration.rules, 'rules must come from the template');
+assert.notEqual(templatePayload.rules, fileGeneration.rules, 'rules must be copied, not shared');
 assert.ok(
   !('skills' in templatePayload) && !('bindings' in templatePayload),
   'skills must be bound through the bindings API, not smuggled into the create request'
@@ -404,41 +492,47 @@ for (const key of Object.keys(templatePayload)) {
   );
 }
 
-// Every template must produce a usable digital human.
-for (const template of DIGITAL_HUMAN_TEMPLATES) {
+// Every template must produce a usable digital human, and memory_policy only
+// ever carries instructions: memory is always on (ADR 0019).
+for (const template of TEMPLATES) {
   const payload = createDigitalHumanPayload({
     name: 'x',
-    responsibility: 'y',
-    icon: { type: 'text', icon: 'X', iconBackground: template.iconBackground },
+    responsibility: template.responsibility,
+    icon: { type: 'text', icon: 'X', iconBackground: '' },
     model: 'm',
     template,
-    texts: zhTexts,
+    sharedRules: SHARED_RULES,
   });
-  assert.ok(payload.persona.length > 0, `${template.id} persona must not be empty`);
-  assert.equal(payload.goals.length, template.goalKeys.length, `${template.id} must write goals`);
-  assert.equal(
-    payload.rules.length,
-    template.ruleKeys.length,
-    `${template.id} must write rules`
-  );
+  assert.deepEqual(Object.keys(payload).filter(key => key !== 'template_id').sort(), EXPECTED_PAYLOAD_KEYS);
+  assert.equal(payload.persona, template.persona, `${template.id} persona must be the template persona`);
+  assert.deepEqual(payload.goals, template.goals, `${template.id} must write its goals`);
+  assert.deepEqual(payload.rules, template.rules, `${template.id} must write its rules`);
   assert.equal(payload.default_model, 'm');
+  assert.ok(
+    !('enabled' in payload.memory_policy) && !('ownership' in payload.memory_policy),
+    `${template.id} memory_policy must not carry enabled/ownership`
+  );
+  assert.deepEqual(
+    payload.memory_policy,
+    template.memory_instructions.trim() ? { instructions: template.memory_instructions.trim() } : {},
+    `${template.id} memory_policy carries only its instructions`
+  );
 }
 
-// The operations template must create a usable digital human without smuggling
+// The connector template must create a usable digital human without smuggling
 // a binding, concrete connection, or credential into the create request.
 const opsPayload = createDigitalHumanPayload({
   name: '运维专员',
   responsibility: '整理环境问题证据。',
-  icon: { type: 'text', icon: '', iconBackground: opsSpecialist.iconBackground },
+  icon: { type: 'text', icon: '', iconBackground: '' },
   model: 'deepseek-chat',
   template: opsSpecialist,
-  texts: zhTexts,
+  sharedRules: SHARED_RULES,
 });
-assert.deepEqual(Object.keys(opsPayload).sort(), EXPECTED_PAYLOAD_KEYS);
-assert.equal(opsPayload.goals.length, opsSpecialist.goalKeys.length);
-assert.equal(opsPayload.rules.length, opsSpecialist.ruleKeys.length);
+assert.deepEqual(Object.keys(opsPayload).filter(key => key !== 'template_id').sort(), EXPECTED_PAYLOAD_KEYS);
+assert.deepEqual(opsPayload.memory_policy, {});
 assert.ok(
-  opsPayload.persona.includes(zhHans.createFlow.templates.opsSpecialist.persona),
+  opsPayload.persona.startsWith(opsSpecialist.persona),
   'the operations create request must carry the reviewed persona'
 );
 for (const forbiddenField of [
@@ -455,139 +549,30 @@ for (const forbiddenField of [
   );
 }
 
-// Safety copy: the operations template must state the read-only boundary in both
-// locales and must never imply an approval can be reused or a connection works
-// before it is bound and verified.
-const opsCopyZh = zhHans.createFlow.templates.opsSpecialist;
-const opsCopyEn = enUS.createFlow.templates.opsSpecialist;
-assert.ok(
-  opsCopyZh.responsibility.includes('不执行部署、重启、写入、配置修改，也不运行任意命令'),
-  'the zh operations responsibility must state the read-only boundary'
-);
-assert.ok(
-  opsCopyEn.responsibility.includes(
-    'It does not deploy, restart, write, change configuration, or run arbitrary commands.'
-  ),
-  'the en operations responsibility must state the read-only boundary'
-);
-assert.ok(
-  opsCopyZh.persona.includes('不得部署、重启、写入、修改配置、开启交互式会话或运行任意命令') &&
-    opsCopyZh.persona.includes('不得假设之前的批准仍然有效或已被记住'),
-  'the zh operations persona must forbid writes and remembered approval'
-);
-assert.ok(
-  opsCopyEn.persona.includes(
-    'Never deploy, restart, write, change configuration, open an interactive session, or run arbitrary commands.'
-  ) && opsCopyEn.persona.includes('never assume an earlier approval still applies or has been remembered'),
-  'the en operations persona must forbid writes and remembered approval'
-);
-assert.ok(
-  !Object.prototype.hasOwnProperty.call(opsCopyZh, 'connections') &&
-    !Object.prototype.hasOwnProperty.call(opsCopyEn, 'connections'),
-  'the operations copy must not keep a connection family label'
-);
-
-// Phase one reaches servers through the DigitalHuman-only serverops_ssh
-// connector. Both locales must describe only the supported behaviour: the user
-// creates and verifies SSH server connections in Connector Center, binds one or
-// more distinct named servers in the generic create form, and the role uses only
-// the approved per-invocation read-only actions. They must never claim the
-// connector works before it is bound and verified, never promise deploy, restart,
-// write, arbitrary-command, or configuration-change behaviour, and never claim an
-// approval can be remembered.
-const OPS_PHASE_ONE_COPY = {
-  'en-US': {
-    shortDescription: [
-      /verify in Connector Center/i,
-      /system snapshot, systemd service status, and a bounded journal tail/i,
-      /No deploy, restart, or configuration changes/i,
-    ],
-    responsibility: [
-      /one or more named Linux servers you create and verify in Connector Center/i,
-      /more than one server is bound and a request does not name a target/i,
-      /ask which server to check before acting/i,
-      /per-invocation approval/i,
-      /does not deploy, restart, write, change configuration, or run arbitrary commands/i,
-      /usable only after it is verified and bound/i,
-    ],
-    persona: [
-      /created and verified in Connector Center and bound to you/i,
-      /not bound or not verified is not usable/i,
-      /ask the user which server they mean/i,
-      /one invocation at a time/i,
-      /Every invocation needs its own approval/i,
-      /has been remembered/i,
-      /Separate observation from inference/i,
-    ],
-  },
-  'zh-Hans': {
-    shortDescription: [
-      /已在连接中心验证并绑定/,
-      /系统快照、systemd 服务状态和有界日志尾部/,
-      /不部署、不重启、不修改配置/,
-    ],
-    responsibility: [
-      /一台或多台具名 Linux 服务器/,
-      /先询问要检查哪一台/,
-      /每次调用都需要单独批准/,
-      /不执行部署、重启、写入、配置修改，也不运行任意命令/,
-      /连接只有在通过验证并绑定后才可用/,
-    ],
-    persona: [
-      /在连接中心创建并验证、且已绑定给你的 SSH 服务器连接/,
-      /未绑定或未验证的连接不可用/,
-      /先询问用户指的是哪一台/,
-      /每次只发起一次调用/,
-      /每次调用都需要当次批准/,
-      /已被记住/,
-      /把观察与推断分开/,
-    ],
-  },
-};
-for (const [locale, dictionary] of [
-  ['en-US', enUS],
-  ['zh-Hans', zhHans],
-]) {
-  const copy = dictionary.createFlow.templates.opsSpecialist;
-  const expected = OPS_PHASE_ONE_COPY[locale];
-  for (const [field, patterns] of [
-    ['shortDescription', expected.shortDescription],
-    ['responsibility', expected.responsibility],
-    ['persona', expected.persona],
-  ]) {
-    const text = copy[field];
-    assert.equal(typeof text, 'string', `${locale} opsSpecialist.${field} must be copy`);
-    assert.ok(text.trim().length > 0, `${locale} opsSpecialist.${field} must not be empty`);
-    for (const pattern of patterns) {
-      assert.match(
-        text,
-        pattern,
-        `${locale} opsSpecialist.${field} must state the phase-one boundary (${pattern})`
-      );
-    }
-  }
-  assert.equal(
-    dictionary.createFlow.form.templateNotEnabled,
-    undefined,
-    `${locale} must not expose the removed template capability warning`
-  );
-}
-
-// Custom (blank) entry keeps the previous behaviour.
+// Custom (blank) entry: the responsibility is the persona, and it starts with
+// the shared safety rules.
 const customPayload = createDigitalHumanPayload({
   name: '自定义助手',
   responsibility: '整理每周进度。',
   icon: { type: 'text', icon: '', iconBackground: '' },
   model: 'deepseek-chat',
   template: null,
-  texts: zhTexts,
+  sharedRules: SHARED_RULES,
 });
-assert.deepEqual(Object.keys(customPayload).sort(), EXPECTED_PAYLOAD_KEYS);
+assert.deepEqual(Object.keys(customPayload).filter(key => key !== 'template_id').sort(), EXPECTED_PAYLOAD_KEYS);
 assert.equal(customPayload.persona, '整理每周进度。');
 assert.deepEqual(customPayload.goals, []);
-assert.deepEqual(customPayload.rules, []);
+assert.deepEqual(customPayload.rules, SHARED_RULES, 'the custom entry starts with the shared rules');
+assert.notEqual(customPayload.rules, SHARED_RULES, 'shared rules must be copied, not shared');
 assert.equal(customPayload.visibility, 'workspace');
-assert.deepEqual(customPayload.memory_policy, { enabled: false, ownership: 'digital_human' });
+assert.equal(customPayload.autonomy_level, 'supervised');
+assert.deepEqual(customPayload.trigger_policy, { manual: true });
+assert.deepEqual(customPayload.memory_policy, {}, 'the custom entry writes an empty memory policy');
+assert.equal(
+  JSON.parse(customPayload.icon).icon_background,
+  '#0847f7',
+  'the custom entry falls back to the default avatar colour'
+);
 
 // ---------------------------------------------------------------------------
 // Skill selection against the workspace's real candidates
@@ -1067,6 +1052,49 @@ assert.equal(
   addCreateConnectorSelection(connectorPicks, connectorCandidates[1]).length,
   connectorPicks.length,
   'selecting the exact same connection twice must not duplicate it'
+);
+
+// An SSH connection starts with its read actions only; the service write
+// actions stay selectable but must be ticked on purpose.
+const sshReadOperations = ['server.system.snapshot', 'server.service.status', 'server.journal.tail'];
+const sshWriteOperations = [
+  'server.service.restart',
+  'server.service.start',
+  'server.service.stop',
+  'server.service.reload',
+];
+const sshCandidate = {
+  ...connectorCandidates[0],
+  resource_id: 'ssh-connection-1',
+  parent_resource_id: 'serverops_ssh',
+  metadata: { allowed_operation_ids: [...sshReadOperations, ...sshWriteOperations] },
+};
+const sshPicks = addCreateConnectorSelection([], sshCandidate);
+assert.deepEqual(
+  connectorOperationIds(sshPicks[0].binding),
+  sshReadOperations,
+  'a new SSH selection must preselect only its read actions'
+);
+assert.deepEqual(
+  connectorOperationIds(sshPicks[0].candidate),
+  [...sshReadOperations, ...sshWriteOperations],
+  'the write actions must stay offered by the candidate snapshot'
+);
+const sshWithRestart = setCreateConnectorSelectionOperation(
+  sshPicks,
+  createConnectorCandidateKey(sshPicks[0].candidate),
+  'server.service.restart',
+  true
+);
+assert.deepEqual(
+  connectorOperationIds(sshWithRestart[0].binding),
+  [...sshReadOperations, 'server.service.restart'],
+  'a write action must remain selectable after the default'
+);
+assert.deepEqual(
+  createConnectorDefaultOperationIds({ metadata: { allowed_operation_ids: sshWriteOperations } }),
+  sshWriteOperations,
+  'a connection offering only write actions keeps them so the binding stays usable'
 );
 
 // Operation narrowing is a strict subset of the candidate's allowed set and can
@@ -1767,9 +1795,10 @@ for (const [locale, dictionary] of [
     [],
     `${locale} must not keep the removed connection form copy`
   );
-  assert.ok(
-    !Object.prototype.hasOwnProperty.call(dictionary.createFlow.templates.opsSpecialist, 'connections'),
-    `${locale} opsSpecialist must not keep a connection label`
+  assert.equal(
+    dictionary.createFlow.templates,
+    undefined,
+    `${locale} must not keep template copy, connection labels included (ADR 0022)`
   );
 }
 
@@ -2024,7 +2053,47 @@ assert.match(
 );
 
 // Gallery: catalogue driven, keyboard reachable, and it never claims a skill is bound yet.
-assert.match(gallerySource, /DIGITAL_HUMAN_TEMPLATES\.map\(/);
+assert.match(
+  gallerySource,
+  /templates: readonly DigitalHumanTemplate\[\];/,
+  'the gallery must render the catalog it is given, not a client-side list'
+);
+assert.match(
+  gallerySource,
+  /template\.source === 'builtin'[\s\S]*template\.source === 'workspace'/,
+  'built-in templates must come before the workspace saved ones (ADR 0022)'
+);
+assert.match(gallerySource, /section\.items\.map\(template =>/);
+assert.match(
+  gallerySource,
+  /createFlow\.gallery\.loadFailed[\s\S]*onClick=\{onRetry\}[\s\S]*createFlow\.gallery\.retry/,
+  'a catalog that fails to load must offer a retry'
+);
+
+// Flow: the catalog comes from the API, and a template whose requirements are
+// not met cannot create a digital human.
+assert.match(flowSource, /useDigitalHumanTemplates\(\{ locale \}\)/);
+assert.match(
+  flowSource,
+  /sharedRules = catalog\?\.shared_rules \?\? \[\]/,
+  'the custom entry takes its shared rules from the API catalog'
+);
+assert.match(flowSource, /name: template \? templateStartingName\(template\) : ''/);
+assert.match(
+  flowSource,
+  /templateRequirementGap\(\s*template,\s*skillCandidates,\s*selectedSkillIds,\s*connectorSelections\.length\s*\)/,
+  'requirements must be checked against the real candidates and the current selection'
+);
+assert.match(
+  flowSource,
+  /if \(!notice && requirementGap\) \{[\s\S]*?configuration\?setup=1/,
+  'with a template requirement missing, creation stops at a draft and opens the setup checklist (ADR 0023)'
+);
+assert.doesNotMatch(
+  flowSource,
+  /if \(requirementNotice\) \{\s*setSubmitError\(requirementNotice\);/,
+  'a missing requirement no longer refuses creation; publishing waits instead'
+);
 assert.match(gallerySource, /sm:group-focus-within:opacity-100/);
 assert.match(
   gallerySource,
@@ -2097,8 +2166,18 @@ assert.match(
 );
 assert.match(
   gallerySource,
-  /template\.skills\.map\(skill => texts\(skill\.labelKey\)\)/,
-  'skill labels must resolve from the template skill keys'
+  /template\.skills\.map\(skill => \{[\s\S]*skillNames\.get\(skill\.id\) \|\| skill\.id[\s\S]*skill\.required \? t\('createFlow\.detail\.requiredSkill'/,
+  'skill labels must resolve from the workspace candidates by id and mark required skills'
+);
+assert.match(
+  gallerySource,
+  /detailTemplate\.memory_instructions \?[\s\S]*createFlow\.detail\.memory/,
+  'the detail drawer must show the template memory instructions when it has them'
+);
+assert.match(
+  gallerySource,
+  /detailTemplate\.connectors\.some\(connector => connector\.required\) \?[\s\S]*createFlow\.detail\.connector[\s\S]*createFlow\.form\.connectorRequired/,
+  'the detail drawer must say a connector template needs a verified connection'
 );
 assert.match(
   gallerySource,
@@ -2116,18 +2195,18 @@ assert.doesNotMatch(
   'the detail sections must keep the template declaration order'
 );
 
-// Combined with the template facts, the render guard cannot produce a skills
-// section for a template that declares none, and the operations template must
-// stay free of any connection or capability claim.
-assert.deepEqual(
-  fileGeneration.skills.map(skill => skill.id),
-  ['file-generator'],
-  'file generation still declares exactly its real skill'
-);
-assert.deepEqual(opsSpecialist.skills, [], 'the operations template still declares no skill');
-assert.ok(
-  opsSpecialist !== null && !Object.prototype.hasOwnProperty.call(opsSpecialist, 'connections'),
-  'the operations template still declares no connection field'
+// A template is plain data: its type declares skills by id and a connector
+// need as a flag, never a connection list or an i18n key.
+const templateTypesSource = await readSource('../src/services/types/digital-human.ts');
+const templateTypeBlock =
+  templateTypesSource.match(/export interface DigitalHumanTemplate \{[\s\S]*?\n\}/)?.[0] ?? '';
+assert.ok(templateTypeBlock, 'the template type must live with the service types');
+assert.match(templateTypeBlock, /connectors: DigitalHumanTemplateConnector\[\];/);
+assert.match(templateTypeBlock, /memory_instructions: string;/);
+assert.doesNotMatch(
+  templateTypeBlock,
+  /connections|Key\b|Keys\b/,
+  'the template type must not carry connections or i18n keys'
 );
 
 // The detail copy for the removed connection section must be gone from both
@@ -2242,6 +2321,123 @@ for (const [locale, dictionary] of [
       `${locale} must not claim a capability is already connected, online, or deployed`
     );
   }
+}
+
+{
+  // ADR 0026: only an SSH Server Operations connection offers read_only_auto,
+  // and always asking is stored as no policy at all.
+  const ssh = {
+    type: 'connector',
+    resource_id: 'connection-1',
+    parent_resource_id: 'serverops_ssh',
+    access_mode: 'execute',
+    metadata: { allowed_operation_ids: ['server.command.run'] },
+  };
+  const github = { ...ssh, resource_id: 'connection-2', parent_resource_id: 'github' };
+  assert.equal(connectorSupportsReadOnlyAuto(ssh), true);
+  assert.equal(connectorSupportsReadOnlyAuto(github), false);
+  assert.equal(
+    connectorSupportsReadOnlyAuto({ ...ssh, metadata: { credential_mode: 'per_user' } }),
+    false
+  );
+  const [auto, untouched] = updateDigitalHumanApprovalPolicy([ssh, github], ssh, 'read_only_auto');
+  assert.equal(connectorApprovalPolicy(auto), 'read_only_auto');
+  assert.deepEqual(auto.metadata.allowed_operation_ids, ['server.command.run']);
+  assert.equal(untouched, github);
+  const [asked] = updateDigitalHumanApprovalPolicy([auto], auto, 'always_ask');
+  assert.equal('approval_policy' in asked.metadata, false);
+  assert.equal(connectorApprovalPolicy(asked), 'always_ask');
+  assert.deepEqual(updateDigitalHumanApprovalPolicy([github], github, 'read_only_auto'), [github]);
+}
+
+{
+  // ADR 0026: the create flow keeps an SSH connection's read_only_auto choice
+  // and drops it for any other connector.
+  const sshCandidate = {
+    type: 'connector',
+    resource_id: 'ssh-1',
+    parent_resource_id: 'serverops_ssh',
+    display_name: 'Server',
+    resource_revision: 'connector:9',
+    access_modes: ['execute'],
+    metadata: { allowed_operation_ids: ['server.command.run'] },
+    status: 'ready',
+    available: true,
+  };
+  const sshSelection = {
+    ...connectorSelection('serverops_ssh', 'ssh-1', ['server.command.run'], 'connector:9'),
+    metadata: { allowed_operation_ids: ['server.command.run'], approval_policy: 'read_only_auto' },
+  };
+  const mailSelection = {
+    ...connectorSelection('mail', 'connection-3', ['messages.send'], 'connector:3'),
+    metadata: { allowed_operation_ids: ['messages.send'], approval_policy: 'read_only_auto' },
+  };
+  const [ssh, mail] = composeCreateBindings(
+    [],
+    [],
+    [sshSelection, mailSelection],
+    [sshCandidate, ...connectorCandidates]
+  );
+  assert.equal(ssh.metadata.approval_policy, 'read_only_auto');
+  assert.equal('approval_policy' in mail.metadata, false);
+  const [plain] = composeCreateBindings(
+    [],
+    [],
+    [connectorSelection('serverops_ssh', 'ssh-1', ['server.command.run'], 'connector:9')],
+    [sshCandidate]
+  );
+  assert.deepEqual(Object.keys(plain.metadata), ['allowed_operation_ids']);
+  const [trusted] = composeCreateBindings(
+    [],
+    [],
+    [{ ...sshSelection, metadata: { allowed_operation_ids: ['server.command.run'], approval_policy: 'trusted_unattended' } }],
+    [sshCandidate]
+  );
+  assert.equal(trusted.metadata.approval_policy, 'trusted_unattended');
+  const [forged] = composeCreateBindings(
+    [],
+    [],
+    [{ ...sshSelection, metadata: { allowed_operation_ids: ['server.command.run'], approval_policy: 'everything' } }],
+    [sshCandidate]
+  );
+  assert.equal('approval_policy' in forged.metadata, false);
+}
+
+{
+  // The server step: presets limit operations to what the connection allows,
+  // and choosing a server replaces an earlier one of the same connector.
+  const allOps = [
+    'server.system.snapshot',
+    'server.service.status',
+    'server.journal.tail',
+    'server.service.restart',
+    'server.service.start',
+    'server.service.stop',
+    'server.service.reload',
+    'server.command.run',
+  ];
+  const server = (id, ops = allOps) => ({
+    type: 'connector',
+    resource_id: id,
+    parent_resource_id: 'serverops_ssh',
+    display_name: id,
+    resource_revision: `connector:${id}`,
+    access_modes: ['execute'],
+    metadata: { allowed_operation_ids: ops },
+    status: 'ready',
+    available: true,
+  });
+  assert.deepEqual(serverPresetOperationIds('inspect', server('a')), allOps.slice(0, 3));
+  assert.deepEqual(serverPresetOperationIds('full', server('b', allOps.slice(0, 4))), allOps.slice(0, 4));
+  let picked = selectServerConnection([], server('a'), 'manage', 'read_only_auto');
+  assert.equal(picked.length, 1);
+  assert.equal(serverPresetOf(picked[0]), 'manage');
+  assert.equal(picked[0].binding.metadata.approval_policy, 'read_only_auto');
+  picked = selectServerConnection(picked, server('b'), 'full', 'always_ask');
+  assert.deepEqual(picked.map(item => item.binding.resource_id), ['b']);
+  assert.equal(serverPresetOf(picked[0]), 'full');
+  assert.equal('approval_policy' in picked[0].binding.metadata, false);
+  assert.equal(serverPresetOf(selectServerConnection([], server('c'), 'inspect', 'always_ask')[0]), 'inspect');
 }
 
 console.log('digital human create-flow contract tests passed');

@@ -235,6 +235,29 @@ function trimLocalizedText(values: Record<string, string>): Record<string, strin
   );
 }
 
+/**
+ * Chat, Agent, and Workflow confirmations carry a live or draft target. A
+ * DigitalHuman confirmation is always frozen against one published version and
+ * one binding instance, so it must name both; any other shape fails closed.
+ */
+function validRuntimeConfirmationTarget(target: Record<string, unknown>): boolean {
+  if (target.type === 'digital_human') {
+    return (
+      hasOnlyKeys(target, ['type', 'id', 'scope', 'version_id', 'binding_instance_id']) &&
+      safeDisplayString(target.id) &&
+      target.scope === 'published' &&
+      safeDisplayString(target.version_id) &&
+      safeDisplayString(target.binding_instance_id)
+    );
+  }
+  return (
+    hasOnlyKeys(target, ['type', 'id', 'binding_instance_id']) &&
+    ['chat', 'agent', 'workflow'].includes(String(target.type)) &&
+    safeDisplayString(target.id) &&
+    optionalSafeDisplayString(target.binding_instance_id)
+  );
+}
+
 function parseRuntimeConfirmation(value: unknown): ConnectorRuntimeConfirmation | null {
   const record = recordOf(value);
   if (
@@ -267,10 +290,7 @@ function parseRuntimeConfirmation(value: unknown): ConnectorRuntimeConfirmation 
   const consequence = recordOf(record.consequence);
   if (
     !target ||
-    !hasOnlyKeys(target, ['type', 'id', 'binding_instance_id']) ||
-    !['chat', 'agent', 'workflow'].includes(String(target.type)) ||
-    !safeDisplayString(target.id) ||
-    !optionalSafeDisplayString(target.binding_instance_id) ||
+    !validRuntimeConfirmationTarget(target) ||
     !consequence ||
     !hasOnlyKeys(consequence, [
       'external_effect',
@@ -302,9 +322,14 @@ function parseRuntimeConfirmation(value: unknown): ConnectorRuntimeConfirmation 
       ? { action_name_i18n: trimLocalizedText(record.action_name_i18n) }
       : {}),
     target: {
-      type: target.type as 'chat' | 'agent' | 'workflow',
-      id: target.id,
-      ...(target.binding_instance_id ? { binding_instance_id: target.binding_instance_id } : {}),
+      type: target.type as ConnectorRuntimeConfirmation['target']['type'],
+      id: target.id as string,
+      ...(target.type === 'digital_human'
+        ? { scope: 'published' as const, version_id: target.version_id as string }
+        : {}),
+      ...(target.binding_instance_id
+        ? { binding_instance_id: target.binding_instance_id as string }
+        : {}),
     },
     consequence: {
       external_effect: consequence.external_effect,

@@ -221,7 +221,9 @@ func (h *ReconcileHandler) finish(ctx context.Context, actionRunID, taskRunID, t
 		if task.WorkStatus != nil {
 			workStatus = *task.WorkStatus
 		}
-		if succeeded && task.ScheduleType == automationmodel.AutomationScheduleTypeCron &&
+		// A run a server watch started returns the task to waiting too, so the
+		// next outage can start it again (ADR 0031).
+		if succeeded && (task.ScheduleType == automationmodel.AutomationScheduleTypeCron || taskRun.TriggerSource == automationmodel.AutomationTriggerSourceServerEvent) &&
 			task.Status == automationmodel.AutomationTaskStatusActive &&
 			(workStatus == automationmodel.AutomationWorkStatusInProgress || workStatus == automationmodel.AutomationWorkStatusCompleted) {
 			updates["work_status"] = automationmodel.AutomationWorkStatusPending

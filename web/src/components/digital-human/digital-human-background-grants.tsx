@@ -46,6 +46,7 @@ import type {
 } from '@/services/types/connector';
 import { getErrorMessage } from '@/utils/error-notifications';
 import {
+  backgroundGrantOperationAllowed,
   buildBackgroundGrantIssueRequest,
   grantsForEmployee,
   type BackgroundGrantDestinationRow,
@@ -140,7 +141,9 @@ export function DigitalHumanBackgroundGrants({
   );
   const usableOperations = (selectedConnector?.capabilities ?? []).filter(
     operation =>
-      operation.usable && selectedConnection?.usable_operation_ids?.includes(operation.id)
+      operation.usable &&
+      selectedConnection?.usable_operation_ids?.includes(operation.id) &&
+      backgroundGrantOperationAllowed(selectedConnector?.id ?? '', operation.id)
   );
   const pending = grants.issue.isPending || grants.revoke.isPending;
 

@@ -2,6 +2,7 @@ package digitalhuman
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -101,27 +102,50 @@ func TestDigitalHumanMemoryTrustPostgresChannelScopeAndRecall(t *testing.T) {
 	if !admission.Allowed {
 		t.Fatalf("channel admission = %+v", admission)
 	}
-	write := func(run *Run, key string, class memoryruntime.MemoryClass, memoryScope *memoryruntime.MemoryScopeRef) *DigitalHumanMemory {
+	propose := func(run *Run, key string, admitted memoryWriteAdmission, visibility MemoryVisibility, expectedRevision int64) (*MemoryMutationResult, error) {
 		t.Helper()
-		result, err := service.ApplyAutonomousMemoryProposal(t.Context(), runScope(run), detail.Definition.ID, MemoryProposalRequest{
-			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert, MemoryClass: class, Scope: memoryScope,
-			MemoryType: memoryruntime.MemoryTypeDecision, Content: key + " content", ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
+		request := MemoryProposalRequest{
+			OperationID: uuid.New(), Key: key, Action: memoryruntime.MutationActionUpsert,
+			MemoryType: memoryruntime.MemoryTypeDecision, Content: key + " content", ExpectedRevision: expectedRevision,
+			ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
-			Visibility: MemoryVisibilityWorkspace, Confidence: 1, RunID: &run.ID, OccurredAt: fixedNow,
+			Visibility: visibility, Confidence: 1, RunID: &run.ID, OccurredAt: fixedNow,
 			SourceContext: MemorySourceContext{SourceTrust: RunSourceTrust(run)},
-		})
+		}
+		admitted.stamp(&request)
+		return service.ApplyAutonomousMemoryProposal(t.Context(), runScope(run), detail.Definition.ID, request)
+	}
+	write := func(run *Run, key string, admitted memoryWriteAdmission, visibility MemoryVisibility) *DigitalHumanMemory {
+		t.Helper()
+		result, err := propose(run, key, admitted, visibility, 0)
 		if err != nil {
 			t.Fatalf("write %s: %v", key, err)
 		}
 		return result.Memory
 	}
-	channelMemory := write(channelRun, "group-a-standup", admission.Class, admission.Scope)
-	if channelMemory.MemoryClass != memoryruntime.MemoryClassBusiness || channelMemory.ScopeType != memoryruntime.MemoryScopeChannel || channelMemory.ScopeID != admission.Scope.ID {
+	// A channel teaches the DigitalHuman's own memory, internal and marked
+	// with its channel (ADR 0015).
+	channelMemory := write(channelRun, "group-a-standup", admission, "")
+	if channelMemory.NoteInstanceID != "" || channelMemory.Visibility != MemoryVisibilityInternal ||
+		channelMemory.Origin != MemoryOriginChannel || channelMemory.OriginChannelID != admission.OriginChannelID {
 		t.Fatalf("channel memory = %#v", channelMemory)
 	}
 	operatorRun := createRun(SourceTrustAuthorizedOperator, SurfaceConsole, invocation.Event{Type: invocation.EventTypeManual, Origin: invocation.Origin{Kind: invocation.OriginManual}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalAccount, ID: actorID.String()}})
-	write(operatorRun, "self-decision", memoryruntime.MemoryClassSelf, nil)
-	write(operatorRun, "workspace-fact", memoryruntime.MemoryClassBusiness, &memoryruntime.MemoryScopeRef{Type: memoryruntime.MemoryScopeWorkspace, ID: workspaceID.String()})
+	operator := admitMemoryWrite(operatorRun, invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginManual}}, memoryWriteExplicit, true)
+	public := write(operatorRun, "self-decision", operator, "")
+	if public.Visibility != MemoryVisibilityEveryone || public.Origin != MemoryOriginOperator {
+		t.Fatalf("operator memory = %#v", public)
+	}
+	write(operatorRun, "internal-fact", operator, MemoryVisibilityInternal)
+
+	// A channel may change internal memory but never memory external users see.
+	if _, err := propose(channelRun, "self-decision", admission, "", public.Revision); !errors.Is(err, errMemoryEveryoneOperatorOnly) {
+		t.Fatalf("channel change to public memory = %v", err)
+	}
+	// Asking for public visibility does not make it public.
+	if result, err := propose(channelRun, "group-a-standup", admission, MemoryVisibilityEveryone, channelMemory.Revision); err != nil || result.Memory.Visibility != MemoryVisibilityInternal {
+		t.Fatalf("channel update of its internal memory = %#v, %v", result, err)
+	}
 
 	recall := func(run *Run, event invocation.Event) map[string]bool {
 		t.Helper()
@@ -147,9 +171,10 @@ func TestDigitalHumanMemoryTrustPostgresChannelScopeAndRecall(t *testing.T) {
 			}
 		}
 	}
-	expect("own channel", recall(channelRun, channelA), "group-a-standup", "self-decision", "workspace-fact")
+	// One memory inside the team: every channel reads what any channel taught.
+	expect("own channel", recall(channelRun, channelA), "group-a-standup", "self-decision", "internal-fact")
 	channelB := channelEvent("group-b")
-	expect("other channel", recall(channelRun, channelB), "self-decision", "workspace-fact")
+	expect("other channel", recall(channelRun, channelB), "group-a-standup", "self-decision", "internal-fact")
 	externalRun := &Run{OrganizationID: organizationID, WorkspaceID: workspaceID, DigitalHumanID: detail.Definition.ID, Surface: SurfaceAPI, SourceTrust: sourceTrustPointer(SourceTrustExternalEndUser)}
 	expect("external end user", recall(externalRun, invocation.Event{Origin: invocation.Origin{Kind: invocation.OriginAPI}}), "self-decision")
 }

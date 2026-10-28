@@ -479,8 +479,8 @@ const SYSTEM_SKILL_DISPLAY: Record<
       zh_Hans: '当前运行中配置的智能体级记忆值。',
     },
     whenToUse: {
-      en_US: 'Use when the Agent needs configured memory slots for personalization or context.',
-      zh_Hans: '当智能体需要使用已配置的记忆字段进行个性化或上下文补充时使用。',
+      en_US: 'Use when the Agent needs configured memory blocks for personalization or context.',
+      zh_Hans: '当智能体需要使用已配置的记忆块进行个性化或上下文补充时使用。',
     },
     tags: {
       en_US: ['System', 'Memory'],
@@ -657,9 +657,14 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
       en_US: 'Update agent config',
       zh_Hans: '更新智能体配置',
     },
+    replace_agent_memory_blocks: {
+      en_US: 'Update agent memory blocks',
+      zh_Hans: '更新智能体记忆块',
+    },
+    // The name before ADR 0016, kept for earlier conversations.
     replace_agent_memory_slots: {
-      en_US: 'Update agent memory slots',
-      zh_Hans: '更新智能体记忆槽',
+      en_US: 'Update agent memory blocks',
+      zh_Hans: '更新智能体记忆块',
     },
     list_agent_skill_candidates: {
       en_US: 'List agent skills',

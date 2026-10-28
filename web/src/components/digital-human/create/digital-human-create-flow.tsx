@@ -5,10 +5,15 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Loader2 } from 'lucide-react';
 import {
   useDigitalHumanMutations,
   useDigitalHumanSkillCandidates,
+  useDigitalHumanTemplates,
 } from '@/hooks/digital-human/use-digital-humans';
+import { useLocale } from '@/hooks/use-locale';
+import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
+import { digitalHumanSkillToMetadata } from '../digital-human-skill-picker';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { DIGITAL_HUMAN_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
@@ -31,6 +36,7 @@ import {
   type DigitalHumanCreateConnectorSelection,
 } from './digital-human-connector-create-model';
 import { DigitalHumanCreateSuccessDialog } from './digital-human-create-success-dialog';
+import { enableDailyServerInspection } from './server-onboarding';
 import {
   DigitalHumanTemplateForm,
   type DigitalHumanTemplateFormValue,
@@ -40,12 +46,15 @@ import {
   CUSTOM_TEMPLATE_ID,
   findDigitalHumanTemplate,
   isCustomTemplateId,
+  templateRequirementGap,
+  templateStartingName,
   type DigitalHumanTemplate,
 } from './digital-human-templates';
-import { useRoleTextResolver } from './use-role-texts';
 
 const CREATE_PATH = '/console/digital-humans/create';
 const LIST_PATH = '/console/digital-humans';
+/** The SSH Server Operations connector a server template needs. */
+const SERVER_CONNECTOR_ID = 'serverops_ssh';
 
 function initials(value: string): string {
   return value.trim().slice(0, 2).toUpperCase();
@@ -70,9 +79,14 @@ export function DigitalHumanCreateFlow() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const templateParam = searchParams.get('template');
-  const template = findDigitalHumanTemplate(templateParam);
+  const { locale } = useLocale();
+  const catalogQuery = useDigitalHumanTemplates({ locale });
+  const catalog = catalogQuery.data?.data;
+  const templates = catalog?.templates ?? [];
+  const sharedRules = catalog?.shared_rules ?? [];
+  const template = findDigitalHumanTemplate(templates, templateParam);
   const isCustom = isCustomTemplateId(templateParam);
-  const invalidTemplate = Boolean(templateParam) && !template && !isCustom;
+  const invalidTemplate = Boolean(templateParam) && Boolean(catalog) && !template && !isCustom;
 
   const selectTemplate = (templateId: string) => {
     router.push(`${CREATE_PATH}?template=${encodeURIComponent(templateId)}`);
@@ -82,14 +96,24 @@ export function DigitalHumanCreateFlow() {
     router.push(CREATE_PATH);
   };
 
-  if (template || isCustom) {
+  // The form starts from the template, and the blank entry from the shared
+  // rules, so it waits for the catalog.
+  if ((template || isCustom) && catalog) {
     return (
       <DigitalHumanConfigureStep
         // Remount per template so the form always starts from that template.
         key={templateParam ?? CUSTOM_TEMPLATE_ID}
         template={template}
+        sharedRules={sharedRules}
         onBack={backToGallery}
       />
+    );
+  }
+  if (templateParam && !catalog && !catalogQuery.isError) {
+    return (
+      <div className="flex min-h-72 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </div>
     );
   }
 
@@ -103,7 +127,13 @@ export function DigitalHumanCreateFlow() {
           {t('createFlow.invalidRole')}
         </p>
       ) : null}
-      <DigitalHumanTemplateGallery onSelectTemplate={selectTemplate} />
+      <DigitalHumanTemplateGallery
+        templates={templates}
+        loading={catalogQuery.isLoading}
+        error={catalogQuery.isError}
+        onRetry={() => void catalogQuery.refetch()}
+        onSelectTemplate={selectTemplate}
+      />
     </div>
   );
 }
@@ -128,24 +158,23 @@ interface CreatedState {
  */
 function DigitalHumanConfigureStep({
   template,
+  sharedRules,
   onBack,
 }: {
   template: DigitalHumanTemplate | null;
+  sharedRules: readonly string[];
   onBack: () => void;
 }) {
   const t = useT('digitalHumans');
-  const texts = useRoleTextResolver();
+  const { locale: skillLocale } = useLocale();
   const router = useRouter();
   const queryClient = useQueryClient();
   const availableModels = useAvailableModels({ use_case: 'agent-runtime' });
   const skillCandidatesQuery = useDigitalHumanSkillCandidates();
   const mutations = useDigitalHumanMutations();
 
-  const templateTitle = template ? texts(template.titleKey) : t('createFlow.gallery.customEntry');
-  const tags = useMemo(
-    () => (template ? template.tagKeys.map(key => texts(key)) : []),
-    [template, texts]
-  );
+  const templateTitle = template ? template.title : t('createFlow.gallery.customEntry');
+  const tags = useMemo(() => template?.tags ?? [], [template]);
   const skillCandidates: DigitalHumanResourceCandidate[] = useMemo(
     () => skillCandidatesQuery.data?.data?.items ?? [],
     [skillCandidatesQuery.data?.data?.items]
@@ -169,10 +198,13 @@ function DigitalHumanConfigureStep({
   >([]);
 
   const [initialValue] = useState<DigitalHumanTemplateFormValue>(() => ({
-    name: template ? texts(template.titleKey) : '',
-    responsibility: template ? texts(template.responsibilityKey) : '',
+    name: template ? templateStartingName(template) : '',
+    responsibility: template ? template.responsibility : '',
     icon: template
-      ? createTextIconValue(initials(texts(template.titleKey)), template.iconBackground)
+      ? createTextIconValue(
+          initials(templateStartingName(template)),
+          template.icon_background || ICON_BG
+        )
       : createTextIconValue('', ICON_BG),
     model: '',
   }));
@@ -218,6 +250,36 @@ function DigitalHumanConfigureStep({
     });
   };
 
+  // A template that needs a server gets its own step (the operations specialist).
+  const serverConnectorId = template?.connectors.find(
+    connector => connector.required && connector.connector_id === SERVER_CONNECTOR_ID
+  )?.connector_id;
+
+  // A template that needs a skill the workspace lacks, or a connection, would
+  // create a digital human that cannot do its work (ADR 0022).
+  const requirementGap = skillCandidatesQuery.isLoading
+    ? null
+    : templateRequirementGap(
+        template,
+        skillCandidates,
+        selectedSkillIds,
+        connectorSelections.length
+      );
+  const requirementNotice = requirementGap
+    ? [
+        requirementGap.missingSkillIds.length > 0
+          ? t('createFlow.form.requiredSkillsMissing', {
+              skills: requirementGap.missingSkillIds.join(', '),
+            })
+          : '',
+        requirementGap.connectorMissing
+          ? t(serverConnectorId ? 'createFlow.server.missing' : 'createFlow.form.connectorRequired')
+          : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : null;
+
   const requestBack = () => {
     if (dirty && !created) {
       setDiscardOpen(true);
@@ -255,7 +317,14 @@ function DigitalHumanConfigureStep({
   ) => {
     if (items.length === 0) return [];
     const bound = await digitalHumanService.replaceDraftBindings(id, lockVersion, items);
-    return bindingDisplayNames(bound.data?.items ?? items);
+    // A skill is named as the pickers name it, not by its id.
+    return bindingDisplayNames(bound.data?.items ?? items).map((name, index) => {
+      const item = (bound.data?.items ?? items)[index];
+      const candidate = skillCandidates.find(value => value.resource_id === item?.resource_id);
+      return candidate
+        ? getAIChatSkillDisplayInfo(digitalHumanSkillToMetadata(candidate), skillLocale).label
+        : name;
+    });
   };
 
   const submit = async () => {
@@ -284,7 +353,7 @@ function DigitalHumanConfigureStep({
         icon: value.icon,
         model: effectiveModel,
         template,
-        texts,
+        sharedRules,
       });
       const response = await mutations.create.mutateAsync(payload);
       const detail = response.data;
@@ -302,6 +371,14 @@ function DigitalHumanConfigureStep({
         );
       } catch {
         notice = t('createFlow.form.bindingFailed');
+      }
+
+      // Something the template requires is still missing: the digital human
+      // stays a draft, and its setup checklist leads the way (ADR 0023).
+      if (!notice && requirementGap) {
+        await queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.detail(id) });
+        router.push(`${LIST_PATH}/${id}/configuration?setup=1`);
+        return;
       }
 
       if (!notice) {
@@ -334,6 +411,32 @@ function DigitalHumanConfigureStep({
   };
 
   const draftBase = created ? `${LIST_PATH}/${created.id}` : LIST_PATH;
+  const serverSelection = connectorSelections.find(
+    item => item.candidate.parent_resource_id === serverConnectorId
+  );
+  const [dailyState, setDailyState] = useState<'idle' | 'working' | 'done' | 'failed'>('idle');
+  // One click turns on the daily read-only inspection: a bounded task grant
+  // and a task every morning (ADR 0027).
+  const turnOnDailyInspection = async () => {
+    if (!created || !serverConnectorId || !serverSelection || dailyState === 'working') return;
+    setDailyState('working');
+    try {
+      await enableDailyServerInspection(
+        created.id,
+        serverConnectorId,
+        serverSelection,
+        {
+          name: t('createFlow.server.dailyTaskName'),
+          goal: t('createFlow.server.dailyTaskGoal'),
+          criteria: [t('createFlow.server.dailyTaskCriteria')],
+        },
+        Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      );
+      setDailyState('done');
+    } catch {
+      setDailyState('failed');
+    }
+  };
   const notice = created?.notice ?? null;
 
   return (
@@ -349,6 +452,20 @@ function DigitalHumanConfigureStep({
         onRetrySkills={() => void skillCandidatesQuery.refetch()}
         connectorSelections={connectorSelections}
         onChangeConnectorSelections={setConnectorSelections}
+        serverConnectorId={serverConnectorId}
+        expectedSkillIds={template?.skills.map(skill => skill.id) ?? []}
+        codeExecution={{
+          enabled: false,
+          settingsHint: t('createFlow.server.codeExecutionAfterCreate'),
+        }}
+        onSkillEnabled={async skillId => {
+          await skillCandidatesQuery.refetch();
+          // A deliberate selection keeps its choices and gains the skill the
+          // person just enabled; an untouched one follows the template.
+          setSkillSelection(current =>
+            current && !current.includes(skillId) ? [...current, skillId] : current
+          );
+        }}
         value={{ ...value, model: effectiveModel }}
         onChange={handleChange}
         models={availableModels.models}
@@ -359,10 +476,13 @@ function DigitalHumanConfigureStep({
         submitting={submitting}
         onSubmit={() => void submit()}
         onBack={requestBack}
-        submitLabel={created ? t('createFlow.success.continueSetup') : undefined}
-        notice={
-          notice ??
-          (created ? t('createFlow.form.draftCreatedNotice') : null)
+        notice={notice ?? (created ? t('createFlow.form.draftCreatedNotice') : requirementNotice)}
+        submitLabel={
+          created
+            ? t('createFlow.success.continueSetup')
+            : requirementGap
+              ? t('createFlow.form.createDraft')
+              : undefined
         }
       />
 
@@ -377,8 +497,20 @@ function DigitalHumanConfigureStep({
         icon={value.icon}
         onContinueSetup={() => router.push(`${draftBase}/configuration`)}
         onChannels={() => router.push(`${draftBase}/channels`)}
-        onAutonomy={() => router.push(`${draftBase}/configuration#configuration-behavior`)}
+        onAutonomy={() => router.push(`${draftBase}/configuration`)}
         onBackToList={() => router.push(LIST_PATH)}
+        server={
+          serverConnectorId && serverSelection
+            ? {
+                onTryIt: () =>
+                  router.push(
+                    `${draftBase}/chat?draft=${encodeURIComponent(t('createFlow.server.tryPrompt'))}`
+                  ),
+                onDailyInspection: () => void turnOnDailyInspection(),
+                dailyState,
+              }
+            : undefined
+        }
       />
 
       <ConfirmDialog

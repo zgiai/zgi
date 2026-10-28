@@ -85,6 +85,7 @@
   triggerSource: {
     scheduler: 'Scheduled trigger',
     manual_run: 'Manual run',
+    server_event: 'Server alert',
     retry: 'Retry',
   },
   schedule: {

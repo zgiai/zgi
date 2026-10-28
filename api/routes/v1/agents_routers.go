@@ -7,8 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 	runtimerepo "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemoryworker"
 	app "github.com/zgiai/zgi/api/internal/modules/app/agents"
 	workflow "github.com/zgiai/zgi/api/internal/modules/app/workflow"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
@@ -22,7 +20,6 @@ import (
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
-	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -38,7 +35,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, memoryService *memorymodule.Service, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string, connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorDispatcher connectordispatch.Dispatcher, connectorCatalog connectorexecution.DefinitionCatalog, errorCatalog *appcatalog.Catalog, manifestResolvers ...skills.ToolGovernanceManifestResolver) app.AgentsService {
+func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService interfaces.AccountService, tenantService interfaces.WorkspaceManagementService, resourcePermissionService interfaces.ResourcePermissionService, enterpriseService interfaces.OrganizationService, quotaService interfaces.QuotaService, fileService interfaces.FileService, contentExtractor runtimeservice.ContentExtractionService, llmClient llmclient.LLMClient, toolEngine *tools.ToolEngine, toolManager *tools.ToolManager, graphFlowService *graphflow.Service, promptResolver promptservice.PromptService, dataSourceService datasourceservice.DataSourceService, knowledgeRetrievalService *datasetservice.KnowledgeRetrievalService, engineFactory *graph_engine.EngineFactory, taskManager *queue.TaskManager, taskRegistry workflowtest.TaskHandlerRegistry, workflowTestService *workflowtest.Service, scheduler *pkgscheduler.Scheduler, workflowTestTaskBackend string, connectorAgentRuntime connectorruntimeauth.AgentRuntimeResolver, connectorConfirmationStore connectorexecution.ConfirmationContinuationStore, connectorDispatcher connectordispatch.Dispatcher, connectorCatalog connectorexecution.DefinitionCatalog, errorCatalog *appcatalog.Catalog, manifestResolvers ...skills.ToolGovernanceManifestResolver) app.AgentsService {
 	repo := app.NewAgentsRepository(db)
 
 	// Initialize workflow service for agents with all required dependencies
@@ -65,12 +62,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	)
 	workflowService.SetConnectorCatalog(connectorCatalog)
 
-	agentMemoryService := agentmemory.NewService(db)
 	userRelationshipMemory := relationshipmemory.NewAgentAdapter(db)
-	var runtimeAgentMemory any = agentMemoryService
-	if relationshipmemory.RuntimeEnabled() {
-		runtimeAgentMemory = userRelationshipMemory
-	}
+	var runtimeAgentMemory any = userRelationshipMemory
 	var defaultModelResolver llmdefaultservice.DefaultModelResolver
 	var titleGenerator titlegen.Service
 	if graphFlowService != nil {
@@ -93,7 +86,6 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		contentExtractor,
 		enterpriseService,
 		newSkillRuntimeWithSandbox(toolEngine, toolManager, fileService, enterpriseService, manifestResolvers...).WithConnectorDispatcher(connectorDispatcher),
-		memoryService,
 		runtimeAgentMemory,
 		runtimeInputDispatcher,
 		connectorAgentRuntime,
@@ -114,17 +106,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		if err := scheduler.RegisterTask(task, handler); err != nil {
 			logger.Error("Failed to register chat runtime lease cleanup task", err)
 		}
-		extractionTask := agentmemoryworker.NewExtractionSweepTask()
-		if relationshipmemory.RuntimeEnabled() {
-			extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, userRelationshipMemory, llmClient))
-			if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
-				logger.Error("Failed to register Agent memory extraction sweep", err)
-			}
-		} else {
-			extractionHandler := agentmemoryworker.NewExtractionSweepHandler(agentmemoryworker.NewRunner(db, agentMemoryService, llmClient))
-			if err := scheduler.RegisterTask(extractionTask, extractionHandler); err != nil {
-				logger.Error("Failed to register Agent memory extraction sweep", err)
-			}
+		if err := scheduler.RegisterTask(relationshipmemory.NewCleanupTask(), relationshipmemory.NewCleanupHandler(db)); err != nil {
+			logger.Error("Failed to register relationship memory cleanup", err)
 		}
 		if runtimeInputDispatcher != nil {
 			recoveryTask := &app.RuntimeInputRecoveryTask{}
@@ -134,7 +117,7 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 			}
 		}
 	}
-	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
+	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	if err := appHandler.SetApplicationErrorCatalog(errorCatalog); err != nil {
 		panic(err)
@@ -249,9 +232,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.PATCH("/:agent_id/webapp/status", appHandler.UpdateWebAppStatus)
 	appsGroup.GET("/:agent_id/delete-impact", appHandler.PreviewAgentDeleteImpact)
 	appsGroup.DELETE("/:agent_id", appHandler.DeleteAgent)
-	appsGroup.GET("/:agent_id/memory/slots", appHandler.ListAgentMemorySlots)
-	appsGroup.PUT("/:agent_id/memory/slots", appHandler.ReplaceAgentMemorySlots)
 	appsGroup.PUT("/:agent_id/memory/config", appHandler.UpdateAgentMemoryConfig)
+	appsGroup.GET("/:agent_id/memory/templates", appHandler.GetAgentMemoryTemplates)
 	appsGroup.GET("/:agent_id/memory/values", appHandler.ListAgentMemoryValues)
 	appsGroup.PUT("/:agent_id/memory/values", appHandler.UpdateAgentMemoryValue)
 	appsGroup.DELETE("/:agent_id/memory/values/:key", appHandler.ClearAgentMemoryValue)
@@ -292,6 +274,10 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	protectedWebApps.DELETE("/:web_app_id/memory", appHandler.DeleteAllWebAppMemory)
 	protectedWebApps.GET("/:web_app_id/memory/export", appHandler.ExportWebAppMemory)
 	protectedWebApps.POST("/:web_app_id/memory/operations/:operation_id/undo", appHandler.UndoWebAppMemoryOperation)
+	protectedWebApps.GET("/:web_app_id/memory/history", appHandler.GetWebAppMemoryHistory)
+	protectedWebApps.POST("/:web_app_id/memory/history/:version_id/revert", appHandler.RevertWebAppMemoryVersion)
+	protectedWebApps.GET("/:web_app_id/memory/archive", appHandler.GetWebAppMemoryArchive)
+	protectedWebApps.DELETE("/:web_app_id/memory/archive/:entry_id", appHandler.DeleteWebAppMemoryArchiveEntry)
 	protectedWebApps.GET("/:web_app_id/memory/settings", appHandler.GetWebAppMemorySettings)
 	protectedWebApps.PATCH("/:web_app_id/memory/settings", appHandler.PatchWebAppMemorySettings)
 

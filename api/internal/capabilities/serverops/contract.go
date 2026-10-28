@@ -1,9 +1,9 @@
 package serverops
 
-// This file declares the read-only operation and input boundary a future adapter
-// may expose for the server operations capability: three read-only tools, each
-// mapped one to one onto an existing Action* constant and an existing Service
-// result type.
+// This file declares the operation and input boundary an adapter may expose for
+// the server operations capability: three read-only tools and four controlled
+// service write tools, each mapped one to one onto an existing Action* constant
+// and an existing Service result type.
 //
 // It declares that boundary and nothing more. It cannot advertise or deliver the
 // capability on its own: an adapter still has to own the credential store, obtain
@@ -16,9 +16,10 @@ package serverops
 // declares no package-level state, so reading it can never start a runtime,
 // mutate a registry, or reach the network.
 //
-// ApprovalPolicy states an obligation on the future adapter, not behaviour this
-// package performs: every single use of a stored credential must be explicitly
-// approved by the user first, and one approval never authorizes a second use.
+// ApprovalPolicy states an obligation on the adapter, not behaviour this package
+// performs: every single use of a stored credential, read or write, must be
+// explicitly approved by the user first, after the user has seen the exact
+// command it runs, and one approval never authorizes a second use.
 // The capability itself only consumes a Connection the adapter already approved
 // and built.
 
@@ -26,17 +27,19 @@ package serverops
 const SkillID = "server-operations"
 
 // SkillSummary is the one-line description of what the Skill offers. It is
-// conditional: the inspection happens only after explicit per-use user approval,
-// and the Skill cannot deliver it on its own. It describes the read-only
-// inspection surface only and claims no deployment, restart, configuration
-// change, or arbitrary command capability.
-const SkillSummary = "After per-use user approval, read-only inspection of a single Linux server over SSH: " +
-	"a system snapshot, systemd service status, and a bounded service journal tail."
+// conditional: every action happens only after explicit per-use user approval,
+// and the Skill cannot deliver it on its own. It describes the inspection
+// surface and the four fixed service actions only and claims no deployment,
+// configuration change, or arbitrary command capability.
+const SkillSummary = "After per-use user approval, inspection of a single Linux server over SSH " +
+	"(a system snapshot, systemd service status, and a bounded service journal tail) " +
+	"restart, start, stop, or reload of one systemd service, and running a shell command as the SSH user."
 
 // ToolName is a stable tool name inside SkillID.
 type ToolName string
 
-// The Skill's complete tool set. There are exactly three tools and no fourth.
+// The Skill's complete tool set: three read-only tools, four service write
+// tools, and the command run tool, and no other.
 const (
 	// ToolSystemSnapshot reads host facts and maps to ActionSystemSnapshot.
 	ToolSystemSnapshot ToolName = "system_snapshot"
@@ -46,10 +49,23 @@ const (
 	// ToolJournalTail reads a bounded journal window and maps to
 	// ActionJournalTail.
 	ToolJournalTail ToolName = "journal_tail"
+	// ToolServiceRestart restarts one systemd unit and maps to
+	// ActionServiceRestart.
+	ToolServiceRestart ToolName = "service_restart"
+	// ToolServiceStart starts one systemd unit and maps to ActionServiceStart.
+	ToolServiceStart ToolName = "service_start"
+	// ToolServiceStop stops one systemd unit and maps to ActionServiceStop.
+	ToolServiceStop ToolName = "service_stop"
+	// ToolServiceReload reloads one systemd unit and maps to
+	// ActionServiceReload.
+	ToolServiceReload ToolName = "service_reload"
+	// ToolCommandRun runs one caller-written shell command and maps to
+	// ActionCommandRun.
+	ToolCommandRun ToolName = "command_run"
 )
 
-// ApprovalPolicy is the approval a future adapter must obtain before it may use
-// a stored credential for one tool call.
+// ApprovalPolicy is the approval an adapter must obtain before it may use a
+// stored credential for one tool call.
 //
 // It is a declaration only. This package holds no credential, performs no
 // approval, and exposes no runtime that could record, reuse, or bypass one.
@@ -57,8 +73,10 @@ type ApprovalPolicy string
 
 // ApprovalPerUseUserApproval requires explicit user approval for every single
 // use of a credential. There is no session, standing, or blanket approval, and
-// an approval for one call never authorizes another. A future adapter must
-// enforce this before it builds the request-scoped Connection for a call.
+// an approval for one call never authorizes another. The approver must see the
+// exact command the call runs. An adapter must enforce this before it builds
+// the request-scoped Connection for a call, and a call without an interactive
+// approver (a scheduled or background run) must be refused.
 const ApprovalPerUseUserApproval ApprovalPolicy = "per_use_user_approval"
 
 // ParameterKind is the closed set of parameter types a tool may declare.
@@ -99,7 +117,7 @@ type ParameterDescriptor struct {
 	Description string
 }
 
-// ToolDescriptor is the static description of one read-only tool.
+// ToolDescriptor is the static description of one tool.
 type ToolDescriptor struct {
 	// Name is the stable tool name inside SkillID.
 	Name ToolName
@@ -107,9 +125,10 @@ type ToolDescriptor struct {
 	ActionID string
 	// Summary is the one-line human description.
 	Summary string
-	// ReadOnly is always true: this Skill defines no mutating tool.
+	// ReadOnly is true for the three inspection tools and false for the four
+	// service write tools, which change the state of one systemd unit.
 	ReadOnly bool
-	// RequiredApproval is the approval a future adapter must obtain per use.
+	// RequiredApproval is the approval an adapter must obtain per use.
 	RequiredApproval ApprovalPolicy
 	// Parameters is the exact accepted parameter set, in declaration order.
 	Parameters []ParameterDescriptor
@@ -198,7 +217,56 @@ func Skill() SkillDescriptor {
 				},
 				Returns: "JournalTail",
 			},
+			serviceWriteTool(ToolServiceRestart, ActionServiceRestart,
+				"Restart one systemd unit, then read its load, active, and sub state."),
+			serviceWriteTool(ToolServiceStart, ActionServiceStart,
+				"Start one systemd unit, then read its load, active, and sub state."),
+			serviceWriteTool(ToolServiceStop, ActionServiceStop,
+				"Stop one systemd unit, then read its load, active, and sub state."),
+			serviceWriteTool(ToolServiceReload, ActionServiceReload,
+				"Reload one systemd unit's configuration, then read its load, active, and sub state."),
+			{
+				Name:     ToolCommandRun,
+				ActionID: ActionCommandRun,
+				Summary: "Run one shell command as the SSH user and return its exit code and " +
+					"bounded output. The command can read or change anything that user may.",
+				ReadOnly:         false,
+				RequiredApproval: ApprovalPerUseUserApproval,
+				Parameters: []ParameterDescriptor{
+					{
+						Name:        "command",
+						Kind:        ParameterKindString,
+						Required:    true,
+						Pattern:     CommandPattern,
+						Description: "The exact shell command to run, for example df -h.",
+					},
+				},
+				Returns: "CommandRun",
+			},
 		},
+	}
+}
+
+// serviceWriteTool builds the descriptor of one service write tool. Every write
+// tool accepts exactly the one service_name parameter of the read tools, never
+// a free-form argument, and returns the state read after the change.
+func serviceWriteTool(name ToolName, actionID, summary string) ToolDescriptor {
+	return ToolDescriptor{
+		Name:             name,
+		ActionID:         actionID,
+		Summary:          summary,
+		ReadOnly:         false,
+		RequiredApproval: ApprovalPerUseUserApproval,
+		Parameters: []ParameterDescriptor{
+			{
+				Name:        "service_name",
+				Kind:        ParameterKindString,
+				Required:    true,
+				Pattern:     SystemdServiceNamePattern,
+				Description: "Exact systemd unit name, for example nginx.service.",
+			},
+		},
+		Returns: "ServiceChange",
 	}
 }
 

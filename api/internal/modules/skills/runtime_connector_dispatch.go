@@ -44,6 +44,9 @@ func (runtime *Runtime) callConnectorTool(ctx context.Context, doc SkillDocument
 	defer cancel()
 	start := time.Now()
 	runCtx = connectorexecution.WithPresentationLocale(runCtx, execCtx.PresentationLocale)
+	if requester, parseErr := uuid.Parse(strings.TrimSpace(execCtx.ConnectorRequesterID)); identity.Interactive && parseErr == nil && requester != uuid.Nil {
+		runCtx = connectorexecution.WithPresentRequester(runCtx, requester)
+	}
 	if !identity.Interactive && identity.Target.Type == core.TargetTypeDigitalHuman {
 		runID, runErr := uuid.Parse(strings.TrimSpace(execCtx.ConnectorRunID))
 		messageID, messageErr := uuid.Parse(strings.TrimSpace(execCtx.MessageID))

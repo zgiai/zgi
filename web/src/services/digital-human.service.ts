@@ -31,7 +31,14 @@ import type {
   DigitalHumanMemoryRepairResult,
   DigitalHumanMemoryState,
   DigitalHumanMemoryProposalRequest,
-  DigitalHumanMemoryRescopeRequest,
+  DigitalHumanMemoryVisibilityRequest,
+  DigitalHumanMemoryBulkRequest,
+  DigitalHumanMemoryPreviewRequest,
+  DigitalHumanMemoryInstructionsCatalog,
+  DigitalHumanTemplateCatalog,
+  DigitalHumanSetupStatus,
+  DigitalHumanMemoryPreviewResult,
+  DigitalHumanMemoryBulkResult,
   DigitalHumanResourceBindingInput,
   DigitalHumanResourceCandidateList,
   DraftResourceBindings,
@@ -50,6 +57,8 @@ import type {
   CreateDigitalHumanTaskRequest,
   UpdateDigitalHumanTaskRequest,
   DigitalHumanTask,
+  DigitalHumanServerWatch,
+  PutDigitalHumanServerWatchRequest,
   DigitalHumanTaskList,
   DigitalHumanTaskRequester,
   DigitalHumanTaskRequesterPage,
@@ -452,12 +461,45 @@ class DigitalHumanService extends BaseService {
     return this.request('post', `/digital-humans/${id}/memory/proposals`, data);
   }
 
-  rescopeMemory(
+  getSetup(id: string): Promise<ApiResponseData<DigitalHumanSetupStatus>> {
+    return this.request('get', `/digital-humans/${id}/setup`);
+  }
+
+  listTemplates(params: {
+    locale: string;
+    search?: string;
+  }): Promise<ApiResponseData<DigitalHumanTemplateCatalog>> {
+    return this.request('get', '/digital-human-templates', undefined, { params });
+  }
+
+  listMemoryInstructionsTemplates(
+    locale: string
+  ): Promise<ApiResponseData<DigitalHumanMemoryInstructionsCatalog>> {
+    return this.request('get', '/digital-human-memory-templates', undefined, {
+      params: { locale },
+    });
+  }
+
+  previewMemory(
+    id: string,
+    data: DigitalHumanMemoryPreviewRequest
+  ): Promise<ApiResponseData<DigitalHumanMemoryPreviewResult>> {
+    return this.request('post', `/digital-humans/${id}/memory/preview`, data);
+  }
+
+  applyMemoryBulk(
+    id: string,
+    data: DigitalHumanMemoryBulkRequest
+  ): Promise<ApiResponseData<DigitalHumanMemoryBulkResult>> {
+    return this.request('post', `/digital-humans/${id}/memory/bulk`, data);
+  }
+
+  setMemoryVisibility(
     id: string,
     memoryId: string,
-    data: DigitalHumanMemoryRescopeRequest
+    data: DigitalHumanMemoryVisibilityRequest
   ): Promise<ApiResponseData<DigitalHumanMemoryMutationResult>> {
-    return this.request('post', `/digital-humans/${id}/memory/${memoryId}/rescope`, data);
+    return this.request('post', `/digital-humans/${id}/memory/${memoryId}/visibility`, data);
   }
 
   undoMemory(
@@ -681,6 +723,19 @@ class DigitalHumanService extends BaseService {
 
   getTask(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTask>> {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}`);
+  }
+
+  /** The task's server watch (ADR 0031), or null. */
+  getTaskServerWatch(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanServerWatch | null>> {
+    return this.request('get', `/digital-humans/${id}/tasks/${taskId}/server-watch`);
+  }
+
+  putTaskServerWatch(
+    id: string,
+    taskId: string,
+    data: PutDigitalHumanServerWatchRequest
+  ): Promise<ApiResponseData<DigitalHumanServerWatch | null>> {
+    return this.request('put', `/digital-humans/${id}/tasks/${taskId}/server-watch`, data);
   }
 
   updateTask(

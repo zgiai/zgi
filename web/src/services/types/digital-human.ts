@@ -151,6 +151,8 @@ export interface DigitalHumanList {
 
 export interface CreateDigitalHumanRequest {
   file_upload_policy?: FileUploadSelection | null;
+  /** The built-in template it starts from; its required items gate publishing. */
+  template_id?: string;
   name: string;
   avatar?: string;
   icon_type?: 'text' | 'image';
@@ -260,10 +262,16 @@ export interface PublishDigitalHumanRequest {
 
 export interface DigitalHumanPersonaTemplate {
   id: string;
+  /** The template's own title. */
   name: string;
+  /** The name in conversation applying it gives; empty leaves the name as it is. */
+  identity_name: string;
+  description: string;
   persona: string;
   goals: string[];
   rules: string[];
+  memory_instructions: string;
+  skill_ids: string[];
   revision: number;
   created_at: string;
   updated_at: string;
@@ -279,17 +287,89 @@ export interface DigitalHumanPersonaTemplateList {
 
 export interface CreateDigitalHumanPersonaTemplateRequest {
   name: string;
+  identity_name: string;
+  description: string;
   persona: string;
   goals: string[];
   rules: string[];
+  memory_instructions: string;
+  skill_ids: string[];
 }
 
 export interface UpdateDigitalHumanPersonaTemplateRequest {
   expected_revision: number;
   name?: string;
+  identity_name?: string;
+  description?: string;
   persona?: string;
   goals?: string[];
   rules?: string[];
+  memory_instructions?: string;
+  skill_ids?: string[];
+}
+
+/** A skill a template binds; a required one must be offered by the workspace. */
+export interface DigitalHumanTemplateSkill {
+  id: string;
+  required: boolean;
+}
+
+/**
+ * A connector connection a template needs (ADR 0023): the operations it must
+ * allow, and those the operator may opt into. The connection is chosen per
+ * DigitalHuman.
+ */
+export interface DigitalHumanTemplateConnector {
+  connector_id: string;
+  required_operation_ids: string[];
+  optional_operation_ids?: string[];
+  required: boolean;
+}
+
+/**
+ * A DigitalHuman template (ADR 0022): built in, or saved by the workspace.
+ * Connector connections are never part of it.
+ */
+export interface DigitalHumanTemplate {
+  id: string;
+  source: 'builtin' | 'workspace';
+  title: string;
+  description: string;
+  /** Saved templates only: the name in conversation applying it gives. */
+  identity_name?: string;
+  responsibility: string;
+  persona: string;
+  goals: string[];
+  rules: string[];
+  tags: string[];
+  skills: DigitalHumanTemplateSkill[];
+  connectors: DigitalHumanTemplateConnector[];
+  memory_instructions: string;
+  icon_background?: string;
+  revision?: number;
+}
+
+/** One item of a DigitalHuman's setup checklist (ADR 0023). */
+export interface DigitalHumanSetupItem {
+  kind: 'skill' | 'connector';
+  id: string;
+  operation_ids?: string[];
+  optional_operation_ids?: string[];
+  met: boolean;
+}
+
+/** What a DigitalHuman from a template still needs before it can publish. */
+export interface DigitalHumanSetupStatus {
+  template_id?: string;
+  complete: boolean;
+  items: DigitalHumanSetupItem[];
+}
+
+export interface DigitalHumanTemplateCatalog {
+  version: number;
+  /** The safety rules every built-in template starts with. */
+  shared_rules: string[];
+  templates: DigitalHumanTemplate[];
 }
 
 export type DigitalHumanBindingType =
@@ -438,7 +518,6 @@ export interface ManualDigitalHumanInvocationResponse {
   created: boolean;
 }
 
-export type DigitalHumanMemoryClass = 'self' | 'business';
 export type DigitalHumanMemoryType =
   | 'identity'
   | 'experience'
@@ -446,13 +525,10 @@ export type DigitalHumanMemoryType =
   | 'fact'
   | 'open_loop'
   | 'reflection';
-export type DigitalHumanMemoryScopeType =
-  | 'workspace'
-  | 'project'
-  | 'customer'
-  | 'campaign'
-  | 'channel'
-  | 'instance';
+/** Who may see a DigitalHuman's own memory (ADR 0015). */
+export type DigitalHumanMemoryVisibility = 'everyone' | 'internal';
+/** Who a memory came from (ADR 0015). */
+export type DigitalHumanMemoryOrigin = 'operator' | 'member' | 'channel' | 'end_user';
 export type DigitalHumanMemoryStatus = 'active' | 'invalidated' | 'archived';
 
 export interface DigitalHumanMemoryEvidence {
@@ -465,13 +541,14 @@ export interface DigitalHumanMemory {
   id: string;
   digital_human_id: string;
   memory_key: string;
-  memory_class: DigitalHumanMemoryClass;
+  /** File path in the model's view (ADR 0014). */
+  path?: string;
   memory_type: DigitalHumanMemoryType;
-  scope_type?: DigitalHumanMemoryScopeType | '';
-  scope_id?: string;
   content: string;
   content_digest: string;
-  visibility: 'workspace' | 'restricted';
+  visibility: DigitalHumanMemoryVisibility;
+  origin?: DigitalHumanMemoryOrigin;
+  origin_channel_id?: string;
   status: DigitalHumanMemoryStatus;
   confidence: number;
   revision: number;
@@ -502,37 +579,97 @@ export interface DigitalHumanMemoryList {
   page_size: number;
   has_more: boolean;
   state: DigitalHumanMemoryState;
+  /** Counts of the listed status, whatever the other filters (ADR 0015). */
+  facets?: DigitalHumanMemoryFacets;
+}
+
+export interface DigitalHumanMemoryFacets {
+  types: Partial<Record<DigitalHumanMemoryType, number>>;
+  visibility: Partial<Record<DigitalHumanMemoryVisibility, number>>;
+  origins: Partial<Record<DigitalHumanMemoryOrigin, number>>;
+  /** Channel conversations that taught the DigitalHuman, most entries first. */
+  channels: Array<{ id: string; count: number }>;
+}
+
+// Changes the visibility of, or invalidates, several memories at once. Each
+// memory changes in its own recorded, undoable mutation.
+export interface DigitalHumanMemoryBulkRequest {
+  operation_id: string;
+  action: 'set_visibility' | 'invalidate';
+  visibility?: DigitalHumanMemoryVisibility;
+  memory_ids: string[];
+}
+
+export interface DigitalHumanMemoryPreviewTurn {
+  user: string;
+  assistant: string;
+}
+
+// Asks which memory a sample conversation would produce. Instructions default
+// to the draft's.
+export interface DigitalHumanMemoryPreviewRequest {
+  instructions?: string;
+  turns: DigitalHumanMemoryPreviewTurn[];
+}
+
+// A starting point for a DigitalHuman's memory instructions, with sample
+// conversations to preview them with.
+export interface DigitalHumanMemoryInstructionsTemplate {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  samples: Array<{ name: string; turns: DigitalHumanMemoryPreviewTurn[] }>;
+}
+
+export interface DigitalHumanMemoryInstructionsCatalog {
+  version: number;
+  templates: DigitalHumanMemoryInstructionsTemplate[];
+}
+
+export interface DigitalHumanMemoryPreviewResult {
+  instructions: string;
+  proposals: Array<{
+    key: string;
+    memory_type: DigitalHumanMemoryType;
+    content: string;
+    confidence?: number;
+    accepted: boolean;
+    reason?: string;
+  }>;
+}
+
+export interface DigitalHumanMemoryBulkResult {
+  updated: number;
+  skipped: Array<{ memory_id: string; reason: string }>;
 }
 
 export interface DigitalHumanMemoryListParams {
   page?: number;
   page_size?: number;
   search?: string;
-  memory_class?: DigitalHumanMemoryClass;
   memory_type?: DigitalHumanMemoryType;
-  scope_type?: DigitalHumanMemoryScopeType;
-  scope_id?: string;
   status?: DigitalHumanMemoryStatus;
   source?: string;
+  visibility?: DigitalHumanMemoryVisibility;
+  origin?: DigitalHumanMemoryOrigin;
+  origin_channel_id?: string;
 }
 
-// Moves one memory between self memory and workspace business memory.
-export interface DigitalHumanMemoryRescopeRequest {
+// Makes one of the DigitalHuman's own memories visible to everyone or internal only.
+export interface DigitalHumanMemoryVisibilityRequest {
   operation_id: string;
   expected_revision: number;
   config_revision: string;
   memory_epoch: number;
-  memory_class: 'self' | 'business';
-  scope?: { type: 'workspace'; id: string };
+  visibility: DigitalHumanMemoryVisibility;
 }
 
 export interface DigitalHumanMemoryProposalRequest {
   operation_id: string;
   key: string;
   action: 'upsert' | 'clear';
-  memory_class: DigitalHumanMemoryClass;
   memory_type: DigitalHumanMemoryType;
-  scope?: { type: DigitalHumanMemoryScopeType; id: string };
   content?: string;
   expected_revision: number;
   supersedes_id?: string;
@@ -540,7 +677,7 @@ export interface DigitalHumanMemoryProposalRequest {
   config_revision: string;
   memory_epoch: number;
   evidence?: DigitalHumanMemoryEvidence[];
-  visibility?: 'workspace' | 'restricted';
+  visibility?: DigitalHumanMemoryVisibility;
   confidence?: number;
   source_context: {
     private_conversation: boolean;
@@ -808,6 +945,38 @@ export interface DigitalHumanTaskSchedulePreviewRequest {
 export interface DigitalHumanTaskSchedulePreview {
   schedule: DigitalHumanTaskSchedule;
   next_run_at?: string;
+}
+
+/** One watched service, or the host under the key `@host` (ADR 0031). */
+export interface DigitalHumanServerWatchTarget {
+  healthy: boolean;
+  observed?: string;
+  failures: number;
+  alerted: boolean;
+  at: string;
+}
+
+/** A model-free service check that starts its task on an outage (ADR 0031). */
+export interface DigitalHumanServerWatch {
+  task_id: string;
+  connection_id: string;
+  services: string[];
+  interval_minutes: number;
+  failure_threshold: number;
+  enabled: boolean;
+  owned_by_viewer: boolean;
+  last_checked_at?: string;
+  last_outcome?: string;
+  last_triggered_at?: string;
+  state: Record<string, DigitalHumanServerWatchTarget>;
+}
+
+export interface PutDigitalHumanServerWatchRequest {
+  connection_id?: string;
+  services?: string[];
+  interval_minutes?: number;
+  failure_threshold?: number;
+  enabled: boolean;
 }
 
 export interface DigitalHumanTask {

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
 	"github.com/zgiai/zgi/api/internal/modules/connectors/core"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func nativeOutcomeRecord(ref connectortools.OperationRef, state, outcome string) map[string]interface{} {
@@ -113,5 +114,75 @@ func TestConnectorPlanMissingPhaseAndForgedCompletion(t *testing.T) {
 	phases[1]["status"] = "pending"
 	if err := validateConnectorPlanSnapshot(phases, evidence); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConnectorTerminalAnswerNamesTheFailedOperationAndReason(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.service.restart", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "restart-1"}
+	failed := nativeOutcomeRecord(ref, "completed", "failed")
+	failed["result"].(map[string]interface{})["connector_presentation"] = connectortools.OperationPresentation{
+		SchemaVersion: 1, SourceKind: "native", InvocationID: ref.LogicalOperationID, ConnectorID: ref.ConnectorID, OperationID: ref.OperationID,
+		Title: "重启 systemd 服务", Summary: "The Connector operation did not complete.", ErrorCode: string(core.ErrorCodePermissionMissing),
+	}
+	decision := connectorTerminalStateDecision(map[string]any{"user_request": "重启 ssh.service", "skill_invocations": []map[string]any{failed}}, "已重启")
+	if decision == nil || decision.Path != terminalStateGuardAccepted ||
+		!strings.Contains(decision.FinalAnswer, "重启 systemd 服务：外部系统拒绝了这个账号执行该操作的权限") ||
+		!strings.Contains(decision.FinalAnswer, "失败 1 项") {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestConnectorTerminalKeepsTheAnswerWhenThePersonOnlyCancelled(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.command.run", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "probe-1"}
+	success := nativeOutcomeRecord(ref, "completed", "successful")
+	other := ref
+	other.LogicalOperationID = "probe-2"
+	cancelled := nativeOutcomeRecord(other, "cancelled", "")
+	evidence := map[string]any{"user_request": "看下日志", "skill_invocations": []map[string]any{success, cancelled}}
+	decision := connectorTerminalStateDecision(evidence, "2670 的健康检查返回 503。")
+	if decision == nil || !strings.HasPrefix(decision.FinalAnswer, "2670 的健康检查返回 503。") || !strings.Contains(decision.FinalAnswer, "已取消 1 项") {
+		t.Fatalf("decision = %+v", decision)
+	}
+	failed := nativeOutcomeRecord(other, "completed", "failed")
+	evidence["skill_invocations"] = []map[string]any{success, failed}
+	if decision := connectorTerminalStateDecision(evidence, "全部完成"); decision == nil || strings.Contains(decision.FinalAnswer, "全部完成") {
+		t.Fatalf("a failed outcome kept the model's claim: %+v", decision)
+	}
+}
+
+func TestConnectorTerminalKeepsTheReportWhenAnUnattendedChangeWasBlocked(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.journal.tail", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "read-1"}
+	success := nativeOutcomeRecord(ref, "completed", "successful")
+	other := ref
+	other.OperationID, other.LogicalOperationID = "server.command.run", "change-1"
+	blocked := nativeOutcomeRecord(other, "blocked", "")
+	evidence := map[string]any{"user_request": "巡检服务", "skill_invocations": []map[string]any{success, blocked}}
+	decision := connectorTerminalStateDecision(evidence, "服务运行正常，日志无报错。")
+	if decision == nil || !strings.HasPrefix(decision.FinalAnswer, "服务运行正常，日志无报错。") || !strings.Contains(decision.FinalAnswer, "未执行 1 项") {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestConnectorNeedsPersonLetsTheRunFinishItsReport(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.command.run", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "restart-1"}
+	record := nativeOutcomeRecord(ref, "blocked", "")
+	result := record["result"].(map[string]interface{})
+	result["connector_presentation"] = map[string]interface{}{"error_code": string(core.ErrorCodeConfirmationRequired)}
+	if !connectorNeedsPerson(result) {
+		t.Fatal("a call blocked for approval was not recognised")
+	}
+	trace := skills.SkillTrace{Kind: "tool_call", Status: "error", ConnectorNative: true, Result: result}
+	if step := connectorTerminalStep(trace, "call-1", map[string]interface{}{}); step != nil {
+		t.Fatalf("a call that needs a person ended the run: %+v", step)
+	}
+	if next := connectorNeedsPersonResult(result)["next_step"]; next == nil {
+		t.Fatal("the model is not told to report instead of retrying")
+	}
+	result["connector_presentation"] = map[string]interface{}{"error_code": string(core.ErrorCodeAccessDenied)}
+	if connectorNeedsPerson(result) {
+		t.Fatal("an access denial was treated as needing a person")
+	}
+	if step := connectorTerminalStep(trace, "call-1", map[string]interface{}{}); step == nil {
+		t.Fatal("other blocked calls must still end the unattended run")
 	}
 }

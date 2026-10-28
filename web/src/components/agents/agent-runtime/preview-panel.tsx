@@ -2,7 +2,7 @@
 
 import type { FileUploadSelection } from '@/services/upload.service';
 import { useCallback, useId } from 'react';
-import { Eye, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-warning';
 import Chat, { type AIChatController } from '@/components/chat';
@@ -41,7 +41,6 @@ interface AgentRuntimePreviewPanelProps {
   voiceInputEnabled: boolean;
   speechEnabled: boolean;
   surfaceMode?: 'inline' | 'sheet';
-  onOpenMemoryValues: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   beforeSend?: () => boolean | Promise<boolean>;
   onClose?: () => void;
@@ -63,7 +62,6 @@ export function AgentRuntimePreviewPanel({
   voiceInputEnabled,
   speechEnabled,
   surfaceMode = 'inline',
-  onOpenMemoryValues,
   onModelChange,
   beforeSend,
   onClose,
@@ -102,18 +100,6 @@ export function AgentRuntimePreviewPanel({
         </div>
         <div className="flex min-w-0 shrink items-center justify-end">
           <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              isIcon
-              interactive="subtle"
-              className={embeddedControlButtonClassName}
-              onClick={onOpenMemoryValues}
-              aria-label={t('memory.viewValues')}
-              title={t('memory.viewValues')}
-            >
-              <Eye className="size-3.5" />
-            </Button>
             <div id={controlsPortalId} className="flex shrink-0 items-center" />
             {surfaceMode === 'sheet' ? (
               <Button
@@ -145,7 +131,6 @@ export function AgentRuntimePreviewPanel({
           }
           variant="embedded"
           showModelSelector={false}
-          showMemoryToggle={false}
           forcedUseMemory={useMemory}
           enableUpload={fileUploadEnabled}
           fileUploadPolicy={fileUploadPolicy}

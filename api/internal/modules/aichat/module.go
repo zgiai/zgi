@@ -6,13 +6,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/aichat/handler"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorruntimeauth "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeauth"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
-	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
@@ -26,7 +25,7 @@ type Module struct {
 }
 
 func NewModule(db *gorm.DB, llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) *Module {
-	return NewModuleWithDependencies(db, llmClient, defaultModelSvc, nil, nil, nil, nil, nil)
+	return NewModuleWithDependencies(db, llmClient, defaultModelSvc, nil, nil, nil, nil)
 }
 
 func NewModuleWithDependencies(
@@ -36,8 +35,7 @@ func NewModuleWithDependencies(
 	fileService service.FileLookupService,
 	contentExtractor service.ContentExtractionService,
 	workspacePerms service.WorkspacePermissionService,
-	memoryService *memorymodule.Service,
-	agentMemoryService *agentmemory.Service,
+	agentMemoryService *relationshipmemory.AgentAdapter,
 	optionalServices ...interface{},
 ) *Module {
 	modelPrechecker, ok := llmClient.(llmclient.AppModelPrechecker)
@@ -68,7 +66,6 @@ func NewModuleWithDependencies(
 		contentExtractor,
 		workspacePerms,
 		skillRuntime,
-		memoryService,
 		agentMemoryService,
 		connectorChatRuntime,
 		connectorAgentRuntime,

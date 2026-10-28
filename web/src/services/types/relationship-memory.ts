@@ -1,6 +1,6 @@
 import type { ApiResponseData } from './common';
 
-export type UserMemoryConsumerType = 'agent' | 'digital_human';
+export type UserMemoryConsumerType = 'agent' | 'digital_human' | 'ai_chat';
 export type UserMemoryRelationshipStatus = 'active' | 'archived';
 export type UserMemoryCategory = 'profile' | 'preference' | 'constraint' | 'relationship';
 
@@ -46,6 +46,8 @@ export interface UserMemoryRelationship {
 
 export interface UserMemoryRelationshipDetail extends UserMemoryRelationship {
   items: UserRelationshipMemoryItem[];
+  /** False when the assistant or the deployment has automatic memory off. */
+  auto_capture_available?: boolean;
 }
 
 export interface UserMemoryRelationshipPage {

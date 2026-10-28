@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
@@ -17,51 +19,48 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-const agentMemoryToolMutate = agentmemoryruntime.ToolMutate
-const maxUserRelationshipMemoryContextChars = 4000
+// memoryFilesContextChars is the room the user's memory files need when
+// full (ADR 0017): their total limit plus the file markup.
+const memoryFilesContextChars = agentmemory.MaxMemoryChars + 2000
 
 func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string, modelInputLimit int) (string, map[string]interface{}, error) {
-	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
+	if parts == nil || !parts.AgentMemoryEnabled {
 		return systemPrompt, nil, nil
 	}
-	if relationshipmemory.RuntimeEnabled() {
-		identity := agentRelationshipMemoryIdentity(scope, parts)
-		decision := relationshipmemory.DecideAccess(identity)
-		relationshipmemory.RecordAccessDecision(ctx, relationshipmemory.ConsumerAgent, identity, decision)
-		if !decision.Read {
-			// Fail closed for every downstream memory path. The inline tools and
-			// extraction scheduler both use these resolved per-invocation flags.
-			parts.AgentMemoryEnabled = false
-			parts.AgentMemoryToolsEnabled = false
-			parts.AgentMemoryAutoExtractionEnabled = false
-			return systemPrompt, map[string]interface{}{
-				"agent_memory": map[string]interface{}{
-					"enabled": false, "available": false, "injected": false,
-					"context_status": "policy_denied", "reason": decision.Reason,
-				},
-			}, nil
-		}
+	identity := agentRelationshipMemoryIdentity(scope, parts)
+	decision := relationshipmemory.DecideAccess(identity)
+	relationshipmemory.RecordAccessDecision(ctx, relationshipmemory.ConsumerAgent, identity, decision)
+	if !decision.Read {
+		// Fail closed for every downstream memory path. The inline tools and
+		// extraction scheduler both use these resolved per-invocation flags.
+		parts.AgentMemoryEnabled = false
+		parts.AgentMemoryToolsEnabled = false
+		parts.AgentMemoryAutoExtractionEnabled = false
+		return systemPrompt, map[string]interface{}{
+			"agent_memory": map[string]interface{}{
+				"enabled": false, "available": false, "injected": false,
+				"context_status": "policy_denied", "reason": decision.Reason,
+			},
+		}, nil
 	}
 	agentID, _ := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
-	workspaceID := uuid.Nil
-	if resourceWorkspaceID := scope.AgentResourceWorkspaceID(); resourceWorkspaceID != nil {
-		workspaceID = *resourceWorkspaceID
-	}
+	workspaceID, _ := agentMemoryWorkspaceID(scope, parts)
 	budgetTokens := maxAgentMemoryContextTokens
-	if modelInputLimit > 0 && modelInputLimit/10 < budgetTokens {
+	if modelInputLimit > 0 {
 		budgetTokens = modelInputLimit / 10
 	}
 	if budgetTokens <= 0 {
 		return systemPrompt, nil, nil
 	}
+	maxChars := memoryFilesContextChars
 	budgetChars := budgetTokens * 4
-	if budgetChars > maxUserRelationshipMemoryContextChars {
-		budgetChars = maxUserRelationshipMemoryContextChars
+	if budgetChars > maxChars {
+		budgetChars = maxChars
 	}
 	result, err := agentmemoryruntime.BuildContext(ctx, agentmemoryruntime.ContextRequest{
 		SystemPrompt: systemPrompt, Enabled: parts.AgentMemoryEnabled,
 		Slots: enabledAgentMemorySlots(parts.AgentMemorySlots), MemoryService: s.agentMemoryService,
-		WorkspaceID: workspaceID, AgentID: agentID, UserID: agentMemoryUserID(scope),
+		WorkspaceID: workspaceID, Personal: isAIChatMemory(parts), AgentID: agentID, UserID: agentMemoryUserID(scope),
 		UserScope: parts.AgentMemoryUserScope, ConfigScope: parts.AgentMemoryConfigScope,
 		ConfigRevision: parts.AgentMemoryConfigRevision, Budget: budgetChars,
 	})
@@ -71,7 +70,7 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		low, high := 1, budgetChars
 		for low <= high {
 			mid := low + (high-low)/2
-			candidate, values := agentmemoryruntime.RenderContextWithMetadata(result.State.SavedValues, mid)
+			candidate, values := agentmemoryruntime.Render(result.State.SavedValues, mid)
 			tokens := s.tokenEstimator.EstimateMessages([]adapter.Message{{Role: "user", Content: candidate}}, parts.ModelName).Tokens
 			if strings.TrimSpace(candidate) != "" && tokens <= budgetTokens {
 				bestContext, bestValues = candidate, values
@@ -93,16 +92,56 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		parts.AgentMemoryRuntimeState = result.State
 	}
 	parts.AgentMemoryContext = strings.TrimSpace(result.Context)
-	if relationshipmemory.RuntimeEnabled() {
-		injectedCount := 0
-		if memoryMetadata, ok := result.Metadata["agent_memory"].(map[string]interface{}); ok {
-			if value, ok := memoryMetadata["value_count"].(int); ok {
-				injectedCount = value
-			}
+	injectedCount := 0
+	if memoryMetadata, ok := result.Metadata["agent_memory"].(map[string]interface{}); ok {
+		if value, ok := memoryMetadata["value_count"].(int); ok {
+			injectedCount = value
 		}
-		relationshipmemory.RecordContextInjection(ctx, relationshipmemory.ConsumerAgent, parts.AgentMemoryContext, injectedCount)
 	}
+	relationshipmemory.RecordContextInjection(ctx, relationshipmemory.ConsumerAgent, parts.AgentMemoryContext, injectedCount)
 	return result.SystemPrompt, result.Metadata, err
+}
+
+// isAIChatMemory reports whether a run uses the person's AI chat memory,
+// which goes through the Agent memory path with the AI chat consumer
+// (ADR 0021).
+func isAIChatMemory(parts *chatRequestParts) bool {
+	return parts != nil && strings.TrimSpace(parts.AgentMemoryAgentID) == relationshipmemory.AIChatConsumerID.String()
+}
+
+// agentMemoryWorkspaceID is the workspace of the memory a run uses: the
+// Agent's, or none for AI chat memory, which belongs to no organization.
+func agentMemoryWorkspaceID(scope Scope, parts *chatRequestParts) (uuid.UUID, bool) {
+	if isAIChatMemory(parts) {
+		return uuid.Nil, true
+	}
+	if workspaceID := scope.AgentResourceWorkspaceID(); workspaceID != nil && *workspaceID != uuid.Nil {
+		return *workspaceID, true
+	}
+	return uuid.Nil, false
+}
+
+// applyAIChatMemoryPolicy gives the person's own AI chat their memory: the
+// main chat and the console's contextual assistant, not pages that embed a
+// chat for others (ADR 0021). It has no builder, so the general rules decide
+// what to keep.
+func applyAIChatMemoryPolicy(caller Caller, parts *chatRequestParts) {
+	if parts == nil || normalizeCallerType(caller.Type) != runtimemodel.ConversationCallerAIChat {
+		return
+	}
+	switch normalizeAIChatSurface(parts.Surface) {
+	case aiChatSurfaceWorkChat, aiChatSurfaceContextualSidebar:
+	default:
+		return
+	}
+	parts.AgentMemoryEnabled = true
+	parts.AgentMemoryAutoExtractionEnabled = globalAgentMemoryAutoExtractionEnabled()
+	parts.AgentMemorySlots = nil
+	parts.AgentMemoryUserScope = agentmemory.UserScopeAccount
+	parts.AgentMemoryConfigScope = agentmemory.ConfigScopePublished
+	parts.AgentMemoryConfigRevision = relationshipmemory.AIChatConfigRevision
+	parts.AgentMemoryInstructions = ""
+	parts.AgentMemoryAgentID = relationshipmemory.AIChatConsumerID.String()
 }
 
 func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relationshipmemory.InvocationIdentity {
@@ -111,6 +150,15 @@ func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relat
 		ConversationType: relationshipmemory.ConversationPrivate,
 	}
 	if parts == nil {
+		return identity
+	}
+	if isAIChatMemory(parts) {
+		identity.Principal.Type = "account"
+		identity.Surface = relationshipmemory.SurfaceAIChat
+		if scope.AccountID != uuid.Nil {
+			subject := usersubject.AccountSubject(scope.AccountID)
+			identity.UserSubject = &subject
+		}
 		return identity
 	}
 	switch strings.TrimSpace(parts.AgentMemoryUserScope) {
@@ -137,8 +185,13 @@ func agentRelationshipMemoryIdentity(scope Scope, parts *chatRequestParts) relat
 	return identity
 }
 
-func renderAgentMemoryContext(values []agentmemory.SlotValueResponse, budget int) (string, int) {
-	return agentmemoryruntime.RenderContext(values, budget)
+// agentMemoryEventScope names whose memory an event changed, so the reply
+// can open the right memory page.
+func agentMemoryEventScope(parts *chatRequestParts) string {
+	if isAIChatMemory(parts) {
+		return relationshipmemory.ConsumerAIChat
+	}
+	return "agent"
 }
 
 func agentMemoryContextMessage(parts *chatRequestParts) *adapter.Message {
@@ -147,33 +200,6 @@ func agentMemoryContextMessage(parts *chatRequestParts) *adapter.Message {
 	}
 	message := adapter.Message{Role: "user", Content: strings.TrimSpace(parts.AgentMemoryContext)}
 	return &message
-}
-
-func (s *service) scheduleAgentMemoryExtractionBestEffort(ctx context.Context, prepared *PreparedChat) {
-	if s == nil || s.agentMemoryExtractionScheduler == nil || prepared == nil || prepared.parts == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return
-	}
-	if !prepared.parts.AgentMemoryEnabled || !prepared.parts.AgentMemoryAutoExtractionEnabled || !globalAgentMemoryAutoExtractionEnabled() {
-		return
-	}
-	if state := prepared.parts.AgentMemoryRuntimeState; state != nil && state.RelationshipSettingsResolved && (!state.Enabled || !state.AutoCaptureEnabled) {
-		return
-	}
-	resourceWorkspaceID := prepared.Scope.AgentResourceWorkspaceID()
-	if resourceWorkspaceID == nil || *resourceWorkspaceID == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
-		return
-	}
-	agentID, err := uuid.Parse(strings.TrimSpace(prepared.parts.AgentMemoryAgentID))
-	if err != nil || agentID == uuid.Nil {
-		return
-	}
-	_, _ = s.agentMemoryExtractionScheduler.ScheduleExtraction(ctx, agentmemory.ScheduleExtractionRequest{
-		WorkspaceID: resourceWorkspaceID.String(), AgentID: agentID.String(),
-		UserScope: prepared.parts.AgentMemoryUserScope, UserID: agentMemoryUserID(prepared.Scope).String(),
-		ConversationID: prepared.Conversation.ID.String(), MessageWatermarkID: prepared.Message.ID.String(),
-		ExtractorVersion: "agent-memory-v2", ConfigScope: prepared.parts.AgentMemoryConfigScope,
-		ConfigRevision: prepared.parts.AgentMemoryConfigRevision, Slots: agentMemoryRuntimeSlots(prepared.parts.AgentMemorySlots),
-	})
 }
 
 func globalAgentMemoryAutoExtractionEnabled() bool {
@@ -236,10 +262,10 @@ func agentMemoryRuntimeAvailable(prepared *PreparedChat, memoryService AgentMemo
 		return false
 	}
 	parts := prepared.parts
-	if !parts.AgentMemoryEnabled || !parts.AgentMemoryToolsEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 {
+	if !parts.AgentMemoryEnabled || !parts.AgentMemoryToolsEnabled {
 		return false
 	}
-	if prepared.Scope.AgentResourceWorkspaceID() == nil || *prepared.Scope.AgentResourceWorkspaceID() == uuid.Nil || agentMemoryUserID(prepared.Scope) == uuid.Nil {
+	if _, ok := agentMemoryWorkspaceID(prepared.Scope, parts); !ok || agentMemoryUserID(prepared.Scope) == uuid.Nil {
 		return false
 	}
 	agentID, err := uuid.Parse(strings.TrimSpace(parts.AgentMemoryAgentID))
@@ -279,14 +305,25 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 		relationshipAutoCaptureAllowed = state.AutoCaptureEnabled
 	}
 	proactiveAllowed := parts.AgentMemoryAutoExtractionEnabled && relationshipAutoCaptureAllowed && globalAgentMemoryAutoExtractionEnabled()
-	definitions := agentmemoryruntime.Tools(state.EnabledSlots, proactiveAllowed)
+	archiveAvailable := s.repos != nil && s.repos.DB != nil
+	definitions := agentmemoryruntime.FileTools(proactiveAllowed, archiveAvailable)
 	if len(definitions) == 0 {
 		return nil
 	}
 	validationFailures := 0
 	succeeded := false
 	terminalFailure := false
+	partialCalls := 0
+	views := 0
 	handler := func(ctx context.Context, call adapter.ToolCall) skillloop.RuntimeToolResult {
+		if call.Function.Name == agentmemoryruntime.ToolMemoryView {
+			views++
+			if views > 5 {
+				return memoryRuntimeFailure("view_limit", false)
+			}
+			result := agentmemoryruntime.ExecuteView(agentmemoryruntime.MutationRequest{Slots: state.EnabledSlots, CurrentValues: state.SavedValues}, call.Function.Arguments)
+			return skillloop.RuntimeToolResult{Status: fmt.Sprint(result["status"]), Arguments: map[string]interface{}{}, Result: result}
+		}
 		if succeeded {
 			return memoryRuntimeFailure("already_mutated", false)
 		}
@@ -295,20 +332,26 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			// validation failure. Further attempts remain harmless and final.
 			return memoryRuntimeFailure("retry_exhausted", false)
 		}
-		resourceWorkspaceID := prepared.Scope.AgentResourceWorkspaceID()
-		if resourceWorkspaceID == nil || *resourceWorkspaceID == uuid.Nil {
+		workspaceID, ok := agentMemoryWorkspaceID(prepared.Scope, parts)
+		if !ok {
 			return memoryRuntimeFailure("workspace_missing", false)
 		}
-		workspaceID := *resourceWorkspaceID
 		mutationCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		result := agentmemoryruntime.Execute(mutationCtx, agentmemoryruntime.MutationRequest{
-			MemoryService: s.agentMemoryService, WorkspaceID: workspaceID, AgentID: agentID,
+		request := agentmemoryruntime.MutationRequest{
+			MemoryService: s.agentMemoryService, WorkspaceID: workspaceID, Personal: isAIChatMemory(parts), AgentID: agentID,
 			UserID: agentMemoryUserID(prepared.Scope), UserScope: parts.AgentMemoryUserScope,
 			Slots: state.EnabledSlots, CurrentValues: state.SavedValues,
-			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: parts.Query,
-			ProactiveAllowed: proactiveAllowed,
-		}, call.Function.Arguments)
+			MutationMetadata: agentMemoryMutationMetadata(prepared), LatestUserMessage: currentTurnUserText(parts),
+			ProactiveAllowed: proactiveAllowed, RecentUserMessages: parts.AgentMemoryRecentUserMessages, CallID: call.ID,
+		}
+		if archiveAvailable {
+			userScope, userID := parts.AgentMemoryUserScope, request.UserID
+			request.Archive = func(ctx context.Context, content, sourceKey string) error {
+				return relationshipmemory.NewAgentAdapter(s.repos.DB).ArchiveText(ctx, workspaceID, agentID, userScope, userID, content, sourceKey, sourceKey, request.MutationMetadata)
+			}
+		}
+		result := agentmemoryruntime.ExecuteEdits(mutationCtx, request, call.Function.Arguments)
 		if result.Error != nil {
 			if agentmemoryruntime.ValidationError(result.Error) {
 				validationFailures++
@@ -321,14 +364,72 @@ func (s *service) agentMemoryRuntimeTools(persistCtx context.Context, prepared *
 			result.Result["retry_allowed"] = false
 			return skillloop.RuntimeToolResult{Status: "failed", Arguments: result.Arguments, Result: result.Result, Error: result.Error}
 		}
-		succeeded = true
+		// A call whose edits were partly rejected may be followed by one more
+		// call that corrects them.
+		if editsRejected(result.Result) && partialCalls == 0 {
+			partialCalls++
+		} else {
+			succeeded = true
+		}
 		s.recordAgentMemoryMutationEvents(ctx, prepared, result.Response, timeline)
 		s.updateAgentMemoryRuntimeMetadataBestEffort(persistCtx, prepared, map[string]interface{}{
 			"inline_status": "success", "inline_operation_count": len(result.Response.Operations),
 		})
 		return skillloop.RuntimeToolResult{Status: "success", Arguments: result.Arguments, Result: result.Result}
 	}
-	return []skillloop.RuntimeTool{{Definition: definitions[0], SkillID: skills.SkillAgentMemory, Handler: handler}}
+	tools := make([]skillloop.RuntimeTool, 0, len(definitions)+1)
+	for _, definition := range definitions {
+		tools = append(tools, skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillAgentMemory, Handler: handler})
+	}
+	if search, ok := s.agentConversationSearchTool(prepared, agentID, state.UserScope); ok {
+		tools = append(tools, search)
+	}
+	if archive, ok := s.agentArchiveSearchTool(prepared, agentID, state.UserScope); ok {
+		tools = append(tools, archive)
+	}
+	return tools
+}
+
+// agentMemoryEvidenceWindow is how many recent user messages memory_edit
+// evidence may quote besides the current one.
+const agentMemoryEvidenceWindow = 6
+
+// currentTurnUserText is what the user said in this turn: the query and, after
+// the Agent asked a question, the user's answers.
+func currentTurnUserText(parts *chatRequestParts) string {
+	if len(parts.UserInputAnswers) == 0 {
+		return parts.Query
+	}
+	return strings.Join(append([]string{parts.Query}, parts.UserInputAnswers...), "\n")
+}
+
+func editsRejected(result map[string]interface{}) bool {
+	outcomes, _ := result["edits"].([]agentmemoryruntime.EditOutcome)
+	for _, outcome := range outcomes {
+		if outcome.Status != "accepted" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAgentMemoryRuntimeTool(tools []skillloop.RuntimeTool) bool {
+	for _, tool := range tools {
+		if tool.SkillID == skills.SkillAgentMemory {
+			return true
+		}
+	}
+	return false
+}
+
+func recentUserQueries(branch []*runtimemodel.Message, limit int) []string {
+	queries := make([]string, 0, limit)
+	for index := len(branch) - 1; index >= 0 && len(queries) < limit; index-- {
+		if branch[index] != nil && strings.TrimSpace(branch[index].Query) != "" {
+			queries = append(queries, branch[index].Query)
+		}
+	}
+	return queries
 }
 
 func memoryRuntimeFailure(code string, recoverable bool) skillloop.RuntimeToolResult {
@@ -383,7 +484,7 @@ func (s *service) forEachAgentMemoryMutationEvent(prepared *PreparedChat, respon
 		}
 		payload := map[string]interface{}{
 			"conversation_id": prepared.Conversation.ID.String(), "message_id": prepared.Message.ID.String(),
-			"memory_scope": "agent", "action": action, "key": operation.Key, "status": "success",
+			"memory_scope": agentMemoryEventScope(prepared.parts), "action": action, "key": operation.Key, "status": "success",
 			"mutation_status": operation.Status, "source_kind": operation.SourceKind,
 			"operation_id": operation.OperationID, "revision": operation.Revision,
 		}
@@ -411,7 +512,7 @@ func agentMemorySlotDisplayName(parts *chatRequestParts, key string) string {
 }
 
 func agentMemoryUnavailableSystemMessage(parts *chatRequestParts) *adapter.Message {
-	if parts == nil || !parts.AgentMemoryEnabled || len(enabledAgentMemorySlots(parts.AgentMemorySlots)) == 0 || parts.AgentMemoryToolsEnabled {
+	if parts == nil || !parts.AgentMemoryEnabled || parts.AgentMemoryToolsEnabled {
 		return nil
 	}
 	message := adapter.Message{Role: "system", Content: strings.Join([]string{
@@ -455,8 +556,4 @@ func (s *service) updateAgentMemoryRuntimeMetadataBestEffort(ctx context.Context
 	if s != nil && s.repos != nil && s.repos.Message != nil {
 		_ = s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata)
 	}
-}
-
-func truncateNativeAgentMemoryRunes(value string, limit int) string {
-	return agentmemoryruntime.TruncateRunes(value, limit)
 }

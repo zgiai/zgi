@@ -43,9 +43,9 @@ func TestDigitalHumanCallerIsNotNormalizedToAIChat(t *testing.T) {
 	}
 }
 
-func TestDigitalHumanCallerForcesUserAndAgentMemoryOff(t *testing.T) {
+func TestDigitalHumanCallerForcesAgentMemoryOff(t *testing.T) {
 	parts := &chatRequestParts{
-		UseMemory: true, AgentMemoryEnabled: true, AgentMemoryAutoExtractionEnabled: true,
+		AgentMemoryEnabled: true, AgentMemoryAutoExtractionEnabled: true,
 		AgentMemoryToolsEnabled: true, AgentMemorySlots: []AgentMemorySlotConfig{{Key: "profile", Enabled: true}},
 		AgentMemoryUserScope: "user", AgentMemoryConfigScope: "agent-user", AgentMemoryConfigRevision: "r1",
 		AgentMemoryAgentID: uuid.NewString(), AgentMemoryRuntimeState: &AgentMemoryRuntimeState{}, AgentMemoryContext: "secret context",
@@ -54,13 +54,10 @@ func TestDigitalHumanCallerForcesUserAndAgentMemoryOff(t *testing.T) {
 	applyCallerMemoryPolicy(caller, parts)
 	applyAgentMemoryToolsPolicy(parts)
 
-	if parts.UseMemory || parts.AgentMemoryEnabled || parts.AgentMemoryAutoExtractionEnabled || parts.AgentMemoryToolsEnabled ||
+	if parts.AgentMemoryEnabled || parts.AgentMemoryAutoExtractionEnabled || parts.AgentMemoryToolsEnabled ||
 		len(parts.AgentMemorySlots) != 0 || parts.AgentMemoryUserScope != "" || parts.AgentMemoryConfigScope != "" ||
 		parts.AgentMemoryConfigRevision != "" || parts.AgentMemoryAgentID != "" || parts.AgentMemoryRuntimeState != nil || parts.AgentMemoryContext != "" {
 		t.Fatalf("memory state was not cleared: %#v", parts)
-	}
-	if runConfigAllowsUserMemory(RunConfig{UseMemory: true, BillingAppType: runtimemodel.ConversationCallerDigitalHuman}) {
-		t.Fatal("DigitalHuman RunConfig enabled account memory")
 	}
 }
 
@@ -112,16 +109,16 @@ func TestDigitalHumanUsesSharedAgentContextManager(t *testing.T) {
 	}
 }
 
-func TestDigitalHumanSkillProfileDeniesAgentAndUserMemoryManagement(t *testing.T) {
+func TestDigitalHumanSkillProfileDeniesAgentManagementAndMemory(t *testing.T) {
 	got := filterDigitalHumanSkillIDs([]string{
-		"calculator", skills.SkillAgentManagement, skills.SkillAgentMemory, skills.SkillUserMemory, skills.SkillAgentWorkflow,
+		"calculator", skills.SkillAgentManagement, skills.SkillAgentMemory, skills.SkillAgentWorkflow,
 	})
 	want := map[string]bool{"calculator": false, skills.SkillAgentWorkflow: false}
 	for _, id := range got {
 		if _, ok := want[id]; ok {
 			want[id] = true
 		}
-		if id == skills.SkillAgentManagement || id == skills.SkillAgentMemory || id == skills.SkillUserMemory {
+		if id == skills.SkillAgentManagement || id == skills.SkillAgentMemory {
 			t.Fatalf("forbidden skill survived: %q", id)
 		}
 	}

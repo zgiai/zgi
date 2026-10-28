@@ -88,6 +88,12 @@ setup panel is available in Connector Center and can be opened in place from an
 Agent or DigitalHuman connection picker, so users do not have to leave the
 current task to create a credential.
 
+For a new connection the panel recommends a platform-generated key (ADR 0030).
+The browser generates an Ed25519 pair, keeps the private key hidden in the
+private-key field, and shows the public key with a one-line command that adds
+it to the login user's `~/.ssh/authorized_keys`. The server can keep password
+login disabled, and the connection is revoked by deleting that line.
+
 Host identity verification is automatic by default. The first test connects
 with the submitted credential, reads the server's SHA256 host-key fingerprint,
 and asks the user to confirm the observed identity before saving. The confirmed
@@ -103,18 +109,165 @@ never placed in URLs or browser storage. The connection becomes usable only
 after the user confirms the server identity and the strict credential save
 succeeds.
 
+The setup panel also asks for the connection's command privilege, stored as the
+optional, non-secret credential field `privilege`:
+
+- **Run as the SSH user** (the field is omitted): every command runs as the SSH user.
+- **Use sudo (no password)** (`privilege: "sudo"`): the service write actions run
+  behind `sudo -n`, so a server that asks for a password fails the action instead
+  of waiting. The server must allow that user to run `systemctl` through sudo
+  without a password. The read actions never use sudo.
+
+The privilege is part of the connection; changing it means reconnecting with the
+new choice. It is recorded with the verified connection as non-secret evidence,
+so the confirmation preview can show it without reading the credential.
+
 One DigitalHuman can bind multiple independently named, verified server connections
 and select an operation subset for each. When a request could match more than one
 bound server, the operations specialist template instructs the agent to ask the
 owner to clarify the target instead of choosing one. That is template guidance,
 not a platform-enforced deterministic selection, so name the intended target in
-the request. The current release provides exactly three read-only operations:
-system snapshot, systemd service status, and a bounded journal tail. Every
-invocation shows a complete target and action preview and requires fresh owner
-approval; no session grant is created or remembered. SSH operations that require
-fresh owner approval do not run non-interactively; that runtime policy does not
-globally disable other DigitalHuman background features. Deploy, restart, file
-writes, and arbitrary shell commands are not available.
+the request.
+
+The connector offers seven fixed operations, each for at most one systemd unit
+named `*.service`:
+
+| Operation | Effect | Command that runs |
+| --- | --- | --- |
+| `server.system.snapshot` | read | fixed read-only snapshot of hostname, `/etc/os-release`, `uname -sr`, `/proc/uptime`, `/proc/loadavg`, `/proc/meminfo`, and `df -P -k` |
+| `server.service.status` | read | `systemctl show --no-pager --property=LoadState --property=ActiveState --property=SubState --property=Description -- '<unit>'` |
+| `server.journal.tail` | read | `journalctl --no-pager --quiet --output=cat --unit='<unit>' --lines=<1-200, default 100> --since=-<1-1440, default 60>min` |
+| `server.service.restart` | write | `systemctl restart -- '<unit>'` |
+| `server.service.start` | write | `systemctl start -- '<unit>'` |
+| `server.service.stop` | write | `systemctl stop -- '<unit>'` |
+| `server.service.reload` | write | `systemctl reload -- '<unit>'` |
+
+With the sudo privilege, a write command becomes, for example,
+`sudo -n systemctl restart -- 'nginx.service'`. After a write command succeeds,
+the action reads the unit again (unprivileged) and returns its `load_state`,
+`active_state`, and `sub_state`. A failed write command returns a provider
+error; its bounded error text is kept for operators and is never shown with
+credentials. When sudo or systemd refuses the SSH user, the failure is
+`connector_provider_permission_missing`, and the person is told the account
+lacks the permission rather than that the server is unavailable. No operation accepts a command, argument, path, or other free-form
+input.
+
+Every invocation, read or write, is high risk. It shows a complete target and
+action preview, including a **Command** field with the exact command line that
+will run, rendered as code in the connector confirmation card of the
+conversation and of DigitalHuman run details. The preview is built by the same
+code that builds the executed command, so the two cannot differ. Each call
+requires fresh owner approval unless the connection lets proven read-only
+commands run (below); no session grant is created or remembered. Scheduled
+and background DigitalHuman runs reach a server only for inspection (ADR 0027):
+the owner must give the connection a task grant, and each call must be proven
+read-only when it runs. Changes are never unattended.
+
+When the owner decides a DigitalHuman confirmation in the console, the same
+turn continues: the DigitalHuman receives the operation's result, exactly as a
+call without confirmation would, and answers in the same message. A cancelled
+or failed operation is reported as such and is not retried with the same
+arguments. Channel replies and the external API keep their fixed outcome text.
+
+Write actions are opt-in. When a server connection is added while creating a
+DigitalHuman, only the read operations are selected by default; each write
+action must be ticked explicitly.
+
+Release `1.2.0` adds **Run a shell command** (`server.command.run`, ADR 0025).
+It runs one command exactly as written, as the SSH user, for at most 45
+seconds (longer jobs are started detached and checked with later commands),
+and returns the exit code, stdout, and stderr (each keeping its last 15,000 characters, with the
+connection's secrets redacted). The command is at most 8,192 bytes and may not
+contain control characters other than tab and newline, or invisible format
+characters. The connection's sudo privilege does not apply; a command that needs
+root writes `sudo -n` itself. The platform does not check what a command does:
+it can read, change, or delete anything the account may. It is never selected by
+default, ticking it asks the person to accept that risk, and every run shows the
+whole command for approval. Enable it only on a test server or a dedicated
+account with limited permissions. A connection verified before `1.2.0` offers it
+after reconnecting.
+
+A DigitalHuman's SSH connection card also chooses how calls ask (ADR 0026):
+
+- **Always ask me** (default): every call waits for approval.
+- **Run read-only commands without asking**: a call the platform proves
+  read-only runs at once and is still recorded in the run's process; every
+  other call waits for approval as before.
+
+The proof is a parse of a narrow shell grammar against an allowlist of read
+commands with safe arguments, such as `systemctl status`, `journalctl` without
+maintenance flags, `ls`, `cat`, `tail` without `-f`, `grep`, `find` without
+`-exec` or `-delete`, `git status/log/diff`, `docker ps/logs/inspect`, `ss`,
+`ps`, `df`, and `curl` GET requests to a local address. `$` expansion,
+backticks, subshells, `sudo`, any redirection other than `2>&1`, `>/dev/null`,
+or `< file`, and reading credential files such as `.env`, private keys, or
+`/etc/shadow` always ask. Arguments count, not only the program: `ss -K`,
+`getent shadow`, `jq env`, and recursive `grep` or `diff` ask, and a shell
+wildcard is read-only only for programs that report names, sizes or checksums
+(`ls`, `du`, `stat`, `wc`, …) with their display flags, never for one that
+prints file content or reads a list of paths from a file (`--files0-from`). The snapshot, service status, and journal actions are
+read-only. Commands that would destroy the server or cut off access, such as
+`rm -rf /`, `mkfs`, `dd` to a disk, or `reboot`, are refused outright and never
+reach approval.
+
+The card also offers full trust (ADR 0028), each option behind its own risk
+confirmation:
+
+- **Fully trusted (no asking while I am present)**: while the connection's owner
+  is the person in a console conversation, every call runs without asking,
+  changes included. Conversations by anyone else, channels, and the API still
+  ask.
+- **Fully trusted, including scheduled tasks**: additionally, the owner's
+  scheduled and background task runs make any call unattended, without a task
+  grant.
+
+Forbidden commands are still refused and every call is still recorded. Trust is
+pinned to the connection revision, credential, and contract it was given for:
+reconnecting, rotating the credential, or a new connector contract returns the
+connection to asking until the owner trusts it again.
+
+Organization owners and administrators can add server command rules on the
+dashboard's organization settings page (ADR 0029). A rule is a command prefix,
+such as `git push` or `systemctl restart postgresql`, with an action:
+
+- **Forbid**: the command is refused before approval, whatever the connection's
+  policy.
+- **Always ask**: the command needs a person's approval even when the
+  connection runs read-only commands without asking or is fully trusted, so it
+  never runs in a scheduled task.
+
+A rule matches the program and then its other words in order, through wrappers
+such as `sudo` and through the fixed service actions. A command that cannot be
+parsed is matched on its words, erring toward matching. Rules only tighten; they
+never let a command run without asking.
+
+Scheduled and background runs have no one to approve (ADR 0027). A task grant
+on the DigitalHuman's SSH connection can cover only the snapshot, service
+status, journal, and shell command actions; the service write actions cannot be
+granted. With such a grant, an unattended call runs only when it is proven
+read-only, by the same rules as above, and consumes one use of the grant. A
+change, or a command that cannot be proven read-only, is blocked before the
+grant is consulted, so an unattended specialist inspects and reports and leaves
+every change for a person to approve. Such a blocked change does not end the run: the specialist
+finishes its report, and the answer names the change that did not run.
+
+A DigitalHuman task can also carry a **server alert** (ADR 0031). The platform
+checks up to ten systemd services on one of the DigitalHuman's SSH connections
+every 1 to 60 minutes, without a model, through the fixed read-only service
+status action. When a service is not `active`, or the server cannot be reached
+or logged in to, for the chosen number of checks in a row, the watch starts the
+task once for that outage with the trigger `server_event`. The run's
+instruction names what went down; the run itself is an ordinary unattended task
+run under the rules above. Only the connection's owner points a watch at it,
+and anyone who may change the task can turn it off.
+
+Release `1.1.0` of the connector adds the write operations and the `privilege`
+field. Existing installations accept it through the ordinary compatible-update
+check at startup: the accepted `1.0.0` contract stays valid and pinned, its
+three read operations are unchanged, and the one reviewed authentication change
+(adding the optional `privilege` field) is pinned by digest. Existing connections
+keep working with their read operations; reconnect a connection to verify it for
+the new write operations or to choose sudo.
 
 ### Feishu / Lark application Connector
 

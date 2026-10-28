@@ -11,6 +11,7 @@ import {
   SERVEROPS_SSH_PASSPHRASE_FIELD,
   SERVEROPS_SSH_PORT_FIELD,
   SERVEROPS_SSH_PRIVATE_KEY_FIELD,
+  SERVEROPS_SSH_PRIVILEGE_FIELD,
   SERVEROPS_SSH_SETUP_METHOD,
   SERVEROPS_SSH_USERNAME_FIELD,
   buildServerOpsSSHCredentialPayload,
@@ -315,6 +316,34 @@ const withPassphrase = buildServerOpsSSHCredentialPayload({
 });
 assert.equal(withPassphrase[SERVEROPS_SSH_PASSPHRASE_FIELD], 'correct horse battery staple');
 
+// Running as the SSH user omits the privilege field; sudo sends exactly "sudo".
+assert.equal(SERVEROPS_SSH_PRIVILEGE_FIELD, 'privilege');
+assert.equal(Object.hasOwn(withoutPassphrase, SERVEROPS_SSH_PRIVILEGE_FIELD), false);
+assert.equal(
+  Object.hasOwn(
+    buildServerOpsSSHCredentialPayload(completeForm, 'private_key', 'user'),
+    SERVEROPS_SSH_PRIVILEGE_FIELD
+  ),
+  false
+);
+assert.equal(
+  buildServerOpsSSHCredentialPayload(completeForm, 'private_key', 'sudo')[
+    SERVEROPS_SSH_PRIVILEGE_FIELD
+  ],
+  'sudo'
+);
+assert.equal(
+  buildServerOpsSSHCredentialPayload(passwordForm, 'password', 'sudo')[
+    SERVEROPS_SSH_PRIVILEGE_FIELD
+  ],
+  'sudo'
+);
+assert.equal(
+  Object.hasOwn(buildServerOpsSSHProbePayload(completeForm), SERVEROPS_SSH_PRIVILEGE_FIELD),
+  false,
+  'the read-only probe never needs the privilege'
+);
+
 const secretSentinel = 'serverops-ssh-secret-sentinel';
 const payload = buildServerOpsSSHCredentialPayload({
   ...completeForm,
@@ -555,6 +584,10 @@ const confirmSection = panelSource.slice(
 assert.ok(confirmSection.includes('const confirmObservation'), 'the confirm handler must exist');
 assert.match(confirmSection, /idempotencyKey\.current = globalThis\.crypto\.randomUUID\(\)/);
 assert.match(confirmSection, /buildServerOpsSSHCredentialPayload\(/);
+assert.match(confirmSection, /authMethod,\s*privilege\s*\)/);
+assert.match(panelSource, /role="radiogroup"/);
+assert.match(panelSource, /aria-checked=\{privilege === option\}/);
+assert.match(panelSource, /t\('serveropsSsh\.privilegeHint'\)/);
 assert.match(confirmSection, /clearServerOpsSSHSecretValues/);
 assert.match(confirmSection, /connectorService\.startCredentialSetup/);
 assert.match(confirmSection, /connectorService\.reconnectConnection/);
@@ -779,6 +812,8 @@ const panelMocks = {
   },
   './mail-setup-state': { supportsMailSetup: () => false },
   './connector-mail-setup-panel': { ConnectorMailSetupPanel: 'ConnectorMailSetupPanel' },
+  './connector-social-oauth-panel': { ConnectorSocialOAuthPanel: 'ConnectorSocialOAuthPanel' },
+  './social-oauth-state': { supportsSocialOAuth: () => false },
   './serverops-ssh-setup-state': sshState,
   './serverops-ssh-setup-panel': { ServerOpsSSHSetupPanel: 'ServerOpsSSHSetupPanel' },
 };
@@ -879,6 +914,11 @@ for (const [locale, messages] of [
   assert.ok(messages.reTest.trim(), `${locale} must offer a re-test action`);
   assert.ok(messages.errors.staleObservation.trim(), `${locale} must report a stale observation`);
   assert.ok(messages.errors.fingerprintChanged.trim(), `${locale} must report a changed pin`);
+  assert.match(messages.privilegeSudo, /sudo/);
+  assert.match(messages.privilegeHint, /systemctl/);
+  assert.match(messages.privilegeSudoHint, /sudo/);
 }
+assert.equal(zh.serveropsSsh.privilegeUser, '以 SSH 用户身份运行');
+assert.equal(zh.serveropsSsh.privilegeSudo, '使用 sudo（免密码）');
 
 console.log('ServerOps SSH setup routing, validation, and secret-handling checks passed.');

@@ -15,11 +15,14 @@ func IntersectConstraints(a, b *AccessConstraint) (*AccessConstraint, error) {
 	// Authorization is a binding-level opt-in. The left-hand constraint is the
 	// current binding being narrowed; a connection/source constraint on the
 	// right may restrict it, but must never grant direct execution by itself.
-	if a.AuthorizationMode == AuthorizationModeDirect {
-		out.AuthorizationMode = AuthorizationModeDirect
+	if a.PinnedAuthorization() {
+		out.AuthorizationMode = a.AuthorizationMode
 		out.AuthorizationConnectionRevision = a.AuthorizationConnectionRevision
 		out.AuthorizationCredentialVersion = a.AuthorizationCredentialVersion
 		out.AuthorizationContractDigest = a.AuthorizationContractDigest
+	}
+	if a.AuthorizationMode == AuthorizationModeReadOnlyAuto {
+		out.AuthorizationMode = AuthorizationModeReadOnlyAuto
 	}
 	for _, id := range a.AllowedOperationIDs {
 		for _, other := range b.AllowedOperationIDs {

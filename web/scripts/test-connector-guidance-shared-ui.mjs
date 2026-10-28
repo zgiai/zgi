@@ -59,6 +59,25 @@ for (const mutate of [
   mutate(changed);
   assert.equal(parse(changed).complete, false);
 }
+// A command line field keeps its closed `command` format; any other format is rejected.
+const commandEnvelope = globalThis.structuredClone(envelope);
+commandEnvelope.preview.fields.push({
+  label: 'Command',
+  label_i18n: { 'en-US': 'Command', 'zh-Hans': '执行命令' },
+  value: "sudo -n systemctl restart -- 'nginx.service'",
+  truncated: false,
+  format: 'command',
+});
+const parsedCommand = parse(commandEnvelope);
+assert.equal(parsedCommand.complete, true);
+assert.equal(parsedCommand.fields[1].format, 'command');
+assert.equal(Object.hasOwn(parsedCommand.fields[0], 'format'), false);
+for (const format of ['html', '', null, 1]) {
+  const changed = globalThis.structuredClone(commandEnvelope);
+  changed.preview.fields[1].format = format;
+  assert.equal(parse(changed), null);
+}
+
 const longRecipients = globalThis.structuredClone(envelope);
 longRecipients.preview.fields[0].value = 'a'.repeat(6000);
 assert.equal(parse(longRecipients).fields[0].value.length, 6000);

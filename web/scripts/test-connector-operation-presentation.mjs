@@ -123,6 +123,29 @@ for (const mutate of [
   assert.equal(model.parseConnectorOperationPresentation(invocation), null);
 }
 
+// A DigitalHuman operation is bound to one published version and binding instance.
+const digitalHumanTarget = {
+  type: 'digital_human',
+  id: 'c37fb786-4671-4f69-b85e-31bada025c2c',
+  scope: 'published',
+  version_id: '25860bdd-ace2-40cb-9e3a-ea5c399bd5bc',
+  binding_instance_id: '7f2e831c-221e-4e30-a6e2-ee298d4c5f9c',
+};
+{
+  const invocation = fixture('successful');
+  invocation.result.operation.target = { ...digitalHumanTarget };
+  assert.equal(model.parseConnectorOperationPresentation(invocation)?.display_status, 'successful');
+}
+for (const target of [
+  { ...digitalHumanTarget, scope: 'draft' },
+  { ...digitalHumanTarget, version_id: 'invalid' },
+  { ...digitalHumanTarget, binding_instance_id: undefined },
+]) {
+  const invocation = fixture('successful');
+  invocation.result.operation.target = target;
+  assert.equal(model.parseConnectorOperationPresentation(invocation), null);
+}
+
 assert.equal(model.parseConnectorOperationPresentation(fixture('pending', 'history')), null);
 const unrelated = { ...fixture('successful'), runtime_source: 'builtin' };
 assert.equal(model.connectorOperationTone(unrelated), null);

@@ -29,6 +29,10 @@ import {
 } from './selection-dialog';
 import { useSelectionDialogDraftGuard } from './use-selection-dialog-draft-guard';
 import { agentSkillCandidateToMetadata, normalizeAgentSkillCandidates } from './skill-candidates';
+import {
+  SkillAvailabilityNotice,
+  type SkillCodeExecution,
+} from '@/components/skills/skill-availability-notice';
 
 interface AgentRuntimeSkillDialogProps {
   agentId: string;
@@ -37,6 +41,8 @@ interface AgentRuntimeSkillDialogProps {
   normalizedSelectedSkillIds: string[];
   onOpenChange: (open: boolean) => void;
   onConfirmSkills: (skillIds: string[]) => void;
+  /** The agent's code execution environment, for custom script skills. */
+  codeExecution?: SkillCodeExecution;
 }
 
 export function AgentRuntimeSkillDialog({
@@ -46,6 +52,7 @@ export function AgentRuntimeSkillDialog({
   normalizedSelectedSkillIds,
   onOpenChange,
   onConfirmSkills,
+  codeExecution,
 }: AgentRuntimeSkillDialogProps) {
   const t = useT('agents.agentRuntime');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'system' | 'custom'>('all');
@@ -166,6 +173,14 @@ export function AgentRuntimeSkillDialog({
           </>
         }
       >
+        <div className="mb-3">
+          <SkillAvailabilityNotice
+            offeredIds={candidates.map(candidate => candidate.skill_id)}
+            selectedIds={localSelectedSkillIds}
+            codeExecution={codeExecution}
+            onEnabled={() => candidatesQuery.refetch()}
+          />
+        </div>
         {candidatesQuery.isLoading ? (
           <AgentRuntimeSelectionSkeleton />
         ) : candidatesQuery.isError ? (

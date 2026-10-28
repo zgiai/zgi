@@ -254,6 +254,7 @@ export interface AgentRuntimeConfig {
   agent_memory_auto_extraction_enabled?: boolean;
   agent_memory_slots?: AgentMemorySlotConfig[];
   agent_memory_config_revision?: string;
+  agent_memory_instructions?: string;
   file_upload_enabled: boolean;
   home_title: string;
   opening_statement: string;
@@ -447,6 +448,10 @@ export interface AgentMemorySlotConfig {
   max_chars: number;
   enabled: boolean;
   sort_order: number;
+  /** Written only by builders and users, never by the model. */
+  read_only?: boolean;
+  /** Allows automatic writes when the Agent enables them; absent means true. */
+  auto_write?: boolean;
   created_at?: number;
   updated_at?: number;
   created_at_unix?: number;
@@ -486,6 +491,20 @@ export interface AgentMemoryConfigResponse {
   auto_extraction_enabled: boolean;
   slots: AgentMemorySlotConfig[];
   config_revision: string;
+  instructions?: string;
+}
+
+export interface AgentMemoryTemplate {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+}
+
+export interface AgentMemoryTemplatesResponse {
+  catalog: { version: number; templates: AgentMemoryTemplate[] };
+  /** False when the deployment turns automatic memory off for every Agent. */
+  automatic_extraction_available?: boolean;
 }
 
 export interface UpdateAgentRuntimeConfigRequest {
@@ -501,6 +520,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   agent_memory_auto_extraction_enabled?: boolean;
   agent_memory_slots?: AgentMemorySlotConfig[];
   agent_memory_config_revision?: string;
+  agent_memory_instructions?: string;
   file_upload_enabled: boolean;
   home_title: string;
   opening_statement: string;

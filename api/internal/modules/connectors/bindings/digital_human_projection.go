@@ -46,3 +46,27 @@ func requireAuthorizedDigitalHumanConnection(ctx context.Context, tx *gorm.DB, b
 	}
 	return nil
 }
+
+// replacedDigitalHumanConstraint keeps the existing expiry, deny reasons, owner
+// and host boundaries, and takes the edit's explicit operation subset and
+// approval policy (ADR 0026, ADR 0028) with its pinned snapshot. Direct
+// authorization is never granted through this edit.
+func replacedDigitalHumanConstraint(before, edited *core.AccessConstraint) (*core.AccessConstraint, error) {
+	constraint, err := core.IntersectConstraints(before, edited)
+	if err != nil {
+		return nil, err
+	}
+	constraint.AllowedOperationIDs = append([]core.Identifier{}, edited.AllowedOperationIDs...)
+	if mode := edited.AuthorizationModeValue(); mode != core.AuthorizationModeDirect {
+		constraint.AuthorizationMode = mode
+		constraint.AuthorizationConnectionRevision = 0
+		constraint.AuthorizationCredentialVersion = 0
+		constraint.AuthorizationContractDigest = ""
+		if edited.Trusted() {
+			constraint.AuthorizationConnectionRevision = edited.AuthorizationConnectionRevision
+			constraint.AuthorizationCredentialVersion = edited.AuthorizationCredentialVersion
+			constraint.AuthorizationContractDigest = edited.AuthorizationContractDigest
+		}
+	}
+	return constraint, nil
+}

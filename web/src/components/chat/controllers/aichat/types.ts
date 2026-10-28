@@ -318,7 +318,7 @@ export interface AIChatController {
   loadOlderMessages: (conversationId?: string) => Promise<void>;
   recoverStreamingConversation: (
     conversationId: string,
-    options?: { conversation?: AIChatConversation; mode?: AIChatRecoveryMode }
+    options?: { conversation?: AIChatConversation; mode?: AIChatRecoveryMode; refresh?: boolean }
   ) => Promise<void>;
   send: (payload: {
     initialConnectorBindings?: AIChatInitialConnectorBinding[];

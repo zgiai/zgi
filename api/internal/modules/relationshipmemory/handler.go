@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/datatypes"
@@ -42,6 +42,13 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.DELETE("/relationships/:id", h.DeleteRelationship)
 	group.GET("/relationships/:id/export", h.Export)
 	group.POST("/relationships/:id/operations/:operation_id/undo", h.Undo)
+	group.GET("/relationships/:id/history", h.History)
+	group.POST("/relationships/:id/history/:version_id/revert", h.RevertVersion)
+	group.GET("/relationships/:id/archive", h.Archive)
+	group.GET("/relationships/:id/notes", h.Notes)
+	group.DELETE("/relationships/:id/notes/:key", h.DeleteNote)
+	group.PATCH("/relationships/:id/archive/:entry_id", h.UpdateArchiveEntry)
+	group.DELETE("/relationships/:id/archive/:entry_id", h.DeleteArchiveEntry)
 }
 
 func (h *Handler) ListRelationships(c *gin.Context) {
@@ -66,12 +73,28 @@ func (h *Handler) ListRelationships(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// relationshipDetailResponse adds whether automatic memory can run at all, so
+// the person's switch is not shown as working when the assistant or the
+// deployment has it off.
+type relationshipDetailResponse struct {
+	*RelationshipDetail
+	AutoCaptureAvailable bool `json:"auto_capture_available"`
+}
+
 func (h *Handler) GetRelationship(c *gin.Context) {
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
 	}
-	response.Success(c, detail)
+	contract, err := h.managementContract(c, detail)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, relationshipDetailResponse{
+		RelationshipDetail:   detail,
+		AutoCaptureAvailable: contract.Enabled && contract.AutoCaptureAllowed && AutomaticExtractionEnabled(),
+	})
 }
 
 type updateSettingsPayload struct {
@@ -81,9 +104,6 @@ type updateSettingsPayload struct {
 }
 
 func (h *Handler) UpdateSettings(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -127,14 +147,17 @@ type putItemPayload struct {
 }
 
 func (h *Handler) PutItem(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
 	}
 	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return
+	}
+	// The DigitalHuman's notes on the person are its own; the person may
+	// delete them but not edit them (ADR 0015).
+	if IsNoteKey(c.Param("key")) {
 		writeMemoryError(c, ErrAccessDenied)
 		return
 	}
@@ -158,9 +181,6 @@ func (h *Handler) PutItem(c *gin.Context) {
 }
 
 func (h *Handler) DeleteItem(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -184,9 +204,6 @@ func (h *Handler) DeleteItem(c *gin.Context) {
 }
 
 func (h *Handler) ClearItems(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -204,9 +221,6 @@ func (h *Handler) ClearItems(c *gin.Context) {
 }
 
 func (h *Handler) DeleteRelationship(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -233,9 +247,6 @@ func (h *Handler) Export(c *gin.Context) {
 }
 
 func (h *Handler) Undo(c *gin.Context) {
-	if !relationshipMemoryWritesEnabled(c) {
-		return
-	}
 	detail, ok := h.accountRelationship(c)
 	if !ok {
 		return
@@ -258,6 +269,193 @@ func (h *Handler) Undo(c *gin.Context) {
 	response.Success(c, gin.H{"operation_id": operationID, "item": result})
 }
 
+// History lists the relationship's memory changes, newest first.
+func (h *Handler) History(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	request, ok := historyRequestFromQuery(c)
+	if !ok {
+		writeMemoryError(c, ErrPolicyRejected)
+		return
+	}
+	page, err := h.service.History(c.Request.Context(), detail.ID, request)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, page)
+}
+
+// RevertVersion undoes the latest change to one memory file.
+func (h *Handler) RevertVersion(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return
+	}
+	versionID, err := uuid.Parse(c.Param("version_id"))
+	if err != nil {
+		writeMemoryError(c, ErrUndoUnavailable)
+		return
+	}
+	contract, err := h.managementContract(c, detail)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	actorID := detail.SubjectID
+	item, err := h.service.RevertVersion(c.Request.Context(), detail.ID, versionID, contract, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager})
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"version_id": versionID, "item": item})
+}
+
+// Notes lists what a DigitalHuman keeps on the person (ADR 0014
+// /user/notes/), read-only. Other consumers keep no notes.
+func (h *Handler) Notes(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	notes := []InstanceNote{}
+	if detail.ConsumerType == ConsumerDigitalHuman {
+		var err error
+		if notes, err = h.service.InstanceNotes(c.Request.Context(), detail.WorkspaceID, detail.ConsumerID, detail.SubjectID); err != nil {
+			writeMemoryError(c, err)
+			return
+		}
+	}
+	response.Success(c, gin.H{"notes": notes})
+}
+
+// DeleteNote removes one of the DigitalHuman's notes on the person. The
+// person may delete notes but not edit them (ADR 0015).
+func (h *Handler) DeleteNote(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return
+	}
+	expectedRevision, err := strconv.ParseInt(c.Query("expected_revision"), 10, 64)
+	if err != nil || !ValidNoteName(c.Param("key")) {
+		writeMemoryError(c, ErrPolicyRejected)
+		return
+	}
+	actorID := detail.SubjectID
+	result, err := h.service.DeleteItem(c.Request.Context(), detail.ID, NoteKey(c.Param("key")), expectedRevision, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager})
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+// Archive lists the relationship's archive (ADR 0014), newest first.
+func (h *Handler) Archive(c *gin.Context) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return
+	}
+	entries, err := h.service.ArchiveEntries(c.Request.Context(), detail.ID, 0)
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entries": entries})
+}
+
+type archiveEntryRequest struct {
+	Content string `json:"content" binding:"required"`
+}
+
+// UpdateArchiveEntry replaces one archive entry's text.
+func (h *Handler) UpdateArchiveEntry(c *gin.Context) {
+	detail, entryID, ok := h.manageArchiveEntry(c)
+	if !ok {
+		return
+	}
+	var request archiveEntryRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeMemoryError(c, ErrPolicyRejected)
+		return
+	}
+	actorID := detail.SubjectID
+	entry, err := h.service.UpdateArchiveEntry(c.Request.Context(), detail.ID, entryID, request.Content, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager})
+	if err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, entry)
+}
+
+// DeleteArchiveEntry removes one archive entry.
+func (h *Handler) DeleteArchiveEntry(c *gin.Context) {
+	detail, entryID, ok := h.manageArchiveEntry(c)
+	if !ok {
+		return
+	}
+	actorID := detail.SubjectID
+	if err := h.service.DeleteArchiveEntry(c.Request.Context(), detail.ID, entryID, MutationMetadata{ActorType: "user", ActorID: &actorID, Source: "profile", SourceKind: SourceManager}); err != nil {
+		writeMemoryError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"entry_id": entryID})
+}
+
+func (h *Handler) manageArchiveEntry(c *gin.Context) (*RelationshipDetail, uuid.UUID, bool) {
+	detail, ok := h.accountRelationship(c)
+	if !ok {
+		return nil, uuid.Nil, false
+	}
+	if !detail.CanManage {
+		writeMemoryError(c, ErrAccessDenied)
+		return nil, uuid.Nil, false
+	}
+	entryID, err := uuid.Parse(c.Param("entry_id"))
+	if err != nil {
+		writeMemoryError(c, ErrRelationshipNotFound)
+		return nil, uuid.Nil, false
+	}
+	return detail, entryID, true
+}
+
+// historyRequestFromQuery reads key, limit, and before (RFC 3339) from the
+// query string.
+func historyRequestFromQuery(c *gin.Context) (HistoryRequest, bool) {
+	request := HistoryRequest{Key: strings.TrimSpace(c.Query("key"))}
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 0 {
+			return request, false
+		}
+		request.Limit = limit
+	}
+	if raw := strings.TrimSpace(c.Query("before")); raw != "" {
+		before, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return request, false
+		}
+		request.Before = &before
+	}
+	return request, true
+}
+
+// HistoryRequestFromQuery is historyRequestFromQuery for other modules'
+// handlers that expose the same history.
+func HistoryRequestFromQuery(c *gin.Context) (HistoryRequest, bool) {
+	return historyRequestFromQuery(c)
+}
+
 func (h *Handler) accountRelationship(c *gin.Context) (*RelationshipDetail, bool) {
 	organizationID, accountID, ok := relationshipRequestScope(c)
 	if !ok {
@@ -277,20 +475,35 @@ func (h *Handler) accountRelationship(c *gin.Context) (*RelationshipDetail, bool
 }
 
 func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail) (ConsumerMemoryContract, error) {
+	if detail.ConsumerType == ConsumerAIChat {
+		return aiChatContract(), nil
+	}
 	if detail.ConsumerType == ConsumerDigitalHuman {
-		var row struct{ Revision string }
+		var row struct {
+			Revision     string
+			MemoryPolicy datatypes.JSON
+		}
 		err := h.service.db.WithContext(c.Request.Context()).Table("digital_humans AS consumer").
-			Select("published.revision").
+			Select("published.revision, published.memory_policy").
 			Joins("JOIN digital_human_versions AS published ON published.id = consumer.published_version_id AND published.state = ?", "published").
 			Where("consumer.id = ? AND consumer.workspace_id = ? AND consumer.deleted_at IS NULL", detail.ConsumerID, detail.WorkspaceID).
 			Take(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ConsumerMemoryContract{DefinitionMode: "dynamic"}, nil
+			return ConsumerMemoryContract{DefinitionMode: "files"}, nil
 		}
 		if err != nil {
 			return ConsumerMemoryContract{}, err
 		}
-		return ConsumerMemoryContract{Enabled: true, DefinitionMode: "dynamic", AllowedCategories: []string{"profile", "preference", "constraint", "relationship"}, AutoCaptureAllowed: true, ConfigRevision: row.Revision, RenderBudgetChars: defaultRenderBudget}, nil
+		// A person's memory with a DigitalHuman is files, as with an Agent, and
+		// its operator can turn it or its automatic part off (ADR 0019).
+		var policy struct {
+			Enabled     *bool `json:"user_memory_enabled"`
+			AutoCapture *bool `json:"user_auto_capture_enabled"`
+		}
+		_ = json.Unmarshal(row.MemoryPolicy, &policy)
+		enabled := policy.Enabled == nil || *policy.Enabled
+		autoCapture := enabled && (policy.AutoCapture == nil || *policy.AutoCapture)
+		return ConsumerMemoryContract{Enabled: enabled, DefinitionMode: "files", AutoCaptureAllowed: autoCapture, ConfigRevision: row.Revision, RenderBudgetChars: defaultRenderBudget}, nil
 	}
 	var row struct{ ConfigSnapshot datatypes.JSON }
 	err := h.service.db.WithContext(c.Request.Context()).Table("agent_published_versions").
@@ -298,26 +511,19 @@ func (h *Handler) managementContract(c *gin.Context, detail *RelationshipDetail)
 		Where("workspace_id = ? AND agent_id = ? AND deleted_at IS NULL", detail.WorkspaceID, detail.ConsumerID).
 		Order("created_at DESC").Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ConsumerMemoryContract{DefinitionMode: "slots"}, nil
+		return ConsumerMemoryContract{DefinitionMode: "files"}, nil
 	}
 	if err != nil {
 		return ConsumerMemoryContract{}, err
 	}
 	var snapshot struct {
-		Enabled            bool                          `json:"agent_memory_enabled"`
-		AutoCaptureAllowed bool                          `json:"agent_memory_auto_extraction_enabled"`
-		Slots              []agentmemory.AgentMemorySlot `json:"agent_memory_slots"`
+		Enabled            bool `json:"agent_memory_enabled"`
+		AutoCaptureAllowed bool `json:"agent_memory_auto_extraction_enabled"`
 	}
 	if err := json.Unmarshal(row.ConfigSnapshot, &snapshot); err != nil {
 		return ConsumerMemoryContract{}, fmt.Errorf("%w: invalid published Agent memory configuration", ErrPolicyRejected)
 	}
-	definitions := make([]MemoryDefinition, 0, len(snapshot.Slots))
-	for _, slot := range snapshot.Slots {
-		if slot.Enabled {
-			definitions = append(definitions, MemoryDefinition{Key: slot.Key, DisplayName: slot.Name, Description: slot.Description, MaxChars: slot.MaxChars, Enabled: true})
-		}
-	}
-	return ConsumerMemoryContract{Enabled: snapshot.Enabled, DefinitionMode: "slots", Definitions: definitions, AutoCaptureAllowed: snapshot.AutoCaptureAllowed, RenderBudgetChars: defaultRenderBudget}, nil
+	return ConsumerMemoryContract{Enabled: snapshot.Enabled, DefinitionMode: "files", AutoCaptureAllowed: snapshot.AutoCaptureAllowed, RenderBudgetChars: defaultRenderBudget}, nil
 }
 
 func relationshipRequestScope(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
@@ -336,14 +542,6 @@ func queryInt(c *gin.Context, key string, fallback int) int {
 		return fallback
 	}
 	return value
-}
-
-func relationshipMemoryWritesEnabled(c *gin.Context) bool {
-	if RuntimeEnabled() {
-		return true
-	}
-	writeMemoryError(c, fmt.Errorf("%w: relationship memory runtime is disabled", ErrPolicyRejected))
-	return false
 }
 
 func writeMemoryError(c *gin.Context, err error) {

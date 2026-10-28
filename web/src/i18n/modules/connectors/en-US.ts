@@ -739,9 +739,20 @@ const messages = {
     portHint: 'Whole-number TCP port between 1 and 65535. The default is 22.',
     username: 'Username',
     authMethod: 'SSH authentication method',
-    authMethodHint: 'Choose the login method supported by the server. Use exactly one method.',
+    authMethodHint:
+      'A platform-generated key is the simplest: install its public key once and no password is stored. Use exactly one method.',
     passwordMethod: 'Password login',
     privateKeyMethod: 'SSH private key',
+    generatedMethod: 'Generated key (recommended)',
+    generatedHint:
+      'The platform generated a new key for this connection. Its private half is never shown and is stored encrypted after the test passes. Add the public key below to the server, then test the connection.',
+    generatedPublicKey: 'Public key',
+    generatedInstall: 'Or run this on the server as the login user:',
+    generatedCopy: 'Copy',
+    generatedCopied: 'Copied',
+    generatedRegenerate: 'Generate another key',
+    generating: 'Generating a key…',
+    generateFailed: 'This browser cannot generate the key. Use a password or paste a private key instead.',
     password: 'Login password',
     passwordHint:
       'Used only to verify this connection. It is never displayed or returned after saving.',
@@ -751,6 +762,13 @@ const messages = {
     passphrase: 'Private key passphrase (optional)',
     passphraseHint:
       'Leave empty for an unencrypted key. A blank passphrase is omitted and never sent.',
+    privilege: 'Command privilege',
+    privilegeHint:
+      'Service actions (restart, start, stop, reload) need permission to run systemctl on the server. Inspection always runs as the SSH user.',
+    privilegeUser: 'Run as the SSH user',
+    privilegeSudo: 'Use sudo (no password)',
+    privilegeSudoHint:
+      'Requires passwordless sudo for systemctl on the server. If sudo asks for a password, the action fails instead of waiting.',
     hostVerification: 'Host identity verification',
     hostVerificationHint:
       'The first test reads the server fingerprint automatically. After confirmation, later connections verify it strictly.',

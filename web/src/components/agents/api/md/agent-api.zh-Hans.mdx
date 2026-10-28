@@ -1189,10 +1189,10 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
 
 | 事件            | 作用与触发时机                   | 客户端应该做什么                 | 事件特定值      |
 | --------------- | -------------------------------- | -------------------------------- | --------------- |
-| `memory_create` | 首次写入某个 Agent Memory 槽位   | 刷新对应槽位；可提供撤销入口     | `action=create` |
-| `memory_update` | 已有槽位被替换或自动更新         | 用新 `revision` 标记本地缓存过期 | `action=update` |
-| `memory_delete` | 单个槽位值被删除                 | 清空该槽位展示                   | `action=delete` |
-| `memory_clear`  | 当前外部用户的可写槽位被批量清空 | 刷新整份 Agent Memory            | `action=clear`  |
+| `memory_create` | 创建了一个记忆文件             | 刷新对应文件；可提供撤销入口     | `action=create` |
+| `memory_update` | 已有文件被替换或自动更新         | 用新 `revision` 标记本地缓存过期 | `action=update` |
+| `memory_delete` | 单个记忆文件被删除                 | 清空该文件展示                   | `action=delete` |
+| `memory_clear`  | 当前外部用户的记忆文件被批量清空 | 刷新整份 Agent Memory            | `action=clear`  |
 
 <Properties>
   <Property name="memory_scope" type="agent" propKey="memory_scope">
@@ -1206,7 +1206,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     变更动作和总体执行状态。
   </Property>
   <Property name="key / display_name" type="string?" propKey="key">
-    已发布槽位键和展示名称；批量 clear 时可能没有单个 key。
+    记忆文件名；批量 clear 时可能没有单个 key。
   </Property>
   <Property name="mutation_status / source_kind" type="string?" propKey="mutation_status">
     具体变更结果及来源，例如显式管理或自动提取。
@@ -1215,7 +1215,7 @@ data: {"event":"message_end","data":{"conversation_id":"f1f7503a-9e28-4af5-9d6d-
     存在时可传给 Memory undo 接口。
   </Property>
   <Property name="revision" type="integer?" propKey="revision">
-    变更后的槽位修订号，用于并发控制和缓存失效。
+    变更后的文件修订号，用于并发控制和缓存失效。
   </Property>
   <Property name="undoable_until" type="date-time?" propKey="undoable_until">
     可撤销截止时间；超过后不要再显示撤销操作。
@@ -1867,7 +1867,7 @@ sample,42
 
 ## Agent Memory
 
-所有 Memory 接口都要求 `X-External-User-ID`，且只能访问最新发布配置声明的槽位。请与聊天使用同一个 id，使会话和长期 Memory 的归属保持一致。
+所有 Memory 接口都要求 `X-External-User-ID`，且只能访问该用户自己的记忆文件。请与聊天使用同一个 id，使会话和长期 Memory 的归属保持一致。
 
 <Heading
   url="/api/v1/agents/memory"
@@ -1891,8 +1891,8 @@ sample,42
       <Property name='agent_id' type='uuid' propKey='agent_id'>已发布 Agent id。</Property>
       <Property name='user_scope / user_id' type='string' propKey='user_scope'>分别为 `end_user` 和 ZGI 派生的内部用户 UUID；`user_id` 不是原始外部 id。</Property>
       <Property name='exported_at' type='integer' propKey='exported_at'>导出时刻的 Unix 秒。</Property>
-      <Property name='values[]' type='array' propKey='values'>当前可见的已发布 Memory 槽位。</Property>
-      <Property name='values[].id / key / name / description' type='string' propKey='key'>槽位标识与展示信息。</Property>
+      <Property name='values[]' type='array' propKey='values'>该用户的记忆文件，由 Agent 自行命名和整理。</Property>
+      <Property name='values[].id / key / name / description' type='string' propKey='key'>文件标识与展示信息，`key` 即文件名。</Property>
       <Property name='values[].max_chars / enabled / sort_order' type='integer / boolean' propKey='max_chars'>内容上限、启用状态与排序。</Property>
       <Property name='values[].content / revision' type='string / integer' propKey='content'>保存的内容与乐观锁版本。</Property>
       <Property name='values[].source_kind' type='string' propKey='source_kind'>变更来源类型。</Property>
@@ -1977,27 +1977,27 @@ sample,42
 <Heading
   url="/api/v1/agents/memory/{key}"
   method="PUT"
-  title="写入 Memory 槽位"
+  title="写入记忆文件"
   name="#Set-Agent-Memory"
 />
 
 <Row>
   <Col>
-    只可写入最新发布配置中已启用的槽位，并且 Agent Memory 必须开启。
+    写入一个记忆文件；新的 `key` 会创建文件。Agent Memory 必须开启。
 
     ### 路径、请求头与请求体
 
     <Properties>
-      <Property name='key' type='string' propKey='key'>必填，已发布槽位 key。</Property>
+      <Property name='key' type='string' propKey='key'>必填，文件名：小写字母、数字或下划线，以字母开头。</Property>
       <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
       <Property name='Content-Type' type='string' propKey='Content-Type'>必填，固定为 `application/json`。</Property>
-      <Property name='content' type='string' propKey='content'>必填，不得超过该槽位的 `max_chars`。</Property>
+      <Property name='content' type='string' propKey='content'>必填；该用户所有记忆文件合计最多 10000 字。</Property>
       <Property name='expected_revision' type='integer' propKey='expected_revision'>可选，乐观并发校验；版本已经变化时拒绝写入。</Property>
     </Properties>
 
     ### 响应
 
-    `data` 是更新后的完整槽位值，包含新 `revision`、`source_kind`、`last_operation_id` 和可选 `undoable_until`，其他字段与读取接口的 `values[]` 相同。
+    `data` 是更新后的完整文件，包含新 `revision`、`source_kind`、`last_operation_id` 和可选 `undoable_until`，其他字段与读取接口的 `values[]` 相同。
 
   </Col>
 
@@ -2030,7 +2030,7 @@ sample,42
 <Heading
   url="/api/v1/agents/memory/{key}"
   method="DELETE"
-  title="清空单个 Memory 槽位"
+  title="删除记忆文件"
   name="#Clear-Agent-Memory-Slot"
 />
 
@@ -2039,14 +2039,14 @@ sample,42
     ### 路径、Query 与请求头
 
     <Properties>
-      <Property name='key' type='string' propKey='key'>必填，最新发布配置中的槽位 key。</Property>
+      <Property name='key' type='string' propKey='key'>必填，文件名。</Property>
       <Property name='expected_revision' type='integer' propKey='expected_revision'>可选，乐观并发检查；版本过期会拒绝操作。</Property>
       <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
     </Properties>
 
     ### 响应
 
-    `data` 是清空后的完整槽位对象；`content` 为空，`revision` 是清空操作后的新版本。
+    `data` 是删除后的文件对象；`content` 为空，`revision` 是删除操作后的新版本。
 
   </Col>
 
@@ -2083,7 +2083,7 @@ sample,42
 
 <Row>
   <Col>
-    清空当前外部用户的所有可写 Memory 值，不会修改 Agent 的槽位定义。
+    清空当前外部用户的所有记忆文件。
 
     ### 请求头
 
@@ -2136,7 +2136,7 @@ sample,42
     ### 路径参数与请求头
 
     <Properties>
-      <Property name='operation_id' type='uuid' propKey='operation_id'>必填，来自槽位 `last_operation_id` 或 `memory_*` 事件的 `operation_id`。</Property>
+      <Property name='operation_id' type='uuid' propKey='operation_id'>必填，来自文件的 `last_operation_id` 或 `memory_*` 事件的 `operation_id`。</Property>
       <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
     </Properties>
 
@@ -2144,7 +2144,7 @@ sample,42
 
     <Properties>
       <Property name='operation_id' type='uuid' propKey='operation_id'>被撤销的操作 id。</Property>
-      <Property name='value' type='object' propKey='value'>恢复后的完整槽位对象；恢复状态没有值时可省略。</Property>
+      <Property name='value' type='object' propKey='value'>恢复后的完整文件；恢复状态没有值时可省略。</Property>
     </Properties>
 
   </Col>
@@ -2213,6 +2213,195 @@ sample,42
 
     ```json
     {"name":"研究助手","description":"提供有依据的回答","tags":["agent"],"mode":"agent","author_name":"ZGI","agent_id":"4c2cb782-748e-4ff4-a34d-796b40f98f16","icon":"bot","icon_type":"emoji","icon_url":"","version":"v12","version_uuid":"7b0df140-fbc1-41ef-9234-611172283b23"}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/history"
+  method="GET"
+  title="读取 Memory 变更历史"
+  name="#Get-Agent-Memory-History"
+/>
+
+<Row>
+  <Col>
+    返回当前外部用户 Memory 的变更记录，新的在前。每条提交列出改动的文件、改动前后的内容、依据的用户原话和原因。需要部署开启用户关系记忆。
+
+    ### Query 与请求头
+
+    <Properties>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+      <Property name='key' type='string' propKey='key'>可选，只看某个文件的历史。</Property>
+      <Property name='limit' type='integer' propKey='limit'>可选，每页提交数，默认 20，最大 50。</Property>
+      <Property name='before' type='string' propKey='before'>可选，RFC 3339 时间；传上一页的 `next_before` 继续翻页。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data.commits[]` 每项含 `source_kind`、`actor_type`、`created_at` 和 `versions[]`；`versions[]` 含 `key`、`action`、`before`、`after`、`evidence`、`reason`、`content_purged` 与 `revertible`。还有更多记录时返回 `next_before`。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/memory/history?limit=20' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"commits":[{"id":"6f1d2c3b-8a7e-4b9c-9d0e-1f2a3b4c5d6e","source_kind":"automatic","actor_type":"model","source":"agent_runtime","conversation_id":"bd1f2a1a-6d5c-4a8e-9f1b-2c3d4e5f6a7b","created_at":"2026-10-26T08:00:00Z","versions":[{"id":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","key":"profile","action":"update","before_revision":2,"after_revision":3,"before":"Prefers short answers.","after":"Prefers short answers in English.","evidence":"please answer in English","reason":"user asked for English","content_purged":false,"revertible":true}]}],"next_before":"2026-10-26T07:59:59Z"}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/history/{version_id}/revert"
+  method="POST"
+  title="回滚一次 Memory 变更"
+  name="#Revert-Agent-Memory-Version"
+/>
+
+<Row>
+  <Col>
+    把某个文件恢复到这次变更之前的内容，恢复本身会作为一次新的变更记入历史。只有 `revertible` 为 `true` 的版本可以回滚：它是该文件最近一次变更，且内容仍然保留。Agent Memory 必须开启。
+
+    ### 路径与请求头
+
+    <Properties>
+      <Property name='version_id' type='string' propKey='version_id'>必填，历史中 `versions[].id`。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data.item` 是回滚后的文件；文件已被后续变更覆盖时返回冲突错误。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request POST '{apibase}/agents/memory/history/9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d/revert' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"version_id":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","item":{"key":"profile","content":"Prefers short answers.","revision":4,"source_kind":"manager"}}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/archive"
+  method="GET"
+  title="读取 Memory 归档"
+  name="#Get-Agent-Memory-Archive"
+/>
+
+<Row>
+  <Col>
+    返回当前外部用户的 Memory 归档。整理 Memory 时移出文件的旧内容会进入归档，Agent 需要时仍可检索。
+
+    ### 请求头
+
+    <Properties>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+    ### 响应
+
+    `data.entries[]` 每项含 `id`、`tags`、`source_key`（来自哪个文件）、`source_kind`、`content`、`created_at` 与 `updated_at`。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl '{apibase}/agents/memory/archive' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"entries":[{"id":"3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f","relationship_id":"7e8f9a0b-1c2d-4e3f-9a4b-5c6d7e8f9a0b","tags":"preference","source_key":"profile","source_kind":"automatic","content":"Used to prefer tea over coffee.","created_at":"2026-10-20T08:00:00Z","updated_at":"2026-10-20T08:00:00Z"}]}}
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/memory/archive/{entry_id}"
+  method="DELETE"
+  title="删除一条 Memory 归档"
+  name="#Delete-Agent-Memory-Archive-Entry"
+/>
+
+<Row>
+  <Col>
+    永久删除一条归档内容。即使 Agent Memory 已关闭也可以删除，用户随时可以清理自己的数据。
+
+    ### 路径与请求头
+
+    <Properties>
+      <Property name='entry_id' type='string' propKey='entry_id'>必填，归档中 `entries[].id`。</Property>
+      <Property name='Authorization / X-External-User-ID' type='string' propKey='Authorization'>必填 API Key 与 Memory 所有者。</Property>
+    </Properties>
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求">
+
+    ```bash
+    curl --request DELETE '{apibase}/agents/memory/archive/3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="响应" label="200 JSON">
+
+    ```json
+    {"code":"0","message":"success","data":{"entry_id":"3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"}}
     ```
 
     </CodeGroup>
@@ -2374,7 +2563,7 @@ SSE 建立之前，所有接口都以匹配的 HTTP 状态返回 JSON 错误。`
 - `400`：JSON/参数/id/枚举非法，缺少外部用户，Memory revision 过期，或旧 `user` 与请求头不一致。
 - `401`：API Key 缺失、错误、已停用、已过期或已撤销。
 - `403`：已认证调用者没有该操作权限。
-- `404`：没有发布版本、资源不属于当前用户、Memory 槽位不存在，或继续请求已过期/已处理。
+- `404`：没有发布版本、资源不属于当前用户、记忆文件不存在，或继续请求已过期/已处理。
 - `409`：runtime 状态或乐观并发冲突（后端单独映射时）。
 - `500`：服务内部错误；不要向最终用户暴露上游或内部细节。
 

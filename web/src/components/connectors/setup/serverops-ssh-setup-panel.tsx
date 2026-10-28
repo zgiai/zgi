@@ -20,6 +20,12 @@ import type { KeySetupResult, PersonalConnection } from '@/services/types/connec
 import type { ConnectorKeySetupPanelProps } from './connector-key-setup-panel';
 import { useCreationDefault } from './use-creation-default';
 import {
+  authorizedKeysCommand,
+  canGenerateSSHKey,
+  generateSSHKeyPair,
+  type GeneratedSSHKeyPair,
+} from './ssh-key-generation';
+import {
   SERVEROPS_SSH_HOST_FIELD,
   SERVEROPS_SSH_HOST_KEY_FIELD,
   SERVEROPS_SSH_PASSWORD_FIELD,
@@ -39,6 +45,7 @@ import {
   serverOpsSSHProbeFieldError,
   type ServerOpsSSHFieldError,
   type ServerOpsSSHAuthMethod,
+  type ServerOpsSSHPrivilege,
   type ServerOpsSSHHostKeyObservation,
 } from './serverops-ssh-setup-state';
 
@@ -96,6 +103,16 @@ function failureMessageKey(code: string | undefined): ServerOpsSSHMessageKey {
 /** The probe owns the pre-save stages; the final strict save reuses the existing result flow. */
 type ServerOpsSSHStage = 'form' | 'probing' | 'confirmation' | 'submitting';
 
+type SSHKeyChoice = 'generated' | ServerOpsSSHAuthMethod;
+
+const SSH_KEY_CHOICES: readonly SSHKeyChoice[] = ['generated', 'password', 'private_key'];
+
+const SSH_KEY_CHOICE_LABELS = {
+  generated: 'serveropsSsh.generatedMethod',
+  password: 'serveropsSsh.passwordMethod',
+  private_key: 'serveropsSsh.privateKeyMethod',
+} as const;
+
 /** Stored only while a confirmation is pending; contains no credential material. */
 type ServerOpsSSHObservationState = ServerOpsSSHHostKeyObservation & {
   signature: string;
@@ -143,7 +160,17 @@ function ScopedServerOpsSSHSetupPanel({
   const actor = useAuthStore.use.user()?.id;
   const organization = useOrganizationStore.use.currentOrganization()?.id;
   const [values, setValues] = useState(createServerOpsSSHFormValues);
-  const [authMethod, setAuthMethod] = useState<ServerOpsSSHAuthMethod>('password');
+  // A generated key is sent as a private key; only the UI tells them apart.
+  const [keyChoice, setKeyChoice] = useState<SSHKeyChoice>(() =>
+    !updateConnection && canGenerateSSHKey() ? 'generated' : 'password'
+  );
+  const [authMethod, setAuthMethod] = useState<ServerOpsSSHAuthMethod>(() =>
+    keyChoice === 'password' ? 'password' : 'private_key'
+  );
+  const [generated, setGenerated] = useState<GeneratedSSHKeyPair>();
+  const [generateFailed, setGenerateFailed] = useState(false);
+  const [copied, setCopied] = useState<'public' | 'command'>();
+  const [privilege, setPrivilege] = useState<ServerOpsSSHPrivilege>('user');
   const [showVerificationSettings, setShowVerificationSettings] = useState(false);
   const [stage, setStage] = useState<ServerOpsSSHStage>('form');
   const [observation, setObservation] = useState<ServerOpsSSHObservationState>();
@@ -255,17 +282,61 @@ function ScopedServerOpsSSHSetupPanel({
     }
   };
 
-  const updateAuthMethod = (next: ServerOpsSSHAuthMethod) => {
-    if (next === authMethod || busy) return;
+  const generation = useRef(0);
+  const generateKey = useCallback(() => {
+    const attempt = ++generation.current;
+    setGenerated(undefined);
+    setGenerateFailed(false);
+    setCopied(undefined);
+    // A new key makes an earlier observation stale, like any edit.
+    setObservation(undefined);
+    setStage('form');
+    void generateSSHKeyPair()
+      .then(pair => {
+        if (!isCurrent() || generation.current !== attempt) return;
+        setGenerated(pair);
+        setValues(previous => ({
+          ...previous,
+          [SERVEROPS_SSH_PRIVATE_KEY_FIELD]: pair.privateKeyPem,
+          [SERVEROPS_SSH_PASSPHRASE_FIELD]: '',
+        }));
+      })
+      .catch(() => {
+        if (isCurrent() && generation.current === attempt) setGenerateFailed(true);
+      });
+  }, [isCurrent]);
+
+  useEffect(() => {
+    if (keyChoice === 'generated' && !generated && !generateFailed) generateKey();
+  }, [generateFailed, generateKey, generated, keyChoice]);
+
+  const copy = (kind: 'public' | 'command', text: string) => {
+    void navigator.clipboard?.writeText(text).then(() => {
+      if (isCurrent()) setCopied(kind);
+    });
+  };
+
+  const selectKeyChoice = (next: SSHKeyChoice) => {
+    if (next === keyChoice || busy) return;
+    generation.current += 1;
+    setKeyChoice(next);
+    setGenerated(undefined);
+    setGenerateFailed(false);
+    setCopied(undefined);
+    updateAuthMethod(next === 'password' ? 'password' : 'private_key', true);
+  };
+
+  const updateAuthMethod = (next: ServerOpsSSHAuthMethod, clearKey = false) => {
+    if ((next === authMethod && !clearKey) || busy) return;
     setAuthMethod(next);
     setValues(previous => ({
       ...previous,
       [SERVEROPS_SSH_PASSWORD_FIELD]:
         next === 'password' ? previous[SERVEROPS_SSH_PASSWORD_FIELD] : '',
       [SERVEROPS_SSH_PRIVATE_KEY_FIELD]:
-        next === 'private_key' ? previous[SERVEROPS_SSH_PRIVATE_KEY_FIELD] : '',
+        next === 'private_key' && !clearKey ? previous[SERVEROPS_SSH_PRIVATE_KEY_FIELD] : '',
       [SERVEROPS_SSH_PASSPHRASE_FIELD]:
-        next === 'private_key' ? previous[SERVEROPS_SSH_PASSPHRASE_FIELD] : '',
+        next === 'private_key' && !clearKey ? previous[SERVEROPS_SSH_PASSPHRASE_FIELD] : '',
     }));
     setObservation(undefined);
     setStage('form');
@@ -368,7 +439,8 @@ function ScopedServerOpsSSHSetupPanel({
         ...values,
         [SERVEROPS_SSH_HOST_KEY_FIELD]: fingerprint,
       },
-      authMethod
+      authMethod,
+      privilege
     );
     idempotencyKey.current = globalThis.crypto.randomUUID();
     setStage('submitting');
@@ -551,6 +623,16 @@ function ScopedServerOpsSSHSetupPanel({
                   </dd>
                 </div>
                 <div className="min-w-0">
+                  <dt className="text-xs text-muted-foreground">{t('serveropsSsh.privilege')}</dt>
+                  <dd className="mt-0.5 text-xs">
+                    {t(
+                      privilege === 'sudo'
+                        ? 'serveropsSsh.privilegeSudo'
+                        : 'serveropsSsh.privilegeUser'
+                    )}
+                  </dd>
+                </div>
+                <div className="min-w-0">
                   <dt className="text-xs text-muted-foreground">
                     {t('serveropsSsh.observedHostname')}
                   </dt>
@@ -723,31 +805,98 @@ function ScopedServerOpsSSHSetupPanel({
                   </p>
                 </div>
                 <div
-                  className="grid grid-cols-2 gap-2"
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-3"
                   role="tablist"
                   aria-label={t('serveropsSsh.authMethod')}
                 >
-                  {(['password', 'private_key'] as const).map(method => (
+                  {SSH_KEY_CHOICES.map(choice => (
                     <Button
-                      key={method}
+                      key={choice}
                       type="button"
                       role="tab"
-                      aria-selected={authMethod === method}
-                      variant={authMethod === method ? 'default' : 'outline'}
-                      className="w-full"
+                      aria-selected={keyChoice === choice}
+                      variant={keyChoice === choice ? 'default' : 'outline'}
+                      className="h-auto min-h-9 w-full whitespace-normal px-2 py-1.5"
                       disabled={busy}
-                      onClick={() => updateAuthMethod(method)}
+                      onClick={() => selectKeyChoice(choice)}
                     >
-                      {t(
-                        method === 'password'
-                          ? 'serveropsSsh.passwordMethod'
-                          : 'serveropsSsh.privateKeyMethod'
-                      )}
+                      {t(SSH_KEY_CHOICE_LABELS[choice])}
                     </Button>
                   ))}
                 </div>
 
-                {authMethod === 'password' ? (
+                {keyChoice === 'generated' ? (
+                  <div className="space-y-2">
+                    {generateFailed ? (
+                      <p role="alert" className="text-xs leading-5 text-destructive">
+                        {t('serveropsSsh.generateFailed')}
+                      </p>
+                    ) : !generated ? (
+                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        {t('serveropsSsh.generating')}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {t('serveropsSsh.generatedHint')}
+                        </p>
+                        <div className="flex items-center justify-between gap-2">
+                          <Label>{t('serveropsSsh.generatedPublicKey')}</Label>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7"
+                            onClick={() => copy('public', generated.publicKey)}
+                          >
+                            {t(
+                              copied === 'public'
+                                ? 'serveropsSsh.generatedCopied'
+                                : 'serveropsSsh.generatedCopy'
+                            )}
+                          </Button>
+                        </div>
+                        <pre className="whitespace-pre-wrap break-all rounded-md border bg-background p-2 font-mono text-xs">
+                          {generated.publicKey}
+                        </pre>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs leading-5 text-muted-foreground">
+                            {t('serveropsSsh.generatedInstall')}
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 shrink-0"
+                            onClick={() =>
+                              copy('command', authorizedKeysCommand(generated.publicKey))
+                            }
+                          >
+                            {t(
+                              copied === 'command'
+                                ? 'serveropsSsh.generatedCopied'
+                                : 'serveropsSsh.generatedCopy'
+                            )}
+                          </Button>
+                        </div>
+                        <pre className="whitespace-pre-wrap break-all rounded-md border bg-background p-2 font-mono text-xs">
+                          {authorizedKeysCommand(generated.publicKey)}
+                        </pre>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          disabled={busy}
+                          onClick={generateKey}
+                        >
+                          {t('serveropsSsh.generatedRegenerate')}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ) : authMethod === 'password' ? (
                   <div className="space-y-2">
                     <Label htmlFor="serverops-ssh-password">{t('serveropsSsh.password')}</Label>
                     <Input
@@ -826,6 +975,48 @@ function ScopedServerOpsSSHSetupPanel({
                     </div>
                   </>
                 )}
+              </div>
+
+              <div className="space-y-3 rounded-xl border bg-muted/10 p-3">
+                <div className="space-y-1">
+                  <Label id="serverops-ssh-privilege-label">{t('serveropsSsh.privilege')}</Label>
+                  <p
+                    id="serverops-ssh-privilege-hint"
+                    className="text-xs leading-5 text-muted-foreground"
+                  >
+                    {t('serveropsSsh.privilegeHint')}
+                  </p>
+                </div>
+                <div
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                  role="radiogroup"
+                  aria-labelledby="serverops-ssh-privilege-label"
+                  aria-describedby="serverops-ssh-privilege-hint"
+                >
+                  {(['user', 'sudo'] as const).map(option => (
+                    <Button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={privilege === option}
+                      variant={privilege === option ? 'default' : 'outline'}
+                      className="h-auto w-full whitespace-normal py-2"
+                      disabled={busy}
+                      onClick={() => setPrivilege(option)}
+                    >
+                      {t(
+                        option === 'sudo'
+                          ? 'serveropsSsh.privilegeSudo'
+                          : 'serveropsSsh.privilegeUser'
+                      )}
+                    </Button>
+                  ))}
+                </div>
+                {privilege === 'sudo' ? (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t('serveropsSsh.privilegeSudoHint')}
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-3 rounded-xl border bg-muted/10 p-3">

@@ -15,6 +15,9 @@ type InvocationEvidence struct {
 	Status    string
 	Title     string
 	Summary   string
+	// ErrorCode is the safe Connector error code of a terminal that did not
+	// succeed, from the host presentation or the diagnostic code.
+	ErrorCode string
 }
 
 func Evidence(invocation map[string]any) (InvocationEvidence, bool) {
@@ -28,6 +31,7 @@ func Evidence(invocation map[string]any) (InvocationEvidence, bool) {
 		State             string                 `json:"state"`
 		OutcomeID         uuid.UUID              `json:"outcome_id"`
 		OutcomeStatus     string                 `json:"outcome_status"`
+		DiagnosticCode    string                 `json:"diagnostic_code"`
 		ExecutionEvidence *ExecutionEvidence     `json:"execution_evidence"`
 		Presentation      *OperationPresentation `json:"connector_presentation"`
 		Confirmation      json.RawMessage        `json:"confirmation"`
@@ -40,6 +44,10 @@ func Evidence(invocation map[string]any) (InvocationEvidence, bool) {
 	if p := result.Presentation; p != nil && p.SchemaVersion == 1 && p.SourceKind == "native" && p.InvocationID == result.Operation.LogicalOperationID && p.ConnectorID == result.Operation.ConnectorID && p.OperationID == result.Operation.OperationID {
 		evidence.Title, _ = boundedPresentationText(p.Title, 120)
 		evidence.Summary, _ = boundedPresentationText(p.Summary, 800)
+		evidence.ErrorCode, _ = boundedPresentationText(p.ErrorCode, 128)
+	}
+	if evidence.ErrorCode == "" {
+		evidence.ErrorCode, _ = boundedPresentationText(result.DiagnosticCode, 128)
 	}
 	switch result.State {
 	case "rejected", "unresolved":

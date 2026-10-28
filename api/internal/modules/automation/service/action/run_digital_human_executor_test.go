@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -66,5 +67,23 @@ func TestRunDigitalHumanExecutorUsesServerSOPTokenBudget(t *testing.T) {
 	task.SourceSnapshot = map[string]any{"social_operations": map[string]any{"budget": map[string]any{"max_tokens": 0}}}
 	if _, err := executor.ExecuteAction(t.Context(), request); err == nil {
 		t.Fatal("missing SOP token budget accepted")
+	}
+}
+
+func TestServerEventSummaryNamesWhatWentDown(t *testing.T) {
+	summary := serverEventSummary(map[string]any{
+		"detected_at": "2026-10-28T10:00:00Z",
+		"targets": []any{
+			map[string]any{"name": "nginx", "observed": "failed", "failures": 2},
+			map[string]any{"name": "@host", "observed": "unreachable", "failures": 3},
+		},
+	})
+	for _, want := range []string{"service nginx is failed (2 checks in a row)", "could not be reached or logged in to (unreachable) in 3 checks", "Detected at 2026-10-28T10:00:00Z."} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary %q lacks %q", summary, want)
+		}
+	}
+	if serverEventSummary(nil) != "" || serverEventSummary(map[string]any{}) != "" {
+		t.Fatal("an empty event rendered text")
 	}
 }

@@ -52,9 +52,6 @@ func DecideAccess(identity InvocationIdentity) AccessDecision {
 	if identity.Surface == SurfaceChannel {
 		return AccessDecision{Reason: "external_identity_unresolved"}
 	}
-	if identity.Surface == SurfaceAIChat {
-		return AccessDecision{Reason: "aichat_memory_disabled"}
-	}
 	if identity.Surface == SurfaceDigitalHumanTask || identity.ConversationType == ConversationTask {
 		return AccessDecision{Reason: "automated_invocation_has_no_user_subject"}
 	}
@@ -62,7 +59,7 @@ func DecideAccess(identity InvocationIdentity) AccessDecision {
 		return AccessDecision{Reason: "user_subject_missing"}
 	}
 	switch identity.Surface {
-	case SurfaceAgentConsole, SurfaceAgentWebApp, SurfaceDigitalHumanConsole, SurfaceDigitalHumanWebApp:
+	case SurfaceAgentConsole, SurfaceAgentWebApp, SurfaceDigitalHumanConsole, SurfaceDigitalHumanWebApp, SurfaceAIChat:
 		if identity.UserSubject.Kind != usersubject.Account {
 			return AccessDecision{Reason: "subject_kind_mismatch"}
 		}

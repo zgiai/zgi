@@ -220,7 +220,10 @@ func assertFeishuTemplateBootstrap(t *testing.T, current, updated Definition) {
 			}
 			for _, op := range current.Operations {
 				index := slices.IndexFunc(active.Operations, func(candidate Operation) bool { return candidate.ID == op.ID })
-				if index < 0 || !reflect.DeepEqual(op, active.Operations[index]) {
+				// The SSH release moves its operations to the connector Skill;
+				// that reviewed relabel is the only change an operation may see.
+				if index < 0 || (!reflect.DeepEqual(op, active.Operations[index]) &&
+					!reviewedServerOpsSSHSkillRelabel(current, op, active.Operations[index])) {
 					t.Fatal("existing operation changed by template update")
 				}
 			}

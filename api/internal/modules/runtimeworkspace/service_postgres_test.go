@@ -19,7 +19,6 @@ func TestCredentialCreationPostgresIdempotentReplayAndExpiry(t *testing.T) {
 		t.Skip("set ZGI_MIGRATION_TEST_DSN to run Runtime Workspace credential PostgreSQL integration")
 	}
 	// Candidates only report Agent memory when the fail-closed relationship memory runtime is on.
-	t.Setenv("ZGI_RELATIONSHIP_MEMORY_ENABLED", "true")
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)

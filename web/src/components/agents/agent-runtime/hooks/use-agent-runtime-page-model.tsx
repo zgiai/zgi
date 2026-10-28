@@ -43,7 +43,6 @@ import type {
   AgentConnectorBinding,
   AgentDatabaseBinding,
   AgentExecutionRuntimeConfig,
-  AgentMemorySlotConfig,
   AgentRuntimeConfig,
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
@@ -60,7 +59,11 @@ import type {
   AgentPublishedVersionListItem,
   AgentRuntimeSelectedSkillItem,
 } from '../types';
-import { buildAgentRuntimeSignature, toModelParams, validateAgentMemorySlots } from '../utils';
+import {
+  AGENT_MEMORY_LIMITS,
+  buildAgentRuntimeSignature,
+  toModelParams,
+} from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import { getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
@@ -339,7 +342,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [agentMemoryEnabled, setAgentMemoryEnabled] = useState(false);
   const [agentMemoryAutoExtractionEnabled, setAgentMemoryAutoExtractionEnabled] = useState(false);
   const [agentMemoryConfigRevision, setAgentMemoryConfigRevision] = useState('');
-  const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
+  const [agentMemoryInstructions, setAgentMemoryInstructions] = useState('');
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
   const [fileUploadPolicy, setFileUploadPolicy] = useState<FileUploadSelection | null>(null);
   const [executionRuntime, setExecutionRuntime] = useState<AgentExecutionRuntimeConfig | null>(
@@ -515,12 +518,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       }),
     [locale, normalizedSelectedSkillIds, selectableSkills, t]
   );
-  const agentMemorySlotValidationErrors = useMemo(
-    () => validateAgentMemorySlots(agentMemorySlots),
-    [agentMemorySlots]
-  );
-  const hasAgentMemorySlotErrors =
-    agentMemoryEnabled && agentMemorySlotValidationErrors.some(Boolean);
   const systemPromptEffectiveLength = useMemo(
     () => getTemplateAwareCharacterCount(systemPrompt, { templateBlocksEnabled: true }),
     [systemPrompt]
@@ -550,12 +547,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       use_memory: false,
       agent_memory_enabled: agentMemoryEnabled,
       agent_memory_auto_extraction_enabled: agentMemoryAutoExtractionEnabled,
-      agent_memory_slots: agentMemorySlots.slice(0, 5).map((slot, index) => ({
-        ...slot,
-        description: slot.description.slice(0, 200),
-        max_chars: 2000,
-        sort_order: index,
-      })),
+      agent_memory_instructions: agentMemoryInstructions.slice(
+        0,
+        AGENT_MEMORY_LIMITS.maxInstructionsChars
+      ),
       file_upload_enabled: fileUploadEnabled,
       file_upload_policy: fileUploadPolicy,
       home_title: homeTitle.trim() || defaultHomeTitle,
@@ -582,7 +577,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       executionRuntime,
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
-      agentMemorySlots,
+      agentMemoryInstructions,
       homeTitle,
       openingStatement,
       inputPlaceholder,
@@ -623,7 +618,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setSelectedSkillIds(payload.enabled_skill_ids);
     setAgentMemoryEnabled(payload.agent_memory_enabled ?? false);
     setAgentMemoryAutoExtractionEnabled(payload.agent_memory_auto_extraction_enabled ?? false);
-    setAgentMemorySlots(payload.agent_memory_slots ?? []);
+    setAgentMemoryInstructions(payload.agent_memory_instructions ?? '');
     setFileUploadEnabled(payload.file_upload_enabled);
     setFileUploadPolicy(payload.file_upload_policy ?? null);
     setExecutionRuntime(payload.execution_runtime ?? null);
@@ -661,9 +656,10 @@ export function useAgentRuntimePageModel(agentId: string) {
         runtimeConfig.agent_memory_auto_extraction_enabled ??
         fallback?.agent_memory_auto_extraction_enabled ??
         false,
-      agent_memory_slots: runtimeConfig.agent_memory_slots ?? fallback?.agent_memory_slots ?? [],
       agent_memory_config_revision:
         runtimeConfig.agent_memory_config_revision ?? fallback?.agent_memory_config_revision,
+      agent_memory_instructions:
+        runtimeConfig.agent_memory_instructions ?? fallback?.agent_memory_instructions ?? '',
       file_upload_enabled:
         runtimeConfig.file_upload_enabled ?? fallback?.file_upload_enabled ?? false,
       file_upload_policy: runtimeConfig.file_upload_policy ?? fallback?.file_upload_policy ?? null,
@@ -722,10 +718,6 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   const saveRuntimePayload = useCallback(
     async (payload: UpdateAgentRuntimeConfigRequest) => {
-      const payloadMemorySlotErrors = validateAgentMemorySlots(
-        payload.agent_memory_slots ?? []
-      ).some(Boolean);
-      if (payloadMemorySlotErrors) throw new Error('Invalid Agent Memory slot configuration');
       let configPayload: UpdateAgentRuntimeConfigRequest = {
         ...payload,
         agent_memory_config_revision: agentMemoryConfigRevision || undefined,
@@ -781,7 +773,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       const savedPayload = {
         ...configPayload,
         binding_revision: response.data.binding_revision ?? configPayload.binding_revision,
-        agent_memory_slots: response.data.agent_memory_slots ?? payload.agent_memory_slots,
         agent_memory_config_revision:
           response.data.agent_memory_config_revision ?? configPayload.agent_memory_config_revision,
       };
@@ -795,8 +786,8 @@ export function useAgentRuntimePageModel(agentId: string) {
           agent_memory_auto_extraction_enabled:
             response.data.agent_memory_auto_extraction_enabled ??
             payload.agent_memory_auto_extraction_enabled,
-          agent_memory_slots: savedPayload.agent_memory_slots,
           agent_memory_config_revision: savedPayload.agent_memory_config_revision,
+          agent_memory_instructions: savedPayload.agent_memory_instructions,
         },
       });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
@@ -829,7 +820,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       canConfigureAgentRuntime &&
       Boolean(modelValue.provider && modelValue.model) &&
       !isAgentModelUnavailable &&
-      !hasAgentMemorySlotErrors &&
       !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
@@ -840,7 +830,6 @@ export function useAgentRuntimePageModel(agentId: string) {
         applySavedBindingMetadata(result.savedPayload, result.bindingHealth);
       }
       setIsAbnormalSkillCleanupPending(false);
-      setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
     },
     onSaveSuperseded: (result, submittedPayload, latestPayload) => {
       lastServerPayloadRef.current = result.savedPayload;
@@ -1206,10 +1195,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
-      return;
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return;
@@ -1233,7 +1218,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     }
   }, [
     canConfigureAgentRuntime,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
@@ -1326,10 +1310,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforePublish'));
-      return;
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return;
@@ -1344,7 +1324,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     setPublishVersionDialogOpen(true);
   }, [
     canPublishAgent,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     t,
@@ -1364,10 +1343,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return Promise.resolve(false);
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
-      return Promise.resolve(false);
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return Promise.resolve(false);
@@ -1381,7 +1356,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     return saveNow({ silent: false, force: true });
   }, [
     canConfigureAgentRuntime,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
@@ -1399,7 +1373,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         setPreviewSheetOpen(true);
         return;
       }
-      if (hasAgentMemorySlotErrors || isAgentModelUnavailable || isSystemPromptTooLong) {
+      if (isAgentModelUnavailable || isSystemPromptTooLong) {
         if (isAgentModelUnavailable) {
           toast.error(t('toasts.modelUnavailable'));
         }
@@ -1413,7 +1387,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     [
       canConfigureAgentRuntime,
-      hasAgentMemorySlotErrors,
       isAgentModelUnavailable,
       isSystemPromptTooLong,
       isVersionPreviewing,
@@ -1430,10 +1403,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (isVersionPreviewing) {
       return true;
     }
-    if (hasAgentMemorySlotErrors) {
-      toast.error(t('toasts.fixMemorySlotsBeforeSave'));
-      return false;
-    }
     if (isAgentModelUnavailable) {
       toast.error(t('toasts.modelUnavailable'));
       return false;
@@ -1447,7 +1416,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     return saveNow({ silent: false, force: true });
   }, [
     canConfigureAgentRuntime,
-    hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
     isVersionPreviewing,
@@ -1613,8 +1581,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       },
       agentMemoryEnabled,
       agentMemoryAutoExtractionEnabled,
-      agentMemorySlots,
-      agentMemorySlotValidationErrors,
+      agentMemoryInstructions,
+      onOpenMemoryValues: () => setMemoryValuesOpen(true),
       defaultHomeTitle,
       defaultInputPlaceholder,
       openingGuideBrand: agentOpeningGuideBrand,
@@ -1696,15 +1664,18 @@ export function useAgentRuntimePageModel(agentId: string) {
       },
       onChangeAgentMemoryEnabled: (value: boolean) => {
         if (isRuntimeConfigReadOnly) return;
+        // Turning memory on also turns on automatic memory, its default;
+        // the builder can turn that off on its own.
+        if (value && !agentMemoryEnabled) setAgentMemoryAutoExtractionEnabled(true);
         setAgentMemoryEnabled(value);
       },
       onChangeAgentMemoryAutoExtractionEnabled: (value: boolean) => {
         if (isRuntimeConfigReadOnly) return;
         setAgentMemoryAutoExtractionEnabled(value);
       },
-      onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => {
+      onChangeAgentMemoryInstructions: (value: string) => {
         if (isRuntimeConfigReadOnly) return;
-        setAgentMemorySlots(value);
+        setAgentMemoryInstructions(value);
       },
     },
     preview: {
@@ -1724,7 +1695,6 @@ export function useAgentRuntimePageModel(agentId: string) {
       voiceInputEnabled,
       speechEnabled,
       beforeSend: handlePreviewBeforeSend,
-      onOpenMemoryValues: () => setMemoryValuesOpen(true),
       onModelChange: handleModelChange,
       onClose: () => void handlePreviewSheetOpenChange(false),
     },
@@ -1753,6 +1723,13 @@ export function useAgentRuntimePageModel(agentId: string) {
         normalizedSelectedSkillIds,
         onOpenChange: setSkillDialogOpen,
         onConfirmSkills: handleConfirmSkills,
+        codeExecution: {
+          enabled: executionRuntime?.enabled ?? false,
+          onEnable:
+            isRuntimeConfigReadOnly || executionRuntimeCapability?.can_enable === false
+              ? undefined
+              : () => setExecutionRuntime({ ...(executionRuntime ?? {}), enabled: true }),
+        },
       },
       knowledge: {
         agentId,

@@ -13,6 +13,8 @@ import (
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/middleware"
+	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 )
 
 // ConnectorRuntimeConfirmationService is the transport-neutral continuation
@@ -33,9 +35,20 @@ type ConnectorRuntimeConfirmationResolutionRecorder interface {
 	) error
 }
 
+// ConnectorRuntimeConfirmationContinuer resumes the DigitalHuman turn a
+// decided confirmation paused (ADR 0024). It records the resolution itself.
+type ConnectorRuntimeConfirmationContinuer interface {
+	ResumeAfterConnectorConfirmation(
+		context.Context,
+		connectorconfirmation.Command,
+		connectorconfirmation.Result,
+	) error
+}
+
 type ConnectorRuntimeConfirmationRouteDeps struct {
 	Service        ConnectorRuntimeConfirmationService
 	Recorder       ConnectorRuntimeConfirmationResolutionRecorder
+	DigitalHuman   ConnectorRuntimeConfirmationContinuer
 	AccountService interfaces.AccountService
 }
 
@@ -51,7 +64,7 @@ func RegisterConnectorRuntimeConfirmationRoutes(
 	if router == nil || deps.Service == nil || deps.Recorder == nil || deps.AccountService == nil {
 		panic("connector runtime confirmation routes require confirmation, recorder, and account services")
 	}
-	handler := &connectorRuntimeConfirmationHandler{service: deps.Service, recorder: deps.Recorder}
+	handler := &connectorRuntimeConfirmationHandler{service: deps.Service, recorder: deps.Recorder, digitalHuman: deps.DigitalHuman}
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -59,8 +72,9 @@ func RegisterConnectorRuntimeConfirmationRoutes(
 }
 
 type connectorRuntimeConfirmationHandler struct {
-	service  ConnectorRuntimeConfirmationService
-	recorder ConnectorRuntimeConfirmationResolutionRecorder
+	service      ConnectorRuntimeConfirmationService
+	recorder     ConnectorRuntimeConfirmationResolutionRecorder
+	digitalHuman ConnectorRuntimeConfirmationContinuer
 }
 
 func (handler *connectorRuntimeConfirmationHandler) register(group *gin.RouterGroup) {
@@ -169,16 +183,20 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 		Decision:           request.Decision,
 		RememberForSession: request.RememberForSession && request.Decision == connectorexecution.ConfirmationDecisionConfirmed,
 	}
-	result, err := handler.service.Continue(c.Request.Context(), command)
+	// The person has decided: the operation and its record must not depend on
+	// the browser keeping the request open. Execution keeps its own deadline.
+	ctx := context.WithoutCancel(c.Request.Context())
+	// The confirmed call's operation card is labelled in the person's language,
+	// as the call itself would have been inside the run.
+	if locale := confirmationPresentationLocale(c); locale != "" {
+		ctx = connectorexecution.WithPresentationLocale(ctx, locale)
+	}
+	result, err := handler.service.Continue(ctx, command)
 	if err != nil {
 		connectorRouteError(c, err)
 		return
 	}
-	resolution := result
-	resolution.ExecutionResult = nil
-	if err := handler.recorder.RecordConnectorConfirmationResolution(
-		c.Request.Context(), command, resolution,
-	); err != nil {
+	if err := handler.recordResolution(ctx, command, result); err != nil {
 		connectorRouteError(c, err)
 		return
 	}
@@ -191,4 +209,32 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 		projected.DecisionID = &decisionID
 	}
 	connectorSuccess(c, http.StatusOK, projected)
+}
+
+// recordResolution projects the decision into its host. A DigitalHuman turn
+// continues with the operation's result; every other host only records the
+// safe terminal, so the provider value never reaches it.
+func (handler *connectorRuntimeConfirmationHandler) recordResolution(
+	ctx context.Context,
+	command connectorconfirmation.Command,
+	result connectorconfirmation.Result,
+) error {
+	if result.Origin.Surface == connectorcore.TargetTypeDigitalHuman && handler.digitalHuman != nil {
+		return handler.digitalHuman.ResumeAfterConnectorConfirmation(ctx, command, result)
+	}
+	resolution := result
+	resolution.ExecutionResult = nil
+	return handler.recorder.RecordConnectorConfirmationResolution(ctx, command, resolution)
+}
+
+// confirmationPresentationLocale prefers the console's own language cookie,
+// which follows the language the person chose in the UI, over the browser's
+// Accept-Language.
+func confirmationPresentationLocale(c *gin.Context) string {
+	if value, err := c.Cookie("locale"); err == nil {
+		if locale, ok := appcatalog.ParseLocale(value); ok {
+			return string(locale)
+		}
+	}
+	return string(apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")))
 }

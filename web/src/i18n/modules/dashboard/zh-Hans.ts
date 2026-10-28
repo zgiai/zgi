@@ -1,6 +1,20 @@
 import type { DashboardMessages } from './en-US';
 
 const messages: DashboardMessages = {
+  skillAvailability: {
+    deleted: '模板里的这些自定义技能已被删除，不会绑定：{skills}。需要的话请重新导入或改用其他技能。',
+    expectedDisabled: '模板需要的这些技能在组织中还没开启：',
+    disabledCount: '还有 {count} 个技能未开启，展开后可以直接开启',
+    enable: '开启',
+    enabling: '正在开启…',
+    needsReview: '开启这个技能会影响已有绑定，请到「技能」页面确认后再开启。',
+    noPermission: '你没有权限开启技能，请联系组织管理员开启：{skills}',
+    needsCodeExecution: '这些自定义技能需要执行脚本，请先开启代码执行环境：{skills}。',
+    enableCodeExecution: '开启代码执行',
+    openCodeExecution: '去开启代码执行',
+    manage: '管理技能',
+    market: '去市场添加技能',
+  },
   backToConsole: '返回',
   groups: {
     billing: '费用中心',
@@ -1014,6 +1028,24 @@ const messages: DashboardMessages = {
       },
       updateSuccess: '组织已更新',
       updateError: '组织更新失败',
+      commandRules: {
+        title: '服务器命令规则',
+        description:
+          '对本组织所有数字人通过 SSH 执行的命令生效。规则只会收紧：「禁止」的命令永远不会执行，「总是询问」的命令即使连接设为只读直接执行或完全信任，也必须有人批准，定时任务中不会执行。',
+        prefix: '命令前缀',
+        prefixPlaceholder: '例如：git push、systemctl restart nginx、docker rm',
+        action: '处理方式',
+        forbid: '禁止',
+        ask: '总是询问',
+        note: '说明（可选）',
+        add: '添加规则',
+        matching:
+          '按命令的程序和后续词依次匹配，中间可以夹带参数，例如「git push」也匹配「git -C /srv/app push --force」；经 sudo、nohup 等包装执行，或通过「重启服务」等固定操作执行时同样生效。无法解析的命令按其中的词匹配，宁可多匹配。',
+        empty: '还没有规则。',
+        loadFailed: '无法加载命令规则，请稍后重试。',
+        createFailed: '无法添加规则：可能已存在相同前缀，或规则数已达上限。',
+        remove: '删除规则 {prefix}',
+      },
       adminManagement: {
         title: '管理员管理',
         description: '所有者可以为活跃成员授予或移除组织管理员权限。',

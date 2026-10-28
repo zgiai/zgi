@@ -124,41 +124,100 @@ func serverOpsSSHTestField(t *testing.T, preview *ConfirmationPreview, label str
 	return ConfirmationPreviewField{}
 }
 
-func TestServerOpsSSHConfirmationPreviewCompleteForAllThreeActions(t *testing.T) {
+// serverOpsSSHTestSudoConnection is a verified connection whose non-secret
+// evidence records the sudo privilege.
+func serverOpsSSHTestSudoConnection() core.PersonalConnection {
+	connection := serverOpsSSHTestConnection(serverOpsSSHTestPtr(serverOpsSSHTestIdentity))
+	connection.ProviderEvidence = &core.ProviderEvidence{ServerOps: &core.ServerOpsEvidence{
+		Version: 1, Identity: serverOpsSSHTestIdentity, Privilege: "sudo",
+	}}
+	return connection
+}
+
+const serverOpsSSHTestStatusCommand = "systemctl show --no-pager --property=LoadState --property=ActiveState " +
+	"--property=SubState --property=Description -- 'nginx.service'"
+
+func TestServerOpsSSHConfirmationPreviewCompleteForEveryAction(t *testing.T) {
+	plain := serverOpsSSHTestConnection(serverOpsSSHTestPtr(serverOpsSSHTestIdentity))
+	plainEvidence := serverOpsSSHTestConnection(serverOpsSSHTestPtr(serverOpsSSHTestIdentity))
+	plainEvidence.ProviderEvidence = &core.ProviderEvidence{ServerOps: &core.ServerOpsEvidence{Version: 1, Identity: serverOpsSSHTestIdentity}}
+	sudo := serverOpsSSHTestSudoConnection()
+	snapshotCommand, err := serverops.CommandLine(serverops.ActionSystemSnapshot, nil, serverops.PrivilegeNone)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, testCase := range []struct {
 		name       string
 		operation  string
 		input      any
+		connection core.PersonalConnection
 		wantValues map[string]string
 	}{
 		{
-			name: "system snapshot is fixed for an absent input", operation: serverops.ActionSystemSnapshot, input: nil,
-			wantValues: map[string]string{"Action": serverops.ActionSystemSnapshot, "Target": serverOpsSSHTestIdentity},
+			name: "system snapshot is fixed for an absent input", operation: serverops.ActionSystemSnapshot, input: nil, connection: plain,
+			wantValues: map[string]string{"Action": serverops.ActionSystemSnapshot, "Target": serverOpsSSHTestIdentity, "Command": snapshotCommand},
 		},
 		{
-			name: "system snapshot is fixed for an empty object", operation: serverops.ActionSystemSnapshot, input: map[string]any{},
-			wantValues: map[string]string{"Action": serverops.ActionSystemSnapshot, "Target": serverOpsSSHTestIdentity},
+			name: "system snapshot is fixed for an empty object", operation: serverops.ActionSystemSnapshot, input: map[string]any{}, connection: sudo,
+			wantValues: map[string]string{"Action": serverops.ActionSystemSnapshot, "Target": serverOpsSSHTestIdentity, "Command": snapshotCommand},
 		},
 		{
-			name: "service status shows the validated unit", operation: serverops.ActionServiceStatus,
+			name: "service status shows the validated unit", operation: serverops.ActionServiceStatus, connection: plain,
 			input:      map[string]any{"service_name": "nginx.service"},
-			wantValues: map[string]string{"Service": "nginx.service"},
+			wantValues: map[string]string{"Service": "nginx.service", "Command": serverOpsSSHTestStatusCommand},
 		},
 		{
-			name: "journal tail defaults its bounded window", operation: serverops.ActionJournalTail,
+			name: "service status never uses sudo", operation: serverops.ActionServiceStatus, connection: sudo,
 			input:      map[string]any{"service_name": "nginx.service"},
-			wantValues: map[string]string{"Service": "nginx.service", "Lines": "100", "Since minutes": "60"},
+			wantValues: map[string]string{"Service": "nginx.service", "Command": serverOpsSSHTestStatusCommand},
 		},
 		{
-			name: "journal tail keeps explicit bounds", operation: serverops.ActionJournalTail,
-			input:      map[string]any{"service_name": "nginx.service", "lines": float64(50), "since_minutes": float64(15)},
-			wantValues: map[string]string{"Service": "nginx.service", "Lines": "50", "Since minutes": "15"},
+			name: "journal tail defaults its bounded window", operation: serverops.ActionJournalTail, connection: plain,
+			input: map[string]any{"service_name": "nginx.service"},
+			wantValues: map[string]string{"Service": "nginx.service", "Lines": "100", "Since minutes": "60",
+				"Command": "journalctl --no-pager --quiet --output=cat --unit='nginx.service' --lines=100 --since=-60min"},
+		},
+		{
+			name: "journal tail keeps explicit bounds", operation: serverops.ActionJournalTail, connection: sudo,
+			input: map[string]any{"service_name": "nginx.service", "lines": float64(50), "since_minutes": float64(15)},
+			wantValues: map[string]string{"Service": "nginx.service", "Lines": "50", "Since minutes": "15",
+				"Command": "journalctl --no-pager --quiet --output=cat --unit='nginx.service' --lines=50 --since=-15min"},
+		},
+		{
+			name: "restart with sudo shows the sudo command", operation: serverops.ActionServiceRestart, connection: sudo,
+			input: map[string]any{"service_name": "nginx.service"},
+			wantValues: map[string]string{"Action": serverops.ActionServiceRestart, "Service": "nginx.service",
+				"Command": "sudo -n systemctl restart -- 'nginx.service'"},
+		},
+		{
+			name: "start without evidence runs as the SSH user", operation: serverops.ActionServiceStart, connection: plain,
+			input: map[string]any{"service_name": "app@1.service"},
+			wantValues: map[string]string{"Action": serverops.ActionServiceStart, "Service": "app@1.service",
+				"Command": "systemctl start -- 'app@1.service'"},
+		},
+		{
+			name: "stop with explicit unprivileged evidence", operation: serverops.ActionServiceStop, connection: plainEvidence,
+			input: map[string]any{"service_name": "nginx.service"},
+			wantValues: map[string]string{"Action": serverops.ActionServiceStop, "Service": "nginx.service",
+				"Command": "systemctl stop -- 'nginx.service'"},
+		},
+		{
+			name: "command run shows the whole command, never the connection sudo", operation: serverops.ActionCommandRun, connection: sudo,
+			input: map[string]any{"command": "df -h / && tail -n 20 /var/log/nginx/error.log"},
+			wantValues: map[string]string{"Action": serverops.ActionCommandRun, "Runs as": serverOpsSSHTestIdentity,
+				"Command": "df -h / && tail -n 20 /var/log/nginx/error.log"},
+		},
+		{
+			name: "reload with sudo", operation: serverops.ActionServiceReload, connection: sudo,
+			input: map[string]any{"service_name": "nginx.service"},
+			wantValues: map[string]string{"Action": serverops.ActionServiceReload, "Service": "nginx.service",
+				"Command": "sudo -n systemctl reload -- 'nginx.service'"},
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			preview := buildConfirmationPreview(
 				serverOpsSSHTestRequest(testCase.operation, testCase.input),
-				serverOpsSSHTestConnection(serverOpsSSHTestPtr(serverOpsSSHTestIdentity)), "",
+				testCase.connection, "",
 			)
 			if !preview.Complete || preview.Kind != "resource" ||
 				preview.AccountIdentity != serverOpsSSHTestIdentity || preview.AccountName != "Production server" ||
@@ -171,6 +230,17 @@ func TestServerOpsSSHConfirmationPreviewCompleteForAllThreeActions(t *testing.T)
 					field.LabelI18n["en-US"] == "" || field.LabelI18n["zh-Hans"] == "" {
 					t.Fatalf("field %q = %#v, want %q", label, field, want)
 				}
+				wantFormat := ""
+				if label == "Command" {
+					wantFormat = ConfirmationPreviewFormatCommand
+				}
+				if field.Format != wantFormat {
+					t.Fatalf("field %q format = %q, want %q", label, field.Format, wantFormat)
+				}
+			}
+			command := serverOpsSSHTestField(t, preview, "Command")
+			if command.LabelI18n["zh-Hans"] != "执行命令" || preview.Fields[len(preview.Fields)-1].Label != "Command" {
+				t.Fatalf("command field = %#v", command)
 			}
 			// The web parser requires kind=resource, a non-empty identity, and
 			// at least one field before it will mark the preview complete.
@@ -210,6 +280,13 @@ func TestServerOpsSSHConfirmationPreviewRejectsInvalidInputAndIdentity(t *testin
 		{"journal since zero", serverops.ActionJournalTail, map[string]any{"service_name": "nginx.service", "since_minutes": float64(0)}, &validIdentity},
 		{"journal since above cap", serverops.ActionJournalTail, map[string]any{"service_name": "nginx.service", "since_minutes": float64(1441)}, &validIdentity},
 		{"journal extra argument", serverops.ActionJournalTail, map[string]any{"service_name": "nginx.service", "command": "id"}, &validIdentity},
+		{"restart missing unit", serverops.ActionServiceRestart, map[string]any{}, &validIdentity},
+		{"restart bare unit", serverops.ActionServiceRestart, map[string]any{"service_name": "nginx"}, &validIdentity},
+		{"restart injection", serverops.ActionServiceRestart, map[string]any{"service_name": "nginx.service; reboot"}, &validIdentity},
+		{"stop extra verb", serverops.ActionServiceStop, map[string]any{"service_name": "nginx.service", "verb": "mask"}, &validIdentity},
+		{"start wrong type", serverops.ActionServiceStart, map[string]any{"service_name": 1}, &validIdentity},
+		{"reload non-object input", serverops.ActionServiceReload, []any{"nginx.service"}, &validIdentity},
+		{"unknown write action", "server.service.enable", map[string]any{"service_name": "nginx.service"}, &validIdentity},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			preview := buildConfirmationPreview(
@@ -344,5 +421,59 @@ func TestDigitalHumanIncompletePreviewPolicyFailsClosed(t *testing.T) {
 	if decision.Status != core.DecisionStatusDenied || decision.ReceiptID != string(harness.pinned.Receipt) ||
 		decision.Target == nil || *decision.Target != request.Target {
 		t.Fatalf("denial decision = %#v", decision)
+	}
+}
+
+// TestServerOpsSSHConfirmationPreviewRejectsForeignPrivilegeEvidence keeps the
+// rendered command honest: privilege evidence that names another identity or an
+// unsupported privilege makes the preview incomplete instead of guessing.
+func TestServerOpsSSHConfirmationPreviewRejectsForeignPrivilegeEvidence(t *testing.T) {
+	for name, evidence := range map[string]*core.ServerOpsEvidence{
+		"other identity":        {Version: 1, Identity: "root@other.example.com:22", Privilege: "sudo"},
+		"empty identity":        {Version: 1, Privilege: "sudo"},
+		"unsupported privilege": {Version: 1, Identity: serverOpsSSHTestIdentity, Privilege: "root"},
+		"unknown version":       {Version: 2, Identity: serverOpsSSHTestIdentity, Privilege: "sudo"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			connection := serverOpsSSHTestConnection(serverOpsSSHTestPtr(serverOpsSSHTestIdentity))
+			connection.ProviderEvidence = &core.ProviderEvidence{ServerOps: evidence}
+			for _, operation := range []string{serverops.ActionServiceRestart, serverops.ActionServiceStatus} {
+				preview := buildConfirmationPreview(
+					serverOpsSSHTestRequest(operation, map[string]any{"service_name": "nginx.service"}), connection, "",
+				)
+				if preview.Complete || completeDigitalHumanPreview(preview) {
+					t.Fatalf("%s: preview with foreign evidence admitted: %#v", operation, preview)
+				}
+			}
+		})
+	}
+}
+
+// TestServerOpsSSHConfirmationPreviewCommandMatchesExecution pins that the
+// previewed command is the capability's own rendering for the same input and
+// privilege, so the approval card and the executed command cannot drift.
+func TestServerOpsSSHConfirmationPreviewCommandMatchesExecution(t *testing.T) {
+	input := map[string]any{"service_name": "worker@2.service"}
+	for _, operation := range []string{
+		serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload,
+	} {
+		want, err := serverops.CommandLine(operation, input, serverops.PrivilegeSudo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		preview := buildConfirmationPreview(serverOpsSSHTestRequest(operation, input), serverOpsSSHTestSudoConnection(), "")
+		if !preview.Complete || serverOpsSSHTestField(t, preview, "Command").Value != want ||
+			!strings.HasPrefix(want, "sudo -n systemctl ") {
+			t.Fatalf("%s: preview = %#v, want command %q", operation, preview, want)
+		}
+		encoded, err := json.Marshal(preview)
+		if err != nil || !strings.Contains(string(encoded), `"format":"command"`) {
+			t.Fatalf("%s: encoded preview lacks the command format: %s", operation, encoded)
+		}
+	}
+	// Fields without a format omit the key entirely.
+	encoded, _ := json.Marshal(ConfirmationPreviewField{Label: "Service", Value: "x"})
+	if strings.Contains(string(encoded), "format") {
+		t.Fatalf("unformatted field encodes a format key: %s", encoded)
 	}
 }

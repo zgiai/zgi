@@ -14,6 +14,8 @@ type SlotResponse struct {
 	MaxChars         int    `json:"max_chars"`
 	Enabled          bool   `json:"enabled"`
 	SortOrder        int    `json:"sort_order"`
+	ReadOnly         bool   `json:"read_only"`
+	AutoWrite        bool   `json:"auto_write"`
 	CreatedAt        int64  `json:"created_at"`
 	UpdatedAt        int64  `json:"updated_at"`
 	CreatedAtUnix    int64  `json:"created_at_unix"`
@@ -49,6 +51,10 @@ type SlotUpsertRequest struct {
 	MaxChars    int    `json:"max_chars,omitempty"`
 	Enabled     *bool  `json:"enabled,omitempty"`
 	SortOrder   int    `json:"sort_order,omitempty"`
+	ReadOnly    bool   `json:"read_only,omitempty"`
+	// AutoWrite defaults to true: the block takes automatic writes whenever
+	// the Agent allows them.
+	AutoWrite *bool `json:"auto_write,omitempty"`
 }
 
 type UpdateValueRequest struct {
@@ -81,6 +87,9 @@ type ValueMutation struct {
 	OperationID       uuid.UUID
 	SourceMessageID   *uuid.UUID
 	SourceCompletedAt *time.Time
+	// Evidence and Reason explain the change in the user's memory history.
+	Evidence string
+	Reason   string
 }
 
 type MutateValuesRequest struct {
@@ -113,17 +122,4 @@ type MemoryExportResponse struct {
 type UndoResponse struct {
 	OperationID string             `json:"operation_id"`
 	Value       *SlotValueResponse `json:"value,omitempty"`
-}
-
-type ScheduleExtractionRequest struct {
-	WorkspaceID        string
-	AgentID            string
-	UserScope          string
-	UserID             string
-	ConversationID     string
-	MessageWatermarkID string
-	ExtractorVersion   string
-	ConfigScope        string
-	ConfigRevision     string
-	Slots              []RuntimeSlot
 }

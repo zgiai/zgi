@@ -72,6 +72,11 @@ type fakeService struct {
 	snapshotCalls int
 	statusCalls   int
 	journalCalls  int
+	changeCalls   int
+	commandCalls  int
+	lastCommand   string
+	command       *serverops.CommandRun
+	commandErr    error
 
 	lastConnection     serverops.Connection
 	observedPassword   string
@@ -79,16 +84,19 @@ type fakeService struct {
 	observedPassphrase string
 	lastServiceName    string
 	lastOptions        serverops.JournalOptions
+	lastAction         string
 
 	profile  *serverops.ValidationProfile
 	snapshot *serverops.SystemSnapshot
 	status   *serverops.ServiceStatus
 	journal  *serverops.JournalTail
+	change   *serverops.ServiceChange
 
 	validateErr error
 	snapshotErr error
 	statusErr   error
 	journalErr  error
+	changeErr   error
 }
 
 func (f *fakeService) observe(connection serverops.Connection) {
@@ -125,8 +133,23 @@ func (f *fakeService) JournalTail(_ context.Context, connection serverops.Connec
 	return f.journal, f.journalErr
 }
 
+func (f *fakeService) ChangeService(_ context.Context, connection serverops.Connection, action, serviceName string) (*serverops.ServiceChange, error) {
+	f.changeCalls++
+	f.observe(connection)
+	f.lastAction = action
+	f.lastServiceName = serviceName
+	return f.change, f.changeErr
+}
+
+func (f *fakeService) RunCommand(_ context.Context, connection serverops.Connection, command string) (*serverops.CommandRun, error) {
+	f.commandCalls++
+	f.observe(connection)
+	f.lastCommand = command
+	return f.command, f.commandErr
+}
+
 func (f *fakeService) totalCalls() int {
-	return f.validateCalls + f.snapshotCalls + f.statusCalls + f.journalCalls
+	return f.validateCalls + f.snapshotCalls + f.statusCalls + f.journalCalls + f.changeCalls + f.commandCalls
 }
 
 func newTestClient(t *testing.T, service Service) *Client {
@@ -196,9 +219,22 @@ func TestVerifyCredentialsUsesFixedProbeAndStableIdentity(t *testing.T) {
 	if verification.RequestID != "req-verify" {
 		t.Fatalf("RequestID = %q", verification.RequestID)
 	}
-	wantOperations := []string{serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail}
+	wantOperations := []string{
+		serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail,
+		serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload,
+		serverops.ActionCommandRun,
+	}
 	if !reflect.DeepEqual(verification.Operations, wantOperations) {
 		t.Fatalf("Operations = %#v, want %#v", verification.Operations, wantOperations)
+	}
+	wantEvidence := &core.ProviderEvidence{ServerOps: &core.ServerOpsEvidence{
+		Version: 1, Identity: "deploy@server.example.internal:22", Privilege: "",
+	}}
+	if !reflect.DeepEqual(verification.Evidence, wantEvidence) {
+		t.Fatalf("Evidence = %#v, want %#v", verification.Evidence, wantEvidence)
+	}
+	if fake.lastConnection.Privilege != serverops.PrivilegeNone {
+		t.Fatalf("observed privilege = %q, want none", fake.lastConnection.Privilege)
 	}
 
 	// The probe received the pinned request-scoped connection, not a persisted one.
@@ -433,6 +469,12 @@ func TestInvokeCredentialsRejectsUnknownOperationAndInvalidArgumentsWithoutCapab
 		{"journal since zero", serverops.ActionJournalTail, map[string]any{fieldServiceName: "nginx.service", fieldSinceMinutes: 0}},
 		{"journal since above cap", serverops.ActionJournalTail, map[string]any{fieldServiceName: "nginx.service", fieldSinceMinutes: 1441}},
 		{"journal extra key", serverops.ActionJournalTail, map[string]any{fieldServiceName: "nginx.service", "command": "id"}},
+		{"restart missing service name", serverops.ActionServiceRestart, nil},
+		{"restart bare unit name", serverops.ActionServiceRestart, map[string]any{fieldServiceName: "nginx"}},
+		{"start shell injection", serverops.ActionServiceStart, map[string]any{fieldServiceName: "nginx.service; reboot"}},
+		{"stop extra verb", serverops.ActionServiceStop, map[string]any{fieldServiceName: "nginx.service", "verb": "mask"}},
+		{"reload extra privilege", serverops.ActionServiceReload, map[string]any{fieldServiceName: "nginx.service", fieldPrivilege: "sudo"}},
+		{"unknown write action", "server.service.enable", map[string]any{fieldServiceName: "nginx.service"}},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -603,6 +645,7 @@ func TestInvokeCredentialsClassifiesCapabilityErrors(t *testing.T) {
 		{"connection invalid", serverops.ErrConnectionInvalid, core.ErrorCodeInvalidAppCredentials, false},
 		{"auth invalid", serverops.ErrAuthInvalid, core.ErrorCodeInvalidAppCredentials, false},
 		{"provider rejected", serverops.ErrProviderRejected, core.ErrorCodeProviderUnavailable, false},
+		{"permission denied", serverops.ErrPermissionDenied, core.ErrorCodePermissionMissing, false},
 		{"response invalid", serverops.ErrResponseInvalid, core.ErrorCodeProviderResponseUnrecognized, false},
 		{"timeout", serverops.ErrTimeout, core.ErrorCodeProviderUnavailable, true},
 		{"upstream", serverops.ErrUpstream, core.ErrorCodeProviderUnavailable, true},
@@ -770,5 +813,178 @@ func TestInvokeCredentialsZeroesTemporarySecretCopies(t *testing.T) {
 	}
 	if !allZero(fake.lastConnection.PrivateKey) || !allZero(fake.lastConnection.Passphrase) {
 		t.Fatal("temporary secret copies were not zeroed after the capability call")
+	}
+}
+
+func TestVerifyCredentialsRecordsSudoPrivilegeEvidence(t *testing.T) {
+	t.Parallel()
+
+	values := testValues()
+	values[fieldPrivilege] = "sudo"
+	fake := &fakeService{profile: &serverops.ValidationProfile{
+		Attempt:  serverops.Attempt{RequestID: "req-sudo", AttemptCount: 1},
+		Hostname: "remote-host.internal",
+	}}
+	verification, err := newTestClient(t, fake).VerifyCredentials(context.Background(), providers.CredentialInput{Values: values})
+	if err != nil {
+		t.Fatalf("VerifyCredentials() error = %v", err)
+	}
+	if verification.Evidence == nil || verification.Evidence.ServerOps == nil ||
+		verification.Evidence.ServerOps.Privilege != "sudo" || verification.Evidence.ServerOps.Identity != verification.AccountID {
+		t.Fatalf("Evidence = %#v", verification.Evidence)
+	}
+	// The privilege never changes the stable account identity.
+	if verification.AccountID != "deploy@server.example.internal:22" || fake.lastConnection.Privilege != serverops.PrivilegeSudo {
+		t.Fatalf("AccountID = %q, privilege = %q", verification.AccountID, fake.lastConnection.Privilege)
+	}
+
+	for _, privilege := range []string{"", "root", "SUDO"} {
+		invalid := testValues()
+		invalid[fieldPrivilege] = privilege
+		probe := &fakeService{}
+		_, err := newTestClient(t, probe).VerifyCredentials(context.Background(), providers.CredentialInput{Values: invalid})
+		if code := failureOf(t, err).Code; code != core.ErrorCodeInvalidInput || probe.totalCalls() != 0 {
+			t.Fatalf("privilege %q: code = %q, calls = %d", privilege, code, probe.totalCalls())
+		}
+	}
+}
+
+func TestInvokeCredentialsServiceWriteActionsMapOutputSchema(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{
+		serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload,
+	} {
+		for _, privilege := range []string{"", "sudo"} {
+			values := testValues()
+			if privilege != "" {
+				values[fieldPrivilege] = privilege
+			}
+			fake := &fakeService{change: &serverops.ServiceChange{
+				Attempt:     serverops.Attempt{RequestID: "req-change", AttemptCount: 1},
+				Action:      action,
+				ServiceName: "nginx.service",
+				LoadState:   "loaded",
+				ActiveState: "active",
+				SubState:    "running",
+			}}
+			response, err := newTestClient(t, fake).InvokeCredentials(context.Background(), action,
+				providers.CredentialInput{Values: values, ResourceScope: testScope()},
+				map[string]any{fieldServiceName: "nginx.service"})
+			if err != nil {
+				t.Fatalf("%s/%q: InvokeCredentials() error = %v", action, privilege, err)
+			}
+			if fake.changeCalls != 1 || fake.totalCalls() != 1 || fake.lastAction != action || fake.lastServiceName != "nginx.service" {
+				t.Fatalf("%s: capability calls = %d/%d action=%q unit=%q", action, fake.changeCalls, fake.totalCalls(), fake.lastAction, fake.lastServiceName)
+			}
+			if string(fake.lastConnection.Privilege) != privilege {
+				t.Fatalf("%s: privilege = %q, want %q", action, fake.lastConnection.Privilege, privilege)
+			}
+			want := map[string]any{
+				"provider":     catalog.ServerOpsSSHConnectorID,
+				"operation":    action,
+				"service_name": "nginx.service",
+				"load_state":   "loaded",
+				"active_state": "active",
+				"sub_state":    "running",
+			}
+			if !reflect.DeepEqual(response.Value, want) || response.RequestID != "req-change" {
+				t.Fatalf("%s: response = %#v", action, response)
+			}
+		}
+	}
+}
+
+func TestInvokeCredentialsServiceWriteFailuresAreClassified(t *testing.T) {
+	t.Parallel()
+
+	rejected := &serverops.Error{Code: serverops.ErrProviderRejected, RequestID: "req-rejected", AttemptCount: 1}
+	fake := &fakeService{changeErr: rejected}
+	_, err := newTestClient(t, fake).InvokeCredentials(context.Background(), serverops.ActionServiceRestart,
+		providers.CredentialInput{Values: testValues(), ResourceScope: testScope()},
+		map[string]any{fieldServiceName: "nginx.service"})
+	failure := failureOf(t, err)
+	if failure.Code != core.ErrorCodeProviderUnavailable || failure.Retryable || failure.RequestID != "req-rejected" {
+		t.Fatalf("failure = %#v", failure)
+	}
+
+	// A result for another action is never mapped onto this operation.
+	mismatched := &fakeService{change: &serverops.ServiceChange{
+		Action: serverops.ActionServiceStop, ServiceName: "nginx.service",
+		LoadState: "loaded", ActiveState: "inactive", SubState: "dead",
+	}}
+	_, err = newTestClient(t, mismatched).InvokeCredentials(context.Background(), serverops.ActionServiceStart,
+		providers.CredentialInput{Values: testValues(), ResourceScope: testScope()},
+		map[string]any{fieldServiceName: "nginx.service"})
+	if code := failureOf(t, err).Code; code != core.ErrorCodeProviderResponseUnrecognized {
+		t.Fatalf("mismatched action code = %q", code)
+	}
+	nilResult := &fakeService{}
+	_, err = newTestClient(t, nilResult).InvokeCredentials(context.Background(), serverops.ActionServiceReload,
+		providers.CredentialInput{Values: testValues(), ResourceScope: testScope()},
+		map[string]any{fieldServiceName: "nginx.service"})
+	if code := failureOf(t, err).Code; code != core.ErrorCodeProviderResponseUnrecognized {
+		t.Fatalf("nil result code = %q", code)
+	}
+}
+
+func TestInvokeCredentialsReadActionsIgnoreSudoPrivilegeSelection(t *testing.T) {
+	t.Parallel()
+
+	// The connection carries the privilege, but the capability decides that
+	// read actions never use it; the adapter only passes the connection along.
+	values := testValues()
+	values[fieldPrivilege] = "sudo"
+	fake := &fakeService{status: &serverops.ServiceStatus{
+		Attempt: serverops.Attempt{RequestID: "req-status", AttemptCount: 1}, ServiceName: "nginx.service",
+		LoadState: "loaded", ActiveState: "active", SubState: "running", Description: "nginx",
+	}}
+	if _, err := newTestClient(t, fake).InvokeCredentials(context.Background(), serverops.ActionServiceStatus,
+		providers.CredentialInput{Values: values, ResourceScope: testScope()},
+		map[string]any{fieldServiceName: "nginx.service"}); err != nil {
+		t.Fatalf("InvokeCredentials() error = %v", err)
+	}
+	if fake.statusCalls != 1 || fake.changeCalls != 0 {
+		t.Fatalf("calls = status:%d change:%d", fake.statusCalls, fake.changeCalls)
+	}
+}
+
+func TestInvokeCredentialsCommandRunMapsOutputAndRedactsSecrets(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeService{command: &serverops.CommandRun{
+		Attempt:  serverops.Attempt{RequestID: "req-command", AttemptCount: 1},
+		Command:  "cat ~/.config/app",
+		ExitCode: 1,
+		Stdout:   "passphrase=" + testPassphrase + "\n",
+		Stderr:   "warning\n",
+	}}
+	client := newTestClient(t, fake)
+
+	response, err := client.InvokeCredentials(context.Background(), serverops.ActionCommandRun,
+		providers.CredentialInput{Values: testValues(), ResourceScope: testScope()},
+		map[string]any{fieldCommand: "cat ~/.config/app"})
+	if err != nil {
+		t.Fatalf("InvokeCredentials() error = %v", err)
+	}
+	if fake.lastCommand != "cat ~/.config/app" {
+		t.Fatalf("command = %q", fake.lastCommand)
+	}
+	want := map[string]any{
+		"provider":  catalog.ServerOpsSSHConnectorID,
+		"operation": serverops.ActionCommandRun,
+		"command":   "cat ~/.config/app",
+		"exit_code": 1,
+		"stdout":    "passphrase=[redacted]\n",
+		"stderr":    "warning\n",
+		"truncated": false,
+	}
+	if !reflect.DeepEqual(response.Value, want) {
+		t.Fatalf("Value = %#v, want %#v", response.Value, want)
+	}
+	if _, err := client.InvokeCredentials(context.Background(), serverops.ActionCommandRun,
+		providers.CredentialInput{Values: testValues(), ResourceScope: testScope()},
+		map[string]any{fieldCommand: "ls", "path": "/"}); err == nil || fake.commandCalls != 1 {
+		t.Fatalf("an undeclared argument reached the server: %v, calls %d", err, fake.commandCalls)
 	}
 }

@@ -87,6 +87,12 @@ func (s *service) RecordConnectorConfirmationResolution(
 		if applyErr != nil {
 			return applyErr
 		}
+		if !added {
+			// The message already carries this resolution. A DigitalHuman turn
+			// may have continued past it and be streaming or waiting on another
+			// confirmation; a repeated projection changes nothing.
+			return nil
+		}
 		switch message.Status {
 		case runtimemodel.MessageStatusWaitingApproval:
 			if command.RememberForSession {
@@ -115,10 +121,6 @@ func (s *service) RecordConnectorConfirmationResolution(
 				}
 			}
 			return nil
-		case runtimemodel.MessageStatusCompleted:
-			if !added {
-				return nil
-			}
 		}
 		return connectorResolutionError(connectorcore.ErrorCodeConflict)
 	})
@@ -338,7 +340,9 @@ func connectorResolutionConversationMatches(
 }
 
 // resumeDigitalHumanRun moves the exact paused DigitalHuman run that owns this
-// route receipt back to running, or to its terminal state. The WHERE clause
+// route receipt to its terminal state. The decision itself executes the
+// operation and nothing re-enters the model loop afterwards, so a completed
+// operation ends the run as succeeded on every surface. The WHERE clause
 // pins the tenant, owner, host, published version, conversation, message,
 // waiting status, and the stored receipt, so a confirmation can never resume a
 // run from another owner, host, or pinned version.
@@ -348,21 +352,32 @@ func resumeDigitalHumanRun(
 	command connectorconfirmation.Command,
 	resolution connectorConfirmationResolution,
 ) error {
+	status, errorCode := "succeeded", ""
+	completedAt := any(gorm.Expr("CURRENT_TIMESTAMP"))
+	switch resolution.state {
+	case connectorconfirmation.StateCancelled:
+		status = "canceled"
+	case connectorconfirmation.StateFailed:
+		status, errorCode = "failed", resolution.errorCode
+	case connectorconfirmation.StateUnknown:
+		status, errorCode = "unknown", resolution.errorCode
+	}
+	return moveDigitalHumanRun(ctx, tx, command, resolution, status, errorCode, completedAt)
+}
+
+// moveDigitalHumanRun moves the pinned waiting run to status. A continuation
+// moves it back to running with no completion time.
+func moveDigitalHumanRun(
+	ctx context.Context,
+	tx *gorm.DB,
+	command connectorconfirmation.Command,
+	resolution connectorConfirmationResolution,
+	status, errorCode string,
+	completedAt any,
+) error {
 	receiptID, ok := canonicalConnectorResolutionUUID(resolution.routeReceipt)
 	if !ok {
 		return connectorResolutionError(connectorcore.ErrorCodeConflict)
-	}
-	status, errorCode := "running", ""
-	completedAt := any(nil)
-	switch resolution.state {
-	case connectorconfirmation.StateCancelled:
-		status, completedAt = "canceled", gorm.Expr("CURRENT_TIMESTAMP")
-	case connectorconfirmation.StateFailed:
-		status, errorCode = "failed", resolution.errorCode
-		completedAt = gorm.Expr("CURRENT_TIMESTAMP")
-	case connectorconfirmation.StateUnknown:
-		status, errorCode = "unknown", resolution.errorCode
-		completedAt = gorm.Expr("CURRENT_TIMESTAMP")
 	}
 	result := tx.WithContext(ctx).
 		Table("digital_human_runs").

@@ -399,10 +399,17 @@ assert.match(
   /replaceDraftBindings/,
   'Creation must bind the template skills through the bindings API'
 );
+// The shared safety rules (credentials included) come from the API catalog
+// (ADR 0022); the custom entry starts with them and templates carry their own.
+assert.match(
+  createFlow,
+  /sharedRules = catalog\?\.shared_rules \?\? \[\][\s\S]*createDigitalHumanPayload\(\{[\s\S]*sharedRules/,
+  'Creation must pass the catalog shared safety rules into the create request'
+);
 assert.match(
   templates,
-  /SHARED_RULE_KEYS[\s\S]*credentials/,
-  'Every template must carry the shared credential safety rule'
+  /templateRequirementGap/,
+  'Templates must declare the requirements a created DigitalHuman needs'
 );
 assert.match(
   layout,

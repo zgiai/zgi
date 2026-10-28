@@ -225,7 +225,7 @@ func TestRecordConnectorConfirmationResolutionResumesPinnedDigitalHumanRun(t *te
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`(?s)UPDATE "digital_human_runs" SET .*"waiting_receipt"=.*WHERE .*digital_human_id.*digital_human_version_id.*waiting_receipt`).
 		WithArgs(
-			nil, "", "running", "", nil,
+			"", "succeeded", "", nil,
 			runID, command.OrganizationID, command.OwnerAccountID, command.OwnerAccountID,
 			digitalHumanID, versionID, conversationID, messageID, "waiting", command.RouteReceipt,
 		).
@@ -579,5 +579,49 @@ func pendingConnectorResolutionMetadata(receipt string) map[string]interface{} {
 				"confirmation": map[string]interface{}{"route_receipt": receipt},
 			},
 		}},
+	}
+}
+
+func TestRecordConnectorConfirmationResolutionIgnoresARepeatOnAContinuedTurn(t *testing.T) {
+	db, mock := newConnectorConfirmationResolutionTestDB(t)
+	command, result, digitalHumanID, conversationID := digitalHumanConfirmationResolutionFixture()
+	messageID, _ := canonicalConnectorResolutionUUID(result.Origin.MessageID)
+	resolution, err := validateConnectorConfirmationResolution(command, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, added, err := applyConnectorConfirmationResolution(pendingConnectorResolutionMetadata(string(command.RouteReceipt)), resolution)
+	if err != nil || !added {
+		t.Fatalf("apply: added=%v err=%v", added, err)
+	}
+	metadataJSON, err := json.Marshal(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The turn continued after this decision and is streaming; replaying the
+	// stored terminal must neither complete the message nor touch the run.
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT m\.\* FROM chat_runtime_messages AS m.*FOR UPDATE`).
+		WithArgs(messageID, command.OrganizationID, command.OwnerAccountID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "answer", "status", "metadata"}).
+			AddRow(messageID, conversationID, "", runtimemodel.MessageStatusStreaming, metadataJSON))
+	mock.ExpectQuery(`(?s)SELECT \* FROM "chat_runtime_conversations".*LIMIT`).
+		WithArgs(conversationID, command.OrganizationID, command.OwnerAccountID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "organization_id", "account_id", "caller_type", "caller_id", "conversation_type",
+		}).AddRow(
+			conversationID, command.OrganizationID, command.OwnerAccountID,
+			runtimemodel.ConversationCallerDigitalHuman, digitalHumanID, runtimemodel.ConversationTypeChat,
+		))
+	mock.ExpectCommit()
+
+	if err := (&service{repos: repository.NewRepositories(db)}).RecordConnectorConfirmationResolution(
+		context.Background(), command, result,
+	); err != nil {
+		t.Fatalf("RecordConnectorConfirmationResolution() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }

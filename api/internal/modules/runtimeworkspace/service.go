@@ -17,7 +17,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/externalapikey"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
-	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
@@ -318,7 +317,7 @@ func runtimeAgentCapabilities(presentation runtimePublishedPresentation) []strin
 	if presentation.FileUploadEnabled {
 		capabilities = append(capabilities, "files")
 	}
-	if presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled() {
+	if presentation.AgentMemoryEnabled {
 		capabilities = append(capabilities, "memory")
 	}
 	if presentation.SupportsVision {
@@ -577,7 +576,7 @@ func (s *Service) GetApp(ctx context.Context, runtimeWorkspaceID uuid.UUID, appK
 		Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent), Version: agent.Version, VersionUUID: agent.VersionUUID.String(),
 		HomeTitle: presentation.HomeTitle, OpeningStatement: presentation.OpeningStatement, InputPlaceholder: presentation.InputPlaceholder, ThemeColor: presentation.ThemeColor, SuggestedQuestions: presentation.SuggestedQuestions,
 		Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-		AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), MemoryRequiresUser: relationshipmemory.RuntimeEnabled() && runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAppCapabilities(agent, presentation),
+		AgentMemoryEnabled: presentation.AgentMemoryEnabled, MemoryRequiresUser: runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAppCapabilities(agent, presentation),
 	}, nil
 }
 
@@ -633,7 +632,7 @@ func (s *Service) ListApps(ctx context.Context, runtimeWorkspaceID uuid.UUID) ([
 			Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent), Version: agent.Version, VersionUUID: agent.VersionUUID.String(),
 			HomeTitle: presentation.HomeTitle, OpeningStatement: presentation.OpeningStatement, InputPlaceholder: presentation.InputPlaceholder, ThemeColor: presentation.ThemeColor, SuggestedQuestions: presentation.SuggestedQuestions,
 			Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), MemoryRequiresUser: relationshipmemory.RuntimeEnabled() && runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAppCapabilities(agent, presentation),
+			AgentMemoryEnabled: presentation.AgentMemoryEnabled, MemoryRequiresUser: runtimeMemoryRequiresUser(presentation), ExternalUserRequired: true, Capabilities: runtimeAppCapabilities(agent, presentation),
 			Tags: tagsByAgent[binding.AgentID],
 		})
 	}
@@ -673,7 +672,7 @@ func (s *Service) ListBindings(ctx context.Context, runtimeWorkspaceID uuid.UUID
 			Name: agent.Name, Description: agent.Description, Icon: agent.Icon, IconType: agent.IconType, IconURL: runtimeAgentIconURL(agent),
 			Version: agent.Version, VersionUUID: agent.VersionUUID.String(), PublishedAt: agent.PublishedAt,
 			Status: binding.Status, SupportsStream: true, FileUploadEnabled: presentation.FileUploadEnabled, SupportsVision: presentation.SupportsVision,
-			AgentMemoryEnabled: presentation.AgentMemoryEnabled && relationshipmemory.RuntimeEnabled(), Capabilities: runtimeAppCapabilities(agent, presentation),
+			AgentMemoryEnabled: presentation.AgentMemoryEnabled, Capabilities: runtimeAppCapabilities(agent, presentation),
 			Tags:     tagsByAgent[binding.AgentID],
 			Callable: binding.Status == AgentBindingActive && allowed, UnavailableReason: reason,
 		})

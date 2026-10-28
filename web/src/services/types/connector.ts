@@ -617,6 +617,8 @@ export interface ConnectorConfirmationPreview {
     label_i18n: Record<string, string>;
     value: string;
     truncated: boolean;
+    /** Presentation hint: `command` is the exact command line, shown as code. */
+    format?: 'command';
   }>;
 }
 
@@ -660,6 +662,24 @@ export interface IssueConnectorBackgroundGrantRequest {
   destinations?: Record<string, string>;
   expires_at: string;
   max_invocations: number;
+}
+
+/** An organization rule for server commands (ADR 0029). */
+export type ConnectorCommandRuleAction = 'forbid' | 'ask';
+
+export interface ConnectorCommandRule {
+  id: string;
+  prefix: string;
+  action: ConnectorCommandRuleAction;
+  note: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface CreateConnectorCommandRuleRequest {
+  prefix: string;
+  action: ConnectorCommandRuleAction;
+  note?: string;
 }
 
 export interface ConnectorBackgroundGrant {

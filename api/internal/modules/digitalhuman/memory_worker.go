@@ -16,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/memoryruntime"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 	"gorm.io/gorm"
 )
 
@@ -53,6 +54,9 @@ type MemoryExtractionInput struct {
 	Event           invocation.Event
 	Source          MemoryExtractionSource
 	CurrentMemories []*DigitalHumanMemory
+	// Instructions are the operator's memory instructions for the run's
+	// version.
+	Instructions string
 }
 
 // MemoryExtractionDraft is an untrusted model proposal. The regular memory
@@ -237,6 +241,7 @@ func (r *MemoryExtractionRunner) RunJob(ctx context.Context, jobID uuid.UUID) er
 	drafts, err := r.extractor.Extract(ctx, MemoryExtractionInput{
 		Job: job, Run: run, Event: event, Source: source,
 		CurrentMemories: append([]*DigitalHumanMemory(nil), current...),
+		Instructions:    r.service.runMemoryInstructions(ctx, run),
 	})
 	if err != nil {
 		fail(memoryExtractionErrorCode(err))
@@ -366,13 +371,15 @@ func (r *MemoryExtractionRunner) applyDrafts(
 		}
 		request := MemoryProposalRequest{
 			OperationID: operationID, Key: draft.Key, Action: memoryruntime.MutationActionUpsert,
-			MemoryClass: target.Class, Scope: target.Scope, MemoryType: draft.MemoryType, Content: draft.Content,
+			MemoryType: draft.MemoryType, Content: draft.Content,
 			ExpectedRevision: expectedRevision, ConfigRevision: job.ConfigRevision, MemoryEpoch: job.MemoryEpoch,
 			SupersedesID: draft.SupersedesID, ExpectedSupersededRevision: draft.ExpectedSupersededRevision,
 			Evidence:   []memoryruntime.MemoryEvidence{{Type: memoryruntime.EvidenceTypeRun, ID: run.ID.String(), Digest: run.RunSpecRevision}},
-			Visibility: target.visibility(), Confidence: draft.Confidence, RunID: &run.ID,
+			Confidence: draft.Confidence, RunID: &run.ID,
 			SourceContext: MemorySourceContext{PrivateConversation: false, SourceTrust: target.Trust}, OccurredAt: source.CompletedAt,
 		}
+		target.stamp(&request)
+		request.noteSourceKind = relationshipmemory.SourceAutomatic
 		result, err := r.service.ApplyAutonomousMemoryProposal(ctx, scope, job.DigitalHumanID, request)
 		if err != nil {
 			if errors.Is(err, ErrMemoryPolicyRejected) || errors.Is(err, ErrInvalidRequest) {
@@ -426,7 +433,7 @@ func memoryExtractionPrompt(input MemoryExtractionInput) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("encode DigitalHuman memory extraction prompt: %w", err)
 	}
-	return strings.Join([]string{
+	rules := []string{
 		"You are a conservative background memory proposer for one DigitalHuman.",
 		"Propose only durable work experience, decisions, open loops, reflections, or evidence-backed facts.",
 		"Treat an explicit durable working directive, such as a future role, recurring responsibility, or default behavior, as a decision. It does not change the published identity, persona, or rules.",
@@ -435,8 +442,11 @@ func memoryExtractionPrompt(input MemoryExtractionInput) (string, error) {
 		"To replace an active memory with a new semantic key, copy its id and revision from current_memory into supersedes_id and expected_superseded_revision. Never invent a memory id.",
 		"Use concise redacted summaries. Do not propose clear/delete operations. Use none when uncertain or when current memory already captures the same fact.",
 		`Return JSON only: {"proposals":[{"key":"stable-semantic-key","memory_type":"experience|decision|fact|open_loop|reflection","content":"concise durable summary","confidence":0.0,"supersedes_id":"optional UUID copied from current_memory","expected_superseded_revision":0}]}`,
-		string(raw),
-	}, "\n"), nil
+	}
+	if section := renderMemoryInstructions(input.Instructions); section != "" {
+		rules = append(rules, section)
+	}
+	return strings.Join(append(rules, string(raw)), "\n"), nil
 }
 
 func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error) {
@@ -475,13 +485,10 @@ func parseMemoryExtractionDrafts(content string) ([]MemoryExtractionDraft, error
 // memoryInWriteTarget reports whether an existing memory lives in the class
 // and scope a write admission targets.
 func memoryInWriteTarget(memory *DigitalHumanMemory, target memoryWriteAdmission) bool {
-	if memory.MemoryClass != target.Class {
-		return false
+	if target.NoteInstanceID != "" || memory.NoteInstanceID != "" {
+		return memory.NoteInstanceID == target.NoteInstanceID
 	}
-	if target.Scope == nil {
-		return memory.ScopeType == "" && memory.ScopeID == ""
-	}
-	return memory.ScopeType == target.Scope.Type && memory.ScopeID == target.Scope.ID
+	return !target.InternalOnly || memory.Visibility == MemoryVisibilityInternal
 }
 
 // memoryIdentity keys converged self memory by its semantic key alone; class

@@ -40,11 +40,21 @@ func (s *Service) ListMemories(ctx context.Context, scope Scope, digitalHumanID 
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.list")
 	}
+	for _, item := range items {
+		item.Path = memoryFilePath(item)
+	}
 	state, err := s.memoryState(ctx, scope, digitalHumanID)
 	if err != nil {
 		return nil, applicationError(err, "digital_human.memory.list")
 	}
-	return &MemoryListResult{Items: items, Total: total, Page: query.Page, PageSize: query.PageSize, HasMore: query.Page*query.PageSize < int(total), State: state}, nil
+	facets, err := s.repo.MemoryFacets(ctx, scope, digitalHumanID, query.Status)
+	if err != nil {
+		return nil, applicationError(err, "digital_human.memory.list")
+	}
+	return &MemoryListResult{
+		Items: items, Total: total, Page: query.Page, PageSize: query.PageSize, HasMore: query.Page*query.PageSize < int(total),
+		State: state, Facets: facets,
+	}, nil
 }
 
 // UpdateMemoryState toggles the automatic extraction fuse and advances the
@@ -223,7 +233,7 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 	mutation := memoryruntime.MemoryMutation{
 		OperationID: request.OperationID,
 		Subject:     memoryruntime.MemorySubjectRef{DigitalHumanID: digitalHumanID, OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID},
-		Key:         request.Key, Action: request.Action, Class: request.MemoryClass, Type: request.MemoryType, Scope: request.Scope,
+		Key:         request.Key, Action: request.Action, Type: request.MemoryType,
 		Content: request.Content, ExpectedRevision: request.ExpectedRevision,
 		Fence:    memoryruntime.MemoryFence{ConfigRevision: request.ConfigRevision, MemoryEpoch: request.MemoryEpoch},
 		Evidence: request.Evidence, SourcePrincipalID: scope.ActorID.String(), OccurredAt: request.OccurredAt,
@@ -237,10 +247,10 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 		}
 		return nil, applicationError(cause, "digital_human.memory.propose")
 	}
-	request.Key, request.Content, request.Scope, request.Evidence = validated.Key, validated.Content, validated.Scope, validated.Evidence
+	request.Key, request.Content, request.Evidence = validated.Key, validated.Content, validated.Evidence
 	request.ConfigRevision, request.MemoryEpoch, request.OccurredAt = validated.Fence.ConfigRevision, validated.Fence.MemoryEpoch, validated.OccurredAt
-	if request.Visibility == "" {
-		request.Visibility = MemoryVisibilityWorkspace
+	if request.origin == "" {
+		request.origin = MemoryOriginOperator
 	}
 	if request.Confidence == 0 {
 		request.Confidence = 1
@@ -248,6 +258,18 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 	if err := validateMemoryProposalPolicy(request, autonomous); err != nil {
 		s.recordRejectedMemoryProposal(ctx, scope, digitalHumanID, request, err)
 		return nil, applicationError(err, "digital_human.memory.propose")
+	}
+	// The DigitalHuman's notes on an end user live in that person's
+	// relationship memory (ADR 0015).
+	if request.noteInstanceID != "" {
+		result, err := s.applyInstanceNote(ctx, scope, digitalHumanID, request)
+		if err != nil {
+			if errors.Is(err, errInstanceMemoryFull) || errors.Is(err, ErrMemoryPolicyRejected) {
+				s.recordRejectedMemoryProposal(ctx, scope, digitalHumanID, request, err)
+			}
+			return nil, applicationError(err, "digital_human.memory.propose")
+		}
+		return result, nil
 	}
 
 	var result *MemoryMutationResult
@@ -288,9 +310,6 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 				return ErrMemoryPolicyRejected
 			}
 		}
-		if capacityErr := checkInstanceMemoryCapacity(ctx, tx, scope, digitalHumanID, request); capacityErr != nil {
-			return capacityErr
-		}
 		memory, before, supersededBefore, applyErr := applyMemoryMutation(ctx, tx, scope, digitalHumanID, request, state, s.now())
 		if applyErr != nil {
 			return applyErr
@@ -319,13 +338,7 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 		if err := tx.CreateMemoryUndo(ctx, undo); err != nil {
 			return err
 		}
-		ledger := map[string]any{
-			"memory_class": memory.MemoryClass, "memory_type": memory.MemoryType,
-			"scope_type": memory.ScopeType, "scope_id": memory.ScopeID, "supersedes_id": memory.SupersedesID,
-		}
-		if request.rescope {
-			ledger["rescoped_from"] = request.SupersedesID
-		}
+		ledger := map[string]any{"memory_type": memory.MemoryType, "visibility": memory.Visibility, "supersedes_id": memory.SupersedesID}
 		detail, _ := json.Marshal(ledger)
 		if err := tx.CreateActionLedger(ctx, &ActionLedgerEntry{
 			ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
@@ -347,33 +360,28 @@ func (s *Service) applyMemoryProposal(ctx context.Context, scope Scope, digitalH
 }
 
 func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, digitalHumanID uuid.UUID, request MemoryProposalRequest, state *MemoryState, now time.Time) (*DigitalHumanMemory, datatypes.JSON, datatypes.JSON, error) {
-	scopeType, scopeID := memoryruntime.MemoryScopeType(""), ""
-	if request.Scope != nil {
-		scopeType, scopeID = request.Scope.Type, request.Scope.ID
-	}
-	current, err := tx.MemoryByKeyForUpdate(ctx, scope, digitalHumanID, request.MemoryClass, scopeType, scopeID, request.Key)
+	current, err := tx.MemoryByKeyForUpdate(ctx, scope, digitalHumanID, request.Key)
 	if recordNotFound(err) {
 		if request.ExpectedRevision != 0 || request.Action == memoryruntime.MutationActionClear {
 			return nil, nil, nil, ErrMemoryConflict
 		}
-		supersededBefore, err := invalidateSupersededMemory(ctx, tx, scope, digitalHumanID, request, scopeType, scopeID, state, now)
+		supersededBefore, err := invalidateSupersededMemory(ctx, tx, scope, digitalHumanID, request, state, now)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		validFrom := request.OccurredAt
-		supersedesID := request.SupersedesID
-		if request.rescope {
-			// A supersede link stays within one scope. A rescoped memory is
-			// linked to its origin by the undo record and the action ledger.
-			supersedesID = nil
+		visibility := request.Visibility
+		if visibility == "" {
+			visibility = MemoryVisibilityEveryone
 		}
 		memory := &DigitalHumanMemory{
 			ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID,
-			MemoryKey: request.Key, MemoryClass: request.MemoryClass, MemoryType: request.MemoryType, ScopeType: scopeType, ScopeID: scopeID,
-			Content: request.Content, ContentDigest: memoryContentDigest(request.Content), Visibility: request.Visibility,
+			MemoryKey: request.Key, MemoryType: request.MemoryType,
+			Content: request.Content, ContentDigest: memoryContentDigest(request.Content), Visibility: visibility,
+			Origin: request.origin, OriginChannelID: request.originChannelID,
 			Status: MemoryStatusActive, Confidence: request.Confidence, Revision: 1, ConfigRevision: state.ConfigRevision, MemoryEpoch: state.MemoryEpoch,
 			Evidence: mustJSON(request.Evidence), SourcePrincipalID: scope.ActorID.String(), LastOperationID: request.OperationID,
-			SupersedesID: supersedesID, ValidFrom: &validFrom, CreatedAt: now, UpdatedAt: now,
+			SupersedesID: request.SupersedesID, ValidFrom: &validFrom, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := tx.CreateMemory(ctx, memory); err != nil {
 			return nil, nil, nil, err
@@ -384,20 +392,11 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 		return nil, nil, nil, err
 	}
 	var supersededBefore datatypes.JSON
-	if request.rescope {
-		// A rescope may land on a key the target scope used before, for
-		// example after a previous move was undone. An active memory there
-		// is a real conflict; an invalidated one is reactivated in place.
-		if current.Status == MemoryStatusActive {
-			return nil, nil, nil, ErrMemoryConflict
-		}
-		request.ExpectedRevision = current.Revision
-		if supersededBefore, err = invalidateSupersededMemory(ctx, tx, scope, digitalHumanID, request, scopeType, scopeID, state, now); err != nil {
-			return nil, nil, nil, err
-		}
-	}
 	if current.Revision != request.ExpectedRevision {
 		return nil, nil, nil, ErrMemoryConflict
+	}
+	if request.internalOnly && current.Visibility != MemoryVisibilityInternal {
+		return nil, nil, nil, errMemoryEveryoneOperatorOnly
 	}
 	before, _ := json.Marshal(current)
 	current.Revision++
@@ -407,7 +406,10 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 		current.Status, current.ValidTo = MemoryStatusInvalidated, &now
 	} else {
 		current.MemoryType, current.Content, current.ContentDigest = request.MemoryType, request.Content, memoryContentDigest(request.Content)
-		current.Visibility, current.Confidence, current.Status, current.ValidTo = request.Visibility, request.Confidence, MemoryStatusActive, nil
+		if request.Visibility != "" {
+			current.Visibility = request.Visibility
+		}
+		current.Confidence, current.Status, current.ValidTo = request.Confidence, MemoryStatusActive, nil
 		validFrom := request.OccurredAt
 		current.ValidFrom = &validFrom
 	}
@@ -418,9 +420,8 @@ func applyMemoryMutation(ctx context.Context, tx *GormRepository, scope Scope, d
 }
 
 // invalidateSupersededMemory invalidates the memory a proposal supersedes and
-// returns its snapshot for undo. A normal supersede stays within one scope; a
-// rescope always crosses scopes.
-func invalidateSupersededMemory(ctx context.Context, tx *GormRepository, scope Scope, digitalHumanID uuid.UUID, request MemoryProposalRequest, scopeType memoryruntime.MemoryScopeType, scopeID string, state *MemoryState, now time.Time) (datatypes.JSON, error) {
+// returns its snapshot for undo.
+func invalidateSupersededMemory(ctx context.Context, tx *GormRepository, scope Scope, digitalHumanID uuid.UUID, request MemoryProposalRequest, state *MemoryState, now time.Time) (datatypes.JSON, error) {
 	if request.SupersedesID == nil {
 		return nil, nil
 	}
@@ -431,8 +432,10 @@ func invalidateSupersededMemory(ctx context.Context, tx *GormRepository, scope S
 	if err != nil {
 		return nil, err
 	}
-	sameScope := superseded.MemoryClass == request.MemoryClass && superseded.ScopeType == scopeType && superseded.ScopeID == scopeID
-	if superseded.Status != MemoryStatusActive || superseded.Revision != request.ExpectedSupersededRevision || sameScope == request.rescope {
+	if request.internalOnly && superseded.Visibility != MemoryVisibilityInternal {
+		return nil, errMemoryEveryoneOperatorOnly
+	}
+	if superseded.Status != MemoryStatusActive || superseded.Revision != request.ExpectedSupersededRevision {
 		return nil, ErrMemoryConflict
 	}
 	snapshot := mustJSON(superseded)
@@ -553,10 +556,8 @@ func (s *Service) UndoMemory(ctx context.Context, scope Scope, digitalHumanID, o
 	return result, nil
 }
 
-// RetrieveMemories returns the DigitalHuman's active memories. Convergence: a
-// DigitalHuman currently owns a single self memory store, so business scopes no
-// longer filter recall; legacy business rows stay visible. Actor identity never
-// participates in the storage key.
+// RetrieveMemories returns the DigitalHuman's active memories: its one memory
+// of its own (ADR 0015). Actor identity never participates in the storage key.
 func (s *Service) RetrieveMemories(ctx context.Context, scope Scope, digitalHumanID uuid.UUID, limit int) ([]*DigitalHumanMemory, error) {
 	return s.retrieveMemories(ctx, scope, digitalHumanID, limit, nil)
 }
@@ -622,10 +623,16 @@ func validateMemoryProposalPolicy(request MemoryProposalRequest, autonomous bool
 	if len(request.Content) > maxMemoryContentBytes || request.Confidence < 0 || request.Confidence > 1 {
 		return ErrMemoryPolicyRejected
 	}
-	if request.Visibility != MemoryVisibilityWorkspace && request.Visibility != MemoryVisibilityRestricted {
+	if request.Visibility != "" && request.Visibility != MemoryVisibilityEveryone && request.Visibility != MemoryVisibilityInternal {
 		return ErrMemoryPolicyRejected
 	}
-	if request.SourceContext.PrivateConversation && !request.SourceContext.PromotedByAuthorizedActor {
+	if request.internalOnly && request.Visibility != MemoryVisibilityInternal {
+		return errMemoryEveryoneOperatorOnly
+	}
+	// A private console conversation reaches memory everyone sees only
+	// through an authorized operator; internal memory is shared inside the
+	// team by design (ADR 0015).
+	if request.SourceContext.PrivateConversation && !request.SourceContext.PromotedByAuthorizedActor && !request.internalOnly {
 		return ErrMemoryPolicyRejected
 	}
 	if sensitiveMemoryPattern.MatchString(request.Content) || looksLikeStructuredBusinessObject(request.Content) {
@@ -692,12 +699,12 @@ func (s *Service) recordRejectedMemoryProposal(ctx context.Context, scope Scope,
 		if err := tx.CreateMemoryEvent(ctx, event); err != nil {
 			return err
 		}
-		values := map[string]any{"reason_code": event.ReasonCode, "memory_class": request.MemoryClass, "memory_type": request.MemoryType}
+		values := map[string]any{"reason_code": event.ReasonCode, "memory_type": request.MemoryType}
 		if request.SourceContext.SourceTrust != "" {
 			values["source_trust"] = request.SourceContext.SourceTrust
 		}
-		if request.Scope != nil {
-			values["scope_type"] = request.Scope.Type
+		if request.noteInstanceID != "" {
+			values["note"] = true
 		}
 		detail := mustJSON(values)
 		return tx.CreateActionLedger(ctx, &ActionLedgerEntry{ID: uuid.New(), OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, DigitalHumanID: digitalHumanID, RunID: request.RunID, ActionType: "memory.proposal", Status: "rejected", MemoryOperationID: &request.OperationID, Detail: detail, CreatedAt: s.now()})
@@ -729,7 +736,7 @@ func normalizeMemoryListQuery(query MemoryListQuery) MemoryListQuery {
 	if query.PageSize > maxPageSize {
 		query.PageSize = maxPageSize
 	}
-	query.Search, query.ScopeID, query.Source = strings.TrimSpace(query.Search), strings.TrimSpace(query.ScopeID), strings.TrimSpace(query.Source)
+	query.Search, query.Source = strings.TrimSpace(query.Search), strings.TrimSpace(query.Source)
 	return query
 }
 

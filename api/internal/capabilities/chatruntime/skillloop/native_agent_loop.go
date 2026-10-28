@@ -81,6 +81,7 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 	step := successfulSkillStep(trace, message, false, true)
 	step.toolResult = result.Result
 	step.artifacts = result.Artifacts
+	step.events = result.Events
 	step.pendingApproval = result.PendingApproval
 	step.pendingGovernance = result.PendingGovernance
 	step.pendingConnector = result.PendingConnector
@@ -97,8 +98,25 @@ func handleRuntimeToolCall(ctx context.Context, call adapter.ToolCall, runtimeTo
 		step.pendingClientAction = result.PendingClientAction
 		step.pendingUserInput = result.PendingUserInput
 		step.artifacts = result.Artifacts
+		step.events = result.Events
 	}
 	return step
+}
+
+// runtimeToolEventPayload adds the conversation and message a runtime tool's
+// event belongs to, without changing the tool's own map.
+func runtimeToolEventPayload(prepared *PreparedChat, payload map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(payload)+2)
+	for key, value := range payload {
+		out[key] = value
+	}
+	if prepared != nil && prepared.Conversation != nil {
+		out["conversation_id"] = prepared.Conversation.ID
+	}
+	if prepared != nil && prepared.Message != nil {
+		out["message_id"] = prepared.Message.ID
+	}
+	return out
 }
 
 func nativeAgentLoopSystemMessage() adapter.Message {
