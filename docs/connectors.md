@@ -207,7 +207,8 @@ granted. With such a grant, an unattended call runs only when it is proven
 read-only, by the same rules as above, and consumes one use of the grant. A
 change, or a command that cannot be proven read-only, is blocked before the
 grant is consulted, so an unattended specialist inspects and reports and leaves
-every change for a person to approve.
+every change for a person to approve. Such a blocked change does not end the run: the specialist
+finishes its report, and the answer names the change that did not run.
 
 Release `1.1.0` of the connector adds the write operations and the `privilege`
 field. Existing installations accept it through the ordinary compatible-update

@@ -25,6 +25,7 @@ Nothing stopped a grant from covering SSH operations, though. A grant on `server
    A change, or a command that cannot be proven read-only, is blocked before the grant is consulted. It consumes nothing and never reaches the server.
 2. A task grant on an SSH connection can cover only the snapshot, service status, journal, and shell command actions. Grants for the service write actions are refused when issued, and the grant form does not offer them.
 3. The specialist's runbook and template say so: in a scheduled run it inspects and reports, never attempts a change, and lists any change it recommends for a person to approve.
+4. A change blocked this way ran nothing and cannot succeed on a retry. It therefore does not end the run, unlike other blocked calls. The model is told not to try it again, and finishes its report with the change listed for a person. The final answer keeps that report and names the step that did not run.
 
 ## Consequences
 
