@@ -106,6 +106,7 @@ func TestValidateAPIKeyReloadsPersonalKeyBeforeCachedStatusCheck(t *testing.T) {
 		&workspacemodel.Organization{},
 		&workspacemodel.Workspace{},
 		&workspacemodel.WorkspaceMember{},
+		&workspacemodel.OrganizationMember{},
 		&accessmodel.Grant{},
 		&accessmodel.Policy{},
 	); err != nil {

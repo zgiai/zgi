@@ -2625,7 +2625,19 @@ func (s *organizationService) UpdateMemberStatus(ctx context.Context, req *share
 
 	join.Status = req.Status
 	join.UpdatedAt = time.Now()
-	if err := s.organizationRepo.UpdateAccountJoin(ctx, join); err != nil {
+	if req.Status == model.OrganizationMemberStatusInactive {
+		// Disabling turns off the member's personal API keys in the same
+		// transaction. Re-enabling leaves them off; see
+		// deactivateOrganizationMemberDeveloperKeys.
+		if err := s.organizationRepo.GetDB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := s.organizationRepo.WithTx(tx).UpdateAccountJoin(ctx, join); err != nil {
+				return fmt.Errorf("failed to update member status: %w", err)
+			}
+			return deactivateOrganizationMemberDeveloperKeys(ctx, tx, req.OrganizationID, req.AccountID)
+		}); err != nil {
+			return err
+		}
+	} else if err := s.organizationRepo.UpdateAccountJoin(ctx, join); err != nil {
 		return fmt.Errorf("failed to update member status: %w", err)
 	}
 
@@ -3294,6 +3306,10 @@ func (s *organizationService) IsOrganizationMember(ctx context.Context, organiza
 		return false, nil
 	}
 	return organizationMemberIsActive(join), nil
+}
+
+func (s *organizationService) IsOrganizationMemberDisabled(ctx context.Context, organizationID, accountID string) (bool, error) {
+	return s.organizationMembershipDisabled(ctx, organizationID, accountID)
 }
 
 func (s *organizationService) HasOrganizationMembership(ctx context.Context, organizationID, accountID string) (bool, error) {

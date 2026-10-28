@@ -14,10 +14,12 @@ import (
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
+	"github.com/zgiai/zgi/api/pkg/apperror"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -2578,6 +2580,12 @@ func (h *OrganizationHandler) ApproveDepartmentJoinRequest(c *gin.Context) {
 			response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
 			return
 		}
+		if errors.Is(err, workspace_service.ErrOrganizationInviteMemberDisabled) {
+			// The requester was disabled after asking to join; approving must
+			// not restore access. Re-enable the member first.
+			response.Fail(c, response.ErrActionNotAllowed)
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
@@ -4661,6 +4669,10 @@ func (h *OrganizationHandler) AcceptInviteLink(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, workspace_service.ErrMemberNameExists) {
 			response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
+			return
+		}
+		if apperror.IsCode(err, memberstatus.AppCodeMemberDisabled) {
+			middleware.FailOrganizationMemberDisabled(c, err)
 			return
 		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())

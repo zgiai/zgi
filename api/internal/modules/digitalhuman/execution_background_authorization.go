@@ -12,6 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/runtimeidentity"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	automationmodel "github.com/zgiai/zgi/api/internal/modules/automation/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	"gorm.io/gorm"
 )
 
@@ -193,7 +194,11 @@ func (s *AccessService) authorizeBackgroundAccount(ctx context.Context, run *Run
 		// A pending account, such as the administrator created during setup,
 		// signs in and owns its tasks like an active one.
 		Where("accounts.id = ? AND accounts.status IN ? AND accounts.deleted_at IS NULL AND members.workspace_id = ? AND workspaces.organization_id = ? AND workspaces.status = ?",
-			account, []string{"active", "pending"}, run.WorkspaceID, run.OrganizationID, "normal").Count(&count).Error
+			account, []string{"active", "pending"}, run.WorkspaceID, run.OrganizationID, "normal").
+		// A disabled organization member keeps its workspace rows but must not
+		// keep authorizing unattended work in that organization.
+		Where(memberstatus.NotDisabledInWorkspaceOrganizationSQL("members.workspace_id", "members.account_id")).
+		Count(&count).Error
 	if err != nil {
 		return err
 	}

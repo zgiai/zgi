@@ -390,6 +390,8 @@ var (
 	ErrSuperAdminRequired = ErrorCode{403005, "Only super administrators can perform this operation", true}
 	ErrGroupOwnerRequired = ErrorCode{403006, "Only group owners or system administrators can perform this operation", true}
 	ErrRegisterNotAllowed = ErrorCode{403007, "Registration is not allowed for private deployment", true}
+	// ErrOrganizationMemberDisabled carries organization.member.disabled.
+	ErrOrganizationMemberDisabled = ErrorCode{403008, "Your access to this organization has been disabled", true}
 )
 
 var (

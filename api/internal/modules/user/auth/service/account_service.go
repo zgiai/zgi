@@ -35,6 +35,7 @@ import (
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
 	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
 	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/email"
@@ -2412,6 +2413,49 @@ func (s *AccountService) EnsureCurrentOrganizationID(ctx context.Context, accoun
 	return "", fmt.Errorf("no organization found for account")
 }
 
+// CheckOrganizationAccess is the request-time guard for an organization that
+// a request resolved, whether it came from the account context or elsewhere.
+// It rejects a disabled membership even when the organization was not read from
+// the account context, and it rejects a current workspace that the account
+// context pairs with this organization but that belongs to another one.
+func (s *AccountService) CheckOrganizationAccess(ctx context.Context, accountID, organizationID string) error {
+	accountID = strings.TrimSpace(accountID)
+	organizationID = strings.TrimSpace(organizationID)
+	if accountID == "" || organizationID == "" {
+		return nil
+	}
+	if s.organizationService == nil {
+		return fmt.Errorf("organization service is not configured")
+	}
+	disabled, err := s.organizationService.IsOrganizationMemberDisabled(ctx, organizationID, accountID)
+	if err != nil {
+		return fmt.Errorf("check organization member status: %w", err)
+	}
+	if disabled {
+		return memberstatus.NewMemberDisabledError("auth.check_organization_access")
+	}
+
+	ctxModel, err := s.GetAccountContext(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("load account context: %w", err)
+	}
+	if ctxModel == nil || ptrStringValue(ctxModel.CurrentOrganizationID) != organizationID {
+		return nil
+	}
+	currentWorkspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
+	if currentWorkspaceID == "" {
+		return nil
+	}
+	inOrganization, err := s.isWorkspaceInOrganization(ctx, currentWorkspaceID, organizationID)
+	if err != nil {
+		return fmt.Errorf("check current workspace organization: %w", err)
+	}
+	if !inOrganization {
+		return interfaces.ErrCurrentWorkspaceOutsideOrganization
+	}
+	return nil
+}
+
 func (s *AccountService) GetAccountContext(ctx context.Context, accountID string) (*auth_model.AccountContext, error) {
 	cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
 	if cached, ok := workspacecache.GetAccountContext(ctx, cacheToken); ok {
@@ -2453,6 +2497,8 @@ func (s *AccountService) loadAccountContextUncached(ctx context.Context, account
 		isNew = true
 	}
 
+	previousOrganizationID := ptrStringValue(ctxModel.CurrentOrganizationID)
+	previousWorkspaceID := ptrStringValue(ctxModel.CurrentWorkspaceID)
 	changed, err := s.repairAccountContextWorkspace(ctx, ctxModel)
 	if err != nil {
 		return nil, err
@@ -2468,6 +2514,12 @@ func (s *AccountService) loadAccountContextUncached(ctx context.Context, account
 		workspacecache.SetAccountContext(ctx, cacheToken, ctxModel)
 	} else if changed {
 		if err := s.accountRepo.UpdateAccountContext(ctx, ctxModel); err != nil {
+			if accountContextRepairRevokedScope(previousOrganizationID, previousWorkspaceID, ctxModel) {
+				// The stored context still names an organization or workspace the
+				// account lost. Fail closed rather than serve a request whose
+				// persisted scope disagrees with the repaired one.
+				return nil, fmt.Errorf("persist revoked account context scope: %w", err)
+			}
 			logger.Warn("Failed to update account context with resolved workspace: %v", err)
 		} else {
 			s.invalidateAccountProfileCache(accountID)
@@ -2479,6 +2531,19 @@ func (s *AccountService) loadAccountContextUncached(ctx context.Context, account
 	}
 
 	return ctxModel, nil
+}
+
+// accountContextRepairRevokedScope reports whether a repair replaced or
+// cleared an organization or workspace the stored context already named.
+// Filling an empty scope with a default is not a revocation.
+func accountContextRepairRevokedScope(previousOrganizationID, previousWorkspaceID string, repaired *auth_model.AccountContext) bool {
+	if repaired == nil {
+		return previousOrganizationID != "" || previousWorkspaceID != ""
+	}
+	if previousOrganizationID != "" && previousOrganizationID != ptrStringValue(repaired.CurrentOrganizationID) {
+		return true
+	}
+	return previousWorkspaceID != "" && previousWorkspaceID != ptrStringValue(repaired.CurrentWorkspaceID)
 }
 
 func (s *AccountService) GetAccountCapabilities(ctx context.Context, accountID string) (*dto.AccountCapabilitiesResponse, error) {
@@ -3273,7 +3338,7 @@ func (s *AccountService) isWorkspaceInOrganization(ctx context.Context, workspac
 	}
 
 	// Check if workspace.OrganizationID is not nil and matches the provided organizationID
-	if workspace.OrganizationID != nil {
+	if workspace != nil && workspace.OrganizationID != nil {
 		return *workspace.OrganizationID == organizationID, nil
 	}
 	return false, nil

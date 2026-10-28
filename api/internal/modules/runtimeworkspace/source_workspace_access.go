@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
@@ -35,7 +36,9 @@ func (s *Service) sourceWorkspaceAccess(ctx context.Context, runtimeWorkspace *R
 		Where("workspaces.organization_id = ? AND workspaces.status = ?", runtimeWorkspace.OrganizationID, workspace_model.WorkspaceStatusNormal)
 	if !organizationAdmin {
 		query = query.Joins("JOIN workspace_members AS members ON members.workspace_id = workspaces.id").
-			Where("members.account_id = ? AND members.role IN ?", accountID, []workspace_model.WorkspaceMemberRole{workspace_model.WorkspaceRoleOwner, workspace_model.WorkspaceRoleAdmin})
+			Where("members.account_id = ? AND members.role IN ?", accountID, []workspace_model.WorkspaceMemberRole{workspace_model.WorkspaceRoleOwner, workspace_model.WorkspaceRoleAdmin}).
+			// Workspace rows survive a disabled organization membership.
+			Where(memberstatus.NotDisabledInWorkspaceOrganizationSQL("workspaces.id", "members.account_id"))
 	}
 	if err := query.Order("workspaces.name ASC").Order("workspaces.id ASC").Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list manageable Runtime source Workspaces: %w", err)

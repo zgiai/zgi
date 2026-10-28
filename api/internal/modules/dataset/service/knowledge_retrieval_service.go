@@ -24,6 +24,7 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmruntime "github.com/zgiai/zgi/api/internal/modules/llm/runtime"
 	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/embedding"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -988,7 +989,10 @@ func (s *KnowledgeRetrievalService) canAccessKnowledgeWorkspace(ctx context.Cont
 	if err := s.db.WithContext(ctx).
 		Table("workspace_members").
 		Select("role, role_id, COALESCE(permissions::text, '') AS permissions, permission_source").
-		Where("workspace_id = ? AND account_id = ?", workspaceID, accountID).
+		// A disabled organization member keeps its workspace rows.
+		Where("workspace_id = ? AND account_id = ? AND "+
+			memberstatus.NotDisabledInWorkspaceOrganizationSQL("workspace_members.workspace_id", "workspace_members.account_id"),
+			workspaceID, accountID).
 		Take(&member).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
@@ -1056,7 +1060,10 @@ func (s *KnowledgeRetrievalService) accessibleKnowledgeWorkspaceIDs(ctx context.
 		Table("workspaces").
 		Select("workspaces.id, workspace_members.role, workspace_members.role_id, COALESCE(workspace_members.permissions::text, '') AS permissions, workspace_members.permission_source").
 		Joins("JOIN workspace_members ON workspace_members.workspace_id = workspaces.id").
-		Where("workspaces.organization_id = ? AND workspace_members.account_id = ?", organizationID, accountID)
+		// A disabled organization member keeps its workspace rows.
+		Where("workspaces.organization_id = ? AND workspace_members.account_id = ? AND "+
+			memberstatus.NotDisabledInWorkspaceOrganizationSQL("workspaces.id", "workspace_members.account_id"),
+			organizationID, accountID)
 	if workspaceID != "" {
 		query = query.Where("workspaces.id = ?", workspaceID)
 	}
