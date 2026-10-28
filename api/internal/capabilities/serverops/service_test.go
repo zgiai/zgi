@@ -174,6 +174,7 @@ func TestServiceExportedMethodSetIsExact(t *testing.T) {
 		"ServiceStatus":      true,
 		"JournalTail":        true,
 		"ChangeService":      true,
+		"RunCommand":         true,
 		"ValidateCredential": true,
 		"ValidateConnection": true,
 	}

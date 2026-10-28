@@ -951,6 +951,10 @@ const messages: DigitalHumansMessages = {
       identity: '连接 ID：{id}',
       operationUnavailable: '此操作当前不可用，原有选择不会自动扩大。',
       operationRequired: '请选择至少一个可用操作。',
+      riskyOperationTitle: '确认开启“{name}”？',
+      riskyOperationDescription:
+        '开启后，数字人可以以 SSH 账号身份在这台服务器上执行任意 Shell 命令，能读取、修改或删除该账号有权限的任何内容。平台不会检查命令做了什么，只在每次执行前请你确认完整命令。命令执行的后果由你承担，建议只在测试服务器或权限受限的专用账号上开启。',
+      riskyOperationConfirm: '我了解风险，开启',
       replace: '替换连接',
       perUserBadge: '每位用户自己的连接',
       perUserDescription: '每位使用者用自己的账号连接，数字人以使用者本人的身份执行。',

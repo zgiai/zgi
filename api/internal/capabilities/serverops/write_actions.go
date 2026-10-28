@@ -128,6 +128,13 @@ func CommandLine(action string, input map[string]any, privilege Privilege) (stri
 			return "", newError(ErrInvalidInput, "", err)
 		}
 		return journalTailLine(validated), nil
+	case ActionCommandRun:
+		// The command runs exactly as written, as the SSH user.
+		command, err := commandFromInput(input)
+		if err != nil {
+			return "", newError(ErrInvalidInput, "", err)
+		}
+		return command, nil
 	}
 	verb, ok := serviceChangeVerb(action)
 	if !ok {

@@ -202,6 +202,12 @@ func TestServerOpsSSHConfirmationPreviewCompleteForEveryAction(t *testing.T) {
 				"Command": "systemctl stop -- 'nginx.service'"},
 		},
 		{
+			name: "command run shows the whole command, never the connection sudo", operation: serverops.ActionCommandRun, connection: sudo,
+			input: map[string]any{"command": "df -h / && tail -n 20 /var/log/nginx/error.log"},
+			wantValues: map[string]string{"Action": serverops.ActionCommandRun, "Runs as": serverOpsSSHTestIdentity,
+				"Command": "df -h / && tail -n 20 /var/log/nginx/error.log"},
+		},
+		{
 			name: "reload with sudo", operation: serverops.ActionServiceReload, connection: sudo,
 			input: map[string]any{"service_name": "nginx.service"},
 			wantValues: map[string]string{"Action": serverops.ActionServiceReload, "Service": "nginx.service",

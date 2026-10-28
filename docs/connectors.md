@@ -164,8 +164,20 @@ arguments. Channel replies and the external API keep their fixed outcome text.
 
 Write actions are opt-in. When a server connection is added while creating a
 DigitalHuman, only the read operations are selected by default; each write
-action must be ticked explicitly. Deploys, file writes, configuration changes,
-and arbitrary shell commands are not available.
+action must be ticked explicitly.
+
+Release `1.2.0` adds **Run a shell command** (`server.command.run`, ADR 0025).
+It runs one command exactly as written, as the SSH user, and returns the exit
+code, stdout, and stderr (each keeping its last 15,000 characters, with the
+connection's secrets redacted). The command is at most 8,192 bytes and may not
+contain control characters other than tab and newline, or invisible format
+characters. The connection's sudo privilege does not apply; a command that needs
+root writes `sudo -n` itself. The platform does not check what a command does:
+it can read, change, or delete anything the account may. It is never selected by
+default, ticking it asks the person to accept that risk, and every run shows the
+whole command for approval. Enable it only on a test server or a dedicated
+account with limited permissions. A connection verified before `1.2.0` offers it
+after reconnecting.
 
 Release `1.1.0` of the connector adds the write operations and the `privilege`
 field. Existing installations accept it through the ordinary compatible-update

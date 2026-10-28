@@ -997,6 +997,10 @@ const messages = {
       operationUnavailable:
         'This operation is currently unavailable. Existing access will not expand automatically.',
       operationRequired: 'Select at least one available operation.',
+      riskyOperationTitle: 'Enable “{name}”?',
+      riskyOperationDescription:
+        'Once enabled, the digital human can run any shell command on this server as the SSH user, and can read, change, or delete anything that account may. The platform does not check what a command does; it only asks you to approve the exact command before each run. You are responsible for what the commands do. Enable it only on a test server or a dedicated account with limited permissions.',
+      riskyOperationConfirm: 'I understand the risk, enable it',
       replace: 'Replace connection',
       perUserBadge: 'Each user connects',
       perUserDescription: 'Each person connects their own account, and the digital human acts as them.',

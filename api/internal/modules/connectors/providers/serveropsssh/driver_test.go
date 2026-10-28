@@ -73,6 +73,10 @@ type fakeService struct {
 	statusCalls   int
 	journalCalls  int
 	changeCalls   int
+	commandCalls  int
+	lastCommand   string
+	command       *serverops.CommandRun
+	commandErr    error
 
 	lastConnection     serverops.Connection
 	observedPassword   string
@@ -137,8 +141,15 @@ func (f *fakeService) ChangeService(_ context.Context, connection serverops.Conn
 	return f.change, f.changeErr
 }
 
+func (f *fakeService) RunCommand(_ context.Context, connection serverops.Connection, command string) (*serverops.CommandRun, error) {
+	f.commandCalls++
+	f.observe(connection)
+	f.lastCommand = command
+	return f.command, f.commandErr
+}
+
 func (f *fakeService) totalCalls() int {
-	return f.validateCalls + f.snapshotCalls + f.statusCalls + f.journalCalls + f.changeCalls
+	return f.validateCalls + f.snapshotCalls + f.statusCalls + f.journalCalls + f.changeCalls + f.commandCalls
 }
 
 func newTestClient(t *testing.T, service Service) *Client {
@@ -211,6 +222,7 @@ func TestVerifyCredentialsUsesFixedProbeAndStableIdentity(t *testing.T) {
 	wantOperations := []string{
 		serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail,
 		serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload,
+		serverops.ActionCommandRun,
 	}
 	if !reflect.DeepEqual(verification.Operations, wantOperations) {
 		t.Fatalf("Operations = %#v, want %#v", verification.Operations, wantOperations)
@@ -934,5 +946,45 @@ func TestInvokeCredentialsReadActionsIgnoreSudoPrivilegeSelection(t *testing.T) 
 	}
 	if fake.statusCalls != 1 || fake.changeCalls != 0 {
 		t.Fatalf("calls = status:%d change:%d", fake.statusCalls, fake.changeCalls)
+	}
+}
+
+func TestInvokeCredentialsCommandRunMapsOutputAndRedactsSecrets(t *testing.T) {
+	t.Parallel()
+
+	fake := &fakeService{command: &serverops.CommandRun{
+		Attempt:  serverops.Attempt{RequestID: "req-command", AttemptCount: 1},
+		Command:  "cat ~/.config/app",
+		ExitCode: 1,
+		Stdout:   "passphrase=" + testPassphrase + "\n",
+		Stderr:   "warning\n",
+	}}
+	client := newTestClient(t, fake)
+
+	response, err := client.InvokeCredentials(context.Background(), serverops.ActionCommandRun,
+		providers.CredentialInput{Values: testValues(), ResourceScope: testScope()},
+		map[string]any{fieldCommand: "cat ~/.config/app"})
+	if err != nil {
+		t.Fatalf("InvokeCredentials() error = %v", err)
+	}
+	if fake.lastCommand != "cat ~/.config/app" {
+		t.Fatalf("command = %q", fake.lastCommand)
+	}
+	want := map[string]any{
+		"provider":  catalog.ServerOpsSSHConnectorID,
+		"operation": serverops.ActionCommandRun,
+		"command":   "cat ~/.config/app",
+		"exit_code": 1,
+		"stdout":    "passphrase=[redacted]\n",
+		"stderr":    "warning\n",
+		"truncated": false,
+	}
+	if !reflect.DeepEqual(response.Value, want) {
+		t.Fatalf("Value = %#v, want %#v", response.Value, want)
+	}
+	if _, err := client.InvokeCredentials(context.Background(), serverops.ActionCommandRun,
+		providers.CredentialInput{Values: testValues(), ResourceScope: testScope()},
+		map[string]any{fieldCommand: "ls", "path": "/"}); err == nil || fake.commandCalls != 1 {
+		t.Fatalf("an undeclared argument reached the server: %v, calls %d", err, fake.commandCalls)
 	}
 }

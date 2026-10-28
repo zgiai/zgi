@@ -58,6 +58,7 @@ func serverOpsSSHRiskPolicies() []TrustedOperationRiskPolicy {
 		{serverops.ActionServiceStart, "serverops_ssh_service_start"},
 		{serverops.ActionServiceStop, "serverops_ssh_service_stop"},
 		{serverops.ActionServiceReload, "serverops_ssh_service_reload"},
+		{serverops.ActionCommandRun, "serverops_ssh_command_run"},
 	}
 	result := make([]TrustedOperationRiskPolicy, 0, len(rows))
 	for _, row := range rows {

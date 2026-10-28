@@ -73,7 +73,7 @@ func TestBuiltinTemplatesCarryMemoryInstructionsAndNeeds(t *testing.T) {
 	}
 	ops := byID["ops_specialist"]
 	if len(ops.Connectors) != 1 || ops.Connectors[0].ConnectorID != "serverops_ssh" || !ops.Connectors[0].Required ||
-		len(ops.Connectors[0].RequiredOperationIDs) != 3 || len(ops.Connectors[0].OptionalOperationIDs) != 4 {
+		len(ops.Connectors[0].RequiredOperationIDs) != 3 || len(ops.Connectors[0].OptionalOperationIDs) != 5 {
 		t.Fatalf("operations template connectors = %#v", ops.Connectors)
 	}
 	if len(ops.Skills) != 1 || ops.Skills[0].ID != "ops-runbook" || !ops.Skills[0].Required || ops.MemoryInstructions == "" {

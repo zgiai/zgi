@@ -58,8 +58,8 @@ func resolveBuiltinRisk(
 func TestServerOpsSSHOperationsAreHighRiskForEveryDigitalHumanUse(t *testing.T) {
 	definition := catalog.ServerOpsSSHDefinition()
 	policies := serverOpsSSHRiskPolicies()
-	if len(policies) != 7 || len(policies) != len(definition.Operations) {
-		t.Fatalf("SSH policy count = %d, want the 7 admitted operations", len(policies))
+	if len(policies) != 8 || len(policies) != len(definition.Operations) {
+		t.Fatalf("SSH policy count = %d, want the 8 admitted operations", len(policies))
 	}
 	toolByOperation := map[string]string{}
 	for _, operation := range definition.Operations {
@@ -94,6 +94,7 @@ func TestServerOpsSSHOperationsAreHighRiskForEveryDigitalHumanUse(t *testing.T) 
 		serverops.ActionServiceStart,
 		serverops.ActionServiceStop,
 		serverops.ActionServiceReload,
+		serverops.ActionCommandRun,
 	} {
 		if risk := resolveBuiltinRisk(t, resolver, catalog.ServerOpsSSHConnectorID, operation, validDigitalHumanTarget()); risk != RiskHigh {
 			t.Fatalf("SSH operation %s resolved %q, want %q", operation, risk, RiskHigh)
@@ -102,7 +103,7 @@ func TestServerOpsSSHOperationsAreHighRiskForEveryDigitalHumanUse(t *testing.T) 
 }
 
 // TestServerOpsSSHUnclassifiedOperationFailsClosed keeps the SSH surface
-// fail-closed: only the seven exact operation identities have a policy, so any
+// fail-closed: only the eight exact operation identities have a policy, so any
 // other operation under the SSH connector stays unclassified.
 func TestServerOpsSSHUnclassifiedOperationFailsClosed(t *testing.T) {
 	resolver := builtinRiskTestResolver(t)
@@ -111,7 +112,7 @@ func TestServerOpsSSHUnclassifiedOperationFailsClosed(t *testing.T) {
 		"server.read.arbitrary",
 		"server.service.enable",
 		"server.service.kill",
-		"server.command.run",
+		"server.command.exec",
 		"github.user.get",
 	} {
 		if risk := resolveBuiltinRisk(t, resolver, catalog.ServerOpsSSHConnectorID, operation, validDigitalHumanTarget()); risk != RiskUnclassified {
@@ -129,8 +130,8 @@ func TestBuiltinRiskPoliciesAddOnlyServerOpsSSHAndKeepExistingClassifications(t 
 	// still contribute exactly its twelve reviewed entries, including the two
 	// read-only GitHub MCP operations from the main branch.
 	wantExisting := 12 + len(feishuRiskPolicies()) + len(mailRiskPolicies()) + len(messagingRiskPolicies())
-	if len(policies) != wantExisting+7 {
-		t.Fatalf("builtin policy count = %d, want %d existing + 7 SSH", len(policies), wantExisting)
+	if len(policies) != wantExisting+8 {
+		t.Fatalf("builtin policy count = %d, want %d existing + 8 SSH", len(policies), wantExisting)
 	}
 	sshPolicies := 0
 	for _, policy := range policies {
@@ -138,8 +139,8 @@ func TestBuiltinRiskPoliciesAddOnlyServerOpsSSHAndKeepExistingClassifications(t 
 			sshPolicies++
 		}
 	}
-	if sshPolicies != 7 {
-		t.Fatalf("SSH policies in the builtin set = %d, want 7", sshPolicies)
+	if sshPolicies != 8 {
+		t.Fatalf("SSH policies in the builtin set = %d, want 8", sshPolicies)
 	}
 
 	resolver := builtinRiskTestResolver(t)

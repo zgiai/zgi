@@ -52,6 +52,7 @@ import {
   connectorSelectionInvalid,
   digitalHumanResourceKey,
   isPerUserConnectorSlot,
+  RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS,
   selectDigitalHumanConnection,
   updateDigitalHumanOperations,
   type DigitalHumanConnectorSelection,
@@ -96,6 +97,16 @@ export function DigitalHumanConnectorOperationDetails({
   const selected = connectorOperationIds(item);
   const available = candidate ? connectorOperationIds(candidate) : [];
   const operations = [...new Set([...selected, ...(onOperation ? available : [])])];
+  // A risky operation turns on only after the person reads and accepts its risk.
+  const [riskyOperationId, setRiskyOperationId] = useState<string | null>(null);
+  const riskyOperation = connector?.capabilities.find(value => value.id === riskyOperationId);
+  const changeOperation = (operationId: string, checked: boolean) => {
+    if (checked && RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS.has(operationId)) {
+      setRiskyOperationId(operationId);
+      return;
+    }
+    onOperation?.(operationId, checked);
+  };
   return (
     <details className="text-xs">
       <summary className="cursor-pointer py-1 font-medium">
@@ -121,7 +132,7 @@ export function DigitalHumanConnectorOperationDetails({
                     !candidate?.available ||
                     (!checked && !available.includes(operationId))
                   }
-                  onCheckedChange={value => onOperation(operationId, value === true)}
+                  onCheckedChange={value => changeOperation(operationId, value === true)}
                 />
               ) : null}
               <span className="min-w-0">
@@ -145,6 +156,22 @@ export function DigitalHumanConnectorOperationDetails({
           </p>
         ) : null}
       </div>
+      <ConfirmDialog
+        open={riskyOperationId !== null}
+        onOpenChange={open => {
+          if (!open) setRiskyOperationId(null);
+        }}
+        variant="danger"
+        title={t('bindings.connectors.riskyOperationTitle', {
+          name: riskyOperation?.name || riskyOperationId || '',
+        })}
+        description={t('bindings.connectors.riskyOperationDescription')}
+        confirmText={t('bindings.connectors.riskyOperationConfirm')}
+        onConfirm={() => {
+          if (riskyOperationId) onOperation?.(riskyOperationId, true);
+          setRiskyOperationId(null);
+        }}
+      />
     </details>
   );
 }

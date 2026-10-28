@@ -7,10 +7,11 @@
 // verb followed by a fresh state read), the strict parsers for their bounded
 // output protocols, and an immutable SSH transport with mandatory host-key
 // verification. It deliberately carries no registry identity, no credential
-// storage, no database, HTTP, or container wiring, and no arbitrary command
-// surface: no action accepts a command, argument, path, or shell fragment, and
-// the only privilege escalation is the fixed "sudo -n" prefix a connection may
-// select for the write actions. CommandLine renders the exact command line of
+// storage, and no database, HTTP, or container wiring. The fixed actions accept
+// no command, argument, path, or shell fragment, and their only privilege
+// escalation is the fixed "sudo -n" prefix a connection may select for the
+// write actions. The one exception is the command run action (ADR 0025): it
+// runs a caller-written command exactly as written, as the SSH user. CommandLine renders the exact command line of
 // any action, without side effects, for display to an approver.
 //
 // The capability does not depend on the skills, integrations, or connector

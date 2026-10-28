@@ -310,6 +310,15 @@ const CREATE_CONNECTOR_OPT_IN_OPERATION_IDS: ReadonlySet<string> = new Set([
   'server.service.start',
   'server.service.stop',
   'server.service.reload',
+  'server.command.run',
+]);
+
+/**
+ * Operations that only turn on after the person acknowledges their risk, such
+ * as running any shell command on a server.
+ */
+export const RISK_ACKNOWLEDGED_CONNECTOR_OPERATION_IDS: ReadonlySet<string> = new Set([
+  'server.command.run',
 ]);
 
 /**

@@ -313,6 +313,17 @@ func buildServerOpsSSHConfirmationPreview(request ExecutionRequest, connection c
 			serverOpsSSHPreviewField("Action", "动作", tool.ActionID),
 			serverOpsSSHPreviewField("Service", "服务", name),
 		)
+	case serverops.ActionCommandRun:
+		// The free-form command (ADR 0025) is shown whole in the Command field
+		// below; it runs as the SSH user, never with the connection privilege.
+		if !serverOpsSSHOnlyKeys(input, "command") {
+			preview.Complete = false
+			return preview
+		}
+		preview.Fields = append(preview.Fields,
+			serverOpsSSHPreviewField("Action", "动作", tool.ActionID),
+			serverOpsSSHPreviewField("Runs as", "执行身份", identity),
+		)
 	default:
 		preview.Complete = false
 		return preview

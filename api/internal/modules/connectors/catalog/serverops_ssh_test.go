@@ -93,6 +93,7 @@ func TestServerOpsSSHDefinitionIsAdmittedDigitalHumanReadOnlyContract(t *testing
 	wantActions := []string{
 		serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail,
 		serverops.ActionServiceRestart, serverops.ActionServiceStart, serverops.ActionServiceStop, serverops.ActionServiceReload,
+		serverops.ActionCommandRun,
 	}
 	if len(definition.Operations) != len(wantActions) {
 		t.Fatalf("operations = %d, want %d", len(definition.Operations), len(wantActions))
@@ -107,6 +108,19 @@ func TestServerOpsSSHDefinitionIsAdmittedDigitalHumanReadOnlyContract(t *testing
 			t.Fatalf("duplicate tool name %q", operation.ToolName)
 		}
 		seenTools[operation.ToolName] = true
+		if action == serverops.ActionCommandRun {
+			// The one reviewed free-form input (ADR 0025): exactly the bounded
+			// command, an invoke effect, and a description that states the risk.
+			properties, _ := operation.InputSchema["properties"].(map[string]any)
+			command, _ := properties["command"].(map[string]any)
+			if operation.Effect != OperationEffectInvoke || operation.RiskHint != OperationRiskHintHigh || operation.Idempotent ||
+				len(properties) != 1 || command["pattern"] != serverops.CommandPattern || command["maxLength"] != float64(8192) ||
+				!strings.Contains(operation.Description, "Enable it only") || !strings.Contains(operation.DescriptionI18n["zh-Hans"], "风险") {
+				t.Fatalf("command run operation = %+v", operation)
+			}
+			assertServerOpsSSHOperationIsNotLowRisk(t, operation)
+			continue
+		}
 		if serverops.IsServiceWriteAction(action) {
 			if operation.Effect != OperationEffectUpdate || operation.RiskHint != OperationRiskHintHigh || operation.Idempotent {
 				t.Fatalf("write operation %q is not update/high-risk/non-idempotent: %+v", operation.ID, operation)
@@ -609,7 +623,7 @@ func TestServerOpsSSHIsAdmittedLastAndExistingBuiltinsAreUnchanged(t *testing.T)
 		t.Fatalf("last built-in is not the admitted SSH contract: %+v", admitted)
 	}
 	// Admitting the catalog entry must not drift the frozen contract digest.
-	const wantServerOpsSSHDigest = "31a8781b0636ffe3d24180577f3c642fd39a8b533219fa6bd6166103f674bb72"
+	const wantServerOpsSSHDigest = "3c72d8fc0f340f998dc61dce4530b32e0e845623218b26df0a96e9e52380d8a4"
 	if digest, err := DefinitionContractDigest(admitted); err != nil || digest != wantServerOpsSSHDigest {
 		t.Fatalf("serverops_ssh contract digest = %q, %v; want %q", digest, err, wantServerOpsSSHDigest)
 	}
@@ -666,7 +680,7 @@ func TestServerOpsSSHStoredV4ContractRoundTripPinsDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !loaded.IsServerOpsSSHCredentials() || loaded.ContractVersion != 4 || len(loaded.CredentialFields) != 8 || len(loaded.Operations) != 7 {
+	if !loaded.IsServerOpsSSHCredentials() || loaded.ContractVersion != 4 || len(loaded.CredentialFields) != 8 || len(loaded.Operations) != 8 {
 		t.Fatalf("stored contract changed authentication family: %+v", loaded)
 	}
 	if err := CheckCompatibleUpdate(definition, loaded); err != nil {
@@ -703,8 +717,19 @@ func serverOpsSSHRelease100Fixture(t *testing.T) Definition {
 func TestServerOpsSSHReleaseUpdateIsAcceptedThroughTheOrdinaryCheck(t *testing.T) {
 	previous := serverOpsSSHRelease100Fixture(t)
 	current := ServerOpsSSHDefinition()
-	if current.PluginVersion != "1.1.0" {
-		t.Fatalf("current release = %q, want 1.1.0", current.PluginVersion)
+	if current.PluginVersion != "1.2.0" {
+		t.Fatalf("current release = %q, want 1.2.0", current.PluginVersion)
+	}
+	// 1.1.0 -> 1.2.0 only adds the command run operation (ADR 0025).
+	release110 := serverOpsSSHReleaseV110Definition()
+	if digest, err := DefinitionContractDigest(release110); err != nil || digest != serverOpsSSHReleaseV110ContractDigest {
+		t.Fatalf("accepted 1.1.0 fixture drifted: %s, %v", digest, err)
+	}
+	if err := Validate(release110); err != nil {
+		t.Fatalf("stored 1.1.0 contract no longer validates: %v", err)
+	}
+	if err := CheckCompatibleUpdate(release110, current); err != nil {
+		t.Fatalf("1.1.0 -> 1.2.0 update rejected: %v", err)
 	}
 	if err := Validate(previous); err != nil {
 		t.Fatalf("stored 1.0.0 contract no longer validates: %v", err)
@@ -715,7 +740,7 @@ func TestServerOpsSSHReleaseUpdateIsAcceptedThroughTheOrdinaryCheck(t *testing.T
 		t.Fatalf("reviewed authentication drifted: old=%s new=%s", oldAuth, newAuth)
 	}
 	if err := CheckCompatibleUpdate(previous, current); err != nil {
-		t.Fatalf("1.0.0 -> 1.1.0 update rejected: %v", err)
+		t.Fatalf("1.0.0 -> 1.2.0 update rejected: %v", err)
 	}
 	// Downgrades and same-version content changes stay incompatible.
 	if err := CheckCompatibleUpdate(current, previous); !errors.Is(err, ErrIncompatibleDefinitionUpdate) {

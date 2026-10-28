@@ -33,13 +33,13 @@ const SkillID = "server-operations"
 // configuration change, or arbitrary command capability.
 const SkillSummary = "After per-use user approval, inspection of a single Linux server over SSH " +
 	"(a system snapshot, systemd service status, and a bounded service journal tail) " +
-	"and restart, start, stop, or reload of one systemd service."
+	"restart, start, stop, or reload of one systemd service, and running a shell command as the SSH user."
 
 // ToolName is a stable tool name inside SkillID.
 type ToolName string
 
-// The Skill's complete tool set: three read-only tools and four service write
-// tools, and no other.
+// The Skill's complete tool set: three read-only tools, four service write
+// tools, and the command run tool, and no other.
 const (
 	// ToolSystemSnapshot reads host facts and maps to ActionSystemSnapshot.
 	ToolSystemSnapshot ToolName = "system_snapshot"
@@ -59,6 +59,9 @@ const (
 	// ToolServiceReload reloads one systemd unit and maps to
 	// ActionServiceReload.
 	ToolServiceReload ToolName = "service_reload"
+	// ToolCommandRun runs one caller-written shell command and maps to
+	// ActionCommandRun.
+	ToolCommandRun ToolName = "command_run"
 )
 
 // ApprovalPolicy is the approval an adapter must obtain before it may use a
@@ -222,6 +225,24 @@ func Skill() SkillDescriptor {
 				"Stop one systemd unit, then read its load, active, and sub state."),
 			serviceWriteTool(ToolServiceReload, ActionServiceReload,
 				"Reload one systemd unit's configuration, then read its load, active, and sub state."),
+			{
+				Name:     ToolCommandRun,
+				ActionID: ActionCommandRun,
+				Summary: "Run one shell command as the SSH user and return its exit code and " +
+					"bounded output. The command can read or change anything that user may.",
+				ReadOnly:         false,
+				RequiredApproval: ApprovalPerUseUserApproval,
+				Parameters: []ParameterDescriptor{
+					{
+						Name:        "command",
+						Kind:        ParameterKindString,
+						Required:    true,
+						Pattern:     CommandPattern,
+						Description: "The exact shell command to run, for example df -h.",
+					},
+				},
+				Returns: "CommandRun",
+			},
 		},
 	}
 }

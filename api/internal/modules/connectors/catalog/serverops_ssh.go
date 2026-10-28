@@ -37,9 +37,11 @@ import (
 //
 // Release history. 1.0.0 published the three read actions and seven credential
 // fields. 1.1.0 (ADR 0023) adds the four write actions and the optional,
-// non-secret privilege field. Both releases stay accepted contracts, so a
-// stored 1.0.0 definition keeps validating and is replaced through the ordinary
-// compatible-update check; see serverOpsSSHAcceptedContracts.
+// non-secret privilege field. 1.2.0 (ADR 0025) adds the command run action,
+// which runs a caller-written shell command as the SSH user. Every release
+// stays an accepted contract, so a stored older definition keeps validating
+// and is replaced through the ordinary compatible-update check; see
+// serverOpsSSHAcceptedContracts.
 
 // SSH Server Operations stable identities. The connector id is the exact
 // member-facing identity; the provider/driver/auth identities are the frozen
@@ -113,7 +115,14 @@ func (d Definition) IsServerOpsSSHCredentials() bool {
 }
 
 // serverOpsSSHPluginVersion is the current published SSH contract release.
-const serverOpsSSHPluginVersion = "1.1.0"
+const serverOpsSSHPluginVersion = "1.2.0"
+
+// serverOpsSSHDescriptionV110 is the member-facing description published with
+// 1.1.0, before the command run action.
+const (
+	serverOpsSSHDescriptionV110   = "After per-use approval, inspect one Linux server over SSH and restart, start, stop, or reload its systemd services."
+	serverOpsSSHDescriptionV110Zh = "逐次审批后，通过 SSH 检查单台 Linux 服务器，并重启、启动、停止或重载其 systemd 服务。"
+)
 
 // ServerOpsSSHDefinition returns the static SSH Server Operations contract.
 // Each call builds an independent value, and JSON round-tripping normalizes the
@@ -168,8 +177,8 @@ func ServerOpsSSHDefinition() Definition {
 		SourceDialect: SourceDialectAgentPluginsV1, SourceSchemaVersion: SourceSchemaVersion1,
 		ProviderID: ServerOpsSSHProviderID, DriverID: ServerOpsSSHDriverID, AuthMethodID: ServerOpsSSHAuthMethodID,
 		Name: "SSH Server Operations", NameI18n: LocalizedText{"en-US": "SSH Server Operations", "zh-Hans": "SSH 服务器运维"},
-		Description:     "After per-use approval, inspect one Linux server over SSH and restart, start, stop, or reload its systemd services.",
-		DescriptionI18n: LocalizedText{"en-US": "After per-use approval, inspect one Linux server over SSH and restart, start, stop, or reload its systemd services.", "zh-Hans": "逐次审批后，通过 SSH 检查单台 Linux 服务器，并重启、启动、停止或重载其 systemd 服务。"},
+		Description:     "After per-use approval, inspect one Linux server over SSH, restart, start, stop, or reload its systemd services, and run shell commands.",
+		DescriptionI18n: LocalizedText{"en-US": "After per-use approval, inspect one Linux server over SSH, restart, start, stop, or reload its systemd services, and run shell commands.", "zh-Hans": "逐次审批后，通过 SSH 检查单台 Linux 服务器，重启、启动、停止或重载其 systemd 服务，并执行 Shell 命令。"},
 		Icon:            "serverops-ssh", Classification: ClassificationConnector,
 		CapabilityTypes: []CapabilityType{CapabilityTypeAction},
 		SetupMethod:     SetupMethodSSHCredentials, Ownership: OwnershipPersonal,
@@ -274,6 +283,7 @@ func ServerOpsSSHDefinition() Definition {
 			objectSchema(map[string]any{"service_name": serviceNameInput()}, "service_name"),
 			serviceChangeOutput(serverops.ActionServiceReload),
 		),
+		commandRunOperation(operation),
 	}
 
 	// JSON Schema expects JSON number/array types, including for static
@@ -281,6 +291,44 @@ func ServerOpsSSHDefinition() Definition {
 	encoded, _ := json.Marshal(d)
 	_ = json.Unmarshal(encoded, &d)
 	return d
+}
+
+// commandRunOperation is the command run action (ADR 0025). The command is
+// free-form and runs as the SSH user, so its description states the risk the
+// person accepts by enabling it. It invokes the server, is never idempotent,
+// and is High risk like every other SSH operation.
+func commandRunOperation(base func(id, toolName, en, zh string, input, output map[string]any) Operation) Operation {
+	text := func(maxLength int) map[string]any {
+		return map[string]any{"type": "string", "maxLength": maxLength}
+	}
+	op := base(
+		serverops.ActionCommandRun, "serverops_ssh_command_run",
+		"Run a shell command", "执行 Shell 命令",
+		objectSchema(map[string]any{
+			"command": map[string]any{
+				"type": "string", "minLength": 1, "maxLength": 8192,
+				"pattern": serverops.CommandPattern,
+			},
+		}, "command"),
+		objectSchema(map[string]any{
+			"provider":  map[string]any{"const": ServerOpsSSHConnectorID},
+			"operation": map[string]any{"const": serverops.ActionCommandRun},
+			"command":   text(8192),
+			"exit_code": map[string]any{"type": "integer", "minimum": -1, "maximum": 255},
+			"stdout":    text(16000),
+			"stderr":    text(16000),
+			"truncated": map[string]any{"type": "boolean"},
+		}, "provider", "operation", "command", "exit_code", "stdout", "stderr", "truncated"),
+	)
+	op.Description = "Runs any shell command as the SSH user. It can read, change, or delete anything that account may, " +
+		"and the platform does not check what the command does. Each run needs your approval of the exact command. " +
+		"Enable it only for a server and account where you accept that risk."
+	op.DescriptionI18n = LocalizedText{
+		"en-US":   op.Description,
+		"zh-Hans": "以 SSH 账号身份执行任意 Shell 命令。它能读取、修改或删除该账号有权限的任何内容，平台不会检查命令做了什么。每次执行都需要你确认完整命令。只在你愿意承担这一风险的服务器和账号上开启。",
+	}
+	op.Effect, op.Idempotent = OperationEffectInvoke, false
+	return op
 }
 
 // serviceChangeOutput is the output schema of one service write action: the
@@ -299,12 +347,13 @@ func serviceChangeOutput(action string) map[string]any {
 	}, "provider", "operation", "service_name", "load_state", "active_state", "sub_state")
 }
 
-// The published 1.0.0 contract and the reviewed 1.0.0 -> 1.1.0 authentication
-// change are pinned by frozen digests. They were taken from the accepted
+// The published 1.0.0 and 1.1.0 contracts and the reviewed 1.0.0 -> 1.1.0
+// authentication change are pinned by frozen digests. They were taken from the accepted
 // definitions, not derived at run time, so a change to the reconstruction below
 // can never silently widen what a stored contract may be.
 const (
 	serverOpsSSHReleaseV100ContractDigest = "cf58703826e9ff787bc85410eb656ecd553e0a1eafcd518d5cfe89a0e0576627"
+	serverOpsSSHReleaseV110ContractDigest = "31a8781b0636ffe3d24180577f3c642fd39a8b533219fa6bd6166103f674bb72"
 	serverOpsSSHReleaseV100AuthDigest     = "ff4c3728d1efb628765e64769ba46a90115a3ccbf645e2575fe36fcce4870a44"
 	serverOpsSSHReleaseV110AuthDigest     = "f55fe95e4a857bab4ec485d3c44d9a5d5b39192250fca03799c5239b6838bfbf"
 )
@@ -313,7 +362,7 @@ const (
 // the current contract without the privilege field and the four write actions.
 // It is accepted only while it matches the frozen 1.0.0 digest.
 func serverOpsSSHReleaseV100Definition() Definition {
-	d := ServerOpsSSHDefinition()
+	d := serverOpsSSHReleaseV110Definition()
 	d.PluginVersion = "1.0.0"
 	d.Description = "After per-use approval, read-only inspection of one Linux server over SSH."
 	d.DescriptionI18n = LocalizedText{"en-US": d.Description, "zh-Hans": "逐次审批后，通过 SSH 对单台 Linux 服务器进行只读检查。"}
@@ -336,19 +385,44 @@ func serverOpsSSHReleaseV100Definition() Definition {
 	return d
 }
 
+// serverOpsSSHReleaseV110Definition reconstructs the published 1.1.0 contract:
+// the current contract without the command run action. It is accepted only
+// while it matches the frozen 1.1.0 digest.
+func serverOpsSSHReleaseV110Definition() Definition {
+	d := ServerOpsSSHDefinition()
+	d.PluginVersion = "1.1.0"
+	d.Description = serverOpsSSHDescriptionV110
+	d.DescriptionI18n = LocalizedText{"en-US": serverOpsSSHDescriptionV110, "zh-Hans": serverOpsSSHDescriptionV110Zh}
+	operations := make([]Operation, 0, len(d.Operations))
+	for _, operation := range d.Operations {
+		if operation.ID != serverops.ActionCommandRun {
+			operations = append(operations, operation)
+		}
+	}
+	d.Operations = operations
+	return d
+}
+
 // serverOpsSSHAcceptedContracts returns every accepted SSH contract, newest
 // first. The 1.0.0 reconstruction is included only while it still matches the
 // frozen digest; a drifted reconstruction is dropped, so the validator fails
 // closed for a stored 1.0.0 definition instead of accepting an unreviewed shape.
 func serverOpsSSHAcceptedContracts() []Definition {
 	accepted := []Definition{ServerOpsSSHDefinition()}
-	previous := serverOpsSSHReleaseV100Definition()
-	digest, err := digestJSON(struct {
-		Version  int `json:"version"`
-		Contract any `json:"contract"`
-	}{4, canonicalDefinitionContractV2(previous)})
-	if err == nil && digest == serverOpsSSHReleaseV100ContractDigest {
-		accepted = append(accepted, previous)
+	for _, release := range []struct {
+		definition Definition
+		digest     string
+	}{
+		{serverOpsSSHReleaseV110Definition(), serverOpsSSHReleaseV110ContractDigest},
+		{serverOpsSSHReleaseV100Definition(), serverOpsSSHReleaseV100ContractDigest},
+	} {
+		digest, err := digestJSON(struct {
+			Version  int `json:"version"`
+			Contract any `json:"contract"`
+		}{4, canonicalDefinitionContractV2(release.definition)})
+		if err == nil && digest == release.digest {
+			accepted = append(accepted, release.definition)
+		}
 	}
 	return accepted
 }

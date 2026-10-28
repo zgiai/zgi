@@ -141,7 +141,7 @@ var builtinTemplateSources = []builtinTemplateSource{
 		connectors: []TemplateConnector{{
 			ConnectorID:          "serverops_ssh",
 			RequiredOperationIDs: []string{"server.system.snapshot", "server.service.status", "server.journal.tail"},
-			OptionalOperationIDs: []string{"server.service.restart", "server.service.start", "server.service.stop", "server.service.reload"},
+			OptionalOperationIDs: []string{"server.service.restart", "server.service.start", "server.service.stop", "server.service.reload", "server.command.run"},
 			Required:             true,
 		}},
 		memoryInstructions: localized{

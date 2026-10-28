@@ -31,6 +31,7 @@ var skillAcceptedParameters = map[string]ParameterKind{
 	"service_name":  ParameterKindString,
 	"lines":         ParameterKindInteger,
 	"since_minutes": ParameterKindInteger,
+	"command":       ParameterKindString,
 }
 
 // skillContractSource locates and reads contract.go next to this test.
@@ -154,7 +155,7 @@ func skillAssertBoundedIntegerParameter(t *testing.T, parameter ParameterDescrip
 	}
 }
 
-func TestSkillContractHasExactlyThreeReadAndFourWriteTools(t *testing.T) {
+func TestSkillContractHasExactlyThreeReadFourWriteAndOneCommandTool(t *testing.T) {
 	skill := Skill()
 	if SkillID != "server-operations" || skill.ID != SkillID {
 		t.Fatalf("SkillID = %q, skill.ID = %q, want %q", SkillID, skill.ID, "server-operations")
@@ -162,8 +163,8 @@ func TestSkillContractHasExactlyThreeReadAndFourWriteTools(t *testing.T) {
 	if strings.TrimSpace(skill.Summary) == "" {
 		t.Fatal("the Skill summary must not be empty")
 	}
-	if len(skill.Tools) != 7 {
-		t.Fatalf("Skill exposes %d tools, want exactly 7", len(skill.Tools))
+	if len(skill.Tools) != 8 {
+		t.Fatalf("Skill exposes %d tools, want exactly 8", len(skill.Tools))
 	}
 
 	want := []struct {
@@ -179,6 +180,7 @@ func TestSkillContractHasExactlyThreeReadAndFourWriteTools(t *testing.T) {
 		{ToolServiceStart, ActionServiceStart, "ServiceChange", false},
 		{ToolServiceStop, ActionServiceStop, "ServiceChange", false},
 		{ToolServiceReload, ActionServiceReload, "ServiceChange", false},
+		{ToolCommandRun, ActionCommandRun, "CommandRun", false},
 	}
 	seen := make(map[ToolName]bool, len(want))
 	for index, expected := range want {
@@ -195,7 +197,7 @@ func TestSkillContractHasExactlyThreeReadAndFourWriteTools(t *testing.T) {
 		if tool.ReadOnly != expected.readOnly {
 			t.Errorf("tool %q read-only = %v, want %v", tool.Name, tool.ReadOnly, expected.readOnly)
 		}
-		if tool.ReadOnly == IsServiceWriteAction(tool.ActionID) {
+		if tool.ActionID != ActionCommandRun && tool.ReadOnly == IsServiceWriteAction(tool.ActionID) {
 			t.Errorf("tool %q read-only flag disagrees with its action %q", tool.Name, tool.ActionID)
 		}
 		if tool.RequiredApproval != ApprovalPerUseUserApproval {
@@ -339,9 +341,14 @@ func TestSkillContractParameterSurfaceIsClosed(t *testing.T) {
 		t.Fatalf("the manifest uses %d of the %d accepted parameters", len(used), len(skillAcceptedParameters))
 	}
 
-	// No parameter may name a secret, a target, or an execution surface.
+	// No parameter may name a secret, a target, or an execution surface; the
+	// command run tool's single command parameter is the one reviewed
+	// exception (ADR 0025).
 	for _, tool := range Skill().Tools {
 		for _, parameter := range tool.Parameters {
+			if tool.Name == ToolCommandRun && parameter.Name == "command" {
+				continue
+			}
 			lower := strings.ToLower(parameter.Name)
 			for _, forbidden := range []string{
 				"host", "username", "user_name", "port", "key", "passphrase", "password",

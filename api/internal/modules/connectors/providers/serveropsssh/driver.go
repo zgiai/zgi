@@ -43,6 +43,7 @@ const (
 	fieldPrivilege     = "privilege"
 
 	fieldServiceName  = "service_name"
+	fieldCommand      = "command"
 	fieldLines        = "lines"
 	fieldSinceMinutes = "since_minutes"
 )
@@ -61,6 +62,7 @@ type Service interface {
 	ServiceStatus(context.Context, serverops.Connection, string) (*serverops.ServiceStatus, error)
 	JournalTail(context.Context, serverops.Connection, string, serverops.JournalOptions) (*serverops.JournalTail, error)
 	ChangeService(context.Context, serverops.Connection, string, string) (*serverops.ServiceChange, error)
+	RunCommand(context.Context, serverops.Connection, string) (*serverops.CommandRun, error)
 }
 
 // HostKeyObservation is the secret-free result of one read-only host-key probe.
@@ -193,7 +195,7 @@ func (c *Client) ProbeHostKey(ctx context.Context, values map[string]string) (Ho
 	}, nil
 }
 
-// InvokeCredentials executes exactly one of the seven serverops actions. It
+// InvokeCredentials executes exactly one of the eight serverops actions. It
 // accepts a call only for a valid owner-scoped DigitalHuman ResourceScope and
 // one of the exact serverops action ids, rejects any extra or invalid argument
 // before a Connection is built or any SSH call is made, and delegates to the
@@ -265,6 +267,15 @@ func (c *Client) InvokeCredentials(ctx context.Context, operation string, input 
 			return providers.Response{}, responseFailure()
 		}
 		output, requestID = serviceChangeOutput(result), result.RequestID
+	case serverops.ActionCommandRun:
+		result, callErr := c.service.RunCommand(ctx, connection, providers.Text(values, fieldCommand))
+		if callErr != nil {
+			return providers.Response{}, capabilityFailure(callErr)
+		}
+		if result == nil {
+			return providers.Response{}, responseFailure()
+		}
+		output, requestID = commandRunOutput(result), result.RequestID
 	default:
 		return providers.Response{}, providers.Invalid()
 	}
@@ -283,10 +294,10 @@ func (c *Client) InvokeCredentials(ctx context.Context, operation string, input 
 	return providers.Response{Value: output, RequestID: providers.SafeRequestID(requestID, "")}, nil
 }
 
-// knownOperation reports whether operation is one of the seven exact actions.
+// knownOperation reports whether operation is one of the eight exact actions.
 func knownOperation(operation string) bool {
 	switch operation {
-	case serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail:
+	case serverops.ActionSystemSnapshot, serverops.ActionServiceStatus, serverops.ActionJournalTail, serverops.ActionCommandRun:
 		return true
 	default:
 		return serverops.IsServiceWriteAction(operation)
@@ -480,6 +491,20 @@ func serviceChangeOutput(result *serverops.ServiceChange) map[string]any {
 		"load_state":   result.LoadState,
 		"active_state": result.ActiveState,
 		"sub_state":    result.SubState,
+	}
+}
+
+// commandRunOutput maps one command run onto the frozen schema. Its output is
+// remote text and is redacted with the rest of the result.
+func commandRunOutput(result *serverops.CommandRun) map[string]any {
+	return map[string]any{
+		"provider":  catalog.ServerOpsSSHConnectorID,
+		"operation": serverops.ActionCommandRun,
+		"command":   result.Command,
+		"exit_code": result.ExitCode,
+		"stdout":    result.Stdout,
+		"stderr":    result.Stderr,
+		"truncated": result.Truncated,
 	}
 }
 
