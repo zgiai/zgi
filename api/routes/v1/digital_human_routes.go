@@ -65,6 +65,8 @@ type DigitalHumanRouteDeps struct {
 	Artifacts *artifacts.Service
 	// ArtifactOwners names artifact owners in the console.
 	ArtifactOwners *digitalhuman.ArtifactOwnerNames
+	// ServerWatches serves task server watches (ADR 0031).
+	ServerWatches digitalhuman.TaskServerWatchService
 }
 
 // DigitalHumanRuntimeDeps contains the shared bottom-layer runtime and durable
@@ -137,7 +139,7 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
 	// The runtime serves the files a task report carries when it can.
 	reportFiles, _ := deps.Runtime.(digitalhuman.TaskReportFileSource)
-	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges).WithReportFiles(reportFiles)
+	taskHandler := digitalhuman.NewTaskHandler(deps.Tasks, errorProjector).WithPendingChanges(deps.PendingTaskChanges).WithReportFiles(reportFiles).WithServerWatches(deps.ServerWatches)
 	taskHandler.RegisterRoutes(group)
 	taskHandler.RegisterReportRoutes(group)
 	if deps.Artifacts != nil {

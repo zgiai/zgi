@@ -72,6 +72,11 @@ func (r *digitalHumanAutomationRunner) RunDigitalHuman(ctx context.Context, req 
 	// The run is the task happening now, not a job to report on: its answer
 	// is what the requester receives.
 	query := fmt.Sprintf("It is time for the task %q. Do it now: %s%s%s", req.Name, req.Goal, criteria, rework)
+	if req.ServerEvent != "" {
+		// A server watch raised an alert (ADR 0031): the run investigates
+		// what went down, within the task's usual authorization.
+		query = fmt.Sprintf("A server watch raised an alert for the task %q:\n%s\nInvestigate it now and report what happened and what should be done: %s%s%s", req.Name, req.ServerEvent, req.Goal, criteria, rework)
+	}
 	eventContext := scheduledTaskEventContext(req, owner)
 	event := invocation.Event{ID: req.ActionRunID, Type: invocation.EventTypeSchedule, Origin: invocation.Origin{Kind: invocation.OriginSchedule}, Target: runtimeidentity.SubjectRef{Type: runtimeidentity.SubjectTypeDigitalHuman, ID: digitalHumanID, OrganizationID: organizationID, WorkspaceID: workspaceID}, Sender: invocation.PrincipalRef{Type: invocation.PrincipalSystem, ID: "digital-human-task-scheduler"}, OccurredAt: time.Now().UTC(), Context: eventContext, ReplyTo: req.ReplyTo}
 	if req.MaxTaskTokens > 0 && req.MaxTaskTokens <= 100000 {

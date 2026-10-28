@@ -12,6 +12,7 @@ import (
 	approvalruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/approval"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	"github.com/zgiai/zgi/api/internal/modules/automation/serverwatch"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	"github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
@@ -333,7 +334,16 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	if socialOperationsSetupErr != nil {
 		panic(fmt.Sprintf("initialize social operations setup: %v", socialOperationsSetupErr))
 	}
+	// A server watch starts its task when a watched service goes down (ADR 0031).
+	serverWatchProbe := serviceContainer.GetServerWatchProbe()
+	serverWatches := serverwatch.NewService(db, serverWatchProbe, serverWatchProbe, automationBundle.DigitalHumanTasks)
+	if automationDispatchEnabled() {
+		if err := serviceContainer.GetScheduler().RegisterTask(&serverwatch.SweepTask{}, serverwatch.NewSweepHandler(serverWatches)); err != nil {
+			panic("register server watch sweep: " + err.Error())
+		}
+	}
 	RegisterDigitalHumanRoutes(v1, DigitalHumanRouteDeps{
+		ServerWatches:    serverWatches,
 		SocialOperations: socialOperationsSetup,
 		WorkJournal:      serviceContainer.GetWorkJournalManagement(),
 		Service:          consoleDigitalHumanService, Runtime: digitalHumanRuntime.Runtime, Channels: digitalHumanRuntime.Channels,

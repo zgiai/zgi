@@ -57,6 +57,8 @@ import type {
   CreateDigitalHumanTaskRequest,
   UpdateDigitalHumanTaskRequest,
   DigitalHumanTask,
+  DigitalHumanServerWatch,
+  PutDigitalHumanServerWatchRequest,
   DigitalHumanTaskList,
   DigitalHumanTaskRequester,
   DigitalHumanTaskRequesterPage,
@@ -721,6 +723,19 @@ class DigitalHumanService extends BaseService {
 
   getTask(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanTask>> {
     return this.request('get', `/digital-humans/${id}/tasks/${taskId}`);
+  }
+
+  /** The task's server watch (ADR 0031), or null. */
+  getTaskServerWatch(id: string, taskId: string): Promise<ApiResponseData<DigitalHumanServerWatch | null>> {
+    return this.request('get', `/digital-humans/${id}/tasks/${taskId}/server-watch`);
+  }
+
+  putTaskServerWatch(
+    id: string,
+    taskId: string,
+    data: PutDigitalHumanServerWatchRequest
+  ): Promise<ApiResponseData<DigitalHumanServerWatch | null>> {
+    return this.request('put', `/digital-humans/${id}/tasks/${taskId}/server-watch`, data);
   }
 
   updateTask(

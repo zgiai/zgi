@@ -121,6 +121,7 @@
     "test:aichat-external-action-status": "node scripts/test-aichat-external-action-status.mjs",
     "test:connector-social-capabilities": "node scripts/test-connector-social-capabilities.mjs",
     "test:connector-background-authorization": "node scripts/test-connector-background-authorization.mjs",
+    "test:digital-human-server-watch": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-digital-human-server-watch.mjs",
     "test:ssh-key-generation": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-ssh-key-generation.mjs",
     "test:skill-availability": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-skill-availability.mjs",
     "test:digital-human-background-grants": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-digital-human-background-grants.mjs",

@@ -38,6 +38,7 @@ import {
   TaskReportDigest,
   TaskReportReview,
 } from '@/components/digital-human/digital-human-task-destinations';
+import { TaskServerWatch } from '@/components/digital-human/digital-human-task-server-watch';
 import { DigitalHumanTaskActivityItem, DigitalHumanTaskHistoryPager, DigitalHumanTaskRunSummary } from '@/components/digital-human/digital-human-task-history';
 import type {
   DigitalHumanTaskReportDigest,
@@ -945,6 +946,7 @@ function TaskDetailContent({
       <TaskReportDestinations task={selected} onChange={onChangeChannels} requesterView={title === 'my'} />
       <TaskReportDigest task={selected} onChange={onChangeDigest} />
       <TaskReportReview task={selected} onChange={selected.can_change === false ? undefined : onChangeReview} />
+      {title === 'shared' ? <TaskServerWatch task={selected} /> : null}
       <div className="flex flex-wrap gap-2">
         <Badge>{t(`tasks.status.${digitalHumanTaskDisplayStatus(selected)}`)}</Badge>
         {allowDirectMutations && selected.work_status === 'proposed' && allowProposalApproval ? (

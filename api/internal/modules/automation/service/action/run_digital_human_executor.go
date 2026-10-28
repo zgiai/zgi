@@ -40,6 +40,9 @@ type DigitalHumanRunRequest struct {
 	// Trigger says what started the task run: the scheduler, a person, or a
 	// retry. People see it as the run's source.
 	Trigger string
+	// ServerEvent describes the alert when a server watch started the run
+	// (ADR 0031).
+	ServerEvent string
 }
 
 type DigitalHumanRunResult struct{ RunID string }
@@ -96,6 +99,7 @@ func (e *RunDigitalHumanExecutor) ExecuteAction(ctx context.Context, req ActionE
 		TimeoutSeconds: req.Task.ExecutionTimeoutSeconds, ReplyTo: replyAddress(req.Task.DeliveryConfig),
 		ReworkFeedback: strings.TrimSpace(mapStringValue(req.TaskRun.RuntimeContext, "rework_feedback")),
 		Trigger:        string(req.TaskRun.TriggerSource),
+		ServerEvent:    serverEventSummary(req.TaskRun.RuntimeContext["server_event"]),
 	}
 	if stringValue(req.Task.SourceRef) == "social_operations" {
 		data, marshalErr := json.Marshal(req.Task.SourceSnapshot["social_operations"])
@@ -152,4 +156,35 @@ func mapStringValue(values map[string]any, key string) string {
 	}
 	value, _ := values[key].(string)
 	return strings.TrimSpace(value)
+}
+
+// serverEventSummary renders a server watch alert for the run's instruction.
+func serverEventSummary(raw any) string {
+	event, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	targets, _ := event["targets"].([]any)
+	lines := make([]string, 0, len(targets)+1)
+	for _, item := range targets {
+		target, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := target["name"].(string)
+		observed, _ := target["observed"].(string)
+		failures := fmt.Sprint(target["failures"])
+		if name == "@host" {
+			lines = append(lines, fmt.Sprintf("- the server could not be reached or logged in to (%s) in %s checks in a row", observed, failures))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- service %s is %s (%s checks in a row)", name, observed, failures))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if at, _ := event["detected_at"].(string); at != "" {
+		lines = append(lines, "Detected at "+at+".")
+	}
+	return strings.Join(lines, "\n")
 }

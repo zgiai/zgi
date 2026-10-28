@@ -18,6 +18,7 @@ type TaskHandler struct {
 	base    *Handler
 	pending TaskPendingChangeSource
 	files   TaskReportFileSource
+	watches TaskServerWatchService
 }
 
 func NewTaskHandler(service TaskHandlerService, projector *apptransport.Projector) *TaskHandler {
@@ -52,6 +53,7 @@ func (h *TaskHandler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/:task_id/actions/:action", h.applyAction)
 	group.GET("/:task_id/runs", h.runs)
 	group.GET("/:task_id/activities", h.activities)
+	h.registerServerWatchRoutes(group)
 	private := router.Group("/digital-humans/:id/my-tasks")
 	private.GET("", h.myList)
 	private.POST("", h.myCreate)

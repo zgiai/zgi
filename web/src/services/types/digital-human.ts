@@ -947,6 +947,38 @@ export interface DigitalHumanTaskSchedulePreview {
   next_run_at?: string;
 }
 
+/** One watched service, or the host under the key `@host` (ADR 0031). */
+export interface DigitalHumanServerWatchTarget {
+  healthy: boolean;
+  observed?: string;
+  failures: number;
+  alerted: boolean;
+  at: string;
+}
+
+/** A model-free service check that starts its task on an outage (ADR 0031). */
+export interface DigitalHumanServerWatch {
+  task_id: string;
+  connection_id: string;
+  services: string[];
+  interval_minutes: number;
+  failure_threshold: number;
+  enabled: boolean;
+  owned_by_viewer: boolean;
+  last_checked_at?: string;
+  last_outcome?: string;
+  last_triggered_at?: string;
+  state: Record<string, DigitalHumanServerWatchTarget>;
+}
+
+export interface PutDigitalHumanServerWatchRequest {
+  connection_id?: string;
+  services?: string[];
+  interval_minutes?: number;
+  failure_threshold?: number;
+  enabled: boolean;
+}
+
 export interface DigitalHumanTask {
   id: string;
   digital_human_id: string;

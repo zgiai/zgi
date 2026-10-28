@@ -247,6 +247,16 @@ grant is consulted, so an unattended specialist inspects and reports and leaves
 every change for a person to approve. Such a blocked change does not end the run: the specialist
 finishes its report, and the answer names the change that did not run.
 
+A DigitalHuman task can also carry a **server alert** (ADR 0031). The platform
+checks up to ten systemd services on one of the DigitalHuman's SSH connections
+every 1 to 60 minutes, without a model, through the fixed read-only service
+status action. When a service is not `active`, or the server cannot be reached
+or logged in to, for the chosen number of checks in a row, the watch starts the
+task once for that outage with the trigger `server_event`. The run's
+instruction names what went down; the run itself is an ordinary unattended task
+run under the rules above. Only the connection's owner points a watch at it,
+and anyone who may change the task can turn it off.
+
 Release `1.1.0` of the connector adds the write operations and the `privilege`
 field. Existing installations accept it through the ordinary compatible-update
 check at startup: the accepted `1.0.0` contract stays valid and pinned, its

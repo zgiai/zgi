@@ -14,7 +14,7 @@ export type AutomationBodyType = 'text/plain' | 'text/html';
 
 export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
-export type AutomationTriggerSource = 'scheduler' | 'manual_run' | 'retry';
+export type AutomationTriggerSource = 'scheduler' | 'manual_run' | 'retry' | 'server_event';
 
 export type AutomationWorkflowVersionStrategy = 'latest_published' | 'pinned';
 
