@@ -78,3 +78,26 @@ func TestConnectorConfirmationContinuationMessageNamesTheOutcome(t *testing.T) {
 		t.Fatalf("unbounded result: %d runes", len([]rune(got)))
 	}
 }
+
+func TestMarkDecidedConnectorToolResultsMarksEveryEarlierDecision(t *testing.T) {
+	earlier, current := uuid.NewString(), uuid.NewString()
+	request := &adapter.ChatRequest{Messages: []adapter.Message{
+		{Role: "tool", ToolCallID: "call_snapshot", Content: `[{"type":"json","data":{"confirmation":{"route_receipt":"` + earlier + `"}}}]`},
+		{Role: "tool", ToolCallID: "call_command", Content: `[{"type":"json","data":{"confirmation":{"route_receipt":"` + current + `"}}}]`},
+		{Role: "tool", ToolCallID: "call_other", Content: `{"status":"success"}`},
+	}}
+	metadata := map[string]interface{}{connectorConfirmationEventsMetadataKey: []interface{}{
+		map[string]interface{}{"event_type": streamEventConnectorConfirmationResolved, "route_receipt": earlier, "state": "completed"},
+		map[string]interface{}{"event_type": streamEventConnectorConfirmationResolved, "route_receipt": current, "state": "completed"},
+	}}
+	markDecidedConnectorToolResults(request, metadata, current)
+	replacePendingConnectorToolResult(request, current, `[{"type":"json","data":{"exit_code":0}}]`)
+
+	first, _ := request.Messages[0].Content.(string)
+	if strings.Contains(first, earlier) || !strings.Contains(first, `"state":"completed"`) || !strings.Contains(first, "continuation note") {
+		t.Fatalf("earlier decided call = %s", first)
+	}
+	if request.Messages[1].Content != `[{"type":"json","data":{"exit_code":0}}]` || request.Messages[2].Content != `{"status":"success"}` {
+		t.Fatalf("messages = %#v", request.Messages)
+	}
+}

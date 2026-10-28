@@ -176,6 +176,7 @@ func (s *service) RunConfiguredConnectorConfirmationContinuation(
 	prepared.ContinuationType = "connector_confirmation"
 
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
+	markDecidedConnectorToolResults(prepared.LLMRequest, prepared.Message.Metadata, claim.RouteReceipt)
 	replacePendingConnectorToolResult(prepared.LLMRequest, claim.RouteReceipt, claim.ToolResult)
 	prepared.resumeWith(continuationMessageForExecutionMode(connectorConfirmationContinuationMessage(message, claim), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(runCtx, persistCtx, prepared, nil, onEvent)
@@ -258,6 +259,49 @@ func replacePendingConnectorToolResult(request *adapter.ChatRequest, routeReceip
 		return true
 	}
 	return false
+}
+
+// markDecidedConnectorToolResults replaces the "awaiting confirmation" tool
+// result of every call already decided in this turn. The stored transcript
+// keeps the paused result, and a model trusts it over a later note, so an
+// earlier decided call would otherwise read as never run. Its outcome and
+// result are in the continuation note recorded after it. The current call is
+// skipped: its own result replaces its paused result.
+func markDecidedConnectorToolResults(request *adapter.ChatRequest, metadata map[string]interface{}, current string) {
+	if request == nil {
+		return
+	}
+	states := map[string]string{}
+	for _, event := range connectorConfirmationEventsFromAny(metadata[connectorConfirmationEventsMetadataKey]) {
+		if strings.TrimSpace(stringFromAny(event["event_type"])) != streamEventConnectorConfirmationResolved {
+			continue
+		}
+		if receipt := strings.TrimSpace(stringFromAny(event["route_receipt"])); receipt != "" && receipt != strings.TrimSpace(current) {
+			states[receipt] = strings.TrimSpace(stringFromAny(event["state"]))
+		}
+	}
+	if len(states) == 0 {
+		return
+	}
+	for index, message := range request.Messages {
+		content, ok := message.Content.(string)
+		if message.Role != "tool" || !ok {
+			continue
+		}
+		for receipt, state := range states {
+			if !strings.Contains(content, receipt) {
+				continue
+			}
+			marked, err := json.Marshal(map[string]string{
+				"state": state,
+				"note":  "This call was decided by the user. Its outcome and full result are in the continuation note recorded after it.",
+			})
+			if err == nil {
+				request.Messages[index].Content = string(marked)
+			}
+			break
+		}
+	}
 }
 
 func connectorConfirmationContinuationMessage(message *runtimemodel.Message, claim *ConnectorConfirmationContinuation) adapter.Message {
