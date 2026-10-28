@@ -39,4 +39,7 @@ func TestDeleteAgentHandlerMapsWrappedPermissionDenial(t *testing.T) {
 	if got := body["code"]; got != "403001" {
 		t.Fatalf("response code = %v, want 403001; body=%s", got, recorder.Body.String())
 	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("HTTP status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
 }

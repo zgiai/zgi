@@ -711,6 +711,7 @@ func (r *accessRepository) IsOrganizationMember(ctx context.Context, organizatio
 	var count int64
 	if err := r.db.WithContext(ctx).Table("members").
 		Where("organization_id = ? AND account_id = ?", organizationID, accountID).
+		Where("status <> ?", "inactive"). // disabled members lose access
 		Count(&count).Error; err != nil {
 		return false, fmt.Errorf("failed to check organization membership: %w", err)
 	}

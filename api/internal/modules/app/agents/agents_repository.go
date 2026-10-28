@@ -22,6 +22,11 @@ type AgentsFilter struct {
 	WebAppStatus string
 	TagIDs       []string
 	Internal     *bool
+	// VisibilityScopes, when non-nil, restricts rows to those the caller may
+	// read (see AgentVisibilityScope). An empty non-nil slice matches nothing.
+	VisibilityScopes []AgentVisibilityScope
+	// VisibilityAccountID is the caller; its own drafts stay visible.
+	VisibilityAccountID string
 }
 
 type runnableWebAppItem struct {
@@ -471,7 +476,61 @@ func (r *agentsRepository) applyFiltersMultipleTenants(query *gorm.DB, filter Ag
 	if filter.Internal != nil {
 		query = query.Where("internal = ?", *filter.Internal)
 	}
+	if filter.VisibilityScopes != nil {
+		query = applyAgentVisibilityScopes(query, filter.VisibilityScopes, filter.VisibilityAccountID)
+	}
 	return query
+}
+
+const (
+	agentPublishedVersionExistsSQL = `EXISTS (
+		SELECT 1
+		FROM agent_published_versions
+		WHERE agent_published_versions.agent_id = agents.id
+		  AND agent_published_versions.deleted_at IS NULL
+	)`
+	workflowPublishedVersionExistsSQL = `EXISTS (
+		SELECT 1
+		FROM workflows
+		WHERE workflows.agent_id = agents.id
+		  AND workflows.version != 'draft'
+	)`
+)
+
+// applyAgentVisibilityScopes keeps a row when it falls in a scope's workspaces
+// and is published, created by the caller, or in a workspace where the caller
+// may see drafts.
+func applyAgentVisibilityScopes(query *gorm.DB, scopes []AgentVisibilityScope, accountID string) *gorm.DB {
+	clauses := make([]string, 0, len(scopes))
+	args := make([]interface{}, 0, len(scopes)*4)
+	accountID = strings.TrimSpace(accountID)
+	for _, scope := range scopes {
+		if len(scope.WorkspaceIDs) == 0 {
+			continue
+		}
+		typeClause := "agents.agent_type NOT IN ?"
+		publishedClause := agentPublishedVersionExistsSQL
+		if scope.Workflow {
+			typeClause = "agents.agent_type IN ?"
+			publishedClause = workflowPublishedVersionExistsSQL
+		}
+		readable := []string{publishedClause}
+		clauseArgs := []interface{}{workflowAgentTypes(), scope.WorkspaceIDs}
+		if accountID != "" {
+			readable = append(readable, "agents.created_by = ?")
+			clauseArgs = append(clauseArgs, accountID)
+		}
+		if len(scope.DraftWorkspaceIDs) > 0 {
+			readable = append(readable, "agents.tenant_id IN ?")
+			clauseArgs = append(clauseArgs, scope.DraftWorkspaceIDs)
+		}
+		clauses = append(clauses, "("+typeClause+" AND agents.tenant_id IN ? AND ("+strings.Join(readable, " OR ")+"))")
+		args = append(args, clauseArgs...)
+	}
+	if len(clauses) == 0 {
+		return query.Where("1 = 0")
+	}
+	return query.Where("("+strings.Join(clauses, " OR ")+")", args...)
 }
 
 // CreateExtension creates a record in agent_extensions

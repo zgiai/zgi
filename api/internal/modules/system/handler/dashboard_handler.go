@@ -151,6 +151,9 @@ func (h *DashboardHandler) GetRecentWork(c *gin.Context) {
 		DatasetWorkspaceIDs:              scopes.DatasetWorkspaceIDs,
 		DataSourceWorkspaceIDs:           scopes.DataSourceWorkspaceIDs,
 		FileWorkspaceIDs:                 scopes.FileWorkspaceIDs,
+		AgentDraftWorkspaceIDs:           scopes.AgentDraftWorkspaceIDs,
+		WorkflowDraftWorkspaceIDs:        scopes.WorkflowDraftWorkspaceIDs,
+		WorkflowTestLibraryWorkspaceIDs:  scopes.WorkflowTestLibraryWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -198,6 +201,9 @@ func (h *DashboardHandler) getWorkspaceRecentWork(c *gin.Context, organizationID
 		DatasetWorkspaceIDs:              scopes.DatasetWorkspaceIDs,
 		DataSourceWorkspaceIDs:           scopes.DataSourceWorkspaceIDs,
 		FileWorkspaceIDs:                 scopes.FileWorkspaceIDs,
+		AgentDraftWorkspaceIDs:           scopes.AgentDraftWorkspaceIDs,
+		WorkflowDraftWorkspaceIDs:        scopes.WorkflowDraftWorkspaceIDs,
+		WorkflowTestLibraryWorkspaceIDs:  scopes.WorkflowTestLibraryWorkspaceIDs,
 	})
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
@@ -258,6 +264,18 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 	if err != nil {
 		return systemmodel.DashboardWorkspaceScopes{}, err
 	}
+	agentDraftWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, dashboardAgentDraftVisiblePermissionCodes()...)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+	workflowDraftWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, dashboardWorkflowDraftVisiblePermissionCodes()...)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
+	workflowTestLibraryWorkspaceIDs, err := h.listWorkspaceIDsByAnyPermission(ctx, organizationID, accountID, workspacemodel.WorkspacePermissionWorkflowView)
+	if err != nil {
+		return systemmodel.DashboardWorkspaceScopes{}, err
+	}
 
 	return systemmodel.DashboardWorkspaceScopes{
 		WorkspaceIDs:                     workspaceIDs,
@@ -268,6 +286,9 @@ func (h *DashboardHandler) buildDashboardWorkspaceScopes(ctx context.Context, or
 		DatasetWorkspaceIDs:              datasetWorkspaceIDs,
 		DataSourceWorkspaceIDs:           dataSourceWorkspaceIDs,
 		FileWorkspaceIDs:                 fileWorkspaceIDs,
+		AgentDraftWorkspaceIDs:           agentDraftWorkspaceIDs,
+		WorkflowDraftWorkspaceIDs:        workflowDraftWorkspaceIDs,
+		WorkflowTestLibraryWorkspaceIDs:  workflowTestLibraryWorkspaceIDs,
 	}, nil
 }
 
@@ -320,6 +341,21 @@ func (h *DashboardHandler) buildSingleWorkspaceRecentWorkScopes(ctx context.Cont
 		return scopes, err
 	} else if ok {
 		scopes.FileWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, dashboardAgentDraftVisiblePermissionCodes()...); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.AgentDraftWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, dashboardWorkflowDraftVisiblePermissionCodes()...); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.WorkflowDraftWorkspaceIDs = []string{workspaceID}
+	}
+	if ok, err := h.hasAnyWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionWorkflowView); err != nil {
+		return scopes, err
+	} else if ok {
+		scopes.WorkflowTestLibraryWorkspaceIDs = []string{workspaceID}
 	}
 
 	return scopes, nil
@@ -434,6 +470,28 @@ func dashboardWorkflowVisiblePermissionCodes() []workspacemodel.WorkspacePermiss
 		workspacemodel.WorkspacePermissionWorkflowUpdate,
 		workspacemodel.WorkspacePermissionWorkflowDelete,
 		workspacemodel.WorkspacePermissionWorkflowMove,
+		workspacemodel.WorkspacePermissionWorkflowRunDraft,
+		workspacemodel.WorkspacePermissionWorkflowPublish,
+		workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage,
+	}
+}
+
+// dashboardAgentDraftVisiblePermissionCodes mirrors the agent list rule: only
+// management codes reveal other members' unpublished agents.
+func dashboardAgentDraftVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
+	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionAgentCreate,
+		workspacemodel.WorkspacePermissionAgentUpdate,
+		workspacemodel.WorkspacePermissionAgentPublish,
+		workspacemodel.WorkspacePermissionAgentRuntimeAccessManage,
+	}
+}
+
+func dashboardWorkflowDraftVisiblePermissionCodes() []workspacemodel.WorkspacePermissionCode {
+	return []workspacemodel.WorkspacePermissionCode{
+		workspacemodel.WorkspacePermissionWorkflowCreate,
+		workspacemodel.WorkspacePermissionWorkflowImport,
+		workspacemodel.WorkspacePermissionWorkflowUpdate,
 		workspacemodel.WorkspacePermissionWorkflowRunDraft,
 		workspacemodel.WorkspacePermissionWorkflowPublish,
 		workspacemodel.WorkspacePermissionWorkflowRuntimeAccessManage,

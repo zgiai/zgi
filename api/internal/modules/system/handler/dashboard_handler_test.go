@@ -83,6 +83,10 @@ func TestDashboardRecentWorkOverviewDoesNotRequireCurrentWorkspace(t *testing.T)
 	require.NotContains(t, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs, "ws-knowledge-create")
 	require.NotContains(t, dashboardSvc.recentWorkReq.DatasetWorkspaceIDs, "ws-knowledge-document-create")
 	require.NotContains(t, dashboardSvc.recentWorkReq.DataSourceWorkspaceIDs, "ws-db-create")
+	require.Equal(t, []string{"ws-agent-create", "ws-agent"}, dashboardSvc.recentWorkReq.AgentDraftWorkspaceIDs)
+	require.NotContains(t, dashboardSvc.recentWorkReq.AgentDraftWorkspaceIDs, "ws-agent-logs")
+	require.Equal(t, []string{"ws-workflow-create", "ws-workflow-import"}, dashboardSvc.recentWorkReq.WorkflowDraftWorkspaceIDs)
+	require.NotContains(t, dashboardSvc.recentWorkReq.WorkflowDraftWorkspaceIDs, "ws-workflow")
 }
 
 func TestDashboardRecentWorkWorkspaceScopeUsesResourcePermissions(t *testing.T) {

@@ -7,6 +7,7 @@ import '@xyflow/react/dist/style.css';
 import { WorkflowHeader } from './ui';
 import { useCombinedWorkflowSave, WorkflowEditorProvider } from './hooks';
 import { useWorkflowStore } from './store';
+import { claimWorkflowEditor } from './store/helpers/editor-session';
 import { useWorkflowDraft } from '@/hooks';
 import useWorkflowValidation from './hooks/use-workflow-validation';
 import { toast } from 'sonner';
@@ -121,6 +122,9 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const { data: workflowData, isLoading, error, refetch } = useWorkflowDraft(agentId);
   const { handleCombinedSave, handlePublish, isSaving, isPublishing, isDirty } =
     useCombinedWorkflowSave(agentId);
+  // The workflow store is global: mark which workflow owns it so a save that
+  // finishes after leaving (or switching workflows) leaves the next editor alone.
+  useLayoutEffect(() => claimWorkflowEditor(agentId), [agentId]);
   const { isValid } = useWorkflowValidation();
   const systemFeatures = useAuthStore.use.systemFeatures();
   const syncRunnableSets = useWorkflowStore.use.syncRunnableSets();
@@ -536,6 +540,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
     shouldGuard: !isReadOnly,
     isValid,
     isSaving,
+    assetKind: agentType === AgentType.AGENT ? 'agent' : 'workflow',
     onSave: handleCombinedSave,
   });
 

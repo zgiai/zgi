@@ -214,7 +214,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		"limit":           limit,
 	})
 
-	visibleWorkspaceIDs, err := shared_visibility.ResolveVisibleWorkspaceIDs(
+	candidateWorkspaceIDs, err := shared_visibility.ResolveVisibleWorkspaceIDs(
 		ctx,
 		s.enterpriseService,
 		currentOrganization.OrganizationID,
@@ -227,6 +227,24 @@ func (s *agentsService) GetAgentsListWithPermissions(
 			accountID, currentOrganization.OrganizationID), err)
 		return nil, fmt.Errorf("failed to determine user permissions: %w", err)
 	}
+
+	// Visibility is per asset family: agent rows need agent codes and workflow
+	// rows need workflow codes in their workspace, and other members' drafts
+	// need a management code. The scopes go into the query so totals stay exact.
+	visibilityScopes, visibleWorkspaceIDs, err := s.resolveAgentListVisibilityScopes(
+		ctx,
+		currentOrganization.OrganizationID,
+		accountID,
+		candidateWorkspaceIDs,
+		assetKind,
+	)
+	if err != nil {
+		logger.Error(fmt.Sprintf("GetAgentsListWithPermissions: Failed to resolve visibility scopes for account_id=%s, org_id=%s",
+			accountID, currentOrganization.OrganizationID), err)
+		return nil, fmt.Errorf("failed to determine user permissions: %w", err)
+	}
+	filter.VisibilityScopes = visibilityScopes
+	filter.VisibilityAccountID = accountID
 
 	if len(visibleWorkspaceIDs) == 0 {
 		return &dto.AgentsListResponse{

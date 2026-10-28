@@ -726,6 +726,26 @@ const messages = {
       leave: 'Leave',
       discard: 'Discard changes',
       continueEditing: 'Keep editing',
+      savingDescription:
+        'This agent flow is still saving. If you leave now, this save may not take effect.',
+      leaveAnyway: 'Leave anyway',
+    },
+    leaveGuardWorkflow: {
+      title: 'Save changes?',
+      confirmTitle: 'Leave workflow editing?',
+      invalidTitle: 'You still have unfinished changes',
+      description: 'This workflow has unsaved changes. They may be lost if you leave now.',
+      confirmDescription:
+        'You are leaving the current workflow editor. Are you sure you want to leave?',
+      invalidDescription:
+        'This workflow has unsaved changes and some configuration issues. They may be lost if you leave now.',
+      savingDescription:
+        'This workflow is still saving. If you leave now, this save may not take effect.',
+      saveAndLeave: 'Save and leave',
+      leave: 'Leave',
+      leaveAnyway: 'Leave anyway',
+      discard: 'Discard changes',
+      continueEditing: 'Keep editing',
     },
     exportSuccess: 'Agent flow exported successfully',
     exportFailed: 'Failed to export agent flow',
@@ -2029,6 +2049,8 @@ const messages = {
   toasts: {
     createSuccess: 'Agent created successfully',
     createFailed: 'Failed to create agent',
+    workflowCreateSuccess: 'Workflow created successfully',
+    workflowCreateFailed: 'Failed to create workflow',
     updateSuccess: 'Agent updated successfully',
     updateFailed: 'Failed to update agent',
     deleteSuccess: 'Agent deleted successfully',

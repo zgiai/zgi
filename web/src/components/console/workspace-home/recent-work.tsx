@@ -65,7 +65,8 @@ export function WorkspaceRecentWork({
           item.type,
           item.resource_id,
           item.parent_id,
-          item.workspace_id
+          item.workspace_id,
+          item
         )
     );
 
@@ -127,7 +128,8 @@ export function WorkspaceRecentWork({
                 item.type,
                 item.resource_id,
                 item.parent_id,
-                item.workspace_id
+                item.workspace_id,
+                item
               );
               const content = (
                 <>
@@ -164,7 +166,7 @@ export function WorkspaceRecentWork({
                 <div
                   key={`${item.type}-${item.id}`}
                   aria-disabled="true"
-                  title={t('stats.consoleHome.noWorkspaceHint')}
+                  title={hasWorkspace ? undefined : t('stats.consoleHome.noWorkspaceHint')}
                   className="flex cursor-not-allowed items-start gap-3 rounded-lg border border-border/70 p-3 opacity-70"
                 >
                   {content}

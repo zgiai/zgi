@@ -218,6 +218,13 @@ func (f fakeOrganizationService) IsOrganizationMember(ctx context.Context, organ
 	return true, nil
 }
 
+func (f fakeOrganizationService) HasOrganizationMembership(ctx context.Context, organizationID, accountID string) (bool, error) {
+	if f.isOrganizationMemberFn != nil {
+		return f.isOrganizationMemberFn(ctx, organizationID, accountID)
+	}
+	return true, nil
+}
+
 func (f fakeOrganizationService) AddMember(ctx context.Context, req *shared_dto.AddOrganizationMemberRequest) error {
 	if f.addMemberFn != nil {
 		return f.addMemberFn(ctx, req)

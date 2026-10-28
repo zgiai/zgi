@@ -200,7 +200,7 @@ func (s *agentsService) ensureCanViewAgent(ctx context.Context, ag *Agent, accou
 			callerOrganizationID,
 			ag.TenantID.String(),
 			accountID,
-			agentAssetVisiblePermissionCodes()...,
+			agentVisiblePermissionCodesForType(ag.AgentsType)...,
 		)
 		if err != nil {
 			logger.Error(fmt.Sprintf("ensureCanViewAgent: failed to check workspace permission for agent %s, account %s", ag.ID.String(), accountID), err)
@@ -213,7 +213,7 @@ func (s *agentsService) ensureCanViewAgent(ctx context.Context, ag *Agent, accou
 			OrganizationID:  callerOrganizationID,
 			CreatedBy:       creatorID,
 			GroupID:         nil,
-			PermissionCodes: agentAssetVisiblePermissionCodes(),
+			PermissionCodes: agentVisiblePermissionCodesForType(ag.AgentsType),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("ensureCanViewAgent: failed to check legacy resource permission for agent %s, account %s", ag.ID.String(), accountID), err)
