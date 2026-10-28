@@ -110,6 +110,9 @@ var (
 	ErrAuthInvalid = errors.New("serverops: authentication failed")
 	// ErrProviderRejected classifies a non-zero remote exit status.
 	ErrProviderRejected = errors.New("serverops: provider rejected the request")
+	// ErrPermissionDenied classifies a service write the server refused for
+	// lack of privilege: sudo is not granted or systemd denies the SSH user.
+	ErrPermissionDenied = errors.New("serverops: permission denied on the server")
 	// ErrUpstream classifies any other transport or factory failure.
 	ErrUpstream = errors.New("serverops: provider is unavailable")
 )
@@ -162,6 +165,8 @@ func publicMessage(code error) string {
 		return "server operations request timed out"
 	case errors.Is(code, ErrAuthInvalid):
 		return "server operations authentication failed"
+	case errors.Is(code, ErrPermissionDenied):
+		return "server operations permission was denied"
 	case errors.Is(code, ErrProviderRejected):
 		return "server operations provider rejected the request"
 	default:

@@ -633,6 +633,7 @@ func TestInvokeCredentialsClassifiesCapabilityErrors(t *testing.T) {
 		{"connection invalid", serverops.ErrConnectionInvalid, core.ErrorCodeInvalidAppCredentials, false},
 		{"auth invalid", serverops.ErrAuthInvalid, core.ErrorCodeInvalidAppCredentials, false},
 		{"provider rejected", serverops.ErrProviderRejected, core.ErrorCodeProviderUnavailable, false},
+		{"permission denied", serverops.ErrPermissionDenied, core.ErrorCodePermissionMissing, false},
 		{"response invalid", serverops.ErrResponseInvalid, core.ErrorCodeProviderResponseUnrecognized, false},
 		{"timeout", serverops.ErrTimeout, core.ErrorCodeProviderUnavailable, true},
 		{"upstream", serverops.ErrUpstream, core.ErrorCodeProviderUnavailable, true},

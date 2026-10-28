@@ -141,7 +141,9 @@ With the sudo privilege, a write command becomes, for example,
 the action reads the unit again (unprivileged) and returns its `load_state`,
 `active_state`, and `sub_state`. A failed write command returns a provider
 error; its bounded error text is kept for operators and is never shown with
-credentials. No operation accepts a command, argument, path, or other free-form
+credentials. When sudo or systemd refuses the SSH user, the failure is
+`connector_provider_permission_missing`, and the person is told the account
+lacks the permission rather than that the server is unavailable. No operation accepts a command, argument, path, or other free-form
 input.
 
 Every invocation, read or write, is high risk. It shows a complete target and

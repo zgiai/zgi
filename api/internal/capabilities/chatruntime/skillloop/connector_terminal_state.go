@@ -13,7 +13,7 @@ import (
 // JSON, a tool name, or a completed model call cannot attest business success.
 func connectorTerminalStateDecision(evidence map[string]interface{}, answer string) *terminalStateGuardDecision {
 	states := map[string]string{}
-	details := map[string]string{}
+	details := map[string]connectortools.InvocationEvidence{}
 	for index, record := range terminalStateGuardInvocations(evidence) {
 		proof, native := connectortools.Evidence(record)
 		if !native {
@@ -31,10 +31,8 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 		}
 		states[key] = state
 		if state != "successful" && state != "pending" && proof.Title != "" {
-			details[key] = proof.Title
-			if proof.Summary != "" {
-				details[key] += "：" + proof.Summary
-			}
+			proof.Status = state
+			details[key] = proof
 		}
 	}
 	counts := map[string]int{}
@@ -62,20 +60,22 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 	}
 	hint := evidenceStringFromAny(evidence["latest_user_request"]) + evidenceStringFromAny(evidence["user_request"]) + answer
 	finalAnswer := connectorOutcomeAnswer(hint, counts)
-	if counts["rejected"] > 0 || counts["in_progress"] > 0 {
-		parts := []string{}
-		for _, record := range terminalStateGuardInvocations(evidence) {
-			proof, native := connectortools.Evidence(record)
-			if native {
-				if detail := details[proof.Key()]; detail != "" {
-					parts = append(parts, detail)
-					delete(details, proof.Key())
-				}
-			}
+	// Name every operation that did not succeed and why, in the order it ran,
+	// so the fixed answer still tells the person what to fix.
+	chinese := connectorAnswerIsChinese(hint)
+	parts := []string{}
+	for _, record := range terminalStateGuardInvocations(evidence) {
+		proof, native := connectortools.Evidence(record)
+		if !native {
+			continue
 		}
-		if len(parts) > 0 {
-			finalAnswer = strings.Join(parts, "\n") + "\n" + finalAnswer
+		if detail, exists := details[proof.Key()]; exists {
+			parts = append(parts, connectorOutcomeDetail(detail, chinese))
+			delete(details, proof.Key())
 		}
+	}
+	if len(parts) > 0 {
+		finalAnswer = strings.Join(parts, "\n") + "\n" + finalAnswer
 	}
 	return &terminalStateGuardDecision{Path: terminalStateGuardAccepted, Reason: "Connector outcomes do not prove every operation succeeded", FinalAnswer: finalAnswer}
 }
@@ -106,14 +106,38 @@ func connectorTerminalStep(trace skills.SkillTrace, callID string, runtimeState 
 	return &result
 }
 
-func connectorOutcomeAnswer(hint string, counts map[string]int) string {
-	chinese := false
+func connectorAnswerIsChinese(hint string) bool {
 	for _, r := range hint {
 		if unicode.Is(unicode.Han, r) {
-			chinese = true
-			break
+			return true
 		}
 	}
+	return false
+}
+
+// connectorOutcomeDetail is one line for an operation that did not succeed:
+// its title and the safe, localized reason of its error code, or the
+// presentation summary when there is no code.
+func connectorOutcomeDetail(proof connectortools.InvocationEvidence, chinese bool) string {
+	locale := "en-US"
+	if chinese {
+		locale = "zh-Hans"
+	}
+	reason := ""
+	if proof.ErrorCode != "" {
+		reason = connectortools.SafeTerminalSummary(proof.Status, proof.ErrorCode, locale)
+	}
+	if reason == "" {
+		reason = proof.Summary
+	}
+	if reason == "" {
+		return proof.Title
+	}
+	return proof.Title + "：" + reason
+}
+
+func connectorOutcomeAnswer(hint string, counts map[string]int) string {
+	chinese := connectorAnswerIsChinese(hint)
 	if counts["rejected"] > 0 && counts["unknown"] == 0 && counts["in_progress"] == 0 {
 		if chinese {
 			return "有操作在提交前被拒绝，本轮已停止后续操作。"

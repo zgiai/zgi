@@ -441,3 +441,25 @@ func TestCommandLineRejectsInvalidInput(t *testing.T) {
 		}
 	}
 }
+
+func TestChangeServicePermissionRefusalIsItsOwnClass(t *testing.T) {
+	for _, stderr := range []string{
+		"sudo: a password is required",
+		"Sorry, user ops is not allowed to execute '/usr/bin/systemctl restart -- ssh.service' as root on ops-test.",
+		"ops is not in the sudoers file.",
+		"Failed to restart nginx.service: Interactive authentication required.",
+		"Failed to restart nginx.service: Access denied",
+	} {
+		factory := &serviceFakeFactory{
+			result: sshRunResult{Stderr: []byte(stderr)},
+			runErr: fmt.Errorf("serverops ssh: remote command exited with status 1: %w", &ssh.ExitError{}),
+		}
+		_, err := newFakeService(t, factory).ChangeService(context.Background(), writeActionSudoConnection(), ActionServiceRestart, "nginx.service")
+		if !errors.Is(err, ErrPermissionDenied) || errors.Is(err, ErrProviderRejected) {
+			t.Fatalf("stderr %q: error = %v, want only ErrPermissionDenied", stderr, err)
+		}
+		if message := err.Error(); message != "server operations permission was denied" {
+			t.Fatalf("public message = %q", message)
+		}
+	}
+}

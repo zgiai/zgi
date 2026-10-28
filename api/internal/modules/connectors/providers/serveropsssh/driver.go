@@ -404,6 +404,8 @@ func capabilityFailure(err error) error {
 		code = core.ErrorCodeInvalidAppCredentials
 	case errors.Is(capabilityErr, serverops.ErrAuthInvalid):
 		code = core.ErrorCodeInvalidAppCredentials
+	case errors.Is(capabilityErr, serverops.ErrPermissionDenied):
+		code = core.ErrorCodePermissionMissing
 	case errors.Is(capabilityErr, serverops.ErrProviderRejected):
 		code = core.ErrorCodeProviderUnavailable
 	case errors.Is(capabilityErr, serverops.ErrResponseInvalid):

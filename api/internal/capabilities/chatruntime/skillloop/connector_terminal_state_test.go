@@ -115,3 +115,18 @@ func TestConnectorPlanMissingPhaseAndForgedCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConnectorTerminalAnswerNamesTheFailedOperationAndReason(t *testing.T) {
+	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.service.restart", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "restart-1"}
+	failed := nativeOutcomeRecord(ref, "completed", "failed")
+	failed["result"].(map[string]interface{})["connector_presentation"] = connectortools.OperationPresentation{
+		SchemaVersion: 1, SourceKind: "native", InvocationID: ref.LogicalOperationID, ConnectorID: ref.ConnectorID, OperationID: ref.OperationID,
+		Title: "重启 systemd 服务", Summary: "The Connector operation did not complete.", ErrorCode: string(core.ErrorCodePermissionMissing),
+	}
+	decision := connectorTerminalStateDecision(map[string]any{"user_request": "重启 ssh.service", "skill_invocations": []map[string]any{failed}}, "已重启")
+	if decision == nil || decision.Path != terminalStateGuardAccepted ||
+		!strings.Contains(decision.FinalAnswer, "重启 systemd 服务：外部系统拒绝了这个账号执行该操作的权限") ||
+		!strings.Contains(decision.FinalAnswer, "失败 1 项") {
+		t.Fatalf("decision = %+v", decision)
+	}
+}

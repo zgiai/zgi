@@ -153,8 +153,34 @@ func serviceChangeRunError(requestID string, err error, stderr []byte) error {
 	if !errors.Is(classified, ErrProviderRejected) {
 		return classified
 	}
-	return newError(ErrProviderRejected, requestID,
+	code := ErrProviderRejected
+	if permissionRefused(stderr) {
+		code = ErrPermissionDenied
+	}
+	return newError(code, requestID,
 		fmt.Errorf("%w: %s: %w", errServiceChangeRejected, boundedRemoteErrorText(stderr), err))
+}
+
+// permissionRefusalMarkers are the messages sudo and systemd print when the SSH
+// user may not run the command: no sudo rule, a rule that needs a password, or
+// systemd refusing an unprivileged unit change.
+var permissionRefusalMarkers = []string{
+	"a password is required",
+	"is not allowed to execute",
+	"is not in the sudoers file",
+	"interactive authentication required",
+	"access denied",
+	"permission denied",
+}
+
+func permissionRefused(stderr []byte) bool {
+	text := strings.ToLower(string(stderr))
+	for _, marker := range permissionRefusalMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // boundedRemoteErrorText turns remote error output into one bounded line:

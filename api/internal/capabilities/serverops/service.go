@@ -235,7 +235,8 @@ func (s *Service) JournalTail(ctx context.Context, connection Connection, servic
 // any factory is invoked. The command is the fixed systemctl verb of the action,
 // behind "sudo -n" only when the connection's privilege is PrivilegeSudo, and is
 // followed by the same unprivileged show read the service status action uses.
-// A non-zero exit of the change classifies as ErrProviderRejected with the
+// A non-zero exit of the change classifies as ErrProviderRejected, or as
+// ErrPermissionDenied when sudo or systemd refused the SSH user, with the
 // bounded remote error text in the operator-only cause.
 func (s *Service) ChangeService(ctx context.Context, connection Connection, action, serviceName string) (*ServiceChange, error) {
 	if !connection.Privilege.Valid() {
