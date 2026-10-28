@@ -605,13 +605,21 @@ func dropDuplicatedFinalAnswer(messages []adapter.Message, answer string) []adap
 	return messages
 }
 
-// transcriptExchangeEntries keeps everything but the user's own question.
+// transcriptExchangeEntries keeps everything but the user's own question: the
+// user entries that open the turn. A continuation records how a pause was
+// resolved (an approval, an answer, a connector result) as a user-side entry
+// later in the turn; those stay, or a resumed turn forgets what it learned.
 func transcriptExchangeEntries(entries []*runtimemodel.TranscriptEntryPreview) []*runtimemodel.TranscriptEntryPreview {
 	out := make([]*runtimemodel.TranscriptEntryPreview, 0, len(entries))
+	opened := false
 	for _, entry := range entries {
-		if entry == nil || entry.Kind == runtimemodel.TranscriptEntryKindUser {
+		if entry == nil {
 			continue
 		}
+		if entry.Kind == runtimemodel.TranscriptEntryKindUser && !opened {
+			continue
+		}
+		opened = true
 		out = append(out, entry)
 	}
 	return out

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
@@ -111,5 +112,18 @@ func TestConnectorConfirmationNoteResultPutsTheOutcomeFirst(t *testing.T) {
 	}
 	if got := connectorConfirmationNoteResult("not json"); got != "not json" {
 		t.Fatalf("fallback = %q", got)
+	}
+}
+
+func TestTranscriptExchangeEntriesKeepsContinuationNotes(t *testing.T) {
+	entries := []*runtimemodel.TranscriptEntryPreview{
+		{Kind: runtimemodel.TranscriptEntryKindUser, Preview: map[string]interface{}{"role": "user", "content": "check the server"}},
+		{Kind: runtimemodel.TranscriptEntryKindAssistant, Preview: map[string]interface{}{"role": "assistant", "content": "reading"}},
+		{Kind: runtimemodel.TranscriptEntryKindTool, Preview: map[string]interface{}{"role": "tool", "content": "pending"}},
+		{Kind: runtimemodel.TranscriptEntryKindUser, Preview: map[string]interface{}{"role": "user", "content": "Result of that call: stdout: ok"}},
+	}
+	kept := transcriptExchangeEntries(entries)
+	if len(kept) != 3 || kept[0].Kind != runtimemodel.TranscriptEntryKindAssistant || kept[2].Preview["content"] != "Result of that call: stdout: ok" {
+		t.Fatalf("kept = %#v", kept)
 	}
 }
