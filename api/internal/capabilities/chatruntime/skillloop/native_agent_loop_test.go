@@ -491,20 +491,25 @@ func TestRunnerNativeToolNarrationDoesNotBlockBusinessTool(t *testing.T) {
 	assertNativeDiscardedCommentary(t, events, "intentionally overlong action update")
 }
 
-func TestRunnerNativeAgentLoopDoesNotRetryLengthTermination(t *testing.T) {
+// A response that stops at the output limit before any output is sent again
+// with a larger limit, at most twice, and then fails as truncated (ADR 0041).
+func TestRunnerNativeAgentLoopRetriesLengthTerminationTwice(t *testing.T) {
 	runtime := skills.NewRuntime(nil, nil)
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
 		Instructions: "Answer concisely.",
 	}}}
 	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{
-			Message:      adapter.Message{Role: "assistant", ReasoningContent: "unfinished reasoning"},
-			FinishReason: "length",
-		}},
-		Usage: &adapter.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
-	}}}
+	cutOff := func() *adapter.ChatResponse {
+		return &adapter.ChatResponse{
+			Choices: []adapter.Choice{{
+				Message:      adapter.Message{Role: "assistant", ReasoningContent: "unfinished reasoning"},
+				FinishReason: "length",
+			}},
+			Usage: &adapter.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+		}
+	}
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{cutOff(), cutOff(), cutOff()}}
 	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
 	prepared := NewPreparedChat("conv-length", "msg-length", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "Do a long task"}},
@@ -519,11 +524,81 @@ func TestRunnerNativeAgentLoopDoesNotRetryLengthTermination(t *testing.T) {
 	if !errors.Is(err, ErrAgentOutputTruncated) {
 		t.Fatalf("Run() error = %v, want ErrAgentOutputTruncated", err)
 	}
-	if fakeLLM.appChatCalls != 1 {
-		t.Fatalf("AppChat calls = %d, want exactly 1", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want 3", fakeLLM.appChatCalls)
 	}
-	if usage == nil || usage.TotalTokens != 30 {
-		t.Fatalf("usage = %#v, want actual single-call usage", usage)
+	if usage == nil || usage.TotalTokens != 90 {
+		t.Fatalf("usage = %#v, want the usage of all three calls", usage)
+	}
+	retry := fakeLLM.appChatRequests[1]
+	if retry.MaxTokens == nil || *retry.MaxTokens < 8192 || !strings.Contains(assistantMessageText(retry.Messages[len(retry.Messages)-1]), retryToolCallNotice) {
+		t.Fatalf("retry request = %#v, want a larger output limit and the notice", retry)
+	}
+}
+
+// An answer cut off as text is continued where it stopped, and the parts are
+// joined into one answer (ADR 0041).
+func TestRunnerNativeAgentLoopContinuesAnAnswerCutOffAsText(t *testing.T) {
+	runtime := skills.NewRuntime(nil, nil)
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
+		Instructions: "Answer concisely.",
+	}}}
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The report starts here and"}, FinishReason: "length"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: " ends here."}, FinishReason: "stop"}}},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-continue", "msg-continue", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Write a long report"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:        prepared,
+		Resolved:        resolved,
+		NativeAgentLoop: true,
+		NativeToolSet:   &toolSet,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The report starts here and ends here." {
+		t.Fatalf("answer = %q", answer)
+	}
+	continuation := fakeLLM.appChatRequests[1].Messages
+	if len(continuation) < 2 || assistantMessageText(continuation[len(continuation)-2]) != "The report starts here and" || !strings.Contains(assistantMessageText(continuation[len(continuation)-1]), continueAnswerNotice) {
+		t.Fatalf("continuation request = %#v", continuation)
+	}
+}
+
+// An answer that reaches a max_tokens set in the model parameters is not
+// continued past it (ADR 0041).
+func TestRunnerNativeAgentLoopKeepsAConfiguredAnswerLimit(t *testing.T) {
+	runtime := skills.NewRuntime(nil, nil)
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
+		Instructions: "Answer concisely.",
+	}}}
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "A short answer that"}, FinishReason: "length"}}},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	maxTokens := 64
+	prepared := NewPreparedChat("conv-limit", "msg-limit", "", "auto", &adapter.ChatRequest{
+		Messages:  []adapter.Message{{Role: "user", Content: "Write a long report"}},
+		MaxTokens: &maxTokens,
+	})
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:        prepared,
+		Resolved:        resolved,
+		NativeAgentLoop: true,
+		NativeToolSet:   &toolSet,
+	})
+	if !errors.Is(err, ErrAgentOutputTruncated) || fakeLLM.appChatCalls != 1 {
+		t.Fatalf("Run() error = %v with %d calls, want ErrAgentOutputTruncated after one call", err, fakeLLM.appChatCalls)
 	}
 }
 

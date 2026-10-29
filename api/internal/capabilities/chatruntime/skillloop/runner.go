@@ -794,7 +794,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningResult := planningResult{}
 		var err error
 		if req.NativeAgentLoop {
-			planningResult, err = r.runNativeAgentRound(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
+			planningResult, err = r.runNativeAgentRoundContinuing(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 			err = nativeAgentOutputError(err)
 		} else if req.TerminalOnly {
 			planningResult, err = r.runTerminalOnlyPlanningWithRetry(
