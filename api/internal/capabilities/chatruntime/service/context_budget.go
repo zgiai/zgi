@@ -287,8 +287,16 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	if minPrompt > maxMinPrompt {
 		minPrompt = maxMinPrompt
 	}
-	if minPrompt < baseEstimate.Tokens {
-		minPrompt = baseEstimate.Tokens
+	// The native agent loop's context manager makes an oversized request fit,
+	// down to the beginning and end of an oversized first message, so a large
+	// input is budgeted at the limit instead of refused (ADR 0038).
+	contextManaged := parts != nil && isNativeExecutionMode(parts.ExecutionMode)
+	baseTokens := baseEstimate.Tokens
+	if contextManaged {
+		baseTokens = min(baseTokens, maxMinPrompt)
+	}
+	if minPrompt < baseTokens {
+		minPrompt = baseTokens
 	}
 
 	maxAllowedOutput := safeLimit - minPrompt
@@ -329,7 +337,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	if spec.MaxInputTokens > 0 && promptBudget > spec.MaxInputTokens {
 		promptBudget = spec.MaxInputTokens
 	}
-	if baseEstimate.Tokens > promptBudget {
+	if baseTokens > promptBudget {
 		return nil, fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput)
 	}
 
@@ -361,8 +369,15 @@ func (s *service) conversationHistoryMessages(ctx context.Context, branch []*run
 	if parts != nil {
 		includeImages = parts.ModelSupportsVision
 	}
+	// A supplemental history, such as a channel turn's, keeps only its newest
+	// turns and leaves out what the channel context already carries. The
+	// transcript chain replays every earlier turn, so it is not used then.
+	supplemental := parts != nil && parts.HistoryPolicy != nil && parts.HistoryPolicy.Mode == runtimedto.ConversationHistoryModeSupplemental
+	if supplemental {
+		branch = supplementalHistoryBranch(branch, parts)
+	}
 	tip := conversationBranchTip(branch)
-	if tip != nil && s != nil && s.repos != nil && s.repos.TranscriptEntry != nil {
+	if !supplemental && tip != nil && s != nil && s.repos != nil && s.repos.TranscriptEntry != nil {
 		if tip.TranscriptHeadEntryID != nil && *tip.TranscriptHeadEntryID != uuid.Nil {
 			byID := make(map[uuid.UUID]*runtimemodel.Message, len(branch))
 			for _, row := range branch {

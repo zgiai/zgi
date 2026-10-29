@@ -28,6 +28,9 @@ type Manager struct {
 	// originals holds the complete content of projected tool results by
 	// content hash, read back with read_context_artifact (ADR 0037).
 	originals map[string]string
+	// lastRequestEstimate is the estimate of the last request sent, compared
+	// with the provider's prompt tokens to calibrate the estimator.
+	lastRequestEstimate int
 }
 
 func New(config Config, compactor Compactor, toolStore ToolResultStore, observer RequestObserver, checkpoint CheckpointFunc) (*Manager, error) {
@@ -47,7 +50,7 @@ func New(config Config, compactor Compactor, toolStore ToolResultStore, observer
 			AgentRunID:          strings.TrimSpace(normalized.AgentRunID),
 			NextRound:           1,
 			ContentReplacements: map[string]ContentReplacement{},
-			EstimatorScale:      1,
+			EstimatorScale:      clampEstimateScale(normalized.EstimateScale),
 			CreatedAt:           time.Now().UTC(),
 		},
 	}
@@ -100,6 +103,10 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	if err != nil {
 		return nil, Decision{}, err
 	}
+	// The budget is in real tokens; comparing it with estimates needs it in
+	// estimated tokens, through the scale the provider's usage showed
+	// (ADR 0038).
+	budget = scaledBudget(budget, clampEstimateScale(m.state.EstimatorScale))
 	m.state.SchemaVersion = 1
 	m.state.Provider = strings.TrimSpace(prepared.Provider)
 	m.state.Model = strings.TrimSpace(prepared.Model)
@@ -118,7 +125,7 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 		RequestType:   RequestTypeMain,
 		Action:        DecisionNone,
 		Budget:        budget,
-		EstimateScale: 1,
+		EstimateScale: clampEstimateScale(m.state.EstimatorScale),
 	}
 
 	// An oversized tool result reaches the model as its beginning and end
@@ -157,7 +164,7 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 			}
 		}
 	}
-	if estimate.Tokens >= budget.PromptBudget && m.compactor != nil {
+	if estimate.Tokens >= budget.PromptBudget && m.compactor != nil && m.state.Compaction.RunCompactions < maxCompactionsPerRun {
 		beforeSemantic := cloneRequest(prepared)
 		compacted, summary, compactDecision, compactErr := m.semanticCompact(ctx, prepared, decision, false)
 		if compactErr != nil {
@@ -173,8 +180,18 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 			m.state.Compaction.ConsecutiveFailures = 0
 			m.state.Compaction.LastFailure = ""
 			m.state.Compaction.LastCompactedAt = time.Now().UTC()
+			m.state.Compaction.RunCompactions++
 		}
 		estimate = m.estimator.EstimateChatRequest(prepared)
+	}
+	if estimate.Tokens >= budget.PromptBudget {
+		// Compaction failed, was capped or could not make the request fit:
+		// leave the oldest history out instead of failing the turn (ADR 0038).
+		if fitted, ok := m.fitByDroppingHistory(prepared, budget.PromptBudget); ok {
+			prepared = fitted
+			decision.Action = DecisionDropHistory
+			estimate = m.estimator.EstimateChatRequest(prepared)
+		}
 	}
 	m.syncTurnTranscriptMessages(prepared.Messages)
 
@@ -196,6 +213,7 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	}
 
 	m.state.Messages = cloneMessages(prepared.Messages)
+	m.lastRequestEstimate = estimate.Tokens
 	prepared.Messages = adapter.PlaceSystemMessages(prepared.Messages)
 	return prepared, decision, nil
 }
@@ -276,6 +294,9 @@ func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Mess
 	if usage != nil {
 		cloned := *usage
 		m.state.LastUsage = &cloned
+		if usage.PromptTokens > 0 && m.lastRequestEstimate > 0 {
+			m.state.EstimatorScale = clampEstimateScale(float64(usage.PromptTokens) / float64(m.lastRequestEstimate))
+		}
 	}
 	m.mu.Unlock()
 	// The response is durable before anything acts on it: a tool call that is
@@ -483,11 +504,11 @@ func (m *Manager) compressHistoricalToolResults(ctx context.Context, request *ad
 			stats.count++
 		}
 		if m.estimator.EstimateChatRequest(current).Tokens < promptBudget {
-			current.Messages = adapter.NormalizeSystemMessages(current.Messages)
 			return current, stats, nil
 		}
 	}
-	current.Messages = adapter.NormalizeSystemMessages(current.Messages)
+	// System messages keep their positions; only the request handed to the
+	// provider is placed for it (ADR 0032).
 	return current, stats, nil
 }
 

@@ -42,7 +42,8 @@ func (m *Manager) originalContent(hash string) (string, bool) {
 	}
 	for _, messages := range [][]adapter.Message{m.state.TurnTranscript, m.state.Messages} {
 		for _, message := range messages {
-			if !strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
+			role := strings.ToLower(strings.TrimSpace(message.Role))
+			if role != "tool" && role != "user" {
 				continue
 			}
 			content := contentString(message.Content)

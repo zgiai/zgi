@@ -551,7 +551,7 @@ func (s *service) persistAgentContextSummary(ctx context.Context, prepared *Prep
 	}
 	if boundary, err := uuid.Parse(strings.TrimSpace(boundaryID)); err == nil && boundary != uuid.Nil && s.repos.TranscriptEntry != nil {
 		head := cloneUUID(prepared.Message.TranscriptHeadEntryID)
-		newHead, appendErr := s.repos.TranscriptEntry.AppendSummaryForMessage(ctx, prepared.Message.ID, head, &boundary, contextmgr.GetCompactUserSummaryMessage(contextmgr.FormatCompactSummary(summary), true, "", true), "summary:"+boundary.String())
+		newHead, appendErr := s.repos.TranscriptEntry.AppendSummaryForMessage(ctx, prepared.Message.ID, head, &boundary, contextmgr.GetCompactUserSummaryMessage(contextmgr.FormatCompactSummary(summary), false, "", true), "summary:"+boundary.String())
 		if appendErr != nil {
 			logger.WarnContext(ctx, "failed to append agent context summary entry", "message_id", prepared.Message.ID.String(), "boundary_entry_id", boundary.String(), appendErr)
 			return

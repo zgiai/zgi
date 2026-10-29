@@ -655,7 +655,9 @@ func TestSemanticCompactionDefaultPreservesFourCompleteModelRounds(t *testing.T)
 	}
 }
 
-func TestHardLimitReturnsContextExhaustedAndKeepsInMemoryState(t *testing.T) {
+// A first message larger than the window still runs: its beginning and end
+// are sent, and the rest can be read back (ADR 0038).
+func TestOversizedFirstMessageIsProjectedInsteadOfFailing(t *testing.T) {
 	manager, err := New(Config{
 		AgentRunID:         "run-hard-limit",
 		ModelContextWindow: 32_000,
@@ -664,10 +666,39 @@ func TestHardLimitReturnsContextExhaustedAndKeepsInMemoryState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	original := "BEGIN " + strings.Repeat("uncompressible current request ", 20_000) + " END"
+	prepared, _, err := manager.PrepareBeforeModelCall(context.Background(), &adapter.ChatRequest{
+		Model:     "gpt-5",
+		MaxTokens: intPointerForTest(2_000),
+		Messages:  []adapter.Message{{Role: "user", Content: original}},
+	})
+	if err != nil {
+		t.Fatalf("error = %v, want the message projected", err)
+	}
+	sent := contentString(prepared.Messages[len(prepared.Messages)-1].Content)
+	if !strings.Contains(sent, "BEGIN") || !strings.HasSuffix(sent, "END") || len(sent) >= len(original) {
+		t.Fatalf("sent message should keep the beginning and end only: %.120s", sent)
+	}
+	ref := sent[strings.Index(sent, "agent-context://"):]
+	ref = ref[:strings.Index(ref, ".]")]
+	part, err := manager.ReadContextArtifactPart(context.Background(), ref, ContextArtifactPart{Offset: 0, Limit: 5})
+	if err != nil || part.Content != "BEGIN" {
+		t.Fatalf("read back = %q, %v", part.Content, err)
+	}
+}
+
+func TestSystemPromptLargerThanTheWindowStillFails(t *testing.T) {
+	manager, err := New(Config{AgentRunID: "run-system-too-large", ModelContextWindow: 32_000, MaxOutputTokens: 4_000}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, _, err = manager.PrepareBeforeModelCall(context.Background(), &adapter.ChatRequest{
 		Model:     "gpt-5",
 		MaxTokens: intPointerForTest(2_000),
-		Messages:  []adapter.Message{{Role: "user", Content: strings.Repeat("uncompressible current request ", 20_000)}},
+		Messages: []adapter.Message{
+			{Role: "system", Content: strings.Repeat("rules that cannot be dropped ", 20_000)},
+			{Role: "user", Content: "hi"},
+		},
 	})
 	if !errors.Is(err, ErrContextExhausted) {
 		t.Fatalf("error = %v, want context exhausted", err)
@@ -720,7 +751,9 @@ func TestContextCompactionAlwaysUsesTheSimpleProactivePath(t *testing.T) {
 	}
 }
 
-func TestContextCompactionFailureReturnsContextExhausted(t *testing.T) {
+// A failed compaction leaves the oldest history out instead of failing the
+// turn (ADR 0038).
+func TestContextCompactionFailureDropsTheOldestHistory(t *testing.T) {
 	compactor := &recordingCompactor{failures: []error{errors.New("summary provider unavailable")}}
 	manager := newTestManager(t, Config{
 		AgentRunID:         "run-final-recovery-failed",
@@ -738,12 +771,15 @@ func TestContextCompactionFailureReturnsContextExhausted(t *testing.T) {
 		},
 	}
 
-	_, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
-	if !errors.Is(err, ErrContextExhausted) || !strings.Contains(err.Error(), "context compaction failed") {
-		t.Fatalf("error = %v, want failed context compaction exhaustion", err)
+	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), request)
+	if err != nil {
+		t.Fatalf("error = %v, want the oldest history left out", err)
 	}
-	if decision.CompactionFailure != "summary provider unavailable" {
+	if decision.Action != DecisionDropHistory || decision.CompactionFailure != "summary provider unavailable" {
 		t.Fatalf("decision = %#v", decision)
+	}
+	if !runnerMessagesContain(prepared.Messages, droppedHistoryNotice) {
+		t.Fatalf("request does not say that history was left out: %#v", prepared.Messages)
 	}
 	if len(compactor.calls) != 1 || compactor.calls[0].Type != RequestTypeCompact {
 		t.Fatalf("compact calls = %#v, want one compact call", compactor.calls)
@@ -835,7 +871,7 @@ the recent tool rounds remain authoritative</summary>`}
 		t.Fatalf("compact request carried tools: %#v", compactRequest)
 	}
 	compactPrompt := contentString(compactRequest.Messages[len(compactRequest.Messages)-1].Content)
-	for _, expected := range []string{"CRITICAL: Respond with TEXT ONLY", "newer messages that build on this context will follow", "REMINDER: Do NOT call any tools"} {
+	for _, expected := range []string{"CRITICAL: Respond with TEXT ONLY", "newer messages that build on it will follow", "REMINDER: Do NOT call any tools"} {
 		if !strings.Contains(compactPrompt, expected) {
 			t.Fatalf("compact prompt missing %q", expected)
 		}
@@ -1064,4 +1100,13 @@ func messagesString(messages []adapter.Message) string {
 		}
 	}
 	return builder.String()
+}
+
+func runnerMessagesContain(messages []adapter.Message, text string) bool {
+	for _, message := range messages {
+		if strings.Contains(contentString(message.Content), text) {
+			return true
+		}
+	}
+	return false
 }
