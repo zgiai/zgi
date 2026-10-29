@@ -2419,7 +2419,37 @@ func (r *Runner) runNativeAgentRound(ctx context.Context, prepared *PreparedChat
 	return r.runModelToolRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "agent_tool_loop")
 }
 
+// runModelToolRound calls the model for one round and retries a call that
+// failed with a transient error and showed the user nothing.
 func (r *Runner) runModelToolRound(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, phase string) (planningResult, error) {
+	var usage *adapter.Usage
+	delays := r.modelRetryDelays()
+	for attempt := 0; ; attempt++ {
+		result, err := r.runModelToolRoundAttempt(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, phase)
+		usage = mergeUsage(usage, result.usage)
+		result.usage = usage
+		if err == nil || attempt >= len(delays) || !transientModelError(err) {
+			return result, err
+		}
+		logger.WarnContext(ctx, "chat runtime retrying model call after a transient error",
+			"message_id", prepared.Message.ID.String(),
+			"phase", phase,
+			"round", round,
+			"attempt", attempt+1,
+			"delay_ms", delays[attempt].Milliseconds(),
+			err,
+		)
+		timer := time.NewTimer(delays[attempt])
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return result, err
+		case <-timer.C:
+		}
+	}
+}
+
+func (r *Runner) runModelToolRoundAttempt(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, phase string) (planningResult, error) {
 	var err error
 	planningReq, err = r.prepareContextRequest(ctx, planningReq)
 	if err != nil {

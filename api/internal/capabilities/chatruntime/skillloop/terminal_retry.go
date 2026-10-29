@@ -136,6 +136,10 @@ func terminalFinalAnswerRetryAllowed(ctx context.Context, err error) bool {
 	if errors.As(err, &terminationErr) && terminationErr != nil && !terminationErr.Recoverable {
 		return false
 	}
+	// runModelToolRound has already retried a transient provider failure.
+	if transientModelError(err) {
+		return false
+	}
 	for _, nonRetryable := range []error{
 		adapter.ErrInvalidConfig,
 		adapter.ErrCapabilityUnsupported,

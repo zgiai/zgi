@@ -168,16 +168,19 @@ type Event struct {
 }
 
 type Runner struct {
-	LLMClient             llmclient.LLMClient
-	SkillRuntime          *skills.Runtime
-	AppContext            *llmclient.AppContext
-	OnEvent               func(Event) error
-	OnTrace               func([]skills.SkillTrace, skills.SkillTrace)
-	OnArtifact            func(map[string]interface{})
-	OnModelRequest        func(phase string, round int, request *adapter.ChatRequest, decision *contextmgr.Decision)
-	OnModelInvocation     func(ModelInvocationTrace)
-	FallbackDelay         time.Duration
-	ModelIdleTimeout      time.Duration
+	LLMClient         llmclient.LLMClient
+	SkillRuntime      *skills.Runtime
+	AppContext        *llmclient.AppContext
+	OnEvent           func(Event) error
+	OnTrace           func([]skills.SkillTrace, skills.SkillTrace)
+	OnArtifact        func(map[string]interface{})
+	OnModelRequest    func(phase string, round int, request *adapter.ChatRequest, decision *contextmgr.Decision)
+	OnModelInvocation func(ModelInvocationTrace)
+	FallbackDelay     time.Duration
+	ModelIdleTimeout  time.Duration
+	// ModelRetryDelays are the waits before each retry of a model call that
+	// failed with a transient error; nil uses defaultModelRetryDelays.
+	ModelRetryDelays      []time.Duration
 	ModelProgressSchedule ModelProgressSchedule
 	ContextManager        *contextmgr.Manager
 	diagnostics           modelInvocationDiagnostics
