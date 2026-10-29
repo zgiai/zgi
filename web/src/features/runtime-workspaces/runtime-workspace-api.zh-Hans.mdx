@@ -194,6 +194,7 @@ SSE 的 `id` 是可恢复事件游标。断线后通过 events 接口和最后�
 | POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | 继续审批或工作流问答 |
 | POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | 提交 Skill 补充输入并继续 |
 | POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue` | 增加任务 Token 预算或停止任务 |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/resume` | 继续被服务重启中断的 Agent 任务 |
 
 ### 创建会话
 
@@ -230,6 +231,10 @@ curl -X POST '{apibase}/apps/app_34ab5c8d91ef/conversations' \
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue" method="POST" title="继续任务 Token 预算" name="#Continue-Token-Budget" />
 
 从 `token_budget_requested` 事件读取 `request_id`。增加预算时发送 `{"action":"add","additional_tokens":2048}`；终止当前任务时发送 `{"action":"stop"}`。该接口返回同一条消息的 SSE，不使用 `answers` 字段。
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/resume" method="POST" title="继续被中断的任务" name="#Resume-Interrupted-Turn" />
+
+执行 Agent 任务的服务进程中途停止时，消息会以 `status=error`、`error=runtime_lease_expired` 结束。无需请求体调用此接口，即可基于已记录的模型回复和工具结果，以 SSE 继续同一条消息。每条消息只能继续一次，且必须仍是最新的一轮，并且没有可能已产生改动但未记录结果的工具调用；否则流中会返回 code 为 `interrupted_turn_not_resumable` 的 `error` 事件。数字人应用会自行恢复运行，不提供此接口。
 
 ---
 

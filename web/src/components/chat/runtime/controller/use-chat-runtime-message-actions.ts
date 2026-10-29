@@ -1313,6 +1313,7 @@ export function useChatRuntimeMessageActions({
     continueToolGovernanceDecision,
     continueClientAction,
     continueUserInput,
+    resumeInterruptedTurn,
   } = useWorkflowContinuationActions({
     stateRef,
     transportRef,
@@ -1396,5 +1397,6 @@ export function useChatRuntimeMessageActions({
     continueToolGovernanceDecision,
     continueClientAction,
     continueUserInput,
+    resumeInterruptedTurn,
   };
 }

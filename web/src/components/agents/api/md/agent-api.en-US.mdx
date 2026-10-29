@@ -375,6 +375,7 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 | Waiting for workflow answer | `question_answer_requested`, or `user_input_requested.source=agent_workflow_question_answer` | Render the question/choices and call workflow continuation |
 | Waiting for Skill input | Any other `user_input_requested` | Key answers by question id and call user-input continuation |
 | Waiting for token budget | Latest message has `status=waiting_budget` | Render the independent budget actions and call token-budget continuation with the matching `request_id` |
+| Interrupted by a server restart | Latest message has `status=error` and `error=runtime_lease_expired` | Offer to continue and call the resume endpoint for that message |
 | Completed or failed | `completed`, `stopped`, `error`, or `failed` | Render history only; do not open a recovery stream |
 
     Waiting conversations are normally no longer `running`, so checking only `active_message_id` is insufficient. Inspect the newest message status and recover that same `message_id`. If retained events and message metadata cannot reconstruct the form, actions, or request id, show an unrecoverable-state UI instead of inventing approval actions.
@@ -797,6 +798,41 @@ Normal Agent JSON success responses use `{ "code": "0", "message": "success", "d
 
     event: message_end
     data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/resume"
+  method="POST"
+  title="Resume a Task Stopped by a Server Restart"
+  name="#Resume-Agent-Interrupted-Turn"
+/>
+
+<Row>
+  <Col>
+    When the server process running a task stops, the message ends with `status=error` and
+    `error=runtime_lease_expired`. Call this endpoint to continue the same message from its
+    recorded model responses and tool results instead of starting over.
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>Required conversation id.</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>Required id of the interrupted message.</Property>
+    </Properties>
+
+    A message can be resumed once, only while it is the latest turn of its conversation, and only
+    when no unfinished tool call could have changed anything. Otherwise the stream sends an
+    `error` event with code `interrupted_turn_not_resumable`; regenerate the message instead.
+  </Col>
+  <Col sticky>
+    <CodeGroup title="Request">
+    ```bash
+    curl --no-buffer -X POST '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/resume' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
     ```
     </CodeGroup>
   </Col>

@@ -1315,6 +1315,17 @@ export function AIChatShell({
     ]
   );
 
+  const resumeInterruptedTurn = controller.resumeInterruptedTurn;
+  const handleResumeInterrupted = useCallback(
+    (message: AIChatMessage) => {
+      if (!resumeInterruptedTurn || isSending) return;
+      void resumeInterruptedTurn(message.conversation_id, message.id).catch(() => {
+        toast.error(t('consoleChat.errors.notResumable.title'));
+      });
+    },
+    [isSending, resumeInterruptedTurn, t]
+  );
+
   const handleRetryRuntimeError = useCallback(() => {
     if (!matchingRuntimeErrorMessage) return;
     void handleRegenerate(matchingRuntimeErrorMessage);
@@ -1876,6 +1887,7 @@ export function AIChatShell({
             }
             onScroll={handleMessagesScroll}
             onRegenerate={enableMessageReplay ? handleRegenerate : undefined}
+            onResumeInterrupted={resumeInterruptedTurn ? handleResumeInterrupted : undefined}
             onToolGovernanceDecision={
               enableToolGovernanceApprovals && !isRecoveringMessages
                 ? handleToolGovernanceDecision

@@ -211,6 +211,7 @@ func RegisterAPIKeyRoutes(r *gin.RouterGroup, db *gorm.DB, accountService interf
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/user-input/:request_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeUserInput))
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/tool-governance/:correlation_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeToolGovernance))
 		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/token-budget/:request_id/continue", withAgentAPIKeyContext(agentHandler.ContinueAPIKeyAgentRuntimeTokenBudget))
+		externalGroup.POST("/agents/conversations/:conversation_id/messages/:message_id/resume", withAgentAPIKeyContext(agentHandler.ResumeAPIKeyAgentRuntimeInterruptedTurn))
 	}
 
 	// Runtime Workspace exposes the same published Agent runtime through one

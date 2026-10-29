@@ -91,10 +91,15 @@ export function useWorkflowContinuationActions({
       userInputContinuation?: {
         requestId: string;
         payload: AIChatUserInputContinuationRequest;
-      }
+      },
+      interruptedTurnResume?: boolean
     ) => {
       const transport = transportRef.current;
-      if (userInputContinuation) {
+      if (interruptedTurnResume) {
+        if (!transport.resumeInterruptedTurn) {
+          throw new Error('Interrupted turn resume is unavailable.');
+        }
+      } else if (userInputContinuation) {
         if (!transport.continueUserInput) {
           throw new Error('User input continuation is unavailable.');
         }
@@ -117,6 +122,7 @@ export function useWorkflowContinuationActions({
         transport.continueToolGovernanceDecision?.bind(transport);
       const continueClientActionStream = transport.continueClientAction?.bind(transport);
       const continueUserInputStream = transport.continueUserInput?.bind(transport);
+      const resumeInterruptedTurnStream = transport.resumeInterruptedTurn?.bind(transport);
       const currentState = stateRef.current;
       const conversation =
         currentState.conversations.find(item => item.id === conversationId) ?? null;
@@ -180,6 +186,7 @@ export function useWorkflowContinuationActions({
       let recoveryRequested = false;
       let startError: Error | null = null;
       const shouldSyncContinuationOnClose =
+        Boolean(interruptedTurnResume) ||
         Boolean(toolGovernanceDecision) ||
         Boolean(clientActionResult) ||
         Boolean(userInputContinuation) ||
@@ -592,7 +599,16 @@ export function useWorkflowContinuationActions({
             }
           },
         };
-        if (userInputContinuation) {
+        if (interruptedTurnResume) {
+          if (!resumeInterruptedTurnStream) return;
+          await resumeInterruptedTurnStream(
+            conversationId,
+            messageId,
+            callbacks,
+            abortController.signal
+          );
+          if (startError) throw startError;
+        } else if (userInputContinuation) {
           if (!continueUserInputStream) return;
           await continueUserInputStream(
             conversationId,
@@ -803,11 +819,30 @@ export function useWorkflowContinuationActions({
     [continueWorkflowApproval]
   );
 
+  // Resumes a turn whose server process stopped in the middle of it. The
+  // server decides whether the turn can be resumed and reports it otherwise.
+  const resumeInterruptedTurn = useCallback(
+    async (conversationId: string, messageId: string) => {
+      await continueWorkflowApproval(
+        conversationId,
+        messageId,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true
+      );
+    },
+    [continueWorkflowApproval]
+  );
+
   return {
     continueWorkflowApproval,
     continueWorkflowQuestion,
     continueToolGovernanceDecision,
     continueClientAction,
     continueUserInput,
+    resumeInterruptedTurn,
   };
 }

@@ -47,6 +47,7 @@ interface AIChatMessageListProps {
   bottomSpacerHeight: number;
   onScroll: (event: UIEvent<HTMLDivElement>) => void;
   onRegenerate?: (message: AIChatMessage) => void;
+  onResumeInterrupted?: (message: AIChatMessage) => void;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
@@ -162,6 +163,7 @@ export function AIChatMessageList({
   bottomSpacerHeight,
   onScroll,
   onRegenerate,
+  onResumeInterrupted,
   onToolGovernanceDecision,
   onTaskProposalAction,
   onTaskMutation,
@@ -249,6 +251,7 @@ export function AIChatMessageList({
                     message
                   )}
                   onRegenerate={onRegenerate}
+                  onResumeInterrupted={onResumeInterrupted}
                   onToolGovernanceDecision={onToolGovernanceDecision}
                   onTaskProposalAction={onTaskProposalAction}
                   onTaskMutation={onTaskMutation}

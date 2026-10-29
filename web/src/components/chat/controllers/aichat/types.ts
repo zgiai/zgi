@@ -380,6 +380,8 @@ export interface AIChatController {
     requestId: string,
     payload: AIChatUserInputContinuationRequest
   ) => Promise<void>;
+  /** Present when the transport can resume a turn its server process left. */
+  resumeInterruptedTurn?: (conversationId: string, messageId: string) => Promise<void>;
   switchBranch: (messageId: string) => void;
   search?: (
     query: string,

@@ -217,6 +217,7 @@ export function useChatRuntimeController(options?: {
     continueToolGovernanceDecision,
     continueClientAction,
     continueUserInput,
+    resumeInterruptedTurn,
   } = useChatRuntimeMessageActions({
     stateRef,
     transportRef,
@@ -301,6 +302,9 @@ export function useChatRuntimeController(options?: {
     continueToolGovernanceDecision,
     continueClientAction,
     continueUserInput,
+    resumeInterruptedTurn: options?.transport?.resumeInterruptedTurn
+      ? resumeInterruptedTurn
+      : undefined,
     stop,
     switchBranch,
     search,

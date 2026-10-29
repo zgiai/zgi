@@ -368,6 +368,7 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 | 等待工作流回答 | `question_answer_requested`，或 `user_input_requested.source=agent_workflow_question_answer` | 渲染问题/选项并调用 workflow continuation |
 | 等待 Skill 输入 | 其他 `user_input_requested` | 按问题 id 收集答案并调用 user-input continuation |
 | 等待 Token 预算 | 最新消息为 `status=waiting_budget` | 展示独立预算操作，并使用对应 `request_id` 调用 token-budget continuation |
+| 被服务重启中断 | 最新消息为 `status=error` 且 `error=runtime_lease_expired` | 提供继续操作，并对该消息调用 resume 接口 |
 | 已完成或失败 | `completed`、`stopped`、`error`、`failed` | 只显示消息历史，不建立恢复流 |
 
     等待状态下会话通常已经不再是 `running`，因此不能只检查 `active_message_id`。还要检查最新消息的 `status`，并恢复同一个 `message_id`。事件过期后，非运行消息可能返回空 SSE；此时回退到消息 metadata。若 metadata 也缺少表单、动作或 request id，应显示“状态不可恢复”，不要猜测审批动作。
@@ -785,6 +786,39 @@ Agent 的普通 JSON 成功响应统一为 `{ "code": "0", "message": "success",
 
     event: message_end
     data: {"event":"message_end","data":{"message_id":"...","status":"completed"}}
+    ```
+    </CodeGroup>
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/resume"
+  method="POST"
+  title="继续被服务重启中断的任务"
+  name="#Resume-Agent-Interrupted-Turn"
+/>
+
+<Row>
+  <Col>
+    执行任务的服务进程中途停止时，消息会以 `status=error`、`error=runtime_lease_expired` 结束。
+    调用此接口可以基于已记录的模型回复和工具结果继续同一条消息，而不是从头开始。
+
+    <Properties>
+      <Property name='conversation_id' type='uuid' propKey='conversation_id'>必填，会话 ID。</Property>
+      <Property name='message_id' type='uuid' propKey='message_id'>必填，被中断的消息 ID。</Property>
+    </Properties>
+
+    每条消息只能继续一次，且必须仍是会话中最新的一轮，并且没有可能已产生改动但未记录结果的工具调用。
+    否则流中会返回 code 为 `interrupted_turn_not_resumable` 的 `error` 事件，此时请改为重新生成。
+  </Col>
+  <Col sticky>
+    <CodeGroup title="请求">
+    ```bash
+    curl --no-buffer -X POST '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/resume' \
+      --header 'Authorization: Bearer {api_key}' \
+      --header 'X-External-User-ID: external-user-1'
     ```
     </CodeGroup>
   </Col>
