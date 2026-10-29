@@ -153,6 +153,7 @@ type Repositories struct {
 	SkillPref       AccountSkillPreferenceRepository
 	CustomSkill     CustomSkillRepository
 	TranscriptEntry TranscriptEntryRepository
+	MessageRecord   MessageRecordRepository
 	DB              *gorm.DB
 }
 
@@ -191,6 +192,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		SkillPref:       NewAccountSkillPreferenceRepository(db),
 		CustomSkill:     NewCustomSkillRepository(db),
 		TranscriptEntry: NewTranscriptEntryRepository(db),
+		MessageRecord:   NewMessageRecordRepository(db),
 		DB:              db,
 	}
 }
