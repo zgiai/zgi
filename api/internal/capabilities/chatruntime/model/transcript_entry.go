@@ -21,6 +21,8 @@ const (
 //   - Preview is the effective form the model sees. It may be rewritten by
 //     budget pruning (large tool results become "ref + excerpt"), but it must
 //     always be recomputable from Payload plus the pruning policy.
+//   - A preview equal to the payload is stored as NULL and read back as the
+//     payload (ADR 0040).
 type TranscriptEntry struct {
 	ID                   uuid.UUID              `gorm:"type:uuid;primaryKey" json:"id"`
 	MessageID            uuid.UUID              `gorm:"type:uuid;not null;uniqueIndex:uq_chat_runtime_transcript_entries_message_event,priority:1,where:event_id <> ''" json:"message_id"`
@@ -30,7 +32,7 @@ type TranscriptEntry struct {
 	CoversThroughEntryID *uuid.UUID             `gorm:"type:uuid;index" json:"-"`
 	EventID              string                 `gorm:"type:varchar(255);not null;default:'';uniqueIndex:uq_chat_runtime_transcript_entries_message_event,priority:2,where:event_id <> ''" json:"-"`
 	Kind                 string                 `gorm:"type:varchar(32);not null" json:"kind"`
-	Preview              map[string]interface{} `gorm:"type:jsonb;serializer:json;not null" json:"preview"`
+	Preview              map[string]interface{} `gorm:"type:jsonb;serializer:json" json:"preview"`
 	Payload              map[string]interface{} `gorm:"type:jsonb;serializer:json;not null" json:"payload"`
 	ByteSize             int                    `gorm:"not null;default:0" json:"byte_size"`
 	CreatedAt            time.Time              `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`

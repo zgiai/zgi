@@ -433,8 +433,10 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if parts.OperationLedger != nil {
 		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
+	// The snapshot is stored once, as turn_start_context. Messages from before
+	// also carry it as turn_initial_context_snapshot, which is still read
+	// (ADR 0040).
 	if snapshot := turnInitialContextSnapshot(parts); snapshot != nil {
-		metadata[turnInitialContextSnapshotKey] = snapshot
 		metadata[turnStartContextKey] = snapshot
 	}
 	if parts.ModelTurnIntent != nil {

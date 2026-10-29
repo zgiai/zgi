@@ -22,7 +22,7 @@ Moving every key into its own column would need a migration for each new key. Mo
 2. **System prompts stored once.** `chat_runtime_system_prompts` keys each prompt by its SHA-256. A call record keeps only `user_system_prompt_hash`.
 3. **Model calls are the first kind.** A model call is written as a record. The message metadata keeps the call's place in `runtime_timeline` and `model_invocation_count`. If the record cannot be written, the call is kept in metadata as before.
 4. **Reading.** Only the runtime log paths read records back. They put them under `model_invocations` after any calls an older message still keeps in metadata, with system prompts restored. Paths that write the message back do not, so records never return to metadata.
-5. **Next steps.** Skill calls, the timeline and the audit ledgers (governance decisions, connector actions and confirmations, workflow runs) move to records the same way. The metadata that remains is updated per key, and duplicate data and indexes are removed.
+5. **Next steps.** The plan was to move skill calls, the timeline and the audit ledgers to records the same way, update the remaining metadata per key, and remove duplicate data and indexes. ADR 0040 measured again after this step and removes only the duplicates.
 
 ## Consequences
 

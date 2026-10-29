@@ -297,7 +297,10 @@ func TestOperationContextDoesNotEnterModelContentAndRuntimeContextRemainsTransie
 	if _, ok := message.Metadata["operation_ledger"].(map[string]interface{}); !ok {
 		t.Fatalf("operation_ledger metadata = %#v, want map", message.Metadata["operation_ledger"])
 	}
-	initialSnapshot := mapFromOperationContext(message.Metadata[turnInitialContextSnapshotKey])
+	if _, duplicated := message.Metadata[turnInitialContextSnapshotKey]; duplicated {
+		t.Fatalf("message metadata stores the turn start context twice: %#v", message.Metadata)
+	}
+	initialSnapshot := mapFromOperationContext(message.Metadata[turnStartContextKey])
 	if len(initialSnapshot) == 0 {
 		t.Fatalf("message metadata missing turn initial context snapshot: %#v", message.Metadata)
 	}
