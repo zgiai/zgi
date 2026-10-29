@@ -1440,6 +1440,7 @@ func (s *RuntimeService) Reconcile(ctx context.Context) error {
 		s.DispatchPending(ctx, defaultOutboxBatch),
 		s.recoverCompletedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
 		s.settleAnsweredWaitingRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
+		s.resumeInterruptedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
 		s.store.MarkStaleRunsUnknown(ctx, now.Add(-defaultStaleRunWindow), now),
 	)
 }

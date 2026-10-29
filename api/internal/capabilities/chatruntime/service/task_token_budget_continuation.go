@@ -207,12 +207,35 @@ func (s *service) prepareTaskTokenBudgetContinuationChat(
 	if conversation == nil || message == nil {
 		return nil, fmt.Errorf("%w: task token budget continuation is required", ErrInvalidInput)
 	}
+	prepared, err := s.prepareSameTurnContinuationChat(ctx, scope, caller, config, conversation, message, runtimedto.RegenerateMessageRequest{
+		Surface: req.Surface, RuntimeContext: req.RuntimeContext, OperationContext: req.OperationContext,
+	}, "task_token_budget", true)
+	if err != nil {
+		return nil, err
+	}
+	prepared.resumeWith(taskTokenBudgetContinuationMessage(message, req.AdditionalTokens))
+	return prepared, nil
+}
+
+// prepareSameTurnContinuationChat rebuilds a turn that stopped without a
+// pending question from its durable transcript and same-turn state, so the
+// loop can go on where it stopped. keepAnswer replays the answer stored so
+// far as an assistant message.
+func (s *service) prepareSameTurnContinuationChat(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	config RunConfig,
+	conversation *runtimemodel.Conversation,
+	message *runtimemodel.Message,
+	request runtimedto.RegenerateMessageRequest,
+	continuationType string,
+	keepAnswer bool,
+) (*PreparedChat, error) {
 	if err := ensureConversationWorkspaceScope(scope, conversation); err != nil {
 		return nil, err
 	}
-	parts, err := normalizeRegenerateRequest(applyRunConfigToRegenerateRequest(config, runtimedto.RegenerateMessageRequest{
-		Surface: req.Surface, RuntimeContext: req.RuntimeContext, OperationContext: req.OperationContext,
-	}), message)
+	parts, err := normalizeRegenerateRequest(applyRunConfigToRegenerateRequest(config, request), message)
 	if err != nil {
 		return nil, err
 	}
@@ -247,19 +270,17 @@ func (s *service) prepareTaskTokenBudgetContinuationChat(
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
 	s.appendPersistedAgentTranscript(ctx, llmRequest, message)
-	if answer := strings.TrimSpace(message.Answer); answer != "" {
+	if answer := strings.TrimSpace(message.Answer); keepAnswer && answer != "" {
 		llmRequest.Messages = append(llmRequest.Messages, adapter.Message{Role: "assistant", Content: answer})
 	}
 	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
 		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
 	}
-	prepared := &PreparedChat{
+	return &PreparedChat{
 		Conversation: conversation, Message: message, LLMRequest: llmRequest, Scope: scope, Caller: caller,
-		RunConfig: config, ParentID: message.ParentID, Continuation: true, ContinuationType: "task_token_budget",
+		RunConfig: config, ParentID: message.ParentID, Continuation: true, ContinuationType: continuationType,
 		parts: parts, contextBudget: contextResult,
-	}
-	prepared.resumeWith(taskTokenBudgetContinuationMessage(message, req.AdditionalTokens))
-	return prepared, nil
+	}, nil
 }
 
 func taskTokenBudgetContinuationMessage(message *runtimemodel.Message, additional int) adapter.Message {
