@@ -1071,81 +1071,17 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 		}
 		config.RuntimeToolFactory = factory
 	}
-	config.ConnectorRunID = run.ID.String()
-	location := s.runLocation(ctx, run)
-	config.UserTimezone = location.String()
-	addTurnContext(&config, currentTimeGuidance(s.now(), location))
-	applyRunEndUserBilling(&config, run)
-	if repository, ok := s.store.(*GormRepository); ok {
-		missing, perUserErr := preparePerUserConnectors(ctx, repository.db, repository.connectorCatalog, run)
-		if perUserErr != nil {
-			logger.WarnContext(ctx, "DigitalHuman per-user connector preparation failed", "run_id", run.ID.String(), perUserErr)
-		}
-		if note := perUserConnectorNote(missing); note != "" {
-			addTurnContext(&config, note)
-		}
-		if note, noteErr := connectorApprovalNote(ctx, repository.db, run, event); noteErr != nil {
-			logger.WarnContext(ctx, "DigitalHuman connector approval note failed", "run_id", run.ID.String(), noteErr)
-		} else if note != "" {
-			addTurnContext(&config, note)
-		}
-	}
-	config.ConnectorInteractive = connectorInteractive(event)
-	config.ConnectorRequesterID = connectorRequester(event)
-	applyScheduledConnectorPolicy(&config, run, event)
-	var channelContextPreparation *ChannelContextPreparation
-	if s.channelContext != nil {
-		channelContextPreparation, err = s.channelContext.Prepare(ctx, run, resolved, event, config.ModelProvider, config.Model)
-		if err != nil {
-			channelContextPreparation = &ChannelContextPreparation{
-				SystemPromptAddendum: strings.Join([]string{
-					"Channel conversation context is unavailable for this turn.",
-					"Do not guess missing source content.",
-					channelContextMissingSourceGuidance,
-				}, "\n"),
-				Diagnostics: ChannelContextDiagnostics{Status: string(channelruntime.ContextStatusUnavailable), ErrorCode: "channel_context_unavailable"},
-			}
-		}
-		if channelContextPreparation != nil {
-			if addendum := strings.TrimSpace(channelContextPreparation.SystemPromptAddendum); addendum != "" {
-				addTurnContext(&config, addendum)
-			}
-			config.RuntimeTools = append(config.RuntimeTools, channelContextPreparation.Tools...)
-		}
-	}
-	if previewRun(run) {
-		addTurnContext(&config, previewGuidance)
-	}
-	if s.memory != nil && !previewRun(run) {
-		memoryPreparation, memoryErr := s.memory.Prepare(ctx, run, resolved, event)
-		if memoryErr != nil {
-			_ = s.store.FailRun(ctx, run.ID, "digital_human.memory.prepare_failed", "The DigitalHuman could not prepare its long-term memory context.", s.now())
-			return memoryErr
-		}
-		if memoryPreparation != nil {
-			addSystemGuidance(&config, memoryPreparation.StableGuidance)
-			if addendum := strings.TrimSpace(memoryPreparation.SystemPromptAddendum); addendum != "" {
-				addTurnContext(&config, addendum)
-			}
-			config.RuntimeTools = append(config.RuntimeTools, memoryPreparation.Tools...)
-		}
-	}
-	var bindTaskConversation func(uuid.UUID)
-	if s.tasks != nil && !previewRun(run) {
-		taskPreparation, taskErr := s.tasks.Prepare(withRunTimezone(ctx, location), run, event)
-		if taskErr != nil {
+	capabilities, err := s.applyRunCapabilities(ctx, &config, run, resolved, event)
+	if err != nil {
+		var stageErr *runCapabilityError
+		if errors.As(err, &stageErr) && stageErr.stage == "tasks" {
 			_ = s.store.FailRun(ctx, run.ID, "digital_human.tasks.prepare_failed", "The DigitalHuman could not prepare its task tools.", s.now())
-			return taskErr
+		} else {
+			_ = s.store.FailRun(ctx, run.ID, "digital_human.memory.prepare_failed", "The DigitalHuman could not prepare its long-term memory context.", s.now())
 		}
-		if taskPreparation != nil {
-			addSystemGuidance(&config, taskPreparation.StableGuidance)
-			if addendum := strings.TrimSpace(taskPreparation.SystemPromptAddendum); addendum != "" {
-				addTurnContext(&config, addendum)
-			}
-			config.RuntimeTools = append(config.RuntimeTools, taskPreparation.Tools...)
-			bindTaskConversation = taskPreparation.BindConversation
-		}
+		return err
 	}
+	channelContextPreparation, bindTaskConversation := capabilities.channelContext, capabilities.bindTaskConversation
 	chatRequest := runtimedto.ChatRequest{
 		Query: run.Query, Model: config.Model, Provider: config.ModelProvider,
 		Surface:         runtimedto.RuntimeSurfaceExternalPageChat,

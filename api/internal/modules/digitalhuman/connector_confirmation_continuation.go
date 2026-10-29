@@ -71,13 +71,12 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 		return fail(err)
 	}
 	s.attachAttachmentReader(&config, run, resolved, event, nil)
-	config.ConnectorRunID = run.ID.String()
-	config.ConnectorInteractive = connectorInteractive(event)
-	config.ConnectorRequesterID = connectorRequester(event)
-	location := s.runLocation(ctx, run)
-	config.UserTimezone = location.String()
-	addTurnContext(&config, currentTimeGuidance(s.now(), location))
-	applyRunEndUserBilling(&config, run)
+	// The continuation prepares what the first run had, so it sends the same
+	// system prompt and tools and reuses their cached prefix (ADR 0032).
+	s.prepareBackgroundContinuationLinux(ctx, &config, run, resolved, event)
+	if _, err := s.applyRunCapabilities(ctx, &config, run, resolved, event); err != nil {
+		return fail(err)
+	}
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{
 		Type: runtimemodel.ConversationCallerDigitalHuman, ID: &callerID, RunID: &run.ID, Source: digitalHumanConversationSourceForRun(run),

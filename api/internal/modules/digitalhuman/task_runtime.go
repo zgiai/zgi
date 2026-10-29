@@ -1216,8 +1216,14 @@ func taskToolFailure(code string, recoverable bool) skillloop.RuntimeToolResult 
 	}
 }
 
+// taskApprovalAppliedCode answers a task change asked for in the
+// continuation of an approval that has already been applied.
+const taskApprovalAppliedCode = "digital_human.task.approval_applied"
+
 func taskToolNextAction(code string) string {
 	switch code {
+	case taskApprovalAppliedCode:
+		return "The approved change has already been applied. Do not change tasks in this continuation; report the approved result."
 	case "invalid_arguments":
 		return "Correct the task fields and retry once. Existing-task actions require task_id and expected_revision; use create for a new explicit request."
 	case "digital_human.task.not_found":
