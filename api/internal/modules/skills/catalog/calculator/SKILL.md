@@ -15,6 +15,7 @@ supported_callers:
   - digital_human
   - workflow
 max_calls_per_turn: 50
+side_effects: none
 timeout_seconds: 5
 display:
   icon: calculator

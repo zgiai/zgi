@@ -180,7 +180,10 @@ type Runner struct {
 	ModelIdleTimeout  time.Duration
 	// ModelRetryDelays are the waits before each retry of a model call that
 	// failed with a transient error; nil uses defaultModelRetryDelays.
-	ModelRetryDelays      []time.Duration
+	ModelRetryDelays []time.Duration
+	// prefetchedCalls are the read-only calls of the current round already
+	// started (prefetchReadOnlyCalls).
+	prefetchedCalls       map[string]*prefetchedCall
 	ModelProgressSchedule ModelProgressSchedule
 	ContextManager        *contextmgr.Manager
 	diagnostics           modelInvocationDiagnostics

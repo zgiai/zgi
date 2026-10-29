@@ -25,10 +25,14 @@ func TestInterruptedTurnResumesOnlyWithoutAnUnfinishedChange(t *testing.T) {
 	finished := map[string]interface{}{"kind": "tool_call", "status": "success", "skill_id": "file-generator", "tool_name": "generate_file"}
 	unfinishedRead := map[string]interface{}{"kind": "tool_call", "status": "running", "skill_id": "file-reader", "tool_name": "read_file"}
 	unfinishedWrite := map[string]interface{}{"kind": "tool_call", "status": "running", "skill_id": "file-generator", "tool_name": "generate_file"}
-	unfinishedUndeclared := map[string]interface{}{"kind": "tool_call", "status": "running", "skill_id": "calculator", "tool_name": "evaluate_expression"}
+	unfinishedUndeclared := map[string]interface{}{"kind": "tool_call", "status": "running", "skill_id": "member-report", "tool_name": "write_report"}
+	unfinishedPure := map[string]interface{}{"kind": "tool_call", "status": "running", "skill_id": "calculator", "tool_name": "evaluate_expression"}
 
 	if err := interruptedTurnResumable(interruptedTestMessage(finished)); err != nil {
 		t.Fatalf("stopped between calls: %v, want resumable", err)
+	}
+	if err := interruptedTurnResumable(interruptedTestMessage(finished, unfinishedPure)); err != nil {
+		t.Fatalf("stopped during a calculation: %v, want resumable (the calculator declares no side effects)", err)
 	}
 	if err := interruptedTurnResumable(interruptedTestMessage(finished, unfinishedRead)); err != nil {
 		t.Fatalf("stopped during a read: %v, want resumable", err)

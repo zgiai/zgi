@@ -16,6 +16,9 @@ func skillLoopToolLooksAssetMutation(skillID string, toolName string) bool {
 }
 
 func skillLoopToolLooksReadOnly(skillID string, toolName string) bool {
+	if strings.TrimSpace(skillID) != "" {
+		return skills.SystemSkillToolIsReadOnly(skillID, toolName)
+	}
 	manifest, ok := skillLoopToolGovernanceManifest(skillID, toolName)
 	return ok && toolgovernance.NormalizeManifest(manifest).Effect == toolgovernance.EffectRead
 }

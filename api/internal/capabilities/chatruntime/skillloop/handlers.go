@@ -791,7 +791,7 @@ func (r *Runner) handleCallSkillTool(
 		})
 	}
 	ctx = connectordispatch.WithActionPlanPhase(ctx, planPhaseID)
-	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
+	invocation, err := r.callSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 		if err == nil {

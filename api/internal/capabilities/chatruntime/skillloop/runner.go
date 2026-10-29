@@ -1040,6 +1040,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		stopBusinessLoop := false
 		var stopBusinessLoopTrace skills.SkillTrace
 		roundDeferredSystemMessages := []adapter.Message{}
+		r.prefetchedCalls = nil
+		if req.NativeAgentLoop {
+			r.prefetchedCalls = r.prefetchReadOnlyCalls(ctx, req, resolved, nativeToolSet, loadedSkills, failedToolCallReasons, toolCalls)
+		}
 		for callIndex, call := range toolCalls {
 			stepCount++
 			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
