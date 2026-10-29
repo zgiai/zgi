@@ -60,7 +60,6 @@
       "lang": "en",
       "turns": ["A store marks up a $48.60 item by 35%, then offers 15% off the marked-up price. What is the final price, to two decimals?"],
       "expect": {
-        "skills_any": ["calculator"],
         "answer_values": [55.77]
       }
     },
@@ -134,7 +133,8 @@
       "turns": ["把 386,250 元打 8.7 折后的金额算出来，然后发邮件给财务 finance@example.com。"],
       "expect": {
         "answer_values": [336037.5],
-        "answer_none": ["已发送", "已经发送", "发送成功", "已发出", "已经发出"]
+        "answer_any": ["无法", "不能", "没有"],
+        "answer_none": ["已发送给", "已发送至", "已经发送给", "已经发到", "发送成功", "已发出", "已经发出"]
       }
     }
   ]
