@@ -11,8 +11,14 @@ import (
 )
 
 const (
-	maxExpressionLength      = 512
-	maxExpressionPowerAbsExp = 100
+	maxExpressionLength = 512
+	// An exponent up to 1200 covers monthly periods over a century, such as
+	// the 360 months of a mortgage.
+	maxExpressionPowerAbsExp = 1200
+	// Powers keep this many significant digits in each step, far more than
+	// the float64 result can show, so the digits of a fractional base do not
+	// grow with the exponent.
+	powerSignificantDigits = 40
 )
 
 // ExpressionTool evaluates a restricted arithmetic expression.
