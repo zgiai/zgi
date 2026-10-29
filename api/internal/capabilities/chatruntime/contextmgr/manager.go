@@ -246,11 +246,14 @@ func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Mess
 		return nil
 	}
 	m.mu.Lock()
-	message.ReasoningContent = ""
+	// The active request keeps reasoning for the rest of the turn; the
+	// durable transcript never stores it.
 	message = cloneMessage(message)
 	m.state.Messages = append(m.state.Messages, message)
 	if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
-		m.state.TurnTranscript = append(m.state.TurnTranscript, cloneMessage(message))
+		transcript := cloneMessage(message)
+		transcript.ReasoningContent = ""
+		m.state.TurnTranscript = append(m.state.TurnTranscript, transcript)
 	}
 	if m.state.NextRound <= 0 {
 		m.state.NextRound = 1

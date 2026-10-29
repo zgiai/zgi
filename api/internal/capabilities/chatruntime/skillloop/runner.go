@@ -993,10 +993,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 		planningMessage.Role = "assistant"
 		planningMessage.ToolCalls = toolCalls
-		// Internal reasoning is never replayed. Ordinary assistant content is
-		// retained even on tool-call turns because it may contain model-visible
-		// plans, constraints, and judgments needed by the next API round.
-		planningMessage.ReasoningContent = ""
+		// Reasoning stays on tool-call rounds of this turn: thinking models
+		// such as DeepSeek expect it back until the turn ends, and adapters
+		// drop it for models that do not. Ordinary assistant content is kept
+		// because it may hold plans and judgments the next round needs.
 		messages = append(messages, planningMessage)
 
 		roundHadRecoverableFailure := false
@@ -2500,14 +2500,17 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 	request.Messages = sourceMessages
 	request.Tools = providerCompatibleFunctionTools(request.Tools)
 	r.contextDecision = nil
+	// Reasoning from this turn's tool-call rounds goes back only to models
+	// that expect it; other APIs may reject the field.
 	if r.ContextManager == nil {
-		request.Messages = adapter.PlaceSystemMessages(sourceMessages)
+		request.Messages = adapter.MessagesForModel(request.Model, adapter.PlaceSystemMessages(sourceMessages))
 		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)
 	}
 	prepared, decision, err := r.ContextManager.PrepareBeforeModelCall(ctx, request)
 	if err != nil {
 		return request, err
 	}
+	prepared.Messages = adapter.MessagesForModel(prepared.Model, prepared.Messages)
 	r.contextDecision = &decision
 	r.diagnostics.requestBudget = planningRequestBudgetDiagnostics{
 		safeContextLimit:     decision.Budget.HardLimit,
