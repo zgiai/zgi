@@ -774,6 +774,7 @@ func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	now := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
 	memory := &fakeMemoryRuntimeProvider{preparation: &MemoryRuntimePreparation{
+		StableGuidance:       "Memory rules.",
 		SystemPromptAddendum: "Authorized active long-term memory:\n- launch is September 8",
 		Tools:                []skillloop.RuntimeTool{{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: memoryEditToolName}}}},
 	}}
@@ -787,8 +788,10 @@ func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T
 		t.Fatal(err)
 	}
 	if memory.calls != 1 || memory.finalizeCalls != 1 || !strings.Contains(chat.config.TurnContext, "launch is September 8") || len(chat.config.RuntimeTools) != 1 ||
-		// The system prompt stays the persona alone, the same on every run (ADR 0032).
-		chat.config.SystemPrompt != "Researcher" || !strings.Contains(chat.config.TurnContext, "Current time:") {
+		// The system prompt holds the persona and the rules that are the same
+		// on every run; the memory itself and the time are turn context (ADR 0032).
+		chat.config.SystemPrompt != "Researcher\n\nMemory rules." || strings.Contains(chat.config.TurnContext, "Memory rules.") ||
+		!strings.Contains(chat.config.TurnContext, "Current time:") {
 		t.Fatalf("memory preparation calls=%d finalization calls=%d config=%#v", memory.calls, memory.finalizeCalls, chat.config)
 	}
 	if chat.config.AgentMemoryEnabled || chat.config.AgentMemoryAutoExtractionEnabled {

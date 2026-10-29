@@ -68,6 +68,11 @@ type DigitalHumanMemoryProjectionRepairer interface {
 
 // MemoryRuntimePreparation is the safe context/tool projection for one run.
 type MemoryRuntimePreparation struct {
+	// StableGuidance is the memory rules, which stay the same from run to run
+	// of a conversation; they go in the system prompt.
+	StableGuidance string
+	// SystemPromptAddendum is the memory itself, which changes from run to
+	// run; it is sent as turn context.
 	SystemPromptAddendum string
 	Tools                []skillloop.RuntimeTool
 	// fileEditors are the directories this run may change with memory_edit
@@ -148,11 +153,11 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	promotionAuthorized := RunSourceTrust(run) == SourceTrustAuthorizedOperator
 	toolEnabled := memoryToolAvailable(run, state.AutoExtractionEnabled)
 	preparation := &MemoryRuntimePreparation{
-		SystemPromptAddendum: renderDigitalHumanMemoryGuidance(toolEnabled, state.AutoExtractionEnabled),
+		StableGuidance: renderDigitalHumanMemoryGuidance(toolEnabled, state.AutoExtractionEnabled),
 	}
 	if toolEnabled {
 		if section := renderMemoryInstructions(p.service.runMemoryInstructions(ctx, run)); section != "" {
-			preparation.SystemPromptAddendum += "\n\n" + section
+			preparation.StableGuidance += "\n\n" + section
 		}
 		if editor := p.fileEditor(run, event, state, promotionAuthorized); editor != nil {
 			preparation.fileEditors = append(preparation.fileEditors, editor)
@@ -161,12 +166,12 @@ func (p *DefaultMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, re
 	// Memory is files (ADR 0014): recalled at run start, read with memory_view
 	// and memory_search, changed with memory_edit.
 	if section := p.prepareMemoryFiles(ctx, run, event); section != "" {
-		preparation.SystemPromptAddendum += "\n\n" + section
+		preparation.SystemPromptAddendum = section
 	}
 	preparation.Tools = append(preparation.Tools, p.memoryFileTools(run, event)...)
 	if search, ok := p.conversationSearchTool(run, event); ok {
 		preparation.Tools = append(preparation.Tools, search)
-		preparation.SystemPromptAddendum += "\n\nWhen the user refers to something discussed in an earlier conversation that your memory files do not cover, search for it with conversation_search before saying you do not know."
+		preparation.StableGuidance += "\n\nWhen the user refers to something discussed in an earlier conversation that your memory files do not cover, search for it with conversation_search before saying you do not know."
 	}
 	return preparation, nil
 }

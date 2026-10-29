@@ -95,10 +95,10 @@ func (p *ArtifactRuntimeProvider) Prepare(ctx context.Context, run *Run, event i
 		"Publishing or exporting the same title again from a task or this conversation adds a version. " +
 		"Archive artifacts that are superseded, drafts, or no longer needed with " + artifactArchiveToolName + ", and restore them the same way; archived artifacts stay readable. " +
 		"Something is kept only once " + artifactPublishToolName + " or an export succeeds: never tell the requester it was published, saved, or kept without that result."
+	preparation.StableGuidance = joinGuidance(preparation.StableGuidance, guidance)
 	if index := tools.recentIndex(ctx); index != "" {
-		guidance += "\n" + index
+		preparation.SystemPromptAddendum = joinGuidance(preparation.SystemPromptAddendum, index)
 	}
-	preparation.SystemPromptAddendum = strings.TrimSpace(preparation.SystemPromptAddendum + "\n\n" + guidance)
 	return preparation, nil
 }
 

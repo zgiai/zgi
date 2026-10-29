@@ -60,6 +60,21 @@ func runTimezone(ctx context.Context) string {
 	return name
 }
 
+// addSystemGuidance adds guidance that stays the same from run to run of a
+// conversation, such as the memory and task rules, to the system prompt, where
+// providers cache it with the rest of the prefix (ADR 0032).
+func addSystemGuidance(config *chatruntime.RunConfig, guidance string) {
+	guidance = strings.TrimSpace(guidance)
+	if config == nil || guidance == "" {
+		return
+	}
+	if strings.TrimSpace(config.SystemPrompt) == "" {
+		config.SystemPrompt = guidance
+		return
+	}
+	config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + guidance
+}
+
 // addTurnContext adds guidance that changes from run to run, such as the
 // time, memory or channel context. It is sent after the history instead of in
 // the system prompt, which then stays identical across runs and can be served

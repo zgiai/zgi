@@ -33,6 +33,11 @@ const (
 )
 
 type TaskRuntimePreparation struct {
+	// StableGuidance is the task and artifact rules, which stay the same from
+	// run to run of a conversation; they go in the system prompt.
+	StableGuidance string
+	// SystemPromptAddendum changes from run to run, such as the index of
+	// recent artifacts; it is sent as turn context.
 	SystemPromptAddendum string
 	Tools                []skillloop.RuntimeTool
 	// BindConversation tells the tools the conversation of a run that had
@@ -108,7 +113,7 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		boundary.writable = boundary.currentTaskID != uuid.Nil
 	}
 	if !boundary.writable {
-		return &TaskRuntimePreparation{SystemPromptAddendum: "Task management is not enabled for this invocation. Do not claim that a task was created, scheduled, or changed."}, nil
+		return &TaskRuntimePreparation{StableGuidance: "Task management is not enabled for this invocation. Do not claim that a task was created, scheduled, or changed."}, nil
 	}
 	access, err := taskAccessForRun(run, event, boundary)
 	if err != nil {
@@ -124,7 +129,7 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 	} else if ok && boundary.currentTaskID == uuid.Nil {
 		tools = append(tools, p.reworkTool(run, boundary, reporter))
 	}
-	preparation := &TaskRuntimePreparation{SystemPromptAddendum: taskRuntimeGuidance(boundary), Tools: tools}
+	preparation := &TaskRuntimePreparation{StableGuidance: taskRuntimeGuidance(boundary), Tools: tools}
 	if boundary.replyTo == nil {
 		preparation.BindConversation = func(id uuid.UUID) {
 			if conversation == "" && id != uuid.Nil {

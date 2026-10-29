@@ -1123,6 +1123,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			return memoryErr
 		}
 		if memoryPreparation != nil {
+			addSystemGuidance(&config, memoryPreparation.StableGuidance)
 			if addendum := strings.TrimSpace(memoryPreparation.SystemPromptAddendum); addendum != "" {
 				addTurnContext(&config, addendum)
 			}
@@ -1137,6 +1138,7 @@ func (s *RuntimeService) Execute(ctx context.Context, runID uuid.UUID) error {
 			return taskErr
 		}
 		if taskPreparation != nil {
+			addSystemGuidance(&config, taskPreparation.StableGuidance)
 			if addendum := strings.TrimSpace(taskPreparation.SystemPromptAddendum); addendum != "" {
 				addTurnContext(&config, addendum)
 			}

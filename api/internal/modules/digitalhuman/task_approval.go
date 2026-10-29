@@ -162,6 +162,7 @@ func (s *RuntimeService) taskApprovalContinuationConfigForRun(ctx context.Contex
 	if preparation == nil {
 		return config, nil
 	}
+	addSystemGuidance(&config, preparation.StableGuidance)
 	if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
 		addTurnContext(&config, addendum)
 	}

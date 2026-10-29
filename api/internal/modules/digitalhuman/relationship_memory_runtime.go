@@ -39,12 +39,8 @@ func (p *CompositeMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, 
 		if prepared == nil {
 			continue
 		}
-		if addendum := strings.TrimSpace(prepared.SystemPromptAddendum); addendum != "" {
-			if result.SystemPromptAddendum != "" {
-				result.SystemPromptAddendum += "\n\n"
-			}
-			result.SystemPromptAddendum += addendum
-		}
+		result.StableGuidance = joinGuidance(result.StableGuidance, prepared.StableGuidance)
+		result.SystemPromptAddendum = joinGuidance(result.SystemPromptAddendum, prepared.SystemPromptAddendum)
 		result.Tools = append(result.Tools, prepared.Tools...)
 		result.fileEditors = append(result.fileEditors, prepared.fileEditors...)
 		if prepared.archiveSearch != nil {
@@ -61,7 +57,7 @@ func (p *CompositeMemoryRuntimeProvider) Prepare(ctx context.Context, run *Run, 
 		result.Tools = withoutForgottenTurns(result.Tools, result.forgottenLines)
 	}
 	if len(result.fileEditors) > 0 {
-		result.SystemPromptAddendum += "\n\n" + memoryEditGuidance(result.fileEditors)
+		result.StableGuidance = joinGuidance(result.StableGuidance, memoryEditGuidance(result.fileEditors))
 		result.Tools = append(result.Tools, newMemoryEditTool(run, result.fileEditors))
 	}
 	return result, nil
@@ -148,7 +144,10 @@ func (p *RelationshipMemoryRuntimeProvider) Prepare(ctx context.Context, run *Ru
 			return nil, err
 		}
 	}
-	preparation := &MemoryRuntimePreparation{SystemPromptAddendum: renderUserMemoryFilesGuidance(items, relationship.AutoCaptureEnabled && contract.AutoCaptureAllowed)}
+	preparation := &MemoryRuntimePreparation{
+		StableGuidance:       renderUserMemoryRules(relationship.AutoCaptureEnabled && contract.AutoCaptureAllowed),
+		SystemPromptAddendum: renderUserMemoryFilesSection(items),
+	}
 	if writable {
 		preparation.fileEditors = []memoryFileEditor{&relationshipFileEditor{service: p.service, run: run, relationship: relationship, contract: contract}}
 	}
@@ -181,20 +180,39 @@ func relationshipMemorySurfaceForRun(run *Run) relationshipmemory.MemorySurface 
 }
 
 // renderUserMemoryFilesGuidance is the file view of the user's own memory.
-func renderUserMemoryFilesGuidance(items []relationshipmemory.UserMemoryItem, proactiveAllowed bool) string {
-	sections := []string{
-		"Files under /user/ are the person's own memory: facts about them that they own. They are separate from your memory and your notes, and nothing is ever copied between the two.",
-	}
-	if len(items) > 0 {
-		sections = append(sections, renderUserMemoryFiles(items))
-	} else {
-		sections = append(sections, "The person has no files under /user/ yet.")
-	}
+// renderUserMemoryRules is how the DigitalHuman treats the person's own
+// memory. It stays the same from run to run and goes in the system prompt.
+func renderUserMemoryRules(proactiveAllowed bool) string {
 	mode := "Change /user/ files only when the person directly asks you to remember, correct, or forget something about themselves."
 	if proactiveAllowed {
 		mode = "You may also add to /user/ a stable fact or preference the person states about themselves, without being asked. Use mode explicit only when they asked you to remember, correct, or forget it; anything you save on your own uses mode proactive, so they can tell it apart and undo it."
 	}
-	return strings.Join(append(sections, mode, "Never store project, customer, channel, credential, third-party, or document data under /user/."), "\n\n")
+	return strings.Join([]string{
+		"Files under /user/ are the person's own memory: facts about them that they own. They are separate from your memory and your notes, and nothing is ever copied between the two.",
+		mode,
+		"Never store project, customer, channel, credential, third-party, or document data under /user/.",
+	}, "\n\n")
+}
+
+// renderUserMemoryFilesSection shows the person's files, which change from
+// run to run.
+func renderUserMemoryFilesSection(items []relationshipmemory.UserMemoryItem) string {
+	if len(items) > 0 {
+		return renderUserMemoryFiles(items)
+	}
+	return "The person has no files under /user/ yet."
+}
+
+func joinGuidance(current, next string) string {
+	current, next = strings.TrimSpace(current), strings.TrimSpace(next)
+	switch {
+	case next == "":
+		return current
+	case current == "":
+		return next
+	default:
+		return current + "\n\n" + next
+	}
 }
 
 func sourceKindForRelationshipMode(mode string) string {

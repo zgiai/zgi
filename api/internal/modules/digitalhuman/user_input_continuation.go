@@ -174,6 +174,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 			return runtimeservice.RunConfig{}, cleanup, prepareErr
 		}
 		if preparation != nil {
+			addSystemGuidance(&config, preparation.StableGuidance)
 			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
 				addTurnContext(&config, addendum)
 			}
@@ -186,6 +187,7 @@ func (s *RuntimeService) userInputContinuationConfig(
 			return runtimeservice.RunConfig{}, cleanup, prepareErr
 		}
 		if preparation != nil {
+			addSystemGuidance(&config, preparation.StableGuidance)
 			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
 				addTurnContext(&config, addendum)
 			}

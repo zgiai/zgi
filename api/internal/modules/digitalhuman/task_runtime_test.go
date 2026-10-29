@@ -73,7 +73,7 @@ func TestTaskRuntimeChannelIsWritableByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
-	if len(preparation.Tools) != 3 || !strings.Contains(preparation.SystemPromptAddendum, "proposed task") || !strings.Contains(preparation.SystemPromptAddendum, "current group conversation") {
+	if len(preparation.Tools) != 3 || !strings.Contains(preparation.StableGuidance, "proposed task") || !strings.Contains(preparation.StableGuidance, "current group conversation") {
 		t.Fatalf("channel preparation = %#v", preparation)
 	}
 	for _, tool := range preparation.Tools {
@@ -140,7 +140,7 @@ func TestScheduledTaskRuntimeMayOnlyMarkCurrentTaskWaitingOrBlocked(t *testing.T
 	taskID := uuid.New()
 	scheduled.Context = map[string]any{"task_id": taskID.String()}
 	prepared, err := provider.Prepare(t.Context(), run, scheduled)
-	if err != nil || len(prepared.Tools) != 3 || !strings.Contains(prepared.SystemPromptAddendum, "scheduled execution") {
+	if err != nil || len(prepared.Tools) != 3 || !strings.Contains(prepared.StableGuidance, "scheduled execution") {
 		t.Fatalf("scheduled Prepare() = %#v, %v", prepared, err)
 	}
 	manage := prepared.Tools[2]
