@@ -13,7 +13,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testing.T) {
+func TestRunnerReadContextArtifactFeedsAPartIntoNextModelCall(t *testing.T) {
 	store := contextmgr.NewMemoryStore()
 	manager, err := contextmgr.New(contextmgr.Config{
 		AgentRunID:          "run-read-context-artifact",
@@ -79,8 +79,10 @@ func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testi
 	if answer != "used restored evidence" || fakeLLM.appChatCalls != 2 {
 		t.Fatalf("answer = %q calls = %d", answer, fakeLLM.appChatCalls)
 	}
-	if runnerTestHasTool(fakeLLM.appChatRequests[0].Tools, contextArtifactToolName) {
-		t.Fatalf("first request unexpectedly exposed %s", contextArtifactToolName)
+	// The reader is offered from the first request, so the tool list does not
+	// change when a projection appears (ADR 0037).
+	if !runnerTestHasTool(fakeLLM.appChatRequests[0].Tools, contextArtifactToolName) {
+		t.Fatalf("first request did not offer %s", contextArtifactToolName)
 	}
 	secondRequest := fakeLLM.appChatRequests[1]
 	if !runnerTestMessagesContain(secondRequest.Messages, "restored knowledge evidence row") {
@@ -91,7 +93,8 @@ func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testi
 			continue
 		}
 		parts := strings.SplitN(messageContent(message.Content), "\n\n[artifact content]\n", 2)
-		if len(parts) != 2 || parts[1] != original {
+		// A read returns a part, never more than the projection removed.
+		if len(parts) != 2 || parts[1] != string([]rune(original)[:12_000]) {
 			t.Fatalf("artifact tool message = %q", messageContent(message.Content))
 		}
 		var payload map[string]interface{}
@@ -99,7 +102,8 @@ func TestRunnerReadContextArtifactFeedsCompleteContentIntoNextModelCall(t *testi
 			t.Fatal(err)
 		}
 		returnedTokens := numericValue(payload["returned_tokens"])
-		if returnedTokens <= 0 || returnedTokens != numericValue(payload["total_tokens"]) || payload["complete"] != true {
+		if returnedTokens <= 0 || returnedTokens >= numericValue(payload["total_tokens"]) || payload["complete"] != false ||
+			numericValue(payload["total_chars"]) != len([]rune(original)) {
 			t.Fatalf("artifact tool payload = %#v", payload)
 		}
 		return

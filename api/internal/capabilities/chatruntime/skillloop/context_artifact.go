@@ -17,7 +17,7 @@ func contextArtifactTool() adapter.Tool {
 		Type: "function",
 		Function: adapter.Function{
 			Name:        contextArtifactToolName,
-			Description: "Read the complete original content of an oversized tool result referenced by an agent-context artifact receipt. Use this only when a projected or compacted result omitted evidence needed for the current task.",
+			Description: "Read part of an oversized tool result that reached you projected: its beginning and end are shown, and the rest is omitted. Read a range of characters with offset and limit, or the lines that contain a query. Use it only when the omitted part holds evidence the current task needs.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -26,6 +26,22 @@ func contextArtifactTool() adapter.Tool {
 						"description": "The exact agent-context://tool-results/... reference from a projected or compacted tool result receipt.",
 						"minLength":   1,
 						"maxLength":   512,
+					},
+					"offset": map[string]interface{}{
+						"type":        "integer",
+						"description": "The first character to read, from 0. Ignored with query.",
+						"minimum":     0,
+					},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "How many characters to read, at most 24000. Defaults to 12000.",
+						"minimum":     1,
+						"maximum":     24000,
+					},
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "Return only the lines that contain this text, ignoring case, with their line numbers.",
+						"maxLength":   200,
 					},
 				},
 				"required":             []string{"artifact_ref"},
@@ -55,7 +71,11 @@ func (r *Runner) handleReadContextArtifactCall(ctx context.Context, callID strin
 	if r == nil || r.ContextManager == nil {
 		return contextArtifactReadFailure(callID, fmt.Errorf("context artifact reader is unavailable"))
 	}
-	result, err := r.ContextManager.ReadContextArtifact(ctx, artifactRef)
+	result, err := r.ContextManager.ReadContextArtifactPart(ctx, artifactRef, contextmgr.ContextArtifactPart{
+		Offset: nativeIntegerArg(args, "offset"),
+		Limit:  nativeIntegerArg(args, "limit"),
+		Query:  stringArg(args, "query"),
+	})
 	if err != nil {
 		return contextArtifactReadFailure(callID, err)
 	}
@@ -66,7 +86,7 @@ func (r *Runner) handleReadContextArtifactCall(ctx context.Context, callID strin
 		Result: map[string]interface{}{
 			"returned_tokens": result.ReturnedTokens,
 			"total_tokens":    result.TotalTokens,
-			"complete":        true,
+			"complete":        result.Complete,
 		},
 	}
 	return successfulSkillStep(trace, contextArtifactToolResultMessage(callID, result), false, false)

@@ -25,6 +25,9 @@ type Manager struct {
 	checkpoint   CheckpointFunc
 	state        AgentContextState
 	pendingUsage *adapter.Usage
+	// originals holds the complete content of projected tool results by
+	// content hash, read back with read_context_artifact (ADR 0037).
+	originals map[string]string
 }
 
 func New(config Config, compactor Compactor, toolStore ToolResultStore, observer RequestObserver, checkpoint CheckpointFunc) (*Manager, error) {
@@ -117,6 +120,17 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 		Budget:        budget,
 		EstimateScale: 1,
 	}
+
+	// An oversized tool result reaches the model as its beginning and end
+	// with a reference to the rest. Only the outgoing request is projected:
+	// the run and its transcript keep the original, so the projection is the
+	// same in every request and the rest can be read back (ADR 0037).
+	projectedMessages, projection, projectErr := m.projectOversizedToolResults(ctx, prepared.Messages)
+	if projectErr != nil {
+		return nil, decision, projectErr
+	}
+	prepared.Messages = projectedMessages
+	decision.ToolProjectionCount = projection.count
 
 	estimate := m.estimator.EstimateChatRequest(prepared)
 	decision.BeforeTokens = estimate.Tokens
@@ -401,6 +415,12 @@ func (m *Manager) syncTurnTranscriptMessages(messages []adapter.Message) {
 			continue
 		}
 		if replacement, ok := current[strings.TrimSpace(message.ToolCallID)]; ok {
+			// A projection is applied to each request again; the transcript
+			// keeps the original it is made from.
+			if receipt, projected := decodeToolResultReceipt(contentString(replacement.Content)); projected &&
+				strings.EqualFold(strings.TrimSpace(fmt.Sprint(receipt["status"])), "projected") {
+				continue
+			}
 			m.state.TurnTranscript[index] = replacement
 		}
 	}
@@ -543,7 +563,7 @@ func (m *Manager) projectOversizedToolResults(ctx context.Context, messages []ad
 			}
 		}
 		stats.originalTokens += originalTokens
-		if result.Tokens <= m.config.MaxToolResultTokens {
+		if result.Tokens <= m.config.ProjectToolResultTokens {
 			stats.projectedTokens += result.Tokens
 			continue
 		}
@@ -805,8 +825,10 @@ func (m *Manager) toolReplacement(ctx context.Context, message adapter.Message, 
 			return ContentReplacement{}, fmt.Errorf("store oversized tool result: %w", err)
 		}
 		artifactRef = ref
+	} else if ref, err := m.rememberOriginal(hash, content); err == nil {
+		artifactRef = ref
 	}
-	preview := truncateRunes(content, m.config.ToolResultPreviewRunes)
+	preview := headAndTail(content, m.config.ToolResultPreviewRunes)
 	status := "projected"
 	if compact {
 		status = "compacted"

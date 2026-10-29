@@ -58,6 +58,7 @@ func (m *Manager) ReadContextArtifact(ctx context.Context, artifactRef string) (
 		Content:          content,
 		ReturnedTokens:   totalTokens,
 		TotalTokens:      totalTokens,
+		Complete:         true,
 	}, nil
 }
 
@@ -107,7 +108,14 @@ func FormatContextArtifactToolResult(result ContextArtifactResult) (string, erro
 		"content_hash":    strings.TrimSpace(result.ContentHash),
 		"returned_tokens": result.ReturnedTokens,
 		"total_tokens":    result.TotalTokens,
-		"complete":        true,
+		"complete":        result.Complete,
+	}
+	if result.TotalChars > 0 {
+		header["offset"] = result.Offset
+		header["total_chars"] = result.TotalChars
+	}
+	if result.Query != "" {
+		header["query"] = result.Query
 	}
 	if sourceToolCallID := strings.TrimSpace(result.SourceToolCallID); sourceToolCallID != "" {
 		header["source_tool_call_id"] = sourceToolCallID

@@ -10,6 +10,7 @@ const (
 	defaultMaxToolResult              = 32_000
 	DefaultCompressedToolResultTokens = 10_000
 	defaultToolPreviewRunes           = 12_000
+	defaultProjectToolResult          = 16_000
 	defaultPreservedRounds            = 4
 	contextTriggerNumerator           = 80
 	contextTriggerDenominator         = 100
@@ -24,6 +25,9 @@ func normalizeConfig(config Config) (Config, error) {
 	}
 	if config.ToolResultPreviewRunes <= 0 {
 		config.ToolResultPreviewRunes = defaultToolPreviewRunes
+	}
+	if config.ProjectToolResultTokens <= 0 {
+		config.ProjectToolResultTokens = defaultProjectToolResult
 	}
 	return config, nil
 }
