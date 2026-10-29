@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -478,6 +479,28 @@ func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]st
 	return filtered
 }
 
+// keepToolPositions orders tools by the round in which each first appeared,
+// so a tool added during the turn, such as one from a newly active skill,
+// goes after the tools already sent. Providers render tools before the
+// messages, and an insertion earlier in the list would invalidate the cached
+// prefix of everything after it (ADR 0032).
+func keepToolPositions(tools []adapter.Tool, positions map[string]int) []adapter.Tool {
+	if len(tools) == 0 || positions == nil {
+		return tools
+	}
+	for _, tool := range tools {
+		name := strings.TrimSpace(tool.Function.Name)
+		if _, seen := positions[name]; !seen {
+			positions[name] = len(positions)
+		}
+	}
+	ordered := append([]adapter.Tool(nil), tools...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return positions[strings.TrimSpace(ordered[i].Function.Name)] < positions[strings.TrimSpace(ordered[j].Function.Name)]
+	})
+	return ordered
+}
+
 func controlToolsForRound(input []adapter.Tool, allowPlanUpdate bool, allowIntermediateAnswer bool) []adapter.Tool {
 	filtered := make([]adapter.Tool, 0, len(input))
 	for _, tool := range input {
@@ -533,6 +556,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		restoreValidationTraces = append(restoreValidationTraces, restoredSkillAttemptTraces(currentMetadataForRun(req), resolved, restoredSkillState)...)
 	}
 	loadedSkills := restoredSkillState.activeLoaded
+	toolPositions := map[string]int{}
 
 	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
 	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
@@ -742,6 +766,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		if req.LegacyToolChat {
 			planningReq.Tools = legacyToolChatTools(planningReq.Tools, len(restoredSkillState.reloadRequired) > 0)
 		}
+		planningReq.Tools = keepToolPositions(planningReq.Tools, toolPositions)
 		if req.TerminalOnly {
 			planningReq.Tools = nil
 			planningReq.ToolChoice = nil

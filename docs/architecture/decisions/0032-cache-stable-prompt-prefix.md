@@ -40,6 +40,8 @@ Four things prevented that:
    - the last block of the request.
 
    The last one lets the next round of a turn read everything sent before it.
+7. The tool list grows only at its end within a run. A tool keeps the position it had in the round where it first appeared, and a tool added later, such as one from a newly active skill or `read_skill_reference`, goes after the tools already sent.
+8. `activate_skills` keeps offering every candidate the model has been shown, including active ones, so its definition does not change when a skill is activated. Activating an active skill again reports it as already active.
 
 ## Consequences
 
@@ -47,5 +49,6 @@ Four things prevented that:
 - Within a turn, each round reads the previous rounds from Claude's cache.
 - Per-run guidance, the skill catalog and loop notices now reach the model as reminders in a user turn, close to the current request. Models trained on such reminders follow them; regression evaluations should watch for drift.
 - Measured on a DigitalHuman on DeepSeek V4 Flash, the second and later messages of a conversation went from 384 cached input tokens of about 11,300 to about 6,700. The first round of a tool-calling turn rose from 512 to 6,656. The rest is the current turn: the turn context, the skill catalog and the loop notices.
-- A tool list that changes, for example when a skill is activated and adds tools, still breaks the cache from the tools onward. Loading tools on demand without changing the list is a later step, as is moving guidance that never changes into the system prompt.
+- Before decisions 7 and 8, activating a skill removed `activate_skills` from the end of the tool list. DeepSeek renders tools before the messages, so the round after an activation read only 6,528 cached tokens. With them, the tool list is the same in every round of the turn, and that round reads 11,648; rounds 3 and 4 read 13,824 and 14,336.
+- A tool a skill adds still lands after the existing tools, which costs the part of the prefix after them in that one round. Moving guidance that never changes into the system prompt is a later step.
 - Claude writes to the cache at a premium of 25% on the cached part. A conversation that never sends a second request pays that premium without a read. Agent turns almost always send a second request.

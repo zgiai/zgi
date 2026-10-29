@@ -289,6 +289,24 @@ func (s *NativeSkillSession) ExposedSkillIDs() []string {
 	return out
 }
 
+// OfferedSkillIDs returns every candidate the model has been shown, active
+// or not. activate_skills keeps offering all of them so its definition, and
+// the cached prompt prefix after it, stay the same once a skill is active;
+// activating an active skill again reports it as already active.
+func (s *NativeSkillSession) OfferedSkillIDs() []string {
+	if s == nil {
+		return nil
+	}
+	out := make([]string, 0, len(s.exposedSet))
+	for _, skillID := range s.catalog.CandidateSkillIDs {
+		normalized := normalizeSkillID(skillID)
+		if _, ok := s.exposedSet[normalized]; ok {
+			out = append(out, normalized)
+		}
+	}
+	return out
+}
+
 // RankNativeSkillIDs orders candidates by explicit priority followed by a
 // deterministic metadata match against the current task text.
 func RankNativeSkillIDs(resolved *ResolvedSkills, query string, prioritySkillIDs []string) []string {

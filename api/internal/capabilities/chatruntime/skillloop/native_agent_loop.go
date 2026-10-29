@@ -27,7 +27,7 @@ func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.Nat
 		return append(tools, skills.NativeControlToolsForSession(
 			resolved,
 			current.ActiveSkillIDs,
-			session.ExposedSkillIDs(),
+			session.OfferedSkillIDs(),
 			session.SearchAvailable(),
 		)...)
 	}
