@@ -386,6 +386,45 @@ func (r *Runner) handleNativeSessionControlCall(
 	return nativeSessionControlResult{step: step, instructions: activation.InstructionMessages}, true
 }
 
+// activateNativeSkillForToolCall activates the skill of a business tool the
+// model called without activating it first, typically a tool it used in an
+// earlier turn of the conversation. Skills start inactive in every turn, and
+// bouncing the call cost the turn a round. Activation goes through the
+// session, so only a skill that is still a candidate for this turn and passes
+// its checks becomes active; any other call keeps the not-active feedback.
+func activateNativeSkillForToolCall(
+	ctx context.Context,
+	call adapter.ToolCall,
+	session *skills.NativeSkillSession,
+	resolved *skills.ResolvedSkills,
+	toolSet *skills.NativeToolSet,
+	loadedSkills map[string]struct{},
+) (skills.NativeSkillActivationResult, bool) {
+	name := strings.TrimSpace(call.Function.Name)
+	if session == nil || name == "" || isSkillMetaToolName(name) || name == skills.MetaToolActivateSkills || name == skills.MetaToolSearchSkills {
+		return skills.NativeSkillActivationResult{}, false
+	}
+	if toolSet != nil {
+		if _, _, bound := nativeToolBindingForCall(toolSet, name); bound {
+			return skills.NativeSkillActivationResult{}, false
+		}
+	}
+	skillID, ok := uniqueResolvedSkillForToolName(resolved, name)
+	if !ok {
+		return skills.NativeSkillActivationResult{}, false
+	}
+	if _, active := loadedSkills[skillID]; active {
+		return skills.NativeSkillActivationResult{}, false
+	}
+	activation := session.Activate(ctx, []string{skillID}, "tool_call")
+	for _, activated := range activation.ActivatedSkillIDs {
+		if strings.EqualFold(strings.TrimSpace(activated), skillID) {
+			return activation, true
+		}
+	}
+	return activation, false
+}
+
 func nativeRuntimeToolAvailable(runtimeTools []RuntimeTool, name string) bool {
 	for _, runtimeTool := range runtimeTools {
 		if runtimeTool.Handler != nil && strings.EqualFold(strings.TrimSpace(runtimeTool.Definition.Function.Name), name) {

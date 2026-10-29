@@ -1049,6 +1049,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				))
 			}
 			if req.NativeAgentLoop && !runtimeCall {
+				if activation, activated := activateNativeSkillForToolCall(ctx, call, req.NativeSkillSession, resolved, nativeToolSet, loadedSkills); activated {
+					current := req.NativeSkillSession.ToolSet()
+					nativeToolSet = &current
+					for _, skillID := range current.ActiveSkillIDs {
+						loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
+					}
+					r.diagnostics.loadedSkillIDs = append([]string(nil), current.ActiveSkillIDs...)
+					roundDeferredSystemMessages = append(roundDeferredSystemMessages, activation.InstructionMessages...)
+				}
 				executionCall = nativeExecutionCall(call, nativeToolSet)
 			}
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, executionCall)

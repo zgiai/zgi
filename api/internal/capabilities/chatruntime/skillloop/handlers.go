@@ -42,8 +42,10 @@ func (r *Runner) handleProgressiveSkillCall(
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, stringArg(args, "next_action"))), false, false)
 	}
 	// Tool visibility is scoped to the current skill session. A model may carry
-	// a previously visible tool name into a new user turn; require explicit
-	// activation instead of restoring the skill from conversation history.
+	// a previously visible tool name into a new user turn; the native loop
+	// activates the skill through the session first when it is still a
+	// candidate (activateNativeSkillForToolCall), and any other inactive skill
+	// is not restored from conversation history.
 	if !isSkillMetaToolName(call.Function.Name) {
 		if skillID, ok := uniqueResolvedSkillForToolName(resolved, call.Function.Name); ok {
 			if _, active := loadedSkills[skillID]; !active {
