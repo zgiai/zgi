@@ -567,9 +567,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		messages = terminalOnlyProjectedMessages(prepared, currentMetadataForRun(req))
 		messages = append([]adapter.Message{terminalOnlySystemMessage()}, messages...)
 	} else if req.NativeAgentLoop {
+		systemAdditions := validAdditionalSystemMessages(req.SystemPromptAdditions)
 		if req.NativeSkillSession != nil {
 			if candidateMessage := req.NativeSkillSession.CatalogMessage(); strings.TrimSpace(messageContent(candidateMessage.Content)) != "" {
-				messages = append(messages, candidateMessage)
+				// A directory that lists every candidate in a fixed order is the
+				// same in every turn, so it belongs to the cached system prompt;
+				// one ranked for this question stays with the turn.
+				if req.NativeSkillSession.CatalogStable() {
+					systemAdditions = append(systemAdditions, candidateMessage)
+				} else {
+					messages = append(messages, candidateMessage)
+				}
 			}
 		}
 		if nativeToolSet != nil {
@@ -579,7 +587,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 		}
 		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
-		messages = withSystemPromptAdditions(messages, append(validAdditionalSystemMessages(req.SystemPromptAdditions), nativeAgentLoopSystemMessage()))
+		messages = withSystemPromptAdditions(messages, append(systemAdditions, nativeAgentLoopSystemMessage()))
 	} else {
 		messages = append(messages, metadataMessage)
 		if restoredSkillState.message != nil {

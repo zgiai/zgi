@@ -55,6 +55,7 @@ Four things prevented that:
     - a task-approval continuation keeps the task-change tool but refuses its calls, instead of removing it from the tool list;
     - a continuation within 15 minutes of the run's start keeps the run's start time in its turn context;
     - page context is restored only for a turn that sent some.
+11. When every candidate skill fits in the skill directory, the directory lists them in skill ID order and goes in the system prompt, before the native-loop rules. Only when some must be left out does the ranking for the current question decide which are shown, and that directory stays with the turn. `activate_skills` offers the candidates in the directory's order, so its definition is also the same from turn to turn.
 
 ## Consequences
 
@@ -73,6 +74,7 @@ Four things prevented that:
   | DigitalHuman, input tokens read from the cache | about 4,800 | about 7,300 |
 
   What is left uncached is the newest exchange, the turn boundary, the skill catalog, and, for a DigitalHuman, the time and the memory files.
+- Decision 11, measured on an Agent with three skills on DeepSeek V4 Flash, four short questions in one conversation: turns 2 to 4 left 150 to 275 input tokens uncached per request instead of about 950.
 - Decision 10, measured on a task-approval continuation of a DigitalHuman on DeepSeek V4 Flash: its first request read 10,496 input tokens from the cache instead of 5,760, and left 1,968 uncached instead of 5,979. The rest is what the continuation adds: the tool call, its result, the skill catalog and the continuation note.
 - A DigitalHuman continuation (user input, tool approval, task approval, connector confirmation) prepares the same capabilities as its first run, so it sends the same system prompt and tools (decision 10).
 - Claude writes to the cache at a premium of 25% on the cached part. A conversation that never sends a second request pays that premium without a read. Agent turns almost always send a second request.

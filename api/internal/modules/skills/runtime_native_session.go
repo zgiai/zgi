@@ -25,12 +25,16 @@ const (
 // NativeSkillCatalog is the lightweight candidate directory exposed before a
 // skill's complete instructions and business tools are activated.
 type NativeSkillCatalog struct {
-	CandidateSkillIDs []string              `json:"candidate_skill_ids"`
-	ExposedSkillIDs   []string              `json:"exposed_candidate_skill_ids"`
-	OmittedCount      int                   `json:"omitted_candidate_count"`
-	MetadataTokens    int                   `json:"metadata_tokens"`
-	Message           llmadapter.Message    `json:"-"`
-	Metadata          []SkillPromptMetadata `json:"-"`
+	CandidateSkillIDs []string `json:"candidate_skill_ids"`
+	ExposedSkillIDs   []string `json:"exposed_candidate_skill_ids"`
+	OmittedCount      int      `json:"omitted_candidate_count"`
+	MetadataTokens    int      `json:"metadata_tokens"`
+	// Stable reports that the catalog lists every candidate in a fixed order,
+	// so it is the same in every turn with the same skills and can be part of
+	// the cached system prompt (ADR 0032).
+	Stable   bool                  `json:"stable"`
+	Message  llmadapter.Message    `json:"-"`
+	Metadata []SkillPromptMetadata `json:"-"`
 }
 
 type NativeSkillActivationAttempt struct {
@@ -64,7 +68,39 @@ type NativeSkillSession struct {
 
 // BuildNativeSkillCatalog creates a compact candidate directory. maxTokens is
 // enforced with estimateMessageTokens when the model context limit is known.
+//
+// When every candidate fits, they are listed in skill ID order instead of the
+// priority order, so the catalog does not change with the question. The
+// priority only decides which candidates are shown when not all of them fit.
 func BuildNativeSkillCatalog(
+	resolved *ResolvedSkills,
+	prioritySkillIDs []string,
+	maxChars int,
+	maxTokens int,
+	estimateMessageTokens func(llmadapter.Message) int,
+) NativeSkillCatalog {
+	if resolved != nil {
+		stable := buildNativeSkillCatalog(resolved, nativeSkillIDOrder(resolved.Skills), maxChars, maxTokens, estimateMessageTokens)
+		if stable.OmittedCount == 0 {
+			stable.Stable = true
+			return stable
+		}
+	}
+	return buildNativeSkillCatalog(resolved, prioritySkillIDs, maxChars, maxTokens, estimateMessageTokens)
+}
+
+func nativeSkillIDOrder(docs []SkillDocument) []string {
+	ids := make([]string, 0, len(docs))
+	for _, doc := range docs {
+		if skillID := normalizeSkillID(doc.Metadata.ID); skillID != "" {
+			ids = append(ids, skillID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func buildNativeSkillCatalog(
 	resolved *ResolvedSkills,
 	prioritySkillIDs []string,
 	maxChars int,
@@ -221,6 +257,12 @@ func (s *NativeSkillSession) CatalogMessage() llmadapter.Message {
 		}
 	}
 	return nativeSkillCatalogMessage(metadata, inactiveCount, s.OmittedCandidateCount())
+}
+
+// CatalogStable reports that the candidate directory is the same in every
+// turn with the same skills (NativeSkillCatalog.Stable).
+func (s *NativeSkillSession) CatalogStable() bool {
+	return s != nil && s.catalog.Stable
 }
 
 func (s *NativeSkillSession) CandidateSkillIDs() []string {

@@ -46,11 +46,15 @@ func TestNativeLoopKeepsUnchangingGuidanceInTheSystemPrompt(t *testing.T) {
 		{Role: "user", Content: "hi"},
 	})
 	prompt := messageContent(first.Messages[0].Content)
-	if first.Messages[0].Role != "system" || prompt != "You are a helpful assistant.\n\nMemory rules.\n\n"+rules {
-		t.Fatalf("system prompt = %q, want the persona, the memory rules and the loop rules", prompt)
+	// The calculator is the only candidate, so the directory lists every
+	// candidate and is the same in every turn.
+	catalog := skills.BuildNativeSkillCatalog(nativeCalculatorResolvedSkills(), nil, skills.DefaultNativeSkillCatalogBudgetChars, 0, nil)
+	directory := messageContent(catalog.Message.Content)
+	if !catalog.Stable || first.Messages[0].Role != "system" || prompt != "You are a helpful assistant.\n\nMemory rules.\n\n"+directory+"\n\n"+rules {
+		t.Fatalf("system prompt = %q, want the persona, the memory rules, the skill directory and the loop rules", prompt)
 	}
 	later := first.Messages[1:]
-	if runnerTestMessagesContain(later, "Memory rules.") || runnerTestMessagesContain(later, rules[:60]) {
+	if runnerTestMessagesContain(later, "Memory rules.") || runnerTestMessagesContain(later, rules[:60]) || runnerTestMessagesContain(later, directory[:60]) {
 		t.Fatalf("messages after the system prompt repeat its guidance: %#v", later)
 	}
 	if !runnerTestMessagesContain(later, "Page context for this turn.") {
