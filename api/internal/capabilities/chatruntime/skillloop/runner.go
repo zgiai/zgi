@@ -1942,8 +1942,14 @@ func skillToolCallIdentityForCall(resolved *skills.ResolvedSkills, loadedSkills 
 func userInputPlanRevisionPending(req RunRequest) bool {
 	metadata := currentMetadataForRun(req)
 	continuation := evidenceMapFromAny(metadata["user_input_continuation"])
-	return strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["status"])), userInputContinuationAnswered) &&
-		strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["next_action"])), userInputContinuationReplan)
+	if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["status"])), userInputContinuationAnswered) ||
+		!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["next_action"])), userInputContinuationReplan) {
+		return false
+	}
+	// Only planned phases can be out of date after the user's answer. A
+	// question asked before any plan leaves nothing to revise, and requiring
+	// update_plan then cost the turn a blocked call and two extra rounds.
+	return len(evidenceMapsFromAny(evidenceMapFromAny(metadata["operation_plan"])["phases"])) > 0
 }
 
 func userInputPlanRevisionRequiredForTool(req RunRequest, skillID string, toolName string) bool {

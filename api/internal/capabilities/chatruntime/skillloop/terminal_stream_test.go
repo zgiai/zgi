@@ -930,8 +930,14 @@ func TestUserInputPlanRevisionPendingUsesStructuredContinuationState(t *testing.
 		},
 	}
 	req := RunRequest{CurrentMetadata: func() map[string]interface{} { return metadata }}
+	if userInputPlanRevisionPending(req) {
+		t.Fatal("userInputPlanRevisionPending() = true for an answer given before any plan, want false")
+	}
+	metadata["operation_plan"] = map[string]interface{}{
+		"phases": []interface{}{map[string]interface{}{"id": "phase-1", "status": "pending"}},
+	}
 	if !userInputPlanRevisionPending(req) {
-		t.Fatal("userInputPlanRevisionPending() = false, want true")
+		t.Fatal("userInputPlanRevisionPending() = false with planned phases, want true")
 	}
 	if !planRevisionRequiredForTool(skills.SkillAgentManagement, "get_agent_config") {
 		t.Fatal("business tool should require plan revision")
