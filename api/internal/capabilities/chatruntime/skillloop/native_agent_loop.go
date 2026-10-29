@@ -183,6 +183,35 @@ func nativeReferenceReadContinuationSystemMessage(trace skills.SkillTrace) (adap
 	}, "\n")}, true
 }
 
+// withSystemPromptAdditions appends guidance that stays the same from turn to
+// turn, such as the native-loop rules, to the system prompt. There it is part
+// of the prefix a provider caches; sent after the history, as it was, every
+// turn's first request paid for it in full (ADR 0032). Without a leading text
+// system prompt, the guidance becomes one.
+func withSystemPromptAdditions(messages []adapter.Message, additions []adapter.Message) []adapter.Message {
+	parts := make([]string, 0, len(additions))
+	for _, addition := range additions {
+		if text := strings.TrimSpace(messageContent(addition.Content)); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) == 0 {
+		return messages
+	}
+	guidance := strings.Join(parts, "\n\n")
+	if len(messages) > 0 && strings.EqualFold(messages[0].Role, "system") {
+		if prompt, ok := messages[0].Content.(string); ok {
+			out := append([]adapter.Message(nil), messages...)
+			if prompt = strings.TrimSpace(prompt); prompt != "" {
+				guidance = prompt + "\n\n" + guidance
+			}
+			out[0].Content = guidance
+			return out
+		}
+	}
+	return append([]adapter.Message{{Role: "system", Content: guidance}}, messages...)
+}
+
 // NativeAgentLoopSystemMessage exposes the native-loop prompt for the service's
 // final context-budget estimate without duplicating its contents.
 func NativeAgentLoopSystemMessage() adapter.Message {

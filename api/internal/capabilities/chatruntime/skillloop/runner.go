@@ -579,13 +579,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 		}
 		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
-		messages = append(messages, nativeAgentLoopSystemMessage())
+		messages = withSystemPromptAdditions(messages, append(validAdditionalSystemMessages(req.SystemPromptAdditions), nativeAgentLoopSystemMessage()))
 	} else {
 		messages = append(messages, metadataMessage)
 		if restoredSkillState.message != nil {
 			messages = append(messages, *restoredSkillState.message)
 		}
 		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
+		messages = append(messages, validAdditionalSystemMessages(req.SystemPromptAdditions)...)
 		if req.ProtocolToolsOnly {
 			messages = append(messages, protocolToolLoopSystemMessage(preferExplicitFinalAnswer))
 		} else if req.LegacyToolChat {

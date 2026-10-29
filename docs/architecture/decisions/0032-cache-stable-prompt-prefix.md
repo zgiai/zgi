@@ -22,11 +22,13 @@ Four things prevented that:
 ## Decision
 
 1. `RunConfig.TurnContext` carries server-owned guidance that changes from run to run. The runtime sends it as one system message after the history and just before the current user message, next to the memory and turn-boundary context. `SystemPrompt` keeps only what is the same on every run: the persona, its rules and its configuration.
-2. A DigitalHuman puts all of its per-run guidance in `TurnContext`, in the first run and in every continuation (connector confirmation, user input, task approval):
+2. A DigitalHuman puts its per-run guidance in `TurnContext`, in the first run and in every continuation (connector confirmation, user input, task approval):
    - the current time;
    - per-user connector and approval notes;
    - channel context and preview guidance;
-   - memory and task guidance.
+   - the memory files and the index of recent artifacts.
+
+   The rules for memory, tasks and artifacts stay the same from run to run of a conversation, so they go in the system prompt (decision 9).
 3. The runtime keeps system messages where they are while it manages the context. Only the request sent to the provider is placed for it:
    - the first message, when it is a system message, is the system prompt;
    - every later text system message stays in place as a user turn wrapped in `<system-reminder>`, merged with the user message next to it.
@@ -42,6 +44,12 @@ Four things prevented that:
    The last one lets the next round of a turn read everything sent before it.
 7. The tool list grows only at its end within a run. A tool keeps the position it had in the round where it first appeared, and a tool added later, such as one from a newly active skill or `read_skill_reference`, goes after the tools already sent.
 8. `activate_skills` keeps offering every candidate the model has been shown, including active ones, so its definition does not change when a skill is activated. Activating an active skill again reports it as already active.
+9. Guidance that changes only with the configuration goes at the end of the system prompt, not after the history:
+   - the native loop's rules;
+   - an Agent's memory rules and its builder's memory instructions, passed in `RunRequest.SystemPromptAdditions`;
+   - a DigitalHuman's memory, task and artifact rules, returned by its runtime providers as `StableGuidance`.
+
+   Sent after the history, this guidance was the same in every turn but never part of a prefix the provider had seen, so every turn's first request paid for it in full. Loops other than the native loop still send these additions as system messages.
 
 ## Consequences
 
@@ -50,5 +58,15 @@ Four things prevented that:
 - Per-run guidance, the skill catalog and loop notices now reach the model as reminders in a user turn, close to the current request. Models trained on such reminders follow them; regression evaluations should watch for drift.
 - Measured on a DigitalHuman on DeepSeek V4 Flash, the second and later messages of a conversation went from 384 cached input tokens of about 11,300 to about 6,700. The first round of a tool-calling turn rose from 512 to 6,656. The rest is the current turn: the turn context, the skill catalog and the loop notices.
 - Before decisions 7 and 8, activating a skill removed `activate_skills` from the end of the tool list. DeepSeek renders tools before the messages, so the round after an activation read only 6,528 cached tokens. With them, the tool list is the same in every round of the turn, and that round reads 11,648; rounds 3 and 4 read 13,824 and 14,336.
-- A tool a skill adds still lands after the existing tools, which costs the part of the prefix after them in that one round. Moving guidance that never changes into the system prompt is a later step.
+- A tool a skill adds still lands after the existing tools, which costs the part of the prefix after them in that one round.
+- Decision 9, measured on DeepSeek V4 Flash with four short questions in one conversation:
+
+  | Turns 2 to 4, per request | Before | After |
+  |---|---|---|
+  | Agent, input tokens not read from the cache | about 1,800 | about 950 |
+  | DigitalHuman, input tokens not read from the cache | about 3,050 | about 520 |
+  | DigitalHuman, input tokens read from the cache | about 4,800 | about 7,300 |
+
+  What is left uncached is the newest exchange, the turn boundary, the skill catalog, and, for a DigitalHuman, the time and the memory files.
+- The connector-confirmation and task-approval continuations of a DigitalHuman do not prepare memory, and the connector-confirmation continuation does not prepare tasks either. Their tool lists already differed from the first run, so their requests did not reuse its prefix before decision 9 either.
 - Claude writes to the cache at a premium of 25% on the cached part. A conversation that never sends a second request pays that premium without a read. Agent turns almost always send a second request.

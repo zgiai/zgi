@@ -202,18 +202,23 @@ type RunRequest struct {
 	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool
 	AdditionalSystemMessages       []adapter.Message
-	RuntimeStateSnapshot           RuntimeStateSnapshotFunc
-	CurrentMetadata                func() map[string]interface{}
-	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
-	OnTerminalCompletion           func(TerminalCompletionResult)
-	OnChunk                        func(string) error
-	BeforeModelRound               func(context.Context, int) ([]adapter.Message, error)
-	AfterModelRound                func(context.Context, int, bool) error
-	PlanningOutputTokenLimit       int
-	AuthorizeSkillStep             func(context.Context, string) (bool, error)
-	PreferredRestoredSkillID       string
-	ContinuationType               string
-	TerminalOnly                   bool
+	// SystemPromptAdditions are guidance that stays the same from turn to
+	// turn, such as the memory rules. The native loop appends them to the
+	// system prompt so they are part of the cached prefix; other loops send
+	// them as additional system messages.
+	SystemPromptAdditions        []adapter.Message
+	RuntimeStateSnapshot         RuntimeStateSnapshotFunc
+	CurrentMetadata              func() map[string]interface{}
+	OnTerminalStateGuardDecision func(TerminalStateGuardDecisionRecord)
+	OnTerminalCompletion         func(TerminalCompletionResult)
+	OnChunk                      func(string) error
+	BeforeModelRound             func(context.Context, int) ([]adapter.Message, error)
+	AfterModelRound              func(context.Context, int, bool) error
+	PlanningOutputTokenLimit     int
+	AuthorizeSkillStep           func(context.Context, string) (bool, error)
+	PreferredRestoredSkillID     string
+	ContinuationType             string
+	TerminalOnly                 bool
 }
 
 // RuntimeTool is a first-party capability owned by the chat runtime rather

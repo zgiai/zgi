@@ -142,12 +142,16 @@ func (s *service) runPreparedToolLoop(
 	}
 	authorizeSkillStep := s.currentAgentSkillStepAuthorizer(prepared)
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
+	// The memory rules and the builder's memory instructions change only with
+	// the Agent's configuration, so the native loop keeps them in the system
+	// prompt, where providers cache them.
+	systemPromptAdditions := []adapter.Message{}
 	if len(runtimeTools) > 0 {
 		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
 		if hasAgentMemoryRuntimeTool(runtimeTools) {
-			additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.FilePolicyMessage(proactiveAllowed))
+			systemPromptAdditions = append(systemPromptAdditions, agentmemoryruntime.FilePolicyMessage(proactiveAllowed))
 			if instructions := agentmemoryruntime.InstructionsMessage(prepared.parts.AgentMemoryInstructions); instructions != nil {
-				additionalSystemMessages = append(additionalSystemMessages, *instructions)
+				systemPromptAdditions = append(systemPromptAdditions, *instructions)
 			}
 		}
 	}
@@ -166,7 +170,7 @@ func (s *service) runPreparedToolLoop(
 		if len(nativeConnectorTools) > 0 {
 			directTools = skills.RankNativeToolProjections(append(directTools, nativeConnectorTools...), prepared.parts.Query)
 		}
-		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
+		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, append(append([]adapter.Message(nil), additionalSystemMessages...), systemPromptAdditions...))
 		reservedNativeToolNames := nativeProjectionReservedToolNames(runtimeTools)
 		toolSetOptions := skills.NativeToolSetOptions{
 			TenantID:          prepared.Scope.OrganizationID.String(),
@@ -263,6 +267,7 @@ func (s *service) runPreparedToolLoop(
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
 		AdditionalSystemMessages:       additionalSystemMessages,
+		SystemPromptAdditions:          systemPromptAdditions,
 		RuntimeStateSnapshot:           runtimeStateSnapshot,
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
 		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
