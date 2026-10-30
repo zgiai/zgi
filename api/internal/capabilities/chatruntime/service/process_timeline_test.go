@@ -93,6 +93,30 @@ func TestProcessTimelineTaskGovernanceIsNotAddedToUserPresentation(t *testing.T)
 	}
 }
 
+// The start of a read-only runtime tool's call keeps the mark in durable
+// metadata, where a resume reads it (ADR 0035).
+func TestProcessTimelineCallStartKeepsTheReadOnlyMark(t *testing.T) {
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{Conversation: &runtimemodel.Conversation{ID: uuid.New()}, Message: message}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+	for _, start := range []map[string]interface{}{
+		{"invocation_id": "call-view", "skill_id": "digital-human-memory", "tool_name": "memory_view", skillCallReadOnlyKey: true},
+		{"invocation_id": "call-edit", "skill_id": "digital-human-memory", "tool_name": "memory_edit"},
+	} {
+		if err := recorder.RecordEvent(streamEventSkillCallStart, start); err != nil {
+			t.Fatalf("RecordEvent() error = %v", err)
+		}
+	}
+	marks := map[string]bool{}
+	for _, invocation := range skillInvocationsFromMetadata(message.Metadata["skill_invocations"]) {
+		readOnly, _ := invocation[skillCallReadOnlyKey].(bool)
+		marks[stringFromAny(invocation["tool_name"])] = readOnly
+	}
+	if !marks["memory_view"] || marks["memory_edit"] || len(marks) != 2 {
+		t.Fatalf("read-only marks = %v, want memory_view only", marks)
+	}
+}
+
 func (r *countingTimelineMessageRepo) UpdateMetadata(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
 	r.updates++
 	r.metadata = copyStringAnyMap(metadata)

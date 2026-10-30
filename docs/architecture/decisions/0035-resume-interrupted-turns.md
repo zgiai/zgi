@@ -24,6 +24,9 @@ What happened instead: the message stayed an error. A DigitalHuman run became `u
    - It claims the message with a compare-and-swap from that error back to `streaming`, then runs the loop.
    - It drops the partial answer of the stopped attempt and marks unfinished `skill_invocations` as `interrupted`.
 2. A turn is resumed only if every tool call it started without a recorded result is read-only. The tool's governance manifest must declare `effect: read`; a tool that declares nothing does not count. Otherwise the turn is not resumed, because repeating a change could do it twice. The common case passes: a stop while the model was answering or deciding.
+   - A call is started once its `running` record is in the message metadata. The skill loop writes that record before it runs the call, and runs no call whose record could not be written: the run stops with the error instead (added 2026-10-30). Without this, a call that ran while its record failed would look not started after a stop, and a resume could repeat a change.
+   - A call the model asked for that never got a record never started, so repeating it is safe whatever it does. The resume note says a call without a result either never started or was read-only.
+   - A runtime tool marked `ReadOnly` (ADR 0036 decision 6) puts `read_only: true` in its call's record, and such a call counts as read-only. Before, a stop during a DigitalHuman memory or task read was not resumed, since runtime tools have no governance manifest.
 3. A turn is resumed at most once. The outcome is recorded on the message under `interrupted_turn_resume`, whether resumed or not resumed with the reason. A turn that stops again during its resume stays an error.
 4. DigitalHuman runs resume automatically:
    - `Reconcile` (every 15 seconds) finds running runs whose message is such an error.

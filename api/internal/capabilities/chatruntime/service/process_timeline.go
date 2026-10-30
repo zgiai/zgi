@@ -526,6 +526,9 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		invocation := newSkillInvocation("tool_call", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), "running", invocationTimelineFields(payload, map[string]interface{}{
 			"arguments": payloadMap(payload, "arguments_summary", "arguments"),
 		}))
+		if readOnly, _ := payload[skillCallReadOnlyKey].(bool); readOnly {
+			invocation[skillCallReadOnlyKey] = true
+		}
 		invocation["runtime_id"] = r.runtimeIDForStart(invocation)
 		return invocation
 	case streamEventSkillCallEnd:

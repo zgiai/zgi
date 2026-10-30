@@ -37,6 +37,14 @@ func TestInterruptedTurnResumesOnlyWithoutAnUnfinishedChange(t *testing.T) {
 	if err := interruptedTurnResumable(interruptedTestMessage(finished, unfinishedRead)); err != nil {
 		t.Fatalf("stopped during a read: %v, want resumable", err)
 	}
+	runtimeRead := map[string]interface{}{"kind": "tool_call", "status": "running", "skill_id": "digital-human-memory", "tool_name": "memory_view", skillCallReadOnlyKey: true}
+	if err := interruptedTurnResumable(interruptedTestMessage(finished, runtimeRead)); err != nil {
+		t.Fatalf("stopped during a read-only runtime tool: %v, want resumable", err)
+	}
+	runtimeWrite := map[string]interface{}{"kind": "tool_call", "status": "running", "skill_id": "digital-human-memory", "tool_name": "memory_edit"}
+	if err := interruptedTurnResumable(interruptedTestMessage(finished, runtimeWrite)); !errors.Is(err, ErrInterruptedTurnNotResumable) {
+		t.Fatalf("stopped during a runtime tool not marked read-only: %v, want not resumable", err)
+	}
 	for name, message := range map[string]*runtimemodel.Message{
 		"stopped during a change":                       interruptedTestMessage(unfinishedWrite),
 		"stopped during a call with no declared effect": interruptedTestMessage(unfinishedUndeclared),

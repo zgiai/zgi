@@ -18,6 +18,9 @@ import (
 const (
 	interruptedTurnResumeKey        = "interrupted_turn_resume"
 	interruptedTurnContinuationType = "interrupted_turn"
+	// skillCallReadOnlyKey marks a call's start when its runtime tool is
+	// read-only; the skill loop sets it in the start event.
+	skillCallReadOnlyKey = "read_only"
 )
 
 // ErrInterruptedTurnNotResumable reports a turn that stopped with its process
@@ -166,12 +169,17 @@ func (s *service) recordInterruptedTurnNotResumed(ctx context.Context, message *
 // interruptedTurnResumable checks that a message is a turn its lease sweeper
 // stopped, that it was not resumed before, and that every tool call it
 // started and did not finish is read-only, so repeating it changes nothing.
+// A call is started once its start is recorded; the skill loop runs no call
+// before that. A runtime tool's call records whether the tool is read-only.
 func interruptedTurnResumable(message *runtimemodel.Message) error {
 	if !interruptedTurnAwaitingResume(message) {
 		return fmt.Errorf("%w: the turn did not stop with its process, or was resumed once already", ErrInterruptedTurnNotResumable)
 	}
 	for _, invocation := range skillInvocationMaps(message.Metadata) {
 		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "running") {
+			continue
+		}
+		if readOnly, _ := invocation[skillCallReadOnlyKey].(bool); readOnly {
 			continue
 		}
 		skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
@@ -190,7 +198,7 @@ func interruptedTurnResumeMessage(message *runtimemodel.Message) adapter.Message
 	}
 	return adapter.Message{Role: "user", Content: "The process running this assistant task stopped in the middle of it, and the same task is resuming. " +
 		"Continue from the tool results and the authoritative same-turn state above; do not restart completed work. " +
-		"A tool call shown without a recorded result was read-only: call it again if you still need its result. " +
+		"A tool call shown without a recorded result either never started or was read-only: call it again if you still need its result. " +
 		"Original request: " + original}
 }
 

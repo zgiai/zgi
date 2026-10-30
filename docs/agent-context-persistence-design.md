@@ -298,4 +298,4 @@ project(conversation, at = 当前 tail):
 | 只允许删除最后一轮 | `DeleteMessage` 用 `CountChildren` 拦截，中间轮提示"从该轮开分支" | ✅ |
 | 会话删除清理 entry | `DeleteConversation` 在同一事务里 `DeleteByConversation`（会话是软删，外键级联不会触发） | ✅ |
 | 窄查询白名单 | `transcriptEntryPreviewColumns` + SQL 守卫测试（payload 不进投影/列表查询） | ✅ |
-| **工具执行状态机**：派发前 fail-closed 写"已开始"意图，区分"未开始 / 结果未知" | 需要在 `skillloop` 的 `handleProgressiveSkillCall` 之前提供 dispatch 钩子（`RunRequest` 上加回调），service 侧写 intent entry（log-only，kind 不进投影） | ⏳ 第二个 PR |
+| **工具执行状态机**：派发前 fail-closed 写"已开始"意图，区分"未开始 / 结果未知" | 没有另建 intent entry：`skill_call_start` 事件在派发前同步写入消息 metadata 的 `skill_invocations`（status `running`），这条记录就是"已开始"。写入失败时 `skillloop` 不执行该调用、直接以错误结束（`unrecordedCallStep`），所以没有记录 = 未开始；只读运行时工具的记录带 `read_only: true`，续跑时按只读处理（ADR 0035 decision 2） | ✅ |

@@ -125,13 +125,20 @@ func (r *Runner) executeToolCall(ctx context.Context, s *runState, rs *roundStat
 		// Runtime tools bypass the regular progressive-skill handler. Emit
 		// the same lifecycle events so durable runs and the shared chat UI
 		// expose their progress consistently with Agent tools.
-		r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(
+		startPayload := skillCallStartPayload(
 			prepared,
 			call.ID,
 			runtimeTool.SkillID,
 			runtimeTool.Definition.Function.Name,
 			nil,
-		))
+		)
+		if runtimeTool.ReadOnly {
+			startPayload[skillCallReadOnlyKey] = true
+		}
+		r.emitEvent(prepared, EventSkillCallStart, startPayload)
+		if err := prepared.presentationEventError(); err != nil {
+			return unrecordedCallStep(call.ID, runtimeTool.SkillID, runtimeTool.Definition.Function.Name, err), ""
+		}
 	}
 	if !runtimeCall {
 		if activation, activated := activateNativeSkillForToolCall(ctx, call, req.NativeSkillSession, resolved, s.nativeToolSet, s.loadedSkills); activated {

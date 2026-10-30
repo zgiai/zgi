@@ -567,6 +567,9 @@ func (r *Runner) handleCallSkillTool(
 		argumentSummary["completion_intent"] = completionIntent
 	}
 	r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(prepared, callID, skillID, toolName, argumentSummary))
+	if err := prepared.presentationEventError(); err != nil {
+		return unrecordedCallStep(callID, skillID, toolName, err)
+	}
 	if isAgentWorkflowRunTool(skillID, toolName) {
 		execCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
 		if execCtx.RuntimeParameters == nil {
@@ -1057,6 +1060,23 @@ func terminalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, use
 		usedTool:    usedTool,
 		terminal:    true,
 	}
+}
+
+// skillCallReadOnlyKey marks the start of a call whose tool is read-only, so a
+// turn that stops before the call's result can repeat it (ADR 0035).
+const skillCallReadOnlyKey = "read_only"
+
+// unrecordedCallStep ends a run before a call whose start could not be
+// recorded. Had the call run, a process that stops before its result could
+// not tell later whether it changed something (ADR 0035).
+func unrecordedCallStep(callID, skillID, toolName string, err error) skillStepResult {
+	trace := failedSkillTrace("tool_call", toolName, err)
+	trace.InvocationID = strings.TrimSpace(callID)
+	trace.SkillID = skillID
+	return fatalSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"status": "not_run",
+		"error":  "the call was not run because its start could not be recorded",
+	}), err)
 }
 
 func fatalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, err error) skillStepResult {
