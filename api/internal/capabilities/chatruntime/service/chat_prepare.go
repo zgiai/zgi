@@ -515,6 +515,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		}
 		branch := contextState.RawMessages
 		parts.AgentMemoryRecentUserMessages = recentUserQueries(branch, agentMemoryEvidenceWindow)
+		parts.RecentSkillIDs = recentlyUsedSkillIDs(branch, recentSkillTurns)
 		registerAttachmentReadFiles(parts, branch)
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)

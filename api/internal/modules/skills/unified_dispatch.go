@@ -1,7 +1,6 @@
 package skills
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 
@@ -67,14 +66,14 @@ func withUnifiedToolUsage(skillID string, candidate nativeSkillCandidate, estima
 	}
 	sort.Strings(names)
 	var builder strings.Builder
-	builder.WriteString("Tools of this skill. Call each with zgi, command \"" + skillID + " <tool>\" and input matching its schema:")
+	builder.WriteString("Tools of this skill, as signatures (\"?\" marks an optional field). Call each with zgi, command \"" + skillID + " <tool>\". If the input is rejected, the error gives the tool's full schema.")
 	for _, name := range names {
 		tool := tools[name]
-		schema, err := json.Marshal(tool.Function.Parameters)
-		if err != nil {
-			schema = []byte("{}")
+		schema, _ := tool.Function.Parameters.(map[string]interface{})
+		builder.WriteString("\n- " + compactSignature(name, schema) + "\n  " + strings.TrimSpace(tool.Function.Description))
+		for _, line := range compactParameterNotes(schema) {
+			builder.WriteString("\n  " + line)
 		}
-		builder.WriteString("\n- " + name + ": " + strings.TrimSpace(tool.Function.Description) + "\n  input schema: " + string(schema))
 	}
 	content, _ := candidate.instruction.Content.(string)
 	candidate.instruction.Content = strings.TrimSpace(content) + "\n\n" + builder.String()
@@ -84,4 +83,118 @@ func withUnifiedToolUsage(skillID string, candidate nativeSkillCandidate, estima
 		candidate.totalTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, candidate.tools)
 	}
 	return candidate
+}
+
+// compactSignature renders a tool's input as a short signature, such as
+// generate_file(format: txt|md|csv, content: string, filename?: string). A
+// unified-mode model reads it instead of the JSON schema, which the server
+// still validates against (ADR 0044). Objects deeper than two levels are
+// shown as {...}.
+func compactSignature(name string, schema map[string]interface{}) string {
+	return name + "(" + compactFields(schema, 0) + ")"
+}
+
+const compactSignatureDepth = 2
+
+func compactFields(schema map[string]interface{}, depth int) string {
+	properties, _ := schema["properties"].(map[string]interface{})
+	if len(properties) == 0 {
+		return ""
+	}
+	required := map[string]bool{}
+	for _, name := range compactStrings(schema["required"]) {
+		required[name] = true
+	}
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		if required[names[i]] != required[names[j]] {
+			return required[names[i]]
+		}
+		return names[i] < names[j]
+	})
+	fields := make([]string, 0, len(names))
+	for _, name := range names {
+		field, _ := properties[name].(map[string]interface{})
+		marker := "?"
+		if required[name] {
+			marker = ""
+		}
+		fields = append(fields, name+marker+": "+compactType(field, depth))
+	}
+	return strings.Join(fields, ", ")
+}
+
+func compactType(schema map[string]interface{}, depth int) string {
+	if values := compactStrings(schema["enum"]); len(values) > 0 {
+		if len(values) > 12 {
+			values = append(values[:12], "...")
+		}
+		return strings.Join(values, "|")
+	}
+	for _, key := range []string{"oneOf", "anyOf"} {
+		if options, ok := schema[key].([]interface{}); ok && len(options) > 0 {
+			kinds := make([]string, 0, len(options))
+			for _, option := range options {
+				branch, _ := option.(map[string]interface{})
+				kinds = append(kinds, compactType(branch, depth))
+			}
+			return strings.Join(kinds, " | ")
+		}
+	}
+	switch kind, _ := schema["type"].(string); kind {
+	case "array":
+		items, _ := schema["items"].(map[string]interface{})
+		return compactType(items, depth) + "[]"
+	case "object":
+		if depth >= compactSignatureDepth {
+			return "{...}"
+		}
+		if fields := compactFields(schema, depth+1); fields != "" {
+			return "{" + fields + "}"
+		}
+		return "object"
+	case "":
+		return "any"
+	default:
+		return kind
+	}
+}
+
+// compactParameterNotes keeps the descriptions of a tool's top-level fields,
+// which carry most of its usage rules.
+func compactParameterNotes(schema map[string]interface{}) []string {
+	properties, _ := schema["properties"].(map[string]interface{})
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	notes := make([]string, 0, len(names))
+	for _, name := range names {
+		field, _ := properties[name].(map[string]interface{})
+		if description, _ := field["description"].(string); strings.TrimSpace(description) != "" {
+			notes = append(notes, name+": "+strings.TrimSpace(description))
+		}
+	}
+	return notes
+}
+
+func compactStrings(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }

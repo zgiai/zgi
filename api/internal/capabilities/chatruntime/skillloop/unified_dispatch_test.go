@@ -71,7 +71,7 @@ func TestUnifiedCallRunsTheNamedToolWithAStableToolList(t *testing.T) {
 	if result := toolResultFor(second.Messages, "calc-1"); !strings.Contains(result, "42") {
 		t.Fatalf("calculate result = %s, want 42", result)
 	}
-	if !runnerTestMessagesContain(second.Messages, "input schema") {
+	if !runnerTestMessagesContain(second.Messages, "calculate(left: number, operation: add|subtract|multiply|divide|power|mod, right: number, precision?: number)") {
 		t.Fatalf("second request messages = %#v, want the skill's tools listed in its instructions", second.Messages)
 	}
 	for _, message := range second.Messages {

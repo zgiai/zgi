@@ -768,6 +768,9 @@ type chatRequestParts struct {
 	// TurnContext is the server-owned per-run guidance of RunConfig.TurnContext.
 	TurnContext         string
 	TurnContextSections []string
+	// RecentSkillIDs are the skills whose tools succeeded in the conversation's
+	// recent turns; they are active from the start of this turn (ADR 0043).
+	RecentSkillIDs []string
 	// TurnReminders are the reminders sent before the current question; the
 	// transcript stores the question with them (ADR 0043).
 	TurnReminders []string

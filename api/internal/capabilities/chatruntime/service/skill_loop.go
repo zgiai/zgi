@@ -602,6 +602,9 @@ func nativeInitialActiveSkillIDs(prepared *PreparedChat, resolved *skills.Resolv
 		}
 	}
 	if prepared.parts != nil {
+		for _, skillID := range prepared.parts.RecentSkillIDs {
+			appendID(skillID)
+		}
 		if strategy := contextualAIChatTurnStrategyFromParts(prepared.parts); strategy != nil {
 			for _, planned := range strategy.PlannedTools {
 				appendID(planned.SkillID)

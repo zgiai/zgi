@@ -75,6 +75,10 @@ Changing content already comes last, so the prefix is cached (ADR 0032). The con
 10. **Resident tools and protocol tools are lean.**
     - The resident calculator offers only `evaluate_expression`. `calculate` and `percentage` stay in the skill for workflows and older loops.
     - `request_user_input` and `submit_turn_state` describe their fields in a few words.
+    - The docx and pptx schemas describe only the fields whose names do not say enough. Fields such as `bold` or `italic` carry no description, so `generate_docx` went from 15.4K to 9.5K characters and `generate_pptx` from 6.5K to 4.2K.
+11. **Recently used skills start active.**
+    - A turn starts with the skills whose tools succeeded in the conversation's last three turns.
+    - Their tools are in the tool list from the first round. Their instructions are stored with the question and then deduplicated (decision 9), instead of being resent after a tool call in every turn.
 
 ## Consequences
 

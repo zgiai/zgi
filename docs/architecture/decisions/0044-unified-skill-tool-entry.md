@@ -67,7 +67,31 @@ Accuracy did not drop: no argument errors, the same files, and slightly fewer mo
 - In unified mode the same schemas travel with the skill's instructions, after the conversation's own messages. Each conversation pays for them in full the first time: the round after activation read about 3.8K tokens from the cache and paid about 7.6K.
 - Unified mode only saves the history after the activation point of that turn. In these conversations that history is smaller than the schemas, so the trade is a loss.
 
-`unified` therefore stays off. Keeping skill tool schemas in the cached prefix is worth more than keeping the tool list unchanged within a turn. A better direction is to give the tools of the enabled skills from the first round, so the tool list is both stable and shared.
+`unified` therefore stays off. Keeping skill tool schemas in the cached prefix is worth more than keeping the tool list unchanged within a turn.
+
+### Second round: signatures instead of schemas
+
+Unified mode then listed each tool as a signature, such as `generate_file(content: string, format: txt|md|..., filename?: string)`, with the descriptions of its top-level fields. A rejected input still returns the full schema. `generate_docx` went from a 15K-character schema to a signature of about 1K. The same build also carried two changes that apply to both modes (ADR 0043):
+
+- skills used in the last three turns start active;
+- shorter docx and pptx schemas.
+
+| Measure | native | unified |
+|---|---|---|
+| Runtime suite | 327/327, cache 89.3%, 9,219 prompt tokens | 327/327, cache 88.7%, 10,112 prompt tokens |
+| Skill conversations: completed | 18/18, 16 files | 18/18, 16 files |
+| Skill conversations: model calls | 45 | 45 |
+| Skill conversations: uncached input | 80,913 | 88,680 |
+| Skill conversations: cached input | 412,544 | 268,288 |
+| Skill conversations: cached share | 83.6% | 75.2% |
+
+Signatures cut unified mode's uncached input from 157,984 to 88,680 tokens, close to native mode.
+
+- Unified mode still pays about 10% more uncached input.
+- Its total input is a third smaller, so where a cache read costs a fraction of a miss, the two are close and unified mode may be slightly cheaper.
+- Accuracy was the same.
+
+The gap is too small to justify a second way of calling tools, so `native` stays the default. Unified mode is worth measuring again for Agents with many activatable skills, where its fixed tool list matters more.
 
 ## Consequences
 
