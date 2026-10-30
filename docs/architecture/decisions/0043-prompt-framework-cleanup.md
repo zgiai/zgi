@@ -70,8 +70,11 @@ Changing content already comes last, so the prefix is cached (ADR 0032). The con
    - The next turn therefore replays the previous turn's request unchanged, and the provider's cache covers it up to the first message that differs. Before, the previous request ended at its reminders, which the history did not keep.
    - A turn context section or a memory block the replayed history already holds verbatim is not sent again. Unchanged memory is shown once per conversation, not once per turn. After a compaction, or when memory changes, it is sent again, and a memory block says it replaces any earlier one.
    - DigitalHuman runs give their turn context as sections, so unchanged connector notes and memory are not repeated either.
-   - The cache of a previous turn still stops at its first tool call. That call carried its reasoning within the turn (ADR 0033), and later turns leave reasoning out.
-   - Skill instructions added during a turn are not stored either.
+   - Guidance the loop adds right after the question is stored with it as well: the instructions of skills active from the start, the script packages and the workflow bindings. Guidance the replayed history already holds verbatim is not sent again, so a skill used in an earlier turn does not resend its instructions. A turn that sends a directory ranked for its question is stored without that guidance, since the directory changes every turn.
+   - The cache of a previous turn still stops at its first tool call. That call carried its reasoning within the turn (ADR 0033), and later turns leave reasoning out. Instructions added after a tool call are therefore not stored: storing them would not reach the cache.
+10. **Resident tools and protocol tools are lean.**
+    - The resident calculator offers only `evaluate_expression`. `calculate` and `percentage` stay in the skill for workflows and older loops.
+    - `request_user_input` and `submit_turn_state` describe their fields in a few words.
 
 ## Consequences
 

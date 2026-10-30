@@ -263,47 +263,47 @@ func requestUserInputMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolRequestUserInput,
-			Description: "Ask the user up to five concise questions and pause this turn until they answer. Provide options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; the user can always type freely. Use this only when missing information or ambiguity blocks reliable progress.",
+			Description: "Ask the user up to five short questions and pause the turn until they answer. Use it only when missing information blocks reliable progress.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"message": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional user-visible explanation shown as the assistant message alongside the questions. Use this to briefly explain what has been checked, why user input is needed, and what will happen next. Do not include internal tool names, JSON, IDs, or parameter names.",
+						"description": "Shown with the questions: what you checked, why you need the answer, and what happens next.",
 						"maxLength":   2000,
 					},
 					"questions": map[string]interface{}{
 						"type":        "array",
-						"description": "One to five user-visible questions. Prefer one to three questions, and only ask what blocks reliable progress.",
+						"description": "One to five questions; prefer one to three.",
 						"maxItems":    5,
 						"items": map[string]interface{}{
 							"type": "object",
 							"properties": map[string]interface{}{
 								"id": map[string]interface{}{
 									"type":        "string",
-									"description": "Optional stable short identifier for the question. This is not shown to the user.",
+									"description": "Optional short ID, not shown.",
 									"maxLength":   80,
 								},
 								"question": map[string]interface{}{
 									"type":        "string",
-									"description": "The natural-language question to show to the user.",
+									"description": "The question.",
 									"maxLength":   1000,
 								},
 								"options": map[string]interface{}{
 									"type":        "array",
-									"description": "Optional concrete quick replies for this question. Every option must be a definite answer that can be used directly. Omit options for open-ended or uncertain questions.",
+									"description": "Optional quick replies, each a definite answer. Never add vague ones such as Other or Not sure; the user can always type.",
 									"maxItems":    5,
 									"items": map[string]interface{}{
 										"type": "object",
 										"properties": map[string]interface{}{
 											"label": map[string]interface{}{
 												"type":        "string",
-												"description": "Short user-visible option label containing a concrete answer, not a vague placeholder such as Other or Freestyle.",
+												"description": "The answer.",
 												"maxLength":   80,
 											},
 											"description": map[string]interface{}{
 												"type":        "string",
-												"description": "Optional short explanation for this option.",
+												"description": "Optional short explanation.",
 												"maxLength":   200,
 											},
 										},
@@ -332,7 +332,7 @@ func turnStateMetaTool() llmadapter.Tool {
 				"properties": map[string]interface{}{
 					"items": map[string]interface{}{
 						"type":        "array",
-						"description": "One to eight structured turn-state items.",
+						"description": "One to eight items.",
 						"minItems":    1,
 						"maxItems":    8,
 						"items": map[string]interface{}{
@@ -345,37 +345,37 @@ func turnStateMetaTool() llmadapter.Tool {
 								},
 								"visibility": map[string]interface{}{
 									"type":        "string",
-									"description": "Use model_only for internal state; use user_visible only for user-facing deliverables.",
+									"description": "model_only for internal state, user_visible for deliverables.",
 									"enum":        []string{"model_only", "user_visible", "audit"},
 								},
 								"key": map[string]interface{}{
 									"type":        "string",
-									"description": "Stable short key for later reuse, for example agent_theme or selected_file_content.",
+									"description": "Short key for later reuse.",
 									"maxLength":   120,
 								},
 								"value": map[string]interface{}{
 									"type":        "string",
-									"description": "The concise fact, decision, assumption, verification result, or structured reference serialized as short JSON. Keep exact short user-derived values exact; never copy full documents or complete configuration payloads.",
+									"description": "The fact, decision or reference, as short text or JSON. Keep user-given values exact; never copy whole documents.",
 									"maxLength":   1024,
 								},
 								"title": map[string]interface{}{
 									"type":        "string",
-									"description": "Short user-facing title when kind is user_deliverable.",
+									"description": "Title of a user_deliverable.",
 									"maxLength":   120,
 								},
 								"content": map[string]interface{}{
 									"type":        "string",
-									"description": "Concise Markdown content when kind is user_deliverable. Save full documents as artifacts and reference them by file ID instead.",
+									"description": "Short Markdown of a user_deliverable; refer to files by ID.",
 									"maxLength":   1024,
 								},
 								"source": map[string]interface{}{
 									"type":        "string",
-									"description": "Optional source, such as file-reader/read_file or page_context.",
+									"description": "Optional source.",
 									"maxLength":   200,
 								},
 								"used_for": map[string]interface{}{
 									"type":        "array",
-									"description": "Optional later use labels, such as agent.name or agent.prompt.",
+									"description": "Optional labels for where it is used.",
 									"maxItems":    8,
 									"items": map[string]interface{}{
 										"type":      "string",
@@ -384,7 +384,7 @@ func turnStateMetaTool() llmadapter.Tool {
 								},
 								"confidence": map[string]interface{}{
 									"type":        "number",
-									"description": "Optional confidence from 0 to 1.",
+									"description": "Optional, 0 to 1.",
 									"minimum":     0,
 									"maximum":     1,
 								},

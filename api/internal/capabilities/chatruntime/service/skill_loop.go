@@ -263,6 +263,7 @@ func (s *service) runPreparedToolLoop(
 		OmitPlanningTools:              nativeLoop && !skills.HasNonResidentSkill(resolved),
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
+		OnTurnUserContent:              func(content interface{}) { prepared.turnUserContent = content },
 		RuntimeTools:                   runtimeTools,
 		PlatformModel:                  platformModel,
 		ExecutionContext:               executionContext,

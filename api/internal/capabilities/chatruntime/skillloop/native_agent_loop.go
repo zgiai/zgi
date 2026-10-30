@@ -212,6 +212,56 @@ func withSystemPromptAdditions(messages []adapter.Message, additions []adapter.M
 	return append([]adapter.Message{{Role: "system", Content: guidance}}, messages...)
 }
 
+// withoutRemindersInHistory leaves out guidance the conversation already
+// holds verbatim, such as the instructions of a skill a previous turn
+// activated: they are not sent again every turn (ADR 0043).
+func withoutRemindersInHistory(messages []adapter.Message, additions []adapter.Message) []adapter.Message {
+	out := make([]adapter.Message, 0, len(additions))
+	for _, addition := range additions {
+		text := strings.TrimSpace(messageContent(addition.Content))
+		if text != "" && strings.EqualFold(strings.TrimSpace(addition.Role), "system") && messagesHoldReminder(messages, text) {
+			continue
+		}
+		out = append(out, addition)
+	}
+	return out
+}
+
+func messagesHoldReminder(messages []adapter.Message, text string) bool {
+	wrapped := adapter.SystemReminder(text)
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "user") && strings.Contains(messageContent(message.Content), wrapped) {
+			return true
+		}
+	}
+	return false
+}
+
+// placedTurnUserContent is the current question as the provider receives it:
+// the last user message with the system messages after it merged in. It is
+// reported only when nothing but system messages follows the question.
+func placedTurnUserContent(messages []adapter.Message) (interface{}, bool) {
+	last := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		role := strings.ToLower(strings.TrimSpace(messages[index].Role))
+		if role == "system" {
+			continue
+		}
+		if role == "user" && messages[index].ToolCallID == "" {
+			last = index
+		}
+		break
+	}
+	if last <= 0 {
+		return nil, false
+	}
+	placed := adapter.PlaceSystemMessages(append([]adapter.Message{{Role: "system", Content: "-"}}, messages[last:]...))
+	if len(placed) != 2 {
+		return nil, false
+	}
+	return placed[1].Content, true
+}
+
 // NativeAgentLoopSystemMessage exposes the native-loop prompt for the service's
 // final context-budget estimate without duplicating its contents.
 func NativeAgentLoopSystemMessage() adapter.Message {

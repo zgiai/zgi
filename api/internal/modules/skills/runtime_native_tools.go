@@ -397,7 +397,7 @@ func (r *Runtime) nativeSkillCandidate(ctx context.Context, doc SkillDocument, t
 	}
 
 	localNames := make(map[string]struct{}, len(doc.Tools))
-	for _, definition := range doc.Tools {
+	for _, definition := range residentTools(skillID, doc.Tools) {
 		toolName := strings.TrimSpace(definition.Name)
 		if toolName == "" {
 			return nativeSkillCandidate{}, &NativeSkillSkip{SkillID: skillID, Reason: "tool_name_invalid"}

@@ -197,6 +197,10 @@ type RunRequest struct {
 	ProtocolToolsOnly bool
 	LegacyToolChat    bool
 	NativeAgentLoop   bool
+	// OnTurnUserContent receives the current question as it is sent, with the
+	// reminders the turn adds after it merged in, so the transcript can store
+	// what the next turn will replay (ADR 0043).
+	OnTurnUserContent func(content interface{})
 	// OmitPlanningTools leaves update_plan and submit_turn_state out of a
 	// native run that has no business action to plan (ADR 0043).
 	OmitPlanningTools              bool

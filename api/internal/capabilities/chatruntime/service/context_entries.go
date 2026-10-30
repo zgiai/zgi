@@ -241,6 +241,14 @@ func turnTranscriptWithQuery(prepared *PreparedChat, transcript []adapter.Messag
 	if prepared.parts != nil && len(prepared.parts.TurnReminders) > 0 {
 		content = adapter.PrependSystemReminders(prepared.parts.TurnReminders, query)
 	}
+	// The loop may have merged more guidance after the question, such as the
+	// instructions of skills active from the start. Its form is kept only when
+	// the question was sent as plain text.
+	if sent, ok := prepared.turnUserContent.(string); ok {
+		if base, isText := content.(string); isText && strings.HasPrefix(sent, base) {
+			content = sent
+		}
+	}
 	messages := make([]adapter.Message, 0, len(transcript)+1)
 	messages = append(messages, adapter.Message{Role: "user", Content: content})
 	return append(messages, transcript...)

@@ -568,6 +568,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		messages = append([]adapter.Message{terminalOnlySystemMessage()}, messages...)
 	} else if req.NativeAgentLoop {
 		systemAdditions := validAdditionalSystemMessages(req.SystemPromptAdditions)
+		rankedCatalog := false
 		if req.NativeSkillSession != nil {
 			if candidateMessage := req.NativeSkillSession.CatalogMessage(); strings.TrimSpace(messageContent(candidateMessage.Content)) != "" {
 				// A directory that lists every candidate in a fixed order is the
@@ -577,16 +578,26 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					systemAdditions = append(systemAdditions, candidateMessage)
 				} else {
 					messages = append(messages, candidateMessage)
+					rankedCatalog = true
 				}
 			}
 		}
+		tail := make([]adapter.Message, 0, 4)
 		if nativeToolSet != nil {
-			messages = append(messages, nativeToolSet.InstructionMessages...)
+			tail = append(tail, nativeToolSet.InstructionMessages...)
 			if sessionScripts, ok := nativeActiveSessionScriptsSystemMessage(resolved, nativeToolSet.ActiveSkillIDs, req.RuntimeTools); ok {
-				messages = append(messages, sessionScripts)
+				tail = append(tail, sessionScripts)
 			}
 		}
-		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
+		tail = append(tail, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
+		messages = append(messages, withoutRemindersInHistory(messages, tail)...)
+		// A ranked directory changes with every question, so a turn that sends
+		// one is not stored with it; its history would grow by a directory a turn.
+		if req.OnTurnUserContent != nil && !rankedCatalog {
+			if content, ok := placedTurnUserContent(messages); ok {
+				req.OnTurnUserContent(content)
+			}
+		}
 		messages = withSystemPromptAdditions(messages, append(systemAdditions, nativeAgentLoopSystemMessage()))
 	} else {
 		messages = append(messages, metadataMessage)
@@ -1349,6 +1360,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				stopBusinessLoopTrace = result.trace
 			}
 		}
+		roundDeferredSystemMessages = withoutRemindersInHistory(messages, roundDeferredSystemMessages)
 		if len(roundDeferredSystemMessages) > 0 {
 			messages = append(messages, roundDeferredSystemMessages...)
 			if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {

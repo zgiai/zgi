@@ -176,6 +176,21 @@ func TestNativeSkillSessionActivatesResidentSkillsWithoutDocuments(t *testing.T)
 	}
 }
 
+// A resident calculator offers only evaluate_expression; a document without
+// it keeps its tools (ADR 0043).
+func TestResidentCalculatorOffersOnlyItsExpressionTool(t *testing.T) {
+	definitions := []SkillToolDefinition{{Name: "evaluate_expression"}, {Name: "calculate"}, {Name: "percentage"}}
+	if kept := residentTools(SkillCalculator, definitions); len(kept) != 1 || kept[0].Name != "evaluate_expression" {
+		t.Fatalf("resident calculator tools = %#v, want evaluate_expression", kept)
+	}
+	if kept := residentTools(SkillCalculator, definitions[1:]); len(kept) != 2 {
+		t.Fatalf("calculator without evaluate_expression = %#v, want its tools kept", kept)
+	}
+	if kept := residentTools("exact-math", definitions); len(kept) != 3 {
+		t.Fatalf("non-resident tools = %#v, want all", kept)
+	}
+}
+
 func TestNativeSkillSessionPreservesActionProjectionAcrossLaterActivation(t *testing.T) {
 	resolved := &ResolvedSkills{Skills: []SkillDocument{
 		{Metadata: SkillMetadata{ID: SkillConnectorRuntime, RuntimeType: SkillRuntimeTypePrompt}, Instructions: "Use connected applications safely."},

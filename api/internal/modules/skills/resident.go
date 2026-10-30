@@ -1,6 +1,9 @@
 package skills
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Resident skills are built-in skills whose tools are offered from the first
 // round of every turn, without activation (ADR 0043). Their documents are not
@@ -12,6 +15,35 @@ func IsResidentSkill(skillID string) bool {
 	default:
 		return false
 	}
+}
+
+// residentToolNames are the tools a resident skill offers the model. Its other
+// tools stay available to workflows and older loops; offering them in every
+// request would cost more than the rare call they save (ADR 0043).
+var residentToolNames = map[string][]string{
+	SkillCalculator: {"evaluate_expression"},
+}
+
+// residentTools keeps the tools of a resident skill that it offers the model.
+// A skill whose document lists none of them keeps all of its tools.
+func residentTools(skillID string, definitions []SkillToolDefinition) []SkillToolDefinition {
+	allowed := residentToolNames[normalizeSkillID(skillID)]
+	if len(allowed) == 0 || !IsResidentSkill(skillID) {
+		return definitions
+	}
+	kept := make([]SkillToolDefinition, 0, len(allowed))
+	for _, definition := range definitions {
+		for _, name := range allowed {
+			if strings.TrimSpace(definition.Name) == name {
+				kept = append(kept, definition)
+				break
+			}
+		}
+	}
+	if len(kept) == 0 {
+		return definitions
+	}
+	return kept
 }
 
 // ResidentSkillIDs returns the resident skills of resolved in skill ID order,

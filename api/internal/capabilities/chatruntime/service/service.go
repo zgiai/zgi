@@ -683,6 +683,9 @@ type PreparedChat struct {
 	contextBudget                  *contextBudgetResult
 	contextManager                 *contextmgr.Manager
 	contextEntries                 *contextEntrySync
+	// turnUserContent is the question as the native loop sent it, with the
+	// reminders after it merged in (ADR 0043).
+	turnUserContent interface{}
 	// continuationTranscript holds the messages that resume a paused turn,
 	// such as the resolved approval. They reach the model only through the
 	// request, so they are stored ahead of the resumed run's own output.
