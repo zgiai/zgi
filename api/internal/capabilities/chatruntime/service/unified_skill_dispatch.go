@@ -8,9 +8,10 @@ import (
 )
 
 // unifiedSkillDispatchEnabled reports whether skill tools go through the
-// unified tool, the experiment of ADR 0044. The default keeps native tools.
+// unified tool, the default since ADR 0044. ZGI_SKILL_TOOL_DISPATCH=native
+// restores native per-tool functions.
 func unifiedSkillDispatchEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_SKILL_TOOL_DISPATCH")), "unified")
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_SKILL_TOOL_DISPATCH")), "native")
 }
 
 // unifiedSkillDispatchSystemMessage tells the model how to reach skill tools

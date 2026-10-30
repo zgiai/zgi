@@ -1,6 +1,6 @@
-# ADR 0044: A Unified Entry for Skill Tools (Experiment)
+# ADR 0044: A Unified Entry for Skill Tools
 
-- Status: Not adopted (measured 2026-10-30); the switch stays off by default
+- Status: Accepted (2026-10-30, after three measured rounds); `unified` is the default
 - Date: 2026-10-30
 
 ## Context
@@ -16,8 +16,8 @@ A unified entry would give ZGI the same property. It is close to the retired `ca
 ## Decision
 
 1. **A switch selects how skill tools are offered.**
-   - `ZGI_SKILL_TOOL_DISPATCH=native` (the default) keeps today's behaviour.
-   - `ZGI_SKILL_TOOL_DISPATCH=unified` offers the business tools of activatable skills through one tool.
+   - `ZGI_SKILL_TOOL_DISPATCH=unified`, the default, offers the business tools of activatable skills through one tool.
+   - `ZGI_SKILL_TOOL_DISPATCH=native` restores a function per tool and is kept as a fallback.
 2. **The unified tool is `zgi`.**
    - It takes `command`, the skill ID and tool name separated by a space (`file-generator generate_file`), and `input`, the tool's arguments as a JSON object.
    - The input is not shell text, because tools such as file generation take whole documents.
@@ -125,8 +125,22 @@ With many skills, unified mode costs less on both measures.
 - Unified mode's fixed tool list avoids both. The signatures it adds are small and paid once.
 - With a single skill, native mode had about 10% less uncached input and unified mode about 28% less total input. With many skills, unified mode leads on both.
 
+## Outcome
+
+`unified` is the default for Agents, the AI chat and DigitalHumans.
+
+- The three rounds found no loss of accuracy. The concern that once retired the old single-entry protocol was weaker tool calling, and current models no longer show it.
+- With one activatable skill the cost is about even.
+- With many skills, unified mode costs less on both uncached and total input.
+
+On the default build, three checks passed:
+
+- the runtime suite, 327/327 with a cached share of 88.8%;
+- a console AI chat that reached file generation through `zgi`;
+- a DigitalHuman memory subset, 6/6.
+
 ## Consequences
 
 - In `unified` mode a conversation's tool list stays the same from its first round, so activation no longer invalidates the cache.
 - The model no longer gets per-tool argument constraints for activatable skills. Invalid input is caught by server-side validation and costs a retry.
-- Both modes have to be maintained while the switch exists. It can be removed once the next direction is measured.
+- `native` stays as a fallback while unified mode settles in production. Removing it later removes the per-tool projection for activatable skills.
