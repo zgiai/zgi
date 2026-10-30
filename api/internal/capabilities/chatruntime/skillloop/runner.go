@@ -180,15 +180,6 @@ func (s *retryFailureBudgetState) finishRound(
 	}
 }
 
-func (s *retryFailureBudgetState) recordStandaloneFailure(class retryFailureClass, category string, trace skills.SkillTrace) {
-	s.recordCall(class, category, trace)
-	s.finishRound(
-		map[retryFailureClass]bool{class: true},
-		map[retryFailureClass]bool{},
-		false,
-	)
-}
-
 func (s *retryFailureBudgetState) limitReached() (retryFailureClass, *retryFailureBudgetMetrics, bool) {
 	for _, class := range retryFailureClasses {
 		metrics := s.metricsFor(class)
@@ -242,17 +233,6 @@ func retryFailureLimitDetails(class retryFailureClass) (reasonCode string, stopR
 	default:
 		return "skill_tool_failure_limit_reached", "the Provider business operation continued to fail and its safe retry limit was reached", true
 	}
-}
-
-func terminalProtocolRetryTrace(decision terminalStateGuardDecision) skills.SkillTrace {
-	err := errors.New(strings.TrimSpace(decision.Reason))
-	trace := failedSkillTrace("terminal_protocol", "", err)
-	trace.Status = "advisory"
-	trace.Arguments = map[string]interface{}{
-		"failure_category": "protocol",
-		"blockers":         append([]string(nil), decision.Blockers...),
-	}
-	return trace
 }
 
 func (r *Runner) completeSkillLoopSafetyTermination(
@@ -373,6 +353,142 @@ func (r *Runner) completeConnectorOutcomeSuccess(
 		})
 	}
 	return answer, result.usage, nil
+}
+
+// guardSkillToolCall stops a skill tool call before it runs, with a
+// recoverable result the model can act on: the plan must be revised after a
+// clarification first, the skill is not authorized, or the same call already
+// failed. It returns an empty step when the call may run.
+func guardSkillToolCall(ctx context.Context, req RunRequest, resolved *skills.ResolvedSkills, callID string, skillID string, toolName string, args map[string]interface{}, failedCallKey string, failedReasons map[string]string, failedAttempts map[string]int) skillStepResult {
+	if userInputPlanRevisionRequiredForTool(req, skillID, toolName) {
+		return pendingUserInputPlanRevisionStep(callID, skillID, toolName, args, resolved)
+	}
+	if req.AuthorizeSkillStep != nil && strings.TrimSpace(skillID) != "" {
+		if allowed, policyErr := req.AuthorizeSkillStep(ctx, skillID); policyErr != nil || !allowed {
+			return unavailableSkillPolicyStep(callID, skillID, toolName, args, policyErr, resolved)
+		}
+	}
+	if failedCallKey != "" {
+		if reason := failedReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
+			return repeatedFailedToolCallRecoverableStep(callID, skillID, toolName, args, reason, failedAttempts[failedCallKey] >= 2, resolved)
+		}
+	}
+	return skillStepResult{}
+}
+
+// initialRunMessages builds the first request of a run for its loop: the
+// terminal-only projection, the native loop with its cached system prompt and
+// turn guidance, or the legacy protocol loop.
+func initialRunMessages(req RunRequest, resolved *skills.ResolvedSkills, nativeToolSet *skills.NativeToolSet, restoredSkillState restoredSkillInstructionState, preferExplicitFinalAnswer bool) ([]adapter.Message, skills.SkillMetadataPromptStats) {
+	prepared := req.Prepared
+	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
+	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
+		resolved.PromptMetadata(),
+		skills.DefaultSkillMetadataPromptBudgetChars,
+	)
+	switch {
+	case req.TerminalOnly:
+		messages = terminalOnlyProjectedMessages(prepared, currentMetadataForRun(req))
+		messages = append([]adapter.Message{terminalOnlySystemMessage()}, messages...)
+	case req.NativeAgentLoop:
+		messages = nativeInitialMessages(req, resolved, nativeToolSet, messages)
+	default:
+		messages = append(messages, metadataMessage)
+		if restoredSkillState.message != nil {
+			messages = append(messages, *restoredSkillState.message)
+		}
+		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
+		messages = append(messages, validAdditionalSystemMessages(req.SystemPromptAdditions)...)
+		switch {
+		case req.ProtocolToolsOnly:
+			messages = append(messages, protocolToolLoopSystemMessage(preferExplicitFinalAnswer))
+		case req.LegacyToolChat:
+			messages = append(messages, legacyToolChatSystemMessage())
+		default:
+			messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
+		}
+	}
+	return messages, metadataStats
+}
+
+// nativeInitialMessages adds the native loop's guidance: what stays the same
+// from turn to turn goes into the system prompt, and the turn's own guidance
+// follows the question (ADR 0032, ADR 0043).
+func nativeInitialMessages(req RunRequest, resolved *skills.ResolvedSkills, nativeToolSet *skills.NativeToolSet, messages []adapter.Message) []adapter.Message {
+	systemAdditions := validAdditionalSystemMessages(req.SystemPromptAdditions)
+	rankedCatalog := false
+	if req.NativeSkillSession != nil {
+		if candidateMessage := req.NativeSkillSession.CatalogMessage(); strings.TrimSpace(messageContent(candidateMessage.Content)) != "" {
+			// A directory that lists every candidate in a fixed order is the
+			// same in every turn, so it belongs to the cached system prompt;
+			// one ranked for this question stays with the turn.
+			if req.NativeSkillSession.CatalogStable() {
+				systemAdditions = append(systemAdditions, candidateMessage)
+			} else {
+				messages = append(messages, candidateMessage)
+				rankedCatalog = true
+			}
+		}
+	}
+	tail := make([]adapter.Message, 0, 4)
+	if nativeToolSet != nil {
+		tail = append(tail, nativeToolSet.InstructionMessages...)
+		if sessionScripts, ok := nativeActiveSessionScriptsSystemMessage(resolved, nativeToolSet.ActiveSkillIDs, req.RuntimeTools); ok {
+			tail = append(tail, sessionScripts)
+		}
+	}
+	tail = append(tail, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
+	messages = append(messages, withoutRemindersInHistory(messages, tail)...)
+	// A ranked directory changes with every question, so a turn that sends
+	// one is not stored with it; its history would grow by a directory a turn.
+	if req.OnTurnUserContent != nil && !rankedCatalog {
+		if content, ok := placedTurnUserContent(messages); ok {
+			req.OnTurnUserContent(content)
+		}
+	}
+	return withSystemPromptAdditions(messages, append(systemAdditions, nativeAgentLoopSystemMessage()))
+}
+
+// planningToolsForRound is the tool list of one round before positions are
+// kept: the native loop's tools, or the legacy protocol tools, narrowed by the
+// run's state.
+func (r *Runner) planningToolsForRound(req RunRequest, resolved *skills.ResolvedSkills, nativeToolSet *skills.NativeToolSet, loadedSkills map[string]struct{}, restoredSkillState restoredSkillInstructionState, preferExplicitFinalAnswer bool, planRevisionRequired bool, connectorOutcomesComplete bool, roundRuntimeState map[string]interface{}) []adapter.Tool {
+	var tools []adapter.Tool
+	if req.NativeAgentLoop {
+		tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools, req.OmitPlanningTools, req.UnifiedSkillDispatch)
+		// Oversized tool results reach the model projected, with the rest
+		// readable through this tool (ADR 0037). It is always offered, so
+		// the tool list does not change when a projection first appears.
+		tools = appendContextArtifactTool(tools, r.ContextManager != nil)
+	} else {
+		tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, false)
+	}
+	allowPlanUpdate := planRevisionRequired || operationPlanModelRevisionRequired(req, roundRuntimeState)
+	allowIntermediateAnswer := !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState)
+	if connectorOutcomesComplete {
+		tools = controlToolsForRound(tools, false, allowIntermediateAnswer)
+	} else if !req.NativeAgentLoop {
+		tools = controlToolsForRound(tools, allowPlanUpdate, allowIntermediateAnswer)
+	}
+	tools = updatePlanToolsForRuntimeState(tools, roundRuntimeState)
+	if req.LegacyToolChat {
+		tools = legacyToolChatTools(tools, len(restoredSkillState.reloadRequired) > 0)
+	}
+	return tools
+}
+
+// runPlanningRound makes the model call of one round with the loop's retry and
+// continuation policy.
+func (r *Runner) runPlanningRound(ctx context.Context, req RunRequest, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, deferTerminalContent bool, terminalSubmissionAllowed bool, suppressNaturalProgress bool) (planningResult, error) {
+	switch {
+	case req.NativeAgentLoop:
+		result, err := r.runNativeAgentRoundContinuing(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
+		return result, nativeAgentOutputError(err)
+	case req.TerminalOnly:
+		return r.runTerminalOnlyPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, suppressNaturalProgress)
+	default:
+		return r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
+	}
 }
 
 func connectorRequiredOutcomesSatisfied(runtimeState map[string]interface{}) bool {
@@ -558,62 +674,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	loadedSkills := restoredSkillState.activeLoaded
 	toolPositions := map[string]int{}
 
-	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
-	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
-		resolved.PromptMetadata(),
-		skills.DefaultSkillMetadataPromptBudgetChars,
-	)
-	if req.TerminalOnly {
-		messages = terminalOnlyProjectedMessages(prepared, currentMetadataForRun(req))
-		messages = append([]adapter.Message{terminalOnlySystemMessage()}, messages...)
-	} else if req.NativeAgentLoop {
-		systemAdditions := validAdditionalSystemMessages(req.SystemPromptAdditions)
-		rankedCatalog := false
-		if req.NativeSkillSession != nil {
-			if candidateMessage := req.NativeSkillSession.CatalogMessage(); strings.TrimSpace(messageContent(candidateMessage.Content)) != "" {
-				// A directory that lists every candidate in a fixed order is the
-				// same in every turn, so it belongs to the cached system prompt;
-				// one ranked for this question stays with the turn.
-				if req.NativeSkillSession.CatalogStable() {
-					systemAdditions = append(systemAdditions, candidateMessage)
-				} else {
-					messages = append(messages, candidateMessage)
-					rankedCatalog = true
-				}
-			}
-		}
-		tail := make([]adapter.Message, 0, 4)
-		if nativeToolSet != nil {
-			tail = append(tail, nativeToolSet.InstructionMessages...)
-			if sessionScripts, ok := nativeActiveSessionScriptsSystemMessage(resolved, nativeToolSet.ActiveSkillIDs, req.RuntimeTools); ok {
-				tail = append(tail, sessionScripts)
-			}
-		}
-		tail = append(tail, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
-		messages = append(messages, withoutRemindersInHistory(messages, tail)...)
-		// A ranked directory changes with every question, so a turn that sends
-		// one is not stored with it; its history would grow by a directory a turn.
-		if req.OnTurnUserContent != nil && !rankedCatalog {
-			if content, ok := placedTurnUserContent(messages); ok {
-				req.OnTurnUserContent(content)
-			}
-		}
-		messages = withSystemPromptAdditions(messages, append(systemAdditions, nativeAgentLoopSystemMessage()))
-	} else {
-		messages = append(messages, metadataMessage)
-		if restoredSkillState.message != nil {
-			messages = append(messages, *restoredSkillState.message)
-		}
-		messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
-		messages = append(messages, validAdditionalSystemMessages(req.SystemPromptAdditions)...)
-		if req.ProtocolToolsOnly {
-			messages = append(messages, protocolToolLoopSystemMessage(preferExplicitFinalAnswer))
-		} else if req.LegacyToolChat {
-			messages = append(messages, legacyToolChatSystemMessage())
-		} else {
-			messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
-		}
-	}
+	messages, metadataStats := initialRunMessages(req, resolved, nativeToolSet, restoredSkillState, preferExplicitFinalAnswer)
 	traces := []skills.SkillTrace{}
 	for _, trace := range restoreValidationTraces {
 		traces = append(traces, trace)
@@ -762,34 +823,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
-		if req.NativeAgentLoop {
-			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools, req.OmitPlanningTools, req.UnifiedSkillDispatch)
-			// Oversized tool results reach the model projected, with the rest
-			// readable through this tool (ADR 0037). It is always offered, so
-			// the tool list does not change when a projection first appears.
-			planningReq.Tools = appendContextArtifactTool(planningReq.Tools, r.ContextManager != nil)
-		} else {
-			planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, false)
-		}
-		allowPlanUpdate := planRevisionRequired || operationPlanModelRevisionRequired(req, roundRuntimeState)
-		allowIntermediateAnswer := !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState)
-		if connectorOutcomesComplete {
-			planningReq.Tools = controlToolsForRound(
-				planningReq.Tools,
-				false,
-				allowIntermediateAnswer,
-			)
-		} else if !req.NativeAgentLoop {
-			planningReq.Tools = controlToolsForRound(
-				planningReq.Tools,
-				allowPlanUpdate,
-				allowIntermediateAnswer,
-			)
-		}
-		planningReq.Tools = updatePlanToolsForRuntimeState(planningReq.Tools, roundRuntimeState)
-		if req.LegacyToolChat {
-			planningReq.Tools = legacyToolChatTools(planningReq.Tools, len(restoredSkillState.reloadRequired) > 0)
-		}
+		planningReq.Tools = r.planningToolsForRound(req, resolved, nativeToolSet, loadedSkills, restoredSkillState, preferExplicitFinalAnswer, planRevisionRequired, connectorOutcomesComplete, roundRuntimeState)
 		planningReq.Tools = keepToolPositions(planningReq.Tools, toolPositions)
 		if req.TerminalOnly {
 			planningReq.Tools = nil
@@ -802,24 +836,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 		suppressNaturalProgress := req.SuppressInitialNaturalProgress && round == 0
 		deferTerminalContent := preferExplicitFinalAnswer || req.TerminalOnly || !terminalSubmissionAllowed
-		planningResult := planningResult{}
-		var err error
-		if req.NativeAgentLoop {
-			planningResult, err = r.runNativeAgentRoundContinuing(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
-			err = nativeAgentOutputError(err)
-		} else if req.TerminalOnly {
-			planningResult, err = r.runTerminalOnlyPlanningWithRetry(
-				ctx,
-				prepared,
-				planningReq,
-				round,
-				req.OnChunk,
-				deferTerminalContent,
-				suppressNaturalProgress,
-			)
-		} else {
-			planningResult, err = r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
-		}
+		planningResult, err := r.runPlanningRound(ctx, req, prepared, planningReq, round, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
 		if req.AfterModelRound != nil {
 			if hookErr := req.AfterModelRound(ctx, round, err == nil); hookErr != nil {
 				if err != nil {
@@ -1143,24 +1160,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					r.emitEvent(prepared, event.Type, runtimeToolEventPayload(prepared, event.Payload))
 				}
 			}
-			if result.trace.Kind == "" && userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
-				result = pendingUserInputPlanRevisionStep(executionCall.ID, callSkillID, callToolName, callToolArgs, resolved)
+			if result.trace.Kind == "" {
+				result = guardSkillToolCall(ctx, req, resolved, executionCall.ID, callSkillID, callToolName, callToolArgs, failedCallKey, failedToolCallReasons, failedToolCallAttemptCounts)
 			}
-			if result.trace.Kind == "" && req.AuthorizeSkillStep != nil && strings.TrimSpace(callSkillID) != "" {
-				allowed, policyErr := req.AuthorizeSkillStep(ctx, callSkillID)
-				if policyErr != nil || !allowed {
-					result = unavailableSkillPolicyStep(executionCall.ID, callSkillID, callToolName, callToolArgs, policyErr, resolved)
-				}
-			}
-			if result.trace.Kind == "" && failedCallKey != "" {
-				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
-					stopAfterWarning := failedToolCallAttemptCounts[failedCallKey] >= 2
-					result = repeatedFailedToolCallRecoverableStep(executionCall.ID, callSkillID, callToolName, callToolArgs, reason, stopAfterWarning, resolved)
-				}
-			}
-			callEvidence[runtimeStateAllowPlanUpdateKey] = req.NativeAgentLoop || planRevisionRequired || operationPlanModelRevisionRequired(req, callEvidence)
-			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
-			callEvidence[runtimeStateNativeAgentLoopKey] = req.NativeAgentLoop
 			if result.trace.Kind == "" {
 				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, executionCall, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
 			}
@@ -1724,10 +1726,6 @@ func legacyToolChatTools(input []adapter.Tool, allowSkillReload bool) []adapter.
 	return out
 }
 
-func restoredLoadedSkillInstructionState(resolved *skills.ResolvedSkills, historicalLoadedSkills map[string]struct{}) restoredSkillInstructionState {
-	return restoredLoadedSkillInstructionStateForRun(resolved, historicalLoadedSkills, "")
-}
-
 func restoredLoadedSkillInstructionStateForRun(resolved *skills.ResolvedSkills, historicalLoadedSkills map[string]struct{}, preferredSkillID string) restoredSkillInstructionState {
 	state := restoredSkillInstructionState{activeLoaded: map[string]struct{}{}}
 	if resolved == nil || len(historicalLoadedSkills) == 0 {
@@ -1947,10 +1945,6 @@ func evidenceStringSliceFromAny(value interface{}) []string {
 	}
 }
 
-func repeatedFailedToolCallKeyForCall(call adapter.ToolCall) (string, string, map[string]interface{}, string) {
-	return skillToolCallIdentityForCall(nil, nil, call)
-}
-
 func skillToolCallIdentityForCall(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, call adapter.ToolCall) (string, string, map[string]interface{}, string) {
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
@@ -2033,25 +2027,6 @@ func currentMetadataForRun(req RunRequest) map[string]interface{} {
 		return nil
 	}
 	return copyStringAnyMap(req.CurrentMetadata())
-}
-
-func runRequiresFinalPlanSnapshot(_ RunRequest) bool {
-	return false
-}
-
-func isAgentManagementMutationTool(skillID string, toolName string) bool {
-	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "update_agent_identity", "update_agent_config",
-		"replace_agent_skill_bindings", "replace_agent_knowledge_bindings",
-		"replace_agent_database_bindings", "replace_agent_workflow_bindings",
-		"replace_agent_memory_blocks", "replace_agent_memory_slots":
-		return true
-	default:
-		return false
-	}
 }
 
 func failedToolCallKey(skillID string, toolName string, args map[string]interface{}) string {
@@ -2844,28 +2819,6 @@ func utf16CodeUnitLength(text string) int {
 	return len(utf16.Encode([]rune(text)))
 }
 
-func (r *Runner) emitAgentProgress(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) bool {
-	content := localizedAgentProgressText(text)
-	if content == "" {
-		return false
-	}
-	r.emitEvent(prepared, EventAgentProgress, map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"content":         content,
-		"created_at":      time.Now().Unix(),
-	})
-	return true
-}
-
-func localizedAgentProgressText(text string) string {
-	return visibleAgentProgressText(text)
-}
-
-func visibleAgentProgressText(text string) string {
-	return strings.TrimSpace(text)
-}
-
 func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Message {
 	instructions := []string{
 		"When using skills or tools, you may provide concise user-facing progress when it helps the user understand a multi-step operation.",
@@ -2960,8 +2913,4 @@ func protocolToolLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		instructions = append(instructions, "When no protocol tool is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")
 	}
 	return adapter.Message{Role: "system", Content: strings.Join(instructions, "\n")}
-}
-
-func AgenticSkillLoopSystemMessage() adapter.Message {
-	return agenticSkillLoopSystemMessage(true)
 }

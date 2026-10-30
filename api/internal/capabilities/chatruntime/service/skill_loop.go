@@ -4591,7 +4591,3 @@ func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
 	}
 	return &cloned
 }
-
-func agenticSkillLoopSystemMessage() adapter.Message {
-	return skillloop.AgenticSkillLoopSystemMessage()
-}

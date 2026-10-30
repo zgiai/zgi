@@ -45,15 +45,15 @@ func TestSkillPlanningStreamStreamsExplicitFinalAnswerWithoutRetract(t *testing.
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
-	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false)
+	result, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false, "skill_planning", nil)
 	if err != nil {
-		t.Fatalf("runSkillPlanningStream() error = %v", err)
+		t.Fatalf("runModelToolRoundStream() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("runSkillPlanningStream() ok = false, want true")
+		t.Fatal("runModelToolRoundStream() ok = false, want true")
 	}
 	if !result.answerStreamed {
-		t.Fatal("runSkillPlanningStream() answerStreamed = false, want true")
+		t.Fatal("runModelToolRoundStream() answerStreamed = false, want true")
 	}
 	var answer strings.Builder
 	for _, event := range events {
@@ -269,12 +269,12 @@ func TestSkillPlanningStreamKeepsFinalAnswerWhenStreamTerminatesEarly(t *testing
 	}}
 	prepared := NewPreparedChat("conv-truncated", "msg-truncated", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
-	_, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false)
+	_, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false, "skill_planning", nil)
 	if err == nil {
-		t.Fatal("runSkillPlanningStream() error = nil, want truncated stream error")
+		t.Fatal("runModelToolRoundStream() error = nil, want truncated stream error")
 	}
 	if !ok {
-		t.Fatal("runSkillPlanningStream() ok = false, want true")
+		t.Fatal("runModelToolRoundStream() ok = false, want true")
 	}
 	var streamedErr *streamedFinalAnswerError
 	if !errors.As(err, &streamedErr) || streamedErr.answer != "partial answer" {
@@ -353,9 +353,9 @@ func TestSkillPlanningStreamDefersTerminalToolTurnBodyUntilCallsAreValidated(t *
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 	prepared.Query = "\u8bfb\u53d6\u6587\u4ef6"
 
-	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false)
+	result, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false, "skill_planning", nil)
 	if err != nil || !ok {
-		t.Fatalf("runSkillPlanningStream() = ok %v, error %v", ok, err)
+		t.Fatalf("runModelToolRoundStream() = ok %v, error %v", ok, err)
 	}
 	if result.answerStreamed {
 		t.Fatal("tool-turn process body was marked as a streamed answer")
@@ -402,9 +402,9 @@ func TestSkillPlanningStreamSuppressesInitialContinuationBody(t *testing.T) {
 	}}
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
-	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, true)
+	result, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, true, "skill_planning", nil)
 	if err != nil || !ok {
-		t.Fatalf("runSkillPlanningStream() = ok %v, error %v", ok, err)
+		t.Fatalf("runModelToolRoundStream() = ok %v, error %v", ok, err)
 	}
 	if result.answerStreamed || result.naturalAnswerStreamed {
 		t.Fatalf("suppressed continuation body was marked streamed: %#v", result)
@@ -453,9 +453,9 @@ func TestSkillPlanningStreamMovesToolTurnTextIntoProcessTimeline(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 	prepared.Query = "\u8bfb\u53d6\u6587\u4ef6"
 
-	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, false)
+	result, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, false, "skill_planning", nil)
 	if err != nil || !ok {
-		t.Fatalf("runSkillPlanningStream() = ok %v, error %v", ok, err)
+		t.Fatalf("runModelToolRoundStream() = ok %v, error %v", ok, err)
 	}
 	const want = "\u5148\u68c0\u67e5\u5f53\u524d\u6587\u4ef6\u3002\u8bfb\u53d6\u540e\u6211\u4f1a\u7ee7\u7eed\u5904\u7406\uff0c\u4e0d\u4f1a\u4e22\u5931\u8fd9\u53e5\u8bdd\u3002"
 	if got := messageContent(result.message.Content); got != want {
@@ -597,9 +597,9 @@ func TestSkillPlanningStreamRejectsLengthTermination(t *testing.T) {
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
-	_, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false)
+	_, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false, "skill_planning", nil)
 	if err == nil || !ok {
-		t.Fatalf("runSkillPlanningStream() = ok %v, error %v; want terminal error", ok, err)
+		t.Fatalf("runModelToolRoundStream() = ok %v, error %v; want terminal error", ok, err)
 	}
 	if trace.FinishReason != "length" || trace.Error == "" {
 		t.Fatalf("trace = %#v, want length termination recorded as error", trace)

@@ -151,7 +151,7 @@ func TestRetryFailureBudgetStateSeparatesTerminalProtocolAndPlanner(t *testing.T
 		rounds = plannerRounds
 	}
 	for index := 0; index < rounds; index++ {
-		state.recordStandaloneFailure(
+		state.recordStandaloneFailureForTest(
 			retryFailureTerminalProtocol,
 			"protocol",
 			retryBudgetTestTrace(retryFailureTerminalProtocol, index),
@@ -180,7 +180,7 @@ func TestRetryFailureBudgetStateSeparatesTerminalProtocolAndPlanner(t *testing.T
 		t.Fatalf("planner_schema metrics = %#v, want %d independent rounds/calls", planner, rounds)
 	}
 
-	state.recordStandaloneFailure(
+	state.recordStandaloneFailureForTest(
 		retryFailureTerminalProtocol,
 		"protocol",
 		retryBudgetTestTrace(retryFailureTerminalProtocol, rounds),
@@ -433,4 +433,10 @@ func runnerTestMessageText(messages []adapter.Message) string {
 		parts = append(parts, messageContent(message.Content))
 	}
 	return strings.Join(parts, "\n")
+}
+
+// recordStandaloneFailureForTest records one failed call as a round of its own.
+func (s *retryFailureBudgetState) recordStandaloneFailureForTest(class retryFailureClass, category string, trace skills.SkillTrace) {
+	s.recordCall(class, category, trace)
+	s.finishRound(map[retryFailureClass]bool{class: true}, map[retryFailureClass]bool{}, false)
 }

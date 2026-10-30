@@ -78,25 +78,6 @@ func resolveOperationPlanPhaseForSkillCall(
 	return "", false, nil
 }
 
-func appendUniqueStringsFold(values []string, additions ...string) []string {
-	seen := make(map[string]struct{}, len(values)+len(additions))
-	for _, value := range values {
-		seen[strings.ToLower(strings.TrimSpace(value))] = struct{}{}
-	}
-	for _, value := range additions {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		values = append(values, value)
-	}
-	return values
-}
-
 func operationPlanCurrentOpenPhaseID(phases []map[string]interface{}) string {
 	firstOpen := ""
 	inProgress := ""
@@ -285,15 +266,6 @@ func operationPlanOutcomeForPhase(phase map[string]interface{}, runtimeState map
 		}
 	}
 	return nil
-}
-
-func operationPlanPhaseHasSafeNonToolClassification(phase map[string]interface{}) bool {
-	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase["completion_mode"]))) {
-	case "final_answer", "non_tool":
-		return true
-	default:
-		return false
-	}
 }
 
 func operationPlanSkillCallTarget(arguments map[string]interface{}) map[string]interface{} {

@@ -12,19 +12,6 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-func (r *Runner) runSkillPlanningStream(
-	ctx context.Context,
-	prepared *PreparedChat,
-	planningReq *adapter.ChatRequest,
-	round int,
-	onEvent func(Event) error,
-	terminalProtocol bool,
-	terminalStreamingAllowed bool,
-	suppressNaturalProgress bool,
-) (planningResult, bool, error) {
-	return r.runModelToolRoundStream(ctx, prepared, planningReq, round, onEvent, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "skill_planning", nil)
-}
-
 func (r *Runner) runModelToolRoundStream(
 	ctx context.Context,
 	prepared *PreparedChat,

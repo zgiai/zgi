@@ -55,7 +55,7 @@ func TestSkillPlanningRoundCancelsCompletedStream(t *testing.T) {
 	client := &planningStreamContextClient{openedContext: make(chan context.Context, 1)}
 	runner := &Runner{LLMClient: client}
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
-	_, ok, err := runner.runSkillPlanningStream(t.Context(), prepared, prepared.LLMRequest, 0, nil, false, false, false)
+	_, ok, err := runner.runModelToolRoundStream(t.Context(), prepared, prepared.LLMRequest, 0, nil, false, false, false, "skill_planning", nil)
 	if err != nil || !ok {
 		t.Fatalf("planning round failed: ok=%v error=%v", ok, err)
 	}

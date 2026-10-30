@@ -96,7 +96,7 @@ func TestLegacyToolChatToolsAllowReloadOnlyWhenRestorationRequiresIt(t *testing.
 		Tools:        []skills.SkillToolDefinition{{Name: "delete_file"}},
 	}}}
 	loaded := initialLoadedSkillsForRun(RunRequest{LegacyToolChat: true}, resolved)
-	state := restoredLoadedSkillInstructionState(resolved, loaded)
+	state := restoredLoadedSkillInstructionStateForRun(resolved, loaded, "")
 	if len(state.reloadRequired) != 1 {
 		t.Fatalf("reloadRequired = %#v, want one oversized skill", state.reloadRequired)
 	}
@@ -873,9 +873,9 @@ func TestRestoredLoadedSkillInstructionStateRehydratesCompleteContinuation(t *te
 			Instructions: "# File Reader\nRead exact file content.",
 		},
 	}}
-	state := restoredLoadedSkillInstructionState(resolved, map[string]struct{}{
+	state := restoredLoadedSkillInstructionStateForRun(resolved, map[string]struct{}{
 		skills.SkillAgentManagement: {},
-	})
+	}, "")
 	if state.message == nil {
 		t.Fatal("restoredLoadedSkillInstructionState().message = nil")
 	}
@@ -909,9 +909,9 @@ func TestRestoredLoadedSkillInstructionStateReopensOversizedSkill(t *testing.T) 
 		Tools:        []skills.SkillToolDefinition{{Name: "update_agent_config"}},
 	}}}
 
-	state := restoredLoadedSkillInstructionState(resolved, map[string]struct{}{
+	state := restoredLoadedSkillInstructionStateForRun(resolved, map[string]struct{}{
 		skills.SkillAgentManagement: {},
-	})
+	}, "")
 
 	if _, ok := state.activeLoaded[skills.SkillAgentManagement]; ok {
 		t.Fatalf("activeLoaded[%q] present for oversized instructions", skills.SkillAgentManagement)
@@ -1100,7 +1100,7 @@ func TestRestoredLoadedSkillInstructionStateReopensOnlySkillsBeyondTotalBudget(t
 	}}
 	historical := map[string]struct{}{"skill-a": {}, "skill-b": {}}
 
-	state := restoredLoadedSkillInstructionState(resolved, historical)
+	state := restoredLoadedSkillInstructionStateForRun(resolved, historical, "")
 
 	if _, ok := state.activeLoaded["skill-a"]; !ok {
 		t.Fatalf("activeLoaded = %#v, want skill-a fully restored", state.activeLoaded)
@@ -1120,29 +1120,6 @@ func runnerTestHasTool(tools []adapter.Tool, name string) bool {
 		}
 	}
 	return false
-}
-
-func TestRunNeverRequiresFinalPlanSnapshotForOutcomePlan(t *testing.T) {
-	req := RunRequest{CurrentMetadata: func() map[string]interface{} {
-		return map[string]interface{}{
-			"operation_plan": map[string]interface{}{
-				"phases": []interface{}{map[string]interface{}{
-					"id":     "phase-1",
-					"step":   "Complete the task",
-					"status": "in_progress",
-				}},
-			},
-		}
-	}}
-	if runRequiresFinalPlanSnapshot(req) {
-		t.Fatal("runRequiresFinalPlanSnapshot() = true, want optional audit snapshot")
-	}
-	req.CurrentMetadata = func() map[string]interface{} {
-		return map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{}}}
-	}
-	if runRequiresFinalPlanSnapshot(req) {
-		t.Fatal("runRequiresFinalPlanSnapshot() = true for empty phases")
-	}
 }
 
 func TestShouldEmitNaturalProgressOnlyForExecutableBusinessTools(t *testing.T) {

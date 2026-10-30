@@ -520,15 +520,6 @@ func plannerFeedbackTrace(skillID string, toolName string, err error) skills.Ski
 	}
 }
 
-func internalPlannerFeedbackTrace(trace skills.SkillTrace) bool {
-	switch strings.TrimSpace(trace.Kind) {
-	case "planner_feedback", "skill_load_attempt", "context_artifact_read":
-		return true
-	default:
-		return false
-	}
-}
-
 func skillToolLimitExceededTrace(skillID string, toolName string, args map[string]interface{}, err error) skills.SkillTrace {
 	trace := failedSkillTrace("tool_call", toolName, err)
 	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
