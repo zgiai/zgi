@@ -87,6 +87,7 @@ type Decision struct {
 	ToolProjectionCount           int            `json:"tool_projection_count"`
 	LossyRecoveryDroppedRounds    int            `json:"lossy_recovery_dropped_rounds,omitempty"`
 	LossyRecoveryDroppedBatches   int            `json:"lossy_recovery_dropped_batches,omitempty"`
+	ReasoningDropped              bool           `json:"reasoning_dropped,omitempty"`
 	Estimator                     string         `json:"estimator"`
 	EstimateScale                 float64        `json:"estimate_scale"`
 	CompactionFailure             string         `json:"compaction_failure,omitempty"`

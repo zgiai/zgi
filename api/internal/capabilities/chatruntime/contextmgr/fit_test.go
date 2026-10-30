@@ -86,3 +86,41 @@ func TestHistoryThatDoesNotFitIsLeftOutByWholeTurns(t *testing.T) {
 		t.Fatalf("want the oldest turn left out and the persona and current question kept: %.300s", text)
 	}
 }
+
+// When a request does not fit, the reasoning of earlier turns goes first. The
+// current turn keeps its reasoning, and no history is left out when that is
+// enough (ADR 0045).
+func TestEarlierTurnReasoningIsLeftOutFirst(t *testing.T) {
+	manager, err := New(Config{AgentRunID: "run-reasoning-fit", ModelContextWindow: 40_000, MaxOutputTokens: 4_000}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("earlier thinking ", 6_000)
+	messages := []adapter.Message{
+		{Role: "system", Content: "persona"},
+		{Role: "user", Content: "first question"},
+		{Role: "assistant", Content: "first answer", ReasoningContent: long},
+		{Role: "user", Content: "current question"},
+		{Role: "assistant", ReasoningContent: "current thinking", ToolCalls: []adapter.ToolCall{{ID: "a", Type: "function", Function: adapter.FunctionCall{Name: "read", Arguments: "{}"}}}},
+		{Role: "tool", ToolCallID: "a", Content: "rows"},
+	}
+	prepared, decision, err := manager.PrepareBeforeModelCall(context.Background(), &adapter.ChatRequest{
+		Model: "deepseek-v4-flash", MaxTokens: intPointerForTest(4_000), Messages: messages,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.ReasoningDropped || decision.Action == DecisionDropHistory {
+		t.Fatalf("decision = %+v, want only the earlier reasoning left out", decision)
+	}
+	text := ""
+	for _, message := range prepared.Messages {
+		text += contentString(message.Content) + "|" + message.ReasoningContent + "\n"
+	}
+	if strings.Contains(text, "earlier thinking") || !strings.Contains(text, "first answer") || !strings.Contains(text, "current thinking") {
+		t.Fatalf("want earlier reasoning dropped and the answers and current reasoning kept: %.300s", text)
+	}
+	if messages[2].ReasoningContent != long {
+		t.Fatal("the caller's messages were modified")
+	}
+}

@@ -106,6 +106,32 @@ func (m *Manager) fitByDroppingHistory(request *adapter.ChatRequest, budget int)
 	return current, fits()
 }
 
+// withoutEarlierTurnReasoning clears the reasoning of messages before the
+// current turn and reports whether there was any. The current turn keeps its
+// reasoning, which its tool calls need (ADR 0033).
+func withoutEarlierTurnReasoning(request *adapter.ChatRequest) bool {
+	if request == nil {
+		return false
+	}
+	userIndex := lastUserTurnIndex(request.Messages)
+	if userIndex <= 0 {
+		return false
+	}
+	cleared := false
+	for index := 0; index < userIndex; index++ {
+		if request.Messages[index].ReasoningContent == "" {
+			continue
+		}
+		if !cleared {
+			// The caller may share the slice; clear a copy.
+			request.Messages = append([]adapter.Message(nil), request.Messages...)
+			cleared = true
+		}
+		request.Messages[index].ReasoningContent = ""
+	}
+	return cleared
+}
+
 // lastUserTurnIndex finds the user message that opens the current turn.
 func lastUserTurnIndex(messages []adapter.Message) int {
 	for index := len(messages) - 1; index >= 0; index-- {

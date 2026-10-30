@@ -1,6 +1,6 @@
 # ADR 0033: Reasoning Goes Back Within a Turn
 
-- Status: Accepted
+- Status: Accepted. Decision 3 is superseded by ADR 0045: models that replay reasoning keep it across turns.
 - Date: 2026-10-29
 
 ## Context

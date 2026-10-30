@@ -123,3 +123,16 @@ func TestFallbackEstimatesEachCharacterClassAtItsOwnRate(t *testing.T) {
 		t.Fatalf("a provider-prefixed Qwen model uses %q", got)
 	}
 }
+
+// Reasoning counts for models that are sent it, and only for them.
+func TestEstimateMessagesCountsReasoningForModelsThatReplayIt(t *testing.T) {
+	estimator := NewEstimator()
+	plain := []adapter.Message{{Role: "assistant", Content: "done"}}
+	withReasoning := []adapter.Message{{Role: "assistant", Content: "done", ReasoningContent: strings.Repeat("thinking ", 200)}}
+	if estimator.EstimateMessages(withReasoning, "deepseek-v4-flash").Tokens <= estimator.EstimateMessages(plain, "deepseek-v4-flash").Tokens {
+		t.Fatal("want reasoning counted for DeepSeek")
+	}
+	if estimator.EstimateMessages(withReasoning, "gpt-5").Tokens != estimator.EstimateMessages(plain, "gpt-5").Tokens {
+		t.Fatal("want reasoning not counted for a model that is not sent it")
+	}
+}

@@ -9,9 +9,9 @@ import (
 // With reasoning kept across turns, guidance added after a tool call is
 // recorded as the user turn the provider received, once (ADR 0043).
 func TestTurnTranscriptRecordsRemindersAfterToolCalls(t *testing.T) {
-	t.Setenv("ZGI_REASONING_HISTORY", "keep")
 	call := adapter.ToolCall{ID: "call-1", Type: "function", Function: adapter.FunctionCall{Name: "activate_skills"}}
 	m := &Manager{}
+	m.state.Model = "deepseek-v4-flash"
 	m.state.TurnTranscript = []adapter.Message{{Role: "assistant", ToolCalls: []adapter.ToolCall{call}}}
 	messages := []adapter.Message{
 		{Role: "system", Content: "System prompt."},
@@ -38,9 +38,11 @@ func TestTurnTranscriptRecordsRemindersAfterToolCalls(t *testing.T) {
 	}
 }
 
-func TestTurnTranscriptKeepsNoRemindersByDefault(t *testing.T) {
+// A model that does not replay reasoning gains nothing from them.
+func TestTurnTranscriptKeepsNoRemindersForModelsWithoutReasoningReplay(t *testing.T) {
 	call := adapter.ToolCall{ID: "call-1", Type: "function"}
 	m := &Manager{}
+	m.state.Model = "gpt-5"
 	m.state.TurnTranscript = []adapter.Message{{Role: "assistant", ToolCalls: []adapter.ToolCall{call}}}
 	m.appendNewTurnToolMessages([]adapter.Message{
 		{Role: "assistant", ToolCalls: []adapter.ToolCall{call}},

@@ -146,6 +146,12 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 		return nil, decision, fmt.Errorf("validate model request tool pairing: %w", err)
 	}
 
+	if estimate.Tokens >= budget.PromptBudget && withoutEarlierTurnReasoning(prepared) {
+		// The reasoning of earlier turns is the first thing to give up when
+		// the request does not fit (ADR 0045).
+		decision.ReasoningDropped = true
+		estimate = m.estimator.EstimateChatRequest(prepared)
+	}
 	if estimate.Tokens >= budget.PromptBudget {
 		compressed, compression, compressErr := m.compressHistoricalToolResults(ctx, prepared, budget.PromptBudget)
 		if compressErr != nil {
@@ -279,12 +285,12 @@ func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Mess
 	}
 	m.mu.Lock()
 	// The active request keeps reasoning for the rest of the turn; the
-	// durable transcript never stores it.
+	// durable transcript stores it only for models that replay it (ADR 0045).
 	message = cloneMessage(message)
 	m.state.Messages = append(m.state.Messages, message)
 	if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
 		transcript := cloneMessage(message)
-		if !adapter.ReasoningHistoryKept() {
+		if !adapter.KeepsReasoningHistory(m.state.Model) {
 			transcript.ReasoningContent = ""
 		}
 		m.state.TurnTranscript = append(m.state.TurnTranscript, transcript)
@@ -398,7 +404,7 @@ func (m *Manager) appendNewTurnToolMessages(messages []adapter.Message) {
 		m.state.TurnTranscript = append(m.state.TurnTranscript, cloneMessage(message))
 		knownResults[id] = struct{}{}
 	}
-	if adapter.ReasoningHistoryKept() {
+	if adapter.KeepsReasoningHistory(m.state.Model) {
 		m.appendNewTurnReminders(messages, knownCalls)
 	}
 }
@@ -463,7 +469,7 @@ func (m *Manager) syncTurnTranscriptMessages(messages []adapter.Message) {
 	current := make(map[string]adapter.Message)
 	for _, message := range messages {
 		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
-			if !adapter.ReasoningHistoryKept() {
+			if !adapter.KeepsReasoningHistory(m.state.Model) {
 				message.ReasoningContent = ""
 			}
 			for _, call := range message.ToolCalls {

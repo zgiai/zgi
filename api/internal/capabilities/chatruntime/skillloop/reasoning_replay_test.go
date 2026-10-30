@@ -8,8 +8,8 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-// Reasoning from a tool-call round is sent back within the turn to models
-// that require it, such as DeepSeek, and left out for the others.
+// Reasoning from a tool-call round is sent back to models that require it,
+// such as DeepSeek, and left out for the others.
 func TestPrepareContextRequestReplaysReasoningOnlyForModelsThatExpectIt(t *testing.T) {
 	cases := map[string]string{
 		"deepseek-v4-pro": "check the service before restarting",
@@ -61,9 +61,11 @@ func TestPrepareContextRequestReplaysReasoningOnlyForModelsThatExpectIt(t *testi
 				t.Fatalf("%s manager=%v: tool-call round missing: %#v", model, withManager, prepared.Messages)
 			}
 			if withManager {
+				// The transcript keeps reasoning only for models that replay
+				// it (ADR 0045).
 				for _, message := range runner.ContextManager.TurnTranscript() {
-					if message.ReasoningContent != "" {
-						t.Fatalf("%s: reasoning stored in the turn transcript: %#v", model, message)
+					if len(message.ToolCalls) > 0 && message.ReasoningContent != want {
+						t.Fatalf("%s: transcript reasoning = %q, want %q", model, message.ReasoningContent, want)
 					}
 				}
 			}

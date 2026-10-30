@@ -169,7 +169,7 @@ func TestTurnTranscriptCapturesToolPairsAndTracksProjectedContent(t *testing.T) 
 	assistant := adapter.Message{
 		Role:             "assistant",
 		Content:          "I will inspect both sources.",
-		ReasoningContent: "private reasoning must not persist",
+		ReasoningContent: "gpt-5 does not replay its reasoning",
 		ToolCalls: []adapter.ToolCall{
 			{ID: "call-a", Function: adapter.FunctionCall{Name: "search", Arguments: `{"query":"a"}`}},
 			{ID: "call-b", Function: adapter.FunctionCall{Name: "read_file", Arguments: `{"path":"b"}`}},
@@ -196,7 +196,7 @@ func TestTurnTranscriptCapturesToolPairsAndTracksProjectedContent(t *testing.T) 
 		t.Fatalf("turn transcript order = %#v", transcript)
 	}
 	if transcript[0].ReasoningContent != "" {
-		t.Fatalf("reasoning leaked into transcript: %#v", transcript[0])
+		t.Fatalf("reasoning of a model that does not replay it was stored: %#v", transcript[0])
 	}
 	if transcript[0].ToolCalls[0].Function.Arguments != projectedAssistant.ToolCalls[0].Function.Arguments {
 		t.Fatalf("projected assistant arguments were not synchronized: %#v", transcript[0].ToolCalls[0])
@@ -1109,4 +1109,40 @@ func runnerMessagesContain(messages []adapter.Message, text string) bool {
 		}
 	}
 	return false
+}
+
+// A model that replays its reasoning keeps it in the turn transcript, so the
+// next turn replays the requests the provider cached (ADR 0045).
+func TestTurnTranscriptKeepsReasoningOfModelsThatReplayIt(t *testing.T) {
+	manager, err := New(Config{AgentRunID: "run-reasoning", ModelContextWindow: 64_000, MaxOutputTokens: 8_000}, nil, NewMemoryStore(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	request := &adapter.ChatRequest{Model: "deepseek-v4-flash", Messages: []adapter.Message{{Role: "user", Content: "check it"}}}
+	if _, _, err := manager.PrepareBeforeModelCall(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ObserveModelResponse(ctx, adapter.Message{Role: "assistant", Content: "done", ReasoningContent: "check the service first"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	transcript := manager.TurnTranscript()
+	if len(transcript) != 1 || transcript[0].ReasoningContent != "check the service first" {
+		t.Fatalf("transcript = %#v, want the reasoning kept", transcript)
+	}
+
+	t.Setenv("ZGI_REASONING_HISTORY", "turn")
+	manager, err = New(Config{AgentRunID: "run-reasoning-turn", ModelContextWindow: 64_000, MaxOutputTokens: 8_000}, nil, NewMemoryStore(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.PrepareBeforeModelCall(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ObserveModelResponse(ctx, adapter.Message{Role: "assistant", Content: "done", ReasoningContent: "check the service first"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if transcript := manager.TurnTranscript(); transcript[0].ReasoningContent != "" {
+		t.Fatalf("transcript = %#v, want reasoning kept within its turn only", transcript)
+	}
 }

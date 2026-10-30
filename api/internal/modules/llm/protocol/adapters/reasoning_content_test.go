@@ -34,3 +34,19 @@ func TestWithoutReasoningContentReturnsInputWhenNothingToClear(t *testing.T) {
 		t.Fatal("expected the input slice when no message carries reasoning")
 	}
 }
+
+// Reasoning history is kept by default, only for models that replay it, and
+// ZGI_REASONING_HISTORY=turn keeps it within its turn (ADR 0045).
+func TestKeepsReasoningHistoryForModelsThatReplayIt(t *testing.T) {
+	t.Setenv("ZGI_REASONING_HISTORY", "")
+	if !KeepsReasoningHistory("deepseek-v4-flash") || !KeepsReasoningHistory("kimi-k2-thinking") {
+		t.Fatal("want reasoning history kept for DeepSeek and Kimi by default")
+	}
+	if KeepsReasoningHistory("gpt-5") || KeepsReasoningHistory("") {
+		t.Fatal("want no reasoning history for models that do not replay it")
+	}
+	t.Setenv("ZGI_REASONING_HISTORY", "turn")
+	if KeepsReasoningHistory("deepseek-v4-flash") {
+		t.Fatal("want reasoning kept within its turn with ZGI_REASONING_HISTORY=turn")
+	}
+}

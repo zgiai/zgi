@@ -7,11 +7,17 @@ import (
 
 // ReasoningHistoryKept reports whether the transcript keeps the reasoning of
 // earlier turns, so a later turn replays the requests the provider cached
-// (ZGI_REASONING_HISTORY=keep, ADR 0045). It stores model reasoning, which
-// ADR 0033 keeps out of the durable transcript, so it is off by default.
-// Models that do not replay reasoning never receive it.
+// (ADR 0045). It is on unless ZGI_REASONING_HISTORY=turn keeps reasoning
+// within its turn only (ADR 0033).
 func ReasoningHistoryKept() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_REASONING_HISTORY")), "keep")
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_REASONING_HISTORY")), "turn")
+}
+
+// KeepsReasoningHistory reports whether the transcript of a turn answered by
+// model keeps its reasoning. Only models that replay reasoning store it; for
+// any other model it would be data no later request uses.
+func KeepsReasoningHistory(model string) bool {
+	return ReasoningHistoryKept() && ModelReplaysReasoningContent(model)
 }
 
 // ModelReplaysReasoningContent reports whether a chat model expects the

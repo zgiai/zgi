@@ -72,6 +72,9 @@ func (e *Estimator) EstimateMessages(messages []adapter.Message, model string) R
 			total += e.estimateText(message.Name, model, tokenizerName)
 		}
 		total += e.estimateContent(message.Content, model, tokenizerName)
+		if message.ReasoningContent != "" && adapter.ModelReplaysReasoningContent(model) {
+			total += e.estimateText(message.ReasoningContent, model, tokenizerName)
+		}
 		if message.FunctionCall != nil {
 			total += e.estimateText(fmt.Sprintf("%v", message.FunctionCall), model, tokenizerName)
 		}
