@@ -764,9 +764,25 @@ func (r *conversationRepository) FinishContinuationMessage(ctx context.Context, 
 	return nil
 }
 
+// ClearActiveMessages ends the streams of turns the lease sweep stopped. A
+// stopped turn becomes its conversation's leaf the way a failed turn does
+// (UpdateAfterMessage): when it follows the current leaf, or is the leaf
+// already. Otherwise the conversation would keep showing the turn before it,
+// and the stopped turn and its resume would not appear.
 func (r *conversationRepository) ClearActiveMessages(ctx context.Context, messageIDs []uuid.UUID) error {
 	if len(messageIDs) == 0 {
 		return nil
+	}
+	leaf := r.db.WithContext(ctx).Exec(`
+		UPDATE chat_runtime_conversations AS c
+		SET current_leaf_message_id = c.active_message_id,
+			dialogue_count = CASE WHEN c.current_leaf_message_id = c.active_message_id THEN c.dialogue_count ELSE c.dialogue_count + 1 END
+		FROM chat_runtime_messages AS m
+		WHERE c.active_message_id IN ? AND c.deleted_at IS NULL AND m.id = c.active_message_id
+			AND (c.current_leaf_message_id IS NULL OR c.current_leaf_message_id = m.id OR c.current_leaf_message_id = m.parent_id)`,
+		messageIDs)
+	if leaf.Error != nil {
+		return fmt.Errorf("failed to move stale aichat conversation leaves: %w", leaf.Error)
 	}
 	result := r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
 		Where("active_message_id IN ? AND deleted_at IS NULL", messageIDs).

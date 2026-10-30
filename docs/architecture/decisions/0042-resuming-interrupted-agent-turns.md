@@ -30,6 +30,7 @@ Every other Agent continuation is already started by the client: approvals, user
    - The error explains that the service restarted.
    - A turn that cannot be resumed shows that it should be regenerated instead.
    - A chat that is open when its turn stops learns it without a reload. When reconnecting fails and the server still reports the turn running, the chat checks the conversation every 10 seconds, for up to 5 minutes, until the lease sweep settles the turn; then it loads the turn and its Continue action (added 2026-10-30).
+   - The lease sweep makes the stopped turn its conversation's leaf, the way a failed turn becomes it. It used to leave the leaf on the turn before, so the chat never showed the stopped turn or its Continue action, even after a reload (fixed 2026-10-30).
 4. **Not covered.**
    - DigitalHuman apps resume their own runs, so the Runtime Workspace route serves only Agent apps.
    - The console AI chat has no continuation endpoints, and its interrupted turns are still regenerated.
