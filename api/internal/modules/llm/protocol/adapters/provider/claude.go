@@ -115,6 +115,16 @@ type claudeRequest struct {
 	Tools         []claudeTool         `json:"tools,omitempty"`
 	ToolChoice    interface{}          `json:"tool_choice,omitempty"`
 	Metadata      *claudeMetadata      `json:"metadata,omitempty"`
+	OutputConfig  *claudeOutputConfig  `json:"output_config,omitempty"`
+}
+
+type claudeOutputConfig struct {
+	Format *claudeOutputFormat `json:"format,omitempty"`
+}
+
+type claudeOutputFormat struct {
+	Type   string         `json:"type"`
+	Schema map[string]any `json:"schema"`
 }
 
 type claudeMetadata struct {
@@ -767,6 +777,15 @@ func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRe
 	// Convert tool_choice
 	if request.ToolChoice != nil {
 		claudeReq.ToolChoice = convertToolChoice(request.ToolChoice)
+	}
+
+	// Map OpenAI json_schema structured output to Anthropic output_config.format.
+	if format := request.ResponseFormat; format != nil && strings.EqualFold(strings.TrimSpace(format.Type), "json_schema") {
+		if schema := format.SchemaDefinition(); len(schema) > 0 {
+			claudeReq.OutputConfig = &claudeOutputConfig{
+				Format: &claudeOutputFormat{Type: "json_schema", Schema: schema},
+			}
+		}
 	}
 
 	markClaudeCacheBreakpoints(claudeReq)

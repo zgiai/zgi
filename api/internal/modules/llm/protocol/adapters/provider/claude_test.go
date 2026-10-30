@@ -533,3 +533,45 @@ func TestConvertToolChoiceForcedFunction(t *testing.T) {
 		t.Fatalf("missing function name = %#v, want type=any", got)
 	}
 }
+
+func TestClaudeAdapterConvertToClaudeMapsJSONSchemaToOutputConfig(t *testing.T) {
+	a, err := NewClaudeAdapter(&adapter.AdapterConfig{
+		APIKey:  "test-key",
+		BaseURL: "https://api.anthropic.test/v1",
+	})
+	if err != nil {
+		t.Fatalf("NewClaudeAdapter() error = %v", err)
+	}
+	schema := map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string"}}}
+	req, err := a.convertToClaude(&adapter.ChatRequest{
+		Model:    "claude-test",
+		Messages: []adapter.Message{{Role: "user", Content: "hi"}},
+		ResponseFormat: &adapter.ResponseFormat{
+			Type:       "json_schema",
+			JSONSchema: &adapter.ResponseFormatJSONSchema{Name: "weather", Schema: schema},
+		},
+	})
+	if err != nil {
+		t.Fatalf("convertToClaude() error = %v", err)
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	want := `"output_config":{"format":{"type":"json_schema","schema":{"properties":{"city":{"type":"string"}},"type":"object"}}}`
+	if !strings.Contains(string(payload), want) {
+		t.Fatalf("claude request = %s, want %s", payload, want)
+	}
+
+	plain, err := a.convertToClaude(&adapter.ChatRequest{
+		Model:          "claude-test",
+		Messages:       []adapter.Message{{Role: "user", Content: "hi"}},
+		ResponseFormat: &adapter.ResponseFormat{Type: "json_object"},
+	})
+	if err != nil {
+		t.Fatalf("convertToClaude(json_object) error = %v", err)
+	}
+	if plain.OutputConfig != nil {
+		t.Fatalf("OutputConfig = %#v, want nil for json_object", plain.OutputConfig)
+	}
+}

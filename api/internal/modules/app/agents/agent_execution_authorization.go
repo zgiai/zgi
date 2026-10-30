@@ -15,7 +15,7 @@ import (
 // Recheck console permission and current opt-in without creating a missing
 // draft. This remains an Agent entry concern, not a shared relay assumption.
 func (s *agentsService) authorizeRuntimePlatform(ctx context.Context, agentID, accountID, organizationID string) error {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentRuntimeConfigReadPermissionCodes("AGENT")...)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentRuntimePlatformPermissionCodes("AGENT")...)
 	if err != nil {
 		return apperror.Wrap(err, catalog.CodePermissionDenied, apperror.WithOperation("runtime_platform.agent_access"))
 	}

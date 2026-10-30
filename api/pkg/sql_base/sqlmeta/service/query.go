@@ -32,7 +32,7 @@ func (s *queryService) Execute(ctx context.Context, sql string, opts types.Query
 		return nil, errors.New("sqlmeta: nil query repository")
 	}
 
-	rows, err := s.repo.Execute(ctx, sql, opts)
+	result, err := s.repo.Execute(ctx, sql, opts)
 	if err != nil {
 		if pgErr := new(pgconn.PgError); errors.As(err, &pgErr) {
 			return &types.QueryResponse{
@@ -56,7 +56,14 @@ func (s *queryService) Execute(ctx context.Context, sql string, opts types.Query
 		return nil, err
 	}
 
-	return &types.QueryResponse{Data: rows, Error: nil}, nil
+	if result == nil {
+		return &types.QueryResponse{}, nil
+	}
+	return &types.QueryResponse{
+		Data:         result.Rows,
+		Command:      result.Command,
+		RowsAffected: result.RowsAffected,
+	}, nil
 }
 
 func buildPgError(pgErr *pgconn.PgError, sql string) *types.QueryError {

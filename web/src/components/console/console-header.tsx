@@ -87,6 +87,10 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tDash('items.organizationSettings'),
       },
       {
+        match: path => path.startsWith('/dashboard/organization/audit-logs'),
+        title: tDash('items.auditLogs'),
+      },
+      {
         match: path => path.startsWith('/dashboard/cost-center/overview'),
         title: tDash('items.billingOverview'),
       },

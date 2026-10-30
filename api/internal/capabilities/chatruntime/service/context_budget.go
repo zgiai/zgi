@@ -76,7 +76,7 @@ func (s *service) buildTokenBudgetMessages(
 	if err != nil {
 		return nil, err
 	}
-	reminders := currentTurnReminders(parts, historyMessages, recentExecutionContext, continuationContext, turnBoundaryContext)
+	reminders := currentTurnReminders(parts, historyMessages, recentExecutionContext, continuationContext, databaseBindingsRemovedMessage(parts, parentMessages), turnBoundaryContext)
 	parts.TurnReminders = reminders
 	extraContextMessages := make([]adapter.Message, 0, 1)
 	if len(reminders) > 0 {
@@ -293,7 +293,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 
 	maxAllowedOutput := safeLimit - minPrompt
 	if maxAllowedOutput < minOutput {
-		return nil, fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput)
+		return nil, errQueryTooLong()
 	}
 
 	originalMaxTokens, hasRequestedMaxTokens := requestedMaxTokens(parts)
@@ -313,7 +313,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 		reservedOutput = maxAllowedOutput
 	}
 	if reservedOutput < minOutput {
-		return nil, fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput)
+		return nil, errQueryTooLong()
 	}
 
 	effectiveMaxTokens := originalMaxTokens
@@ -330,7 +330,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 		promptBudget = spec.MaxInputTokens
 	}
 	if baseTokens > promptBudget {
-		return nil, fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput)
+		return nil, errQueryTooLong()
 	}
 
 	return &budgetComputation{

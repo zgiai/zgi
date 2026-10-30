@@ -30,6 +30,8 @@ export const ORGANIZATION_KEYS = {
     ['organization', 'join-requests', orgId, params].filter(Boolean),
   inviteLink: (orgId: string, departmentId?: string) =>
     ['organization', 'invite-link', orgId, departmentId].filter(Boolean),
+  auditLogs: (orgId: string, params?: unknown) =>
+    [...ORGANIZATION_KEYS.all, 'audit-logs', orgId, params] as const,
 } as const;
 
 // 2. Workspace Related

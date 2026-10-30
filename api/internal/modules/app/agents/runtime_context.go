@@ -742,6 +742,18 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, runtimeservice.ErrNotFound):
 		response.Fail(c, response.ErrNotFound)
+	case apperror.IsCode(err, runtimeservice.CodeQueryTooLong):
+		// Keep the legacy invalid-parameter envelope; only the message is the
+		// localized catalog copy, and the catalog code travels in the header.
+		message := response.ErrInvalidParam.Message
+		if projector := h.runtimeErrorProjector(); projector != nil {
+			projected := projector.ProjectLegacyMessage(err, apptransport.LocaleFromAcceptLanguage(c.GetHeader("Accept-Language")), runtimeservice.LegacyQueryTooLong)
+			if projected.Resolution == apptransport.ResolutionMatched {
+				message = projected.Message
+				c.Header(apptransport.HeaderApplicationErrorCode, projected.AppCode.String())
+			}
+		}
+		response.FailWithMessage(c, response.ErrInvalidParam, message)
 	case errors.Is(err, runtimeservice.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
@@ -768,7 +780,7 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		if externalInvocation {
 			c.JSON(http.StatusForbidden, response.Response{Code: "403001", Message: "Permission denied"})
 		} else {
-			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 		}
 	case errors.Is(err, runtimeservice.ErrWorkflowBindingUnavailable):
 		payload := gin.H{
@@ -798,7 +810,7 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 			response.Fail(c, response.ErrSystemError)
 			return
 		}
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 	}
 }
 

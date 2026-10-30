@@ -3,6 +3,7 @@ package titlegen
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -30,7 +31,7 @@ const (
 
 	defaultFallbackTitle = "New chat"
 	maxTitleRunes        = 60
-	titleAttemptTimeout  = 4 * time.Second
+	titleAttemptTimeout  = 10 * time.Second
 )
 
 type Service interface {
@@ -196,9 +197,15 @@ func (s *service) Generate(ctx context.Context, req GenerateRequest) (*GenerateR
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, titleAttemptTimeout)
 		resp, err := s.llmClient.AppChat(attemptCtx, appContext(req), titleChatRequest(candidate, rendered, req.RoutingStrategy))
+		attemptTimedOut := attemptCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, adapter.ErrTimeout)
 		cancel()
 		if err != nil {
 			logger.DebugContext(ctx, "conversation title model attempt failed", "provider", candidate.Provider, "model", candidate.Model, err)
+			// A timed-out gateway is slow, not model-specific; trying another candidate
+			// would only add another failed invocation record.
+			if attemptTimedOut || ctx.Err() != nil {
+				break
+			}
 			continue
 		}
 		title, err := parseTitleResponse(resp)
@@ -481,7 +488,6 @@ func titleChatRequest(resolved *llmdefaultservice.ResolvedModel, promptText stri
 		Messages: []adapter.Message{
 			{Role: "user", Content: promptText},
 		},
-		ResponseFormat: &adapter.ResponseFormat{Type: "json_object"},
 	}
 }
 

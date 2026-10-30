@@ -129,6 +129,16 @@ type workflowRunnerProvider func() AutomationWorkflowRunner
 // RunWorkflowExecutor executes run_workflow automation actions.
 type RunWorkflowExecutor struct {
 	runnerProvider workflowRunnerProvider
+	creatorAccess  TaskCreatorAccessChecker
+}
+
+// WithTaskCreatorAccessChecker makes every run recheck that the task creator,
+// whose account the workflow runs as, may still use the task's workspace.
+func (e *RunWorkflowExecutor) WithTaskCreatorAccessChecker(check TaskCreatorAccessChecker) *RunWorkflowExecutor {
+	if e != nil {
+		e.creatorAccess = check
+	}
+	return e
 }
 
 // NewRunWorkflowExecutor creates a run_workflow executor with a concrete runner.
@@ -171,6 +181,13 @@ func (e *RunWorkflowExecutor) ExecuteAction(ctx context.Context, req ActionExecu
 	runner := e.runner()
 	if runner == nil {
 		return nil, fmt.Errorf("automation workflow runner is not configured")
+	}
+
+	// The workflow runs as the task creator with no person present, so the
+	// creator's current access is rechecked on every run instead of trusting
+	// the authority it had when the task was saved.
+	if err := authorizeTaskCreator(ctx, e.creatorAccess, req.Task.OrganizationID, req.Task.WorkspaceID, req.Task.CreatedBy); err != nil {
+		return nil, err
 	}
 
 	runReq := WorkflowRunRequest{

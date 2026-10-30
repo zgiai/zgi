@@ -4,6 +4,38 @@ import { usePublishWorkflow, useSaveWorkflowDraft } from '@/hooks';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { flushWorkflowPendingEdits } from './pending-edits';
+import {
+  currentWorkflowEditorSession,
+  isWorkflowEditorSessionActive,
+} from '../store/helpers/editor-session';
+import type { WorkflowData } from '../store/type';
+
+/**
+ * Upper bound on consecutive draft saves one call may run. A follow-up pass is
+ * only needed when the user edits while a save is in flight; if the store keeps
+ * reporting changes beyond this, stop and leave the dirty flags for the next save
+ * instead of hammering the API.
+ */
+const MAX_SAVE_PASSES = 5;
+
+/**
+ * Comparable key for workflow metadata outside the graph. Connector reference
+ * commands the server accepted are dropped from the store after a successful
+ * save, so they are excluded here (and a missing list equals an empty one).
+ */
+function workflowMetadataKey(
+  data: WorkflowData | null | undefined,
+  acceptedCommands: ReadonlySet<string>
+): string {
+  return JSON.stringify({
+    ...data,
+    graph: undefined,
+    hash: undefined,
+    connector_reference_commands: (data?.connector_reference_commands ?? []).filter(
+      command => !acceptedCommands.has(JSON.stringify(command))
+    ),
+  });
+}
 
 /**
  * Combined workflow save hook that handles both local store update and API save
@@ -21,6 +53,10 @@ export const useCombinedWorkflowSave = (agentId: string) => {
       const silent = options?.silent ?? false;
       const saveToast = options?.saveToast;
       let savedAtLeastOnce = false;
+      let savePasses = 0;
+      // The editor mount this save belongs to. A save outliving it (the user
+      // left, switched workflows, or reopened this one) stops touching the store.
+      const editorSession = currentWorkflowEditorSession(agentId);
 
       for (;;) {
         const activeSave = inFlightSaveRef.current;
@@ -31,6 +67,10 @@ export const useCombinedWorkflowSave = (agentId: string) => {
           continue;
         }
 
+        // The editor was closed, switched or reopened: the global store no
+        // longer belongs to this save, so never snapshot it for agentId.
+        if (!isWorkflowEditorSessionActive(editorSession)) return false;
+
         flushWorkflowPendingEdits();
         const stateAfterFlush = useWorkflowStore.getState();
         if (!stateAfterFlush.isDirty && !stateAfterFlush.hasLayoutChanges) {
@@ -40,6 +80,15 @@ export const useCombinedWorkflowSave = (agentId: string) => {
           if (savedAtLeastOnce && !silent && saveToast) toast.success(saveToast);
           return true;
         }
+
+        if (savePasses >= MAX_SAVE_PASSES) {
+          // Newer local changes are still unsaved and keep their dirty flags for
+          // the next save. Report failure so publish and save-and-leave do not
+          // proceed past edits that were never persisted.
+          console.warn('Workflow draft still changing after repeated saves; deferring.');
+          return false;
+        }
+        savePasses += 1;
 
         const {
           isDirty: prevIsDirty,
@@ -56,11 +105,10 @@ export const useCombinedWorkflowSave = (agentId: string) => {
           graph: { nodes, edges, viewport },
           hash: Date.now().toString(),
         } as typeof workflowData;
-        const submittedMetadata = JSON.stringify({
-          ...workflowData,
-          graph: undefined,
-          hash: undefined,
-        });
+        const acceptedCommands = new Set(
+          (workflowData?.connector_reference_commands ?? []).map(command => JSON.stringify(command))
+        );
+        const submittedMetadata = workflowMetadataKey(workflowData, acceptedCommands);
 
         const savePromise = (async (): Promise<boolean> => {
           useWorkflowStore.setState({
@@ -77,17 +125,18 @@ export const useCombinedWorkflowSave = (agentId: string) => {
               agentId,
               workflowData: updatedWorkflowData,
               silent,
+              editorSession,
             });
+
+            // The request finished after the user left this workflow. Its own
+            // save is done; do not inspect or flag the next editor's store.
+            if (!isWorkflowEditorSessionActive(editorSession)) return false;
 
             // The mutation success handler clears dirty flags. Restore them if
             // the graph changed while this exact snapshot was being persisted;
             // the loop will then save the newer snapshot before publishing.
             const current = useWorkflowStore.getState();
-            const currentMetadata = JSON.stringify({
-              ...current.workflowData,
-              graph: undefined,
-              hash: undefined,
-            });
+            const currentMetadata = workflowMetadataKey(current.workflowData, acceptedCommands);
             const semanticChanged =
               current.graphVersion !== graphVersion || currentMetadata !== submittedMetadata;
             const graphOrLayoutChanged =
@@ -100,11 +149,13 @@ export const useCombinedWorkflowSave = (agentId: string) => {
             }
             return true;
           } catch (error) {
-            useWorkflowStore.setState({
-              isDirty: prevIsDirty,
-              hasLayoutChanges: prevHasLayoutChanges,
-              lastSavedAt: prevLastSavedAt ?? null,
-            });
+            if (isWorkflowEditorSessionActive(editorSession)) {
+              useWorkflowStore.setState({
+                isDirty: prevIsDirty,
+                hasLayoutChanges: prevHasLayoutChanges,
+                lastSavedAt: prevLastSavedAt ?? null,
+              });
+            }
             // The mutation hook owns user-facing error feedback.
             console.error('Failed to save workflow:', error);
             return false;

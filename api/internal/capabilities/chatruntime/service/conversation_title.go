@@ -17,6 +17,7 @@ const (
 	conversationTitleStatusPending       = "pending"
 	conversationTitleStatusCompleted     = "completed"
 	conversationTitleStatusFailed        = "failed"
+	conversationTitleStatusFallback      = "fallback"
 	conversationTitleBackfillMaxTurns    = 3
 )
 
@@ -117,7 +118,11 @@ func (s *service) enqueueConversationTitleGeneration(
 		}
 
 		title := normalizeTitle(result.Title, input.FallbackTitle)
-		if err := s.persistConversationTitleGenerationResult(titleCtx, scope, conversation, input.FallbackTitle, title, input.LegacyFallback); err != nil {
+		status := conversationTitleStatusCompleted
+		if result.Source == titlegen.SourceFallback {
+			status = conversationTitleStatusFallback
+		}
+		if err := s.persistConversationTitleGenerationResult(titleCtx, scope, conversation, input.FallbackTitle, title, status, input.LegacyFallback); err != nil {
 			logger.WarnContext(titleCtx, "failed to update generated chat runtime conversation title", "conversation_id", conversationID.String(), "caller_type", normalizeCallerType(caller.Type), err)
 		}
 	}()
@@ -141,6 +146,7 @@ func (s *service) persistConversationTitleGenerationResult(
 	conversation *runtimemodel.Conversation,
 	expectedTitle string,
 	title string,
+	status string,
 	legacyFallback bool,
 ) error {
 	if legacyFallback {
@@ -162,7 +168,7 @@ func (s *service) persistConversationTitleGenerationResult(
 	if strings.TrimSpace(current.Title) != strings.TrimSpace(expectedTitle) {
 		return nil
 	}
-	metadata := conversationMetadataWithTitleStatus(current.Metadata, conversationTitleStatusCompleted)
+	metadata := conversationMetadataWithTitleStatus(current.Metadata, status)
 	updates := map[string]interface{}{"metadata": metadata}
 	if title != "" && title != current.Title {
 		updates["title"] = title
@@ -184,7 +190,7 @@ func (s *service) enqueueConversationTitleBackfill(ctx context.Context, scope Sc
 		return
 	}
 	status := conversationTitleGenerationStatus(conversation.Metadata)
-	if status == conversationTitleStatusCompleted {
+	if status == conversationTitleStatusCompleted || status == conversationTitleStatusFallback {
 		return
 	}
 

@@ -10,6 +10,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/apperror"
@@ -189,6 +190,15 @@ func (r *apiKeyRepositoryImpl) ValidatePrincipalAccess(ctx context.Context, apiK
 		}
 		if count == 0 {
 			return errors.New("API key principal is no longer a workspace member")
+		}
+		// The workspace row survives a disabled organization membership, so the
+		// organization's member status must be checked on its own.
+		disabled, err := memberstatus.OrganizationDisabled(ctx, r.db, apiKey.OrganizationID, *apiKey.PrincipalID)
+		if err != nil {
+			return fmt.Errorf("check personal API key principal organization status: %w", err)
+		}
+		if disabled {
+			return errors.New("API key principal's organization membership is disabled")
 		}
 	}
 	// Authorization failures take precedence over quota: removed members must

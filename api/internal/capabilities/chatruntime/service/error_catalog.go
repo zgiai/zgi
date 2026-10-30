@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	"github.com/zgiai/zgi/api/pkg/apperror"
@@ -73,9 +74,33 @@ func IsEndUserAdmissionError(err error) bool {
 	return apperror.IsCode(err, appcatalog.CodeQuotaExceeded) || apperror.IsCode(err, CodeEndUserSuspended)
 }
 
+// CodeQueryTooLong refuses a turn whose input does not fit the model's
+// context budget even after history and attachments are trimmed.
+var CodeQueryTooLong = apperror.MustCode("aichat.query.too_long")
+
+// LegacyQueryTooLong is the legacy invalid-parameter wire code the HTTP
+// handlers keep for CodeQueryTooLong; only the message is overlaid.
+var LegacyQueryTooLong = appcatalog.MustLegacyKey("aichat.query_too_long:199001")
+
+// errQueryTooLong is the context-budget rejection. It still matches
+// ErrInvalidInput so existing callers keep their legacy handling.
+func errQueryTooLong() error {
+	return apperror.Wrap(fmt.Errorf("%w: query exceeds model context budget", ErrInvalidInput), CodeQueryTooLong,
+		apperror.WithOperation("chatruntime.context_budget"))
+}
+
 // CatalogDefinitions returns chat-runtime-owned product error definitions.
 func CatalogDefinitions() []appcatalog.Definition {
 	return []appcatalog.Definition{{
+		Code:       CodeQueryTooLong,
+		Category:   appcatalog.CategoryValidation,
+		HTTPStatus: 400,
+		Messages: map[appcatalog.Locale]string{
+			appcatalog.LocaleEnglishUS:         "Your message is too long for this model. Shorten it, split it into several messages, or send long content as a file.",
+			appcatalog.LocaleChineseSimplified: "输入内容过长，超出了当前模型可处理的范围。请精简内容、分多条发送，或将长文本作为文件上传。",
+		},
+		LegacyCodes: []appcatalog.LegacyKey{LegacyQueryTooLong},
+	}, {
 		Code:       CodeEndUserSuspended,
 		Category:   appcatalog.CategoryAuthorization,
 		HTTPStatus: 403,

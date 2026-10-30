@@ -15,6 +15,7 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"gorm.io/gorm"
@@ -1421,6 +1422,9 @@ func (s *WorkspaceManagementServiceImpl) GetDatasetOperatorMembers(ctx context.C
 
 // CheckPermission Check permission
 func (s *WorkspaceManagementServiceImpl) CheckPermission(ctx context.Context, workspaceID, accountID string) bool {
+	if disabled, err := s.workspaceOrganizationMemberDisabled(ctx, workspaceID, accountID); err != nil || disabled {
+		return false
+	}
 	allowed, err := s.isWorkspaceOrganizationAdminOrOwner(ctx, workspaceID, accountID)
 	if err == nil && allowed {
 		return true
@@ -1632,6 +1636,16 @@ func (s *WorkspaceManagementServiceImpl) CheckMemberPermission(ctx context.Conte
 	}
 
 	return usererrors.NewNoPermissionError(fmt.Sprintf("no permission to %s", action))
+}
+
+// workspaceOrganizationMemberDisabled reports whether the organization owning
+// the workspace disabled accountID. Without a database (unit fakes) there is
+// no members table to consult, so the check is skipped.
+func (s *WorkspaceManagementServiceImpl) workspaceOrganizationMemberDisabled(ctx context.Context, workspaceID, accountID string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, nil
+	}
+	return memberstatus.WorkspaceOrganizationDisabled(ctx, s.db, workspaceID, accountID)
 }
 
 func (s *WorkspaceManagementServiceImpl) isWorkspaceOrganizationAdminOrOwner(ctx context.Context, workspaceID, accountID string) (bool, error) {
@@ -2180,6 +2194,15 @@ func (s *WorkspaceManagementServiceImpl) SwitchWorkspace(ctx context.Context, ac
 
 // GetUserRole Get user's role in workspace
 func (s *WorkspaceManagementServiceImpl) GetUserRole(ctx context.Context, accountID, workspaceID string) (*model.WorkspaceMemberRole, error) {
+	disabled, err := s.workspaceOrganizationMemberDisabled(ctx, workspaceID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user role: %w", err)
+	}
+	if disabled {
+		// A disabled organization member keeps its workspace rows but holds no
+		// role in that organization's workspaces.
+		return nil, nil
+	}
 	join, err := s.workspaceMemberRepo.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

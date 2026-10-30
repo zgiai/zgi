@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	usererrors "github.com/zgiai/zgi/api/internal/errors"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -27,6 +28,7 @@ type MembersHandler struct {
 	//registerService *auth.RegisterService
 	enterpriseService interfaces.OrganizationService
 	consoleWebURL     string
+	audit             *orgaudit.Recorder
 }
 
 func memberActivationURL(consoleWebURL, email, token string) string {
@@ -220,6 +222,9 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"emails": req.Emails, "workspace_role": req.Role})
+	orgaudit.MarkBatch(c)
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -242,6 +247,7 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetWorkspace(c, currentWorkspaceJoin.WorkspaceID)
 	invitationResults := make([]map[string]interface{}, 0)
 
 	for _, email := range req.Emails {
@@ -253,6 +259,7 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 			role,
 			req.Language,
 		)
+		h.auditInvite(c, currentWorkspaceJoin.WorkspaceID, "", email, err)
 
 		if err != nil {
 			if err == usererrors.ErrAccountAlreadyInWorkspace {
@@ -715,6 +722,17 @@ func (h *MembersHandler) UpdateWorkspaceMemberExtensionDetail(c *gin.Context) {
 		return
 	}
 
+	if targetWorkspace.OrganizationID != nil {
+		orgaudit.SetOrganization(c, *targetWorkspace.OrganizationID)
+	}
+	orgaudit.SetAfter(c, map[string]any{
+		"workspace_role":   req.Role,
+		"permissions":      req.Permissions,
+		"position":         req.Position,
+		"status":           req.Status,
+		"new_workspace_id": req.NewWorkspaceID,
+	})
+
 	member, err := h.workspaceManagementService.GetWorkspaceMemberWithExtensionsById(c.Request.Context(), targetWorkspace.ID, memberID)
 	if err != nil {
 		switch {
@@ -816,6 +834,15 @@ func (h *MembersHandler) UpdateWorkspaceMemberExtensionDetail(c *gin.Context) {
 		targetWorkspace = newWorkspace
 	}
 
+	if member != nil {
+		orgaudit.SetBefore(c, map[string]any{
+			"workspace_role":    member.Role,
+			"workspace_role_id": member.RoleID,
+			"permissions":       member.Permissions,
+			"permission_source": member.PermissionSource,
+			"position":          member.Position,
+		})
+	}
 	if req.Role != nil || req.Position != nil || len(req.Permissions) > 0 {
 		err = h.workspaceManagementService.UpdateMemberRoleExtensions(
 			c.Request.Context(),
@@ -976,6 +1003,9 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"email": req.Email, "workspace_role": req.Role, "position": req.Position})
+	orgaudit.MarkBatch(c)
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -1023,6 +1053,7 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		return
 	}
 
+	auditWorkspaceOrganization(c, targetWorkspace)
 	invitationResults := make([]map[string]interface{}, 0)
 	// Use inviter's interface language if request language is not provided
 	language := req.Language
@@ -1043,6 +1074,7 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		req.Position,
 		sendEmail,
 	)
+	h.auditInvite(c, workspaceID, "", req.Email, err)
 
 	if err != nil {
 		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
@@ -1116,6 +1148,8 @@ func (h *MembersHandler) InviteWorkspaceMemberByAccountId(c *gin.Context) {
 	if req.Role == "" {
 		req.Role = "admin"
 	}
+	orgaudit.SetTarget(c, memberAuditTarget(req.AccountID))
+	orgaudit.SetAfter(c, map[string]any{"workspace_role": req.Role, "position": req.Position})
 
 	role := model.WorkspaceMemberRole(req.Role)
 	if !role.IsNonOwnerRole() {
@@ -1150,6 +1184,7 @@ func (h *MembersHandler) InviteWorkspaceMemberByAccountId(c *gin.Context) {
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return
 	}
+	auditWorkspaceOrganization(c, targetWorkspace)
 	if !h.requireAccountInWorkspaceOrganization(c, workspaceID, req.AccountID) {
 		return
 	}
@@ -1228,6 +1263,9 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"workspace_role": req.Role, "position": req.Position})
+	orgaudit.MarkBatch(c)
+
 	accountID, exists := c.Get("account_id")
 	if !exists {
 		response.Fail(c, response.ErrUnauthorized)
@@ -1262,47 +1300,45 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 		return
 	}
 
+	auditWorkspaceOrganization(c, targetWorkspace)
 	results := make([]map[string]interface{}, 0)
+	// Each member gets its own audit record with the result the response reports.
+	failInvite := func(accountID string, result map[string]interface{}, message string) {
+		result["status"] = "failed"
+		result["message"] = message
+		results = append(results, result)
+		h.auditInvite(c, workspaceID, accountID, "", errors.New(message))
+	}
 
 	for _, accountID := range req.AccountIDs {
 		result := make(map[string]interface{})
 		result["account_id"] = accountID
 		if inviterID == accountID {
-			result["status"] = "failed"
-			result["message"] = "cannot invite yourself to the workspace"
-			results = append(results, result)
+			failInvite(accountID, result, "cannot invite yourself to the workspace")
 			continue
 		}
 
 		if targetOrganization != nil {
 			isOrganizationMember, err := h.enterpriseService.IsOrganizationMember(c.Request.Context(), targetOrganization.ID, accountID)
 			if err != nil {
-				result["status"] = "failed"
-				result["message"] = "Failed to check organization membership"
-				results = append(results, result)
+				failInvite(accountID, result, "Failed to check organization membership")
 				continue
 			}
 			if !isOrganizationMember {
-				result["status"] = "failed"
-				result["message"] = "Account is not a member of the workspace organization"
-				results = append(results, result)
+				failInvite(accountID, result, "Account is not a member of the workspace organization")
 				continue
 			}
 		}
 
 		targetAccount, err := h.accountService.GetAccountByID(c.Request.Context(), accountID)
 		if err != nil || targetAccount == nil {
-			result["status"] = "failed"
-			result["message"] = "Account not found"
-			results = append(results, result)
+			failInvite(accountID, result, "Account not found")
 			continue
 		}
 
 		existingJoin, _ := h.workspaceManagementService.GetUserRole(c.Request.Context(), accountID, workspaceID)
 		if existingJoin != nil {
-			result["status"] = "failed"
-			result["message"] = "Already in workspace"
-			results = append(results, result)
+			failInvite(accountID, result, "Already in workspace")
 			continue
 		}
 
@@ -1314,11 +1350,10 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 
 		err = h.workspaceManagementService.AddMember(c.Request.Context(), addReq)
 		if err != nil {
-			result["status"] = "failed"
-			result["message"] = err.Error()
-			results = append(results, result)
+			failInvite(accountID, result, err.Error())
 			continue
 		}
+		h.auditInvite(c, workspaceID, accountID, "", nil)
 
 		if req.Position != "" {
 			extensionReq := &interfaces.CreateMemberExtensionRequest{
@@ -1783,6 +1818,8 @@ func (h *MembersHandler) ReInviteMemberById(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"send_email": sendEmail})
+	orgaudit.MarkBatch(c)
 	results := make([]map[string]interface{}, 0)
 
 	for _, join := range workspaceJoins {
@@ -1809,6 +1846,7 @@ func (h *MembersHandler) ReInviteMemberById(c *gin.Context) {
 			"", // position
 			sendEmail,
 		)
+		h.auditInvite(c, workspace.ID, member.ID, member.Email, err)
 		if err != nil {
 			status := "failed"
 			message := err.Error()
@@ -1934,6 +1972,9 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 		return
 	}
 
+	orgaudit.SetAfter(c, map[string]any{"email": req.Email, "workspace_role": req.Role, "position": req.Position})
+	orgaudit.MarkBatch(c)
+
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
@@ -1968,6 +2009,8 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 		return
 	}
 
+	auditWorkspaceOrganization(c, workspace)
+	orgaudit.SetWorkspace(c, workspaceID)
 	invitationResults := make([]map[string]interface{}, 0)
 
 	token, err := h.accountService.InviteMemberEx(
@@ -1983,6 +2026,7 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 		req.Position,
 		true,
 	)
+	h.auditInvite(c, workspaceID, "", req.Email, err)
 
 	if err != nil {
 		if errors.Is(err, usererrors.ErrInviteEmailDeliveryFailed) {
@@ -2031,9 +2075,9 @@ func (h *MembersHandler) RegisterRoutes(router *gin.RouterGroup) {
 			current.POST("/members/invite-email",
 				accountMiddleware.SetupRequired(),
 				accountMiddleware.AccountInitializationRequired(),
-				h.InviteMemberByEmail)
-			current.DELETE("/members/:member_id", h.CancelMemberInvite)
-			current.PUT("/members/:member_id/update-role", h.UpdateMemberRole)
+				h.audit.Wrap(orgaudit.ActionMemberInvite, h.InviteMemberByEmail))
+			current.DELETE("/members/:member_id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRemove, h.CancelMemberInvite))
+			current.PUT("/members/:member_id/update-role", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRole, h.UpdateMemberRole))
 			current.GET("/dataset-operators", h.GetDatasetOperatorMembers)
 		}
 
@@ -2042,20 +2086,20 @@ func (h *MembersHandler) RegisterRoutes(router *gin.RouterGroup) {
 			//workspace.GET("/members", h.GetWorkspaceMembers)
 			workspace.GET("/members", h.GetWorkspaceMembersExtension)
 			workspace.GET("/members/:member_id", h.GetWorkspaceMemberExtensionDetail)
-			workspace.PUT("/members/:member_id", h.UpdateWorkspaceMemberExtensionDetail)
-			workspace.POST("/members/invite-email", h.InviteWorkspaceMemberByEmailEx)
-			workspace.POST("/members/invite-email-ex", h.InviteWorkspaceMemberByEmailEx)
-			workspace.POST("/members/invite-by-id", h.InviteWorkspaceMemberByAccountId)
-			workspace.POST("/members/batch-invite-by-ids", h.BatchInviteWorkspaceMembers)
-			workspace.DELETE("/members/:member_id", h.CancelWorkspaceMemberInvite)
-			workspace.PUT("/members/:member_id/update-role", h.UpdateWorkspaceMemberRole)
-			workspace.PUT("/members/:member_id/update-ex", h.UpdateWorkspaceMemberExtension)
+			workspace.PUT("/members/:member_id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberPerms, h.UpdateWorkspaceMemberExtensionDetail))
+			workspace.POST("/members/invite-email", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.InviteWorkspaceMemberByEmailEx))
+			workspace.POST("/members/invite-email-ex", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.InviteWorkspaceMemberByEmailEx))
+			workspace.POST("/members/invite-by-id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.InviteWorkspaceMemberByAccountId))
+			workspace.POST("/members/batch-invite-by-ids", h.audit.Wrap(orgaudit.ActionWorkspaceMemberAdd, h.BatchInviteWorkspaceMembers))
+			workspace.DELETE("/members/:member_id", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRemove, h.CancelWorkspaceMemberInvite))
+			workspace.PUT("/members/:member_id/update-role", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRole, h.UpdateWorkspaceMemberRole))
+			workspace.PUT("/members/:member_id/update-ex", h.audit.Wrap(orgaudit.ActionWorkspaceMemberRole, h.UpdateWorkspaceMemberExtension))
 			workspace.GET("/dataset-operators", h.GetWorkspaceDatasetOperatorMembers)
 			workspace.GET("/non-members", h.GetWorkspaceNonMembers)
 		}
 
-		workspaces.POST("/members/:member_id/re-invite", h.ReInviteMemberById)
+		workspaces.POST("/members/:member_id/re-invite", h.audit.Wrap(orgaudit.ActionMemberInvite, h.ReInviteMemberById))
 
-		workspaces.POST("/default/members/invite-email-ex", h.InviteDefaultMemberByEmailEx)
+		workspaces.POST("/default/members/invite-email-ex", h.audit.Wrap(orgaudit.ActionMemberInvite, h.InviteDefaultMemberByEmailEx))
 	}
 }

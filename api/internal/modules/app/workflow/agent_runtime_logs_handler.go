@@ -290,6 +290,7 @@ func buildAgentRuntimeRunItem(message *runtimemodel.Message, conversation *runti
 		CreatedAt:      message.CreatedAt.Unix(),
 		FinishedAt:     runtimeFinishedAtUnix(message),
 		Error:          runtimeErrorString(message),
+		ErrorCode:      runtimeErrorCode(message),
 		Source:         runtimeConversationSource(conversation, fallbackSource),
 		SourceWebAppID: runtimeSourceWebAppID(conversation),
 	}
@@ -314,6 +315,7 @@ func buildAgentRuntimeRunDetail(message *runtimemodel.Message, conversation *run
 		CreatedAt:       message.CreatedAt.Unix(),
 		FinishedAt:      runtimeFinishedAtUnix(message),
 		Error:           runtimeErrorString(message),
+		ErrorCode:       runtimeErrorCode(message),
 		Source:          runtimeConversationSource(conversation, runtimemodel.ConversationSourceWebApp),
 		SourceWebAppID:  runtimeSourceWebAppID(conversation),
 	}

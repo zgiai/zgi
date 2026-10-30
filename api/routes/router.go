@@ -12,6 +12,7 @@ import (
 	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	"github.com/zgiai/zgi/api/middleware"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
+	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	external "github.com/zgiai/zgi/api/routes/external"
 	v1 "github.com/zgiai/zgi/api/routes/v1"
@@ -23,6 +24,17 @@ func RegisterRoutes(r *gin.Engine, serviceContainer *container.ServiceContainer,
 	// Fail fast in CLOUD mode if LLM client cannot be initialized.
 	if err := serviceContainer.EnsureLLMClient(); err != nil {
 		logger.Fatal("BOOT_LLMCLIENT_INIT_FAILED: %v", err)
+	}
+
+	// Authentication middleware and handlers without their own projector read
+	// it from the request context to localize cataloged errors. Register it
+	// before any route so every group inherits it.
+	if applicationErrorCatalog != nil {
+		if projector, err := apptransport.NewProjector(applicationErrorCatalog); err != nil {
+			logger.Warn("failed to build application error projector for request context", err)
+		} else {
+			r.Use(middleware.SetApplicationErrorProjector(projector))
+		}
 	}
 
 	// Swagger documentation

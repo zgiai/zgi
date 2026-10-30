@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useT } from '@/i18n';
+import type { AgentAssetKind } from '@/services/types/agent';
 import { useWorkflowStore } from '../store';
 import { flushWorkflowPendingEdits } from './pending-edits';
 
@@ -23,6 +24,8 @@ interface WorkflowLeaveGuardOptions {
   confirmOnAnyNavigation?: boolean;
   isValid: boolean;
   isSaving: boolean;
+  /** Which asset this editor belongs to; selects agent or workflow wording. */
+  assetKind?: AgentAssetKind;
   onSave: (
     options?: { silent?: boolean }
   ) => Promise<boolean | void> | boolean | void;
@@ -41,6 +44,7 @@ interface WorkflowLeaveGuardDialogProps {
   hasUnsavedChanges: boolean;
   isValid: boolean;
   isSaving: boolean;
+  assetKind: AgentAssetKind;
   onOpenChange: (open: boolean) => void;
   onSaveAndLeave: () => void;
   onDiscardAndLeave: () => void;
@@ -80,15 +84,19 @@ function WorkflowLeaveGuardDialog({
   hasUnsavedChanges,
   isValid,
   isSaving,
+  assetKind,
   onOpenChange,
   onSaveAndLeave,
   onDiscardAndLeave,
 }: WorkflowLeaveGuardDialogProps) {
   const t = useT('agents');
+  const copyKey = assetKind === 'workflow' ? 'workflow.leaveGuardWorkflow' : 'workflow.leaveGuard';
 
+  // While a save is in flight the user can always keep editing or leave anyway
+  // (abandoning the pending result); only starting another save is blocked.
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="sm" className="overflow-hidden p-0" showCloseButton={!isSaving}>
+      <DialogContent size="sm" className="overflow-hidden p-0">
         <DialogHeader className="pb-3">
           <div className="flex items-center gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600">
@@ -97,9 +105,9 @@ function WorkflowLeaveGuardDialog({
             <DialogTitle className="text-base">
               {hasUnsavedChanges
                 ? isValid
-                  ? t('workflow.leaveGuard.title')
-                  : t('workflow.leaveGuard.invalidTitle')
-                : t('workflow.leaveGuard.confirmTitle')}
+                  ? t(`${copyKey}.title`)
+                  : t(`${copyKey}.invalidTitle`)
+                : t(`${copyKey}.confirmTitle`)}
             </DialogTitle>
           </div>
         </DialogHeader>
@@ -107,35 +115,37 @@ function WorkflowLeaveGuardDialog({
           <DialogDescription className="text-sm leading-6">
             {hasUnsavedChanges
               ? isValid
-                ? t('workflow.leaveGuard.description')
-                : t('workflow.leaveGuard.invalidDescription')
-              : t('workflow.leaveGuard.confirmDescription')}
+                ? t(`${copyKey}.description`)
+                : t(`${copyKey}.invalidDescription`)
+              : isSaving
+                ? t(`${copyKey}.savingDescription`)
+                : t(`${copyKey}.confirmDescription`)}
           </DialogDescription>
         </DialogBody>
         <DialogFooter className="border-none px-6 pb-6 pt-3">
           {hasUnsavedChanges ? (
             <>
-              <Button variant="ghost" disabled={isSaving} onClick={onDiscardAndLeave}>
-                {t('workflow.leaveGuard.discard')}
+              <Button variant="ghost" onClick={onDiscardAndLeave}>
+                {t(`${copyKey}.discard`)}
               </Button>
               {isValid ? (
                 <Button disabled={isSaving} onClick={onSaveAndLeave}>
                   {isSaving ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {t('workflow.leaveGuard.saveAndLeave')}
+                  {t(`${copyKey}.saveAndLeave`)}
                 </Button>
               ) : (
-                <Button disabled={isSaving} onClick={() => onOpenChange(false)}>
-                  {t('workflow.leaveGuard.continueEditing')}
+                <Button onClick={() => onOpenChange(false)}>
+                  {t(`${copyKey}.continueEditing`)}
                 </Button>
               )}
             </>
           ) : (
             <>
-              <Button variant="ghost" disabled={isSaving} onClick={() => onOpenChange(false)}>
-                {t('workflow.leaveGuard.continueEditing')}
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                {t(`${copyKey}.continueEditing`)}
               </Button>
-              <Button disabled={isSaving} onClick={onDiscardAndLeave}>
-                {t('workflow.leaveGuard.leave')}
+              <Button onClick={onDiscardAndLeave}>
+                {isSaving ? t(`${copyKey}.leaveAnyway`) : t(`${copyKey}.leave`)}
               </Button>
             </>
           )}
@@ -155,6 +165,7 @@ export function useWorkflowLeaveGuard({
   confirmOnAnyNavigation = false,
   isValid,
   isSaving,
+  assetKind = 'agent',
   onSave,
 }: WorkflowLeaveGuardOptions): React.ReactNode {
   const router = useRouter();
@@ -213,9 +224,8 @@ export function useWorkflowLeaveGuard({
   }, []);
 
   const closeGuard = React.useCallback(() => {
-    if (isSaving) return;
     setPending(null);
-  }, [isSaving, setPending]);
+  }, [setPending]);
 
   const runPendingNavigation = React.useCallback(() => {
     const navigation = pendingNavigationRef.current;
@@ -381,6 +391,7 @@ export function useWorkflowLeaveGuard({
       hasUnsavedChanges={Boolean(pendingNavigation?.hasUnsavedChanges)}
       isValid={isValid}
       isSaving={isSaving}
+      assetKind={assetKind}
       onOpenChange={open => {
         if (!open) closeGuard();
       }}

@@ -20,7 +20,7 @@ import (
 
 // Repository exposes the low-level capability to run arbitrary SQL.
 type Repository interface {
-	Execute(ctx context.Context, sql string, opts types.QueryOptions) ([]types.QueryRow, error)
+	Execute(ctx context.Context, sql string, opts types.QueryOptions) (*types.QueryResult, error)
 }
 
 type repository struct {
@@ -34,7 +34,7 @@ func NewRepository(pool *driver.Pool) Repository {
 	return &repository{pool: pool}
 }
 
-func (r *repository) Execute(ctx context.Context, sql string, opts types.QueryOptions) ([]types.QueryRow, error) {
+func (r *repository) Execute(ctx context.Context, sql string, opts types.QueryOptions) (*types.QueryResult, error) {
 	raw := r.rawPool()
 	if raw == nil {
 		return nil, errors.New("sqlmeta: nil pool")
@@ -77,7 +77,29 @@ func (r *repository) Execute(ctx context.Context, sql string, opts types.QueryOp
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return data, nil
+	// The command tag is only complete once the result set is fully consumed;
+	// closing first makes that explicit instead of relying on Next() having
+	// auto-closed the rows.
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	tag := rows.CommandTag()
+	return &types.QueryResult{
+		Rows:         data,
+		Command:      commandFromTag(tag),
+		RowsAffected: tag.RowsAffected(),
+	}, nil
+}
+
+// commandFromTag returns the leading command keyword of a command tag
+// (for example "INSERT" for "INSERT 0 3").
+func commandFromTag(tag pgconn.CommandTag) string {
+	text := strings.TrimSpace(tag.String())
+	if idx := strings.IndexByte(text, ' '); idx >= 0 {
+		return text[:idx]
+	}
+	return text
 }
 
 func (r *repository) rawPool() *pgxpool.Pool {

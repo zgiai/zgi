@@ -3,15 +3,19 @@ package fxapp
 import (
 	chatruntimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	agents "github.com/zgiai/zgi/api/internal/modules/app/agents"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorpreferences "github.com/zgiai/zgi/api/internal/modules/connectors/preferences"
+	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	digitalhuman "github.com/zgiai/zgi/api/internal/modules/digitalhuman"
 	imageservice "github.com/zgiai/zgi/api/internal/modules/image/service"
 	"github.com/zgiai/zgi/api/internal/modules/inbox"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	musicmodule "github.com/zgiai/zgi/api/internal/modules/music"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	authservice "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
 	videoservice "github.com/zgiai/zgi/api/internal/modules/video/service"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/memberstatus"
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 )
 
@@ -24,14 +28,18 @@ func provideApplicationErrorCatalog() (*appcatalog.Catalog, error) {
 	definitions = append(definitions, agents.CatalogDefinitions()...)
 	definitions = append(definitions, connectorpreferences.CatalogDefinitions()...)
 	definitions = append(definitions, connectorcore.CatalogDefinitions()...)
+	definitions = append(definitions, datasetservice.CatalogDefinitions()...)
 	definitions = append(definitions, digitalhuman.CatalogDefinitions()...)
 	definitions = append(definitions, imageservice.CatalogDefinitions()...)
 	definitions = append(definitions, inbox.CatalogDefinitions()...)
 	definitions = append(definitions, llmerrors.CatalogDefinitions()...)
 	definitions = append(definitions, llmerrors.BillingCatalogDefinitions()...)
 	definitions = append(definitions, musicmodule.CatalogDefinitions()...)
+	definitions = append(definitions, orgaudit.CatalogDefinitions()...)
 	definitions = append(definitions, videoservice.CatalogDefinitions()...)
 	definitions = append(definitions, authservice.CatalogDefinitions()...)
+	definitions = append(definitions, memberstatus.CatalogDefinitions()...)
+	definitions = append(definitions, automationaction.CatalogDefinitions()...)
 	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, definitions...)
 	if err != nil {
 		return nil, err

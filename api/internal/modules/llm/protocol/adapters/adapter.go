@@ -359,8 +359,57 @@ type ToolCall struct {
 
 // ResponseFormat response format
 type ResponseFormat struct {
-	Type   string         `json:"type"`             // text, json_object
+	Type   string         `json:"type"`             // text, json_object, json_schema
 	Schema map[string]any `json:"schema,omitempty"` // optional JSON schema for structured output
+	// JSONSchema carries the OpenAI Chat Completions json_schema object. Public
+	// callers send the schema here; internal callers may still set Schema.
+	JSONSchema *ResponseFormatJSONSchema `json:"json_schema,omitempty"`
+}
+
+// ResponseFormatJSONSchema is the OpenAI response_format.json_schema object.
+type ResponseFormatJSONSchema struct {
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Schema      map[string]any `json:"schema,omitempty"`
+	Strict      *bool          `json:"strict,omitempty"`
+}
+
+const defaultResponseFormatSchemaName = "response"
+
+// SchemaDefinition returns the requested structured-output schema regardless
+// of whether it arrived in the OpenAI json_schema object or the internal field.
+func (f *ResponseFormat) SchemaDefinition() map[string]any {
+	if f == nil {
+		return nil
+	}
+	if f.JSONSchema != nil && len(f.JSONSchema.Schema) > 0 {
+		return f.JSONSchema.Schema
+	}
+	return f.Schema
+}
+
+// MarshalJSON emits the OpenAI wire shape. A json_schema format always carries
+// its schema under json_schema, which is where OpenAI-compatible upstreams
+// read it; other formats keep the legacy top-level schema field.
+func (f ResponseFormat) MarshalJSON() ([]byte, error) {
+	if !strings.EqualFold(strings.TrimSpace(f.Type), "json_schema") {
+		return json.Marshal(struct {
+			Type   string         `json:"type"`
+			Schema map[string]any `json:"schema,omitempty"`
+		}{Type: f.Type, Schema: f.Schema})
+	}
+	spec := ResponseFormatJSONSchema{}
+	if f.JSONSchema != nil {
+		spec = *f.JSONSchema
+	}
+	if strings.TrimSpace(spec.Name) == "" {
+		spec.Name = defaultResponseFormatSchemaName
+	}
+	spec.Schema = f.SchemaDefinition()
+	return json.Marshal(struct {
+		Type       string                   `json:"type"`
+		JSONSchema ResponseFormatJSONSchema `json:"json_schema"`
+	}{Type: f.Type, JSONSchema: spec})
 }
 
 // ChatResponse platform standard chat response format
@@ -424,7 +473,7 @@ type InputTokensDetails struct {
 
 type PromptTokensDetails struct {
 	UncachedTokens        int `json:"uncached_tokens,omitempty"`
-	CachedTokens          int `json:"cached_tokens,omitempty"`
+	CachedTokens          int `json:"cached_tokens"`
 	CacheCreationTokens   int `json:"cache_creation_tokens,omitempty"`
 	CacheCreation5mTokens int `json:"cache_creation_5m_tokens,omitempty"`
 	CacheCreation1hTokens int `json:"cache_creation_1h_tokens,omitempty"`

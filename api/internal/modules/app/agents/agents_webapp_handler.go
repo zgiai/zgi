@@ -48,11 +48,11 @@ func (h *AgentsHandler) UpdateWebAppStatus(c *gin.Context) {
 		case errors.Is(err, errInvalidWebAppStatus), errors.Is(err, errWebAppOfflineReasonTooLong):
 			response.Fail(c, response.ErrInvalidParam)
 		case err.Error() == "agent not found":
-			response.SpecialFail(c, gin.H{"code": "404001", "message": "Agent not found"})
+			writeAgentLegacyFailure(c, agentNotFoundBody(), err)
 		case err.Error() == "permission denied":
-			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+			writeAgentLegacyFailure(c, agentPermissionDeniedBody(), err)
 		default:
-			response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+			writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		}
 		return
 	}

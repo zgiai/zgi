@@ -36,6 +36,8 @@ import type {
   OrganizationUpdateRequest,
   OrganizationCreateRequest,
   OrganizationMemberRoleUpdateRequest,
+  OrgAuditLogPage,
+  OrgAuditLogParams,
 } from './types/organization';
 
 export type * from './types/organization';
@@ -407,6 +409,17 @@ class OrganizationService extends BaseService {
   }
 
   // Get join requests
+  // Organization and permission change records (owners and admins only)
+  async getAuditLogs(organizationId: string, params?: OrgAuditLogParams) {
+    const response = await this.request<ApiResponseData<OrgAuditLogPage>>(
+      'get',
+      `/organizations/${organizationId}/audit-logs`,
+      undefined,
+      { params }
+    );
+    return response.data;
+  }
+
   async getJoinRequests(organizationId: string, params?: { limit?: string; page?: string }) {
     const response = await this.request<ApiResponseData<JoinRequestList>>(
       'get',

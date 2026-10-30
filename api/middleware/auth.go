@@ -180,6 +180,9 @@ func JWTWithTenant() gin.HandlerFunc {
 				c.Abort()
 				return
 			}
+			if !enforceOrganizationAccess(c, contextAccountService(c), user_id, organizationID) {
+				return
+			}
 
 			util.SetOrganizationID(c, organizationID)
 
@@ -199,6 +202,9 @@ func JWTWithTenant() gin.HandlerFunc {
 		if tenantID == "" {
 			response.Fail(c, response.ErrWorkspaceNotFound)
 			c.Abort()
+			return
+		}
+		if !enforceOrganizationAccess(c, contextAccountService(c), user_id, tenantID) {
 			return
 		}
 
@@ -442,6 +448,9 @@ func JWTWithOrganizationAndService(accountService interfaces.AccountService) gin
 				return
 			}
 			logger.Debug("auth: skipping tenant resolution for path=%s", c.Request.URL.Path)
+		}
+		if tenantID != "" && !enforceOrganizationAccess(c, accountService, user_id, tenantID) {
+			return
 		}
 		logger.Debug("auth: tenant resolved: %s", tenantID)
 

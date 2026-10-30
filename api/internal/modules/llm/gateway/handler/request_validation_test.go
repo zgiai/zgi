@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 func TestValidatePublicNativeBodyRejectsInvalidProtocolParameters(t *testing.T) {
@@ -85,5 +86,28 @@ func TestInvalidRequestUsesLocalizedCatalogMessage(t *testing.T) {
 	body := recorder.Body.String()
 	if !strings.Contains(body, "大模型请求内容不正确") || strings.Contains(body, "model is required") {
 		t.Fatalf("request validation leaked an untranslated message: %s", body)
+	}
+}
+
+func TestValidatePublicChatRequestRequiresJSONSchemaDefinition(t *testing.T) {
+	base := func(format *adapter.ResponseFormat) *adapter.ChatRequest {
+		return &adapter.ChatRequest{
+			Model:          "gpt-test",
+			Messages:       []adapter.Message{{Role: "user", Content: "hi"}},
+			ResponseFormat: format,
+		}
+	}
+	if err := validatePublicChatRequest(base(&adapter.ResponseFormat{Type: "json_schema"})); err == nil {
+		t.Fatal("validatePublicChatRequest() error = nil, want json_schema without schema rejected")
+	}
+	withSchema := &adapter.ResponseFormat{
+		Type:       "json_schema",
+		JSONSchema: &adapter.ResponseFormatJSONSchema{Name: "weather", Schema: map[string]any{"type": "object"}},
+	}
+	if err := validatePublicChatRequest(base(withSchema)); err != nil {
+		t.Fatalf("validatePublicChatRequest() error = %v, want json_schema with schema accepted", err)
+	}
+	if err := validatePublicChatRequest(base(&adapter.ResponseFormat{Type: "json_object"})); err != nil {
+		t.Fatalf("validatePublicChatRequest() error = %v, want json_object accepted", err)
 	}
 }

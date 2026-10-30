@@ -814,6 +814,10 @@ func (workflowRoutesAccountService) EnsureCurrentOrganizationID(context.Context,
 	return uuid.NewString(), nil
 }
 
+func (workflowRoutesAccountService) CheckOrganizationAccess(context.Context, string, string) error {
+	return nil
+}
+
 func (workflowRoutesAccountService) IsOrganizationAdminOrOwner(context.Context, string, string) (bool, error) {
 	return true, nil
 }

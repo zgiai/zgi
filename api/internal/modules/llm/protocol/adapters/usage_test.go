@@ -1,6 +1,10 @@
 package adapter
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestUsageNormalizeCacheTokensSeparatesOpenAIInput(t *testing.T) {
 	usage := &Usage{
@@ -41,5 +45,17 @@ func TestUsageNormalizeCacheTokensDerivesCacheCreationTTLTotal(t *testing.T) {
 	}
 	if usage.UncachedInputTokens != 400 {
 		t.Fatalf("uncached input tokens = %d, want 400", usage.UncachedInputTokens)
+	}
+}
+
+func TestUsageAlwaysReportsCachedTokens(t *testing.T) {
+	usage := Usage{PromptTokens: 12, CompletionTokens: 4, TotalTokens: 16}
+	usage.NormalizeCacheTokens()
+	payload, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(payload), `"prompt_tokens_details":{"uncached_tokens":12,"cached_tokens":0}`) {
+		t.Fatalf("usage = %s, want prompt_tokens_details.cached_tokens present", payload)
 	}
 }

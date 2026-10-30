@@ -268,8 +268,18 @@ func (r *organizationRepository) ListUserOrganizationsForAccount(ctx context.Con
 			AND workspace_members.account_id = ?
 		)`
 
+	// A disabled membership hides the organization even when workspace rows remain.
+	disabledCondition := `
+		NOT EXISTS (
+			SELECT 1 FROM members
+			WHERE members.organization_id = organizations.id
+			AND members.account_id = ?
+			AND members.status = ?
+		)`
+
 	// Combine both conditions with OR
-	query = query.Where(directCondition+" OR "+indirectCondition, accountID, accountID)
+	query = query.Where("("+directCondition+" OR "+indirectCondition+")", accountID, accountID).
+		Where(disabledCondition, accountID, model.OrganizationMemberStatusInactive)
 
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -477,6 +487,7 @@ func (r *organizationRepository) GetFirstJoinedOrganization(ctx context.Context,
 		Model(&model.Organization{}).
 		Joins("JOIN members ON members.organization_id = organizations.id").
 		Where("members.account_id = ?", accountID).
+		Where("members.status <> ?", model.OrganizationMemberStatusInactive).
 		Order("organizations.created_at ASC").
 		First(&organization).Error
 

@@ -135,3 +135,34 @@ func TestModelsDetailAnthropicRejectsProtocolMismatch(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestModelsCatalogExposesCapabilities(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+
+	writeModelsCatalog(c, []adapter.Model{
+		{ID: "agent-a", Capabilities: []string{"tool_use", "structured_output"}},
+		{ID: "plain-text"},
+	})
+
+	var payload struct {
+		Data []struct {
+			ID           string   `json:"id"`
+			Capabilities []string `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Data) != 2 {
+		t.Fatalf("data = %#v", payload.Data)
+	}
+	if got := payload.Data[0].Capabilities; len(got) != 2 || got[0] != "tool_use" || got[1] != "structured_output" {
+		t.Fatalf("agent-a capabilities = %v", got)
+	}
+	if got := payload.Data[1].Capabilities; len(got) != 1 || got[0] != "messages" {
+		t.Fatalf("plain-text capabilities = %v, want the messages fallback", got)
+	}
+}

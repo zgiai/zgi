@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"strings"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -30,6 +31,10 @@ func validatePublicChatRequest(req *adapter.ChatRequest) error {
 	}
 	if req.FrequencyPenalty != nil && (*req.FrequencyPenalty < -2 || *req.FrequencyPenalty > 2) {
 		return newPublicInputErrorf("frequency_penalty must be between -2 and 2")
+	}
+	if format := req.ResponseFormat; format != nil && strings.EqualFold(strings.TrimSpace(format.Type), "json_schema") &&
+		len(format.SchemaDefinition()) == 0 {
+		return newPublicInputErrorf("response_format.json_schema.schema is required when response_format.type is json_schema")
 	}
 	return nil
 }

@@ -41,7 +41,7 @@ const (
 	searchSnippetRunes       = 120
 	staleActiveMessageError  = "runtime_lease_expired"
 	streamEventsExpiredError = "stream events expired"
-	titleGenerationTimeout   = 15 * time.Second
+	titleGenerationTimeout   = 25 * time.Second
 	runtimeContextMaxRunes   = 8000
 	runtimeLeaseHeartbeat    = 15 * time.Second
 	runtimeLeaseFailureTTL   = 90 * time.Second
@@ -827,6 +827,9 @@ type chatRequestParts struct {
 	SystemPrompt                     string
 	SystemPromptVersion              string
 	ConfiguredSkillIDs               []string
+	// DatabaseBindingsAbsent marks an Agent or DigitalHuman run with no bound
+	// database table, so the database skill is not offered this turn.
+	DatabaseBindingsAbsent           bool
 	KnowledgeDatasetIDs              []string
 	KnowledgeRetrievalConfig         map[string]interface{}
 	AgentMemoryEnabled               bool

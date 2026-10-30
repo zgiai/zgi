@@ -4,9 +4,9 @@ import { useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import { agentService } from '@/services';
 import { toast } from 'sonner';
+import { AgentType } from '@/services/types/agent';
 import type {
   AgentAssetKind,
-  AgentType,
   AgentList,
   CreateAgentRequest,
   UpdateAgentRequest,
@@ -293,16 +293,25 @@ export function useCreateAgent() {
 
   return useMutation({
     mutationFn: (data: CreateAgentRequest) => agentService.createAgent(data),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       // Invalidate both paginated and basic lists that are either unfiltered or belong to current workspace
       queryClient.invalidateQueries({
         queryKey: AGENT_KEYS.all,
         predicate: workspaceInvalidatePredicate(AGENT_KEYS.all[0], currentWorkspaceId),
       });
-      toast.success(t('toasts.createSuccess'));
+      toast.success(
+        variables.agent_type === AgentType.AGENT
+          ? t('toasts.createSuccess')
+          : t('toasts.workflowCreateSuccess')
+      );
     },
-    onError: (error: unknown) => {
-      toast.error(getErrorMessage(error) || t('toasts.createFailed'));
+    onError: (error: unknown, variables) => {
+      toast.error(
+        getErrorMessage(error) ||
+          (variables.agent_type === AgentType.AGENT
+            ? t('toasts.createFailed')
+            : t('toasts.workflowCreateFailed'))
+      );
     },
   });
 }

@@ -4,7 +4,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/config"
 	notificationsms "github.com/zgiai/zgi/api/internal/modules/notification/sms"
+	"github.com/zgiai/zgi/api/internal/modules/orgaudit"
 	authService "github.com/zgiai/zgi/api/internal/modules/user/auth/service"
+	"github.com/zgiai/zgi/api/middleware"
 
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
@@ -126,6 +128,13 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 		deps.ConsoleWebURL,
 	)
 
+	// Organization and permission changes are recorded to org_audit_logs.
+	auditRepository := orgaudit.NewRepository(deps.DB)
+	auditRecorder := orgaudit.NewRecorder(auditRepository)
+	membersHandler.SetAuditRecorder(auditRecorder)
+	enterpriseHandler.SetAuditRecorder(auditRecorder)
+	auditHandler := orgaudit.NewHandler(orgaudit.NewService(auditRepository, deps.OrganizationService), errorProjector)
+
 	// --- Route Registration ---
 	accountHandler.RegisterRoutes(v1)
 	forgotPasswordHandler.RegisterRoutes(v1)
@@ -136,6 +145,7 @@ func RegisterUserRoutes(v1 *gin.RouterGroup, deps UserRouteDeps) {
 	activateHandler.RegisterRoutes(v1)
 	enterpriseHandler.RegisterRoutes(v1)
 	membersHandler.RegisterRoutes(v1)
+	auditHandler.RegisterRoutes(v1.Group("/organizations", middleware.JWTWithOrganizationAndService(deps.AccountService)))
 }
 
 func isDevelopmentRuntime(cfg *config.Config) bool {
