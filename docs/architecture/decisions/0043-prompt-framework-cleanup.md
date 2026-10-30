@@ -79,6 +79,7 @@ Changing content already comes last, so the prefix is cached (ADR 0032). The con
 11. **Recently used skills start active.**
     - A turn starts with the skills whose tools succeeded in the conversation's last three turns.
     - Their tools are in the tool list from the first round. Their instructions are stored with the question and then deduplicated (decision 9), instead of being resent after a tool call in every turn.
+    - The stable skill directory in the system prompt lists every candidate, including those a turn starts with active. Otherwise a change in recently used skills changed the system prompt and lost the whole cache for that turn.
 
 ## Consequences
 

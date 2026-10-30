@@ -264,6 +264,13 @@ func (s *NativeSkillSession) CatalogMessage() llmadapter.Message {
 	if s == nil {
 		return llmadapter.Message{}
 	}
+	// A stable directory is part of the cached system prompt, so it lists
+	// every candidate whichever of them this turn starts with active; leaving
+	// active skills out would change the system prompt between turns (ADR
+	// 0032, ADR 0043).
+	if s.catalog.Stable {
+		return s.catalog.Message
+	}
 	metadata := make([]SkillPromptMetadata, 0, len(s.catalog.Metadata))
 	for _, item := range s.catalog.Metadata {
 		if _, active := s.activeSet[normalizeSkillID(item.ID)]; active {

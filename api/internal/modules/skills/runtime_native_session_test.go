@@ -117,8 +117,10 @@ func TestNativeSkillSessionActivatesCompleteSkillsIncrementally(t *testing.T) {
 		t.Fatalf("calculator tool set = %#v, want complete instruction and calculate schema", current)
 	}
 	candidateMessage := stringFromNativeMessage(session.CatalogMessage().Content)
-	if strings.Contains(candidateMessage, "- exact-math:") || !strings.Contains(candidateMessage, "- prompt-only:") {
-		t.Fatalf("candidate message = %s, want inactive prompt-only without active calculator", candidateMessage)
+	// A stable directory stays in the cached system prompt, so it keeps
+	// listing a candidate after it is activated (ADR 0043).
+	if !strings.Contains(candidateMessage, "- exact-math:") || !strings.Contains(candidateMessage, "- prompt-only:") {
+		t.Fatalf("candidate message = %s, want every candidate listed", candidateMessage)
 	}
 
 	promptResult := session.Activate(context.Background(), []string{"prompt-only"}, "runtime_activation")
