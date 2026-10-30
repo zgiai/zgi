@@ -1191,7 +1191,58 @@ func preservesNamedChatToolChoice(config *adapter.AdapterConfig) bool {
 	}
 }
 
+// protectedChatExtraKeys are request fields a provider-specific extra may never
+// set: they decide identity, billing, routing, the response shape or tool
+// execution, and only the typed ChatRequest fields own them.
+var protectedChatExtraKeys = map[string]struct{}{
+	"model":           {},
+	"messages":        {},
+	"stream":          {},
+	"stream_options":  {},
+	"organization_id": {},
+	"user":            {},
+	"n":               {},
+	"tools":           {},
+	"tool_choice":     {},
+	"functions":       {},
+	"function_call":   {},
+	"response_format": {},
+}
+
+// setChatExtra adds a provider-specific extra unless the key is protected or
+// the typed request already produced it.
+func setChatExtra(payload map[string]interface{}, key string, value interface{}) {
+	if _, protected := protectedChatExtraKeys[key]; protected {
+		return
+	}
+	if _, exists := payload[key]; exists {
+		return
+	}
+	payload[key] = value
+}
+
 func buildOpenAICompatibleChatPayload(request *adapter.ChatRequest) map[string]interface{} {
+	payload := buildOpenAICompatibleChatCorePayload(request)
+
+	// Process AdditionalParameters (Dynamic Mapping)
+	for k, v := range request.AdditionalParameters {
+		switch k {
+		case "reasoning_effort":
+			// Map to OpenAI o1 structure: "reasoning": {"effort": "..."}
+			setChatExtra(payload, "reasoning", map[string]interface{}{"effort": v})
+			// o1 doesn't support temperature/top_p, but we usually let the user omit them
+			// If they are provided, we could strip them here if needed.
+		default:
+			// Passthrough for any other parameters
+			setChatExtra(payload, k, v)
+		}
+	}
+
+	return payload
+}
+
+// buildOpenAICompatibleChatCorePayload maps the typed ChatRequest fields only.
+func buildOpenAICompatibleChatCorePayload(request *adapter.ChatRequest) map[string]interface{} {
 	payload := make(map[string]interface{})
 	payload["model"] = request.Model
 	payload["messages"] = request.Messages
@@ -1242,20 +1293,6 @@ func buildOpenAICompatibleChatPayload(request *adapter.ChatRequest) map[string]i
 	}
 	if len(request.LogitBias) > 0 {
 		payload["logit_bias"] = request.LogitBias
-	}
-
-	// Process AdditionalParameters (Dynamic Mapping)
-	for k, v := range request.AdditionalParameters {
-		switch k {
-		case "reasoning_effort":
-			// Map to OpenAI o1 structure: "reasoning": {"effort": "..."}
-			payload["reasoning"] = map[string]interface{}{"effort": v}
-			// o1 doesn't support temperature/top_p, but we usually let the user omit them
-			// If they are provided, we could strip them here if needed.
-		default:
-			// Passthrough for any other parameters
-			payload[k] = v
-		}
 	}
 
 	return payload
