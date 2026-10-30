@@ -1,6 +1,18 @@
 package adapter
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
+
+// ReasoningHistoryKept reports whether the transcript keeps the reasoning of
+// earlier turns, so a later turn replays the requests the provider cached
+// (ZGI_REASONING_HISTORY=keep, ADR 0045). It stores model reasoning, which
+// ADR 0033 keeps out of the durable transcript, so it is off by default.
+// Models that do not replay reasoning never receive it.
+func ReasoningHistoryKept() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("ZGI_REASONING_HISTORY")), "keep")
+}
 
 // ModelReplaysReasoningContent reports whether a chat model expects the
 // reasoning_content of its own tool-call turns sent back. DeepSeek thinking

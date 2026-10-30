@@ -62,7 +62,9 @@ func protocolMessageFromJSON(payload map[string]interface{}) (adapter.Message, e
 	if err := json.Unmarshal(encoded, &message); err != nil {
 		return adapter.Message{}, fmt.Errorf("decode stored protocol message: %w", err)
 	}
-	message.ReasoningContent = ""
+	if !adapter.ReasoningHistoryKept() {
+		message.ReasoningContent = ""
+	}
 	return message, nil
 }
 

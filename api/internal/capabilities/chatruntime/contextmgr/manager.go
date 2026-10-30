@@ -284,7 +284,9 @@ func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Mess
 	m.state.Messages = append(m.state.Messages, message)
 	if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
 		transcript := cloneMessage(message)
-		transcript.ReasoningContent = ""
+		if !adapter.ReasoningHistoryKept() {
+			transcript.ReasoningContent = ""
+		}
 		m.state.TurnTranscript = append(m.state.TurnTranscript, transcript)
 	}
 	if m.state.NextRound <= 0 {
@@ -396,6 +398,57 @@ func (m *Manager) appendNewTurnToolMessages(messages []adapter.Message) {
 		m.state.TurnTranscript = append(m.state.TurnTranscript, cloneMessage(message))
 		knownResults[id] = struct{}{}
 	}
+	if adapter.ReasoningHistoryKept() {
+		m.appendNewTurnReminders(messages, knownCalls)
+	}
+}
+
+// appendNewTurnReminders records the guidance the loop added after this
+// turn's tool calls, such as the instructions of a skill activated mid-turn,
+// as the user turn a provider receives it in. With reasoning kept across
+// turns, the next turn's request then extends this turn's requests past its
+// tool calls, and the provider's cache covers them (ADR 0043).
+func (m *Manager) appendNewTurnReminders(messages []adapter.Message, knownCalls map[string]struct{}) {
+	recorded := make(map[string]struct{})
+	for _, message := range m.state.TurnTranscript {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+			if text, ok := message.Content.(string); ok {
+				recorded[text] = struct{}{}
+			}
+		}
+	}
+	afterTurnCall := false
+	pending := make([]string, 0, 2)
+	flush := func() {
+		if len(pending) == 0 {
+			return
+		}
+		content := strings.Join(pending, "\n\n")
+		pending = pending[:0]
+		if _, exists := recorded[content]; exists {
+			return
+		}
+		recorded[content] = struct{}{}
+		m.state.TurnTranscript = append(m.state.TurnTranscript, adapter.Message{Role: "user", Content: content})
+	}
+	for _, message := range messages {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role == "assistant" {
+			for _, call := range message.ToolCalls {
+				if _, known := knownCalls[strings.TrimSpace(call.ID)]; known {
+					afterTurnCall = true
+				}
+			}
+		}
+		if role == "system" && afterTurnCall {
+			if text, ok := message.Content.(string); ok && strings.TrimSpace(text) != "" {
+				pending = append(pending, adapter.SystemReminder(text))
+				continue
+			}
+		}
+		flush()
+	}
+	flush()
 }
 
 // syncTurnTranscriptMessages keeps the durable turn transcript aligned with
@@ -410,7 +463,9 @@ func (m *Manager) syncTurnTranscriptMessages(messages []adapter.Message) {
 	current := make(map[string]adapter.Message)
 	for _, message := range messages {
 		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
-			message.ReasoningContent = ""
+			if !adapter.ReasoningHistoryKept() {
+				message.ReasoningContent = ""
+			}
 			for _, call := range message.ToolCalls {
 				if id := strings.TrimSpace(call.ID); id != "" {
 					currentAssistants[id] = cloneMessage(message)
