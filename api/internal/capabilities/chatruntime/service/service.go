@@ -492,6 +492,7 @@ type Service interface {
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredTaskTokenBudgetContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.TaskTokenBudgetContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunInterruptedTurnResumeStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredInterruptedTurnResume(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, onEvent func(StreamEvent) error) (*ChatResult, error)
 	CreatePendingMessage(ctx context.Context, scope Scope, req CreatePendingMessageRequest) (*runtimemodel.Message, error)
 	CreateConversationWithPendingMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithPendingMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)

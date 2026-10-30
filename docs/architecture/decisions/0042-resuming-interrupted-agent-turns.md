@@ -33,7 +33,7 @@ Every other Agent continuation is already started by the client: approvals, user
    - The lease sweep makes the stopped turn its conversation's leaf, the way a failed turn becomes it. It used to leave the leaf on the turn before, so the chat never showed the stopped turn or its Continue action, even after a reload (fixed 2026-10-30).
 4. **Not covered.**
    - DigitalHuman apps resume their own runs, so the Runtime Workspace route serves only Agent apps.
-   - The console AI chat has no continuation endpoints, and its interrupted turns are still regenerated.
+   - The console AI chat got the same resume on 2026-10-30: `POST /console/api/aichat/conversations/{conversation_id}/messages/{message_id}/resume`, run with the AI chat caller and billing as its other continuations are. Its chat shows the same Continue action.
 
 ## Consequences
 

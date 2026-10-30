@@ -822,6 +822,27 @@ export class AIChatTransport implements AIChatRuntimeTransport {
       abortSignal
     );
   }
+
+  resumeInterruptedTurn(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.resumeInterruptedTurn(
+      conversationId,
+      messageId,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onOpen: () => callbacks.onOpen?.(),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
 }
 
 export const aichatTransport = new AIChatTransport();

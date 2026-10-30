@@ -28,6 +28,27 @@ const (
 // before, or a call that may have changed something has no recorded result.
 var ErrInterruptedTurnNotResumable = errors.New("interrupted turn cannot be resumed")
 
+// RunInterruptedTurnResumeStream resumes an AI chat turn whose process stopped
+// in the middle of it, as the AI chat's other continuations run: with its
+// caller and billing (ADR 0042).
+func (s *service) RunInterruptedTurnResumeStream(
+	ctx context.Context,
+	scope Scope,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	onEvent func(StreamEvent) error,
+) (*ChatResult, error) {
+	return s.RunConfiguredInterruptedTurnResume(
+		ctx,
+		scope,
+		Caller{Type: runtimemodel.ConversationCallerAIChat},
+		RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat},
+		conversationID,
+		messageID,
+		onEvent,
+	)
+}
+
 // RunConfiguredInterruptedTurnResume resumes a turn whose process stopped in
 // the middle of it (ADR 0035). The lease sweeper has marked such a message
 // error/runtime_lease_expired; its transcript holds every model response and

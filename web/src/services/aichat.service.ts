@@ -457,6 +457,34 @@ export const aichatService = {
     );
   },
 
+  /** Resumes a turn whose server process stopped in the middle of it. */
+  resumeInterruptedTurn(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    const outputFilter = createAIChatStreamOutputFilter(callbacks);
+
+    return http.sse<AIChatSseEnvelope, Record<string, never>>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/resume`,
+      {
+        method: 'POST',
+        body: {},
+        abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
+        isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
+        onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
+        onError: error => callbacks.onError?.(error),
+        onClose: callbacks.onClose,
+      }
+    );
+  },
+
   streamChat(
     payload: AIChatChatRequest,
     callbacks: AIChatStreamCallbacks,

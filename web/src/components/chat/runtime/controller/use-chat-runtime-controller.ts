@@ -302,7 +302,7 @@ export function useChatRuntimeController(options?: {
     continueToolGovernanceDecision,
     continueClientAction,
     continueUserInput,
-    resumeInterruptedTurn: options?.transport?.resumeInterruptedTurn
+    resumeInterruptedTurn: (options?.transport ?? aichatTransport).resumeInterruptedTurn
       ? resumeInterruptedTurn
       : undefined,
     stop,
