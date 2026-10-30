@@ -101,7 +101,7 @@ func (s *llmGatewayServiceImpl) Transcribe(
 		if selection == nil {
 			continue
 		}
-		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
+		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(ctx, selection, organizationID))
 		if err != nil {
 			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), true, true)
 			return nil, fmt.Errorf("failed to create transcription adapter: %w", err)

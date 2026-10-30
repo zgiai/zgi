@@ -78,6 +78,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	v1 := router.Group("/v1")
 	v1.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
 	v1.Use(authMiddleware)
+	v1.Use(gatewayhandler.GatewayRequestTimeout())
 	{
 		// OpenAI-compatible endpoints
 		v1.POST("/chat/completions", llmHandler.ChatCompletions)
@@ -99,6 +100,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	anthropic := router.Group("/anthropic")
 	anthropic.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
 	anthropic.Use(authMiddleware)
+	anthropic.Use(gatewayhandler.GatewayRequestTimeout())
 	{
 		anthropic.POST("/v1/messages", llmHandler.CreateAnthropicMessage)
 	}
@@ -107,6 +109,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	gemini := router.Group("/v1beta")
 	gemini.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
 	gemini.Use(authMiddleware)
+	gemini.Use(gatewayhandler.GatewayRequestTimeout())
 	{
 		gemini.POST("/models/*modelAction", llmHandler.CreateGeminiContent)
 	}

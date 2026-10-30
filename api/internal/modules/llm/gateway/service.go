@@ -1047,7 +1047,7 @@ func (s *llmGatewayServiceImpl) validateRerankRequest(req *adapter.RerankRequest
 }
 
 // createAdapterConfig creates adapter configuration from provider selection
-func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection, organizationID ...uuid.UUID) *adapter.AdapterConfig {
+func (s *llmGatewayServiceImpl) createAdapterConfig(ctx context.Context, selection *ProviderSelection, organizationID ...uuid.UUID) *adapter.AdapterConfig {
 	adapterProvider := selection.ChannelProvider
 	if strings.TrimSpace(selection.AdapterProviderOverride) != "" {
 		adapterProvider = strings.TrimSpace(selection.AdapterProviderOverride)
@@ -1060,7 +1060,7 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 		ProviderName:        adapterProvider,
 		ProviderID:          selection.Provider.ID.String(),
 		BaseURL:             selection.Provider.APIBaseURL,
-		Timeout:             adapterTimeoutFromSelection(selection),
+		Timeout:             adapterTimeoutFromSelection(ctx, selection),
 		MaxRetries:          3,
 		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
 		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,

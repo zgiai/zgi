@@ -95,7 +95,7 @@ func (s *llmGatewayServiceImpl) GenerateLyrics(
 		if selection == nil {
 			continue
 		}
-		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
+		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(ctx, selection, organizationID))
 		if err != nil {
 			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), selection.UseSystemProvider, true)
 			return nil, fmt.Errorf("failed to create lyrics adapter: %w", err)
@@ -244,7 +244,7 @@ func (s *llmGatewayServiceImpl) GenerateMusic(
 		if selection == nil {
 			continue
 		}
-		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(selection, organizationID))
+		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(ctx, selection, organizationID))
 		if err != nil {
 			reportLLMAdapterFailure(ctx, err, selection.Provider.Provider, selection.Model.Model, organizationID.String(), 0, getChannelID(selection), selection.UseSystemProvider, true)
 			return fmt.Errorf("failed to create music adapter: %w", err)

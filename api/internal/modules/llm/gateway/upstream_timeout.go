@@ -1,23 +1,39 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/requesttimeout"
 )
 
 const (
-	minUpstreamTimeoutSeconds     = 15
-	maxUpstreamTimeoutSeconds     = 600
-	defaultPrivateAdapterTimeout  = 500 * time.Second
-	defaultOfficialAdapterTimeout = 120 * time.Second
-	upstreamTimeoutOverrideKey    = "upstream_timeout_seconds"
+	minUpstreamTimeoutSeconds    = 15
+	defaultPrivateAdapterTimeout = 500 * time.Second
+	// officialAdapterMargin keeps the hop to Console open slightly longer than
+	// Console's own budget for the same request, so Console's timeout answer
+	// (a cataloged 504) arrives before pre gives up on the connection.
+	officialAdapterMargin      = 30 * time.Second
+	upstreamTimeoutOverrideKey = "upstream_timeout_seconds"
 )
 
-func adapterTimeoutFromSelection(selection *ProviderSelection) time.Duration {
+// adapterTimeoutFromSelection is the HTTP budget of one adapter call.
+//
+// Official (Console platform proxy): the request's X-ZGI-Request-Timeout, or
+// the default, plus a margin. Console bounds the provider call itself, and its
+// channel override governs there, so a pre-side override is ignored.
+//
+// Private (direct provider): header > channel override > 500s default, bounded
+// by the request maximum instead of a fixed 600s.
+func adapterTimeoutFromSelection(ctx context.Context, selection *ProviderSelection) time.Duration {
 	if selection != nil && selection.UseSystemProvider {
-		return defaultOfficialAdapterTimeout
+		return requesttimeout.Effective(ctx) + officialAdapterMargin
+	}
+	if timeout, ok := requesttimeout.Requested(ctx); ok {
+		return timeout
 	}
 	timeout := defaultPrivateAdapterTimeout
 	if selection != nil && selection.ParamOverride != nil {
@@ -32,12 +48,11 @@ func adapterTimeoutFromSelection(selection *ProviderSelection) time.Duration {
 
 func clampUpstreamTimeout(timeout time.Duration) time.Duration {
 	minTimeout := time.Duration(minUpstreamTimeoutSeconds) * time.Second
-	maxTimeout := time.Duration(maxUpstreamTimeoutSeconds) * time.Second
 	if timeout < minTimeout {
 		return minTimeout
 	}
-	if timeout > maxTimeout {
-		return maxTimeout
+	if limit := requesttimeout.Max(); timeout > limit {
+		return limit
 	}
 	return timeout
 }

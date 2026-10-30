@@ -12,6 +12,7 @@ import (
 	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/infra/platform/consoleauth"
 	"github.com/zgiai/zgi/api/internal/infra/platform/consolecred"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/requesttimeout"
 	"github.com/zgiai/zgi/api/internal/observability"
 	pb "github.com/zgiai/zgi/api/pkg/rpc/v1"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -154,7 +155,8 @@ func (c *QuotaClient) PreDeductQuota(ctx context.Context, req *PreDeductQuotaReq
 		PricingSnapshot:   req.PricingSnapshot,
 	}
 
-	resp, err := c.client.PreDeductQuota(ctx, grpcReq)
+	// Console keeps the hold open for the request's total duration.
+	resp, err := c.client.PreDeductQuota(requesttimeout.AppendOutgoingMetadata(ctx), grpcReq)
 	if err != nil {
 		return nil, fmt.Errorf("grpc call failed: %w", newBillingRPCError(err))
 	}
@@ -190,7 +192,8 @@ func (c *QuotaClient) PreDeductMeteredUsage(ctx context.Context, req *PreDeductM
 		}
 	}
 
-	resp, err := c.client.PreDeductMeteredUsage(ctx, grpcReq)
+	// Console keeps the hold open for the request's total duration.
+	resp, err := c.client.PreDeductMeteredUsage(requesttimeout.AppendOutgoingMetadata(ctx), grpcReq)
 	if err != nil {
 		return nil, fmt.Errorf("grpc call failed: %w", newBillingRPCError(err))
 	}

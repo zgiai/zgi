@@ -123,7 +123,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.responses")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
-		adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+		adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 		providerAdapter, err := s.adapterFactory.CreateAdapter(adapterConfig)
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
@@ -278,7 +278,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.embeddings")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
-		adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+		adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 		providerAdapter, err := s.adapterFactory.CreateAdapter(adapterConfig)
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
@@ -413,7 +413,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.rerank")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
-		adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+		adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 		providerAdapter, err := s.adapterFactory.CreateAdapter(adapterConfig)
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
