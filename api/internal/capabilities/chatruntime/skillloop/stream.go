@@ -434,7 +434,7 @@ func shouldStreamSkillPlanning(prepared *PreparedChat) bool {
 	provider := strings.ToLower(strings.TrimSpace(prepared.parts.Provider))
 	switch provider {
 	case "openai", "openai-compatible", "deepseek", "openrouter", "zgi-cloud", "zgi_cloud", "dashscope",
-		"aliyun", "qwen", "claude", "anthropic", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
+		"aliyun", "qwen", "claude", "anthropic", "moonshot", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
 		return true
 	default:
 		return false

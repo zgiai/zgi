@@ -1317,6 +1317,16 @@ func TestShouldStreamSkillPlanningIncludesQwenProvider(t *testing.T) {
 	}
 }
 
+// Synced Kimi models have the provider "moonshot"; their Agent runs used to
+// fall back to waiting for the whole answer.
+func TestShouldStreamSkillPlanningIncludesMoonshotProvider(t *testing.T) {
+	prepared := NewPreparedChat("conversation-1", "message-1", "moonshot", "auto", &adapter.ChatRequest{Model: "kimi-k2.6"})
+
+	if !shouldStreamSkillPlanning(prepared) {
+		t.Fatal("shouldStreamSkillPlanning(moonshot) = false, want true")
+	}
+}
+
 func TestShouldStreamSkillPlanningIncludesQwQModelWithoutProvider(t *testing.T) {
 	prepared := NewPreparedChat("conversation-1", "message-1", "", "auto", &adapter.ChatRequest{Model: " qwen/qwq-plus "})
 
