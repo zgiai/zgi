@@ -321,6 +321,8 @@ func TestAgentProtocolCapabilities(t *testing.T) {
 		{provider: "zhipu", want: true},
 		{provider: "moonshot", want: true},
 		{provider: "kimi", want: true},
+		{provider: "anthropic", want: true},
+		{provider: "claude", want: true},
 		{provider: "google", want: false},
 		{provider: "ollama", want: false},
 	}
