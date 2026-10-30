@@ -88,3 +88,68 @@ func TestNormalizeSystemMessagesKeepsStructuredSystemContentLosslessly(t *testin
 		t.Fatalf("conversation order = %#v, want user then assistant", normalized[2:])
 	}
 }
+
+func TestChatRequestUnmarshalCapturesProviderExtras(t *testing.T) {
+	body := `{
+		"model":"qwen3.8-27b",
+		"messages":[{"role":"user","content":"hi"}],
+		"temperature":0.2,
+		"stream":true,
+		"stream_options":{"include_usage":true},
+		"enable_thinking":false,
+		"chat_template_kwargs":{"enable_thinking":false},
+		"thinking":{"type":"disabled"},
+		"reasoning_effort":"low"
+	}`
+
+	var request ChatRequest
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if request.Model != "qwen3.8-27b" || len(request.Messages) != 1 || !request.Stream {
+		t.Fatalf("typed fields = %+v, want model/messages/stream decoded", request)
+	}
+	if request.Temperature == nil || *request.Temperature != 0.2 {
+		t.Fatalf("temperature = %v, want 0.2", request.Temperature)
+	}
+	want := map[string]interface{}{
+		"enable_thinking":      false,
+		"chat_template_kwargs": map[string]interface{}{"enable_thinking": false},
+		"thinking":             map[string]interface{}{"type": "disabled"},
+		"reasoning_effort":     "low",
+	}
+	if !reflect.DeepEqual(request.AdditionalParameters, want) {
+		t.Fatalf("AdditionalParameters = %#v, want %#v", request.AdditionalParameters, want)
+	}
+}
+
+func TestChatRequestUnmarshalKeepsKnownFieldsOutOfExtras(t *testing.T) {
+	body := `{
+		"model":"m","messages":[],"temperature":1,"top_p":1,"max_tokens":8,"stream":true,
+		"stream_options":{"include_usage":true},"stop":["x"],"presence_penalty":0,
+		"frequency_penalty":0,"user":"u","functions":[],"function_call":"auto","tools":[],
+		"tool_choice":"auto","response_format":{"type":"text"},"seed":1,"n":1,"logit_bias":{"1":1}
+	}`
+
+	var request ChatRequest
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if request.AdditionalParameters != nil {
+		t.Fatalf("AdditionalParameters = %#v, want nil when only standard fields are sent", request.AdditionalParameters)
+	}
+}
+
+func TestChatRequestUnmarshalKeepsFieldsAbsentFromBody(t *testing.T) {
+	request := ChatRequest{Model: "preset", Messages: []Message{{Role: "user", Content: "hi"}}}
+	if err := json.Unmarshal([]byte(`{"enable_thinking":true}`), &request); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if request.Model != "preset" || len(request.Messages) != 1 {
+		t.Fatalf("request = %+v, want preset model and messages kept", request)
+	}
+	if request.AdditionalParameters["enable_thinking"] != true {
+		t.Fatalf("AdditionalParameters = %#v, want enable_thinking captured", request.AdditionalParameters)
+	}
+}

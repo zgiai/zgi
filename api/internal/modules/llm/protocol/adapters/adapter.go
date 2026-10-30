@@ -146,6 +146,37 @@ type ChatRequest struct {
 	AdditionalParameters map[string]interface{} `json:"-"`
 }
 
+// chatRequestWireKeys lists every top-level field ChatRequest models. Any other
+// key a caller sends is a provider-specific extra.
+var chatRequestWireKeys = [...]string{
+	"model", "messages", "temperature", "top_p", "max_tokens", "stream", "stream_options",
+	"stop", "presence_penalty", "frequency_penalty", "user", "functions", "function_call",
+	"tools", "tool_choice", "response_format", "seed", "n", "logit_bias",
+}
+
+// UnmarshalJSON keeps provider-specific chat parameters such as enable_thinking,
+// chat_template_kwargs, thinking and reasoning_effort, which the standard core
+// does not model, so adapters can forward them upstream.
+func (r *ChatRequest) UnmarshalJSON(data []byte) error {
+	// Decode in place so fields absent from data keep their current values, as
+	// the default decoder does.
+	type alias ChatRequest
+	if err := json.Unmarshal(data, (*alias)(r)); err != nil {
+		return err
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, key := range chatRequestWireKeys {
+		delete(raw, key)
+	}
+	if len(raw) > 0 {
+		r.AdditionalParameters = raw
+	}
+	return nil
+}
+
 // StreamOptions options for streaming requests
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
