@@ -475,10 +475,10 @@ func normalizeExecutionMode(value string) string {
 		return executionModeNativeAgentLoop
 	case executionModeNativeToolLoop:
 		return executionModeNativeToolLoop
-	case executionModeAgentLoop:
-		return executionModeAgentLoop
-	case executionModeLegacyToolChat:
-		return executionModeLegacyToolChat
+	case retiredExecutionModeAgentLoop:
+		return executionModeNativeAgentLoop
+	case retiredExecutionModeLegacyToolChat:
+		return executionModeNativeToolLoop
 	case executionModeDirectChat:
 		return executionModeDirectChat
 	default:
@@ -493,10 +493,9 @@ func restoreExecutionModeFromMetadata(parts *chatRequestParts, metadata map[stri
 	parts.ExecutionMode = normalizeExecutionMode(stringMetadataValue(metadata["execution_mode"]))
 	parts.ExecutionRouteReason = executionRoutePersistedMode
 	if parts.ExecutionMode == "" {
-		// Messages created before execution mode was persisted already entered the
-		// Agent loop. Keep their continuation semantics instead of switching the
-		// in-flight turn to a different runtime after an upgrade.
-		parts.ExecutionMode = executionModeAgentLoop
+		// Messages created before execution mode was persisted entered the
+		// retired protocol loop; they continue in the native loop (ADR 0046).
+		parts.ExecutionMode = executionModeNativeAgentLoop
 	}
 }
 

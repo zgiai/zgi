@@ -720,29 +720,6 @@ func nativeToolBindingForCall(toolSet *skills.NativeToolSet, name string) (skill
 	return skills.NativeToolBinding{}, "", false
 }
 
-func nativeExecutionCalls(calls []adapter.ToolCall, toolSet *skills.NativeToolSet) []adapter.ToolCall {
-	out := make([]adapter.ToolCall, 0, len(calls))
-	for _, call := range calls {
-		out = append(out, nativeExecutionCall(call, toolSet))
-	}
-	return out
-}
-
-func nativeSessionControlCallsOnly(calls []adapter.ToolCall) bool {
-	if len(calls) == 0 {
-		return false
-	}
-	for _, call := range calls {
-		switch strings.TrimSpace(call.Function.Name) {
-		case skills.MetaToolActivateSkills, skills.MetaToolSearchSkills, contextArtifactToolName:
-			continue
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func nativeForbiddenProtocolTool(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case skills.MetaToolLoadSkill,

@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -183,53 +182,6 @@ func TestFinalizeOperationPlanCannotBypassUnsatisfiedStructuredOutcome(t *testin
 	verification := mapFromOperationContext(plan["completion_verification"])
 	if got := stringFromAny(verification["status"]); got != "incomplete" {
 		t.Fatalf("completion verification = %#v, want incomplete", verification)
-	}
-}
-
-func TestSkillLoopPrefersExplicitFinalAnswerOnlyForPlannedAIChatTurn(t *testing.T) {
-	tests := []struct {
-		name       string
-		callerType string
-		metadata   map[string]interface{}
-		want       bool
-	}{
-		{
-			name:       "webapp agent without plan",
-			callerType: runtimemodel.ConversationCallerAgent,
-			metadata:   map[string]interface{}{},
-		},
-		{
-			name:       "webapp agent with plan remains ordinary agent chat",
-			callerType: runtimemodel.ConversationCallerAgent,
-			metadata: map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "running"},
-			},
-		},
-		{
-			name:       "aichat without plan",
-			callerType: runtimemodel.ConversationCallerAIChat,
-			metadata:   map[string]interface{}{},
-		},
-		{
-			name:       "planned aichat operation",
-			callerType: runtimemodel.ConversationCallerAIChat,
-			metadata: map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "running"},
-			},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prepared := &PreparedChat{
-				Caller:  Caller{Type: tt.callerType},
-				Message: &runtimemodel.Message{Metadata: tt.metadata},
-			}
-			if got := skillLoopPrefersExplicitFinalAnswer(prepared); got != tt.want {
-				t.Fatalf("skillLoopPrefersExplicitFinalAnswer() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 

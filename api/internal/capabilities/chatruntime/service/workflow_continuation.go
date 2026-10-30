@@ -1460,7 +1460,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		contextBudget:    contextResult,
 		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
 	}
-	prepared.resumeWith(continuationMessageForExecutionMode(workflowTaskContinuationMessage(continuation, req), parts.ExecutionMode))
+	prepared.resumeWith(workflowTaskContinuationMessage(continuation, req))
 	return prepared, nil
 }
 

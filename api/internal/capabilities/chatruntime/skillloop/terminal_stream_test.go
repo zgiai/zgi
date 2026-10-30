@@ -79,130 +79,6 @@ func TestSkillPlanningStreamStreamsExplicitFinalAnswerWithoutRetract(t *testing.
 	}
 }
 
-func TestRunnerAcceptsStreamedFinalAnswerWithPendingPlanWithoutRetract(t *testing.T) {
-	index := 0
-	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
-		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ToolCalls: []adapter.ToolCall{{
-			Index: &index,
-			ID:    "final-with-pending-plan",
-			Type:  "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: `{"answer":"done"}`,
-			},
-		}}}}},
-		},
-		{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
-	}}}
-	events := make([]Event, 0)
-	runner := &Runner{
-		LLMClient:    client,
-		SkillRuntime: skills.NewRuntime(nil, nil),
-		OnEvent: func(event Event) error {
-			events = append(events, event)
-			return nil
-		},
-	}
-	prepared := NewPreparedChat("conv-retry", "msg-retry", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"phases": []interface{}{map[string]interface{}{
-				"id":     "phase-1",
-				"step":   "finish the task",
-				"status": "in_progress",
-			}},
-		},
-	}
-
-	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "done" {
-		t.Fatalf("answer = %q, want %q", answer, "done")
-	}
-	visible := ""
-	retracts := 0
-	for _, event := range events {
-		switch event.Type {
-		case EventMessage:
-			visible += stringFromInterface(event.Payload["answer"])
-		case EventMessageRetract:
-			retracts++
-			content := stringFromInterface(event.Payload["content"])
-			if strings.HasSuffix(visible, content) {
-				visible = strings.TrimSuffix(visible, content)
-			}
-		}
-	}
-	if retracts != 0 {
-		t.Fatalf("message retract count = %d, want 0", retracts)
-	}
-	if visible != "done" {
-		t.Fatalf("visible answer after retract = %q, want %q", visible, "done")
-	}
-}
-
-func TestRunnerAcceptsStreamedAnswerWhenOptionalMetadataIsMalformed(t *testing.T) {
-	index := 0
-	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
-		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ToolCalls: []adapter.ToolCall{{
-			Index: &index,
-			ID:    "final-malformed-metadata",
-			Type:  "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: `{"answer":"done","plan":[`,
-			},
-		}}}}},
-		},
-		{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
-	}}}
-	events := make([]Event, 0)
-	runner := &Runner{
-		LLMClient:    client,
-		SkillRuntime: skills.NewRuntime(nil, nil),
-		OnEvent: func(event Event) error {
-			events = append(events, event)
-			return nil
-		},
-	}
-	prepared := NewPreparedChat("conv-malformed", "msg-malformed", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
-
-	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return map[string]interface{}{} },
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "done" {
-		t.Fatalf("answer = %q, want done", answer)
-	}
-	visible := ""
-	for _, event := range events {
-		switch event.Type {
-		case EventMessage:
-			visible += stringFromInterface(event.Payload["answer"])
-		case EventMessageRetract:
-			t.Fatalf("malformed optional metadata caused retract: %#v", event.Payload)
-		}
-	}
-	if visible != "done" {
-		t.Fatalf("visible answer = %q, want exactly one streamed answer", visible)
-	}
-	if client.appChatStreamCalls != 1 {
-		t.Fatalf("AppChatStream calls = %d, want one", client.appChatStreamCalls)
-	}
-}
-
 func TestRunnerDoesNotStreamFinalAnswerWithPendingProtocolBlocker(t *testing.T) {
 	index := 0
 	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
@@ -230,9 +106,8 @@ func TestRunnerDoesNotStreamFinalAnswerWithPendingProtocolBlocker(t *testing.T) 
 	prepared := NewPreparedChat("conv-blocked", "msg-blocked", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
 	_, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
 		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{"pending_approval": map[string]interface{}{"status": "waiting"}}
 		},
@@ -292,41 +167,6 @@ func TestSkillPlanningStreamKeepsFinalAnswerWhenStreamTerminatesEarly(t *testing
 	}
 	if messageCount == 0 || retractCount != 0 {
 		t.Fatalf("message events = %d, retract events = %d; want streamed content and no retract", messageCount, retractCount)
-	}
-}
-
-func TestRunnerReturnsPartialFinalAnswerWithoutRetryWhenStreamTerminatesEarly(t *testing.T) {
-	index := 0
-	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
-		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ToolCalls: []adapter.ToolCall{{
-			Index: &index,
-			ID:    "final-truncated-runner",
-			Type:  "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: `{"answer":"partial answer"}`,
-			},
-		}}}}},
-		},
-		{Choices: []adapter.StreamChoice{{FinishReason: "length"}}, Done: true},
-	}}}
-	runner := &Runner{LLMClient: client, SkillRuntime: skills.NewRuntime(nil, nil)}
-	prepared := NewPreparedChat("conv-truncated-runner", "msg-truncated-runner", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
-
-	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return map[string]interface{}{} },
-	})
-	if err == nil {
-		t.Fatal("Run() error = nil, want truncated stream error")
-	}
-	if answer != "partial answer" {
-		t.Fatalf("answer = %q, want preserved partial answer", answer)
-	}
-	if client.appChatStreamCalls != 1 {
-		t.Fatalf("AppChatStream calls = %d, want no retry", client.appChatStreamCalls)
 	}
 }
 
@@ -775,57 +615,6 @@ func TestRunnerStreamsPlainAnswerWithoutExplicitFinalAnswerProtocol(t *testing.T
 	}
 }
 
-func TestRunnerUsesExplicitFinalAnswerProtocolWhenPreferred(t *testing.T) {
-	index := 0
-	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
-		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ToolCalls: []adapter.ToolCall{{
-			Index: &index,
-			ID:    "final-webapp-scope-test",
-			Type:  "function",
-			Function: adapter.FunctionCall{
-				Name:      skills.MetaToolFinalAnswer,
-				Arguments: `{"answer":"done"}`,
-			},
-		}}}}}},
-		{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
-	}}}
-	runner := &Runner{
-		LLMClient:    client,
-		SkillRuntime: skills.NewRuntime(nil, nil),
-	}
-	prepared := NewPreparedChat("conv-planned", "msg-planned", "deepseek", "auto", &adapter.ChatRequest{
-		Model:    "deepseek-v4-flash",
-		Messages: []adapter.Message{{Role: "user", Content: "complete the planned operation"}},
-	})
-
-	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return map[string]interface{}{} },
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "done" {
-		t.Fatalf("answer = %q, want explicit final answer", answer)
-	}
-	if client.appChatStreamCalls != 1 || len(client.appChatStreamRequests) != 1 {
-		t.Fatalf("stream calls = %d, requests = %d; want one", client.appChatStreamCalls, len(client.appChatStreamRequests))
-	}
-	foundFinalTool := false
-	foundTerminalPrompt := false
-	for _, tool := range client.appChatStreamRequests[0].Tools {
-		foundFinalTool = foundFinalTool || tool.Function.Name == skills.MetaToolFinalAnswer
-	}
-	for _, message := range client.appChatStreamRequests[0].Messages {
-		foundTerminalPrompt = foundTerminalPrompt || strings.Contains(messageContent(message.Content), "call submit_final_answer")
-	}
-	if !foundFinalTool || !foundTerminalPrompt {
-		t.Fatalf("explicit protocol request missing final tool or prompt: tool=%v prompt=%v", foundFinalTool, foundTerminalPrompt)
-	}
-}
-
 func TestRunnerAcceptsPlainCandidateThroughGateWhenFinalToolPreferred(t *testing.T) {
 	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
 		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "completed from evidence"}}}},
@@ -861,10 +650,9 @@ func TestRunnerAcceptsPlainCandidateThroughGateWhenFinalToolPreferred(t *testing
 	}
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
+		Prepared:             prepared,
+		Resolved:             runnerTestResolvedSkills(),
+		RuntimeStateSnapshot: func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -906,10 +694,9 @@ func TestRunnerAcceptsMainModelAnswerWhenAdvisoryPlanIsPending(t *testing.T) {
 	}
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:                  prepared,
-		Resolved:                  runnerTestResolvedSkills(),
-		PreferExplicitFinalAnswer: true,
-		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
+		Prepared:             prepared,
+		Resolved:             runnerTestResolvedSkills(),
+		RuntimeStateSnapshot: func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -919,43 +706,6 @@ func TestRunnerAcceptsMainModelAnswerWhenAdvisoryPlanIsPending(t *testing.T) {
 	}
 	if client.appChatCalls != 1 {
 		t.Fatalf("AppChat calls = %d, want one terminal decision", client.appChatCalls)
-	}
-}
-
-func TestUserInputPlanRevisionPendingUsesStructuredContinuationState(t *testing.T) {
-	metadata := map[string]interface{}{
-		"user_input_continuation": map[string]interface{}{
-			"status":      userInputContinuationAnswered,
-			"next_action": userInputContinuationReplan,
-		},
-	}
-	req := RunRequest{CurrentMetadata: func() map[string]interface{} { return metadata }}
-	if userInputPlanRevisionPending(req) {
-		t.Fatal("userInputPlanRevisionPending() = true for an answer given before any plan, want false")
-	}
-	metadata["operation_plan"] = map[string]interface{}{
-		"phases": []interface{}{map[string]interface{}{"id": "phase-1", "status": "pending"}},
-	}
-	if !userInputPlanRevisionPending(req) {
-		t.Fatal("userInputPlanRevisionPending() = false with planned phases, want true")
-	}
-	if !planRevisionRequiredForTool(skills.SkillAgentManagement, "get_agent_config") {
-		t.Fatal("business tool should require plan revision")
-	}
-	if userInputPlanRevisionRequiredForTool(RunRequest{
-		LegacyToolChat:  true,
-		CurrentMetadata: req.CurrentMetadata,
-	}, skills.SkillAgentManagement, "get_agent_config") {
-		t.Fatal("legacy tool chat must not require the Agent plan revision protocol")
-	}
-	if planRevisionRequiredForTool(skills.SkillAgentManagement, skills.MetaToolUpdatePlan) {
-		t.Fatal("update_plan must remain available while plan revision is pending")
-	}
-	metadata["user_input_continuation"] = map[string]interface{}{
-		"status": "plan_updated",
-	}
-	if userInputPlanRevisionPending(req) {
-		t.Fatal("userInputPlanRevisionPending() = true after plan update")
 	}
 }
 

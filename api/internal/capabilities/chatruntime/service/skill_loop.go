@@ -126,27 +126,19 @@ func (s *service) runPreparedToolLoop(
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
-	nativeLoop := isNativeExecutionMode(prepared.parts.ExecutionMode)
-	preferExplicitFinalAnswer := !nativeLoop && skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
+	// Every tool loop is the native loop (ADR 0046).
+	nativeLoop := true
 	if prepared.Message.Metadata == nil {
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
-	if nativeLoop {
-		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
-	} else if prepared.TerminalOnly {
-		prepared.Message.Metadata["final_answer_protocol"] = "terminal_assistant_content"
-	} else if preferExplicitFinalAnswer {
-		prepared.Message.Metadata["final_answer_protocol"] = skills.MetaToolFinalAnswer + "_preferred"
-	} else {
-		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
-	}
+	prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
 	authorizeSkillStep := s.currentAgentSkillStepAuthorizer(prepared)
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
 	// The memory rules and the builder's memory instructions change only with
 	// the Agent's configuration, so the native loop keeps them in the system
 	// prompt, where providers cache them.
 	systemPromptAdditions := []adapter.Message{}
-	if isNativeExecutionMode(prepared.parts.ExecutionMode) && unifiedSkillDispatchEnabled() && skills.HasNonResidentSkill(resolved) {
+	if unifiedSkillDispatchEnabled() && skills.HasNonResidentSkill(resolved) {
 		systemPromptAdditions = append(systemPromptAdditions, unifiedSkillDispatchSystemMessage())
 	}
 	if len(runtimeTools) > 0 {
@@ -253,17 +245,9 @@ func (s *service) runPreparedToolLoop(
 	runtimeStateSnapshot := skillLoopRuntimeStateSnapshot(prepared)
 	onTerminalStateGuardDecision := skillLoopTerminalStateGuardDecision(prepared)
 	onTerminalCompletion := skillLoopTerminalCompletionResult(prepared)
-	if prepared.parts.ExecutionMode == executionModeLegacyToolChat {
-		runtimeStateSnapshot = nil
-		onTerminalStateGuardDecision = nil
-		onTerminalCompletion = nil
-	}
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
-		ProtocolToolsOnly:              len(resolved.Skills) == 0 && len(runtimeTools) == 0,
-		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
-		NativeAgentLoop:                nativeLoop,
 		OmitPlanningTools:              nativeLoop && !skills.HasNonResidentSkill(resolved),
 		UnifiedSkillDispatch:           nativeLoop && unifiedSkillDispatchEnabled(),
 		NativeToolSet:                  nativeToolSet,
@@ -272,7 +256,6 @@ func (s *service) runPreparedToolLoop(
 		RuntimeTools:                   runtimeTools,
 		PlatformModel:                  platformModel,
 		ExecutionContext:               executionContext,
-		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
 		AdditionalSystemMessages:       additionalSystemMessages,
 		SystemPromptAdditions:          systemPromptAdditions,
@@ -953,19 +936,6 @@ func skillLoopHasOperationPlan(prepared *PreparedChat) bool {
 		return false
 	}
 	return len(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) > 0
-}
-
-func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
-	if prepared == nil {
-		return false
-	}
-	if prepared.parts != nil && prepared.parts.ExecutionMode == executionModeLegacyToolChat {
-		return false
-	}
-	if isAutonomousSubjectCaller(prepared.Caller.Type) {
-		return false
-	}
-	return skillLoopHasOperationPlan(prepared)
 }
 
 func skillLoopTerminalCompletionResult(prepared *PreparedChat) func(skillloop.TerminalCompletionResult) {
@@ -3003,18 +2973,6 @@ func nativeProjectionReservedToolNames(runtimeTools []skillloop.RuntimeTool) []s
 		}
 	}
 	return append(names, skillloop.ContextArtifactToolName)
-}
-
-func continuationMessageForExecutionMode(message adapter.Message, mode string) adapter.Message {
-	if normalizeExecutionMode(mode) != executionModeLegacyToolChat {
-		return message
-	}
-	message.Content = strings.TrimSpace(stringFromAny(message.Content)) + "\n" + strings.Join([]string{
-		"Legacy tool-chat override for this continuation:",
-		"The Agent planning and terminal-answer protocol tools are not available. Ignore any instruction above to call update_plan, submit_turn_state, submit_intermediate_answer, or submit_final_answer.",
-		"Call only the tools exposed in this request when more work is needed; otherwise answer the user directly.",
-	}, "\n")
-	return message
 }
 
 func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {

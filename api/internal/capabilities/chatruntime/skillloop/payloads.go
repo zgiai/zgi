@@ -437,14 +437,6 @@ func skillCallErrorPayload(prepared *PreparedChat, trace skills.SkillTrace) map[
 	return skilltrace.SkillCallErrorPayload(skillTracePayloadIDs(prepared), trace, runtimemodel.MessageStatusError, true)
 }
 
-func skillLoadPayload(prepared *PreparedChat, skillID string) map[string]interface{} {
-	return skilltrace.SkillLoadPayload(skillTracePayloadIDs(prepared), skillID)
-}
-
-func skillLoadEndPayload(prepared *PreparedChat, trace skills.SkillTrace) map[string]interface{} {
-	return skilltrace.SkillLoadEndPayload(skillTracePayloadIDs(prepared), trace)
-}
-
 func skillReferenceReadPayload(prepared *PreparedChat, trace skills.SkillTrace, path string) map[string]interface{} {
 	return skilltrace.SkillReferenceReadPayload(skillTracePayloadIDs(prepared), trace, path)
 }
@@ -532,39 +524,6 @@ func blockedSkillGuardrailTrace(skillID string, toolName string, message string)
 	trace.Error = strings.TrimSpace(message)
 	trace.Arguments["next_step"] = "load_skill"
 	return trace
-}
-
-func metadataExposedTrace(skillIDs []string, stats skills.SkillMetadataPromptStats) skills.SkillTrace {
-	return skills.SkillTrace{
-		Kind:   "metadata_exposed",
-		Status: "success",
-		Arguments: map[string]interface{}{
-			"skill_ids":     strings.Join(skillIDs, ","),
-			"enabled_count": stats.EnabledCount,
-			"exposed_count": stats.ExposedCount,
-			"omitted_count": stats.OmittedCount,
-			"truncated":     stats.Truncated,
-		},
-	}
-}
-
-func skillDocumentPayload(doc *skills.SkillDocument) map[string]interface{} {
-	if doc == nil {
-		return map[string]interface{}{}
-	}
-	payload := map[string]interface{}{
-		"skill_id":     doc.Metadata.ID,
-		"name":         doc.Metadata.Name,
-		"description":  doc.Metadata.Description,
-		"when_to_use":  doc.Metadata.WhenToUse,
-		"instructions": doc.Instructions,
-		"references":   doc.Metadata.References,
-		"tools":        doc.Metadata.Tools,
-	}
-	if sessionScript := portableSessionScriptPayload(doc); sessionScript != nil {
-		payload["session_script"] = sessionScript
-	}
-	return payload
 }
 
 func portableSessionScriptPayload(doc *skills.SkillDocument) map[string]interface{} {

@@ -596,7 +596,7 @@ func (s *service) prepareUserInputContinuationChat(
 		contextBudget:    contextResult,
 		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
 	}
-	prepared.resumeWith(continuationMessageForExecutionMode(userInputContinuationMessage(message, continuation.Request, continuation.Response), parts.ExecutionMode))
+	prepared.resumeWith(userInputContinuationMessage(message, continuation.Request, continuation.Response))
 	return prepared, nil
 }
 

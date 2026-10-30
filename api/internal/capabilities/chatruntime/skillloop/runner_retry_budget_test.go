@@ -229,7 +229,7 @@ func TestRunnerAlternatingSchemaAndArgumentValidationFailuresDoNotShareLimit(t *
 		Prepared: NewPreparedChat("conv-independent-retry", "msg-independent-retry", "", "auto", &adapter.ChatRequest{
 			Messages: []adapter.Message{{Role: "user", Content: "执行测试操作"}},
 		}),
-		Resolved: runnerTestResolvedSkills(), NativeAgentLoop: true,
+		Resolved:             runnerTestResolvedSkills(),
 		NativeToolSet:        &skills.NativeToolSet{},
 		RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
@@ -356,7 +356,7 @@ func TestRunnerPlannerFeedbackUsesIndependentConsecutiveLimit(t *testing.T) {
 		Messages: []adapter.Message{{Role: "user", Content: "执行测试操作"}},
 	})
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared: prepared, Resolved: runnerTestResolvedSkills(), NativeAgentLoop: true,
+		Prepared: prepared, Resolved: runnerTestResolvedSkills(),
 		NativeToolSet: &skills.NativeToolSet{}, RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {

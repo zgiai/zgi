@@ -313,18 +313,6 @@ func normalizeSkillSource(source string) string {
 	return SkillSourceSystem
 }
 
-func resolvedHasToolSkills(resolved *ResolvedSkills) bool {
-	if resolved == nil {
-		return false
-	}
-	for _, doc := range resolved.Skills {
-		if len(doc.Tools) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 func docTimeoutSeconds(doc SkillDocument) int {
 	if doc.Metadata.TimeoutSeconds <= 0 {
 		return defaultTimeoutSeconds
@@ -447,70 +435,6 @@ func isValidSkillName(value string) bool {
 		return false
 	}
 	return true
-}
-
-func skillMetadataPrompt(metadata []SkillPromptMetadata) string {
-	content, _ := skillMetadataPromptWithBudget(metadata, DefaultSkillMetadataPromptBudgetChars)
-	return content
-}
-
-func skillMetadataPromptWithBudget(metadata []SkillPromptMetadata, budgetChars int) (string, SkillMetadataPromptStats) {
-	if budgetChars <= 0 {
-		budgetChars = DefaultSkillMetadataPromptBudgetChars
-	}
-	stats := SkillMetadataPromptStats{EnabledCount: len(metadata)}
-	exposed := make([]SkillPromptMetadata, 0, len(metadata))
-	for _, item := range metadata {
-		candidate, truncated := skillPromptMetadataWithFieldBudget(item, skillMetadataLongFieldBudgetChars)
-		if promptFitsBudget(exposed, candidate, stats, truncated, budgetChars) {
-			exposed = append(exposed, candidate)
-			stats.ExposedCount = len(exposed)
-			stats.Truncated = stats.Truncated || truncated
-			continue
-		}
-		candidate, truncated = skillPromptMetadataWithFieldBudget(item, skillMetadataShortFieldBudgetChars)
-		if promptFitsBudget(exposed, candidate, stats, truncated, budgetChars) {
-			exposed = append(exposed, candidate)
-			stats.ExposedCount = len(exposed)
-			stats.Truncated = true
-			continue
-		}
-		candidate.Description = ""
-		candidate.WhenToUse = ""
-		if promptFitsBudget(exposed, candidate, stats, true, budgetChars) {
-			exposed = append(exposed, candidate)
-			stats.ExposedCount = len(exposed)
-			stats.Truncated = true
-			continue
-		}
-		break
-	}
-	stats.ExposedCount = len(exposed)
-	stats.OmittedCount = len(metadata) - len(exposed)
-	if stats.OmittedCount > 0 {
-		stats.Truncated = true
-	}
-	return skillMetadataPromptContent(exposed, stats), stats
-}
-
-func skillMetadataPromptContent(metadata []SkillPromptMetadata, stats SkillMetadataPromptStats) string {
-	payload, err := json.Marshal(metadata)
-	if err != nil {
-		payload = []byte("[]")
-	}
-	note := ""
-	if stats.Truncated {
-		note = fmt.Sprintf(" Metadata was shortened or omitted to fit the discovery budget. enabled_count=%d exposed_count=%d omitted_count=%d.", stats.EnabledCount, stats.ExposedCount, stats.OmittedCount)
-	}
-	return "The following skills are enabled for this AIChat turn. Only lightweight skill metadata is shown. If a skill is useful, call load_skill first to read its SKILL.md instructions. Do not call business tools before loading the skill." + note + " Enabled skills JSON: " + string(payload)
-}
-
-func promptFitsBudget(existing []SkillPromptMetadata, candidate SkillPromptMetadata, stats SkillMetadataPromptStats, truncated bool, budgetChars int) bool {
-	next := append(append([]SkillPromptMetadata{}, existing...), candidate)
-	stats.ExposedCount = len(next)
-	stats.OmittedCount = stats.EnabledCount - stats.ExposedCount
-	stats.Truncated = stats.Truncated || truncated || stats.OmittedCount > 0
-	return utf8.RuneCountInString(skillMetadataPromptContent(next, stats)) <= budgetChars
 }
 
 func skillPromptMetadataWithFieldBudget(item SkillPromptMetadata, budget int) (SkillPromptMetadata, bool) {

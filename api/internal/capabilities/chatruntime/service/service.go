@@ -83,10 +83,8 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
-	executionModeAgentLoop       = "agent_loop"
 	executionModeNativeAgentLoop = "native_agent_loop"
 	executionModeNativeToolLoop  = "native_tool_loop"
-	executionModeLegacyToolChat  = "legacy_tool_chat"
 	executionModeDirectChat      = "direct_chat"
 
 	executionRouteNativeAgent                = "native_agent"
@@ -153,6 +151,13 @@ func (s Scope) AgentResourceWorkspaceID() *uuid.UUID {
 	return s.WorkspaceID
 }
 
+// Execution modes of the retired protocol loop. Messages persisted with them
+// continue in the native loop (ADR 0046).
+const (
+	retiredExecutionModeAgentLoop      = "agent_loop"
+	retiredExecutionModeLegacyToolChat = "legacy_tool_chat"
+)
+
 func isNativeExecutionMode(mode string) bool {
 	switch normalizeExecutionMode(mode) {
 	case executionModeNativeAgentLoop, executionModeNativeToolLoop:
@@ -164,9 +169,9 @@ func isNativeExecutionMode(mode string) bool {
 
 func executionModeModelUseCase(mode string) string {
 	switch normalizeExecutionMode(mode) {
-	case executionModeAgentLoop, executionModeNativeAgentLoop:
+	case executionModeNativeAgentLoop:
 		return "agent"
-	case executionModeNativeToolLoop, executionModeLegacyToolChat, executionModeDirectChat:
+	case executionModeNativeToolLoop, executionModeDirectChat:
 		return "text-chat"
 	default:
 		return ""

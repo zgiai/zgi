@@ -1,43 +1,12 @@
 package skillloop
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
-
-func TestSkillDocumentPayloadDescribesPortableSessionScript(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-example\ndescription: Example.\n---\nRun the script.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "scripts", "report.py"), []byte("print('ok')\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	payload := skillDocumentPayload(&skills.SkillDocument{Metadata: skills.SkillMetadata{ID: "portable-example", Source: skills.SkillSourceCustom, HasScripts: true, RootPath: root}})
-	session, ok := payload["session_script"].(map[string]interface{})
-	if !ok || session["execution_tool"] != "shell_exec" || session["skill_id"] != "portable-example" {
-		t.Fatalf("session_script = %#v", payload["session_script"])
-	}
-	if path, ok := session["workspace_path"].(string); !ok || path == "" || filepath.IsAbs(path) {
-		t.Fatalf("workspace_path = %#v, want a relative workspace path", session["workspace_path"])
-	}
-	if digest, ok := session["package_sha256"].(string); !ok || len(digest) != 64 || !strings.Contains(fmt.Sprint(session["usage"]), "package_sha256") {
-		t.Fatalf("session script version contract = %#v, want package digest in execution guidance", session)
-	}
-	if strings.Contains(fmt.Sprint(payload), root) {
-		t.Fatalf("payload exposed the host package path: %#v", payload)
-	}
-}
 
 func TestBlockedSkillPlanningFeedbackTraceIsNotGuardrail(t *testing.T) {
 	trace := blockedSkillGuardrailTrace(skills.SkillFileReader, "read_file", "skill must be loaded before calling its tools")
@@ -49,34 +18,6 @@ func TestBlockedSkillPlanningFeedbackTraceIsNotGuardrail(t *testing.T) {
 	}
 	if trace.Arguments["next_step"] != "load_skill" {
 		t.Fatalf("next_step = %#v, want load_skill", trace.Arguments["next_step"])
-	}
-}
-
-func TestSkillDocumentPayloadDescribesCoreModulePackage(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "core"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("---\nname: portable-core\ndescription: Example.\n---\nImport core.helper.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "core/helper.py"), []byte("VALUE = 30\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	doc, err := skills.LoadCustomSkillDocument(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, ok := skillDocumentPayload(&doc)["session_script"].(map[string]interface{})
-	if !ok || session["skill_id"] != "portable-core" || len(fmt.Sprint(session["package_sha256"])) != 64 {
-		t.Fatalf("session metadata = %#v", session)
-	}
-	usage := fmt.Sprint(session["usage"])
-	if !strings.Contains(usage, "complete package root") || !strings.Contains(usage, "core/") || !strings.Contains(usage, "local module imports") {
-		t.Fatalf("missing actual module layout guidance: %s", usage)
-	}
-	if strings.Contains(fmt.Sprint(session), root) {
-		t.Fatal("host path leaked")
 	}
 }
 

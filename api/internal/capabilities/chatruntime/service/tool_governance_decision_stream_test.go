@@ -67,17 +67,7 @@ func TestRunToolGovernanceApprovedContinuationCompletionOwnershipLossIsFinalized
 	messageRepo.updateCompletedErr = gorm.ErrRecordNotFound
 	prepared.Message.Metadata["operation_plan"] = map[string]interface{}{"status": "completed"}
 	llm.appChatResponses = []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{Message: adapter.Message{
-			Role: "assistant",
-			ToolCalls: []adapter.ToolCall{{
-				ID:   "submit-final-answer",
-				Type: "function",
-				Function: adapter.FunctionCall{
-					Name:      skills.MetaToolFinalAnswer,
-					Arguments: `{"answer":"Done."}`,
-				},
-			}},
-		}}},
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Done."}}},
 	}}
 	ctx := repository.WithRuntimeRunID(t.Context(), uuid.New())
 
@@ -735,14 +725,14 @@ func TestRunClientActionContinuationStreamAssetObservationUsesVerifierWithoutRep
 	if result.Answer != finalAnswer {
 		t.Fatalf("result answer = %q", result.Answer)
 	}
-	if len(llm.appChatRequests) != 1 {
-		t.Fatalf("AppChat requests = %d, want the main-model answer without routine verifier", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 0 {
+		t.Fatalf("AppChat requests = %d, want the streamed native call only, without a routine verifier", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 1 {
 		t.Fatalf("AppChatStream requests = %d, want the main-model final answer to stream", len(llm.streamRequests))
 	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[0], "do not repeat the same side-effecting tool") {
-		t.Fatalf("skill-loop continuation request missing client action safety instruction: %q", toolGovernanceStreamRequestText(llm.appChatRequests[0]))
+	if !toolGovernanceStreamRequestContains(llm.streamRequests[0], "do not repeat the same side-effecting tool") {
+		t.Fatalf("skill-loop continuation request missing client action safety instruction: %q", toolGovernanceStreamRequestText(llm.streamRequests[0]))
 	}
 	if !messageRepo.updateCompletedCalled {
 		t.Fatal("UpdateCompleted was not called")
@@ -972,14 +962,14 @@ func TestRunClientActionContinuationStreamAgentUpdatedRouteCompletesWithoutRepea
 	if result.Answer != finalAnswer {
 		t.Fatalf("result answer = %q", result.Answer)
 	}
-	if len(llm.appChatRequests) != 1 {
-		t.Fatalf("AppChat requests = %d, want planning answer without completion verifier", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 0 {
+		t.Fatalf("AppChat requests = %d, want the streamed native call only, without a completion verifier", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 1 {
 		t.Fatalf("AppChatStream requests = %d, want the main-model final answer to stream", len(llm.streamRequests))
 	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[0], "do not call console-navigator/navigate again for the same route") {
-		t.Fatalf("skill-loop continuation request missing route continuation instruction: %q", toolGovernanceStreamRequestText(llm.appChatRequests[0]))
+	if !toolGovernanceStreamRequestContains(llm.streamRequests[0], "do not call console-navigator/navigate again for the same route") {
+		t.Fatalf("skill-loop continuation request missing route continuation instruction: %q", toolGovernanceStreamRequestText(llm.streamRequests[0]))
 	}
 	if !messageRepo.updateCompletedCalled {
 		t.Fatal("UpdateCompleted was not called")
@@ -1586,11 +1576,10 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		t.Fatalf("AppChatStream requests = %d, want one skill-loop continuation call", len(llm.streamRequests))
 	}
 	streamReq := llm.streamRequests[0]
-	if !toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolLoadSkill) {
-		t.Fatalf("execution-failure continuation should expose %s before retrying another skill tool", skills.MetaToolLoadSkill)
-	}
-	if toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolCallSkillTool) {
-		t.Fatalf("execution-failure continuation should not expose %s before full skill instructions are loaded", skills.MetaToolCallSkillTool)
+	for _, retired := range []string{skills.MetaToolLoadSkill, skills.MetaToolCallSkillTool} {
+		if toolGovernanceStreamRequestHasTool(streamReq, retired) {
+			t.Fatalf("execution-failure continuation exposes the retired protocol tool %s", retired)
+		}
 	}
 	if toolGovernanceStreamRequestContains(streamReq, "Do not call tools") {
 		t.Fatalf("execution-failure continuation should not use the removed no-tools summary flow: %q", toolGovernanceStreamRequestText(streamReq))
@@ -2358,6 +2347,8 @@ type toolGovernanceStreamLLM struct {
 	appContexts      []*llmclient.AppContext
 	appChatResponses []*adapter.ChatResponse
 	appChatRequests  []*adapter.ChatRequest
+	// scriptedStreams counts the scripted responses replayed as streams.
+	scriptedStreams int
 }
 
 func (f *toolGovernanceStreamLLM) Chat(context.Context, string, *adapter.ChatRequest) (*adapter.ChatResponse, error) {
@@ -2396,6 +2387,12 @@ func (f *toolGovernanceStreamLLM) AppChat(_ context.Context, appCtx *llmclient.A
 func (f *toolGovernanceStreamLLM) AppChatStream(_ context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
 	f.appContexts = append(f.appContexts, appCtx)
 	f.streamRequests = append(f.streamRequests, cloneChatRequest(req))
+	// A streaming native run replays the scripted responses as streams; the
+	// plain chunks serve tests that script only the streamed answer.
+	if len(f.streamChunks) == 0 && f.scriptedStreams < len(f.appChatResponses) {
+		f.scriptedStreams++
+		return streamScriptedChatResponse(f.appChatResponses[f.scriptedStreams-1]), nil
+	}
 	ch := make(chan adapter.StreamResponse, len(f.streamChunks)+1)
 	for _, chunk := range f.streamChunks {
 		ch <- adapter.StreamResponse{
@@ -2430,4 +2427,34 @@ func (f *toolGovernanceStreamLLM) AppCreateImage(context.Context, *llmclient.App
 
 func (f *toolGovernanceStreamLLM) AppRerank(context.Context, *llmclient.AppContext, *adapter.RerankRequest) (*adapter.RerankResponse, error) {
 	return nil, errors.New("unexpected AppRerank call")
+}
+
+// streamScriptedChatResponse replays a scripted non-streaming response as the
+// stream a provider would send: its content and tool calls, then usage.
+func streamScriptedChatResponse(resp *adapter.ChatResponse) <-chan adapter.StreamResponse {
+	ch := make(chan adapter.StreamResponse, 3)
+	if resp != nil && len(resp.Choices) > 0 {
+		choice := resp.Choices[0]
+		delta := adapter.Message{Role: "assistant", Content: choice.Message.Content, ReasoningContent: choice.Message.ReasoningContent}
+		for index, call := range choice.Message.ToolCalls {
+			position := index
+			call.Index = &position
+			delta.ToolCalls = append(delta.ToolCalls, call)
+		}
+		finish := choice.FinishReason
+		if finish == "" {
+			finish = "stop"
+			if len(delta.ToolCalls) > 0 {
+				finish = "tool_calls"
+			}
+		}
+		ch <- adapter.StreamResponse{Choices: []adapter.StreamChoice{{Delta: delta, FinishReason: finish}}}
+	}
+	usage := &adapter.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
+	if resp != nil && resp.Usage != nil {
+		usage = resp.Usage
+	}
+	ch <- adapter.StreamResponse{Usage: usage, Done: true}
+	close(ch)
+	return ch
 }

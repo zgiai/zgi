@@ -30,7 +30,6 @@ func firstNativeRequest(t *testing.T, history []adapter.Message) *adapter.ChatRe
 		Prepared:                 prepared,
 		Resolved:                 resolved,
 		NativeSkillSession:       session,
-		NativeAgentLoop:          true,
 		SystemPromptAdditions:    []adapter.Message{{Role: "system", Content: "Memory rules."}},
 		AdditionalSystemMessages: []adapter.Message{{Role: "system", Content: "Page context for this turn."}},
 	}); err != nil {

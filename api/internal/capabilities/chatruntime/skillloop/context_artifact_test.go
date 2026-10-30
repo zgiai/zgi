@@ -68,10 +68,8 @@ func TestRunnerReadContextArtifactFeedsAPartIntoNextModelCall(t *testing.T) {
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:          prepared,
-		Resolved:          nil,
-		ProtocolToolsOnly: true,
-		NativeAgentLoop:   true,
+		Prepared: prepared,
+		Resolved: nil,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -109,11 +107,4 @@ func TestRunnerReadContextArtifactFeedsAPartIntoNextModelCall(t *testing.T) {
 		return
 	}
 	t.Fatal("second request did not contain the artifact tool result")
-}
-
-func TestLegacyToolChatRemovesContextArtifactReader(t *testing.T) {
-	tools := legacyToolChatTools([]adapter.Tool{contextArtifactTool()}, false)
-	if runnerTestHasTool(tools, contextArtifactToolName) {
-		t.Fatalf("legacy tools retained %s", contextArtifactToolName)
-	}
 }

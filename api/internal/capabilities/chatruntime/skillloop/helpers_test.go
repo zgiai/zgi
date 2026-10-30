@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestNormalizeToolCallsRepairsBareQuotesInArguments(t *testing.T) {
@@ -168,20 +167,6 @@ func TestProviderCompatibleFunctionToolsRemovesUnsupportedRootKeywords(t *testin
 	original, _ := source[0].Function.Parameters.(map[string]interface{})
 	if _, retained := original["oneOf"]; !retained {
 		t.Fatal("source tool schema was mutated")
-	}
-}
-
-func TestProviderCompatibleFunctionToolsAcceptsAllMetaToolRoots(t *testing.T) {
-	for _, tool := range providerCompatibleFunctionTools(skills.MetaTools()) {
-		parameters, ok := tool.Function.Parameters.(map[string]interface{})
-		if !ok || parameters["type"] != "object" {
-			t.Fatalf("tool %s parameters = %#v, want root object", tool.Function.Name, tool.Function.Parameters)
-		}
-		for _, keyword := range unsupportedProviderRootSchemaKeywords {
-			if _, exists := parameters[keyword]; exists {
-				t.Fatalf("tool %s contains unsupported root keyword %q", tool.Function.Name, keyword)
-			}
-		}
 	}
 }
 

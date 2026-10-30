@@ -192,11 +192,8 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared          *PreparedChat
-	Resolved          *skills.ResolvedSkills
-	ProtocolToolsOnly bool
-	LegacyToolChat    bool
-	NativeAgentLoop   bool
+	Prepared *PreparedChat
+	Resolved *skills.ResolvedSkills
 	// OnTurnUserContent receives the current question as it is sent, with the
 	// reminders the turn adds after it merged in, so the transcript can store
 	// what the next turn will replay (ADR 0043).
@@ -212,7 +209,6 @@ type RunRequest struct {
 	RuntimeTools                   []RuntimeTool
 	PlatformModel                  func(context.Context, string, int) (string, error)
 	ExecutionContext               skills.ExecutionContext
-	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool
 	AdditionalSystemMessages       []adapter.Message
 	// SystemPromptAdditions are guidance that stays the same from turn to

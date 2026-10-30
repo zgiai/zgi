@@ -39,7 +39,6 @@ func runUnifiedCalls(t *testing.T, calls ...adapter.ToolCall) *runnerTestLLMClie
 	if _, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:             prepared,
 		Resolved:             resolved,
-		NativeAgentLoop:      true,
 		NativeSkillSession:   session,
 		UnifiedSkillDispatch: true,
 		ExecutionContext:     skills.ExecutionContext{OrganizationID: "org-1", UserID: "user-1"},

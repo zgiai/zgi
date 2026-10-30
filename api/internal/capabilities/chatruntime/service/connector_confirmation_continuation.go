@@ -179,7 +179,7 @@ func (s *service) RunConfiguredConnectorConfirmationContinuation(
 	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
 	markDecidedConnectorToolResults(prepared.LLMRequest, prepared.Message.Metadata, claim.RouteReceipt)
 	replacePendingConnectorToolResult(prepared.LLMRequest, claim.RouteReceipt, claim.ToolResult)
-	prepared.resumeWith(continuationMessageForExecutionMode(connectorConfirmationContinuationMessage(message, claim), prepared.parts.ExecutionMode))
+	prepared.resumeWith(connectorConfirmationContinuationMessage(message, claim))
 	answer, usage, err := s.runPreparedToolLoop(runCtx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		return s.finishContinuationPendingOrError(persistCtx, prepared, answer, usage, err, onEvent)

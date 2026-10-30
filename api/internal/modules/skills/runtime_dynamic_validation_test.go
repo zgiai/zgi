@@ -175,7 +175,9 @@ func TestExpectedSkillToolArgumentsForResolvedUsesSafeDynamicSchema(t *testing.T
 	}
 }
 
-func TestDynamicToolModelContractAndRecoveryHideServerOwnedConnectionFields(t *testing.T) {
+// The arguments a recovery shows the model hide the connection fields the
+// server owns, while the server still validates the enriched call.
+func TestDynamicToolRecoveryHidesServerOwnedConnectionFields(t *testing.T) {
 	const (
 		skillID      = "external-apps"
 		toolName     = "execute_action"
@@ -202,43 +204,21 @@ func TestDynamicToolModelContractAndRecoveryHideServerOwnedConnectionFields(t *t
 		Tools:    []SkillToolDefinition{{Name: toolName, InputSchema: rawSchema}},
 	}}}
 
-	_, _, _, contracts := loadedToolOptions(resolved, map[string]struct{}{skillID: {}})
-	if len(contracts) != 1 {
-		t.Fatalf("contracts = %#v, want one", contracts)
+	encoded, err := json.Marshal(ExpectedSkillToolArgumentsForResolved(resolved, skillID, toolName))
+	if err != nil {
+		t.Fatalf("json.Marshal(recovery) error = %v", err)
 	}
-	var callSkillToolParameters interface{}
-	for _, metaTool := range MetaToolsForSkillState(resolved, map[string]struct{}{skillID: {}}) {
-		if metaTool.Function.Name == MetaToolCallSkillTool {
-			callSkillToolParameters = metaTool.Function.Parameters
-			break
+	text := string(encoded)
+	for _, forbidden := range []string{"connection_id", "connection_name", "catalog_revision", connectionID} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("recovery contains %q: %s", forbidden, text)
 		}
 	}
-	if callSkillToolParameters == nil {
-		t.Fatal("call_skill_tool model contract not found")
-	}
-	expected := ExpectedSkillToolArgumentsForResolved(resolved, skillID, toolName)
-	for label, value := range map[string]interface{}{
-		"projected contract":       contracts[0].Schema,
-		"call_skill_tool contract": callSkillToolParameters,
-		"recovery":                 expected,
-	} {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			t.Fatalf("json.Marshal(%s) error = %v", label, err)
-		}
-		text := string(encoded)
-		for _, forbidden := range []string{"connection_id", "connection_name", "catalog_revision", connectionID} {
-			if strings.Contains(text, forbidden) {
-				t.Fatalf("%s contains %q: %s", label, forbidden, text)
-			}
-		}
-		for _, required := range []string{`"integration_id"`, `"action_id"`, `"arguments"`} {
-			if !strings.Contains(text, required) {
-				t.Fatalf("%s missing %s: %s", label, required, text)
-			}
+	for _, required := range []string{`"integration_id"`, `"action_id"`, `"arguments"`} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("recovery missing %s: %s", required, text)
 		}
 	}
-
 	if err := tools.ValidateJSONSchemaValue(rawSchema, map[string]interface{}{
 		"integration_id": "github",
 		"action_id":      "github.user.get",

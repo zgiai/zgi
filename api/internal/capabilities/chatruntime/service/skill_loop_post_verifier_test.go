@@ -92,8 +92,8 @@ func TestRunPreparedSkillStreamUsesMainModelTerminalDecisionForLegacyOnlyEvidenc
 	if answer != "The operation is complete." {
 		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
 	}
-	if len(llm.appChatRequests) != 1 {
-		t.Fatalf("AppChat requests = %d, want one main-model terminal decision", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 0 {
+		t.Fatalf("AppChat requests = %d, want the main-model decision in the streamed native call", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 1 {
 		t.Fatalf("AppChatStream requests = %d, want the main-model answer to stream normally", len(llm.streamRequests))

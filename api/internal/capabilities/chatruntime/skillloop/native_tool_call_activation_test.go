@@ -44,7 +44,6 @@ func runDirectCalculateCall(t *testing.T, catalogResolved *skills.ResolvedSkills
 	answer, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:           prepared,
 		Resolved:           resolved,
-		NativeAgentLoop:    true,
 		NativeSkillSession: session,
 		ExecutionContext:   skills.ExecutionContext{OrganizationID: "org-1", UserID: "user-1"},
 	})
