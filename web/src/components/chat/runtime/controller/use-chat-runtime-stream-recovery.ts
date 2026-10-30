@@ -315,6 +315,9 @@ export function useChatRuntimeStreamRecovery({
                     [conversationId]: 'disconnected',
                   },
                 }));
+                // The server may be down; keep checking until it settles
+                // the turn.
+                watchUntilSettled(0);
               });
             return;
           }
