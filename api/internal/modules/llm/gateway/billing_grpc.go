@@ -1258,10 +1258,11 @@ func (s *RemoteBilling) claimAttemptForReconcile(ctx context.Context, attemptID 
 }
 
 func (s *RemoteBilling) recoverStalePredeductedRemoteAttempts(ctx context.Context) error {
-	cutoff := time.Now().Add(-defaultRemotePredeductTimeout)
+	now := time.Now()
+	cutoff := now.Add(-defaultRemotePredeductTimeout)
 	var attempts []BillingAttempt
 	if err := s.localService.db.WithContext(ctx).
-		Where("status = ? AND lane = ? AND updated_at < ?", billingAttemptStatusPre, billingAttemptLaneRemote, cutoff).
+		Where("status = ? AND lane = ? AND updated_at < ? AND (next_reconcile_at IS NULL OR next_reconcile_at <= ?)", billingAttemptStatusPre, billingAttemptLaneRemote, cutoff, now).
 		Order("updated_at ASC").
 		Limit(defaultReconcileBatchSize).
 		Find(&attempts).Error; err != nil {
@@ -1270,9 +1271,41 @@ func (s *RemoteBilling) recoverStalePredeductedRemoteAttempts(ctx context.Contex
 	for _, attempt := range attempts {
 		if err := s.recoverStalePredeductedRemoteAttempt(ctx, attempt.AttemptID, cutoff); err != nil {
 			logger.ErrorContext(ctx, "remote billing stale prededuct attempt recovery failed", err, zap.String("attempt_id", attempt.AttemptID))
+			if scheduleErr := s.scheduleStalePredeductRecoveryFailure(ctx, attempt, err); scheduleErr != nil {
+				logger.ErrorContext(ctx, "remote billing stale prededuct recovery failure scheduling failed", scheduleErr, zap.String("attempt_id", attempt.AttemptID))
+			}
 		}
 	}
 	return nil
+}
+
+// scheduleStalePredeductRecoveryFailure counts a failed stale prededuct
+// recovery and backs the attempt off, so a settlement Pre cannot mirror stops
+// being retried every sweep and ends in DEAD_LETTER after
+// defaultReconcileMaxRetries. The update is conditional on the attempt still
+// being PREDEDUCTED with the retry count this sweep read, so concurrent
+// workers count one failure once and a recovery that moved the attempt on is
+// never overwritten.
+func (s *RemoteBilling) scheduleStalePredeductRecoveryFailure(ctx context.Context, attempt BillingAttempt, recoveryErr error) error {
+	now := time.Now()
+	retry := attempt.ReconcileAttempts + 1
+	updates := map[string]interface{}{
+		"reconcile_attempts": retry,
+		"last_reconcile_at":  now,
+		"error_code":         "STALE_PREDEDUCT_RECOVERY_FAILED",
+		"error_message":      recoveryErr.Error(),
+		"next_reconcile_at":  now.Add(reconcileBackoff(retry)),
+		"updated_at":         now,
+	}
+	if retry >= defaultReconcileMaxRetries {
+		updates["status"] = billingAttemptStatusDeadLetter
+		updates["error_message"] = fmt.Sprintf("max retries reached(%d): %v", retry, recoveryErr)
+		updates["next_reconcile_at"] = nil
+	}
+	return s.localService.db.WithContext(ctx).
+		Model(&BillingAttempt{}).
+		Where("attempt_id = ? AND status = ? AND lane = ? AND reconcile_attempts = ?", attempt.AttemptID, billingAttemptStatusPre, billingAttemptLaneRemote, attempt.ReconcileAttempts).
+		Updates(updates).Error
 }
 
 func (s *RemoteBilling) recoverStalePredeductedRemoteAttempt(ctx context.Context, attemptID string, cutoff time.Time) error {
