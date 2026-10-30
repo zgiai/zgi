@@ -37,4 +37,4 @@ Only messages persisted with the `agent_loop` or `legacy_tool_chat` execution mo
 
 - The loop has one path. `Run` is shorter, and the next step, moving its per-call state into a struct, no longer has to carry two protocols.
 - A continued turn that began in the protocol loop resumes in the native loop. It sees native tools and answers in ordinary content. Turns old enough to have no persisted mode are rare.
-- Removed: about 5,400 lines across the skill loop, its service and the skills package, most of them tests of the retired protocol.
+- Net removal of about 6,400 lines: 1,475 of production code across the skill loop, its service and the skills package, and 4,900 of tests of the retired protocol.
