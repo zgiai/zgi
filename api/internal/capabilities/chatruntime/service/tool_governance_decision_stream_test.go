@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -2002,31 +2001,6 @@ func toolGovernanceStreamHasInvocation(metadata map[string]interface{}, kind str
 		}
 	}
 	return false
-}
-
-func modelInvocationMetadataHasPhase(metadata map[string]interface{}, phase string) bool {
-	for _, invocation := range modelInvocationsFromMetadata(metadata["model_invocations"]) {
-		if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["phase"])), phase) {
-			return true
-		}
-	}
-	return false
-}
-
-func toolGovernanceStreamSkillToolCall(callID string, skillID string, toolName string, arguments map[string]interface{}) adapter.ToolCall {
-	payload, _ := json.Marshal(map[string]interface{}{
-		"skill_id":  skillID,
-		"tool_name": toolName,
-		"arguments": arguments,
-	})
-	return adapter.ToolCall{
-		ID:   callID,
-		Type: "function",
-		Function: adapter.FunctionCall{
-			Name:      skills.MetaToolCallSkillTool,
-			Arguments: string(payload),
-		},
-	}
 }
 
 func toolGovernanceStreamChatResponse(content string) *adapter.ChatResponse {

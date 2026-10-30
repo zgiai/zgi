@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/relationshipmemory"
 )
@@ -203,53 +201,4 @@ func (f *fakeAgentMemoryContextService) MutateValues(_ context.Context, _, _ uui
 		results = append(results, agentmemory.ValueMutationResult{Action: operation.Action, Status: agentmemory.MutationStatusUpdated, Key: operation.Key, Revision: operation.ExpectedRevision + 1, SourceKind: sourceKind, OperationID: operation.OperationID.String()})
 	}
 	return &agentmemory.MutateValuesResponse{Status: "success", Operations: results}, nil
-}
-
-// This general LLM fake is shared by chat-runtime tests that assert prepare
-// does not introduce an extra model invocation.
-type fakeAgentMemoryPlannerLLM struct {
-	response *adapter.ChatResponse
-	err      error
-	requests []*adapter.ChatRequest
-}
-
-func (f *fakeAgentMemoryPlannerLLM) Chat(context.Context, string, *adapter.ChatRequest) (*adapter.ChatResponse, error) {
-	return nil, errors.New("unexpected Chat call")
-}
-func (f *fakeAgentMemoryPlannerLLM) ChatStream(context.Context, string, *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	return nil, errors.New("unexpected ChatStream call")
-}
-func (f *fakeAgentMemoryPlannerLLM) CreateResponse(context.Context, string, *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {
-	return nil, errors.New("unexpected CreateResponse call")
-}
-func (f *fakeAgentMemoryPlannerLLM) Embed(context.Context, string, *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
-	return nil, errors.New("unexpected Embed call")
-}
-func (f *fakeAgentMemoryPlannerLLM) CreateImage(context.Context, string, *adapter.ImageRequest) (*adapter.ImageResponse, error) {
-	return nil, errors.New("unexpected CreateImage call")
-}
-func (f *fakeAgentMemoryPlannerLLM) Rerank(context.Context, string, *adapter.RerankRequest) (*adapter.RerankResponse, error) {
-	return nil, errors.New("unexpected Rerank call")
-}
-func (f *fakeAgentMemoryPlannerLLM) AppChat(_ context.Context, _ *llmclient.AppContext, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
-	f.requests = append(f.requests, cloneChatRequest(req))
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.response, nil
-}
-func (f *fakeAgentMemoryPlannerLLM) AppChatStream(context.Context, *llmclient.AppContext, *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	return nil, errors.New("unexpected AppChatStream call")
-}
-func (f *fakeAgentMemoryPlannerLLM) AppCreateResponse(context.Context, *llmclient.AppContext, *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {
-	return nil, errors.New("unexpected AppCreateResponse call")
-}
-func (f *fakeAgentMemoryPlannerLLM) AppEmbed(context.Context, *llmclient.AppContext, *adapter.EmbeddingsRequest) (*adapter.EmbeddingsResponse, error) {
-	return nil, errors.New("unexpected AppEmbed call")
-}
-func (f *fakeAgentMemoryPlannerLLM) AppCreateImage(context.Context, *llmclient.AppContext, *adapter.ImageRequest) (*adapter.ImageResponse, error) {
-	return nil, errors.New("unexpected AppCreateImage call")
-}
-func (f *fakeAgentMemoryPlannerLLM) AppRerank(context.Context, *llmclient.AppContext, *adapter.RerankRequest) (*adapter.RerankResponse, error) {
-	return nil, errors.New("unexpected AppRerank call")
 }

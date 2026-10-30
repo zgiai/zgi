@@ -182,21 +182,6 @@ func annotatePresentationPayload(payload map[string]interface{}, item map[string
 	}
 }
 
-func ensurePresentationEventPosition(
-	metadata map[string]interface{},
-	messageID string,
-	eventType string,
-	payload map[string]interface{},
-) map[string]interface{} {
-	return ensurePresentationEventPositionWithReference(
-		metadata,
-		messageID,
-		eventType,
-		presentationEventReference(payload, nil),
-		payload,
-	)
-}
-
 func ensurePresentationEventPositionWithReference(
 	metadata map[string]interface{},
 	messageID string,

@@ -293,7 +293,7 @@ project(conversation, at = 当前 tail):
 | 逐轮重放的末尾去重 | `dropDuplicatedFinalAnswer`：entry 日志保留该轮最终回答（事实），但逐轮重放会丢掉末尾那条 assistant 回答，因为调用方（历史组装）随后自己会 append `message.Answer`，否则回答会重复一次 | ✅ |
 | 悬空 `tool_call` 补齐 | `closeDanglingToolCalls`，投影必然过一遍（合成结果明确写"结果未记录、不要盲目重试"） | ✅ |
 | 重建 | 摘要 + `cseq > 边界`：一轮的组装走 `conversationHistoryMessages` → `projectConversationRegion`；分支流程走 `loadProjectedConversationContext` | ✅ |
-| 分支复制 | `copyConversationTranscriptForBranch`（重铸 entry id、保留 seq/cseq、重写 preview 里的 ref） | ✅ 供分支流程调用 |
+| 分支复制 | 曾实现为 `copyConversationTranscriptForBranch`（重铸 entry id、保留 seq/cseq、重写 preview 里的 ref），但分支流程从未调用，已随不可达代码一并删除；分支流程接入时需要重新实现 | ❌ 未接入 |
 | 本轮交换的逐轮重放（续跑用） | `historicalAgentTranscript` / `appendPersistedAgentTranscript`：跳掉本轮自己的提问、丢掉调用方会再 append 的末尾回答；4 个续跑入口 | ✅ |
 | 只允许删除最后一轮 | `DeleteMessage` 用 `CountChildren` 拦截，中间轮提示"从该轮开分支" | ✅ |
 | 会话删除清理 entry | `DeleteConversation` 在同一事务里 `DeleteByConversation`（会话是软删，外键级联不会触发） | ✅ |

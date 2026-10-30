@@ -25,12 +25,6 @@ const (
 	conversationArtifactLifecycleManaged = "managed"
 )
 
-func hydrateMessagesGeneratedFileURLs(messages []*runtimemodel.Message) {
-	for _, message := range messages {
-		hydrateMessageGeneratedFileURLs(message)
-	}
-}
-
 func hydrateMessagesGeneratedFileState(ctx context.Context, messages []*runtimemodel.Message) {
 	toolFiles, lookupAttempted := generatedToolFilesForHistory(ctx, messages)
 	now := time.Now()
@@ -41,10 +35,6 @@ func hydrateMessagesGeneratedFileState(ctx context.Context, messages []*runtimem
 
 func hydrateMessageGeneratedFileState(ctx context.Context, message *runtimemodel.Message) {
 	hydrateMessagesGeneratedFileState(ctx, []*runtimemodel.Message{message})
-}
-
-func hydrateMessageGeneratedFileURLs(message *runtimemodel.Message) {
-	hydrateMessageGeneratedFileURLsWithLookup(message, nil, false, time.Now())
 }
 
 func hydrateMessageGeneratedFileURLsWithLookup(message *runtimemodel.Message, toolFiles map[string]*tool_file.ToolFile, lookupAttempted bool, now time.Time) {

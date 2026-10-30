@@ -38,11 +38,6 @@ type ClientActionContinuation struct {
 
 type configuredClientActionContinuationOptions struct{}
 
-func (s *service) persistClientActionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
-	metadata, _ := s.persistClientActionPendingResult(ctx, prepared, payload, usage)
-	return metadata
-}
-
 func (s *service) persistClientActionPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
 		return map[string]interface{}{}, nil
@@ -287,42 +282,12 @@ func (s *service) runConfiguredClientActionContinuationStream(
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
-func clientActionContinuationIsRouteNavigation(metadata map[string]interface{}) bool {
-	if len(metadata) == 0 {
-		return false
-	}
-	continuation := governanceMapFromAny(metadataValue(metadata, "client_action_continuation"))
-	if len(continuation) == 0 {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["action_type"])), "route_navigation") ||
-		isConsoleNavigatorNavigateTool(stringFromAny(continuation["skill_id"]), stringFromAny(continuation["tool_name"]))
-}
-
 func clientActionRequiresModelContinuation(payload map[string]interface{}) bool {
 	if len(payload) == 0 {
 		return false
 	}
 	policy := strings.TrimSpace(stringFromAny(payload["continuation_policy"]))
 	return !strings.EqualFold(policy, clientActionContinuationPolicyRecordOnly)
-}
-
-func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
-	return s.beginConfiguredClientActionContinuation(
-		ctx,
-		scope,
-		Caller{Type: runtimemodel.ConversationCallerAIChat},
-		conversationID,
-		messageID,
-		actionID,
-	)
-}
-
-// beginClientActionContinuationForCaller is the caller-aware entry point used
-// by external Agent and web-app continuations. The configured implementation
-// applies caller and external-user scoping consistently with other continuations.
-func (s *service) beginClientActionContinuationForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
-	return s.beginConfiguredClientActionContinuation(ctx, scope, caller, conversationID, messageID, actionID)
 }
 
 func (s *service) beginConfiguredClientActionContinuation(
@@ -418,20 +383,6 @@ func isConnectorRuntimeConfirmationClientAction(event map[string]interface{}) bo
 	)
 }
 
-func (s *service) reloadClientActionContinuationMessage(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
-	return s.reloadConfiguredClientActionContinuationMessage(
-		ctx,
-		scope,
-		Caller{Type: runtimemodel.ConversationCallerAIChat},
-		conversationID,
-		messageID,
-	)
-}
-
-func (s *service) reloadClientActionContinuationMessageForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*runtimemodel.Conversation, *runtimemodel.Message, error) {
-	return s.reloadConfiguredClientActionContinuationMessage(ctx, scope, caller, conversationID, messageID)
-}
-
 func (s *service) reloadConfiguredClientActionContinuationMessage(
 	ctx context.Context,
 	scope Scope,
@@ -450,18 +401,6 @@ func (s *service) reloadConfiguredClientActionContinuationMessage(
 		return nil, nil, fmt.Errorf("%w: message belongs to another conversation", ErrInvalidInput)
 	}
 	return conversation, message, nil
-}
-
-func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope Scope, continuation *ClientActionContinuation, req runtimedto.ClientActionResultRequest) (*PreparedChat, error) {
-	return s.prepareConfiguredClientActionContinuationChat(
-		ctx,
-		scope,
-		Caller{Type: runtimemodel.ConversationCallerAIChat},
-		RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat},
-		continuation,
-		req,
-		configuredClientActionContinuationOptions{},
-	)
 }
 
 func (s *service) prepareConfiguredClientActionContinuationChat(

@@ -498,18 +498,6 @@ func (b *attachmentBundle) promptFiles() []attachmentFile {
 	return files
 }
 
-func (b *attachmentBundle) hasDocumentFiles() bool {
-	if b == nil {
-		return false
-	}
-	for _, file := range b.Files {
-		if !file.isImage() {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *attachmentBundle) imageParts() []adapter.MessageContentPart {
 	if b == nil {
 		return nil

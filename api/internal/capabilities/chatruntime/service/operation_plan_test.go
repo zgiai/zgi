@@ -12,19 +12,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func operationPlanEvidenceLedgerHasToolForTest(ledger []map[string]interface{}, skillID string, toolName string, invocationID string) bool {
-	for _, entry := range ledger {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(entry["skill_id"])), strings.TrimSpace(skillID)) ||
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(entry["tool_name"])), strings.TrimSpace(toolName)) {
-			continue
-		}
-		if invocationID == "" || strings.TrimSpace(stringFromAny(entry["invocation_id"])) == invocationID {
-			return true
-		}
-	}
-	return false
-}
-
 func assertAgentManagementModelDecidesStrategyForTest(t *testing.T, parts *chatRequestParts, strategy *AIChatTurnStrategy) map[string]interface{} {
 	t.Helper()
 	if strategy == nil || strategy.Intent != "manage_agent_asset" {
@@ -486,27 +473,6 @@ func TestApplyOperationPlanCompletionVerificationPassesWhenAllPhasesTerminal(t *
 	}
 }
 
-func TestFinalizeOperationPlanDoesNotCompleteWithPendingPhase(t *testing.T) {
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": operationPlanStatusRunning,
-			"phases": []interface{}{
-				map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusCompleted},
-				map[string]interface{}{"id": "phase-2", "status": operationPlanStepStatusPending},
-			},
-		},
-	}
-
-	finalizeOperationPlanForCompletedResult(metadata)
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
-		t.Fatalf("plan status = %q, want running", got)
-	}
-	if got := stringFromAny(mapFromOperationContext(plan["completion_verification"])["status"]); got != "incomplete" {
-		t.Fatalf("verification status = %q, want incomplete", got)
-	}
-}
-
 func TestMainModelFinalCompletesModelReconciliationPhase(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -814,16 +780,6 @@ func TestOperationPlanIncludesCurrentPageEvidence(t *testing.T) {
 	}
 }
 
-func assertStringSliceContains(t *testing.T, values []string, want string) {
-	t.Helper()
-	for _, value := range values {
-		if value == want {
-			return
-		}
-	}
-	t.Fatalf("values = %#v, want to contain %q", values, want)
-}
-
 func TestTurnStrategyAllowedSkillIDsKeepsPlannedToolsWithRouteHint(t *testing.T) {
 	strategy := &AIChatTurnStrategy{
 		Intent:        "manage_agent_asset",
@@ -840,28 +796,6 @@ func TestTurnStrategyAllowedSkillIDsKeepsPlannedToolsWithRouteHint(t *testing.T)
 			t.Fatalf("allowed skills = %#v, missing %s", allowed, want)
 		}
 	}
-}
-
-func readOnlyBindingCapabilityGoalMapsForTest() []interface{} {
-	goals := []AIChatAgentCapabilityGoal{
-		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
-			CapabilityID: agentCapabilitySkillBacked,
-			GoalAction:   agentCapabilityActionInspect,
-		}),
-		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
-			CapabilityID: agentCapabilityKnowledgeBinding,
-			GoalAction:   agentCapabilityActionInspect,
-		}),
-		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
-			CapabilityID: agentCapabilityDatabaseBinding,
-			GoalAction:   agentCapabilityActionInspect,
-		}),
-		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
-			CapabilityID: agentCapabilityWorkflowBinding,
-			GoalAction:   agentCapabilityActionInspect,
-		}),
-	}
-	return mapsToInterfaceSlice(agentCapabilityGoalsToMaps(goals))
 }
 
 func TestAgentConfigPlanMapsCapabilityFieldsAndPreservesConfigGoal(t *testing.T) {
@@ -1344,33 +1278,6 @@ func TestAgentIdentityPostUpdateReadDoesNotAddConsoleNavigatorAutomatically(t *t
 	}
 }
 
-func TestAgentMemoryCapabilityEnableRequestPlansConfigMutation(t *testing.T) {
-	query := "\u8ba9\u5f53\u524d Agent \u5177\u5907\u957f\u671f\u8bb0\u5fc6\u80fd\u529b"
-	if agentManagementCapabilityStatusQuestionRequested(query) {
-		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = true, want false for memory mutation request", query)
-	}
-	if !agentManagementMemoryConfigCapabilityRequested(query) {
-		t.Fatalf("agentManagementMemoryConfigCapabilityRequested(%q) = false, want true", query)
-	}
-	parts := consoleAgentDetailTestParts(query)
-	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.memory:update")
-	strategy := contextualAIChatTurnStrategyFromParts(parts)
-	if strategy == nil {
-		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
-	}
-	semanticPlan := assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
-	semanticCapabilityGoals := mapSliceFromAny(semanticPlan["capability_goals"])
-	if len(semanticCapabilityGoals) != 1 || stringFromAny(semanticCapabilityGoals[0]["capability_id"]) != agentCapabilityMemory {
-		t.Fatalf("capability_goals = %#v, want one memory capability goal; plan=%#v", semanticCapabilityGoals, semanticPlan)
-	}
-	if got := stringFromAny(semanticCapabilityGoals[0]["goal_action"]); got != agentCapabilityActionUpdate {
-		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionUpdate, semanticCapabilityGoals[0])
-	}
-	if !operationPlanCapabilityGoalsContainRequiredFieldForTest(semanticCapabilityGoals, "agent_memory_enabled") {
-		t.Fatalf("capability_goals = %#v, missing agent_memory_enabled", semanticCapabilityGoals)
-	}
-}
-
 func TestAgentCapabilityContinuationActionConfirmationUsesPriorCandidate(t *testing.T) {
 	for _, query := range []string{
 		"\u90a3\u5c31\u505a",
@@ -1668,108 +1575,6 @@ func TestSkillLoopRuntimeStateSnapshotEmbedsOperationLedgerInExecutionLedger(t *
 	capabilities := mapSliceFromAny(operationLedger["capabilities"])
 	if len(capabilities) != 1 || capabilities[0]["name"] != "read_file" {
 		t.Fatalf("operation ledger capabilities = %#v, want read_file capability", operationLedger["capabilities"])
-	}
-}
-
-func TestSkillLoopRuntimeStateSnapshotBuildsExecutionSummaryWithoutLegacyDeviations(t *testing.T) {
-	parts := &chatRequestParts{
-		Query:     "\u5220\u9664\u524d\u4e24\u4e2a\u667a\u80fd\u4f53\uff0c\u5982\u679c\u6709\u5931\u8d25\u8981\u544a\u8bc9\u6211",
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillAgentManagement},
-	}
-	metadata := streamingMessageMetadataWithTaskID(parts, "task-batch-summary")
-	recordOperationPlanToolDeviation(metadata, skills.SkillAgentManagement, "list_agents", "model_collected_unplanned_readonly_evidence")
-	recordOperationPlanToolBlockedDeviation(metadata, skills.SkillFileManager, "delete_file", "model_attempted_unrelated_mutation")
-	metadata["skill_invocations"] = []map[string]interface{}{
-		{
-			"kind":      "tool_call",
-			"status":    "success",
-			"skill_id":  skills.SkillAgentManagement,
-			"tool_name": "delete_agents",
-			"result": map[string]interface{}{
-				"status":        "partial_failed",
-				"target_count":  2,
-				"deleted_count": 1,
-				"failed_count":  1,
-				"operation_group": map[string]interface{}{
-					"id":            "agent.delete.batch:test",
-					"type":          "batch",
-					"operation":     "agent.delete",
-					"asset_type":    "agent",
-					"status":        "partial_failed",
-					"target_count":  2,
-					"success_count": 1,
-					"failed_count":  1,
-					"item_results": []interface{}{
-						map[string]interface{}{"agent_id": "agent-ok", "agent_name": "Agent OK", "status": "succeeded"},
-						map[string]interface{}{"agent_id": "agent-locked", "agent_name": "Agent Locked", "status": "failed", "error": "locked"},
-					},
-				},
-			},
-		},
-	}
-	prepared := &PreparedChat{
-		parts: parts,
-		Message: &runtimemodel.Message{
-			ID:       uuid.New(),
-			Metadata: metadata,
-		},
-	}
-
-	evidence := skillLoopRuntimeStateSnapshot(prepared)()
-	summary := mapFromOperationContext(evidence["execution_summary"])
-	if len(summary) == 0 {
-		t.Fatalf("execution_summary = %#v, want compact summary", evidence["execution_summary"])
-	}
-	planSummary := mapFromOperationContext(summary["operation_plan"])
-	for _, key := range []string{"deviations", "blocked_deviations"} {
-		if _, exists := planSummary[key]; exists {
-			t.Fatalf("execution summary contains audit-only field %q: %#v", key, planSummary[key])
-		}
-	}
-	groups := mapSliceFromAny(summary["operation_groups"])
-	if len(groups) != 1 {
-		t.Fatalf("execution_summary.operation_groups = %#v, want one batch group", summary["operation_groups"])
-	}
-	items := mapSliceFromAny(groups[0]["item_results"])
-	if len(items) != 2 || items[1]["status"] != "failed" || items[1]["error"] != "locked" {
-		t.Fatalf("operation group item_results = %#v, want failed item evidence", groups[0]["item_results"])
-	}
-	toolResults := mapSliceFromAny(summary["tool_results"])
-	if len(toolResults) != 1 {
-		t.Fatalf("execution_summary.tool_results = %#v, want one delete_agents result", summary["tool_results"])
-	}
-	toolSummary := mapFromOperationContext(toolResults[0]["result_summary"])
-	groupSummary := mapFromOperationContext(toolSummary["operation_group"])
-	if groupSummary["failed_count"] != 1 {
-		t.Fatalf("tool result summary operation_group = %#v, want failed_count=1", groupSummary)
-	}
-	operationSummary := mapFromOperationContext(evidence["operation_result_summary"])
-	if len(operationSummary) == 0 {
-		t.Fatalf("operation_result_summary = %#v, want stable operation facts", evidence["operation_result_summary"])
-	}
-	if got := operationSummary["status"]; got != "partial_failed" {
-		t.Fatalf("operation_result_summary.status = %#v, want partial_failed; summary=%#v", got, operationSummary)
-	}
-	if got := operationSummary["operation"]; got != "agent.delete" {
-		t.Fatalf("operation_result_summary.operation = %#v, want agent.delete; summary=%#v", got, operationSummary)
-	}
-	if got := operationSummary["target_count"]; got != 2 {
-		t.Fatalf("operation_result_summary.target_count = %#v, want 2; summary=%#v", got, operationSummary)
-	}
-	if got := operationSummary["failed_count"]; got != 1 {
-		t.Fatalf("operation_result_summary.failed_count = %#v, want 1; summary=%#v", got, operationSummary)
-	}
-	if latest := mapFromOperationContext(operationSummary["latest_tool_result"]); latest["tool_name"] != "delete_agents" {
-		t.Fatalf("operation_result_summary.latest_tool_result = %#v, want delete_agents", latest)
-	}
-	ledger := mapFromOperationContext(evidence["execution_ledger"])
-	if got := mapFromOperationContext(ledger["summary"]); len(got) == 0 {
-		t.Fatalf("execution_ledger.summary = %#v, want mirrored summary", ledger["summary"])
-	}
-	if got := mapFromOperationContext(ledger["operation_result_summary"]); len(got) == 0 {
-		t.Fatalf("execution_ledger.operation_result_summary = %#v, want mirrored operation facts", ledger["operation_result_summary"])
 	}
 }
 
@@ -2163,40 +1968,6 @@ func TestAgentManagementDeleteWithBindingPreserveClauseStillPlansDelete(t *testi
 	}
 }
 
-func TestAgentManagementCreateWithDefaultConfigPrunesOverBroadPlannerTools(t *testing.T) {
-	query := "\u8bf7\u521b\u5efa\u4e00\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u4e3a AICHAT-GOAL-BIND-SMOKE-1782757787864\uff0c\u63cf\u8ff0\u4e3a Agent \u914d\u7f6e\u7ed1\u5b9a\u5192\u70df\u6d4b\u8bd5\uff0c\u53ef\u4f7f\u7528\u9ed8\u8ba4\u6a21\u578b\u548c\u914d\u7f6e\u3002\u521b\u5efa\u540e\u8bf7\u786e\u8ba4\u5b83\u5728\u5217\u8868\u4e2d\u53ef\u89c1\u3002"
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
-	}
-	if agentManagementConfigReadRequested(query) {
-		t.Fatalf("agentManagementConfigReadRequested(%q) = true, want false for default config reference", query)
-	}
-
-	parts := &chatRequestParts{
-		Query:     query,
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillAgentManagement},
-		ModelTurnIntent: agentManagementModelIntentForTest(
-			"/console/agents/current/agent",
-			"agent.skill_binding:bind",
-			"agent.knowledge_binding:bind",
-			"agent.database_binding:bind",
-		),
-	}
-	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
-		Intent: "manage_agent_asset",
-		PlannedTools: []AIChatTurnStrategyTool{
-			{SkillID: skills.SkillAgentManagement, ToolName: "create_agent"},
-			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
-			{SkillID: skills.SkillAgentManagement, ToolName: "update_agent_identity"},
-			{SkillID: skills.SkillAgentManagement, ToolName: "list_available_models"},
-			{SkillID: skills.SkillAgentManagement, ToolName: "update_agent_config"},
-		},
-	})
-	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
-}
-
 func TestAgentManagementCreateThenExplicitBindingSurvivesCreatePayloadPruning(t *testing.T) {
 	query := "\u8bf7\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u4e3a SMOKE-BIND\uff0c\u63cf\u8ff0\u4e3a Agent \u914d\u7f6e\u7ed1\u5b9a\u5192\u70df\u6d4b\u8bd5\uff0c\u5e76\u7ed1\u5b9a\u77e5\u8bc6\u5e93 \u6d4b\u8bd5\u5e932\u3002"
 	parts := &chatRequestParts{
@@ -2495,18 +2266,6 @@ func TestSkillLoopCompletionOperationResultSummaryPrefersLatestToolCallOverPlanC
 	}
 }
 
-func aiChatTurnStrategyHasPlannedToolForTest(strategy *AIChatTurnStrategy, skillID, toolName string) bool {
-	if strategy == nil {
-		return false
-	}
-	for _, tool := range strategy.PlannedTools {
-		if tool.SkillID == skillID && tool.ToolName == toolName {
-			return true
-		}
-	}
-	return false
-}
-
 func operationPlanCapabilityGoalsContainForTest(goals []map[string]interface{}, capabilityID string) bool {
 	for _, goal := range goals {
 		if stringFromAny(goal["capability_id"]) == capabilityID {
@@ -2520,15 +2279,6 @@ func operationPlanCapabilityGoalsContainRequiredFieldForTest(goals []map[string]
 	field = strings.TrimSpace(field)
 	for _, goal := range goals {
 		if stringSliceContainsFold(stringSliceFromAny(goal["required_config_fields"]), field) {
-			return true
-		}
-	}
-	return false
-}
-
-func agentCapabilityGoalsContainForTest(goals []AIChatAgentCapabilityGoal, capabilityID string) bool {
-	for _, goal := range goals {
-		if goal.CapabilityID == capabilityID {
 			return true
 		}
 	}
@@ -2584,68 +2334,6 @@ func assertNoSynthesizedAgentCapabilityContinuationForTest(t *testing.T, parts *
 			t.Fatalf("RecentOperationPlans include synthesized Agent continuation %q: %#v", derivedFrom, plan)
 		}
 	}
-}
-
-func operationPlanStructuredOperationHasArgumentForTest(operations []map[string]interface{}, toolName string, argKey string, argValue string) bool {
-	for _, operation := range operations {
-		if !strings.EqualFold(stringFromAny(operation["tool_name"]), toolName) {
-			continue
-		}
-		args := mapFromOperationContext(operation["arguments"])
-		if stringFromAny(args[argKey]) == argValue {
-			return true
-		}
-	}
-	return false
-}
-
-func aiChatTurnStrategyPlannedToolArgumentsForTest(strategy *AIChatTurnStrategy, skillID, toolName string) map[string]string {
-	if strategy == nil {
-		return nil
-	}
-	for _, tool := range strategy.PlannedTools {
-		if tool.SkillID == skillID && tool.ToolName == toolName {
-			return tool.Arguments
-		}
-	}
-	return nil
-}
-
-func aiChatTurnStrategyPlannedToolForTest(strategy *AIChatTurnStrategy, skillID, toolName string) *AIChatTurnStrategyTool {
-	if strategy == nil {
-		return nil
-	}
-	for idx := range strategy.PlannedTools {
-		tool := &strategy.PlannedTools[idx]
-		if tool.SkillID == skillID && tool.ToolName == toolName {
-			return tool
-		}
-	}
-	return nil
-}
-
-func aiChatTurnStrategyHasPlannedToolStepIDForTest(strategy *AIChatTurnStrategy, stepID string) bool {
-	if strategy == nil {
-		return false
-	}
-	for _, tool := range strategy.PlannedTools {
-		if strings.TrimSpace(tool.StepID) == stepID {
-			return true
-		}
-	}
-	return false
-}
-
-func aiChatTurnStrategyAvoidContainsForTest(strategy *AIChatTurnStrategy, fragment string) bool {
-	if strategy == nil {
-		return false
-	}
-	for _, item := range strategy.Avoid {
-		if strings.Contains(item, fragment) {
-			return true
-		}
-	}
-	return false
 }
 
 func consoleAgentsVisibleTargetsTestParts(query string) *chatRequestParts {
@@ -2719,14 +2407,6 @@ func consoleAgentDetailTestParts(query string) *chatRequestParts {
 func agentManagementModelIntentForTest(targetPage string, capabilities ...string) *AIChatModelTurnIntent {
 	return &AIChatModelTurnIntent{
 		Intent:                  "manage_agent_asset",
-		TargetPage:              targetPage,
-		RecommendedCapabilities: capabilities,
-	}
-}
-
-func modelTurnIntentForTest(intent string, targetPage string, capabilities ...string) *AIChatModelTurnIntent {
-	return &AIChatModelTurnIntent{
-		Intent:                  intent,
 		TargetPage:              targetPage,
 		RecommendedCapabilities: capabilities,
 	}

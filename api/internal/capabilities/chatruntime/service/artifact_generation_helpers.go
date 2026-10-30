@@ -3,7 +3,6 @@ package service
 import (
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -128,40 +127,4 @@ func isChartGeneratorToolCall(skillID string, toolName string) bool {
 
 func isKnownArtifactGeneratorToolCall(skillID string, toolName string) bool {
 	return isFileGeneratorToolCall(skillID, toolName) || isChartGeneratorToolCall(skillID, toolName)
-}
-
-func toolCallResultLooksLikeGeneratedArtifact(call skillloop.SkillToolCallRef) bool {
-	if len(call.Result) == 0 {
-		return false
-	}
-	if strings.TrimSpace(stringFromAny(call.Result["upload_file_id"])) != "" ||
-		strings.EqualFold(strings.TrimSpace(stringFromAny(call.Result["target"])), "managed_file") {
-		return false
-	}
-	if strings.TrimSpace(stringFromAny(call.Result["tool_file_id"])) != "" {
-		return true
-	}
-	if isKnownArtifactGeneratorToolCall(call.SkillID, call.ToolName) &&
-		strings.TrimSpace(stringFromAny(call.Result["file_id"])) != "" {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(stringFromAny(call.Result["transfer_method"])), "tool_file") {
-		return true
-	}
-	if !hasGeneratedArtifactURL(call.Result) {
-		return false
-	}
-	if strings.TrimSpace(stringFromAny(call.Result["file_id"])) == "" {
-		return false
-	}
-	return strings.TrimSpace(firstNonEmptyString(
-		call.Result["filename"],
-		call.Result["name"],
-		call.Result["mime_type"],
-		call.Result["format"],
-	)) != ""
-}
-
-func hasGeneratedArtifactURL(result map[string]interface{}) bool {
-	return strings.TrimSpace(firstNonEmptyString(result["download_url"], result["url"])) != ""
 }

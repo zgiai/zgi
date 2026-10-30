@@ -16,13 +16,6 @@ func skillReferencePaths(doc skills.SkillDocument) []string {
 	return references
 }
 
-func previewValidationErrors(preview *SkillImportPreview) []string {
-	if preview == nil || len(preview.ValidationErrors) == 0 {
-		return []string{"skill package cannot be imported"}
-	}
-	return preview.ValidationErrors
-}
-
 func skillDisplayMap(display skills.SkillDisplayMetadata) map[string]interface{} {
 	data, err := json.Marshal(display)
 	if err != nil {

@@ -1050,44 +1050,6 @@ func compactTaskContractForPrompt(contract map[string]interface{}) map[string]in
 	return out
 }
 
-func operationPlanPromptSteps(steps []map[string]interface{}, limit int) []map[string]interface{} {
-	if limit <= 0 || len(steps) == 0 {
-		return nil
-	}
-	if len(steps) <= limit {
-		return steps
-	}
-	selected := make([]map[string]interface{}, 0, limit)
-	used := map[int]struct{}{}
-	add := func(index int) bool {
-		if index < 0 || index >= len(steps) {
-			return false
-		}
-		if _, ok := used[index]; ok {
-			return len(selected) < limit
-		}
-		step := copyStringAnyMap(steps[index])
-		step["sequence_index"] = index + 1
-		selected = append(selected, step)
-		used[index] = struct{}{}
-		return len(selected) < limit
-	}
-	for index, step := range steps {
-		status := operationPlanNormalizeStepStatus(stringFromAny(step["status"]))
-		if status != operationPlanStepStatusCompleted {
-			if !add(index) {
-				return selected
-			}
-		}
-	}
-	for index := range steps {
-		if !add(index) {
-			return selected
-		}
-	}
-	return selected
-}
-
 func continuationStateInvocations(metadata map[string]interface{}) []map[string]interface{} {
 	invocations := skillInvocationMaps(metadata)
 	out := make([]map[string]interface{}, 0, len(invocations))
@@ -1171,25 +1133,6 @@ func continuationPendingHints(branch []*runtimemodel.Message) []string {
 		return []string{"A generated artifact and a managed copy already exist in recent execution state. Reuse their exact facts and decide the next action from the user's current request."}
 	}
 	return []string{"A generated artifact already exists in recent execution state. Reuse its exact facts when they satisfy the current request instead of regenerating it."}
-}
-
-func operationPlanStepMatchesExactTool(step map[string]interface{}, skillID, toolName string) bool {
-	skillID = strings.TrimSpace(skillID)
-	toolName = strings.TrimSpace(toolName)
-	if skillID == "" {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skillID) {
-		return false
-	}
-	stepToolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
-	if toolName == "" {
-		return stepToolName == ""
-	}
-	if stepToolName != "" {
-		return strings.EqualFold(stepToolName, toolName)
-	}
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(step["id"])), operationPlanToolStepID(skillID, toolName))
 }
 
 func continuationHasSuccessfulTool(branch []*runtimemodel.Message, skillID, toolName string) bool {

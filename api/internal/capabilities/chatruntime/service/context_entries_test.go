@@ -211,45 +211,6 @@ func TestPersistedLegacyAgentTranscriptRemainsReadable(t *testing.T) {
 	}
 }
 
-func TestCopyConversationTranscriptForBranchOwnsIndependentEntries(t *testing.T) {
-	svc, sourceMessage, sourceConversation := newContextEntryTestService(t, "context-entry-branch-copy")
-	prepared := &PreparedChat{Message: sourceMessage, Conversation: sourceConversation, Scope: Scope{OrganizationID: sourceConversation.OrganizationID, AccountID: sourceConversation.AccountID}}
-	svc.persistTurnTranscriptEntries(context.Background(), prepared, []adapter.Message{{Role: "assistant", Content: "answer"}})
-
-	targetConversation := &runtimemodel.Conversation{ID: uuid.New(), OrganizationID: sourceConversation.OrganizationID, AccountID: sourceConversation.AccountID, Title: "branch", Metadata: map[string]interface{}{}}
-	if err := svc.repos.DB.Create(targetConversation).Error; err != nil {
-		t.Fatal(err)
-	}
-	targetMessage := &runtimemodel.Message{ID: uuid.New(), ConversationID: targetConversation.ID, Query: sourceMessage.Query, Status: runtimemodel.MessageStatusCompleted, ModelName: "test", ModelParameters: map[string]interface{}{}, Metadata: map[string]interface{}{}}
-	if err := svc.repos.DB.Create(targetMessage).Error; err != nil {
-		t.Fatal(err)
-	}
-	copied, err := svc.copyConversationTranscriptForBranch(context.Background(), *sourceMessage.TranscriptHeadEntryID, targetConversation.ID, map[uuid.UUID]uuid.UUID{sourceMessage.ID: targetMessage.ID}, sourceConversation.OrganizationID)
-	if err != nil || copied != 2 {
-		t.Fatalf("copy = %d/%v", copied, err)
-	}
-	var stored runtimemodel.Message
-	if err := svc.repos.DB.First(&stored, "id = ?", targetMessage.ID).Error; err != nil || stored.TranscriptHeadEntryID == nil || *stored.TranscriptHeadEntryID == *sourceMessage.TranscriptHeadEntryID {
-		t.Fatalf("target head = %v/%v", stored.TranscriptHeadEntryID, err)
-	}
-	if _, err := svc.repos.TranscriptEntry.DeleteByConversation(context.Background(), sourceConversation.ID); err != nil {
-		t.Fatal(err)
-	}
-	chain, err := svc.repos.TranscriptEntry.LoadPreviewChain(context.Background(), *stored.TranscriptHeadEntryID, nil, 0)
-	if err != nil || len(chain) != 2 {
-		t.Fatalf("target chain after source delete = %d/%v", len(chain), err)
-	}
-}
-
-func TestCopyConversationTranscriptForBranchRejectsIncompleteMessageMapping(t *testing.T) {
-	svc, sourceMessage, sourceConversation := newContextEntryTestService(t, "context-entry-branch-missing-map")
-	prepared := &PreparedChat{Message: sourceMessage, Conversation: sourceConversation, Scope: Scope{OrganizationID: sourceConversation.OrganizationID, AccountID: sourceConversation.AccountID}}
-	svc.persistTurnTranscriptEntries(context.Background(), prepared, []adapter.Message{{Role: "assistant", Content: "answer"}})
-	if _, err := svc.copyConversationTranscriptForBranch(context.Background(), *sourceMessage.TranscriptHeadEntryID, uuid.New(), map[uuid.UUID]uuid.UUID{}, sourceConversation.OrganizationID); err == nil {
-		t.Fatal("expected incomplete message mapping to be rejected")
-	}
-}
-
 func TestLegacyMainMessageHistoryIsLazilyJoinedToParentChain(t *testing.T) {
 	svc, parent, conversation := newContextEntryTestService(t, "context-entry-legacy-bootstrap")
 	parent.Status = runtimemodel.MessageStatusCompleted

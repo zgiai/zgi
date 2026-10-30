@@ -121,10 +121,6 @@ func modelInvocationTraceWithoutContent(trace skillloop.ModelInvocationTrace) sk
 	return trace
 }
 
-func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
-	return applyProviderPromptUsageCalibrationWithEstimate(metadata, usage, 0, "", "", "")
-}
-
 func applyProviderPromptUsageCalibrationWithEstimate(metadata map[string]interface{}, usage *adapter.Usage, finalEstimate int, estimator string, provider string, model string) map[string]interface{} {
 	if metadata == nil || usage == nil || usage.PromptTokens <= 0 {
 		return metadata

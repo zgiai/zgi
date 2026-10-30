@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
-	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/pkg/logger"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 func (s *service) persistWorkflowRunEventBestEffort(ctx context.Context, prepared *PreparedChat, eventType string, payload map[string]interface{}) {
@@ -24,11 +25,6 @@ func (s *service) persistWorkflowRunEventBestEffort(ctx context.Context, prepare
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		logger.WarnContext(ctx, "failed to persist aichat workflow run metadata", "message_id", prepared.Message.ID.String(), err)
 	}
-}
-
-func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
-	metadata, _ := s.persistWorkflowApprovalPendingResult(ctx, prepared, payload, usage)
-	return metadata
 }
 
 func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
@@ -85,11 +81,6 @@ func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prep
 		},
 	)
 	return metadata, err
-}
-
-func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
-	metadata, _ := s.persistWorkflowQuestionPendingResult(ctx, prepared, payload, usage)
-	return metadata
 }
 
 func (s *service) persistWorkflowQuestionPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {

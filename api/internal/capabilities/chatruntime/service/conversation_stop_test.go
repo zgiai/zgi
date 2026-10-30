@@ -371,36 +371,3 @@ type stopConversationAccessRepo struct {
 func (stopConversationAccessRepo) IsOrganizationMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
 	return true, nil
 }
-
-type stopConversationRepo struct {
-	repository.ConversationRepository
-	conversation      *runtimemodel.Conversation
-	clearActiveCalled bool
-}
-
-func (r *stopConversationRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Conversation, error) {
-	return r.conversation, nil
-}
-
-func (r *stopConversationRepo) ClearActiveMessage(context.Context, uuid.UUID, uuid.UUID) error {
-	r.clearActiveCalled = true
-	return nil
-}
-
-type stopConversationMessageRepo struct {
-	repository.MessageRepository
-	message             *runtimemodel.Message
-	updateStoppedCalled bool
-}
-
-func (r *stopConversationMessageRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Message, error) {
-	return r.message, nil
-}
-
-func (r *stopConversationMessageRepo) UpdateStoppedAnswer(_ context.Context, _ uuid.UUID, answer string, metadata map[string]interface{}) error {
-	r.updateStoppedCalled = true
-	r.message.Answer = answer
-	r.message.Metadata = metadata
-	r.message.Status = runtimemodel.MessageStatusStopped
-	return nil
-}

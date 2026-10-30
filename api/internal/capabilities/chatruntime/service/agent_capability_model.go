@@ -314,19 +314,6 @@ func agentManagementConfigOnlyCapabilityDescriptors() []agentConfigOnlyCapabilit
 	}
 }
 
-func agentManagementConfigOnlyCapabilityDescriptorForField(field string) (agentConfigOnlyCapabilityDescriptor, bool) {
-	field = operationPlanAgentConfigCanonicalField(field)
-	if field == "" {
-		return agentConfigOnlyCapabilityDescriptor{}, false
-	}
-	for _, descriptor := range agentManagementConfigOnlyCapabilityDescriptors() {
-		if operationPlanAgentConfigCanonicalField(descriptor.Field) == field {
-			return descriptor, true
-		}
-	}
-	return agentConfigOnlyCapabilityDescriptor{}, false
-}
-
 func agentSkillBackedCapabilityDisplayName(candidateQuery string) string {
 	candidateQuery = strings.ToLower(strings.TrimSpace(candidateQuery))
 	if candidateQuery == "" {
@@ -531,32 +518,6 @@ func agentCapabilityHintParts(hint string) (string, string, string, string) {
 	return raw, capabilityID, action, target
 }
 
-func agentCapabilityHintIsImplicitBinding(hint string) bool {
-	_, capabilityID, action, _ := agentCapabilityHintParts(hint)
-	if capabilityID == "" || action != "" {
-		return false
-	}
-	_, ok := agentManagementBindingCapabilityDescriptorForCapability(capabilityID)
-	return ok
-}
-
-func agentCapabilityExplicitBindingCapabilityIDs(hints []string) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, hint := range hints {
-		_, capabilityID, action, _ := agentCapabilityHintParts(hint)
-		if capabilityID == "" || action == "" {
-			continue
-		}
-		if _, ok := agentManagementBindingCapabilityDescriptorForCapability(capabilityID); ok {
-			out[capabilityID] = struct{}{}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 func canonicalAgentCapabilityIDHint(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.NewReplacer("-", "_", " ", "_").Replace(value)
@@ -611,57 +572,6 @@ type agentBindingCapabilityDescriptor struct {
 	mutationTool   string
 }
 
-type agentBindingToolDescriptor struct {
-	field       string
-	bindingKind string
-	toolName    string
-}
-
-func agentBindingToolDescriptors() []agentBindingToolDescriptor {
-	out := []agentBindingToolDescriptor{{
-		field:       "enabled_skill_ids",
-		bindingKind: "agent_skill",
-		toolName:    "replace_agent_skill_bindings",
-	}}
-	for _, descriptor := range agentManagementBindingCapabilityDescriptors() {
-		if descriptor.field == "" || descriptor.bindingKind == "" || descriptor.mutationTool == "" {
-			continue
-		}
-		out = append(out, agentBindingToolDescriptor{
-			field:       descriptor.field,
-			bindingKind: descriptor.bindingKind,
-			toolName:    descriptor.mutationTool,
-		})
-	}
-	return out
-}
-
-func agentBindingToolDescriptorForTool(toolName string) (agentBindingToolDescriptor, bool) {
-	toolName = strings.TrimSpace(toolName)
-	if toolName == "" {
-		return agentBindingToolDescriptor{}, false
-	}
-	for _, descriptor := range agentBindingToolDescriptors() {
-		if strings.EqualFold(descriptor.toolName, toolName) {
-			return descriptor, true
-		}
-	}
-	return agentBindingToolDescriptor{}, false
-}
-
-func agentBindingToolDescriptorForField(field string) (agentBindingToolDescriptor, bool) {
-	field = operationPlanAgentConfigCanonicalField(field)
-	if field == "" {
-		return agentBindingToolDescriptor{}, false
-	}
-	for _, descriptor := range agentBindingToolDescriptors() {
-		if operationPlanAgentConfigCanonicalField(descriptor.field) == field {
-			return descriptor, true
-		}
-	}
-	return agentBindingToolDescriptor{}, false
-}
-
 func agentManagementBindingCapabilityDescriptors() []agentBindingCapabilityDescriptor {
 	return []agentBindingCapabilityDescriptor{
 		{
@@ -706,19 +616,6 @@ func agentManagementBindingCapabilityDescriptors() []agentBindingCapabilityDescr
 	}
 }
 
-func agentManagementBindingCapabilityDescriptorForField(field string) (agentBindingCapabilityDescriptor, bool) {
-	field = operationPlanAgentConfigCanonicalField(field)
-	if field == "" {
-		return agentBindingCapabilityDescriptor{}, false
-	}
-	for _, descriptor := range agentManagementBindingCapabilityDescriptors() {
-		if operationPlanAgentConfigCanonicalField(descriptor.field) == field {
-			return descriptor, true
-		}
-	}
-	return agentBindingCapabilityDescriptor{}, false
-}
-
 func agentManagementBindingCapabilityDescriptorForCapability(capabilityID string) (agentBindingCapabilityDescriptor, bool) {
 	capabilityID = strings.TrimSpace(capabilityID)
 	if capabilityID == "" {
@@ -730,22 +627,6 @@ func agentManagementBindingCapabilityDescriptorForCapability(capabilityID string
 		}
 	}
 	return agentBindingCapabilityDescriptor{}, false
-}
-
-func agentManagementBindingCapabilityCandidateTools(field string) []string {
-	descriptor, ok := agentManagementBindingCapabilityDescriptorForField(field)
-	if !ok {
-		return nil
-	}
-	return append([]string(nil), descriptor.candidateTools...)
-}
-
-func agentManagementBindingCapabilityResourceMarkers() []string {
-	out := []string{}
-	for _, descriptor := range agentManagementBindingCapabilityDescriptors() {
-		out = appendUniqueStrings(out, descriptor.markers...)
-	}
-	return out
 }
 
 func canonicalAgentCapabilityConfigFields(fields []string) []string {
@@ -927,37 +808,6 @@ func agentCapabilityGoalWithBindingDefaults(goal AIChatAgentCapabilityGoal) AICh
 	return goal
 }
 
-func agentCapabilityGoalsExpectedBindingActions(goals []AIChatAgentCapabilityGoal) map[string]string {
-	out := map[string]string{}
-	for _, goal := range goals {
-		out = mergeAgentCapabilityGoalExpectedBindingActions(out, goal)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func mergeAgentCapabilityGoalExpectedBindingActions(out map[string]string, goal AIChatAgentCapabilityGoal) map[string]string {
-	if canonicalAgentCapabilityAction(goal.GoalAction) == agentCapabilityActionInspect {
-		return out
-	}
-	if out == nil {
-		out = map[string]string{}
-	}
-	for field, action := range goal.RequiredBindingActions {
-		canonicalField := operationPlanAgentConfigCanonicalField(field)
-		canonicalAction := operationPlanCanonicalAgentConfigBindingAction(action)
-		if canonicalField == "" || canonicalAction == "" {
-			continue
-		}
-		if operationPlanCanonicalAgentConfigBindingAction(out[canonicalField]) == "" {
-			out[canonicalField] = canonicalAction
-		}
-	}
-	return out
-}
-
 func canonicalAgentCapabilityAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case agentCapabilityActionInspect, "read", "query", "status":
@@ -1000,38 +850,6 @@ func agentManagementCapabilityGoalsNeedPostUpdateRead(goals []AIChatAgentCapabil
 		}
 	}
 	return false
-}
-
-func agentCapabilityGoalsRequireConfigMutation(goals []AIChatAgentCapabilityGoal) bool {
-	for _, goal := range goals {
-		if canonicalAgentCapabilityAction(goal.GoalAction) == agentCapabilityActionInspect {
-			continue
-		}
-		if len(goal.RequiredConfigFields) > 0 || len(goal.RequiredBindingActions) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func agentCapabilityGoalsAreExplicitReadOnly(goals []AIChatAgentCapabilityGoal) bool {
-	if len(goals) == 0 {
-		return false
-	}
-	hasInspectGoal := false
-	for _, goal := range goals {
-		switch canonicalAgentCapabilityAction(goal.GoalAction) {
-		case agentCapabilityActionInspect:
-			hasInspectGoal = true
-		case "":
-			if len(goal.RequiredConfigFields) > 0 || len(goal.RequiredBindingActions) > 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return hasInspectGoal
 }
 
 func appendAgentCapabilityGoals(current []AIChatAgentCapabilityGoal, additions ...AIChatAgentCapabilityGoal) []AIChatAgentCapabilityGoal {

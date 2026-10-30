@@ -325,11 +325,6 @@ func appendTurnAnswer(prepared *PreparedChat, messages []adapter.Message) []adap
 	return append(messages, adapter.Message{Role: "assistant", Content: answer})
 }
 
-func (w *contextEntrySync) sync(ctx context.Context, repos *repository.Repositories, transcript []adapter.Message) error {
-	_, err := w.syncWithOrigins(ctx, repos, transcript)
-	return err
-}
-
 func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repository.Repositories, transcript []adapter.Message) ([]contextEntryOrigin, error) {
 	if w == nil || repos == nil || repos.TranscriptEntry == nil || len(transcript) == 0 {
 		return nil, nil

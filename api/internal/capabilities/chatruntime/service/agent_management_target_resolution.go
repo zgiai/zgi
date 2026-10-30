@@ -83,46 +83,6 @@ func agentManagementModelDetailNavigationTarget(parts *chatRequestParts) (consol
 	return consoleNavigationRouteHintForHref(href), true
 }
 
-func visibleAgentsForAgentManagementTargetResolution(parts *chatRequestParts) []visibleConsoleAgentResource {
-	if parts == nil {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	out := []visibleConsoleAgentResource{}
-	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
-		for _, agent := range visibleAgentResources(source) {
-			id := strings.TrimSpace(agent.ID)
-			if id == "" {
-				continue
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			out = append(out, agent)
-		}
-	}
-	return out
-}
-
 func isConsoleAgentDetailRoute(value string) bool {
 	return normalizeAgentDetailHref(value) != ""
-}
-
-func currentConsoleAgentID(parts *chatRequestParts) string {
-	if parts == nil {
-		return ""
-	}
-	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
-		agents := visibleAgentResources(source)
-		for _, agent := range agents {
-			if agent.Selected && strings.TrimSpace(agent.ID) != "" {
-				return strings.TrimSpace(agent.ID)
-			}
-		}
-		if len(agents) == 1 && strings.TrimSpace(agents[0].ID) != "" {
-			return strings.TrimSpace(agents[0].ID)
-		}
-	}
-	return ""
 }

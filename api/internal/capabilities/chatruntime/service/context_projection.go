@@ -140,24 +140,6 @@ func projectContextMessages(entries []*runtimemodel.TranscriptEntryPreview) ([]a
 	return messages, nil
 }
 
-// snapContextWindowStart moves a retention-window start backwards to the
-// nearest legal protocol boundary. A window must never open with a tool result
-// whose assistant tool_call fell outside it, and it must never cut a tool-call
-// batch in half, so the window may grow but not shrink.
-func snapContextWindowStart(messages []adapter.Message, start int) int {
-	if start <= 0 {
-		return 0
-	}
-	if start > len(messages) {
-		start = len(messages)
-	}
-	for start > 0 && start < len(messages) &&
-		strings.EqualFold(strings.TrimSpace(messages[start].Role), "tool") {
-		start--
-	}
-	return start
-}
-
 // closeDanglingToolCalls makes a projected message list provider-valid by
 // closing every assistant tool call that has no recorded result. It returns the
 // closed list plus the synthetic results, so the caller can persist them as

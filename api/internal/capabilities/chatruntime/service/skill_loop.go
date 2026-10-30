@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -26,8 +25,6 @@ import (
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
-
-var agentManagementSkillIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func (p *PreparedChat) toolLoopEnabled() bool {
 	return p != nil && chatPartsToolLoopEnabled(p.parts)
@@ -339,10 +336,6 @@ func projectNativeDirectToolsToSession(
 		ReservedToolNames: reservedToolNames,
 		EstimateTokens:    estimateTokens,
 	})
-}
-
-func nativeToolSetHasActiveSkill(toolSet skills.NativeToolSet, skillID string) bool {
-	return containsNativeSkillID(toolSet.ActiveSkillIDs, skillID)
 }
 
 func containsNativeSkillID(values []string, skillID string) bool {
@@ -1652,168 +1645,6 @@ func operationPlanCompactOutcomesForPrompt(value interface{}, limit int) []inter
 	return out
 }
 
-func operationPlanCompactStructuredPlanForPrompt(value interface{}, limit int) map[string]interface{} {
-	plan := mapFromOperationContext(value)
-	if len(plan) == 0 || limit <= 0 {
-		return nil
-	}
-	out := map[string]interface{}{}
-	for _, key := range []string{
-		"schema_version",
-		"domain",
-		"intent",
-		"target",
-		"status",
-		"if_blocked",
-	} {
-		if text := strings.TrimSpace(stringFromAny(plan[key])); text != "" {
-			out[key] = compactForPrompt(text, 500)
-		}
-	}
-	for _, key := range []string{"requires_approval", "read_before_write"} {
-		if value, ok := plan[key].(bool); ok {
-			out[key] = value
-		}
-	}
-	if counts := mapFromOperationContext(plan["operation_counts"]); len(counts) > 0 {
-		out["operation_counts"] = counts
-	}
-	if operations := operationPlanCompactStructuredOperationsForPrompt(plan["operations"], limit); len(operations) > 0 {
-		out["operations"] = operations
-	}
-	if goals := operationPlanCompactCapabilityGoals(plan["capability_goals"], 6); len(goals) > 0 {
-		out["capability_goals"] = goals
-	}
-	if criteria := stringSliceFromAny(plan["completion_criteria"]); len(criteria) > 0 {
-		out["completion_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
-	}
-	if warnings := stringSliceFromAny(plan["validation_warnings"]); len(warnings) > 0 {
-		out["validation_warnings"] = compactStringSliceForPrompt(warnings, 8, 240)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func operationPlanCompactStructuredOperationsForPrompt(value interface{}, limit int) []interface{} {
-	operations := mapSliceFromAny(value)
-	if len(operations) == 0 || limit <= 0 {
-		return nil
-	}
-	out := make([]interface{}, 0, minInt(len(operations), limit))
-	for _, operation := range operations {
-		if len(out) >= limit {
-			break
-		}
-		compact := map[string]interface{}{}
-		for _, key := range []string{
-			"action",
-			"resource_type",
-			"resource_name",
-			"effect",
-			"if_missing",
-			"status",
-			"last_invocation_id",
-			"last_invocation_kind",
-			"goal",
-			"error",
-		} {
-			if text := strings.TrimSpace(stringFromAny(operation[key])); text != "" {
-				compact[key] = compactForPrompt(text, 500)
-			}
-		}
-		if fields := stringSliceFromAny(operation["fields"]); len(fields) > 0 {
-			compact["fields"] = compactStringSliceForPrompt(fields, 8, 160)
-		}
-		if group := mapFromOperationContext(operation["operation_group"]); len(group) > 0 {
-			compact["operation_group"] = operationPlanCompactOperationGroup(group)
-		}
-		if items := operationPlanCompactOperationItems(operation["item_steps"], 20); len(items) > 0 {
-			compact["item_steps"] = items
-		}
-		if len(compact) > 0 {
-			out = append(out, compact)
-		}
-	}
-	return out
-}
-
-func cleanStringAnyStringMap(values map[string]interface{}) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := map[string]string{}
-	for key, value := range values {
-		key = strings.TrimSpace(key)
-		text := strings.TrimSpace(stringFromAny(value))
-		if key == "" || text == "" {
-			continue
-		}
-		out[key] = text
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func operationPlanCompactStepsForPrompt(value interface{}, limit int) []interface{} {
-	steps := mapSliceFromAny(value)
-	if len(steps) == 0 || limit <= 0 {
-		return nil
-	}
-	promptSteps := operationPlanPromptSteps(steps, limit)
-	out := make([]interface{}, 0, len(promptSteps))
-	for _, step := range promptSteps {
-		item := map[string]interface{}{}
-		for _, key := range []string{"id", "title", "status", "skill_id", "tool_name"} {
-			if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
-				item[key] = compactForPrompt(value, 180)
-			}
-		}
-		if index := intValueFromAny(step["sequence_index"]); index > 0 {
-			item["sequence_index"] = index
-		}
-		if target := mapFromOperationContext(step["asset_target"]); len(target) > 0 {
-			item["asset_target"] = target
-		}
-		if goal := strings.TrimSpace(stringFromAny(step[operationPlanConfigGoalKey])); goal != "" {
-			item[operationPlanConfigGoalKey] = compactForPrompt(goal, 240)
-		}
-		if len(item) > 0 {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func skillLoopCompletionPlanDeviations(value interface{}, limit int) []interface{} {
-	deviations := mapSliceFromAny(value)
-	if len(deviations) == 0 || limit <= 0 {
-		return nil
-	}
-	out := make([]interface{}, 0, minInt(len(deviations), limit))
-	for _, item := range deviations {
-		if len(out) >= limit {
-			break
-		}
-		compact := map[string]interface{}{}
-		for _, key := range []string{"skill_id", "tool_name", "reason", "outcome"} {
-			if value, ok := item[key]; ok && value != nil {
-				compact[key] = value
-			}
-		}
-		if target := mapFromOperationContext(item["asset_target"]); len(target) > 0 {
-			compact["asset_target"] = target
-		}
-		if len(compact) > 0 {
-			out = append(out, compact)
-		}
-	}
-	return out
-}
-
 func skillLoopCompletionToolResults(invocations []map[string]interface{}, limit int) []interface{} {
 	if len(invocations) == 0 || limit <= 0 {
 		return nil
@@ -2363,10 +2194,6 @@ func preparedSkillWorkspaceID(prepared *PreparedChat) string {
 	return ""
 }
 
-func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message {
-	return skillLoopAdditionalSystemMessagesForResolved(prepared, nil)
-}
-
 func skillLoopAdditionalSystemMessagesForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) []adapter.Message {
 	if prepared == nil {
 		return nil
@@ -2461,26 +2288,6 @@ func aiChatTurnStrategyModelDecidesTools(strategy *AIChatTurnStrategy) bool {
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(strategy.ToolChoiceMode), aiChatTurnToolChoiceModelDecides)
-}
-
-func operationPlanModelDecidesTools(plan map[string]interface{}) bool {
-	if len(plan) == 0 {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(plan["tool_choice_mode"])), aiChatTurnToolChoiceModelDecides)
-}
-
-func skillLoopModelDecidesToolChoice(prepared *PreparedChat) bool {
-	if prepared == nil {
-		return false
-	}
-	if prepared.Message != nil {
-		plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
-		if len(plan) > 0 {
-			return operationPlanModelDecidesTools(plan)
-		}
-	}
-	return aiChatTurnStrategyModelDecidesTools(contextualAIChatTurnStrategy(prepared))
 }
 
 // AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
@@ -2800,32 +2607,6 @@ func agentManagementNeedsFileReadPrecondition(parts *chatRequestParts) bool {
 	return modelTurnIntentHasRecommendedCapability(parts.ModelTurnIntent, "page_navigation")
 }
 
-func agentManagementCurrentAgentIDFromParts(parts *chatRequestParts) string {
-	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		return ""
-	}
-	if agentID := agentIDFromConsoleAgentPageRoute(contextualTurnCurrentPage(parts)); agentID != "" {
-		return agentID
-	}
-	agents := consoleAgentsPromptVisibleAgents(parts)
-	selectedID := ""
-	selectedCount := 0
-	for _, agent := range agents {
-		selected, _ := agent["selected"].(bool)
-		if !selected {
-			continue
-		}
-		if id := strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"], agent["resource_id"])); id != "" {
-			selectedID = id
-			selectedCount++
-		}
-	}
-	if selectedCount == 1 {
-		return selectedID
-	}
-	return ""
-}
-
 func agentManagementModelIntentResolvesVisibleTarget(parts *chatRequestParts) bool {
 	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return false
@@ -2837,109 +2618,6 @@ func agentManagementModelIntentResolvesVisibleTarget(parts *chatRequestParts) bo
 		return false
 	}
 	return true
-}
-
-func appendPlannedToolWithStep(strategy *AIChatTurnStrategy, skillID string, toolName string, arguments map[string]string, stepID string, waitForStepID string) *AIChatTurnStrategy {
-	if strategy == nil {
-		return strategy
-	}
-	skillID = strings.TrimSpace(skillID)
-	toolName = strings.TrimSpace(toolName)
-	if skillID == "" || toolName == "" {
-		return strategy
-	}
-	id := strings.TrimSpace(stepID)
-	if id == "" {
-		id = operationPlanToolStepID(skillID, toolName)
-	}
-	for idx, existing := range strategy.PlannedTools {
-		if aiChatTurnStrategyToolStepID(existing) == id {
-			if len(arguments) > 0 {
-				strategy.PlannedTools[idx].Arguments = mergeTurnStrategyToolArguments(strategy.PlannedTools[idx].Arguments, arguments)
-			}
-			return strategy
-		}
-	}
-	tool := AIChatTurnStrategyTool{
-		SkillID:  skillID,
-		ToolName: toolName,
-	}
-	if len(arguments) > 0 {
-		tool.Arguments = arguments
-	}
-	if strings.TrimSpace(stepID) != "" {
-		tool.StepID = strings.TrimSpace(stepID)
-	}
-	if strings.TrimSpace(waitForStepID) != "" {
-		tool.WaitForStepID = strings.TrimSpace(waitForStepID)
-	}
-	strategy.PlannedTools = append(strategy.PlannedTools, tool)
-	return strategy
-}
-
-func mergeTurnStrategyToolArguments(current map[string]string, additions map[string]string) map[string]string {
-	if len(additions) == 0 {
-		return current
-	}
-	next := map[string]string{}
-	for key, value := range current {
-		key = strings.TrimSpace(key)
-		if key != "" {
-			next[key] = value
-		}
-	}
-	for key, value := range additions {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key == "" || value == "" {
-			continue
-		}
-		if key == operationPlanExpectedUpdatedFieldsKey {
-			next[key] = strings.Join(mergeCommaSeparatedValues(next[key], value), ",")
-			continue
-		}
-		if key == operationPlanExpectedBindingActionsKey {
-			next[key] = mergeAgentConfigBindingActionSpecs(next[key], value)
-			continue
-		}
-		if strings.TrimSpace(next[key]) == "" {
-			next[key] = value
-		}
-	}
-	if len(next) == 0 {
-		return nil
-	}
-	return next
-}
-
-func mergeAgentConfigBindingActionSpecs(values ...string) string {
-	merged := map[string]string{}
-	for _, value := range values {
-		for field, action := range operationPlanAgentConfigBindingActionsFromAny(value) {
-			merged[field] = action
-		}
-	}
-	return operationPlanEncodeAgentConfigBindingActions(merged)
-}
-
-func mergeCommaSeparatedValues(values ...string) []string {
-	out := []string{}
-	for _, value := range values {
-		for _, item := range strings.Split(value, ",") {
-			item = strings.TrimSpace(item)
-			if item != "" {
-				out = appendUniqueStrings(out, item)
-			}
-		}
-	}
-	return out
-}
-
-func aiChatTurnStrategyToolStepID(tool AIChatTurnStrategyTool) string {
-	if id := strings.TrimSpace(tool.StepID); id != "" {
-		return id
-	}
-	return operationPlanToolStepID(tool.SkillID, tool.ToolName)
 }
 
 func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
@@ -3415,10 +3093,6 @@ func consoleNavigationAccessibleRouteSnapshot(prepared *PreparedChat) (map[strin
 	return nil, false
 }
 
-func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
-	return contextualConsoleAgentsSkillMessageForResolved(prepared, nil)
-}
-
 func contextualConsoleAgentsSkillMessageForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
 	if prepared == nil || prepared.parts == nil {
 		return adapter.Message{}, false
@@ -3741,84 +3415,6 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 	return adapter.Message{Role: "system", Content: content}, true
 }
 
-func stringSliceContainsFold(values []string, target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), target) {
-			return true
-		}
-	}
-	return false
-}
-
-func clientActionMetadataHasCompletedRoute(metadata map[string]interface{}, href string) bool {
-	href = normalizeConsoleNavigationGuardHref(href)
-	if len(metadata) == 0 || href == "" {
-		return false
-	}
-	for _, action := range mapSliceFromAny(metadata["client_actions"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["status"])), clientActionStatusSucceeded) {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") {
-			continue
-		}
-		if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(action["href"]), href) {
-			return true
-		}
-		if consoleNavigationResultMatchesTarget(governanceMapFromAny(action["result"]), href) {
-			return true
-		}
-	}
-	return false
-}
-
-func clientActionMetadataHasActiveRoute(metadata map[string]interface{}, href string) bool {
-	href = normalizeConsoleNavigationGuardHref(href)
-	if len(metadata) == 0 || href == "" {
-		return false
-	}
-	if clientActionRouteRecordActiveForTarget(governanceMapFromAny(metadata["client_action_continuation"]), href) {
-		return true
-	}
-	for _, action := range mapSliceFromAny(metadata["client_actions"]) {
-		if clientActionRouteRecordActiveForTarget(action, href) {
-			return true
-		}
-	}
-	for _, invocation := range skillInvocationsFromMetadata(metadata["skill_invocations"]) {
-		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "client_action" {
-			continue
-		}
-		if clientActionRouteRecordActiveForTarget(invocation, href) {
-			return true
-		}
-	}
-	return false
-}
-
-func clientActionRouteRecordActiveForTarget(action map[string]interface{}, href string) bool {
-	if len(action) == 0 || href == "" {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") &&
-		!isConsoleNavigatorNavigateTool(stringFromAny(action["skill_id"]), stringFromAny(action["tool_name"])) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(stringFromAny(action["status"]))) {
-	case clientActionStatusWaiting, clientActionStatusRunning, "pending", "loading", "streaming":
-	default:
-		return false
-	}
-	if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(action["href"]), href) {
-		return true
-	}
-	return consoleNavigationResultMatchesTarget(governanceMapFromAny(action["result"]), href)
-}
-
 func isFileManagerSaveToolCall(skillID string, toolName string) bool {
 	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileManager) &&
 		strings.EqualFold(strings.TrimSpace(toolName), "save_file_to_management")
@@ -3850,17 +3446,6 @@ func successfulMetadataToolCalls(metadata map[string]interface{}, skillID string
 		})
 	}
 	return calls
-}
-
-func matchingSkillToolCalls(calls []skillloop.SkillToolCallRef, skillID string, toolName string) []skillloop.SkillToolCallRef {
-	matches := make([]skillloop.SkillToolCallRef, 0)
-	for _, call := range calls {
-		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
-			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
-			matches = append(matches, call)
-		}
-	}
-	return matches
 }
 
 func skillToolCallArgumentString(arguments map[string]interface{}, key string) string {
@@ -4529,23 +4114,4 @@ func mergeUsage(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {
 	current.CompletionTokens += next.CompletionTokens
 	current.TotalTokens += next.TotalTokens
 	return current
-}
-
-func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
-	if source == nil {
-		return &adapter.ChatRequest{}
-	}
-	cloned := *source
-	cloned.Messages = append([]adapter.Message{}, source.Messages...)
-	cloned.Stop = append([]string{}, source.Stop...)
-	if source.AdditionalParameters != nil {
-		cloned.AdditionalParameters = copyStringAnyMap(source.AdditionalParameters)
-	}
-	if source.LogitBias != nil {
-		cloned.LogitBias = make(map[string]float64, len(source.LogitBias))
-		for key, value := range source.LogitBias {
-			cloned.LogitBias[key] = value
-		}
-	}
-	return &cloned
 }

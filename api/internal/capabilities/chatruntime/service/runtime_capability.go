@@ -1,7 +1,6 @@
 package service
 
 import (
-	"sort"
 	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -123,24 +122,6 @@ func copyResourceBindingAuthorizations(input []ResourceBindingAuthorization) []R
 		authorization.BoundByAccountID = strings.TrimSpace(authorization.BoundByAccountID)
 		result = append(result, authorization)
 	}
-	return result
-}
-
-func normalizeRuntimeStringIDs(input []string) []string {
-	seen := make(map[string]struct{}, len(input))
-	result := make([]string, 0, len(input))
-	for _, value := range input {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
 	return result
 }
 

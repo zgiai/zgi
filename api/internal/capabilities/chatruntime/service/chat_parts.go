@@ -369,10 +369,6 @@ func cloneUUIDPointer(value *uuid.UUID) *uuid.UUID {
 	return &cloned
 }
 
-func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
-	return streamingMessageMetadataWithTaskID(parts, "")
-}
-
 func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) map[string]interface{} {
 	version := systemPromptVersion
 	if strings.TrimSpace(parts.SystemPromptVersion) != "" {

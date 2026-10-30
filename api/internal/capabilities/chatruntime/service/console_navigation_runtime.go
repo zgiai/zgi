@@ -4,47 +4,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 var runtimeContextRoutePattern = regexp.MustCompile(`(?i)(?:^|[\s,;])route=([^\s,;]+)`)
-
-func createdAgentDetailHrefFromCalls(calls []skillloop.SkillToolCallRef) string {
-	for _, call := range calls {
-		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentManagement) ||
-			!strings.EqualFold(strings.TrimSpace(call.ToolName), "create_agent") {
-			continue
-		}
-		if href := normalizeAgentDetailHref(firstNonEmptyString(
-			stringFromAny(call.Result["href"]),
-			stringFromAny(call.Result["detail_href"]),
-		)); href != "" {
-			return href
-		}
-		if agent := governanceMapFromAny(call.Result["agent"]); len(agent) > 0 {
-			if href := normalizeAgentDetailHref(firstNonEmptyString(
-				stringFromAny(agent["href"]),
-				stringFromAny(agent["detail_href"]),
-			)); href != "" {
-				return href
-			}
-			if agentID := strings.TrimSpace(firstNonEmptyString(
-				stringFromAny(agent["agent_id"]),
-				stringFromAny(agent["id"]),
-			)); agentID != "" {
-				return consoleAgentDetailHref(agentID)
-			}
-		}
-		if agentID := strings.TrimSpace(firstNonEmptyString(
-			stringFromAny(call.Result["agent_id"]),
-			stringFromAny(call.Result["id"]),
-		)); agentID != "" {
-			return consoleAgentDetailHref(agentID)
-		}
-	}
-	return ""
-}
 
 func consoleAgentDetailHref(agentID string) string {
 	agentID = strings.TrimSpace(agentID)
@@ -104,17 +67,6 @@ func clientActionContinuationLoadedRoute(parts *chatRequestParts, href string) b
 		}
 	}
 	return false
-}
-
-func managedFileCreateShouldBlockReturningToCompletedRoute(metadata map[string]interface{}, href string) bool {
-	href = normalizeConsoleNavigationGuardHref(href)
-	if href == "" || consoleNavigationLoadedHrefMatchesTarget(href, consoleFilesRouteHint().Href) {
-		return false
-	}
-	if !clientActionMetadataHasCompletedRoute(metadata, consoleFilesRouteHint().Href) {
-		return false
-	}
-	return clientActionMetadataHasCompletedRoute(metadata, href)
 }
 
 func consoleNavigationResultMatchesTarget(result map[string]interface{}, href string) bool {
@@ -238,66 +190,6 @@ func consoleNavigationRouteHintForHref(href string) consoleNavigationRouteHint {
 	return consoleNavigationRouteHint{Href: href, Label: "Console page"}
 }
 
-func completedConsoleNavigationHrefsFromParts(parts *chatRequestParts) []string {
-	if parts == nil {
-		return nil
-	}
-	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
-		completed := completedConsoleNavigationHrefsFromOperationContext(source)
-		if len(completed) > 0 {
-			return completed
-		}
-	}
-	return nil
-}
-
-func completedConsoleNavigationHrefsFromOperationContext(source map[string]interface{}) []string {
-	if len(source) == 0 {
-		return nil
-	}
-	hrefs := make([]string, 0, 4)
-	for _, action := range mapSliceFromAny(source["completed_client_actions"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["status"])), clientActionStatusSucceeded) {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") {
-			continue
-		}
-		if href := clientActionRouteHref(action); href != "" {
-			hrefs = append(hrefs, href)
-		}
-	}
-	continuation := governanceMapFromAny(source["client_action_continuation"])
-	if strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["status"])), clientActionStatusSucceeded) &&
-		strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["action_type"])), "route_navigation") {
-		if href := clientActionRouteHref(continuation); href != "" && !lastConsoleNavigationHrefMatches(hrefs, href) {
-			hrefs = append(hrefs, href)
-		}
-	}
-	return hrefs
-}
-
-func lastConsoleNavigationHrefMatches(hrefs []string, href string) bool {
-	if len(hrefs) == 0 {
-		return false
-	}
-	return consoleNavigationLoadedHrefMatchesTarget(hrefs[len(hrefs)-1], href)
-}
-
-func consumeCompletedConsoleNavigationHref(completed *[]string, targetHref string) bool {
-	if completed == nil || len(*completed) == 0 {
-		return false
-	}
-	for len(*completed) > 0 {
-		href := (*completed)[0]
-		*completed = (*completed)[1:]
-		if consoleNavigationLoadedHrefMatchesTarget(href, targetHref) {
-			return true
-		}
-	}
-	return false
-}
-
 func consoleFilesRouteHint() consoleNavigationRouteHint {
 	for _, route := range consoleNavigationRouteHints {
 		if consoleNavigationLoadedHrefMatchesTarget(route.Href, "/console/files") {
@@ -359,33 +251,4 @@ func normalizeConsoleNavigationGuardHref(rawHref string) string {
 		return "/"
 	}
 	return rawHref
-}
-
-func clientActionRouteHref(event map[string]interface{}) string {
-	if len(event) == 0 {
-		return ""
-	}
-	if href := normalizeConsoleNavigationGuardHref(stringFromAny(event["href"])); href != "" {
-		return href
-	}
-	result := governanceMapFromAny(event["result"])
-	for _, key := range []string{"observed_path", "href", "loaded_href", "target_page"} {
-		if href := normalizeConsoleNavigationGuardHref(stringFromAny(result[key])); href != "" {
-			return href
-		}
-	}
-	return ""
-}
-
-func consoleNavigationHrefAllowedForCurrentScope(href string, targets []consoleNavigationRouteHint) bool {
-	href = normalizeConsoleNavigationGuardHref(href)
-	if href == "" {
-		return false
-	}
-	for _, target := range targets {
-		if consoleNavigationLoadedHrefMatchesTarget(href, target.Href) {
-			return true
-		}
-	}
-	return false
 }

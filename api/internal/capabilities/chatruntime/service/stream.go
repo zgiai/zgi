@@ -392,10 +392,6 @@ func (s *service) ensureRecoverableEventStream(ctx context.Context, conversation
 	return false, nil
 }
 
-func (s *service) isConversationMessageStreaming(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (bool, error) {
-	return s.isConversationMessageStreamingForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, conversationID, messageID)
-}
-
 func (s *service) isConversationMessageStreamingForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (bool, error) {
 	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
@@ -604,10 +600,6 @@ func preparedModelUseCase(prepared *PreparedChat) string {
 		mode = normalizeExecutionMode(stringMetadataValue(prepared.Message.Metadata["execution_mode"]))
 	}
 	return executionModeModelUseCase(mode)
-}
-
-func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onChunk func(string) error) (string, *adapter.Usage, error) {
-	return s.collectStreamAnswerWithEvents(ctx, prepared, stream, nil, onChunk)
 }
 
 func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error) (string, *adapter.Usage, error) {
@@ -1185,13 +1177,6 @@ func shouldSuppressDigitalHumanTaskGovernanceEvent(caller Caller, eventType stri
 	return isDigitalHumanCaller(caller.Type) &&
 		strings.TrimSpace(eventType) == streamEventToolGovernanceDecision &&
 		isDigitalHumanTaskGovernancePayload(payload)
-}
-
-// BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.
-// requestID is the transport request identity when the caller has one; it is
-// omitted for runtime-internal emissions that never crossed an HTTP boundary.
-func BuildStreamErrorPayload(prepared *PreparedChat, err error, requestID string) map[string]interface{} {
-	return BuildLocalizedStreamErrorPayload(prepared, err, requestID, "")
 }
 
 // BuildLocalizedStreamErrorPayload is BuildStreamErrorPayload with the caller's

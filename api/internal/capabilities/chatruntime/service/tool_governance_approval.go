@@ -29,11 +29,6 @@ const (
 	toolGovernanceApprovalStatusRejected = "rejected"
 )
 
-func (s *service) persistToolGovernanceApprovalPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
-	metadata, _ := s.persistToolGovernanceApprovalPendingResult(ctx, prepared, payload, usage)
-	return metadata
-}
-
 func (s *service) persistToolGovernanceApprovalPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
 		return map[string]interface{}{}, nil

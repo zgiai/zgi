@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -142,29 +141,6 @@ func postVerifierServiceTestChatResponse(content string) *adapter.ChatResponse {
 	return &adapter.ChatResponse{
 		Choices: []adapter.Choice{{
 			Message: adapter.Message{Role: "assistant", Content: content},
-		}},
-	}
-}
-
-func postVerifierServiceTestFinalAnswerResponse(answer string, planJSON string) *adapter.ChatResponse {
-	arguments := `{"answer":` + strconv.Quote(answer)
-	if strings.TrimSpace(planJSON) != "" {
-		arguments += `,"plan":` + planJSON
-	}
-	arguments += `}`
-	return &adapter.ChatResponse{
-		Choices: []adapter.Choice{{
-			Message: adapter.Message{
-				Role: "assistant",
-				ToolCalls: []adapter.ToolCall{{
-					ID:   "final-answer",
-					Type: "function",
-					Function: adapter.FunctionCall{
-						Name:      skills.MetaToolFinalAnswer,
-						Arguments: arguments,
-					},
-				}},
-			},
 		}},
 	}
 }

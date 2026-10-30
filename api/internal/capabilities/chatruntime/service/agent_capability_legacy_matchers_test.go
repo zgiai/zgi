@@ -428,39 +428,6 @@ func agentSkillBackedCapabilityCandidateQueryForText(text string) string {
 	return ""
 }
 
-func agentManagementGenericBindingResourceStatusRequested(query string) bool {
-	text := strings.ToLower(strings.TrimSpace(query))
-	if text == "" {
-		return false
-	}
-	return containsPositiveAgentManagementResourceMarker(text, []string{
-		"binding resource",
-		"binding resources",
-		"bound resource",
-		"bound resources",
-		"associated resource",
-		"associated resources",
-		"resources",
-		"resource",
-		"\u7ed1\u5b9a\u8d44\u6e90",
-		"\u5173\u8054\u8d44\u6e90",
-		"\u5df2\u7ed1\u5b9a\u8d44\u6e90",
-		"\u8d44\u6e90",
-	})
-}
-
-func agentManagementConfigCapabilityStatusRequested(query string, field string) bool {
-	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
-	if text == "" || !agentManagementCapabilityStatusQuestionRequested(text) {
-		return false
-	}
-	descriptor, ok := agentManagementConfigOnlyCapabilityDescriptorForField(field)
-	if !ok {
-		return false
-	}
-	return containsPositiveAgentManagementResourceMarker(text, descriptor.Markers)
-}
-
 func agentManagementConfigCapabilityMarkerRequested(query string) bool {
 	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
 	if query == "" {
@@ -470,56 +437,6 @@ func agentManagementConfigCapabilityMarkerRequested(query string) bool {
 		return true
 	}
 	return containsPositiveAgentManagementResourceMarker(query, agentManagementConfigCapabilityMarkers())
-}
-
-func agentManagementExplicitConfigAssignmentRequested(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || !agentManagementMutationVerbRequested(query) || !agentManagementConfigCapabilityMarkerRequested(query) {
-		return false
-	}
-	return containsAnySubstring(query, []string{
-		"set ",
-		" to ",
-		"update ",
-		"change ",
-		"modify ",
-		"replace ",
-		"switch ",
-		"enable ",
-		"disable ",
-		"\u8bbe\u7f6e",
-		"\u8bbe\u4e3a",
-		"\u8bbe\u6210",
-		"\u914d\u7f6e\u6a21\u578b",
-		"\u6a21\u578b\u914d\u7f6e",
-		"\u6a21\u578b\u914d\u7f6e\u4e3a",
-		"\u6a21\u578b\u914d\u6210",
-		"\u914d\u7f6e\u4e3a",
-		"\u914d\u7f6e\u6210",
-		"\u5199\u597d\u63d0\u793a\u8bcd",
-		"\u7f16\u5199\u63d0\u793a\u8bcd",
-		"\u63d0\u793a\u8bcd\u9700\u8981",
-		"\u4e0a\u4f20\u6587\u4ef6",
-		"\u6539\u4e3a",
-		"\u6539\u6210",
-		"\u66f4\u65b0",
-		"\u66f4\u6539",
-		"\u66ff\u6362",
-		"\u5207\u6362",
-		"\u542f\u7528",
-		"\u7981\u7528",
-	})
-}
-
-func agentManagementExplicitIdentityAssignmentRequested(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || !agentManagementMutationVerbRequested(query) {
-		return false
-	}
-	return containsPositiveAgentManagementResourceMarker(query, []string{
-		"rename", "name", "description", "icon",
-		"\u6539\u540d", "\u540d\u79f0", "\u540d\u5b57", "\u63cf\u8ff0", "\u56fe\u6807",
-	})
 }
 
 func agentManagementExplicitNoMutationRequested(query string) bool {
@@ -630,30 +547,6 @@ func agentManagementPersonaUpdateRequested(query string) bool {
 		"\u4eba\u8bbe", "\u89d2\u8272", "\u5199\u4f5c", "\u521b\u4f5c", "\u5c0f\u8bf4", "\u4f5c\u5bb6", "\u4f5c\u8005",
 		"\u521b\u4f5c\u667a\u80fd\u4f53", "\u5199\u4f5c\u667a\u80fd\u4f53",
 	})
-}
-
-func agentManagementConfigOnlyCapabilityRequested(query string, field string) bool {
-	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
-	if text == "" ||
-		agentManagementExplicitNoMutationRequested(text) ||
-		agentBindingStateReadOnlyQuestionRequested(text) {
-		return false
-	}
-	descriptor, ok := agentManagementConfigOnlyCapabilityDescriptorForField(field)
-	if !ok || !containsPositiveAgentManagementResourceMarker(text, descriptor.Markers) {
-		return false
-	}
-	if !agentManagementMutationVerbRequested(text) &&
-		containsAnySubstring(text, []string{"?", "\uff1f", "\u5417", "whether"}) &&
-		!containsAnySubstring(text, []string{"let", "allow", "make", "\u8ba9", "\u4f7f"}) {
-		return false
-	}
-	return agentManagementMutationVerbRequested(text) ||
-		agentManagementCapabilityEnablePhraseRequested(text)
-}
-
-func agentManagementCapabilityEnablePhraseRequested(text string) bool {
-	return containsAnySubstring(strings.ToLower(strings.TrimSpace(text)), agentManagementCapabilityEnablePhrases())
 }
 
 func agentManagementCapabilityEnablePhrases() []string {
@@ -1350,52 +1243,6 @@ func removeAgentManagementCreateAssignmentPayload(text string, marker string) st
 	}
 }
 
-func agentManagementCandidateLookupExplicitlyNegated(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
-	if query == "" {
-		return false
-	}
-	return containsAnySubstring(query, []string{
-		"do not query available models",
-		"do not list available models",
-		"do not query candidate resources",
-		"do not list candidate resources",
-		"do not list candidate",
-		"do not list candidates",
-		"do not query candidates",
-		"don't list candidate",
-		"don't list candidates",
-		"don't query candidates",
-		"without listing candidates",
-		"no candidate list",
-		"no candidates",
-		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b\u6216\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009",
-		"\u4e0d\u8981\u67e5\u770b\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u8981\u67e5\u770b\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u5217\u5019\u9009",
-		"\u4e0d\u8981\u5217\u51fa\u5019\u9009",
-		"\u4e0d\u8981\u5217\u51fa\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u8981\u5217\u51fa\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u67e5\u770b\u5019\u9009",
-		"\u4e0d\u8981\u62c9\u5019\u9009",
-		"\u4e0d\u8981\u5019\u9009",
-		"\u4e0d\u67e5\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u67e5\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u67e5\u5019\u9009",
-		"\u4e0d\u7528\u5217\u5019\u9009",
-		"\u65e0\u9700\u5217\u5019\u9009",
-		"\u65e0\u9700\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
-		"\u65e0\u9700\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u5217\u53ef\u7ed1\u5b9a",
-		"\u4e0d\u8981\u67e5\u770b\u53ef\u7ed1\u5b9a",
-		"\u4e0d\u8981\u5217\u53ef\u9009",
-		"\u4e0d\u8981\u67e5\u770b\u53ef\u9009",
-	})
-}
-
 func agentManagementExplicitConfigFieldsFromText(text string) []string {
 	text = strings.ToLower(strings.TrimSpace(text))
 	if text == "" {
@@ -1415,179 +1262,6 @@ func agentManagementExplicitConfigFieldsFromText(text string) []string {
 		}
 	}
 	return fields
-}
-
-func agentBindingExpectedActionForResource(query string, resourceMarkers []string) string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || len(resourceMarkers) == 0 {
-		return ""
-	}
-	if action := agentBindingTrailingListActionForResource(query, resourceMarkers); action != "" {
-		return action
-	}
-	resourceClauses := agentBindingResourceClauses(query)
-	matchingClauses := []string{}
-	for _, clause := range resourceClauses {
-		if !containsAnySubstring(clause, resourceMarkers) {
-			continue
-		}
-		matchingClauses = append(matchingClauses, clause)
-		for _, segment := range agentBindingActionSegments(clause) {
-			if !containsAnySubstring(segment, resourceMarkers) {
-				continue
-			}
-			if action := agentBindingExpectedActionFromText(segment); action != "" {
-				return action
-			}
-		}
-	}
-	for _, clause := range matchingClauses {
-		if action := agentBindingExpectedActionFromText(clause); action != "" {
-			return action
-		}
-	}
-	return agentBindingExpectedActionFromText(query)
-}
-
-func agentBindingTrailingListActionForResource(query string, resourceMarkers []string) string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || len(resourceMarkers) == 0 {
-		return ""
-	}
-	resourceIndex := -1
-	for _, marker := range resourceMarkers {
-		marker = strings.ToLower(strings.TrimSpace(marker))
-		if marker == "" {
-			continue
-		}
-		if index := strings.Index(query, marker); index >= 0 && (resourceIndex < 0 || index < resourceIndex) {
-			resourceIndex = index
-		}
-	}
-	if resourceIndex < 0 {
-		return ""
-	}
-	trailing := query[resourceIndex:]
-	for _, marker := range []string{
-		"\u5168\u90e8\u89e3\u7ed1",
-		"\u5168\u90fd\u89e3\u7ed1",
-		"\u90fd\u89e3\u7ed1",
-		"\u4e00\u5e76\u89e3\u7ed1",
-		"\u4e00\u6b21\u6027\u89e3\u7ed1",
-		"\u5168\u90e8\u53d6\u6d88\u5173\u8054",
-		"\u90fd\u53d6\u6d88\u5173\u8054",
-		"\u5168\u90e8\u6e05\u7a7a",
-		"\u90fd\u6e05\u7a7a",
-		"\u5168\u90e8\u79fb\u9664",
-		"\u90fd\u79fb\u9664",
-	} {
-		if containsUnnegatedAgentManagementMutationMarker(trailing, marker) {
-			return "unbind"
-		}
-	}
-	for _, marker := range []string{
-		"\u5168\u90e8\u7ed1\u5b9a",
-		"\u5168\u90fd\u7ed1\u5b9a",
-		"\u90fd\u7ed1\u5b9a",
-		"\u4e00\u5e76\u7ed1\u5b9a",
-		"\u4e00\u6b21\u6027\u7ed1\u5b9a",
-		"\u5168\u90e8\u5173\u8054",
-		"\u90fd\u5173\u8054",
-	} {
-		if containsUnnegatedAgentManagementMutationMarker(trailing, marker) {
-			return "bind"
-		}
-	}
-	return ""
-}
-
-func agentBindingActionSegments(text string) []string {
-	text = strings.ToLower(strings.TrimSpace(text))
-	if text == "" {
-		return nil
-	}
-	replacer := strings.NewReplacer(
-		" and ", "\uff0c",
-		" then ", "\uff0c",
-		"\u7136\u540e", "\uff0c",
-		"\u5e76\u4e14", "\uff0c",
-		"\u5e76", "\uff0c",
-		"\u4ee5\u53ca", "\uff0c",
-		"\u548c", "\uff0c",
-		"\u4e0e", "\uff0c",
-		"\u53ca", "\uff0c",
-	)
-	text = replacer.Replace(text)
-	segments := strings.FieldsFunc(text, func(r rune) bool {
-		switch r {
-		case ',', '.', ';', '\n', '\r', '\uff0c', '\u3002', '\uff1b', '\u3001':
-			return true
-		default:
-			return false
-		}
-	})
-	out := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		segment = strings.TrimSpace(segment)
-		if segment != "" {
-			out = append(out, segment)
-		}
-	}
-	return out
-}
-
-func agentBindingExpectedActionFromText(text string) string {
-	text = strings.ToLower(strings.TrimSpace(text))
-	if text == "" {
-		return ""
-	}
-	for _, marker := range []string{
-		"\u66ff\u6362",
-		"replace",
-		"switch",
-	} {
-		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
-			return "replace"
-		}
-	}
-	for _, marker := range []string{
-		"\u89e3\u7ed1",
-		"\u7981\u7528",
-		"\u505c\u7528",
-		"\u53d6\u6d88\u5173\u8054",
-		"\u5220\u9664",
-		"\u79fb\u9664",
-		"\u6e05\u7a7a",
-		"unbind",
-		"disable",
-		"detach",
-		"delete",
-		"remove",
-		"clear",
-	} {
-		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
-			return "unbind"
-		}
-	}
-	for _, marker := range []string{
-		"\u7ed1\u5b9a",
-		"\u542f\u7528",
-		"\u5173\u8054",
-		"\u6dfb\u52a0",
-		"\u65b0\u589e",
-		"bind",
-		"enable",
-		"associate",
-		"add",
-	} {
-		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
-			return "bind"
-		}
-	}
-	if agentBindingExplicitCandidateSelectionMutationRequested(text) {
-		return "bind"
-	}
-	return ""
 }
 
 func agentBindingExplicitCandidateSelectionMutationRequested(query string) bool {
@@ -1697,86 +1371,6 @@ func agentManagementMutationVerbRequested(query string) bool {
 	return false
 }
 
-func agentManagementBindingReadRequested(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || !agentBindingReadOnlyRequested(query) {
-		return false
-	}
-	return containsAnySubstring(query, agentManagementBindingReadMarkers())
-}
-
-func agentManagementBindingReadMarkers() []string {
-	markers := []string{
-		"skill", "binding", "bound", "enabled",
-		"\u6280\u80fd", "\u7ed1\u5b9a", "\u5173\u8054", "\u542f\u7528",
-	}
-	return appendUniqueStrings(markers, agentManagementBindingCapabilityResourceMarkers()...)
-}
-
-func agentManagementCandidateScopeStart(query string, markerStart int) int {
-	if markerStart <= 0 {
-		return 0
-	}
-	start := 0
-	prefix := query[:markerStart]
-	for _, delimiter := range []string{
-		"\u3002",
-		"\uff1b",
-		";",
-		".",
-		"\n",
-		"\r",
-		" but ",
-		" except ",
-		"\u4f46\u662f",
-		"\u4f46",
-		"\u4e0d\u8fc7",
-	} {
-		if delimiter == "" {
-			continue
-		}
-		if idx := strings.LastIndex(prefix, delimiter); idx >= 0 && idx+len(delimiter) > start {
-			start = idx + len(delimiter)
-		}
-	}
-	return start
-}
-
-func agentManagementCandidateScopeContainsPositiveResource(scope string, resourceMarkers []string) bool {
-	scope = strings.ToLower(strings.TrimSpace(scope))
-	if scope == "" || len(resourceMarkers) == 0 {
-		return false
-	}
-	for _, marker := range resourceMarkers {
-		marker = strings.ToLower(strings.TrimSpace(marker))
-		if marker == "" {
-			continue
-		}
-		searchFrom := 0
-		for {
-			idx := strings.Index(scope[searchFrom:], marker)
-			if idx < 0 {
-				break
-			}
-			start := searchFrom + idx
-			if !agentManagementResourceMentionCoveredByNoop(scope, start) {
-				return true
-			}
-			searchFrom = start + len(marker)
-		}
-	}
-	return false
-}
-
-func agentManagementResourceMentionCoveredByNoop(text string, markerStart int) bool {
-	if markerStart <= 0 {
-		return false
-	}
-	prefixStart := agentManagementCandidateScopeStart(text, markerStart)
-	prefix := text[prefixStart:markerStart]
-	return containsAnySubstring(prefix, append(agentBindingNoopScopeMarkers(), agentBindingPreserveScopeMarkers()...))
-}
-
 func agentBindingReadOnlyRequested(query string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
@@ -1874,48 +1468,6 @@ func agentBindingSoftMutationRequested(query string) bool {
 		"associate",
 	} {
 		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func agentBindingResourceNoop(query string, resource string) bool {
-	resourceMarkers := map[string][]string{
-		"knowledge": {"\u77e5\u8bc6\u5e93", "knowledge"},
-		"database":  {"\u6570\u636e\u5e93", "database", "\u6570\u636e\u8868", "table"},
-		"workflow":  {"\u5de5\u4f5c\u6d41", "workflow"},
-	}
-	resourceMarkerFound := false
-	for _, resourceMarker := range resourceMarkers[resource] {
-		if strings.Contains(query, resourceMarker) {
-			resourceMarkerFound = true
-			break
-		}
-	}
-	if !resourceMarkerFound {
-		return false
-	}
-	noBindMarkers := agentBindingNoopScopeMarkers()
-	noBindMarkers = append(noBindMarkers, agentBindingPreserveScopeMarkers()...)
-	if agentBindingNoBindScopeCoversResource(query, resourceMarkers[resource], noBindMarkers) {
-		return true
-	}
-	noopMarkers := []string{
-		"\u4fdd\u6301",
-		"\u4fdd\u7559",
-		"\u7ee7\u7eed\u4f7f\u7528",
-		"\u4e0d\u53d8",
-		"keep",
-		"preserve",
-		"retain",
-		"unchanged",
-	}
-	for _, clause := range agentBindingResourceClauses(query) {
-		if !containsAnySubstring(clause, resourceMarkers[resource]) {
-			continue
-		}
-		if containsAnySubstring(clause, noBindMarkers) || containsAnySubstring(clause, noopMarkers) {
 			return true
 		}
 	}
@@ -2021,35 +1573,4 @@ func agentBindingNoBindScopeEnd(query string, start int) int {
 		}
 	}
 	return end
-}
-
-func agentBindingResourceClauses(query string) []string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return nil
-	}
-	replacer := strings.NewReplacer(
-		"\u4f46\u662f", "\uff0c",
-		"\u4f46", "\uff0c",
-		"\u4e0d\u8fc7", "\uff0c",
-		" but ", ",",
-		" except ", ",",
-	)
-	query = replacer.Replace(query)
-	clauses := strings.FieldsFunc(query, func(r rune) bool {
-		switch r {
-		case ',', '.', ';', '\n', '\r', '\uff0c', '\u3002', '\uff1b', '\u3001':
-			return true
-		default:
-			return false
-		}
-	})
-	out := make([]string, 0, len(clauses))
-	for _, clause := range clauses {
-		clause = strings.TrimSpace(clause)
-		if clause != "" {
-			out = append(out, clause)
-		}
-	}
-	return out
 }

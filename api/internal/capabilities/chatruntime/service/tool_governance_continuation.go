@@ -200,10 +200,6 @@ func (s *service) failToolGovernanceContinuation(ctx context.Context, continuati
 	s.emitPreparedEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, continuation.Message.Metadata, runtimemodel.MessageStatusError), onEvent)
 }
 
-func (s *service) beginToolGovernanceContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string) (*ToolGovernanceContinuation, error) {
-	return s.beginToolGovernanceContinuationForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, conversationID, messageID, correlationID)
-}
-
 func (s *service) beginToolGovernanceContinuationForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, correlationID string) (*ToolGovernanceContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
@@ -286,16 +282,6 @@ func (s *service) reloadToolGovernanceContinuationMessageForCaller(ctx context.C
 		return nil, nil, fmt.Errorf("%w: message belongs to another conversation", ErrInvalidInput)
 	}
 	return conversation, message, nil
-}
-
-func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, scope Scope, continuation *ToolGovernanceContinuation) (*PreparedChat, error) {
-	return s.prepareConfiguredToolGovernanceContinuationChat(
-		ctx,
-		scope,
-		Caller{Type: runtimemodel.ConversationCallerAIChat},
-		RunConfig{BillingAppType: runtimemodel.MessageBillingReasonSourceAIChat},
-		continuation,
-	)
 }
 
 func (s *service) prepareConfiguredToolGovernanceContinuationChat(ctx context.Context, scope Scope, caller Caller, config RunConfig, continuation *ToolGovernanceContinuation) (*PreparedChat, error) {
@@ -1185,27 +1171,6 @@ func toolGovernanceContinuationInvocationFailed(invocation map[string]interface{
 		return true
 	}
 	return false
-}
-
-func operationPlanContinuationStepTargetSummary(step map[string]interface{}) string {
-	for _, key := range []string{"target_name", "asset_name", "agent_name", "filename", "name"} {
-		if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
-			return value
-		}
-	}
-	target := mapFromOperationContext(step["asset_target"])
-	for _, key := range []string{"name", "filename", "agent_name", "page", "href"} {
-		if value := strings.TrimSpace(stringFromAny(target[key])); value != "" {
-			return value
-		}
-	}
-	args := mapFromOperationContext(step["arguments"])
-	for _, key := range []string{"name", "agent_name", "filename", "href"} {
-		if value := strings.TrimSpace(stringFromAny(args[key])); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func toolGovernanceModelVisibleOperationSummary(event map[string]interface{}, invocation *skills.ToolInvocationResult) map[string]interface{} {

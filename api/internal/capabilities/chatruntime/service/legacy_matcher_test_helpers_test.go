@@ -2,26 +2,6 @@ package service
 
 import "strings"
 
-func wantsCreatedAgentDetailNavigation(query string) bool {
-	normalized := normalizeConsoleNavigationQuery(query)
-	if normalized == "" {
-		return false
-	}
-	if containsAnySubstring(normalized, []string{
-		"do not navigate", "don't navigate", "dont navigate",
-		"do not open", "don't open", "dont open",
-		"\u4e0d\u8981\u5bfc\u822a", "\u4e0d\u8981\u8df3\u8f6c", "\u4e0d\u8981\u6253\u5f00", "\u4e0d\u8981\u8fdb\u5165",
-	}) {
-		return false
-	}
-	return containsAnySubstring(normalized, []string{
-		"\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e", "create", "new agent",
-	}) && containsAnySubstring(normalized, []string{
-		"\u6253\u5f00", "\u8fdb\u5165", "\u8be6\u60c5", "\u7f16\u8f91\u9875", "\u914d\u7f6e\u9875",
-		"open", "enter", "detail", "details", "edit page", "config page",
-	})
-}
-
 func isFileReadIntent(query string) bool {
 	text := strings.ToLower(strings.TrimSpace(query))
 	if text == "" {
@@ -95,26 +75,6 @@ func isTemporaryFileGenerateIntent(query string) bool {
 		"file", ".txt", ".md", ".json", ".csv", ".svg", ".pdf", "txt", "svg", "pdf",
 		"\u6587\u4ef6", "\u4e34\u65f6\u6587\u4ef6", "\u6587\u6863",
 	})
-}
-
-func allStringIndexes(haystack string, needle string) []int {
-	if haystack == "" || needle == "" {
-		return nil
-	}
-	indexes := []int{}
-	offset := 0
-	for {
-		idx := strings.Index(haystack[offset:], needle)
-		if idx < 0 {
-			return indexes
-		}
-		position := offset + idx
-		indexes = append(indexes, position)
-		offset = position + len(needle)
-		if offset >= len(haystack) {
-			return indexes
-		}
-	}
 }
 
 func agentManagementConfigOnlyCapabilityMarkers() []string {
