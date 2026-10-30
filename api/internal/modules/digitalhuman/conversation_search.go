@@ -111,7 +111,7 @@ func (p *DefaultMemoryRuntimeProvider) conversationSearchTool(run *Run, event in
 		return skillloop.RuntimeToolResult{Status: "success", Arguments: map[string]any{"keywords": args.Keywords, "limit": args.Limit},
 			Result: map[string]any{"status": "success", "result_count": len(matches)}, ModelResult: result}
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanMemory, Handler: handler}, true
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanMemory, Handler: handler, ReadOnly: true}, true
 }
 
 // withoutForgottenTurns drops conversation search turns that repeat what the

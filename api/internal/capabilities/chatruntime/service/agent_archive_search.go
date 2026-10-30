@@ -52,7 +52,7 @@ func (s *service) agentArchiveSearchTool(prepared *PreparedChat, agentID uuid.UU
 		return skillloop.RuntimeToolResult{Status: "success", Arguments: map[string]interface{}{"query": args.Query},
 			Result: map[string]interface{}{"status": "success", "result_count": len(entries)}, ModelResult: archiveSearchModelResult(entries)}
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillAgentMemory, Handler: handler}, true
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillAgentMemory, Handler: handler, ReadOnly: true}, true
 }
 
 // archiveSearchModelResult shows archive entries as files under

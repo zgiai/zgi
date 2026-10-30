@@ -309,8 +309,8 @@ func (p *DefaultMemoryRuntimeProvider) memoryFileTools(run *Run, event invocatio
 			Result: map[string]any{"status": "success", "result_count": len(files)}, ModelResult: modelResult}
 	}
 	return []skillloop.RuntimeTool{
-		{Definition: view, SkillID: skills.SkillDigitalHumanMemory, Handler: viewHandler},
-		{Definition: search, SkillID: skills.SkillDigitalHumanMemory, Handler: searchHandler},
+		{Definition: view, SkillID: skills.SkillDigitalHumanMemory, Handler: viewHandler, ReadOnly: true},
+		{Definition: search, SkillID: skills.SkillDigitalHumanMemory, Handler: searchHandler, ReadOnly: true},
 	}
 }
 

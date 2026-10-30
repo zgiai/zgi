@@ -354,7 +354,7 @@ func (p *DefaultTaskRuntimeProvider) listTool(run *Run, boundary taskRuntimeBoun
 		}
 		return taskToolSuccess(call, payload)
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler, ReadOnly: true}
 }
 
 type taskListToolScope struct {
@@ -494,7 +494,7 @@ func (p *DefaultTaskRuntimeProvider) getTool(run *Run, boundary taskRuntimeBound
 		}
 		return taskToolSuccess(call, result)
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler, ReadOnly: true}
 }
 
 // reworkTool reruns a task with the user's feedback on its latest report. The

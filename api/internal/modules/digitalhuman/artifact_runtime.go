@@ -264,7 +264,7 @@ func (a artifactTools) list() skillloop.RuntimeTool {
 		}
 		return taskToolSuccess(call, map[string]any{"items": items, "total": result.Total})
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanArtifacts, Handler: handler}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanArtifacts, Handler: handler, ReadOnly: true}
 }
 
 type readArtifactArguments struct {
@@ -299,7 +299,7 @@ func (a artifactTools) read() skillloop.RuntimeTool {
 		}
 		return taskToolSuccess(call, result)
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanArtifacts, Handler: handler}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanArtifacts, Handler: handler, ReadOnly: true}
 }
 
 type archiveArtifactArguments struct {

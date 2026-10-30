@@ -171,7 +171,7 @@ func (r *Runner) executeToolCall(ctx context.Context, s *runState, rs *roundStat
 		result = unifiedSkillCallErrorStep(call.ID)
 	}
 	if result.trace.Kind == "" && runtimeCall {
-		result = handleRuntimeToolCall(ctx, call, runtimeTool)
+		result = r.callRuntimeTool(ctx, call, runtimeTool)
 		if strings.TrimSpace(result.trace.InvocationID) == "" {
 			result.trace.InvocationID = call.ID
 		}

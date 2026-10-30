@@ -143,3 +143,45 @@ func TestASingleReadOnlyCallIsNotStartedAhead(t *testing.T) {
 		t.Fatalf("started a lone call ahead")
 	}
 }
+
+// Read-only runtime tools, such as a DigitalHuman's memory and task reads, run
+// together like read-only skill tools; other runtime tools stay in order.
+func TestReadOnlyRuntimeToolCallsRunTogether(t *testing.T) {
+	var started atomic.Int32
+	barrier := func(_ context.Context, _ adapter.ToolCall) RuntimeToolResult {
+		started.Add(1)
+		deadline := time.Now().Add(2 * time.Second)
+		for started.Load() < 2 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"saw_both": started.Load() >= 2}}
+	}
+	tool := func(name string, readOnly bool) RuntimeTool {
+		return RuntimeTool{
+			Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: name}},
+			SkillID:    "digital-human-memory",
+			Handler:    barrier,
+			ReadOnly:   readOnly,
+		}
+	}
+	call := func(id, name string) adapter.ToolCall {
+		return adapter.ToolCall{ID: id, Type: "function", Function: adapter.FunctionCall{Name: name, Arguments: "{}"}}
+	}
+	runtimeTools := []RuntimeTool{tool("memory_view", true), tool("memory_search", true), tool("memory_edit", false)}
+	runner := &Runner{}
+	calls := []adapter.ToolCall{call("a", "memory_view"), call("b", "memory_search"), call("c", "memory_edit")}
+	runner.prefetchedCalls = runner.prefetchReadOnlyCalls(context.Background(), RunRequest{RuntimeTools: runtimeTools}, nil, nil, nil, nil, calls)
+	if len(runner.prefetchedCalls) != 2 || runner.prefetchedCalls["c"] != nil {
+		t.Fatalf("prefetched = %v, want the two reads only", runner.prefetchedCalls)
+	}
+	for _, item := range calls[:2] {
+		tool, _ := runtimeToolForCall(runtimeTools, item)
+		result := runner.callRuntimeTool(context.Background(), item, tool)
+		if result.toolResult["saw_both"] != true {
+			t.Fatalf("%s: result = %#v, want it run alongside the other read", item.ID, result.toolResult)
+		}
+	}
+	if len(runner.prefetchedCalls) != 0 {
+		t.Fatalf("prefetched calls left after use: %v", runner.prefetchedCalls)
+	}
+}

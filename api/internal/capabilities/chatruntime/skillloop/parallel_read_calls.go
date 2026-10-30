@@ -13,17 +13,19 @@ import (
 // the same time.
 const maxParallelReadCalls = 4
 
-// prefetchedCall is a read-only skill tool call started before its turn in
-// the round came.
+// prefetchedCall is a read-only tool call started before its turn in the
+// round came: a skill tool call, or a read-only runtime tool call.
 type prefetchedCall struct {
 	skillID, toolName string
 	done              chan struct{}
 	invocation        *skills.ToolInvocationResult
 	err               error
+	runtime           *skillStepResult
 }
 
-// prefetchReadOnlyCalls starts the read-only skill tool calls of a round at
-// once when there are at least two (ADR 0036). The round still handles its
+// prefetchReadOnlyCalls starts the read-only calls of a round at once when
+// there are at least two (ADR 0036): skill tool calls, and runtime tool calls
+// whose tool is marked ReadOnly. The round still handles its
 // calls one by one in the model's order, with every check, event, count and
 // checkpoint as before; a call that was started here only waits for its
 // result instead of running then. A call is started here only if the
@@ -44,10 +46,20 @@ func (r *Runner) prefetchReadOnlyCalls(
 	type candidate struct {
 		callID, skillID, toolName, planPhaseID string
 		arguments                              map[string]interface{}
+		call                                   adapter.ToolCall
+		runtimeTool                            *RuntimeTool
 	}
 	candidates := make([]candidate, 0, len(calls))
 	for _, call := range calls {
-		if _, runtimeCall := runtimeToolForCall(req.RuntimeTools, call); runtimeCall {
+		if runtimeTool, runtimeCall := runtimeToolForCall(req.RuntimeTools, call); runtimeCall {
+			// The round runs a runtime tool's handler as it stands, so a
+			// read-only one can start now.
+			if runtimeTool.ReadOnly && strings.TrimSpace(call.ID) != "" {
+				candidates = append(candidates, candidate{callID: call.ID, call: call, runtimeTool: &runtimeTool})
+			}
+			continue
+		}
+		if r.SkillRuntime == nil {
 			continue
 		}
 		execution := nativeExecutionCall(call, toolSet)
@@ -81,7 +93,7 @@ func (r *Runner) prefetchReadOnlyCalls(
 			planPhaseID: strings.TrimSpace(stringArg(args, "plan_phase_id")), arguments: toolArgs,
 		})
 	}
-	if len(candidates) < 2 || r.SkillRuntime == nil {
+	if len(candidates) < 2 {
 		return nil
 	}
 	prefetched := make(map[string]*prefetchedCall, len(candidates))
@@ -93,6 +105,11 @@ func (r *Runner) prefetchReadOnlyCalls(
 			defer close(call.done)
 			slots <- struct{}{}
 			defer func() { <-slots }()
+			if item.runtimeTool != nil {
+				result := handleRuntimeToolCall(ctx, item.call, *item.runtimeTool)
+				call.runtime = &result
+				return
+			}
 			callCtx := connectordispatch.WithActionPlanPhase(ctx, item.planPhaseID)
 			call.invocation, call.err = r.SkillRuntime.CallSkillTool(callCtx, resolved, item.skillID, item.toolName, item.arguments, req.ExecutionContext, item.callID)
 		}(item, call)
@@ -121,4 +138,21 @@ func (r *Runner) callSkillTool(
 		}
 	}
 	return r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, arguments, execCtx, callID)
+}
+
+// callRuntimeTool runs a runtime tool call, or waits for it when the round
+// already started it (prefetchReadOnlyCalls).
+func (r *Runner) callRuntimeTool(ctx context.Context, call adapter.ToolCall, runtimeTool RuntimeTool) skillStepResult {
+	callID := strings.TrimSpace(call.ID)
+	if prefetched := r.prefetchedCalls[callID]; prefetched != nil && prefetched.skillID == "" && prefetched.toolName == "" {
+		delete(r.prefetchedCalls, callID)
+		select {
+		case <-prefetched.done:
+			if prefetched.runtime != nil {
+				return *prefetched.runtime
+			}
+		case <-ctx.Done():
+		}
+	}
+	return handleRuntimeToolCall(ctx, call, runtimeTool)
 }

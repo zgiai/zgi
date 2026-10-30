@@ -247,6 +247,10 @@ type RuntimeTool struct {
 	// PlatformInteractiveApproval is granted only by a server-owned interactive
 	// execution factory; ordinary Skill calls retain their original policy.
 	PlatformInteractiveApproval bool `json:"-"`
+	// ReadOnly marks a tool whose Handler changes nothing, keeps no state
+	// between calls and uses no platform services, so a round may run it
+	// alongside its other reads (ADR 0036).
+	ReadOnly bool `json:"-"`
 }
 
 // RuntimePlatformServices exposes no routing credentials or arbitrary API
