@@ -197,7 +197,9 @@ func (r *Runtime) BuildNativeToolSet(ctx context.Context, resolved *ResolvedSkil
 		}
 
 		result.ActiveSkillIDs = append(result.ActiveSkillIDs, skillID)
-		result.InstructionMessages = append(result.InstructionMessages, candidate.instruction)
+		if candidate.instructionChars > 0 {
+			result.InstructionMessages = append(result.InstructionMessages, candidate.instruction)
+		}
 		result.ProviderTools = append(result.ProviderTools, candidate.tools...)
 		for name, binding := range candidate.bindings {
 			result.ToolBindings[name] = binding
@@ -388,7 +390,11 @@ func (r *Runtime) nativeSkillCandidate(ctx context.Context, doc SkillDocument, t
 			}, "\n"),
 		},
 	}
-	candidate.instructionChars = len([]rune(fmt.Sprint(candidate.instruction.Content)))
+	if IsResidentSkill(skillID) {
+		candidate.instruction = llmadapter.Message{}
+	} else {
+		candidate.instructionChars = len([]rune(fmt.Sprint(candidate.instruction.Content)))
+	}
 
 	localNames := make(map[string]struct{}, len(doc.Tools))
 	for _, definition := range doc.Tools {
@@ -419,9 +425,12 @@ func (r *Runtime) nativeSkillCandidate(ctx context.Context, doc SkillDocument, t
 		localNames[providerName] = struct{}{}
 	}
 	if estimateTokens != nil {
-		candidate.instructionTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, nil)
 		candidate.schemaTokens = estimateTokens(nil, candidate.tools)
-		candidate.totalTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, candidate.tools)
+		candidate.totalTokens = candidate.schemaTokens
+		if candidate.instructionChars > 0 {
+			candidate.instructionTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, nil)
+			candidate.totalTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, candidate.tools)
+		}
 	}
 	return candidate, nil
 }

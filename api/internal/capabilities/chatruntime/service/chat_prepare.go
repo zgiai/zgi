@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
@@ -455,6 +456,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	if scope.RuntimeFileAuthorizer != nil && scope.RuntimeWorkspaceID != nil && scope.RuntimeSubjectID != nil {
 		parts.AttachmentReadAllowed = true
 	}
+	s.applyCurrentTimeContext(ctx, scope, parts, time.Now())
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
 		rendered, err := renderAIChatSystemPrompt(parts.Surface)
@@ -869,6 +871,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	if parts.ConnectorToolsDisabled {
 		enabled = skillIDsWithout(enabled, []string{skills.SkillConnectorRuntime})
 	}
+	enabled = withInherentTimeSkill(enabled, catalog, orgEnabled, callerType, parts)
 	parts.BaseSkillIDs, parts.BaseToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	parts.MarketSkillIDs = s.marketSkillIDs(ctx, scope, caller)
 	parts.SkillIDs = mergeNormalizedSkillIDs(parts.BaseSkillIDs, parts.ConnectorSkillIDs, parts.MarketSkillIDs)

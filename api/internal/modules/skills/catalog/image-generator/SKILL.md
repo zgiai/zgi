@@ -56,7 +56,7 @@ Important: the current backend does not pass reference images as structured imag
 4. Read exactly one reference document for the selected task or use case.
 5. Build a concise generation prompt that includes subject, scene, composition, style, color, lighting, intended use, and prohibited elements when provided.
 6. Choose or confirm aspect ratio and number of candidates.
-7. Call `call_skill_tool` with `tool_name` set to `generate_image` or `edit_image`.
+7. Call `generate_image` or `edit_image`.
 8. In the final answer, mention the generated file names, usage notes, and any copyright or brand compliance reminder. Do not paste raw image bytes or base64.
 
 ## Clarification Workflow

@@ -48,6 +48,8 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	parts.SystemPrompt = strings.TrimSpace(config.SystemPrompt)
 	parts.SystemPromptVersion = strings.TrimSpace(config.SystemPromptVersion)
 	parts.TurnContext = strings.TrimSpace(config.TurnContext)
+	parts.CurrentTimeProvided = config.CurrentTimeProvided
+	parts.UserTimezone = strings.TrimSpace(config.UserTimezone)
 	parts.ConfiguredSkillIDs = normalizedSkillIDs(config.EnabledSkillIDs)
 	parts.KnowledgeDatasetIDs = normalizedSkillIDs(config.KnowledgeDatasetIDs)
 	parts.KnowledgeRetrievalConfig = copyStringAnyMap(config.KnowledgeRetrievalConfig)

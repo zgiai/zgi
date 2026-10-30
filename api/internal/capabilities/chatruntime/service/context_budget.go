@@ -565,10 +565,19 @@ func queryReferencesRecentExecutionContext(query string) bool {
 // turnContextMessage carries the run's changing guidance after the history, so
 // the system prompt and history form a stable, cacheable prefix (ADR 0032).
 func turnContextMessage(parts *chatRequestParts) *adapter.Message {
-	if parts == nil || strings.TrimSpace(parts.TurnContext) == "" {
+	if parts == nil {
 		return nil
 	}
-	return &adapter.Message{Role: "system", Content: strings.TrimSpace(parts.TurnContext)}
+	sections := make([]string, 0, 2)
+	for _, section := range []string{parts.CurrentTimeContext, parts.TurnContext} {
+		if section = strings.TrimSpace(section); section != "" {
+			sections = append(sections, section)
+		}
+	}
+	if len(sections) == 0 {
+		return nil
+	}
+	return &adapter.Message{Role: "system", Content: strings.Join(sections, "\n\n")}
 }
 
 func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {
@@ -592,12 +601,8 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	var builder strings.Builder
-	builder.WriteString("Recent assistant execution context for continuity.\n")
-	builder.WriteString("Older turns are represented only by their final assistant answers in the conversation history.\n")
-	builder.WriteString("Use these notes as context; do not mention these storage rules to the user.\n")
-	builder.WriteString("Do not resubmit these notes as intermediate answers; reuse them directly for export, save, convert, or file-generation requests.\n")
-	builder.WriteString("For a new user request, do not recap or claim completion of prior generated files unless the user explicitly references them or asks to continue.\n")
-	builder.WriteString("Prior generated files are candidates for reuse only when the current request asks to reuse, save, convert, download, preview, or continue previous output.\n")
+	builder.WriteString("Notes on what earlier turns produced, for a request that refers back to them. Do not mention these notes to the user.\n")
+	builder.WriteString("Reuse earlier files and results only when the current request asks to reuse, save, convert, download, preview, or continue them, and pass them to tools directly. Otherwise do not recap them or claim them as done.\n")
 
 	remaining := recentExecutionContextBudgetChars - builder.Len()
 	generatedSection, generatedStats := recentGeneratedFilesSection(branch, remaining)
@@ -769,7 +774,7 @@ func recentOperationResultSummarySection(branch []*runtimemodel.Message, budget 
 			continue
 		}
 		summary := operationResultSummaryForPrompt(message.Metadata)
-		if len(summary) == 0 {
+		if len(summary) == 0 || memoryToolSkillID(stringFromAny(summary["skill_id"])) {
 			continue
 		}
 		turns++
@@ -1246,7 +1251,7 @@ func recentToolHistorySection(branch []*runtimemodel.Message, budget int) (strin
 		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
 			continue
 		}
-		invocations := toolHistoryInvocations(message.Metadata)
+		invocations := withoutMemoryToolInvocations(toolHistoryInvocations(message.Metadata))
 		if len(invocations) == 0 {
 			continue
 		}
@@ -1269,6 +1274,27 @@ func recentToolHistorySection(branch []*runtimemodel.Message, budget int) (strin
 		}
 	}
 	return builder.String(), stats
+}
+
+// memoryToolSkillID reports a memory skill. Its edits are visible in the memory
+// files themselves, so the execution notes leave them out (ADR 0043).
+func memoryToolSkillID(skillID string) bool {
+	switch strings.ToLower(strings.TrimSpace(skillID)) {
+	case skills.SkillAgentMemory, skills.SkillDigitalHumanMemory:
+		return true
+	default:
+		return false
+	}
+}
+
+func withoutMemoryToolInvocations(invocations []map[string]interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(invocations))
+	for _, invocation := range invocations {
+		if !memoryToolSkillID(stringFromAny(invocation["skill_id"])) {
+			out = append(out, invocation)
+		}
+	}
+	return out
 }
 
 func recentIntermediateAnswerSection(branch []*runtimemodel.Message, budget int) (string, recentExecutionContextStats) {

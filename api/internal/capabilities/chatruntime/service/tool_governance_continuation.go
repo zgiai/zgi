@@ -331,6 +331,7 @@ func (s *service) prepareConfiguredToolGovernanceContinuationChat(ctx context.Co
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
+	parts.TurnStartedAt = message.CreatedAt
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err

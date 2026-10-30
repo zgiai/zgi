@@ -23,7 +23,7 @@ func runDirectCalculateCall(t *testing.T, catalogResolved *skills.ResolvedSkills
 		t.Fatalf("register calculator: %v", err)
 	}
 	runtime := skills.NewRuntime(tools.NewToolEngine(manager), manager)
-	resolved := nativeCalculatorResolvedSkills()
+	resolved := nativeActivatableMathResolvedSkills()
 	catalog := skills.BuildNativeSkillCatalog(catalogResolved, nil, skills.DefaultNativeSkillCatalogBudgetChars, 0, nil)
 	session := skills.NewNativeSkillSession(runtime, resolved, catalog, skills.NativeToolSetOptions{BudgetChars: 10000})
 	calculateArguments, _ := json.Marshal(map[string]interface{}{"operation": "multiply", "left": 6, "right": 7})
@@ -64,7 +64,7 @@ func toolResultFor(messages []adapter.Message, callID string) string {
 }
 
 func TestNativeLoopActivatesACandidateSkillWhoseToolIsCalledDirectly(t *testing.T) {
-	fakeLLM, answer := runDirectCalculateCall(t, nativeCalculatorResolvedSkills())
+	fakeLLM, answer := runDirectCalculateCall(t, nativeActivatableMathResolvedSkills())
 	if answer != "42" || fakeLLM.appChatCalls != 2 {
 		t.Fatalf("answer = %q after %d model calls, want 42 after the call and the answer", answer, fakeLLM.appChatCalls)
 	}

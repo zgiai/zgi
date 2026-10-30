@@ -1435,6 +1435,7 @@ func (s *service) prepareWorkflowTaskContinuationChat(ctx context.Context, scope
 		return nil, err
 	}
 	applyAgentMemoryToolsPolicy(parts)
+	parts.TurnStartedAt = message.CreatedAt
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err

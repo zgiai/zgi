@@ -752,7 +752,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Messages = messages
 		planningReq.Stream = false
 		if req.NativeAgentLoop {
-			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools)
+			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools, req.OmitPlanningTools)
 			// Oversized tool results reach the model projected, with the rest
 			// readable through this tool (ADR 0037). It is always offered, so
 			// the tool list does not change when a projection first appears.

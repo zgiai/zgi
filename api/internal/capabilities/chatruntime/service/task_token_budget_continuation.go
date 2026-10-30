@@ -263,6 +263,7 @@ func (s *service) prepareSameTurnContinuationChat(
 		return nil, err
 	}
 	applyAgentMemoryToolsPolicy(parts)
+	parts.TurnStartedAt = message.CreatedAt
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err

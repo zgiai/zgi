@@ -13,7 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool) []adapter.Tool {
+func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool, omitPlanning bool) []adapter.Tool {
 	runtimeDefinitions := make([]adapter.Tool, 0, len(runtimeTools))
 	for _, runtimeTool := range runtimeTools {
 		if strings.TrimSpace(runtimeTool.Definition.Function.Name) != "" && runtimeTool.Handler != nil {
@@ -24,19 +24,20 @@ func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.Nat
 		current := session.ToolSet()
 		tools := append([]adapter.Tool(nil), current.ProviderTools...)
 		tools = append(tools, runtimeDefinitions...)
-		return append(tools, skills.NativeControlToolsForSession(
+		return append(tools, skills.NativeControlToolsForRun(
 			resolved,
 			current.ActiveSkillIDs,
 			session.OfferedSkillIDs(),
 			session.SearchAvailable(),
+			!omitPlanning,
 		)...)
 	}
 	if toolSet == nil {
-		return append(runtimeDefinitions, skills.NativeControlToolsForSkills(resolved, nil)...)
+		return append(runtimeDefinitions, skills.NativeControlToolsForRun(resolved, nil, nil, false, !omitPlanning)...)
 	}
 	tools := append([]adapter.Tool(nil), toolSet.ProviderTools...)
 	tools = append(tools, runtimeDefinitions...)
-	tools = append(tools, skills.NativeControlToolsForSkills(resolved, toolSet.ActiveSkillIDs)...)
+	tools = append(tools, skills.NativeControlToolsForRun(resolved, toolSet.ActiveSkillIDs, nil, false, !omitPlanning)...)
 	return tools
 }
 
@@ -121,25 +122,24 @@ func runtimeToolEventPayload(prepared *PreparedChat, payload map[string]interfac
 
 func nativeAgentLoopSystemMessage() adapter.Message {
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
-		"Only active skills have complete instructions and visible business functions. Candidate skills are lightweight metadata until activated.",
-		"Answer knowledge questions, explanations, translations, rewrites, summaries, and tasks fully supported by the current conversation context directly without activating a skill.",
-		"Activate or search for skills only when the user outcome genuinely requires an external read, generation, mutation, governed action, or page operation. Never activate, search, update a plan, or submit state merely to inspect capabilities or prepare an answer.",
-		"If a candidate skill is needed, call activate_skills with the smallest relevant set before doing the business work. Use search_skills only when the compact candidate directory omitted the needed capability.",
-		"Skill discovery and activation are internal. Do not name, narrate, summarize, or expose that mechanism to the user. A useful user-facing process note may accompany the same turn when it describes the actual task stage rather than the internal preparation.",
-		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer. An active script Skill is already loaded; use its supplied session_scripts package_sha256 with shell_exec. Activate a candidate only if it is not already active.",
-		"Call a projected external business function directly when it is needed. Do not call update_plan merely to prepare a single Action: the runtime creates the authoritative Outcome, phase, target binding, and execution ledger fields. Use update_plan only when the user's outcome structure genuinely changes; never invent or pass server-owned phase or binding fields.",
-		"For complex or multi-step work, before the first business stage include one brief user-visible process note in ordinary assistant content before the business function call. Add another note only after important evidence arrives, when the work changes stage, when the approach changes, or when recovering from an error.",
-		"A process note must use the language of the user's latest request and state the current judgment or evidence plus the result the next action will produce. Do not merely repeat the request.",
-		"Keep each process note concise, normally one to four short sentences and about 60 to 180 estimated tokens. Never exceed 384 estimated tokens for one note. Across one user task, produce at most eight notes and about 1920 estimated tokens total.",
-		"Do not add a process note for one fast business call, repeated calls of the same kind, or an ordinary direct answer. Internal control work alone is not worth announcing, but when the same stage has a useful task-level update, describe only the user-visible work and outcome without naming the control operation.",
-		"Process notes must not reveal hidden reasoning, skill names, function or tool names, parameters, IDs, JSON, protocols, or hidden plans. Put artifact bodies and all content required by a function only in its arguments.",
-		"If an active skill document mentions those legacy wrapper functions, this native-loop instruction overrides that wording; preserve the skill's business rules and call its exposed function instead.",
-		"When no more tool calls are needed, provide the complete user-facing final answer as ordinary assistant content. For complex work, briefly state the completed result, the key basis for the work, and any material limitation or unfinished item.",
-		"Use update_plan only for short outcome or step status changes, never for detailed reasoning. Use submit_turn_state when exact working state must survive approval, navigation, refresh, user input, or another continuation boundary.",
-		"Use read_skill_reference only when an active skill's instructions require a reference. Use request_user_input only when missing information blocks reliable progress.",
-		"All user-visible progress, questions, and final answers must use the language of the user's latest request. Never expose internal protocol details, hidden reasoning, tool aliases, IDs, or bookkeeping.",
-		"Never claim an external action succeeded without a matching successful tool result. Do not repeat a failed tool call with unchanged arguments.",
-		"Read-only calls may be grouped when useful, but call at most one side-effecting or governed mutation in one assistant turn, then wait for its result.",
+		"## Skills",
+		"Candidate skills are listed by name only; their instructions and business functions are available after activate_skills. Resident tools need no activation.",
+		"Answer directly when the conversation already holds what the user needs, such as knowledge questions, explanations, translations, rewrites and summaries.",
+		"Activate a skill only when the request needs an external read, a generated file, a change, or a page operation, and activate the smallest set that covers it. Use search_skills only when the directory says some skills were left out.",
+		"An active script skill is already loaded: run its session_scripts package with shell_exec, using the package_sha256 it gives.",
+		"## Tools",
+		"Call business functions directly. Read-only calls may run together; make at most one call that changes something per response, then wait for its result.",
+		"Never repeat a failed call with the same arguments. Use read_skill_reference only when an active skill asks for it, and request_user_input only when missing information blocks reliable progress.",
+		"If update_plan is available, use it only when the user's goal or the required outcomes change; the runtime tracks ordinary progress and owns phase and binding fields. If submit_turn_state is available, use it to keep exact working state across an approval, a question to the user, or another pause.",
+		"## Progress notes",
+		"For work with several stages, write one or two short sentences before the first business call: what you found or decided, and what the next step will produce. Add another only when evidence changes the plan, the stage changes, or you recover from an error.",
+		"Skip notes for a single quick call, for repeated calls of the same kind, and for direct answers. A few notes per task are enough.",
+		"## Answers",
+		"When no more calls are needed, answer as ordinary assistant content. For complex work, give the result, what it is based on, and anything left unfinished.",
+		"Never say an action succeeded without a matching successful tool result.",
+		"## Language and privacy",
+		"Write notes, questions and answers in the language of the user's latest request.",
+		"Never show internal details: skill or tool names, parameters, IDs, JSON, hidden reasoning or plans. Put file bodies and other function content only in the function arguments.",
 	}, "\n")}
 }
 

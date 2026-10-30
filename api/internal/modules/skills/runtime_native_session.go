@@ -2,7 +2,6 @@ package skills
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,12 +91,24 @@ func BuildNativeSkillCatalog(
 func nativeSkillIDOrder(docs []SkillDocument) []string {
 	ids := make([]string, 0, len(docs))
 	for _, doc := range docs {
-		if skillID := normalizeSkillID(doc.Metadata.ID); skillID != "" {
+		if skillID := normalizeSkillID(doc.Metadata.ID); skillID != "" && !IsResidentSkill(skillID) {
 			ids = append(ids, skillID)
 		}
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// catalogNativeSkillDocuments leaves out resident skills, which are active
+// from the start and are never candidates (ADR 0043).
+func catalogNativeSkillDocuments(docs []SkillDocument) []SkillDocument {
+	out := make([]SkillDocument, 0, len(docs))
+	for _, doc := range docs {
+		if !IsResidentSkill(doc.Metadata.ID) {
+			out = append(out, doc)
+		}
+	}
+	return out
 }
 
 func buildNativeSkillCatalog(
@@ -115,20 +126,14 @@ func buildNativeSkillCatalog(
 		catalog.Message = nativeSkillCatalogMessage(nil, 0, 0)
 		return catalog
 	}
-	docs := orderedNativeSkillCatalogDocuments(resolved.Skills, prioritySkillIDs)
+	docs := orderedNativeSkillCatalogDocuments(catalogNativeSkillDocuments(resolved.Skills), prioritySkillIDs)
 	for _, doc := range docs {
 		if skillID := normalizeSkillID(doc.Metadata.ID); skillID != "" {
 			catalog.CandidateSkillIDs = append(catalog.CandidateSkillIDs, skillID)
 		}
 	}
-	exposureLimit := min(len(docs), MaxNativeSkillSearchLimit)
-	if len(docs) > MaxNativeSkillSearchLimit {
-		exposureLimit = DefaultNativeSkillSearchLimit
-	}
+	// Every candidate that fits the budget is listed (ADR 0043).
 	for _, doc := range docs {
-		if len(catalog.Metadata) >= exposureLimit {
-			break
-		}
 		item := skillPromptMetadata(doc)
 		candidate, _ := skillPromptMetadataWithFieldBudget(item, skillMetadataLongFieldBudgetChars)
 		if !nativeSkillCatalogItemFits(catalog.Metadata, candidate, len(docs), maxChars, maxTokens, estimateMessageTokens) {
@@ -190,23 +195,39 @@ func orderedNativeSkillCatalogDocuments(input []SkillDocument, priority []string
 	return out
 }
 
+// nativeSkillCatalogMessage lists each candidate on one line with only what
+// helps the model choose: its ID, name, description and when to use it
+// (ADR 0043). Runtime fields such as timeouts and callers stay out.
 func nativeSkillCatalogMessage(metadata []SkillPromptMetadata, enabledCount int, omittedCount int) llmadapter.Message {
-	payload, err := json.Marshal(metadata)
-	if err != nil {
-		payload = []byte("[]")
+	var builder strings.Builder
+	builder.WriteString("Candidate skills. Activate one with activate_skills before using it:")
+	for _, item := range metadata {
+		builder.WriteString("\n")
+		builder.WriteString(nativeSkillCatalogLine(item))
 	}
-	note := ""
+	if len(metadata) == 0 {
+		builder.WriteString("\n(none listed)")
+	}
 	if omittedCount > 0 {
-		note = " Some candidates were omitted from this compact directory; use search_skills only when the needed capability is not listed."
+		builder.WriteString("\n" + nativeIntString(omittedCount) + " more of " + nativeIntString(enabledCount) + " skills are not listed; find them with search_skills when none above fits.")
 	}
-	content := "The following skills are candidates for this turn; their full instructions and business tools are not active yet. " +
-		"When a listed skill is needed, call activate_skills before doing the business work. " +
-		"Activate only the smallest relevant set and do not describe activation to the user." + note +
-		" enabled_count=" + nativeIntString(enabledCount) +
-		" exposed_count=" + nativeIntString(len(metadata)) +
-		" omitted_count=" + nativeIntString(omittedCount) +
-		" Candidate skills JSON: " + string(payload)
-	return llmadapter.Message{Role: "system", Content: content}
+	return llmadapter.Message{Role: "system", Content: builder.String()}
+}
+
+func nativeSkillCatalogLine(item SkillPromptMetadata) string {
+	skillID := normalizeSkillID(item.ID)
+	line := "- " + skillID
+	if name := strings.TrimSpace(item.Name); name != "" && !strings.EqualFold(name, skillID) {
+		line += " (" + name + ")"
+	}
+	line += ":"
+	if description := strings.TrimSpace(item.Description); description != "" {
+		line += " " + description
+	}
+	if whenToUse := strings.TrimSpace(item.WhenToUse); whenToUse != "" {
+		line += " Use when: " + whenToUse
+	}
+	return line
 }
 
 func nativeIntString(value int) string {
@@ -507,6 +528,36 @@ func (s *NativeSkillSession) Activate(ctx context.Context, requested []string, s
 		if !nativeSkipContains(increment.SkippedSkills, skillID) {
 			s.recordActivationAttempt(skillID, source, "skipped", "dependency_unavailable", "a required dependency could not be activated")
 		}
+	}
+	return result
+}
+
+// ActivateResident activates the resident skills of the turn without their
+// documents, before any candidate, so their tools come first in the tool list
+// in the same order every turn (ADR 0043).
+func (s *NativeSkillSession) ActivateResident(ctx context.Context, source string) NativeSkillActivationResult {
+	result := NativeSkillActivationResult{}
+	if s == nil || s.runtime == nil || s.resolved == nil {
+		return result
+	}
+	selected := removeActiveNativeIDs(ResidentSkillIDs(s.resolved), s.activeSet)
+	if len(selected) == 0 {
+		return result
+	}
+	options := s.options
+	options.SelectedSkillIDs = append([]string(nil), selected...)
+	options.PrioritySkillIDs = append([]string(nil), selected...)
+	options.AlreadyActiveSkillIDs = s.ActiveSkillIDs()
+	options.ReservedToolNames = nativeToolSetNames(s.active)
+	increment := s.runtime.BuildNativeToolSet(ctx, s.resolved, options)
+	result.ActivatedSkillIDs = append([]string(nil), increment.ActiveSkillIDs...)
+	result.ProviderTools = append([]llmadapter.Tool(nil), increment.ProviderTools...)
+	result.SkippedSkills = append(result.SkippedSkills, increment.SkippedSkills...)
+	// Resident tools are part of every turn, so only a skipped resident skill
+	// is worth a trace.
+	s.mergeToolSet(increment)
+	for _, skip := range increment.SkippedSkills {
+		s.recordActivationAttempt(skip.SkillID, source, "skipped", skip.Reason, skip.Detail)
 	}
 	return result
 }

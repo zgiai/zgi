@@ -34,14 +34,14 @@ func TestNativeSkillCatalogThatFitsIsTheSameForEveryQuestion(t *testing.T) {
 func TestNativeSkillCatalogThatOmitsCandidatesFollowsThePriority(t *testing.T) {
 	resolved := catalogTestSkills("writer", "ops", "calendar")
 	// Room for about one candidate: the priority decides which one is shown.
-	full := BuildNativeSkillCatalog(resolved, nil, DefaultNativeSkillCatalogBudgetChars, 0, nil)
-	budget := len([]rune(stringFromNativeMessage(full.Message.Content))) - 150
+	oneCandidate := nativeSkillCatalogMessage([]SkillPromptMetadata{skillPromptMetadata(resolved.Skills[0])}, 3, 2)
+	budget := len([]rune(stringFromNativeMessage(oneCandidate.Content))) + 5
 	catalog := BuildNativeSkillCatalog(resolved, []string{"writer"}, budget, 0, nil)
 	if catalog.Stable || catalog.OmittedCount == 0 {
 		t.Fatalf("catalog = stable %v, omitted %d; want an unstable catalog that omits candidates", catalog.Stable, catalog.OmittedCount)
 	}
 	if len(catalog.ExposedSkillIDs) == 0 || catalog.ExposedSkillIDs[0] != "writer" ||
-		!strings.Contains(stringFromNativeMessage(catalog.Message.Content), "omitted") {
+		!strings.Contains(stringFromNativeMessage(catalog.Message.Content), "search_skills") {
 		t.Fatalf("exposed = %#v, want the priority candidate first", catalog.ExposedSkillIDs)
 	}
 }

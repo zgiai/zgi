@@ -192,11 +192,14 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared                       *PreparedChat
-	Resolved                       *skills.ResolvedSkills
-	ProtocolToolsOnly              bool
-	LegacyToolChat                 bool
-	NativeAgentLoop                bool
+	Prepared          *PreparedChat
+	Resolved          *skills.ResolvedSkills
+	ProtocolToolsOnly bool
+	LegacyToolChat    bool
+	NativeAgentLoop   bool
+	// OmitPlanningTools leaves update_plan and submit_turn_state out of a
+	// native run that has no business action to plan (ADR 0043).
+	OmitPlanningTools              bool
 	NativeToolSet                  *skills.NativeToolSet
 	NativeSkillSession             *skills.NativeSkillSession
 	RuntimeTools                   []RuntimeTool

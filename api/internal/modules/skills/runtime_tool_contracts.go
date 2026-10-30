@@ -21,12 +21,12 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillCalculator + "/evaluate_expression": {
 			SkillID:     SkillCalculator,
 			ToolName:    "evaluate_expression",
-			Description: "Evaluate one deterministic arithmetic expression.",
+			Description: "Evaluate an arithmetic expression exactly. Use it whenever the user expects an exact number instead of calculating mentally, and fold a whole calculation, including discounts, taxes and fixed reductions, into one expression. Write percentages as decimals (0.85 for 85 percent). In the answer, show the calculation briefly and mention rounding when precision changes the result.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"expression": map[string]interface{}{
 						"type":        "string",
-						"description": "Arithmetic expression to evaluate, such as 23*17+9. Only numbers, parentheses, +, -, *, /, %, and ^ are allowed.",
+						"description": "Pure numeric expression with ASCII operators, such as (9.5*10+4.8*15-30)*0.85. Only numbers, parentheses, +, -, *, /, %, and ^ are allowed: remove units, labels, thousands separators, and symbols such as × or ÷.",
 					},
 					"precision": precisionSchema(),
 				},
@@ -37,7 +37,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillCalculator + "/calculate": {
 			SkillID:     SkillCalculator,
 			ToolName:    "calculate",
-			Description: "Perform deterministic binary arithmetic between two numbers.",
+			Description: "Apply one arithmetic operation to two numbers exactly. Prefer evaluate_expression unless a single operation is clearer.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"operation": enumStringSchema("Arithmetic operation.", []string{"add", "subtract", "multiply", "divide", "power", "mod"}),
@@ -52,7 +52,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillCalculator + "/percentage": {
 			SkillID:     SkillCalculator,
 			ToolName:    "percentage",
-			Description: "Calculate percent-of, percentage change, or apply a percentage increase/decrease.",
+			Description: "Calculate percent-of, percentage change, or apply a percentage increase or decrease, when the user asks for exactly that and one expression would be less clear.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"operation": enumStringSchema("Percentage operation. percent_of/apply_* require value and percent; change requires from and to.", []string{"percent_of", "change", "apply_increase", "apply_decrease"}),
@@ -539,7 +539,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
-			Description: "Get the current system time with optional timezone and format.",
+			Description: "Get the current time to the second, or in another timezone. When the conversation already gives the current time, call this only for seconds or another timezone.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"format":   stringValueSchema("Optional strftime-style output format. Defaults to %Y-%m-%d %H:%M:%S %Z (UTC%z)."),
@@ -552,7 +552,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillTime + "/date_calculate": {
 			SkillID:     SkillTime,
 			ToolName:    "date_calculate",
-			Description: "Add or subtract date intervals, or calculate the day interval between two dates.",
+			Description: "Add or subtract days, weeks, months or years from a date, or count the days between two dates. Use it for deadlines and durations instead of counting by hand.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"operation":   enumStringSchema("Operation to perform. diff requires target_date.", []string{"add", "subtract", "diff"}),

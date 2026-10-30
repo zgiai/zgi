@@ -43,6 +43,15 @@ func TestListAgentSkillCandidatesFiltersByAgentCallerAndSelection(t *testing.T) 
 		accountService: &stubWebAppStatusAccountService{isEditor: true},
 		chatRuntimeService: &stubAgentBindingChatRuntimeService{skills: []skills.SkillDiscoveryMetadata{
 			{
+				ID:               skills.SkillCalculator,
+				Name:             "Calculator",
+				Enabled:          true,
+				Status:           skills.SkillStatusActive,
+				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
+			},
+			// Every Agent has the time tools, so an Agent that does not list
+			// the time Skill is not offered it (ADR 0043).
+			{
 				ID:               skills.SkillTime,
 				Name:             "Time",
 				Enabled:          true,
@@ -110,8 +119,8 @@ func TestListAgentSkillCandidatesFiltersByAgentCallerAndSelection(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListAgentSkillCandidates(include_selected=false) error = %v", err)
 	}
-	if len(resp.Data) != 1 || resp.Data[0].SkillID != skills.SkillTime {
-		t.Fatalf("Data = %#v, want only the unselected time skill", resp.Data)
+	if len(resp.Data) != 1 || resp.Data[0].SkillID != skills.SkillCalculator {
+		t.Fatalf("Data = %#v, want only the unselected calculator skill", resp.Data)
 	}
 
 	resp, err = service.ListAgentSkillCandidates(context.Background(), agentID.String(), accountID, dto.AgentSkillCandidatesRequest{
@@ -121,7 +130,7 @@ func TestListAgentSkillCandidatesFiltersByAgentCallerAndSelection(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListAgentSkillCandidates(include_selected=true) error = %v", err)
 	}
-	if len(resp.Data) != 2 || resp.Data[0].SkillID != "chart-generator" || resp.Data[1].SkillID != skills.SkillTime {
+	if len(resp.Data) != 2 || resp.Data[0].SkillID != "chart-generator" || resp.Data[1].SkillID != skills.SkillCalculator {
 		t.Fatalf("Data = %#v, want saved selection first and remaining candidates after it", resp.Data)
 	}
 }

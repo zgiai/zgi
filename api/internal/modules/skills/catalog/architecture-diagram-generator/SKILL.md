@@ -59,7 +59,7 @@ Use this skill to generate downloadable SVG and HTML technical diagram artifacts
 5. Convert the user's natural-language description into the JSON payload documented in the selected reference.
 6. Add semantic `groups` and each node's `group` when components belong to modules such as frontend, backend, data, tools, memory, model, output, external systems, infrastructure, or business domains. Use `layer` only for layout order.
 7. Validate that all required nodes, relationships, participants, states, entities, rows, columns, or cells are present and internally consistent.
-8. Call `call_skill_tool` with `tool_name` set to `generate_architecture_diagram`.
+8. Call `generate_architecture_diagram`.
 9. In the final answer, briefly mention the generated SVG and HTML filenames and any assumptions. Do not paste SVG or HTML source unless the user explicitly asks for it.
 
 ## Clarification Workflow

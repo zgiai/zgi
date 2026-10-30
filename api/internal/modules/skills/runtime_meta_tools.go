@@ -54,16 +54,22 @@ func NativeControlToolsForSkills(resolved *ResolvedSkills, activeSkillIDs []stri
 // NativeControlToolsForSession returns state, reference, and progressive
 // discovery controls for one native skill session.
 func NativeControlToolsForSession(resolved *ResolvedSkills, activeSkillIDs []string, exposedCandidateSkillIDs []string, searchAvailable bool) []llmadapter.Tool {
+	return NativeControlToolsForRun(resolved, activeSkillIDs, exposedCandidateSkillIDs, searchAvailable, true)
+}
+
+// NativeControlToolsForRun is NativeControlToolsForSession for a run that may
+// have no business action to plan. Without one, update_plan and
+// submit_turn_state are left out (ADR 0043).
+func NativeControlToolsForRun(resolved *ResolvedSkills, activeSkillIDs []string, exposedCandidateSkillIDs []string, searchAvailable bool, planning bool) []llmadapter.Tool {
 	active := make(map[string]struct{}, len(activeSkillIDs))
 	for _, skillID := range activeSkillIDs {
 		if normalized := normalizeSkillID(skillID); normalized != "" {
 			active[normalized] = struct{}{}
 		}
 	}
-	result := []llmadapter.Tool{
-		requestUserInputMetaTool(),
-		turnStateMetaTool(),
-		updatePlanMetaTool(),
+	result := []llmadapter.Tool{requestUserInputMetaTool()}
+	if planning {
+		result = append(result, turnStateMetaTool(), updatePlanMetaTool())
 	}
 	if len(exposedCandidateSkillIDs) > 0 {
 		result = append(result, activateSkillsMetaTool(exposedCandidateSkillIDs))
@@ -190,7 +196,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the user-visible outcome contract when its structure changes, or patch existing phases after the goal or route changes. Joint outcomes and plan preserve both contracts: bind each phase with outcome_id, or supply equally sized ordered arrays to pair them by position. Use phase_updates for server-owned phases before a projected external Action; the server preserves hidden attestations and maintains projected bindings automatically. Ordinary tool success is reconciled automatically and must not trigger this tool.",
+			Description: "Change the plan for this turn when the user's goal or the required outcomes change. Give the outcomes, the plan phases (bind each to an outcome with outcome_id, or pair equally sized lists by position), or phase_updates to patch existing phases by ID. The runtime records ordinary tool results and keeps binding data itself; do not call this after a successful tool call.",
 			Parameters:  parameters,
 		},
 	}
@@ -320,7 +326,7 @@ func turnStateMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolTurnState,
-			Description: "Record concise structured state for this same AIChat turn. Use this as a state handoff before approvals, page navigation, refresh, or another phase when implicit working memory may become unreliable. Tool-produced files and resource results are recorded automatically; reference their IDs, digest, and concise summary instead of copying full documents or configuration payloads. Use working_fact for model-only derived facts that later steps must reuse exactly. Use user_deliverable only when content should also be visible to the user; submit_intermediate_answer remains a compatibility shortcut for that case.",
+			Description: "Keep short structured state for this turn so it survives an approval, a question to the user, page navigation, or another pause. Files and tool results are recorded automatically: refer to their IDs and a short summary instead of copying them. Use working_fact for derived facts later steps must reuse exactly, and user_deliverable only for content the user should also see.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

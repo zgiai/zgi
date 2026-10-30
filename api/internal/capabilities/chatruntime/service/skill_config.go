@@ -202,6 +202,31 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 	return effectiveBoundSkillIDs(input, catalog, organizationEnabled, runConfig, runtimemodel.ConversationCallerAgent)
 }
 
+// withInherentTimeSkill gives a run that uses tools the time skill, whose
+// tools are inherent rather than selected (ADR 0043). Agents and DigitalHumans
+// always use tools; an AI chat uses them when it has another skill or memory,
+// so a run that would be a direct chat stays one. An organization that
+// disabled the skill keeps it off.
+func withInherentTimeSkill(enabled []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, callerType string, parts *chatRequestParts) []string {
+	id := skills.SkillTime
+	for _, existing := range enabled {
+		if strings.EqualFold(strings.TrimSpace(existing), id) {
+			return enabled
+		}
+	}
+	if !isAutonomousSubjectCaller(callerType) && len(enabled) == 0 && (parts == nil || !parts.AgentMemoryToolsEnabled) {
+		return enabled
+	}
+	if _, ok := stringSet(organizationEnabled)[id]; !ok {
+		return enabled
+	}
+	item, ok := catalogSkillByID(catalog)[id]
+	if !ok || !skillSupportsCaller(item, callerType) {
+		return enabled
+	}
+	return append(append([]string(nil), enabled...), id)
+}
+
 func effectiveBoundSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, runConfig *RunConfig, callerType string) []string {
 	catalogByID := catalogSkillByID(catalog)
 	orgEnabled := stringSet(organizationEnabled)

@@ -225,8 +225,12 @@ type RunConfig struct {
 	// conversation; empty for every other origin (ADR 0028).
 	ConnectorRequesterID string
 	// UserTimezone is the IANA timezone of the person the run serves; the
-	// time Skill defaults to it. Empty keeps the Skill's UTC default.
+	// time Skill and the current time in the turn context use it. Empty uses
+	// the account's timezone, or Asia/Shanghai.
 	UserTimezone string
+	// CurrentTimeProvided reports that TurnContext already tells the time, so
+	// the runtime adds none of its own (ADR 0043).
+	CurrentTimeProvided bool
 	// TurnContext is server-owned guidance that changes from run to run, such
 	// as the current time, memory, or channel context. It is sent after the
 	// conversation history rather than in SystemPrompt, so the prompt prefix
@@ -754,7 +758,17 @@ type chatRequestParts struct {
 	Surface        string
 	RuntimeContext string
 	// TurnContext is the server-owned per-run guidance of RunConfig.TurnContext.
-	TurnContext                      string
+	TurnContext string
+	// CurrentTimeContext is the current time the runtime adds to the turn
+	// context when the caller provides none (ADR 0043).
+	CurrentTimeContext  string
+	CurrentTimeProvided bool
+	// TurnStartedAt is when the turn's message was created; a continuation
+	// soon after keeps that time in its turn context.
+	TurnStartedAt time.Time
+	// UserTimezone is the timezone of the person the run serves, from the run
+	// configuration or their account.
+	UserTimezone                     string
 	RawOperationContext              map[string]interface{}
 	OperationContext                 map[string]interface{}
 	OperationLedger                  map[string]interface{}

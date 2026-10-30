@@ -92,7 +92,7 @@ func TestRunnerNativeAgentLoopCallsBusinessToolDirectly(t *testing.T) {
 		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
 	}
 	first := fakeLLM.appChatRequests[0]
-	if !runnerTestMessagesContain(first.Messages, "before the first business stage include one brief user-visible process note") {
+	if !runnerTestMessagesContain(first.Messages, "write one or two short sentences before the first business call") {
 		t.Fatalf("first request messages = %#v, want native semantic process-note policy", first.Messages)
 	}
 	for _, excluded := range []string{
@@ -263,10 +263,10 @@ func TestRunnerNativeAgentLoopActivatesSkillBeforeDirectBusinessCall(t *testing.
 		t.Fatalf("register calculator: %v", err)
 	}
 	runtime := skills.NewRuntime(tools.NewToolEngine(manager), manager)
-	resolved := nativeCalculatorResolvedSkills()
+	resolved := nativeActivatableMathResolvedSkills()
 	catalog := skills.BuildNativeSkillCatalog(resolved, nil, skills.DefaultNativeSkillCatalogBudgetChars, 0, nil)
 	session := skills.NewNativeSkillSession(runtime, resolved, catalog, skills.NativeToolSetOptions{BudgetChars: 10000})
-	activateArguments, _ := json.Marshal(map[string]interface{}{"skill_ids": []string{skills.SkillCalculator}})
+	activateArguments, _ := json.Marshal(map[string]interface{}{"skill_ids": []string{nativeActivatableMathSkillID}})
 	calculateArguments, _ := json.Marshal(map[string]interface{}{"operation": "multiply", "left": 6, "right": 7})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
 		{Choices: []adapter.Choice{{
@@ -848,6 +848,16 @@ func TestRunnerNativeAgentLoopDoesNotFallbackAfterEmptyStream(t *testing.T) {
 	}
 }
 
+// nativeActivatableMathResolvedSkills is the calculator under an ID that is
+// not resident, for tests of activation (ADR 0043).
+func nativeActivatableMathResolvedSkills() *skills.ResolvedSkills {
+	resolved := nativeCalculatorResolvedSkills()
+	resolved.Skills[0].Metadata.ID = nativeActivatableMathSkillID
+	return resolved
+}
+
+const nativeActivatableMathSkillID = "exact-math"
+
 func nativeCalculatorResolvedSkills() *skills.ResolvedSkills {
 	return &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{
@@ -997,7 +1007,7 @@ func TestNativeAgentToolsForRunIncludesRuntimeToolWithoutSkills(t *testing.T) {
 			return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"status": "success"}}
 		},
 	}
-	tools := nativeAgentToolsForRun(&skills.ResolvedSkills{}, nil, nil, []RuntimeTool{runtimeTool})
+	tools := nativeAgentToolsForRun(&skills.ResolvedSkills{}, nil, nil, []RuntimeTool{runtimeTool}, false)
 	if !runnerTestHasTool(tools, "mutate_agent_memory") {
 		t.Fatalf("tools = %#v, want runtime memory tool", tools)
 	}

@@ -188,7 +188,7 @@ func (s *service) runPreparedToolLoop(
 			nativeToolSet = &projected
 			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
 		} else if protocol == skills.NativeSkillProtocolProgressiveV1 {
-			initialSkillIDs := nativeInitialActiveSkillIDs(prepared, resolved)
+			initialSkillIDs := nativeSkillIDsWithout(nativeInitialActiveSkillIDs(prepared, resolved), skills.ResidentSkillIDs(resolved))
 			for _, projection := range directTools {
 				initialSkillIDs = appendUniqueNativeSkillID(initialSkillIDs, projection.Binding.SkillID)
 			}
@@ -211,6 +211,7 @@ func (s *service) runPreparedToolLoop(
 				toolSetOptions.BudgetChars = max(1, toolSetOptions.BudgetChars-len([]rune(content)))
 			}
 			nativeSkillSession = skills.NewNativeSkillSession(s.skillRuntime, projectionResolved, catalog, toolSetOptions)
+			nativeSkillSession.ActivateResident(ctx, "runtime_resident")
 			nativeSkillSession.Activate(ctx, initialSkillIDs, "runtime_preload")
 			projectNativeDirectToolsToSession(nativeSkillSession, directTools, reservedNativeToolNames, estimateNativeTokens)
 			projected := nativeSkillSession.ToolSet()
@@ -259,6 +260,7 @@ func (s *service) runPreparedToolLoop(
 		ProtocolToolsOnly:              len(resolved.Skills) == 0 && len(runtimeTools) == 0,
 		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
 		NativeAgentLoop:                nativeLoop,
+		OmitPlanningTools:              nativeLoop && !skills.HasNonResidentSkill(resolved),
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
 		RuntimeTools:                   runtimeTools,
@@ -805,6 +807,10 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 		allowed, err := organizationAuthorizer(ctx, skillID)
 		if err != nil || !allowed {
 			return allowed, err
+		}
+		// The time Skill is inherent to every tool run, not a binding (ADR 0043).
+		if strings.EqualFold(strings.TrimSpace(skillID), skills.SkillTime) {
+			return true, nil
 		}
 		// Runtime-managed hidden Skills are derived from their concrete resource
 		// bindings and are checked again by Tool Governance before invocation.
@@ -2025,7 +2031,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		MessageID:          prepared.Message.ID.String(),
 		InvokeFrom:         invokeFrom,
 		RuntimeParameters:  runtimeParameters,
-		Timezone:           strings.TrimSpace(prepared.RunConfig.UserTimezone),
+		Timezone:           preparedUserTimezone(prepared),
 	}
 	if s == nil {
 		return executionContext

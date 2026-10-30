@@ -42,6 +42,7 @@ func (s *RuntimeService) applyRunCapabilities(ctx context.Context, config *chatr
 	config.ConnectorRunID = run.ID.String()
 	location := s.runLocation(ctx, run)
 	config.UserTimezone = location.String()
+	config.CurrentTimeProvided = true
 	addTurnContext(config, currentTimeGuidance(s.runTurnTime(run), location))
 	applyRunEndUserBilling(config, run)
 	if repository, ok := s.store.(*GormRepository); ok {

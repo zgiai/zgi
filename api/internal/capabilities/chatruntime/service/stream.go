@@ -531,6 +531,9 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
 	}
+	if prepared.Message != nil {
+		prepared.parts.TurnStartedAt = prepared.Message.CreatedAt
+	}
 	contextResult, err := s.buildUpstreamMessages(ctx, prepared.Scope, prepared.ParentID, prepared.parts, prepared.Conversation.ID)
 	if err != nil {
 		return err

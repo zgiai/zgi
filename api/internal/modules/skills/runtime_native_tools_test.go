@@ -42,8 +42,9 @@ func TestBuildNativeToolSetUsesContractAndActivatesPromptOnlySkill(t *testing.T)
 	if binding.SkillID != SkillCalculator || binding.ToolName != "calculate" {
 		t.Fatalf("binding = %#v, want calculator/calculate", binding)
 	}
-	if len(toolSet.InstructionMessages) != 2 {
-		t.Fatalf("instruction messages = %d, want 2", len(toolSet.InstructionMessages))
+	// The calculator is resident and sends no instructions (ADR 0043).
+	if len(toolSet.InstructionMessages) != 1 || !strings.Contains(stringFromNativeMessage(toolSet.InstructionMessages[0].Content), "prompt-only") {
+		t.Fatalf("instruction messages = %#v, want only prompt-only's", toolSet.InstructionMessages)
 	}
 }
 

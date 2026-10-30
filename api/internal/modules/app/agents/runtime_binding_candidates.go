@@ -102,6 +102,11 @@ func (s *agentsService) ListAgentSkillCandidates(ctx context.Context, agentID, a
 			continue
 		}
 		_, isSelected := selected[strings.ToLower(strings.TrimSpace(item.SkillID))]
+		// Every Agent has the time tools, so the time Skill is offered only to
+		// an Agent that already lists it, which can remove it (ADR 0043).
+		if !isSelected && strings.EqualFold(item.SkillID, skills.SkillTime) {
+			continue
+		}
 		if isSelected && !req.IncludeSelected {
 			continue
 		}

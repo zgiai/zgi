@@ -34,6 +34,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 SKILLS = ["calculator", "time", "file-generator"]
 
+# Skills whose tools are offered without activation (ADR 0043).
+RESIDENT_SKILLS = {"calculator", "time"}
+
 SYSTEM_PROMPT = "You are a helpful assistant for a small business. Answer accurately and concisely."
 
 # Names of runtime control functions and business tools that must never reach
@@ -266,7 +269,9 @@ def expectation_checks(expect, turn, conversation):
     if expect.get("asked_user"):
         checks.append(("asked the user for missing details", asked_user(turn)))
     if expect.get("skills_none"):
-        used = conversation["activated_skills"] + conversation["tool_names"]
+        # Resident skills are active in every turn (ADR 0043); only calling one
+        # of their tools counts as using them.
+        used = [s for s in conversation["activated_skills"] if s not in RESIDENT_SKILLS] + conversation["tool_names"]
         checks.append(("used no skill" + (" (" + ", ".join(used) + ")" if used else ""), not used))
     if expect.get("skills_any"):
         checks.append(("activated any of " + "/".join(expect["skills_any"]), any(s in conversation["activated_skills"] for s in expect["skills_any"])))
