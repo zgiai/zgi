@@ -13,7 +13,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool, omitPlanning bool) []adapter.Tool {
+func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool, omitPlanning bool, unified ...bool) []adapter.Tool {
+	if len(unified) > 0 && unified[0] {
+		return unifiedAgentToolsForRun(resolved, toolSet, session, runtimeTools, omitPlanning)
+	}
 	runtimeDefinitions := make([]adapter.Tool, 0, len(runtimeTools))
 	for _, runtimeTool := range runtimeTools {
 		if strings.TrimSpace(runtimeTool.Definition.Function.Name) != "" && runtimeTool.Handler != nil {
@@ -39,6 +42,120 @@ func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.Nat
 	tools = append(tools, runtimeDefinitions...)
 	tools = append(tools, skills.NativeControlToolsForRun(resolved, toolSet.ActiveSkillIDs, nil, false, !omitPlanning)...)
 	return tools
+}
+
+// unifiedAgentToolsForRun is the tool list of a run in unified mode (ADR
+// 0044): resident tools, connector operations, runtime tools and protocol
+// tools stay native, and the tools of activatable skills are reached through
+// the unified tool. Activation changes none of it.
+func unifiedAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool, omitPlanning bool) []adapter.Tool {
+	current := skills.NativeToolSet{}
+	if session != nil {
+		current = session.ToolSet()
+	} else if toolSet != nil {
+		current = *toolSet
+	}
+	tools := make([]adapter.Tool, 0, len(current.ProviderTools)+len(runtimeTools)+6)
+	for _, tool := range current.ProviderTools {
+		if binding, ok := current.ToolBindings[tool.Function.Name]; !ok || skills.UnifiedDispatchExposesTool(binding) {
+			tools = append(tools, tool)
+		}
+	}
+	if skills.HasNonResidentSkill(resolved) {
+		tools = append(tools, skills.UnifiedSkillTool())
+	}
+	for _, runtimeTool := range runtimeTools {
+		if strings.TrimSpace(runtimeTool.Definition.Function.Name) != "" && runtimeTool.Handler != nil {
+			tools = append(tools, runtimeTool.Definition)
+		}
+	}
+	// References are offered for every skill from the start, so activation
+	// does not add read_skill_reference later in the turn.
+	offered, search := []string(nil), false
+	if session != nil {
+		offered, search = session.OfferedSkillIDs(), session.SearchAvailable()
+	}
+	var everySkill []string
+	if resolved != nil {
+		everySkill = resolved.SkillIDs()
+	}
+	return append(tools, skills.NativeControlToolsForRun(resolved, everySkill, offered, search, !omitPlanning)...)
+}
+
+// translateUnifiedSkillCalls turns each unified call into the native call it
+// names, keeping its ID, so the rest of the loop handles it as a direct call:
+// governance, prefetching and traces are unchanged (ADR 0044). A call that
+// names no tool stays unified and is answered with a recoverable error.
+func translateUnifiedSkillCalls(calls []adapter.ToolCall, toolSet *skills.NativeToolSet, resolved *skills.ResolvedSkills) []adapter.ToolCall {
+	out := make([]adapter.ToolCall, len(calls))
+	for index, call := range calls {
+		out[index] = call
+		if strings.TrimSpace(call.Function.Name) != skills.UnifiedSkillToolName {
+			continue
+		}
+		var args struct {
+			Command string                 `json:"command"`
+			Input   map[string]interface{} `json:"input"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			continue
+		}
+		fields := strings.Fields(strings.ReplaceAll(args.Command, "/", " "))
+		if len(fields) != 2 {
+			continue
+		}
+		skillID, toolName := strings.ToLower(fields[0]), fields[1]
+		name := unifiedProviderToolName(toolSet, resolved, skillID, toolName)
+		if name == "" {
+			continue
+		}
+		if args.Input == nil {
+			args.Input = map[string]interface{}{}
+		}
+		encoded, err := json.Marshal(args.Input)
+		if err != nil {
+			continue
+		}
+		out[index].Function.Name = name
+		out[index].Function.Arguments = string(encoded)
+	}
+	return out
+}
+
+// unifiedProviderToolName is the function name of a skill tool: its projected
+// name when the skill is active, or the tool name of a candidate skill, which
+// a direct call activates.
+func unifiedProviderToolName(toolSet *skills.NativeToolSet, resolved *skills.ResolvedSkills, skillID string, toolName string) string {
+	if toolSet != nil {
+		for name, binding := range toolSet.ToolBindings {
+			if strings.EqualFold(binding.SkillID, skillID) && binding.ToolName == toolName {
+				return name
+			}
+		}
+	}
+	if resolved == nil {
+		return ""
+	}
+	doc, ok := resolved.Get(skillID)
+	if !ok {
+		return ""
+	}
+	for _, definition := range doc.Tools {
+		if strings.TrimSpace(definition.Name) == toolName {
+			return toolName
+		}
+	}
+	return ""
+}
+
+func unifiedSkillCallErrorStep(callID string) skillStepResult {
+	err := fmt.Errorf("%w: zgi command must name an available skill and tool, such as \"file-generator generate_file\"", ErrInvalidInput)
+	trace := plannerFeedbackTrace("", skills.UnifiedSkillToolName, err)
+	trace.Arguments["reason_code"] = "unified_command_unknown"
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(
+		err,
+		"Activate the candidate skill to see its tools, then call zgi with command \"<skill_id> <tool_name>\" and input matching the tool's schema.",
+	)), false, false)
 }
 
 func runtimeToolForCall(runtimeTools []RuntimeTool, call adapter.ToolCall) (RuntimeTool, bool) {

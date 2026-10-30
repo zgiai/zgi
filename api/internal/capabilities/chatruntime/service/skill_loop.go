@@ -146,6 +146,9 @@ func (s *service) runPreparedToolLoop(
 	// the Agent's configuration, so the native loop keeps them in the system
 	// prompt, where providers cache them.
 	systemPromptAdditions := []adapter.Message{}
+	if isNativeExecutionMode(prepared.parts.ExecutionMode) && unifiedSkillDispatchEnabled() && skills.HasNonResidentSkill(resolved) {
+		systemPromptAdditions = append(systemPromptAdditions, unifiedSkillDispatchSystemMessage())
+	}
 	if len(runtimeTools) > 0 {
 		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
 		if hasAgentMemoryRuntimeTool(runtimeTools) {
@@ -180,6 +183,7 @@ func (s *service) runPreparedToolLoop(
 			AuthorizeSkill:    authorizeSkillStep,
 			EstimateTokens:    estimateNativeTokens,
 			ReservedToolNames: reservedNativeToolNames,
+			UnifiedDispatch:   unifiedSkillDispatchEnabled(),
 		}
 		protocol := nativeSkillProtocolForPrepared(prepared)
 		prepared.Message.Metadata["native_skill_protocol"] = protocol
@@ -261,6 +265,7 @@ func (s *service) runPreparedToolLoop(
 		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
 		NativeAgentLoop:                nativeLoop,
 		OmitPlanningTools:              nativeLoop && !skills.HasNonResidentSkill(resolved),
+		UnifiedSkillDispatch:           nativeLoop && unifiedSkillDispatchEnabled(),
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
 		OnTurnUserContent:              func(content interface{}) { prepared.turnUserContent = content },

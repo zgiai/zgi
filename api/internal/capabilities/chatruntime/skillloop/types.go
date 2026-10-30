@@ -203,7 +203,10 @@ type RunRequest struct {
 	OnTurnUserContent func(content interface{})
 	// OmitPlanningTools leaves update_plan and submit_turn_state out of a
 	// native run that has no business action to plan (ADR 0043).
-	OmitPlanningTools              bool
+	OmitPlanningTools bool
+	// UnifiedSkillDispatch offers the tools of activatable skills through the
+	// unified tool instead of as native functions (ADR 0044).
+	UnifiedSkillDispatch           bool
 	NativeToolSet                  *skills.NativeToolSet
 	NativeSkillSession             *skills.NativeSkillSession
 	RuntimeTools                   []RuntimeTool

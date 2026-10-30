@@ -98,6 +98,9 @@ type NativeToolSetOptions struct {
 	ReservedToolNames     []string
 	AuthorizeSkill        func(context.Context, string) (bool, error)
 	EstimateTokens        func([]llmadapter.Message, []llmadapter.Tool) int
+	// UnifiedDispatch lists an activated skill's tools in its instructions,
+	// for a run that calls them through the unified tool (ADR 0044).
+	UnifiedDispatch bool
 }
 
 type nativeSkillCandidate struct {
@@ -175,6 +178,9 @@ func (r *Runtime) BuildNativeToolSet(ctx context.Context, resolved *ResolvedSkil
 		if skip != nil {
 			result.SkippedSkills = append(result.SkippedSkills, *skip)
 			continue
+		}
+		if options.UnifiedDispatch {
+			candidate = withUnifiedToolUsage(skillID, candidate, options.EstimateTokens)
 		}
 		requiredChars := candidate.instructionChars + candidate.schemaChars
 		if options.BudgetTokens > 0 && options.EstimateTokens != nil && usedTokens+candidate.totalTokens > options.BudgetTokens {

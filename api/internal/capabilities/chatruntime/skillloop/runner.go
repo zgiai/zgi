@@ -763,7 +763,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Messages = messages
 		planningReq.Stream = false
 		if req.NativeAgentLoop {
-			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools, req.OmitPlanningTools)
+			planningReq.Tools = nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools, req.OmitPlanningTools, req.UnifiedSkillDispatch)
 			// Oversized tool results reach the model projected, with the rest
 			// readable through this tool (ADR 0037). It is always offered, so
 			// the tool list does not change when a projection first appears.
@@ -844,6 +844,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		planningMessage := planningResult.message
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
+		// The conversation keeps the model's own calls; the loop handles each
+		// unified call as the native call it names (ADR 0044).
+		modelToolCalls := toolCalls
+		if req.UnifiedSkillDispatch {
+			toolCalls = translateUnifiedSkillCalls(toolCalls, nativeToolSet, resolved)
+		}
 		text := assistantMessageText(planningMessage)
 		if req.NativeAgentLoop && len(toolCalls) > 0 && strings.TrimSpace(text) != "" {
 			candidate := planningResult.provisionalContent
@@ -1041,7 +1047,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		)
 
 		planningMessage.Role = "assistant"
-		planningMessage.ToolCalls = toolCalls
+		planningMessage.ToolCalls = modelToolCalls
 		// Reasoning stays on tool-call rounds of this turn: thinking models
 		// such as DeepSeek expect it back until the turn ends, and adapters
 		// drop it for models that do not. Ordinary assistant content is kept
@@ -1119,6 +1125,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if req.NativeAgentLoop && nativeForbiddenProtocolTool(call.Function.Name) {
 				result = nativeForbiddenProtocolToolStep(call.ID, call.Function.Name)
+			}
+			if req.UnifiedSkillDispatch && strings.TrimSpace(call.Function.Name) == skills.UnifiedSkillToolName {
+				result = unifiedSkillCallErrorStep(call.ID)
 			}
 			if result.trace.Kind == "" && runtimeCall {
 				result = handleRuntimeToolCall(ctx, call, runtimeTool)
