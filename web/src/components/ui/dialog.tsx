@@ -22,8 +22,10 @@ const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
+    // No backdrop blur: a full-screen backdrop-filter under the dialog makes
+    // Chrome drop the dialog for a frame on some GPUs when hovering inside it.
     className={cn(
-      'fixed inset-0 z-50 bg-neutral-950/20 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+      'fixed inset-0 z-50 bg-neutral-950/30 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
       className
     )}
     {...props}
