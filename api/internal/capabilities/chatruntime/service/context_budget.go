@@ -72,21 +72,15 @@ func (s *service) buildTokenBudgetMessages(
 	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, parentMessages)
 	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
 	turnBoundaryContext := currentTurnBoundaryMessage(parts)
-	extraContextMessages := make([]adapter.Message, 0, 4)
-	if turnContext := turnContextMessage(parts); turnContext != nil {
-		extraContextMessages = append(extraContextMessages, *turnContext)
+	historyMessages, err := s.conversationHistoryMessages(ctx, parentMessages, parts)
+	if err != nil {
+		return nil, err
 	}
-	if memoryContext := agentMemoryContextMessage(parts); memoryContext != nil {
-		extraContextMessages = append(extraContextMessages, *memoryContext)
-	}
-	if recentExecutionContext != nil {
-		extraContextMessages = append(extraContextMessages, *recentExecutionContext)
-	}
-	if continuationContext != nil {
-		extraContextMessages = append(extraContextMessages, *continuationContext)
-	}
-	if turnBoundaryContext != nil {
-		extraContextMessages = append(extraContextMessages, *turnBoundaryContext)
+	reminders := currentTurnReminders(parts, historyMessages, recentExecutionContext, continuationContext, turnBoundaryContext)
+	parts.TurnReminders = reminders
+	extraContextMessages := make([]adapter.Message, 0, 1)
+	if len(reminders) > 0 {
+		extraContextMessages = append(extraContextMessages, adapter.Message{Role: "user", Content: adapter.PrependSystemReminders(reminders, "")})
 	}
 
 	baseMessages := []adapter.Message{
@@ -109,19 +103,17 @@ func (s *service) buildTokenBudgetMessages(
 	}
 	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, extraContextTokens)
 
-	historyMessages, err := s.conversationHistoryMessages(ctx, parentMessages, parts)
-	if err != nil {
-		return nil, err
-	}
 	historyBefore := len(historyMessages)
 	estimatedPromptTokens += s.tokenEstimator.EstimateMessages(historyMessages, parts.ModelName).Tokens
 
 	systemMessage := adapter.Message{Role: "system", Content: systemPrompt}
-	currentUserMessage := adapter.Message{Role: "user", Content: currentContent}
+	// The turn's context travels in its user message, which the transcript
+	// stores as sent: the next turn replays this request unchanged and reads
+	// it from the provider's cache (ADR 0043).
+	currentUserMessage := adapter.Message{Role: "user", Content: adapter.PrependSystemReminders(reminders, currentContent)}
 	messages := make([]adapter.Message, 0, 2+historyBefore)
 	messages = append(messages, systemMessage)
 	messages = append(messages, historyMessages...)
-	messages = append(messages, extraContextMessages...)
 	messages = append(messages, currentUserMessage)
 
 	metadata := contextControlMetadata(spec, budget, estimatedPromptTokens, historyBefore, historyBefore)
@@ -578,6 +570,59 @@ func turnContextMessage(parts *chatRequestParts) *adapter.Message {
 		return nil
 	}
 	return &adapter.Message{Role: "system", Content: strings.Join(sections, "\n\n")}
+}
+
+// currentTurnReminders is the context of the current turn, in the order it is
+// sent before the user's request: the current time, the caller's turn context,
+// memory, execution notes, continuation state and the turn boundary. Turn
+// context sections and memory that the replayed history already holds verbatim
+// are left out, so a conversation does not repeat unchanged memory every turn
+// (ADR 0043).
+func currentTurnReminders(parts *chatRequestParts, history []adapter.Message, extra ...*adapter.Message) []string {
+	if parts == nil {
+		return nil
+	}
+	reminders := make([]string, 0, 6)
+	if text := strings.TrimSpace(parts.CurrentTimeContext); text != "" {
+		reminders = append(reminders, text)
+	}
+	sections := parts.TurnContextSections
+	if len(sections) == 0 && strings.TrimSpace(parts.TurnContext) != "" {
+		sections = []string{parts.TurnContext}
+	}
+	for _, section := range sections {
+		if text := strings.TrimSpace(section); text != "" && !historyHoldsReminder(history, text) {
+			reminders = append(reminders, text)
+		}
+	}
+	if text := strings.TrimSpace(parts.AgentMemoryContext); text != "" && !historyHoldsReminder(history, text) {
+		reminders = append(reminders, text)
+	}
+	for _, message := range extra {
+		if message == nil {
+			continue
+		}
+		if text := strings.TrimSpace(messageContentText(message.Content)); text != "" {
+			reminders = append(reminders, text)
+		}
+	}
+	return reminders
+}
+
+// historyHoldsReminder reports whether a replayed user message carries the
+// reminder verbatim. A compacted or isolated history does not, so the
+// reminder is sent again.
+func historyHoldsReminder(history []adapter.Message, text string) bool {
+	wrapped := adapter.SystemReminder(text)
+	for _, message := range history {
+		if !strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+			continue
+		}
+		if strings.Contains(messageContentText(message.Content), wrapped) {
+			return true
+		}
+	}
+	return false
 }
 
 func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {

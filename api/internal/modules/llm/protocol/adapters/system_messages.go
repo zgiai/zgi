@@ -129,6 +129,33 @@ func appendPlacedMessage(messages []placedMessage, message placedMessage) []plac
 	return messages
 }
 
+// PrependSystemReminders puts reminders before a user message's content, in
+// the form PlaceSystemMessages gives system messages placed before it. A turn
+// that sends its context this way stores it with the user message, so the next
+// turn replays the request it sent and extends its cached prefix (ADR 0043).
+// Content that is neither text nor text and image parts is returned unchanged.
+func PrependSystemReminders(reminders []string, content interface{}) interface{} {
+	var merged interface{} = ""
+	for _, reminder := range reminders {
+		if reminder = strings.TrimSpace(reminder); reminder == "" {
+			continue
+		}
+		next, ok := mergeUserContent(merged, SystemReminder(reminder))
+		if !ok {
+			return content
+		}
+		merged = next
+	}
+	if text, _ := merged.(string); text == "" {
+		return content
+	}
+	result, ok := mergeUserContent(merged, content)
+	if !ok {
+		return content
+	}
+	return result
+}
+
 // SystemReminder wraps platform guidance that travels in a user turn, so the
 // model can tell it from what the person wrote.
 func SystemReminder(text string) string {

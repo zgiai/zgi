@@ -196,7 +196,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Change the plan for this turn when the user's goal or the required outcomes change. Give the outcomes, the plan phases (bind each to an outcome with outcome_id, or pair equally sized lists by position), or phase_updates to patch existing phases by ID. The runtime records ordinary tool results and keeps binding data itself; do not call this after a successful tool call.",
+			Description: "Change the plan for this turn when the user's goal or the required outcomes change. Give exactly one of outcomes, plan, or phase_updates. The runtime records tool results and keeps binding data itself; do not call this after a successful tool call.",
 			Parameters:  parameters,
 		},
 	}
@@ -207,7 +207,7 @@ func phaseUpdateSchema() map[string]interface{} {
 	item["required"] = []string{"id"}
 	return map[string]interface{}{
 		"type":        "array",
-		"description": "Patch existing phases by exact ID after the goal or route changes. Unmentioned phases and all server-owned binding data remain unchanged; prefer this before a projected external Action expected_action binding.",
+		"description": "Patch existing phases by ID; other phases stay unchanged.",
 		"minItems":    1,
 		"maxItems":    16,
 		"items":       item,
@@ -462,27 +462,27 @@ func finalAnswerMetaToolWithOptions(options MetaToolOptions) llmadapter.Tool {
 func planSnapshotSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type":        "array",
-		"description": "Execution plan snapshot used when the requested outcome structure changes. Before a projected external Action it is the required completeness ledger; preserve required outcome phases and expected_action hints. Projected bindings and hidden attestations are created and maintained by the server.",
+		"description": "The full list of phases. Keep required phases and their expected_action.",
 		"maxItems":    16,
 		"items": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"id":         map[string]interface{}{"type": "string"},
-				"outcome_id": map[string]interface{}{"type": "string", "description": "Outcome served by this phase. In a joint snapshot, every outcome must have a phase. If all IDs are omitted, equally sized outcome and plan arrays pair by position."},
+				"outcome_id": map[string]interface{}{"type": "string", "description": "The outcome this phase serves."},
 				"step":       map[string]interface{}{"type": "string"},
 				"status":     map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
 				"completion_mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"tool", "final_answer", "non_tool"},
-					"description": "Classify a phase that intentionally has no expected_action as final-answer-only or non-tool work. Use tool when expected_action is present.",
+					"description": "tool when expected_action is set; otherwise final_answer or non_tool.",
 				},
-				"evidence_refs": map[string]interface{}{"type": "array", "description": "Completed tool phases require references to successful runtime evidence, such as tool:skill-id/tool_name or the exact invocation_id from the evidence ledger. A note or a claimed status is not execution evidence.", "items": map[string]interface{}{"type": "string"}},
+				"evidence_refs": map[string]interface{}{"type": "array", "description": "Required for a completed tool phase: tool:skill-id/tool_name or the invocation_id of a successful call.", "items": map[string]interface{}{"type": "string"}},
 				"note":          map[string]interface{}{"type": "string"},
 				"expected_action": map[string]interface{}{
 					"type":        "object",
-					"description": "Optional structured action expected to complete this phase. For a projected external Action, provide its exact exposed tool_name and stable target IDs when known; server-owned binding identity and attestations cannot be created or changed by this field.",
+					"description": "The tool call expected to complete this phase.",
 					"properties": map[string]interface{}{
-						"skill_id":  map[string]interface{}{"type": "string", "description": "Optional for a projected external Action; required for ordinary skill tools."},
+						"skill_id":  map[string]interface{}{"type": "string", "description": "Required for skill tools."},
 						"tool_name": map[string]interface{}{"type": "string"},
 						"target": map[string]interface{}{
 							"type":                 "object",
@@ -490,7 +490,7 @@ func planSnapshotSchema() map[string]interface{} {
 						},
 						"target_arguments": map[string]interface{}{
 							"type":                 "object",
-							"description":          "Optional stable Action target values keyed by their exact business-argument path (for example recipient_ref or calendar.id). The server keeps only paths authorized by the projected Action binding.",
+							"description":          "Stable target values keyed by argument path, such as calendar.id.",
 							"additionalProperties": map[string]interface{}{"type": "string"},
 						},
 					},

@@ -236,7 +236,12 @@ type RunConfig struct {
 	// conversation history rather than in SystemPrompt, so the prompt prefix
 	// stays identical across runs and provider prompt caches can reuse it
 	// (ADR 0032).
-	TurnContext               string
+	TurnContext string
+	// TurnContextSections are the parts of TurnContext, each sent as its own
+	// reminder. A section already in the replayed history verbatim, such as
+	// unchanged memory, is not sent again (ADR 0043). Empty means TurnContext
+	// is one section.
+	TurnContextSections       []string
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
 	// AgentMemoryInstructions is the builder's guidance on what to remember.
@@ -758,7 +763,11 @@ type chatRequestParts struct {
 	Surface        string
 	RuntimeContext string
 	// TurnContext is the server-owned per-run guidance of RunConfig.TurnContext.
-	TurnContext string
+	TurnContext         string
+	TurnContextSections []string
+	// TurnReminders are the reminders sent before the current question; the
+	// transcript stores the question with them (ADR 0043).
+	TurnReminders []string
 	// CurrentTimeContext is the current time the runtime adds to the turn
 	// context when the caller provides none (ADR 0043).
 	CurrentTimeContext  string

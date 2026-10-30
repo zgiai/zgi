@@ -84,6 +84,7 @@ func addTurnContext(config *chatruntime.RunConfig, guidance string) {
 	if config == nil || guidance == "" {
 		return
 	}
+	config.TurnContextSections = append(config.TurnContextSections, guidance)
 	if strings.TrimSpace(config.TurnContext) == "" {
 		config.TurnContext = guidance
 		return

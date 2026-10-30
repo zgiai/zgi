@@ -62,6 +62,16 @@ Changing content already comes last, so the prefix is cached (ADR 0032). The con
    - The header drops the claim about older turns and the intermediate-answer rule.
    - Memory tool calls are left out of the operation and tool history; the memory files already show the result.
 
+8. **`update_plan` describes fields, not server bookkeeping.**
+   - Its field descriptions say what each field is for, in a few words. The explanations of projected bindings, attestations and ledgers are gone.
+   - The schema still takes exactly one of outcomes, plan or phase_updates. The tool description no longer suggests combining them.
+9. **A turn's context is stored with its request.**
+   - The current turn's reminders travel inside its user message: the time, turn context, memory, execution notes and turn boundary. The transcript stores that message as sent.
+   - The next turn therefore replays the previous turn's request unchanged, and the provider's cache covers it up to the first message that differs. Before, the previous request ended at its reminders, which the history did not keep.
+   - A turn context section or a memory block the replayed history already holds verbatim is not sent again. Unchanged memory is shown once per conversation, not once per turn. After a compaction, or when memory changes, it is sent again, and a memory block says it replaces any earlier one.
+   - DigitalHuman runs give their turn context as sections, so unchanged connector notes and memory are not repeated either.
+   - Skill instructions added during a turn are still not stored, so the cache of a previous turn reaches only to its first activation.
+
 ## Consequences
 
 - The system prompt and tool list of an ordinary Agent shrink by roughly a third. Runs without business tools no longer see planning tools they cannot use.
