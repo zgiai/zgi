@@ -82,6 +82,8 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 		// OpenAI-compatible endpoints
 		v1.POST("/chat/completions", llmHandler.ChatCompletions)
 		v1.POST("/embeddings", llmHandler.Embeddings)
+		// Cohere-compatible rerank, same body as Console /v1/rerank.
+		v1.POST("/rerank", llmHandler.Rerank)
 		v1.POST("/responses", llmHandler.CreateResponse)
 		v1.POST("/images/generations", llmHandler.CreateImage)
 		v1.POST("/videos/generations", llmHandler.CreateVideo)

@@ -68,6 +68,8 @@ func (s *llmGatewayServiceImpl) ModelCapabilities(
 		result.JSONMode = result.JSONMode || m.SupportsJsonMode
 		result.ToolCall = result.ToolCall || m.SupportsToolCall
 		result.Vision = result.Vision || m.SupportsVision
+		result.Rerank = result.Rerank || m.IsRerank()
+		result.UseCasesDeclared = result.UseCasesDeclared || len(m.UseCases) > 0
 	}
 	return result, nil
 }

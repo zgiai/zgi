@@ -56,6 +56,40 @@ func TestModelCapabilitiesUnionsLiveRows(t *testing.T) {
 	}
 }
 
+func TestModelCapabilitiesReadsRerankFromUseCases(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		useCases         []interface{}
+		rerank, declared bool
+	}{
+		{"rerank declared", []interface{}{"{rerank}", "{text_chat}"}, true, true},
+		{"chat only", []interface{}{"{text_chat}", "{}"}, false, true},
+		{"legacy rows without use cases", []interface{}{"{}", "{}"}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, cleanup := openCapabilityPostgresMockDB(t)
+			defer cleanup()
+
+			rows := sqlmock.NewRows([]string{"id", "name", "use_cases"})
+			for _, useCases := range tc.useCases {
+				rows.AddRow(uuid.NewString(), "qwen3-rerank", useCases)
+			}
+			mock.ExpectQuery(regexp.QuoteMeta(`SELECT * FROM "llm_models"`)).
+				WithArgs("qwen3-rerank", true).
+				WillReturnRows(rows)
+
+			service := &llmGatewayServiceImpl{db: db}
+			caps, err := service.ModelCapabilities(context.Background(), "qwen3-rerank")
+			if err != nil {
+				t.Fatalf("ModelCapabilities() error = %v", err)
+			}
+			if !caps.Known || caps.Rerank != tc.rerank || caps.UseCasesDeclared != tc.declared {
+				t.Fatalf("capabilities = %+v, want Rerank=%v UseCasesDeclared=%v", caps, tc.rerank, tc.declared)
+			}
+		})
+	}
+}
+
 func TestModelCapabilitiesMissingRowIsUnknown(t *testing.T) {
 	db, mock, cleanup := openCapabilityPostgresMockDB(t)
 	defer cleanup()
