@@ -53,11 +53,13 @@ Changing content already comes last, so the prefix is cached (ADR 0032). The con
    - The time skill no longer appears in the Agent skill picker. It stays in the catalog for workflows and for configurations that already list it, which keep working.
    - An organization that disabled the skill does not get the tools.
    - A run that would be a direct chat stays one: it does not become a tool loop for the time tools.
-6. **Every run knows the current time.**
-   - The turn context gives the date, the time to the minute, the weekday and the timezone. It comes after the history (ADR 0032), so it changes no cached prefix.
+6. **Every run knows today's date.**
+   - The turn context gives the date, the weekday and the timezone. It comes after the history (ADR 0032), so it changes no cached prefix.
+   - It gives no time of day (changed 2026-10-30). The date stays the same all day, so a turn whose replayed history already holds it leaves it out, like unchanged memory. The time of day, and any other date's weekday or distance, come from the time tools, and the context says so.
+   - Without the date a model assumes the year of its training data, usually without noticing that it should ask, so the date stays in the context rather than behind a tool.
    - The timezone is the run's user timezone: the account's own setting, or Asia/Shanghai when unknown, as for DigitalHuman runs.
-   - A continuation within 15 minutes of its message's creation keeps that time, so its requests extend the first run's.
-   - DigitalHuman runs keep their own wording, which adds the task-schedule rules.
+   - A continuation within 15 minutes of its message's creation keeps that date.
+   - DigitalHuman runs keep their own wording, with the time to the minute: their tasks and reminders are scheduled relative to now, such as "in five minutes".
 7. **The execution notes describe what they are.**
    - The header drops the claim about older turns and the intermediate-answer rule.
    - Memory tool calls are left out of the operation and tool history; the memory files already show the result.
@@ -84,7 +86,7 @@ Changing content already comes last, so the prefix is cached (ADR 0032). The con
 ## Consequences
 
 - The system prompt and tool list of an ordinary Agent shrink by roughly a third. Runs without business tools no longer see planning tools they cannot use.
-- Calculator and time answers take one model call fewer. Questions about today need no tool call at all.
+- Calculator and time answers take one model call fewer. Questions about today's date need no tool call; the time of day takes one.
 - A builder can no longer remove the time tools from an Agent by leaving the skill unselected. An organization can still disable the skill.
 - Custom skills cannot be resident yet; only built-in skills on the server's list are.
 - Prompts are compared with the runtime and memory evaluation suites before and after: pass rate, input tokens and model calls.

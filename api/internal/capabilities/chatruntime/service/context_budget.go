@@ -573,17 +573,17 @@ func turnContextMessage(parts *chatRequestParts) *adapter.Message {
 }
 
 // currentTurnReminders is the context of the current turn, in the order it is
-// sent before the user's request: the current time, the caller's turn context,
-// memory, execution notes, continuation state and the turn boundary. Turn
-// context sections and memory that the replayed history already holds verbatim
-// are left out, so a conversation does not repeat unchanged memory every turn
+// sent before the user's request: today's date, the caller's turn context,
+// memory, execution notes, continuation state and the turn boundary. The date,
+// turn context sections and memory that the replayed history already holds
+// verbatim are left out, so a conversation does not repeat them every turn
 // (ADR 0043).
 func currentTurnReminders(parts *chatRequestParts, history []adapter.Message, extra ...*adapter.Message) []string {
 	if parts == nil {
 		return nil
 	}
 	reminders := make([]string, 0, 6)
-	if text := strings.TrimSpace(parts.CurrentTimeContext); text != "" {
+	if text := strings.TrimSpace(parts.CurrentTimeContext); text != "" && !historyHoldsReminder(history, text) {
 		reminders = append(reminders, text)
 	}
 	sections := parts.TurnContextSections

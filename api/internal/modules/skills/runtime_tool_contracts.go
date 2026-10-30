@@ -539,7 +539,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
-			Description: "Get the current time to the second, or in another timezone. When the conversation already gives the current time, call this only for seconds or another timezone.",
+			Description: "Get the current time to the second, or in another timezone. When the conversation gives only today's date, call this for the time of day; when it gives the time, call this only for seconds or another timezone.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"format":   stringValueSchema("Optional strftime-style output format. Defaults to %Y-%m-%d %H:%M:%S %Z (UTC%z)."),
@@ -552,7 +552,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillTime + "/date_calculate": {
 			SkillID:     SkillTime,
 			ToolName:    "date_calculate",
-			Description: "Add or subtract days, weeks, months or years from a date, or count the days between two dates. Use it for deadlines and durations instead of counting by hand.",
+			Description: "Add or subtract days, weeks, months or years from a date, or count the days between two dates. The result includes its weekday, so adding zero days gives the weekday of any date. Use it for deadlines, durations and weekdays instead of working them out by hand.",
 			Schema: objectSchema(
 				map[string]interface{}{
 					"operation":   enumStringSchema("Operation to perform. diff requires target_date.", []string{"add", "subtract", "diff"}),

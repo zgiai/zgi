@@ -41,7 +41,7 @@ func TestInherentTimeSkillJoinsRunsThatUseTools(t *testing.T) {
 	}
 }
 
-// Every run is told the time in its turn context; a continuation soon after
+// Every run is told today's date in its turn context; a continuation soon after
 // its turn started keeps that time, and a caller with its own time guidance
 // gets none (ADR 0043).
 func TestCurrentTimeContextGoesInTheTurnContext(t *testing.T) {
@@ -51,25 +51,29 @@ func TestCurrentTimeContextGoesInTheTurnContext(t *testing.T) {
 	s.applyCurrentTimeContext(context.Background(), Scope{}, parts, now)
 	message := turnContextMessage(parts)
 	content, _ := message.Content.(string)
-	if !strings.HasPrefix(content, "Current time: 2026-10-30 02:30, Friday (timezone America/New_York, UTC-04:00).") || !strings.HasSuffix(content, "Channel notes.") {
-		t.Fatalf("turn context = %q, want the local time first and the caller's context after it", content)
+	if !strings.HasPrefix(content, "Today is 2026-10-30, Friday (timezone America/New_York, UTC-04:00).") || !strings.HasSuffix(content, "Channel notes.") {
+		t.Fatalf("turn context = %q, want the local date first and the caller's context after it", content)
+	}
+	if strings.Contains(content, "02:30") {
+		t.Fatalf("turn context = %q, want no time of day", content)
 	}
 
-	started := now.Add(-5 * time.Minute)
-	parts = &chatRequestParts{UserTimezone: "UTC", TurnStartedAt: started}
-	s.applyCurrentTimeContext(context.Background(), Scope{}, parts, now)
-	if !strings.Contains(parts.CurrentTimeContext, "06:25") {
-		t.Fatalf("continuation time = %q, want the turn's start time", parts.CurrentTimeContext)
+	// A continuation just after midnight keeps the date its turn started on.
+	midnight := time.Date(2026, 10, 31, 0, 5, 0, 0, time.UTC)
+	parts = &chatRequestParts{UserTimezone: "UTC", TurnStartedAt: midnight.Add(-10 * time.Minute)}
+	s.applyCurrentTimeContext(context.Background(), Scope{}, parts, midnight)
+	if !strings.Contains(parts.CurrentTimeContext, "2026-10-30") {
+		t.Fatalf("continuation date = %q, want the turn's start date", parts.CurrentTimeContext)
 	}
-	parts = &chatRequestParts{UserTimezone: "UTC", TurnStartedAt: now.Add(-20 * time.Minute)}
-	s.applyCurrentTimeContext(context.Background(), Scope{}, parts, now)
-	if !strings.Contains(parts.CurrentTimeContext, "06:30") {
-		t.Fatalf("late continuation time = %q, want the current time", parts.CurrentTimeContext)
+	parts = &chatRequestParts{UserTimezone: "UTC", TurnStartedAt: midnight.Add(-20 * time.Minute)}
+	s.applyCurrentTimeContext(context.Background(), Scope{}, parts, midnight)
+	if !strings.Contains(parts.CurrentTimeContext, "2026-10-31") {
+		t.Fatalf("late continuation date = %q, want the current date", parts.CurrentTimeContext)
 	}
 
 	parts = &chatRequestParts{}
 	s.applyCurrentTimeContext(context.Background(), Scope{}, parts, now)
-	if parts.UserTimezone != defaultTurnTimezone || !strings.Contains(parts.CurrentTimeContext, "14:30") {
+	if parts.UserTimezone != defaultTurnTimezone || !strings.Contains(parts.CurrentTimeContext, "2026-10-30, Friday (timezone Asia/Shanghai") {
 		t.Fatalf("default timezone = %q, context %q; want %s", parts.UserTimezone, parts.CurrentTimeContext, defaultTurnTimezone)
 	}
 

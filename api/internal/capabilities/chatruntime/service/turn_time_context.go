@@ -17,11 +17,12 @@ const defaultTurnTimezone = "Asia/Shanghai"
 // started with, so its requests extend the first run's cached prefix.
 const turnTimeReuseWindow = 15 * time.Minute
 
-// applyCurrentTimeContext tells a run what time it is (ADR 0043). A model has
-// no clock and otherwise guesses or calls a tool for today's date. The time is
-// part of the turn context, sent after the history, so it changes no cached
-// prefix. A caller that writes its own time guidance, such as a DigitalHuman,
-// sets CurrentTimeProvided.
+// applyCurrentTimeContext tells a run today's date (ADR 0043). A model has no
+// clock and otherwise assumes the year of its training data, often without
+// noticing that it should ask. Only the date is given: it stays the same all
+// day, so a turn whose history already holds it leaves it out, and the time of
+// day comes from the time tools. A caller that writes its own time guidance,
+// such as a DigitalHuman, sets CurrentTimeProvided.
 func (s *service) applyCurrentTimeContext(ctx context.Context, scope Scope, parts *chatRequestParts, now time.Time) {
 	if parts == nil || parts.CurrentTimeProvided {
 		return
@@ -53,8 +54,8 @@ func (s *service) turnLocation(ctx context.Context, scope Scope, parts *chatRequ
 
 func currentTimeContext(now time.Time, location *time.Location) string {
 	local := now.In(location)
-	return fmt.Sprintf("Current time: %s, %s (timezone %s, UTC%s). Use it for relative dates and times such as \"tomorrow\" or \"next Friday\", and read times the user gives in this timezone.",
-		local.Format("2006-01-02 15:04"), local.Weekday().String(), location.String(), local.Format("-07:00"))
+	return fmt.Sprintf("Today is %s, %s (timezone %s, UTC%s). Read dates and times the user gives in this timezone. For the time of day, or to work out another date (its weekday, the days between two dates, a date some days away), call the time tools when you have them instead of computing it yourself.",
+		local.Format("2006-01-02"), local.Weekday().String(), location.String(), local.Format("-07:00"))
 }
 
 // preparedUserTimezone is the timezone the time tools default to: the one the
