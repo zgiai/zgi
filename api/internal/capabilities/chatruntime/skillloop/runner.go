@@ -594,148 +594,89 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		current := req.NativeSkillSession.ToolSet()
 		nativeToolSet = &current
 	}
-	loadedSkills := map[string]struct{}{}
-	toolPositions := map[string]int{}
-
-	messages := initialRunMessages(req, resolved, nativeToolSet)
-	traces := []skills.SkillTrace{}
-	{
-		if req.NativeSkillSession != nil {
-			loadedSkills = map[string]struct{}{}
-			for _, skillID := range req.NativeSkillSession.ActiveSkillIDs() {
-				loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
-			}
-			for _, attempt := range req.NativeSkillSession.ActivationAttempts() {
-				trace := nativeSessionActivationAttemptTrace(attempt)
-				traces = append(traces, trace)
-				r.recordTrace(traces, trace)
-				r.logSkillTrace(ctx, prepared, trace)
-			}
-		} else {
-			var preloadErr error
-			loadedSkills, preloadErr = r.preloadNativeSkills(ctx, prepared, resolved, nativeToolSet, &traces, req.ExecutionContext)
-			if preloadErr != nil {
-				return "", nil, preloadErr
-			}
-		}
+	s := &runState{
+		req:                          req,
+		prepared:                     prepared,
+		resolved:                     resolved,
+		nativeToolSet:                nativeToolSet,
+		loadedSkills:                 map[string]struct{}{},
+		toolPositions:                map[string]int{},
+		messages:                     initialRunMessages(req, resolved, nativeToolSet),
+		traces:                       []skills.SkillTrace{},
+		retryFailureBudgets:          newRetryFailureBudgetState(),
+		failedToolCallAttemptCounts:  map[string]int{},
+		skillToolCallCounts:          map[string]int{},
+		successfulToolCalls:          []SkillToolCallRef{},
+		failedToolCallReasons:        map[string]string{},
+		maxSkillSteps:                maxSkillStepsForTurn(resolved),
+		terminalStateGuardConfigured: req.RuntimeStateSnapshot != nil,
+		nativeCommentary:             newNativeCommentaryState(prepared.LLMRequest.Model, currentMetadataForRun(req)),
 	}
-
-	stepCount := 0
-	toolCallCount := 0
-	retryFailureBudgets := newRetryFailureBudgetState()
-	failedToolCallAttemptCounts := map[string]int{}
-	emptyFinalAnswerRetryCount := 0
-	skillToolCallCounts := map[string]int{}
-	successfulToolCalls := []SkillToolCallRef{}
-	failedToolCallReasons := map[string]string{}
-	var latestRecoverableTrace skills.SkillTrace
-	skillUsed := len(loadedSkills) > 0
-	maxSkillSteps := maxSkillStepsForTurn(resolved)
-	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
-	var answerBuilder strings.Builder
-	var usage *adapter.Usage
-	nativeCommentary := newNativeCommentaryState(prepared.LLMRequest.Model, currentMetadataForRun(req))
+	if req.NativeSkillSession != nil {
+		for _, skillID := range req.NativeSkillSession.ActiveSkillIDs() {
+			s.loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
+		}
+		for _, attempt := range req.NativeSkillSession.ActivationAttempts() {
+			r.appendTrace(ctx, s, nativeSessionActivationAttemptTrace(attempt))
+		}
+	} else {
+		loadedSkills, preloadErr := r.preloadNativeSkills(ctx, prepared, resolved, s.nativeToolSet, &s.traces, req.ExecutionContext)
+		if preloadErr != nil {
+			return "", nil, preloadErr
+		}
+		s.loadedSkills = loadedSkills
+	}
+	s.skillUsed = len(s.loadedSkills) > 0
 	r.diagnostics = modelInvocationDiagnostics{
-		activeSkillIDs:   activeSkillIDsForDiagnostics(resolved, loadedSkills),
-		loadedSkillIDs:   activeSkillIDsForDiagnostics(resolved, loadedSkills),
+		activeSkillIDs:   activeSkillIDsForDiagnostics(resolved, s.loadedSkills),
+		loadedSkillIDs:   activeSkillIDsForDiagnostics(resolved, s.loadedSkills),
 		continuationType: strings.TrimSpace(req.ContinuationType),
 		terminalOnly:     req.TerminalOnly,
 	}
-	platformServices := r.runtimePlatformServices(req, prepared, resolved, loadedSkills, func() *skills.NativeToolSet {
+	platformServices := r.runtimePlatformServices(req, prepared, resolved, s.loadedSkills, func() *skills.NativeToolSet {
 		if req.NativeSkillSession != nil {
 			current := req.NativeSkillSession.ToolSet()
 			return &current
 		}
-		return nativeToolSet
-	}, &toolCallCount, skillToolCallCounts, &successfulToolCalls, &traces)
+		return s.nativeToolSet
+	}, &s.toolCallCount, s.skillToolCallCounts, &s.successfulToolCalls, &s.traces)
 	for _, tool := range req.RuntimeTools {
 		if tool.BindPlatform != nil {
 			tool.BindPlatform(platformServices)
 		}
 	}
-	completeRetryFailureLimit := func(class retryFailureClass, metrics *retryFailureBudgetMetrics, round int) (string, *adapter.Usage, error) {
-		limitErr := fmt.Errorf("%w: too many %s failures", ErrInvalidInput, class)
-		failure := skills.SkillTrace{}
-		if metrics != nil {
-			failure = metrics.latestTrace
-		}
-		if strings.TrimSpace(failure.Kind) == "" {
-			failure = failedSkillTrace(string(class), "", limitErr)
-			failure.Arguments = map[string]interface{}{}
-		}
-		reasonCode, stopReason, emitSkillError := retryFailureLimitDetails(class)
-		trace := failedSkillTrace("tool_retry_guard", failure.ToolName, limitErr)
-		trace.SkillID = failure.SkillID
-		trace.Arguments = copyStringAnyMap(failure.Arguments)
-		if trace.Arguments == nil {
-			trace.Arguments = map[string]interface{}{}
-		}
-		trace.Arguments["reason_code"] = reasonCode
-		trace.Arguments["retry_failure_class"] = string(class)
-		trace.Arguments["retry_failure_class_counts"] = copyStringIntMap(retryFailureBudgets.classCallCounts())
-		trace.Arguments["retry_failure_budgets"] = retryFailureBudgets.snapshot()
-		trace.Arguments["termination_reason"] = "safe_retry_limit_reached"
-		if providerMetrics := retryFailureBudgets.metricsFor(retryFailureProviderBusiness); providerMetrics != nil {
-			trace.Arguments["failure_categories"] = copyStringIntMap(providerMetrics.categories)
-		}
-		if plannerMetrics := retryFailureBudgets.metricsFor(retryFailurePlannerSchema); plannerMetrics != nil {
-			trace.Arguments["planner_feedback_categories"] = copyStringIntMap(plannerMetrics.categories)
-		}
-		traces = append(traces, trace)
-		r.recordTrace(traces, trace)
-		r.logSkillTrace(ctx, prepared, trace)
-		if emitSkillError {
-			r.emitSkillError(ctx, prepared, trace)
-		}
-		answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
-			ctx,
-			req,
-			prepared,
-			messages,
-			traces,
-			failure,
-			successfulToolCalls,
-			stopReason,
-			round,
-		)
-		usage = mergeUsage(usage, explanationUsage)
-		if explanationErr != nil {
-			return answerBuilder.String(), usage, explanationErr
-		}
-		return answer, usage, nil
-	}
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		if eventErr := prepared.presentationEventError(); eventErr != nil {
-			return answerBuilder.String(), usage, eventErr
+			return s.stop(eventErr).result()
 		}
 		if req.BeforeModelRound != nil {
 			additional, err := req.BeforeModelRound(ctx, round)
 			if err != nil {
-				return answerBuilder.String(), usage, err
+				return s.stop(err).result()
 			}
 			if len(additional) > 0 {
-				messages = append(messages, additional...)
+				s.messages = append(s.messages, additional...)
 			}
 		}
 		roundRuntimeState := map[string]interface{}{}
 		terminalSubmissionAllowed := true
-		if terminalStateGuardConfigured {
-			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
+		if s.terminalStateGuardConfigured {
+			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, s.successfulToolCalls)
 			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
 		connectorOutcomesComplete := connectorRequiredOutcomesSatisfied(roundRuntimeState)
 		planningReq := cloneChatRequest(prepared.LLMRequest)
-		planningReq.Messages = messages
+		planningReq.Messages = s.messages
 		planningReq.Stream = false
-		planningReq.Tools = r.planningToolsForRound(req, resolved, nativeToolSet, connectorOutcomesComplete, roundRuntimeState)
-		planningReq.Tools = keepToolPositions(planningReq.Tools, toolPositions)
+		planningReq.Tools = r.planningToolsForRound(req, resolved, s.nativeToolSet, connectorOutcomesComplete, roundRuntimeState)
+		planningReq.Tools = keepToolPositions(planningReq.Tools, s.toolPositions)
 		if req.TerminalOnly {
 			planningReq.Tools = nil
 			planningReq.ToolChoice = nil
 		} else {
 			planningReq.ToolChoice = "auto"
 		}
-		r.diagnostics.activeSkillIDs = activeSkillIDsForDiagnostics(resolved, loadedSkills)
+		r.diagnostics.activeSkillIDs = activeSkillIDsForDiagnostics(resolved, s.loadedSkills)
 		r.requestBudget = planningRequestBudgetForRun(req)
 
 		suppressNaturalProgress := req.SuppressInitialNaturalProgress && round == 0
@@ -744,24 +685,24 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		if req.AfterModelRound != nil {
 			if hookErr := req.AfterModelRound(ctx, round, err == nil); hookErr != nil {
 				if err != nil {
-					return answerBuilder.String(), usage, errors.Join(err, hookErr)
+					return s.stop(errors.Join(err, hookErr)).result()
 				}
-				return answerBuilder.String(), usage, hookErr
+				return s.stop(hookErr).result()
 			}
 		}
-		usage = mergeUsage(usage, planningResult.usage)
+		s.usage = mergeUsage(s.usage, planningResult.usage)
 		if len(planningResult.contextMessages) > 0 {
-			messages = cloneMessagesForProvider(planningResult.contextMessages)
+			s.messages = cloneMessagesForProvider(planningResult.contextMessages)
 		}
 		if eventErr := prepared.presentationEventError(); eventErr != nil {
-			return answerBuilder.String(), usage, eventErr
+			return s.stop(eventErr).result()
 		}
 		if err != nil {
 			var streamedErr *streamedFinalAnswerError
 			if errors.As(err, &streamedErr) {
-				appendAnswerText(&answerBuilder, strings.TrimSpace(streamedErr.answer))
+				appendAnswerText(&s.answerBuilder, strings.TrimSpace(streamedErr.answer))
 			}
-			return answerBuilder.String(), usage, err
+			return s.stop(err).result()
 		}
 		planningMessage := planningResult.message
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
@@ -769,7 +710,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		// unified call as the native call it names (ADR 0044).
 		modelToolCalls := toolCalls
 		if req.UnifiedSkillDispatch {
-			toolCalls = translateUnifiedSkillCalls(toolCalls, nativeToolSet, resolved)
+			toolCalls = translateUnifiedSkillCalls(toolCalls, s.nativeToolSet, resolved)
 		}
 		text := assistantMessageText(planningMessage)
 		if len(toolCalls) > 0 && strings.TrimSpace(text) != "" {
@@ -781,71 +722,71 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				candidateStreamed = true
 			}
 			if candidateStreamed && strings.TrimSpace(candidate) != "" {
-				decision := nativeCommentary.classify(candidate, toolCalls, nativeToolSet, req.RuntimeTools...)
+				decision := s.nativeCommentary.classify(candidate, toolCalls, s.nativeToolSet, req.RuntimeTools...)
 				r.emitAnswerRetractWithDisposition(ctx, prepared, candidate, decision.disposition)
 				r.logNativeCommentaryDecision(ctx, prepared, round, decision, planningResult.reasoningObserved)
 				if eventErr := prepared.presentationEventError(); eventErr != nil {
-					return answerBuilder.String(), usage, eventErr
+					return s.stop(eventErr).result()
 				}
 			}
 		}
 		if len(toolCalls) == 0 && strings.TrimSpace(text) == "" {
-			return answerBuilder.String(), usage, fmt.Errorf("%w: model returned neither a tool call nor assistant content", ErrAgentOutputTruncated)
+			return s.stop(fmt.Errorf("%w: model returned neither a tool call nor assistant content", ErrAgentOutputTruncated)).result()
 		}
 		if req.TerminalOnly && len(toolCalls) > 0 {
-			if checkpointErr := r.checkpointTerminalToolBatch(ctx, messages, planningMessage, toolCalls, "", adapter.Message{}, "terminal-only execution rejected an unexpected tool call"); checkpointErr != nil {
-				return answerBuilder.String(), usage, checkpointErr
+			if checkpointErr := r.checkpointTerminalToolBatch(ctx, s.messages, planningMessage, toolCalls, "", adapter.Message{}, "terminal-only execution rejected an unexpected tool call"); checkpointErr != nil {
+				return s.stop(checkpointErr).result()
 			}
-			return answerBuilder.String(), usage, errors.Join(
+			return s.stop(errors.Join(
 				ErrFinalAnswerUnavailable,
 				errors.New("terminal-only model returned an unexpected tool call after retry"),
-			)
+			)).result()
 		}
 		if req.TerminalOnly && strings.TrimSpace(text) == "" {
-			return answerBuilder.String(), usage, errors.Join(
+			return s.stop(errors.Join(
 				ErrFinalAnswerUnavailable,
 				errors.New("terminal-only model returned no final answer after retry"),
-			)
+			)).result()
 		}
-		if len(toolCalls) == 0 && terminalStateGuardConfigured {
+		if len(toolCalls) == 0 && s.terminalStateGuardConfigured {
 			if strings.TrimSpace(text) == "" {
 				if req.TerminalOnly {
-					return answerBuilder.String(), usage, errors.Join(
+					return s.stop(errors.Join(
 						ErrFinalAnswerUnavailable,
 						errors.New("terminal-only model returned no final answer after retry"),
-					)
+					)).result()
 				}
-				emptyFinalAnswerRetryCount++
-				if emptyFinalAnswerRetryCount <= 1 {
-					messages = append(messages, adapter.Message{
+				s.emptyFinalAnswerRetryCount++
+				if s.emptyFinalAnswerRetryCount <= 1 {
+					s.messages = append(s.messages, adapter.Message{
 						Role:    "system",
 						Content: "The previous assistant turn returned neither a tool call nor a user-visible answer. Continue from the latest context: call another tool if work remains, otherwise provide the final answer directly.",
 					})
 					continue
 				}
-				return answerBuilder.String(), usage, fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)
+				return s.stop(fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)).result()
 			}
-			emptyFinalAnswerRetryCount = 0
+			s.emptyFinalAnswerRetryCount = 0
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard)
-				return answerBuilder.String(), usage, terminalStateGuardError(guard)
+				return s.stop(terminalStateGuardError(guard)).result()
 			}
 			answer := strings.TrimSpace(firstNonEmptyString(guard.FinalAnswer, text))
-			appendAnswerText(&answerBuilder, answer)
+			appendAnswerText(&s.answerBuilder, answer)
 			if !planningResult.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, answer, nil)
 			}
 			terminalStateGuardNotify(req, guard)
-			return answerBuilder.String(), usage, nil
+			return s.stop(nil).result()
 		}
-		emptyFinalAnswerRetryCount = 0
-		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !skillUsed {
-			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
+		s.emptyFinalAnswerRetryCount = 0
+		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !s.skillUsed {
+			return s.stop(fmt.Errorf("%w: required skill was not used", ErrInvalidInput)).result()
 		}
 		if text != "" && len(toolCalls) == 0 {
-			appendAnswerText(&answerBuilder, text)
+			appendAnswerText(&s.answerBuilder, text)
 			if !planningResult.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, text, nil)
 			}
@@ -854,53 +795,36 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			logger.DebugContext(ctx, "aichat skill planning completed",
 				"conversation_id", prepared.Conversation.ID.String(),
 				"message_id", prepared.Message.ID.String(),
-				"skill_step_count", stepCount,
-				"tool_call_count", toolCallCount,
+				"skill_step_count", s.stepCount,
+				"tool_call_count", s.toolCallCount,
 			)
-			return answerBuilder.String(), usage, nil
+			return s.stop(nil).result()
 		}
-		if stepCount+len(toolCalls) > maxSkillSteps {
+		if s.stepCount+len(toolCalls) > s.maxSkillSteps {
 			logger.WarnContext(ctx, "aichat skill step limit exceeded",
 				"conversation_id", prepared.Conversation.ID.String(),
 				"message_id", prepared.Message.ID.String(),
-				"current_step_count", stepCount,
+				"current_step_count", s.stepCount,
 				"requested_tool_calls", len(toolCalls),
-				"max_steps", maxSkillSteps,
+				"max_steps", s.maxSkillSteps,
 			)
 			limitErr := fmt.Errorf("%w: too many skill steps", ErrInvalidInput)
 			trace := failedSkillTrace("tool_retry_guard", "", limitErr)
 			trace.Arguments = map[string]interface{}{
 				"reason_code":   "skill_step_limit_exceeded",
-				"current_steps": stepCount,
+				"current_steps": s.stepCount,
 				"requested":     len(toolCalls),
-				"max_steps":     maxSkillSteps,
+				"max_steps":     s.maxSkillSteps,
 			}
-			traces = append(traces, trace)
-			r.recordTrace(traces, trace)
-			r.logSkillTrace(ctx, prepared, trace)
+			r.appendTrace(ctx, s, trace)
 			r.emitSkillError(ctx, prepared, trace)
-			answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
-				ctx,
-				req,
-				prepared,
-				messages,
-				traces,
-				trace,
-				successfulToolCalls,
-				"the business-tool step safety limit was reached before the requested operation completed",
-				round,
-			)
-			usage = mergeUsage(usage, explanationUsage)
-			if explanationErr != nil {
-				return answerBuilder.String(), usage, explanationErr
-			}
-			return answer, usage, nil
+			return r.terminateForSafety(ctx, s, trace, "the business-tool step safety limit was reached before the requested operation completed", round).result()
 		}
 		logger.DebugContext(ctx, "aichat skill planning requested tool calls",
 			"conversation_id", prepared.Conversation.ID.String(),
 			"message_id", prepared.Message.ID.String(),
 			"tool_call_count", len(toolCalls),
-			"step_count", stepCount,
+			"step_count", s.stepCount,
 		)
 
 		planningMessage.Role = "assistant"
@@ -909,384 +833,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		// such as DeepSeek expect it back until the turn ends, and adapters
 		// drop it for models that do not. Ordinary assistant content is kept
 		// because it may hold plans and judgments the next round needs.
-		messages = append(messages, planningMessage)
+		s.messages = append(s.messages, planningMessage)
 
-		roundHadRecoverableFailure := false
-		roundHadSuccess := false
-		roundFailureClasses := map[retryFailureClass]bool{}
-		roundFailureProgress := map[retryFailureClass]bool{}
-		stopBusinessLoop := false
-		var stopBusinessLoopTrace skills.SkillTrace
-		roundDeferredSystemMessages := []adapter.Message{}
-		r.prefetchedCalls = r.prefetchReadOnlyCalls(ctx, req, resolved, nativeToolSet, loadedSkills, failedToolCallReasons, toolCalls)
-		for callIndex, call := range toolCalls {
-			stepCount++
-			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
-			executionCall := call
-			runtimeTool, runtimeCall := runtimeToolForCall(req.RuntimeTools, call)
-			if runtimeCall {
-				// Runtime tools bypass the regular progressive-skill handler. Emit
-				// the same lifecycle events so durable runs and the shared chat UI
-				// expose their progress consistently with Agent tools.
-				r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(
-					prepared,
-					call.ID,
-					runtimeTool.SkillID,
-					runtimeTool.Definition.Function.Name,
-					nil,
-				))
-			}
-			if !runtimeCall {
-				if activation, activated := activateNativeSkillForToolCall(ctx, call, req.NativeSkillSession, resolved, nativeToolSet, loadedSkills); activated {
-					current := req.NativeSkillSession.ToolSet()
-					nativeToolSet = &current
-					for _, skillID := range current.ActiveSkillIDs {
-						loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
-					}
-					r.diagnostics.loadedSkillIDs = append([]string(nil), current.ActiveSkillIDs...)
-					roundDeferredSystemMessages = append(roundDeferredSystemMessages, activation.InstructionMessages...)
-				}
-				executionCall = nativeExecutionCall(call, nativeToolSet)
-			}
-			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, executionCall)
-			if runtimeCall {
-				callSkillID = strings.TrimSpace(runtimeTool.SkillID)
-				callToolName = strings.TrimSpace(runtimeTool.Definition.Function.Name)
-				failedCallKey = ""
-			}
-			callEvidence[runtimeStateAllowPlanUpdateKey] = true
-			callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
-			callEvidence[runtimeStateNativeAgentLoopKey] = true
-			callEvidence[runtimeStateKnowledgeRetrievalHistoryKey] = knowledgeRetrievalHistoryForToolCalls(successfulToolCalls)
-			if isAgentKnowledgeRetrievalCall(callSkillID, callToolName) {
-				callEvidence["knowledge_retrieval_round"] = skillToolCallCounts[callSkillID] + 1
-				callEvidence["knowledge_retrieval_budget"] = maxBusinessToolCallsForSkill(resolved, callSkillID)
-			}
-			result := skillStepResult{}
-			if req.NativeSkillSession != nil {
-				if control, handled := r.handleNativeSessionControlCall(ctx, call, req.NativeSkillSession, resolved, req.RuntimeTools); handled {
-					result = control.step
-					if len(control.instructions) > 0 {
-						roundDeferredSystemMessages = append(roundDeferredSystemMessages, control.instructions...)
-					}
-					current := req.NativeSkillSession.ToolSet()
-					nativeToolSet = &current
-					for _, skillID := range current.ActiveSkillIDs {
-						loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
-					}
-					r.diagnostics.loadedSkillIDs = append([]string(nil), current.ActiveSkillIDs...)
-				}
-			}
-			if nativeForbiddenProtocolTool(call.Function.Name) {
-				result = nativeForbiddenProtocolToolStep(call.ID, call.Function.Name)
-			}
-			if req.UnifiedSkillDispatch && strings.TrimSpace(call.Function.Name) == skills.UnifiedSkillToolName {
-				result = unifiedSkillCallErrorStep(call.ID)
-			}
-			if result.trace.Kind == "" && runtimeCall {
-				result = handleRuntimeToolCall(ctx, call, runtimeTool)
-				if strings.TrimSpace(result.trace.InvocationID) == "" {
-					result.trace.InvocationID = call.ID
-				}
-				r.emitEvent(prepared, EventSkillCallEnd, skillCallEndPayload(prepared, result.trace))
-				for _, artifact := range result.artifacts {
-					r.recordArtifact(artifact)
-					r.emitEvent(prepared, EventSkillArtifactCreated, artifact)
-				}
-				for _, event := range result.events {
-					r.emitEvent(prepared, event.Type, runtimeToolEventPayload(prepared, event.Payload))
-				}
-			}
-			if result.trace.Kind == "" {
-				result = guardSkillToolCall(ctx, req, resolved, executionCall.ID, callSkillID, callToolName, callToolArgs, failedCallKey, failedToolCallReasons, failedToolCallAttemptCounts)
-			}
-			if result.trace.Kind == "" {
-				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, executionCall, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
-			}
-			if eventErr := prepared.presentationEventError(); eventErr != nil {
-				return answerBuilder.String(), usage, eventErr
-			}
-			if strings.TrimSpace(result.trace.Kind) == "" {
-				if result.usedSkill {
-					skillUsed = true
-				}
-				if result.usedTool {
-					toolCallCount++
-					incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
-				}
-				if result.toolMessage.Role != "" || result.toolMessage.ToolCallID != "" || result.toolMessage.Content != nil {
-					messages = append(messages, result.toolMessage)
-					if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-						return answerBuilder.String(), usage, checkpointErr
-					}
-				}
-				continue
-			}
-			if result.recoverable {
-				if result.trace.Arguments == nil {
-					result.trace.Arguments = map[string]interface{}{}
-				}
-				result.trace.Arguments["failure_category"] = recoverableSkillFailureCategory(result.trace)
-				failureClass := recoverableSkillFailureClass(result.trace)
-				result.trace.Arguments["retry_failure_class"] = string(failureClass)
-				budgetClass := recoverableSkillFailureBudget(result.trace)
-				result.trace.Arguments["failure_budget"] = string(budgetClass)
-				annotateRecoverableSkillFailure(
-					&result.trace,
-					failedCallKey,
-					failedToolCallAttemptCounts,
-					result.stopBusinessLoop,
-				)
-				classMetrics := retryFailureBudgets.metricsFor(failureClass)
-				previous := skills.SkillTrace{}
-				if classMetrics != nil {
-					previous = classMetrics.latestTrace
-				}
-				madeProgress := recoverableSkillFailureMadeProgress(previous, result.trace)
-				if madeProgress {
-					roundFailureProgress[failureClass] = true
-				} else if failureClass == retryFailureProviderBusiness &&
-					repeatedProviderValidationFailure(previous, result.trace) {
-					// Permit one corrected retry after provider field-validation
-					// feedback. If the provider reports the same structural failure
-					// again, further argument variation is not evidence of progress.
-					result.stopBusinessLoop = true
-				}
-			}
-			traces = append(traces, result.trace)
-			r.recordTrace(traces, result.trace)
-			r.logSkillTrace(ctx, prepared, result.trace)
-			if result.recoverable &&
-				failedCallKey != "" &&
-				strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
-				shouldRememberFailedToolCall(result.trace) {
-				if _, alreadyRemembered := failedToolCallReasons[failedCallKey]; !alreadyRemembered {
-					failedToolCallReasons[failedCallKey] = strings.TrimSpace(result.trace.Error)
-					if failedToolCallReasons[failedCallKey] == "" {
-						failedToolCallReasons[failedCallKey] = "previous tool call with the same arguments failed"
-					}
-				}
-			}
-			if result.recoverable {
-				failureCategory := recoverableSkillFailureCategory(result.trace)
-				failureClass := recoverableSkillFailureClass(result.trace)
-				retryFailureBudgets.recordCall(failureClass, failureCategory, result.trace)
-				roundFailureClasses[failureClass] = true
-				if failureClass == retryFailureProviderBusiness {
-					r.emitSkillError(ctx, prepared, result.trace)
-				}
-				roundHadRecoverableFailure = true
-				latestRecoverableTrace = result.trace
-			} else {
-				roundHadSuccess = true
-			}
-			if result.fatalErr != nil {
-				if !result.recoverable {
-					r.emitSkillError(ctx, prepared, result.trace)
-				}
-				if result.toolMessage.Role != "" || result.toolMessage.ToolCallID != "" || result.toolMessage.Content != nil {
-					messages = append(messages, result.toolMessage)
-				}
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round stopped after a fatal sibling tool failure")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, result.fatalErr
-			}
-			messages = append(messages, result.toolMessage)
-			if projected, stats := projectMaterializedFileContent(messages, result.toolMessage.ToolCallID, result.toolResult); stats.removedRunes > 0 {
-				messages = projected
-				r.diagnostics.projectedRefs = appendUniqueProjectionRefs(r.diagnostics.projectedRefs, stats.refs...)
-				r.diagnostics.projectedChars += stats.removedRunes
-			}
-			if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-				return answerBuilder.String(), usage, checkpointErr
-			}
-			if result.usedSkill {
-				skillUsed = true
-			}
-			if result.usedTool {
-				toolCallCount++
-				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
-				if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
-					strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
-					successfulToolCalls = append(successfulToolCalls, SkillToolCallRef{
-						ConnectorNative: result.trace.ConnectorNative,
-						SkillID:         strings.TrimSpace(result.trace.SkillID),
-						ToolName:        strings.TrimSpace(result.trace.ToolName),
-						Arguments:       copyStringAnyMap(result.trace.Arguments),
-						Result:          copyStringAnyMap(result.toolResult),
-					})
-				}
-			}
-			if result.pendingApproval != nil {
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for approval before this sibling tool could run")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, &WorkflowApprovalPendingError{Payload: result.pendingApproval}
-			}
-			if result.pendingQuestion != nil {
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for a workflow answer before this sibling tool could run")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, &WorkflowQuestionPendingError{Payload: result.pendingQuestion}
-			}
-			if result.pendingGovernance != nil {
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for governance before this sibling tool could run")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, &ToolGovernancePendingError{Payload: result.pendingGovernance}
-			}
-			if result.pendingConnector != nil {
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for Connector confirmation before this sibling tool could run")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, &ConnectorConfirmationPendingError{Payload: result.pendingConnector}
-			}
-			if result.pendingClientAction != nil {
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for a client action before this sibling tool could run")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, &ClientActionPendingError{Payload: result.pendingClientAction}
-			}
-			if result.answer != "" {
-				appendAnswerText(&answerBuilder, result.answer)
-				if !result.answerStreamed {
-					r.emitAnswerChunk(ctx, prepared, result.answer, nil)
-				}
-			}
-			if result.pendingUserInput != nil {
-				logger.DebugContext(ctx, "aichat skill planning requested user input",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					"skill_step_count", stepCount,
-					"tool_call_count", toolCallCount,
-				)
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round paused for user input before this sibling tool could run")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, &UserInputPendingError{Payload: result.pendingUserInput}
-			}
-			if result.terminal {
-				logger.DebugContext(ctx, "aichat skill planning requested user input",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					"skill_step_count", stepCount,
-					"tool_call_count", toolCallCount,
-				)
-				messages = appendCancelledSiblingToolResults(messages, toolCalls[callIndex+1:], "the round ended before this sibling tool could run")
-				if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-					return answerBuilder.String(), usage, checkpointErr
-				}
-				return answerBuilder.String(), usage, nil
-			}
-			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "skill_load") &&
-				strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
-				r.diagnostics.loadedSkillIDs = appendUniqueProjectionRefs(r.diagnostics.loadedSkillIDs, result.trace.SkillID)
-			}
-			if message, ok := governedReadFileTargetSystemMessage(result.trace); ok {
-				roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
-			}
-			if message, ok := nativeReferenceReadContinuationSystemMessage(result.trace); ok {
-				roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
-			}
-			if result.stopBusinessLoop {
-				stopBusinessLoop = true
-				stopBusinessLoopTrace = result.trace
-			}
-		}
-		roundDeferredSystemMessages = withoutRemindersInHistory(messages, roundDeferredSystemMessages)
-		if len(roundDeferredSystemMessages) > 0 {
-			messages = append(messages, roundDeferredSystemMessages...)
-			if checkpointErr := r.checkpointContext(ctx, messages); checkpointErr != nil {
-				return answerBuilder.String(), usage, checkpointErr
-			}
-		}
-		if stopBusinessLoop && !roundHadSuccess && !roundFailureProgress[recoverableSkillFailureClass(stopBusinessLoopTrace)] {
-			failureReason := "the model repeated the same failed business-tool call without changing its arguments"
-			if strings.EqualFold(
-				strings.TrimSpace(evidenceStringFromAny(stopBusinessLoopTrace.Arguments["recovery_kind"])),
-				"provider_validation",
-			) {
-				failureReason = "the provider rejected the corrected request with the same field-validation error"
-			}
-			answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
-				ctx,
-				req,
-				prepared,
-				messages,
-				traces,
-				stopBusinessLoopTrace,
-				successfulToolCalls,
-				failureReason,
-				round,
-			)
-			usage = mergeUsage(usage, explanationUsage)
-			if explanationErr != nil {
-				return answerBuilder.String(), usage, explanationErr
-			}
-			return answer, usage, nil
-		}
-		retryFailureBudgets.finishRound(roundFailureClasses, roundFailureProgress, roundHadSuccess)
-		if roundHadRecoverableFailure {
-			logger.DebugContext(ctx, "aichat skill recoverable failures observed",
-				"conversation_id", prepared.Conversation.ID.String(),
-				"message_id", prepared.Message.ID.String(),
-				"retry_failure_budgets", retryFailureBudgets.snapshot(),
-			)
-			if class, metrics, reached := retryFailureBudgets.limitReached(); reached {
-				return completeRetryFailureLimit(class, metrics, round)
-			}
-		}
-		if req.TerminalOnly {
-			return answerBuilder.String(), usage, errors.Join(
-				ErrFinalAnswerUnavailable,
-				errors.New("terminal-only model did not submit a final answer after retry"),
-			)
+		if outcome := r.runToolCalls(ctx, s, round, toolCalls); outcome != nil {
+			return outcome.result()
 		}
 	}
-
-	err := fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
-	trace := latestRecoverableTrace
-	if strings.TrimSpace(trace.Kind) == "" {
-		trace = failedSkillTrace("tool_retry_guard", "", err)
-		trace.Arguments = map[string]interface{}{}
-	}
-	trace.Kind = "tool_retry_guard"
-	trace.Status = "error"
-	trace.Error = err.Error()
-	if trace.Arguments == nil {
-		trace.Arguments = map[string]interface{}{}
-	}
-	trace.Arguments["reason_code"] = "skill_planning_rounds_exhausted"
-	trace.Arguments["retry_failure_class_counts"] = copyStringIntMap(retryFailureBudgets.classCallCounts())
-	trace.Arguments["retry_failure_budgets"] = retryFailureBudgets.snapshot()
-	traces = append(traces, trace)
-	r.recordTrace(traces, trace)
-	r.logSkillTrace(ctx, prepared, trace)
-	r.emitSkillError(ctx, prepared, trace)
-	answer, explanationUsage, explanationErr := r.completeSkillLoopSafetyTermination(
-		ctx,
-		req,
-		prepared,
-		messages,
-		traces,
-		trace,
-		successfulToolCalls,
-		"the planning loop reached its safety limit before the requested operation completed",
-		defaultMaxSkillPlanningRounds,
-	)
-	usage = mergeUsage(usage, explanationUsage)
-	if explanationErr != nil {
-		return answerBuilder.String(), usage, explanationErr
-	}
-	return answer, usage, nil
+	return r.planningRoundsExhausted(ctx, s).result()
 }
 
 func fileDeliveryRequiresArtifactOnly(req RunRequest, runtimeState map[string]interface{}) bool {
