@@ -93,6 +93,38 @@ Signatures cut unified mode's uncached input from 157,984 to 88,680 tokens, clos
 
 The gap is too small to justify a second way of calling tools, so `native` stays the default. Unified mode is worth measuring again for Agents with many activatable skills, where its fixed tool list matters more.
 
+### Third round: many skills
+
+The local organization enabled eight more skills for this round and was restored afterwards: chart, architecture diagram, email, summary, work report, schedule, slide planning and decision support. One Agent per scenario had eleven skills.
+
+- **Long:** two 20-turn conversations, mostly short questions, using a chart at turn 5, a markdown file at turn 10, an architecture diagram at turn 15, and an email saved as a file at turn 18.
+- **Mixed:** eight two-turn conversations, each with a different mix of skills.
+
+| Measure | native | unified |
+|---|---|---|
+| Long: turns completed | 40/40 | 40/40 |
+| Long: model calls | 63 | 62 |
+| Long: argument errors | 1 (diagram edge without `from`/`to`) | 0 |
+| Long: uncached input | 304,664 | 199,065 (-35%) |
+| Long: total input | 1,260,440 | 1,146,649 (-9%) |
+| Long: cached share | 75.8% | 82.6% |
+| Mixed: turns completed | 12/16 | 12/16 |
+| Mixed: model calls | 43 | 43 |
+| Mixed: uncached input | 111,538 | 96,300 (-14%) |
+| Mixed: total input | 518,962 | 470,956 (-9%) |
+| Mixed: cached share | 78.5% | 79.6% |
+
+Notes on the mixed scenario:
+
+- In both modes the unfinished turns are clarifying questions the model asked, plus the turns after them, which the probe did not answer.
+- Unified mode's two failed `generate_pptx` calls reached rendering and failed because the local stack has no file-generation sandbox. Native mode had asked a question in that conversation instead.
+
+With many skills, unified mode costs less on both measures.
+
+- Native mode adds each newly used skill's tools in the middle of a conversation, which invalidates the history after them. Conversations that use different skills also no longer share a tool list.
+- Unified mode's fixed tool list avoids both. The signatures it adds are small and paid once.
+- With a single skill, native mode had about 10% less uncached input and unified mode about 28% less total input. With many skills, unified mode leads on both.
+
 ## Consequences
 
 - In `unified` mode a conversation's tool list stays the same from its first round, so activation no longer invalidates the cache.
