@@ -812,7 +812,7 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 		if err := tx.Where("attempt_id = ? AND entry_type = ? AND ledger_type = ?", current.AttemptID, billingEntryTypeFund, billingLedgerTypeOrgFunds).First(&fund).Error; err != nil {
 			return err
 		}
-		if fund.ReservedAmount > 0 && result.SettledCredits+result.RefundedCredits > fund.ReservedAmount.Int64() {
+		if !consoleSettlementAmountsValid(fund.ReservedAmount.Int64(), result.SettledCredits, result.RefundedCredits) {
 			return fmt.Errorf("settlement amounts exceed reserved credits: reserved=%d settled=%d refunded=%d", fund.ReservedAmount, result.SettledCredits, result.RefundedCredits)
 		}
 		bc := &BillingContext{
@@ -858,6 +858,7 @@ func (s *RemoteBilling) mirrorQueriedSettlement(ctx context.Context, attempt *Bi
 		if err := applyPlatformSettlementCostSnapshot(bc, settlement); err != nil {
 			return fmt.Errorf("apply platform settlement currency snapshot: %w", err)
 		}
+		recordSettlementOverageSnapshot(bc, fund.ReservedAmount.Int64(), result.SettledCredits)
 		s.localService.applyRouteAttributionWithLookup(ctx, bc)
 		finalizeMediaTimingSnapshot(bc)
 		if err := s.localService.settleSubjectQuota(ctx, tx, bc); err != nil {
