@@ -1531,6 +1531,8 @@ func (r *Runner) runModelToolRoundAttempt(ctx context.Context, prepared *Prepare
 	if err != nil {
 		if errors.Is(callErr, context.DeadlineExceeded) {
 			err = ErrModelIdleTimeout
+		} else {
+			err = connectionLost(err)
 		}
 		r.recordModelInvocation(ModelInvocationTrace{
 			Phase:      phase,

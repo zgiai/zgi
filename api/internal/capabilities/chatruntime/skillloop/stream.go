@@ -141,7 +141,7 @@ func (r *Runner) runModelToolRoundStream(
 					Usage:      usage,
 					Error:      response.Error.Error(),
 				})
-				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedAnswerOnError())
+				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(connectionLost(response.Error), streamedAnswerOnError())
 			}
 			if len(response.Choices) == 0 {
 				if response.Done {

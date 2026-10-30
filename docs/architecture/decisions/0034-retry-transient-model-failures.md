@@ -28,9 +28,11 @@ The loop already handled two kinds of failure:
    - timeouts, which have already waited the full timeout once;
    - a failure after the user saw part of the answer.
 4. The terminal-only retry no longer retries a transient error, so that one failure is not retried at both levels.
+5. A lost connection counts as a cut-off stream. Adapters pass the read error of a broken connection through as it is: EOF, an unexpected EOF, a reset, or a TLS record failure. The round marks it as `ErrStreamClosed` (`connectionLost`) before deciding, for a stream and for a call without streaming. Network timeouts and cancellations keep their own errors. Added 2026-10-30, after a stream that failed with `tls: bad record MAC` before any answer ended a turn as an internal error.
 
 ## Consequences
 
 - One provider hiccup no longer ends a turn that has done most of its work. A round can take up to three calls and five seconds longer before it fails.
+- A connection that still fails after the retries reaches the user as an unavailable upstream, not an internal error.
 - Each attempt is billed and traced as its own model call, as failover attempts already are.
 - The loop still does not retry a round that stopped at the output limit (`finish_reason: length`). That is a separate decision.

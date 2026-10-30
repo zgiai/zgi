@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"testing"
 	"time"
 
@@ -85,5 +88,68 @@ func TestModelToolRoundDoesNotRetryARejectedRequest(t *testing.T) {
 	_, err := retryTestRunner(client).runNativeAgentRound(context.Background(), prepared, request, 0, nil, false, false, false)
 	if !errors.Is(err, adapter.ErrInvalidRequest) || client.appChatCalls != 1 {
 		t.Fatalf("error = %v after %d calls, want one call", err, client.appChatCalls)
+	}
+}
+
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "i/o timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return true }
+
+func TestConnectionLostMarksABrokenConnectionAsAClosedStream(t *testing.T) {
+	tlsRecord := &net.OpError{Op: "local error", Net: "tcp", Err: errors.New("tls: bad record MAC")}
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"TLS record failure", tlsRecord, true},
+		{"closed before the response", fmt.Errorf("failed to execute request: Post %q: %w", "https://api.example.com", io.EOF), true},
+		{"cut off mid-body", fmt.Errorf("read: %w", io.ErrUnexpectedEOF), true},
+		{"reset by the peer", fmt.Errorf("all providers failed: %w", &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}), true},
+		{"network timeout", &net.OpError{Op: "read", Net: "tcp", Err: timeoutNetError{}}, false},
+		{"cancelled", context.Canceled, false},
+		{"rejected request", adapter.NewAdapterError("x", "bad", 400, adapter.ErrInvalidRequest), false},
+		{"unknown", errors.New("boom"), false},
+	}
+	for _, tt := range tests {
+		got := connectionLost(tt.err)
+		if marked := errors.Is(got, adapter.ErrStreamClosed); marked != tt.want {
+			t.Errorf("%s: marked as a closed stream = %v, want %v", tt.name, marked, tt.want)
+		}
+		if !errors.Is(got, tt.err) {
+			t.Errorf("%s: connectionLost() = %v, want it to keep the original error", tt.name, got)
+		}
+		if transientModelError(got) != tt.want {
+			t.Errorf("%s: transientModelError() = %v, want %v", tt.name, !tt.want, tt.want)
+		}
+	}
+}
+
+func TestModelToolRoundRetriesAStreamWhoseConnectionBroke(t *testing.T) {
+	tlsRecord := &net.OpError{Op: "local error", Net: "tcp", Err: errors.New("tls: bad record MAC")}
+	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{
+		{
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{ReasoningContent: "thinking"}}}},
+			{Error: tlsRecord, Done: true},
+		},
+		{
+			{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "hello"}}}},
+			{Choices: []adapter.StreamChoice{{FinishReason: "stop"}}, Done: true},
+		},
+	}}
+	runner := retryTestRunner(client)
+	runner.ModelIdleTimeout = time.Second
+	prepared := NewPreparedChat("conv-retry", "msg-retry", "deepseek", "auto", &adapter.ChatRequest{
+		Model:    "deepseek-chat",
+		Messages: []adapter.Message{{Role: "user", Content: "hi"}},
+	})
+	result, err := runner.runNativeAgentRound(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, false)
+	if err != nil {
+		t.Fatalf("runNativeAgentRound() error = %v", err)
+	}
+	if client.appChatStreamCalls != 2 || messageContent(result.message.Content) != "hello" {
+		t.Fatalf("stream calls = %d, answer = %q; want the second stream's answer", client.appChatStreamCalls, messageContent(result.message.Content))
 	}
 }
