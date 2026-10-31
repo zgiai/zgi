@@ -440,6 +440,8 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 				"conversation_id": continuation.ConversationID.String(),
 				"message_id":      continuation.MessageID.String(),
 				"content":         passthroughAnswer,
+				// The passthrough text is replaced, not kept as narration.
+				"presentation_disposition": "discard",
 			}, emit)
 		}
 		if !hasPassthroughAnswer || finalPassthroughAnswer != passthroughAnswer {
@@ -468,6 +470,8 @@ func (h *AgentsHandler) finishAgentWorkflowContinuation(ctx context.Context, sco
 				"conversation_id": continuation.ConversationID.String(),
 				"message_id":      continuation.MessageID.String(),
 				"content":         passthroughAnswer,
+				// The passthrough text is replaced, not kept as narration.
+				"presentation_disposition": "discard",
 			}, emit)
 		}
 		errorMessage := ""

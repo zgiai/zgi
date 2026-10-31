@@ -125,12 +125,12 @@ func (p *presentationProjection) eventItemByReference(reference string) map[stri
 func (p presentationProjection) metadataValue() map[string]interface{} {
 	items := make([]map[string]interface{}, 0, len(p.Items))
 	for _, item := range p.Items {
-		// Ordinary process narration is a live presentation concern. Keep it in
-		// the recorder projection so SSE events remain ordered, but do not write
-		// it into message history. Final answer text and durable runtime events
-		// (including explicit intermediate results) remain persisted.
+		// Text still streaming is provisional: it may yet be discarded, so it
+		// stays in the recorder projection only. Once settled, process narration
+		// and final text are history, so a reload shows the rows the live view
+		// showed.
 		if strings.EqualFold(strings.TrimSpace(stringFromAny(item["kind"])), presentationKindText) &&
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(item["content_phase"])), presentationPhaseFinal) {
+			!presentationTextIsSettled(item) {
 			continue
 		}
 		items = append(items, copyStringAnyMap(item))
@@ -139,6 +139,15 @@ func (p presentationProjection) metadataValue() map[string]interface{} {
 		"version":       presentationVersionV2,
 		"last_sequence": p.LastSequence,
 		"items":         items,
+	}
+}
+
+func presentationTextIsSettled(item map[string]interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(item["content_phase"]))) {
+	case presentationPhaseProcess, presentationPhaseFinal:
+		return true
+	default:
+		return false
 	}
 }
 

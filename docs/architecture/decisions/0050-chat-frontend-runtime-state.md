@@ -125,7 +125,7 @@ The steps are ordered so that each one ships alone, keeps behaviour, and makes t
      - `visibleTimelineItems` in `agentic-timeline.tsx` is the pure row filter the component uses, exported so tests run it.
      - Tests: for every recorded turn, the rows shown live equal the rows shown after a reload, and at each of the 172 steps the new entry point shows what the bubble showed before.
    - Not done: the visibility, supersede and dedupe rules still live in `selectors.ts` and `agentic-timeline.tsx`; they are reached through the two entry points above, not moved into one module.
-   - Found while testing: when the model's first text is retracted before a tool call, the live view keeps it as process narration, and the stored presentation drops it, so a reload shows one row fewer. The backend's presentation persistence decides this; it is not changed here.
+   - Found while testing, then fixed: when the model's first text is retracted before a tool call, the live view kept it as process narration and the stored presentation dropped it, so a reload showed one row fewer. The backend now stores settled process narration (only text still streaming stays out of stored metadata), every `message_retract` names its `presentation_disposition`, and the replay orders rows by the presentation items as the bubble does, with a recorded turn (`retract-1`) that retracts text before a call.
 5. **Backend presentation fields** (decision 3).
    - Add `presentation_visibility`, a lane or group id and `supersedes` where the backend knows them.
    - Remove the matching tool-specific branches from the client.
