@@ -90,7 +90,11 @@ The steps are ordered so that each one ships alone, keeps behaviour, and makes t
      - `runtime/controller/runtime-event-callbacks.ts` is the event table. Send, regenerate, continuation and recovery spread it and keep only their lifecycle callbacks; every event a continuation receives marks its stream as started.
      - `AgentAdvancedChatTransport`, which nothing used, is deleted.
      - Tests (`test:chat-runtime-status`, in the CI frontend gate): the mappers, every message and governance status from the Go constants, and the table covering every non-lifecycle stream callback.
-   - 1b, next: decode each stream event with a schema at the transport edge, and move the per-event cursor into the table.
+   - 1b, done:
+     - `transports/stream-event-decoder.ts` checks every event once, before any handler: a payload that is not an object, or a message event without its conversation and message ids, is dropped and recorded in the timeline debug log. The dispatcher no longer casts `data ?? {}` or invents empty ids for connector confirmations.
+     - The event table keeps one cursor per stream: an event whose id is not newer than the last one applied from that stream is a repeat and changes nothing. The reducers keep their own checks until step 3.
+     - Tests (`test:chat-stream-decoder`, in the CI frontend gate) replay streams recorded from the local stack (`web/scripts/fixtures/chat-runtime-streams.json`), check that every event the dispatcher handles is classified, and check the cursor.
+     - Field-level schemas per event are left to step 3, where the normalized invocation map defines the fields the client reads.
 2. **Pending interaction and surface profile** (decisions 5 and 6).
    - Add `selectPendingInteraction` and `resolveChatSurfaceProfile`.
    - Point the composer, queue, regenerate and edit at the selector.

@@ -54,6 +54,7 @@ import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
   type AIChatPagination,
 } from '@/components/chat/controllers/aichat';
+import { decodeStreamEventPayload } from './stream-event-decoder';
 
 function sanitizeWorkflowNodeOutputs(
   node: AIChatWorkflowRunNodeMetadata
@@ -341,76 +342,79 @@ export function dispatchAIChatStreamEvent(
   eventId: string | null | undefined,
   callbacks: AIChatStreamCallbacks
 ): void {
+  // One check per event, before any handler (ADR 0050): a payload that is not
+  // an object, or a message event without its ids, is dropped here.
+  const decoded = decodeStreamEventPayload(event, data);
+  if (!decoded) return;
+  // Each case reads the decoded payload as its event's shape.
+  const payload: unknown = decoded;
   switch (event) {
     case 'message_start':
-      callbacks.onMessageStart((data ?? {}) as AIChatMessageStartEventData, eventId);
+      callbacks.onMessageStart(payload as AIChatMessageStartEventData, eventId);
       break;
     case 'agent_progress':
-      callbacks.onAgentProgress((data ?? {}) as AIChatAgentProgressEventData, eventId);
+      callbacks.onAgentProgress(payload as AIChatAgentProgressEventData, eventId);
       break;
     case 'plan_updated':
-      callbacks.onPlanUpdated?.((data ?? {}) as AIChatPlanUpdatedEventData, eventId);
+      callbacks.onPlanUpdated?.(payload as AIChatPlanUpdatedEventData, eventId);
       break;
     case 'agent_intermediate_answer':
-      callbacks.onIntermediateAnswer((data ?? {}) as AIChatIntermediateAnswerEventData, eventId);
+      callbacks.onIntermediateAnswer(payload as AIChatIntermediateAnswerEventData, eventId);
       break;
     case 'user_input_requested':
-      callbacks.onUserInputRequested((data ?? {}) as AIChatUserInputRequestedEventData, eventId);
+      callbacks.onUserInputRequested(payload as AIChatUserInputRequestedEventData, eventId);
       break;
     case 'file_parse_start':
-      callbacks.onFileParseStart((data ?? {}) as AIChatFileParseStartEventData, eventId);
+      callbacks.onFileParseStart(payload as AIChatFileParseStartEventData, eventId);
       break;
     case 'file_parse_end':
-      callbacks.onFileParseEnd((data ?? {}) as AIChatFileParseEndEventData, eventId);
+      callbacks.onFileParseEnd(payload as AIChatFileParseEndEventData, eventId);
       break;
     case 'file_parse_error':
-      callbacks.onFileParseError((data ?? {}) as AIChatFileParseErrorEventData, eventId);
+      callbacks.onFileParseError(payload as AIChatFileParseErrorEventData, eventId);
       break;
     case 'skill_load_start':
-      callbacks.onSkillLoadStart((data ?? {}) as AIChatSkillLoadStartEventData, eventId);
+      callbacks.onSkillLoadStart(payload as AIChatSkillLoadStartEventData, eventId);
       break;
     case 'skill_load_end':
-      callbacks.onSkillLoadEnd((data ?? {}) as AIChatSkillLoadEndEventData, eventId);
+      callbacks.onSkillLoadEnd(payload as AIChatSkillLoadEndEventData, eventId);
       break;
     case 'skill_reference_read':
-      callbacks.onSkillReferenceRead((data ?? {}) as AIChatSkillReferenceReadEventData, eventId);
+      callbacks.onSkillReferenceRead(payload as AIChatSkillReferenceReadEventData, eventId);
       break;
     case 'skill_call_start':
-      callbacks.onSkillCallStart((data ?? {}) as AIChatSkillCallStartEventData, eventId);
+      callbacks.onSkillCallStart(payload as AIChatSkillCallStartEventData, eventId);
       break;
     case 'skill_call_end':
-      callbacks.onSkillCallEnd((data ?? {}) as AIChatSkillCallEndEventData, eventId);
+      callbacks.onSkillCallEnd(payload as AIChatSkillCallEndEventData, eventId);
       break;
     case 'skill_call_error':
-      callbacks.onSkillCallError((data ?? {}) as AIChatSkillCallErrorEventData, eventId);
+      callbacks.onSkillCallError(payload as AIChatSkillCallErrorEventData, eventId);
       break;
     case 'skill_artifact_created':
       callbacks.onSkillArtifactCreated(
-        (data ?? {}) as AIChatSkillArtifactCreatedEventData,
+        payload as AIChatSkillArtifactCreatedEventData,
         eventId
       );
       break;
     case 'tool_governance_decision':
       callbacks.onToolGovernanceDecision?.(
-        (data ?? {}) as AIChatToolGovernanceDecisionEventData,
+        payload as AIChatToolGovernanceDecisionEventData,
         eventId
       );
       break;
     case 'client_action_required':
       callbacks.onClientActionRequired?.(
-        (data ?? {}) as AIChatClientActionRequiredEventData,
+        payload as AIChatClientActionRequiredEventData,
         eventId
       );
       break;
     case 'client_action_result':
-      callbacks.onClientActionResult?.((data ?? {}) as AIChatClientActionResultEventData, eventId);
+      callbacks.onClientActionResult?.(payload as AIChatClientActionResultEventData, eventId);
       break;
     case 'connector_confirmation_required':
     case 'connector_confirmation_resolved': {
-      const envelope =
-        data && typeof data === 'object' && !Array.isArray(data)
-          ? (data as Record<string, unknown>)
-          : {};
+      const envelope = decoded;
       const nestedResult =
         envelope.result && typeof envelope.result === 'object' && !Array.isArray(envelope.result)
           ? (envelope.result as Record<string, unknown>)
@@ -427,10 +431,12 @@ export function dispatchAIChatStreamEvent(
       };
       callbacks.onAgentProgress(
         {
-          conversation_id: String(envelope.conversation_id ?? ''),
-          message_id: String(envelope.message_id ?? ''),
+          conversation_id: String(envelope.conversation_id),
+          message_id: String(envelope.message_id),
           phase: event,
-          progress_id: String(envelope.route_receipt ?? ''),
+          ...(typeof envelope.route_receipt === 'string' && envelope.route_receipt
+            ? { progress_id: envelope.route_receipt }
+            : {}),
           status:
             event === 'connector_confirmation_required'
               ? 'waiting_approval'
@@ -447,32 +453,32 @@ export function dispatchAIChatStreamEvent(
     case 'memory_update':
     case 'memory_delete':
     case 'memory_clear':
-      callbacks.onMemoryMutation((data ?? {}) as AIChatMemoryMutationEventData, eventId);
+      callbacks.onMemoryMutation(payload as AIChatMemoryMutationEventData, eventId);
       break;
     case 'runtime_input_applied':
       callbacks.onRuntimeInputApplied?.(
-        (data ?? {}) as AIChatRuntimeInputAppliedEventData,
+        payload as AIChatRuntimeInputAppliedEventData,
         eventId
       );
       break;
     case 'workflow_started':
-      callbacks.onWorkflowStarted?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      callbacks.onWorkflowStarted?.(payload as AIChatWorkflowEventData, eventId);
       break;
     case 'workflow_resumed':
       callbacks.onWorkflowStarted?.(
-        { ...((data ?? {}) as AIChatWorkflowEventData), workflow_event: event },
+        { ...(payload as AIChatWorkflowEventData), workflow_event: event },
         eventId
       );
       break;
     case 'node_started':
       callbacks.onWorkflowNodeStarted?.(
-        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        { ...(payload as AIChatWorkflowNodeEventData), workflow_event: event },
         eventId
       );
       break;
     case 'node_finished':
       callbacks.onWorkflowNodeFinished?.(
-        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        { ...(payload as AIChatWorkflowNodeEventData), workflow_event: event },
         eventId
       );
       break;
@@ -481,7 +487,7 @@ export function dispatchAIChatStreamEvent(
     case 'loop_started':
     case 'loop_next':
       callbacks.onWorkflowNodeStarted?.(
-        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        { ...(payload as AIChatWorkflowNodeEventData), workflow_event: event },
         eventId
       );
       break;
@@ -492,51 +498,51 @@ export function dispatchAIChatStreamEvent(
     case 'loop_succeeded':
     case 'loop_failed':
       callbacks.onWorkflowNodeFinished?.(
-        { ...((data ?? {}) as AIChatWorkflowNodeEventData), workflow_event: event },
+        { ...(payload as AIChatWorkflowNodeEventData), workflow_event: event },
         eventId
       );
       break;
     case 'workflow_paused':
-      callbacks.onWorkflowPaused?.((data ?? {}) as AIChatWorkflowPausedEventData, eventId);
+      callbacks.onWorkflowPaused?.(payload as AIChatWorkflowPausedEventData, eventId);
       break;
     case 'question_answer_requested':
       callbacks.onWorkflowPaused?.(
-        { ...((data ?? {}) as AIChatWorkflowPausedEventData), status: 'pending_question' },
+        { ...(payload as AIChatWorkflowPausedEventData), status: 'pending_question' },
         eventId
       );
       break;
     case 'approval_requested':
       callbacks.onWorkflowApprovalRequested?.(
-        (data ?? {}) as AIChatWorkflowPausedEventData,
+        payload as AIChatWorkflowPausedEventData,
         eventId
       );
       break;
     case 'approval_result_filled':
       callbacks.onWorkflowNodeFinished?.(
         {
-          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          ...(payload as AIChatWorkflowNodeEventData),
           workflow_event: event,
           status: 'success',
           node_type: 'approval',
           title: 'Approval submitted',
-          outputs: data,
+          outputs: payload,
         },
         eventId
       );
       break;
     case 'approval_expired':
       callbacks.onWorkflowPaused?.(
-        { ...((data ?? {}) as AIChatWorkflowPausedEventData), status: 'expired' },
+        { ...(payload as AIChatWorkflowPausedEventData), status: 'expired' },
         eventId
       );
       callbacks.onWorkflowNodeFinished?.(
         {
-          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          ...(payload as AIChatWorkflowNodeEventData),
           workflow_event: event,
           status: 'failed',
           node_type: 'approval',
           title: 'Approval expired',
-          outputs: data,
+          outputs: payload,
         },
         // The pause above already took this event id; the expired node is part
         // of the same event, so it carries none and is not dropped as stale.
@@ -546,7 +552,7 @@ export function dispatchAIChatStreamEvent(
     case 'question_answer_submitted':
       callbacks.onWorkflowNodeFinished?.(
         {
-          ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          ...(payload as AIChatWorkflowNodeEventData),
           workflow_event: event,
           status: 'running',
           node_type: 'question-answer',
@@ -555,40 +561,40 @@ export function dispatchAIChatStreamEvent(
       );
       break;
     case 'workflow_finished':
-      callbacks.onWorkflowFinished?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      callbacks.onWorkflowFinished?.(payload as AIChatWorkflowEventData, eventId);
       break;
     case 'workflow_failed':
-      callbacks.onWorkflowFailed?.((data ?? {}) as AIChatWorkflowEventData, eventId);
+      callbacks.onWorkflowFailed?.(payload as AIChatWorkflowEventData, eventId);
       break;
     case 'workflow_stopped':
       callbacks.onWorkflowFinished?.(
-        { ...((data ?? {}) as AIChatWorkflowEventData), status: 'stopped' },
+        { ...(payload as AIChatWorkflowEventData), status: 'stopped' },
         eventId
       );
       break;
     case 'message':
-      callbacks.onMessageChunk((data ?? {}) as AIChatMessageChunkEventData, eventId);
+      callbacks.onMessageChunk(payload as AIChatMessageChunkEventData, eventId);
       break;
     case 'message_retract':
-      callbacks.onMessageRetract((data ?? {}) as AIChatMessageRetractEventData, eventId);
+      callbacks.onMessageRetract(payload as AIChatMessageRetractEventData, eventId);
       break;
     case 'message_end':
-      callbacks.onMessageEnd((data ?? {}) as AIChatMessageEndEventData, eventId);
+      callbacks.onMessageEnd(payload as AIChatMessageEndEventData, eventId);
       break;
     case 'token_usage_updated':
       callbacks.onTokenUsageUpdated?.(
-        (data ?? {}) as AIChatTokenUsageUpdatedEventData,
+        payload as AIChatTokenUsageUpdatedEventData,
         eventId
       );
       break;
     case 'token_budget_requested':
       callbacks.onTokenBudgetRequested?.(
-        (data ?? {}) as AIChatTokenBudgetRequestedEventData,
+        payload as AIChatTokenBudgetRequestedEventData,
         eventId
       );
       break;
     case 'error':
-      callbacks.onErrorEvent((data ?? {}) as AIChatErrorEventData, eventId);
+      callbacks.onErrorEvent(payload as AIChatErrorEventData, eventId);
       break;
     default:
       break;

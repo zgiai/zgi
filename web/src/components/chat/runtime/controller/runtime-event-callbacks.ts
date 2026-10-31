@@ -1,5 +1,6 @@
 import type { AIChatMemoryMutationEventData } from '@/services/types/aichat';
 import type { AIChatStreamCallbacks } from '@/components/chat/transports/aichat-transport';
+import { isStaleAIChatStreamEvent } from '@/components/chat/controllers/aichat/reducers/shared';
 import type { ChatRuntimeEventAppliers } from './use-chat-runtime-event-appliers';
 
 /**
@@ -42,6 +43,10 @@ interface RuntimeEventCallbackOptions {
 /**
  * Builds the event callbacks every stream entry point shares from the
  * controller's appliers. The entry point adds its lifecycle callbacks.
+ *
+ * The callbacks belong to one stream and keep its cursor: an event whose id
+ * is not newer than the last one applied from this stream is a repeat and
+ * changes nothing (ADR 0050). Events without an id are applied.
  */
 export function createRuntimeEventCallbacks({
   appliers,
@@ -88,10 +93,15 @@ export function createRuntimeEventCallbacks({
     RuntimeEventCallbackName,
     (payload: never, eventId?: string | null) => void
   >;
+  let cursor: string | null = null;
   for (const name of Object.keys(handlers) as RuntimeEventCallbackName[]) {
     const handle = handlers[name] as (payload: never, eventId?: string | null) => void;
     guarded[name] = (payload, eventId) => {
       if (isAborted()) return;
+      if (eventId) {
+        if (isStaleAIChatStreamEvent(eventId, cursor)) return;
+        cursor = eventId;
+      }
       onEventApplied?.();
       handle(payload, eventId);
     };

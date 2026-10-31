@@ -91,6 +91,7 @@
     "test:agent-external-app-i18n": "node scripts/test-agent-external-app-i18n.mjs",
     "test:agent-api-docs": "node scripts/test-agent-api-docs.mjs",
     "test:user-input-response-history": "node scripts/test-user-input-response-history.mjs",
+    "test:chat-stream-decoder": "node scripts/test-chat-stream-decoder.mjs",
     "test:chat-runtime-status": "node scripts/test-chat-runtime-status.mjs",
     "test:chat-runtime-stream-recovery": "node scripts/test-chat-runtime-stream-recovery.mjs",
     "test:aichat-context-compaction-block": "node scripts/test-aichat-context-compaction-block.mjs",
