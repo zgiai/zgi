@@ -34,7 +34,7 @@ for (const transportPath of [
   'src/components/chat/transports/agent-runtime-transport.ts',
 ]) {
   const transport = read(transportPath);
-  const expectedIdleTimeoutCount = transportPath.endsWith('agent-runtime-transport.ts') ? 7 : 6;
+  const expectedIdleTimeoutCount = transportPath.endsWith('agent-runtime-transport.ts') ? 8 : 7;
   assert.equal(
     transport.match(/idleTimeoutMs: SSE_IDLE_TIMEOUT_MS/g)?.length,
     expectedIdleTimeoutCount,
@@ -93,7 +93,7 @@ assert.match(agentRuntimeTransport, /X-ZGI-Conversation-ID/);
 assert.match(agentRuntimeTransport, /X-ZGI-Message-ID/);
 assert.equal(
   agentRuntimeTransport.match(/notifyAgentRuntimeStreamOpen\(response, callbacks\)/g)?.length,
-  7,
+  8,
   'all Agent runtime SSE entry points must expose the prepared identity during onOpen'
 );
 

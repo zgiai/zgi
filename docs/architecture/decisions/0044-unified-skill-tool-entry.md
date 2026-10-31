@@ -9,7 +9,7 @@ A ZGI skill brings its own business tools. When the native loop activates a skil
 
 - Providers place tools before the messages, so a tool added in the middle of a turn changes the request's prefix. The rest of that turn reads only the system prompt and the earlier tools from the cache.
 - Measured on a three-turn conversation that generated files: after activation, the cached prefix fell from about 12K to about 3K tokens, and about 9K tokens a round were billed in full.
-- Codex, Claude Code and DeepSeek Harness keep the tool list fixed for a session. A skill is instructions that the model reads when it needs them, and the instructions are appended to the conversation. Its work goes through tools the session already has, such as a shell.
+- Widely used coding-agent harnesses keep the tool list fixed for a session. A skill is instructions that the model reads when it needs them, and the instructions are appended to the conversation. Its work goes through tools the session already has, such as a shell.
 
 A unified entry would give ZGI the same property. It is close to the retired `call_skill_tool` protocol, which carried every skill and tool pair in one large schema. Native per-tool schemas also constrain the model's arguments while it generates them, which a free-form input does not. Whether the cache gain outweighs any loss in accuracy has to be measured.
 
