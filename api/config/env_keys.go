@@ -298,7 +298,7 @@ const (
 	// The task queue reuses the primary Redis host, port, and password.
 	// envTaskQueueRedisDB selects the Redis database index used by the task queue. Default: 0.
 	envTaskQueueRedisDB = "TASK_QUEUE_REDIS_DB"
-	// envTaskQueueConcurrency sets how many task queue workers run in parallel. Default: 8.
+	// envTaskQueueConcurrency sets how many task queue workers run in parallel. Minimum: 1. Default: 8.
 	envTaskQueueConcurrency = "TASK_QUEUE_CONCURRENCY"
 	// envGraphFlowTaskQueueConcurrency sets the dedicated GraphFlow worker concurrency. Range: 1-4. Default: 4.
 	envGraphFlowTaskQueueConcurrency = "GRAPHFLOW_TASK_QUEUE_CONCURRENCY"

@@ -51,6 +51,24 @@ func TestLoadTaskQueueConfigRejectsGraphFlowQuotaAboveFour(t *testing.T) {
 	}
 }
 
+// Zero once meant "disable the workers" to operators; Asynq instead runs CPU
+// count workers and the scheduler worker fell back to the default queue.
+func TestLoadTaskQueueConfigRejectsNonPositiveConcurrency(t *testing.T) {
+	for _, value := range []string{"0", "-1"} {
+		cfg := &Config{}
+		source := &envSource{lookupEnv: func(key string) (string, bool) {
+			if key == envTaskQueueConcurrency {
+				return value, true
+			}
+			return "", false
+		}}
+		err := loadTaskQueueConfig(cfg, source)
+		if err == nil || !strings.Contains(err.Error(), envTaskQueueConcurrency) {
+			t.Fatalf("loadTaskQueueConfig(%s=%s) error=%v, want concurrency validation", envTaskQueueConcurrency, value, err)
+		}
+	}
+}
+
 func TestLoadAppConfigUsesThirtyDayChannelDeliveryTTL(t *testing.T) {
 	cfg := &Config{}
 	source := &envSource{lookupEnv: func(string) (string, bool) { return "", false }}
