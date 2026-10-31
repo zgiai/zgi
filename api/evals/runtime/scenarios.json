@@ -251,6 +251,26 @@
         "files_min": 1,
         "answer_none": ["QK-07", "QK-13"]
       }
+    },
+    {
+      "id": "interface_language_mixed_zh",
+      "category": "language",
+      "lang": "zh",
+      "accept_language": "zh-CN",
+      "turns": ["What is 15% of 2400?"],
+      "expect": {
+        "answer_values": [360]
+      }
+    },
+    {
+      "id": "requested_language_overrides_en",
+      "category": "language",
+      "lang": "en",
+      "accept_language": "zh-CN",
+      "turns": ["请用英文回答：一年通常有多少天？"],
+      "expect": {
+        "answer_any": ["365"]
+      }
     }
   ]
 }

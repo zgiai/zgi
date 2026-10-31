@@ -124,6 +124,7 @@ class ScoreTest(unittest.TestCase):
             for index in scenario.get("turn_expect", {}):
                 self.assertLess(int(index), len(scenario["turns"]), scenario["id"])
             self.assertIn(scenario.get("lang"), ("zh", "en"), scenario["id"])
+            self.assertLessEqual(set(scenario), {"id", "category", "lang", "turns", "turn_expect", "expect", "observe", "accept_language"}, scenario["id"])
 
 
 if __name__ == "__main__":

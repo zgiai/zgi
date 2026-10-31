@@ -237,6 +237,7 @@ func turnTranscriptWithQuery(prepared *PreparedChat, transcript []adapter.Messag
 	// The question is stored with the reminders it was sent with, so the next
 	// turn replays this turn's request and reads it from the provider's cache
 	// (ADR 0043). Transient page context and attachment previews are not stored.
+	query = queryWithLanguageReminder(prepared.parts, query)
 	var content interface{} = query
 	if prepared.parts != nil && len(prepared.parts.TurnReminders) > 0 {
 		content = adapter.PrependSystemReminders(prepared.parts.TurnReminders, query)

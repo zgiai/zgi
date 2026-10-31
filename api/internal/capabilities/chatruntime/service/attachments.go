@@ -652,7 +652,7 @@ func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBu
 }
 
 func (s *service) currentUserContent(parts *chatRequestParts, text string) interface{} {
-	text = userContentWithRuntimeContext(parts, text)
+	text = queryWithLanguageReminder(parts, userContentWithRuntimeContext(parts, text))
 	if parts == nil || parts.Attachments == nil {
 		return strings.TrimSpace(text)
 	}

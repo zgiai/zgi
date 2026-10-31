@@ -457,6 +457,9 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		parts.AttachmentReadAllowed = true
 	}
 	s.applyCurrentTimeContext(ctx, scope, parts, time.Now())
+	if len(conversationIDs) > 0 {
+		s.applyUserLanguageContext(ctx, scope, parts, conversationIDs[0])
+	}
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
 		rendered, err := renderAIChatSystemPrompt(parts.Surface)

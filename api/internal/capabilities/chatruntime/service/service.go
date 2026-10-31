@@ -783,6 +783,9 @@ type chatRequestParts struct {
 	// CurrentTimeContext is the current time the runtime adds to the turn
 	// context when the caller provides none (ADR 0043).
 	CurrentTimeContext  string
+	// UserLanguageContext names the user's interface language when the run
+	// knows it; it follows the user's request (ADR 0048).
+	UserLanguageContext string
 	CurrentTimeProvided bool
 	// TurnStartedAt is when the turn's message was created; a continuation
 	// soon after keeps that time in its turn context.

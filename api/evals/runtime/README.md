@@ -15,6 +15,7 @@ A replayable scenario suite for the Agent runtime: the native agent loop, skill 
     - `tool_content_min_chars`: the longest `content` argument a tool received. It catches long tool arguments that are cut off.
     - `model_calls_max`: model calls over the conversation.
   - `observe` marks scenarios that are reported but not scored.
+  - `accept_language` is sent as the client's `Accept-Language` on every run of the scenario, for checks of the reply language rule (ADR 0048).
 - `run.py`:
   - Creates an Agent with the calculator, time and file-generator skills, publishes it, and creates an API key.
   - Runs every scenario as its own API end user, and writes `results.json` and `report.md`.
@@ -35,7 +36,7 @@ python run.py --workspace-id <id> --label baseline --repeat 3 --container <postg
 python run.py --workspace-id <id> --label change --repeat 3 --container <postgres-container> --baseline results/<dir>/results.json --env-file ../../../.env.test.local
 ```
 
-`--model` and `--model-provider` select the Agent's model; otherwise it uses the workspace default. `--only` and `--category` select scenarios. With `--baseline`, the report adds a table of metrics and of scenarios whose pass rate changed.
+`--model` and `--model-provider` select the Agent's model; otherwise it uses the workspace default. `--send-language` sends each scenario's language as `Accept-Language`, as a client that reports the user's system language; without it the runtime knows no interface language and the model follows the user's writing (ADR 0048). `--only` and `--category` select scenarios. With `--baseline`, the report adds a table of metrics and of scenarios whose pass rate changed.
 
 Results go to `results/`, which is not committed. Keep the model fixed across runs you compare, and use `--repeat 3` or more: single runs of a model vary.
 

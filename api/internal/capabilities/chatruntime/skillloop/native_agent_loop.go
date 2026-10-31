@@ -255,7 +255,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"When no more calls are needed, answer as ordinary assistant content. For complex work, give the result, what it is based on, and anything left unfinished.",
 		"Never say an action succeeded without a matching successful tool result.",
 		"## Language and privacy",
-		"Write notes, questions and answers in the language of the user's latest request, unless the user or their saved preferences ask for another language.",
+		"Write notes, questions and answers in the language the user asked for, in this conversation or in their saved preferences. Otherwise use the user's interface language when the context names it; writing in another language is not a request for it. Without either, use the language the user writes in.",
 		"Never show internal details: skill or tool names, parameters, IDs, JSON, hidden reasoning or plans. Put file bodies and other function content only in the function arguments.",
 	}, "\n")}
 }

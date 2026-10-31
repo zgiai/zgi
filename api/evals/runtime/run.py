@@ -65,6 +65,7 @@ class Client:
         self.base = base_url.rstrip("/")
         self.console_token = None
         self.api_key = None
+        self.send_language = False
 
     def _request(self, method, path, body=None, token=None, timeout=120):
         data = json.dumps(body).encode() if body is not None else None
@@ -89,7 +90,7 @@ class Client:
         data = self.console("POST", "/login", {"email": email, "password": password})
         self.console_token = data.get("access_token") or data["data"]["access_token"]
 
-    def chat(self, user, query, conversation_id=None, pending_input=None):
+    def chat(self, user, query, conversation_id=None, pending_input=None, language=None):
         """Sends one turn and returns what the runtime reported about it.
 
         When the previous turn ended with the Agent asking the user a question,
@@ -109,6 +110,8 @@ class Client:
         req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(), method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + self.api_key)
+        if language:
+            req.add_header("Accept-Language", language)
         started = time.time()
         events = []
         try:
@@ -320,7 +323,8 @@ def run_scenario(client, scenario, run_index):
     user = f"runtime-{scenario['id']}-{run_index}-{uuid.uuid4().hex[:8]}"
     turns, conversation, pending = [], None, None
     for query in scenario["turns"]:
-        turn = client.chat(user, query, conversation, pending)
+        language = scenario.get("accept_language") or ({"zh": "zh-CN", "en": "en-US"}.get(scenario.get("lang")) if client.send_language else None)
+        turn = client.chat(user, query, conversation, pending, language)
         conversation, pending = turn["conversation_id"], turn["pending_input"]
         turns.append(turn)
     checks = score(scenario, turns)
@@ -439,6 +443,7 @@ def main():
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--only", nargs="*", help="Run only these scenario IDs")
     parser.add_argument("--category", help="Run only scenarios of this category")
+    parser.add_argument("--send-language", action="store_true", help="Send each scenario's language as Accept-Language, as a client that reports the user's system language")
     parser.add_argument("--baseline", help="A results.json from an earlier run to compare against")
     parser.add_argument("--container", help="Postgres container of the deployment, to read provider cache use")
     parser.add_argument("--db", default="zgi")
@@ -464,6 +469,7 @@ def main():
             baseline = json.load(handle)
 
     client = Client(args.base_url)
+    client.send_language = args.send_language
     client.login(email, password)
     started = datetime.datetime.now()
     agent = setup_agent(client, args.workspace_id, args.label, args.model_provider, args.model)
