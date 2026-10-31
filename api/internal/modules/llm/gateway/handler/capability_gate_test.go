@@ -205,17 +205,19 @@ type noCapabilityService struct {
 type chatHandlerStub struct {
 	types.GatewayService
 
-	caps      types.ModelCapabilities
-	capsErr   error
-	chatCalls int
+	caps        types.ModelCapabilities
+	capsErr     error
+	chatCalls   int
+	chatRequest *adapter.ChatRequest
 }
 
 func (s *chatHandlerStub) ModelCapabilities(context.Context, string) (types.ModelCapabilities, error) {
 	return s.caps, s.capsErr
 }
 
-func (s *chatHandlerStub) ChatCompletion(context.Context, *apikeymodel.TenantAPIKey, *adapter.ChatRequest) (*adapter.ChatResponse, error) {
+func (s *chatHandlerStub) ChatCompletion(_ context.Context, _ *apikeymodel.TenantAPIKey, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	s.chatCalls++
+	s.chatRequest = req
 	return &adapter.ChatResponse{ID: "chatcmpl-test", Object: "chat.completion", Model: "test-model"}, nil
 }
 
