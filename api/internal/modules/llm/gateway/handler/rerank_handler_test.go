@@ -19,18 +19,22 @@ import (
 type rerankStubService struct {
 	types.GatewayService
 
-	caps    types.ModelCapabilities
-	calls   int
-	lastReq *adapter.RerankRequest
+	caps         types.ModelCapabilities
+	calls        int
+	lastReq      *adapter.RerankRequest
+	invocationID string
 }
 
 func (s *rerankStubService) ModelCapabilities(context.Context, string) (types.ModelCapabilities, error) {
 	return s.caps, nil
 }
 
-func (s *rerankStubService) Rerank(_ context.Context, _ *apikeymodel.TenantAPIKey, req *adapter.RerankRequest) (*adapter.RerankResponse, error) {
+func (s *rerankStubService) Rerank(ctx context.Context, _ *apikeymodel.TenantAPIKey, req *adapter.RerankRequest) (*adapter.RerankResponse, error) {
 	s.calls++
 	s.lastReq = req
+	// The real service mints the invocation ID first; doing the same here
+	// exercises the handler's header publication.
+	s.invocationID = types.NewInvocationID(ctx)
 	return &adapter.RerankResponse{
 		Object:  "rerank",
 		Model:   req.Model,
@@ -158,6 +162,9 @@ func TestRerankForwardsToGatewayService(t *testing.T) {
 	if service.lastReq.Model != "qwen3-rerank" || service.lastReq.Query != "capital of France" ||
 		service.lastReq.TopN == nil || *service.lastReq.TopN != 2 {
 		t.Fatalf("forwarded request = %+v", service.lastReq)
+	}
+	if got := recorder.Header().Get(types.InvocationIDHeader); got == "" || got != service.invocationID {
+		t.Fatalf("%s = %q, want the service invocation ID %q", types.InvocationIDHeader, got, service.invocationID)
 	}
 	var payload adapter.RerankResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
