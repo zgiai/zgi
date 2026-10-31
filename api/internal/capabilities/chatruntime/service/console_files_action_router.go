@@ -496,15 +496,6 @@ func isKnownConsoleFileExtension(extension string) bool {
 	return false
 }
 
-func containsAnySubstring(text string, needles []string) bool {
-	for _, needle := range needles {
-		if needle != "" && strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
-}
-
 func isFileResourceMap(value map[string]interface{}) bool {
 	for _, key := range []string{"type", "resource_type", "kind"} {
 		if strings.EqualFold(strings.TrimSpace(stringMetadataValue(value[key])), "file") {

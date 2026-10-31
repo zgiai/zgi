@@ -88,6 +88,11 @@ class ScoreTest(unittest.TestCase):
         self.assertEqual(self.failed(scenario, [turn("最终价格是 55.77 美元")]), [])
         self.assertEqual(self.failed(scenario, [turn("最终价格是 55.76 美元")]), ["answer has 55.77"])
 
+    def test_answer_values_none_ignores_thousands_separators(self):
+        scenario = {"lang": "zh", "turns": ["q"], "expect": {"answer_values_none": [1000950.29], "tolerance": 0.01}}
+        self.assertEqual(self.failed(scenario, [turn("第一步结果是 7,006,652")]), [])
+        self.assertEqual(self.failed(scenario, [turn("结果是 1,000,950.29")]), ["answer lacks 1.00095e+06"])
+
     def test_internal_names_and_language_are_checked_on_every_turn(self):
         scenario = {"lang": "en", "turns": ["a", "b"], "expect": {}}
         failed = self.failed(scenario, [turn("I used activate_skills for this."), turn("答案是四十二。")])
@@ -107,7 +112,7 @@ class ScoreTest(unittest.TestCase):
                          ["turn 1: asked the user for missing details"])
 
     def test_scenarios_file_uses_known_expectations(self):
-        known = {"answer_all", "answer_any", "answer_none", "answer_regex", "answer_values", "tolerance", "asked_user", "skills_none",
+        known = {"answer_all", "answer_any", "answer_none", "answer_regex", "answer_values", "answer_values_none", "tolerance", "asked_user", "skills_none",
                  "skills_any", "tools_any", "files_min", "tool_content_min_chars", "model_calls_max"}
         with open(os.path.join(run.HERE, "scenarios.json"), encoding="utf-8") as handle:
             scenarios = json.load(handle)["scenarios"]

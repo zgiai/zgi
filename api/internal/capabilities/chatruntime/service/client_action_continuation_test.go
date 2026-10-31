@@ -48,12 +48,6 @@ func TestInjectClientActionContinuationContextPromotesLoadedRouteContext(t *test
 	if got := contextualTurnCurrentPage(parts); got != "/console/files" {
 		t.Fatalf("contextualTurnCurrentPage() = %q, want /console/files", got)
 	}
-	if !clientActionContinuationLoadedRoute(parts, "/console/files") {
-		t.Fatal("clientActionContinuationLoadedRoute() = false, want true for loaded_href")
-	}
-	if !consoleNavigationRouteAlreadyAvailable(parts, "/console/files") {
-		t.Fatal("consoleNavigationRouteAlreadyAvailable() = false, want true")
-	}
 
 	evidence := skillLoopCompletionPageContextEvidence(parts)
 	resources := operationItemsFromValue(evidence["resources"])
@@ -237,9 +231,6 @@ func TestClientActionContinuationRouteFailureFeedbackIsRecoverable(t *testing.T)
 	}
 
 	injectClientActionContinuationContext(parts, event, req, nil)
-	if clientActionContinuationLoadedRoute(parts, "/console/agents/agent-1/agent") {
-		t.Fatal("clientActionContinuationLoadedRoute() = true for failed route, want false")
-	}
 	resources := operationItemsFromValue(parts.OperationContext["resources"])
 	for _, item := range resources {
 		resource := mapFromOperationContext(item)

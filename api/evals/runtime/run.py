@@ -266,6 +266,11 @@ def expectation_checks(expect, turn, conversation):
         found = numbers_in(answer)
         for value in expect["answer_values"]:
             checks.append((f"answer has {value:g}", any(abs(number - value) <= tolerance for number in found)))
+    if expect.get("answer_values_none"):
+        tolerance = expect.get("tolerance", 0.005)
+        found = numbers_in(answer)
+        for value in expect["answer_values_none"]:
+            checks.append((f"answer lacks {value:g}", not any(abs(number - value) <= tolerance for number in found)))
     if expect.get("asked_user"):
         checks.append(("asked the user for missing details", asked_user(turn)))
     if expect.get("skills_none"):

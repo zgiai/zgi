@@ -6,7 +6,7 @@ A replayable scenario suite for the Agent runtime: the native agent loop, skill 
 
 - `scenarios.json`: the scenarios. Each one is a single conversation with one or more turns. A turn that follows a question from the Agent is sent as the answer to that question.
   - `expect` applies to the last turn and to facts collected over the whole conversation. `turn_expect` applies to single turns, keyed by index.
-  - Answer checks: `answer_all`, `answer_any`, `answer_none`, `answer_regex`, and `answer_values`. `answer_values` compares numbers with thousands separators removed, within `tolerance` (default 0.005).
+  - Answer checks: `answer_all`, `answer_any`, `answer_none`, `answer_regex`, `answer_values`, and `answer_values_none`. The value checks compare numbers with thousands separators removed, within `tolerance` (default 0.005).
   - Runtime checks:
     - `asked_user`: the turn asked a question, through `request_user_input` or in its text.
     - `skills_none`: no skill was activated and no business tool was called.
@@ -43,4 +43,5 @@ Results go to `results/`, which is not committed. Keep the model fixed across ru
 
 - **Context compaction:** the context window comes from the model catalog, and the API cannot lower it enough to reach the threshold. The Go tests in `contextmgr` and `skillloop` cover it.
 - **Approval and resume:** the suite's skills need no approval. Governed tools need a connector or server, which a portable suite cannot assume.
+- **The console sidebar:** the `intent` scenarios run through an Agent, so they do not reach the sidebar's turn strategy. After ADR 0047 the sidebar leaves the same decisions to the model.
 - **DigitalHumans:** they run the same native loop. Their memory is covered by `../memory/dh.py`.

@@ -843,9 +843,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 }
 
 func fileDeliveryRequiresArtifactOnly(req RunRequest, runtimeState map[string]interface{}) bool {
-	if latestUserExplicitlyRequestsInlineFileBody(req) {
-		return false
-	}
 	plan := evidenceMapFromAny(runtimeState["operation_plan"])
 	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
 		if !operationPlanPhaseOpenForToolCall(phase) {
@@ -855,27 +852,6 @@ func fileDeliveryRequiresArtifactOnly(req RunRequest, runtimeState map[string]in
 		skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(expected["skill_id"])))
 		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(expected["tool_name"])))
 		if skillID == skills.SkillFileGenerator || toolName == "generate_file" {
-			return true
-		}
-	}
-	return false
-}
-
-func latestUserExplicitlyRequestsInlineFileBody(req RunRequest) bool {
-	text := strings.ToLower(strings.TrimSpace(latestUserRequestText(req)))
-	if text == "" {
-		return false
-	}
-	for _, negative := range []string{"不要展示全文", "无需展示全文", "不需要展示全文", "只生成文件", "do not show the full", "don't show the full", "file only"} {
-		if strings.Contains(text, negative) {
-			return false
-		}
-	}
-	for _, marker := range []string{
-		"同时在聊天", "同时在对话", "在聊天中展示", "在对话中展示", "展示全文", "贴出全文", "同时展示", "正文也发",
-		"show the full", "include the full", "paste the full", "in the chat", "inline copy", "also display",
-	} {
-		if strings.Contains(text, marker) {
 			return true
 		}
 	}

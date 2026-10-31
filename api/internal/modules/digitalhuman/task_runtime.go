@@ -944,7 +944,6 @@ func taskApprovalPayload(run *Run, boundary taskRuntimeBoundary, task *Task, arg
 	}
 	defaults := map[string]interface{}{"name": task.Name, "goal": task.Goal}
 	requestedInputs := taskApprovalRequestedInputs(args, action)
-	augmentTaskApprovalRequestedInputs(run, task, action, requestedInputs)
 	// Resuming a scheduler-blocked task changes both dimensions of state:
 	// lifecycle paused -> active and work blocked -> pending. Keep the latter
 	// in the approval preview so the user can see exactly what will be fixed.
@@ -1176,37 +1175,6 @@ func taskApprovalRequestedInputs(args manageTaskArguments, action string) map[st
 	return inputs
 }
 
-// augmentTaskApprovalRequestedInputs turns the common compound request
-// "change the schedule and restore this paused task" into one approval plan.
-// The model can provide lifecycle_status explicitly; the query fallback keeps
-// older model snapshots from splitting the same user intent into two approvals.
-func augmentTaskApprovalRequestedInputs(run *Run, task *Task, action string, inputs map[string]interface{}) {
-	if run == nil || task == nil || inputs == nil || task.LifecycleStatus != "paused" {
-		return
-	}
-	if action != "schedule" && action != "update" {
-		return
-	}
-	if lifecycle := strings.TrimSpace(stringValue(inputs["lifecycle_status"])); lifecycle != "" {
-		return
-	}
-	query := strings.ToLower(strings.TrimSpace(run.Query))
-	if containsTaskResumeIntent(query) {
-		inputs["lifecycle_status"] = "active"
-	}
-}
-
-func containsTaskResumeIntent(query string) bool {
-	for _, phrase := range []string{"恢复", "重新启动", "重新启用", "resume", "reactivate", "activate"} {
-		if strings.Contains(query, phrase) &&
-			!strings.Contains(query, "不要"+phrase) &&
-			!strings.Contains(query, "不"+phrase) &&
-			!strings.Contains(query, "别"+phrase) {
-			return true
-		}
-	}
-	return false
-}
 func taskToolFailure(code string, recoverable bool) skillloop.RuntimeToolResult {
 	modelResult := map[string]any{"status": "rejected", "error_code": code, "retry_allowed": recoverable, "next_action": taskToolNextAction(code)}
 	return skillloop.RuntimeToolResult{

@@ -25,38 +25,6 @@ type requestedManagedFileTarget struct {
 	Extension string
 }
 
-func requestedManagedFileTargetsFromParts(parts *chatRequestParts) []requestedManagedFileTarget {
-	if parts == nil {
-		return nil
-	}
-	return explicitRequestedManagedFileTargetsFromQuery(parts.Query)
-}
-
-func explicitRequestedManagedFileTargetsFromQuery(query string) []requestedManagedFileTarget {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	targets := []requestedManagedFileTarget{}
-	for _, match := range managedFileTargetPattern.FindAllString(query, -1) {
-		filename := normalizeManagedFileTargetName(match)
-		if filename == "" {
-			continue
-		}
-		key := "name:" + filename
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		targets = append(targets, requestedManagedFileTarget{
-			Filename:  filename,
-			Extension: managedFileTargetExtension(filename),
-		})
-	}
-	return targets
-}
-
 func fileManagerSaveToolFileID(call skillloop.SkillToolCallRef) string {
 	if !hasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
 		return ""
@@ -68,32 +36,6 @@ func fileManagerSaveToolFileID(call skillloop.SkillToolCallRef) string {
 		call.Result["source_file_id"],
 		call.Result["tool_file_id"],
 	))
-}
-
-func normalizeManagedFileTargetName(name string) string {
-	name = strings.TrimSpace(name)
-	name = strings.Trim(name, " \t\r\n\"'`.,，。;；:：!！?？)）]】}》>“”‘’")
-	name = strings.ReplaceAll(name, "\\", "/")
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		name = name[idx+1:]
-	}
-	return strings.ToLower(strings.TrimSpace(name))
-}
-
-func managedFileTargetExtension(filename string) string {
-	filename = normalizeManagedFileTargetName(filename)
-	if filename == "" {
-		return ""
-	}
-	idx := strings.LastIndex(filename, ".")
-	if idx < 0 || idx == len(filename)-1 {
-		return ""
-	}
-	ext := strings.TrimPrefix(filename[idx+1:], ".")
-	if ext == "markdown" {
-		return "md"
-	}
-	return ext
 }
 
 func generatedArtifactMapSaveArguments(artifact map[string]interface{}) map[string]interface{} {
@@ -116,12 +58,4 @@ func generatedArtifactMapSaveArguments(artifact map[string]interface{}) map[stri
 		args["filename"] = filename
 	}
 	return args
-}
-
-func shouldReuseRecentGeneratedArtifactForManagedCreate(parts *chatRequestParts) bool {
-	if parts == nil || len(parts.RecentGeneratedArtifacts) == 0 ||
-		!turnTaskContractRequestsManagedFileCreate(parts, nil, "") {
-		return false
-	}
-	return !modelTurnIntentRequestsTemporaryFileArtifact(parts.ModelTurnIntent)
 }

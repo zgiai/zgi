@@ -506,12 +506,10 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		return capabilities
 	}
 	if isAgentsContext {
-		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-			modelTurnIntentRequestsAgentRead(parts.ModelTurnIntent) {
+		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 			capabilities.AgentRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentView)
 		}
-		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-			modelTurnIntentRequestsAgentMutation(parts.ModelTurnIntent) {
+		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 			// This only makes the skill discoverable; it does not grant authorization
 			// to execute any tool or mutate its target.
 			capabilities.AgentManage = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentCreate) ||
@@ -538,20 +536,7 @@ func contextualAIChatAgentManagementToolingRequested(parts *chatRequestParts) bo
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-		modelTurnIntentRequestsAgentRead(parts.ModelTurnIntent) ||
-		modelTurnIntentRequestsAgentMutation(parts.ModelTurnIntent)
-}
-
-func modelTurnIntentRequestsAgentRead(intent *AIChatModelTurnIntent) bool {
-	if intent == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(intent.Intent), "manage_agent_asset")
-}
-
-func modelTurnIntentRequestsAgentMutation(intent *AIChatModelTurnIntent) bool {
-	return modelTurnIntentRequestsAgentRead(intent)
+	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
 }
 
 func contextualAIChatWorkspaceIDFromContext(parts *chatRequestParts) string {

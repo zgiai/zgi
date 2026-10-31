@@ -859,12 +859,10 @@ type chatRequestParts struct {
 	// UserInputAnswers are the user's answers to questions asked in this
 	// turn. They are the user's words for the turn as much as the query, so
 	// memory evidence may quote them.
-	UserInputAnswers     []string
-	AgentMemoryContext   string
-	RuntimeTools         []skillloop.RuntimeTool
-	SourceMessageID      *uuid.UUID
-	BillingSource        string
-	ModelTurnIntent      *AIChatModelTurnIntent
-	ModelTurnIntentError string
-	HistoryPolicy        *runtimedto.ConversationHistoryPolicy
+	UserInputAnswers   []string
+	AgentMemoryContext string
+	RuntimeTools       []skillloop.RuntimeTool
+	SourceMessageID    *uuid.UUID
+	BillingSource      string
+	HistoryPolicy      *runtimedto.ConversationHistoryPolicy
 }

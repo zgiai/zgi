@@ -34,7 +34,7 @@ func TestControlToolsForRoundHidesUnneededPlanAndFileIntermediateTools(t *testin
 	}
 }
 
-func TestFileDeliveryRequiresArtifactOnlyUnlessInlineCopyRequested(t *testing.T) {
+func TestFileDeliveryRequiresArtifactOnlyWhileFileStepIsOpen(t *testing.T) {
 	state := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
 			"phases": []interface{}{map[string]interface{}{
@@ -43,13 +43,15 @@ func TestFileDeliveryRequiresArtifactOnlyUnlessInlineCopyRequested(t *testing.T)
 			}},
 		},
 	}
-	fileOnly := RunRequest{Prepared: &PreparedChat{Query: "生成 Markdown 文件并保存"}}
-	if !fileDeliveryRequiresArtifactOnly(fileOnly, state) {
-		t.Fatal("file delivery should hide full intermediate answer")
+	// The request's wording does not change this (ADR 0047); the final answer
+	// may still carry the file's text when the user asked for it.
+	for _, query := range []string{"生成 Markdown 文件并保存", "生成 Markdown 文件，同时在聊天中展示全文"} {
+		if !fileDeliveryRequiresArtifactOnly(RunRequest{Prepared: &PreparedChat{Query: query}}, state) {
+			t.Fatalf("fileDeliveryRequiresArtifactOnly(%q) = false, want true while the file step is open", query)
+		}
 	}
-	inline := RunRequest{Prepared: &PreparedChat{Query: "生成 Markdown 文件，同时在聊天中展示全文"}}
-	if fileDeliveryRequiresArtifactOnly(inline, state) {
-		t.Fatal("explicit inline copy should keep intermediate answer available")
+	if fileDeliveryRequiresArtifactOnly(RunRequest{Prepared: &PreparedChat{Query: "生成 Markdown 文件"}}, map[string]interface{}{}) {
+		t.Fatal("fileDeliveryRequiresArtifactOnly() = true without an open file step")
 	}
 }
 

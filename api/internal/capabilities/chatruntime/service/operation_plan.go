@@ -41,11 +41,6 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		return nil
 	}
 	originalGoal := truncateRunes(strings.TrimSpace(parts.Query), 500)
-	if partsRequestsContinuationWithFallback(parts, "") {
-		if goal := recentOperationPlanOriginalGoal(parts); goal != "" {
-			originalGoal = truncateRunes(goal, 500)
-		}
-	}
 	outcomes := operationPlanOutcomesFromTurnStrategy(strategy)
 	phases := operationPlanPhasesFromTurnStrategy(strategy)
 	if len(phases) == 0 && originalGoal != "" {
@@ -471,14 +466,6 @@ func applyRecentOperationPlansFromBranch(parts *chatRequestParts, branch []*runt
 	parts.RecentOperationPlans = plans
 }
 
-func operationPlanAgentResourceBindingFieldForCapability(capabilityID string) string {
-	descriptor, ok := agentManagementBindingCapabilityDescriptorForCapability(capabilityID)
-	if !ok {
-		return ""
-	}
-	return operationPlanAgentConfigCanonicalField(descriptor.field)
-}
-
 func operationPlanIsTerminalFailure(plan map[string]interface{}) bool {
 	switch strings.ToLower(strings.TrimSpace(stringFromAny(plan["status"]))) {
 	case operationPlanStatusFailed, "error", "rejected", "blocked", "canceled", "cancelled", "stopped":
@@ -486,75 +473,6 @@ func operationPlanIsTerminalFailure(plan map[string]interface{}) bool {
 	default:
 		return false
 	}
-}
-
-func recentOperationPlanOriginalGoal(parts *chatRequestParts) string {
-	plan := firstIncompleteRecentOperationPlan(parts)
-	if len(plan) == 0 && parts != nil && len(parts.RecentOperationPlans) > 0 {
-		plan = parts.RecentOperationPlans[0]
-	}
-	return strings.TrimSpace(stringFromAny(plan["original_user_goal"]))
-}
-
-func firstIncompleteRecentOperationPlan(parts *chatRequestParts) map[string]interface{} {
-	if parts == nil {
-		return nil
-	}
-	for _, plan := range parts.RecentOperationPlans {
-		if operationPlanHasIncompleteWork(plan) {
-			return plan
-		}
-	}
-	return nil
-}
-
-func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	if parts == nil || strategy == nil || !partsRequestsContinuationWithFallback(parts, "") {
-		return strategy
-	}
-	plan := firstIncompleteRecentOperationPlan(parts)
-	if len(plan) == 0 {
-		return strategy
-	}
-	strategy.PhaseGoals = appendUniqueStrings(strategy.PhaseGoals, operationPlanAdvisoryContinuationPhases(plan, 8)...)
-	strategy.RecommendedCapabilities = appendUniqueStrings(strategy.RecommendedCapabilities, stringSliceFromAny(plan["recommended_capabilities"])...)
-	if goals := agentCapabilityGoalsFromOperationPlan(plan); len(goals) > 0 {
-		strategy.CapabilityGoals = appendAgentCapabilityGoals(strategy.CapabilityGoals, goals...)
-	}
-	return strategy
-}
-
-func operationPlanAdvisoryContinuationPhases(plan map[string]interface{}, limit int) []string {
-	if len(plan) == 0 || limit <= 0 {
-		return nil
-	}
-	collect := func(records []map[string]interface{}) []string {
-		out := []string{}
-		for _, record := range records {
-			status := strings.ToLower(strings.TrimSpace(stringFromAny(record["status"])))
-			if status == operationPlanStepStatusCompleted || status == "skipped" {
-				continue
-			}
-			text := strings.TrimSpace(firstNonEmptyString(record["step"], record["title"], record["goal"], record["description"]))
-			if text == "" {
-				continue
-			}
-			out = appendUniqueStrings(out, compactForPrompt(text, 240))
-			if len(out) >= limit {
-				break
-			}
-		}
-		return out
-	}
-	if phases := collect(mapSliceFromAny(plan["phases"])); len(phases) > 0 {
-		return phases
-	}
-	if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) > 0 {
-		if phases := collect(mapSliceFromAny(structured["operations"])); len(phases) > 0 {
-			return phases
-		}
-	}
-	return collect(mapSliceFromAny(plan["steps"]))
 }
 
 func operationPlanCompletionVerificationPassStatus(status string) bool {
@@ -1328,53 +1246,6 @@ func operationPlanSequenceFromIdentifier(identifier string) int {
 		return 0
 	}
 	return sequence
-}
-
-func operationPlanAgentConfigBindingActionsFromAny(value interface{}) map[string]string {
-	out := map[string]string{}
-	add := func(field string, action string) {
-		canonicalField := operationPlanAgentConfigCanonicalField(field)
-		canonicalAction := operationPlanCanonicalAgentConfigBindingAction(action)
-		if canonicalField == "" || canonicalAction == "" {
-			return
-		}
-		out[canonicalField] = canonicalAction
-	}
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case string:
-		for _, item := range strings.Split(typed, ",") {
-			item = strings.TrimSpace(item)
-			if item == "" {
-				continue
-			}
-			parts := strings.SplitN(item, ":", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			add(parts[0], parts[1])
-		}
-	case map[string]interface{}:
-		for field, action := range typed {
-			add(field, stringFromAny(action))
-		}
-	case map[string]string:
-		for field, action := range typed {
-			add(field, action)
-		}
-	default:
-		for _, item := range stringSliceFromAny(value) {
-			parts := strings.SplitN(strings.TrimSpace(item), ":", 2)
-			if len(parts) == 2 {
-				add(parts[0], parts[1])
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func operationPlanCanonicalAgentConfigBindingAction(action string) string {

@@ -481,15 +481,6 @@ func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	if partsRequestsContinuationWithFallback(parts, "") {
-		return false
-	}
-	if intent := parts.ModelTurnIntent; intent != nil {
-		switch strings.ToLower(strings.TrimSpace(intent.AssetEffect)) {
-		case "create", "update", "delete", "write", "mutation", "mutate":
-			return true
-		}
-	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		return false
@@ -524,34 +515,12 @@ func buildRecentExecutionContextMessageForRequest(parts *chatRequestParts, branc
 	return buildRecentExecutionContextMessage(branch)
 }
 
+// recentExecutionContextAppliesToCurrentRequest reports whether the recent
+// execution facts are offered. They are offered whenever the turn has a query;
+// the builder adds them only when earlier turns ran tools or produced files, and
+// the model decides whether they matter (ADR 0047).
 func recentExecutionContextAppliesToCurrentRequest(parts *chatRequestParts) bool {
-	if parts == nil {
-		return true
-	}
-	query := strings.TrimSpace(parts.Query)
-	if query == "" {
-		return false
-	}
-	if partsRequestsContinuationWithFallback(parts, "") {
-		return true
-	}
-	return queryReferencesRecentExecutionContext(query)
-}
-
-func queryReferencesRecentExecutionContext(query string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(query))
-	if normalized == "" {
-		return false
-	}
-	for _, marker := range []string{
-		"刚才", "刚刚", "上次", "上一", "前面", "之前", "先前", "继续", "接着", "后续", "用这个", "把这个", "该文件", "这个文件", "这个图", "上述", "以上", "已生成", "生成的文件", "保存它", "下载它", "预览它",
-		"previous", "last", "earlier", "continue", "reuse", "use it", "that file", "this file", "generated file", "save it", "download it", "preview it",
-	} {
-		if strings.Contains(normalized, marker) {
-			return true
-		}
-	}
-	return false
+	return parts == nil || strings.TrimSpace(parts.Query) != ""
 }
 
 // turnContextMessage carries the run's changing guidance after the history, so
@@ -626,7 +595,7 @@ func historyHoldsReminder(history []adapter.Message, text string) bool {
 }
 
 func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {
-	if parts == nil || partsRequestsContinuationWithFallback(parts, "") {
+	if parts == nil {
 		return nil
 	}
 	content := strings.Join([]string{
@@ -705,27 +674,29 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	return &adapter.Message{Role: "system", Content: content}, stats
 }
 
+// buildContinuationTaskStateMessage describes the task the previous turn left
+// open, if any. Whether the latest request continues it is the model's call
+// (ADR 0047), so the state is offered rather than asserted.
 func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtimemodel.Message) *adapter.Message {
-	if parts == nil || !partsRequestsContinuationWithFallback(parts, "") || len(branch) == 0 {
+	if parts == nil || len(branch) == 0 {
 		return nil
 	}
-	goal := recentNonContinuationUserGoal(branch)
+	goal := openTaskGoal(branch)
 	if goal == "" {
 		return nil
 	}
 
 	var builder strings.Builder
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Assistant continuation task state.\n")
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "The user is asking to continue the most recent unfinished task, not starting a new generic page Q&A turn.\n")
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Use this compact state as authoritative continuity guidance; do not mention these internal notes to the user.\n")
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Most recent non-continuation user goal: "+compactForPrompt(goal, 500)+"\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Open task state.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "The previous turn left this task unfinished. If the latest user request continues it, use this state; if the latest request is a different task, ignore it. Do not mention these internal notes to the user.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Open task goal: "+compactForPrompt(goal, 500)+"\n")
 	if activeGoals := continuationTaskGoals(goal, branch, 3); len(activeGoals) > 1 {
-		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nPrior active operation goals still relevant to this continuation:\n")
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nOther unfinished goals:\n")
 		for _, activeGoal := range activeGoals[1:] {
 			appendBudgetedLine(&builder, recentContinuationBudgetChars, "- "+compactForPrompt(activeGoal, 500)+"\n")
 		}
 	}
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Rules for this continuation: do not repeat successful side-effecting tool calls; continue only missing requested steps; verify asset mutations from tool results or refreshed page context before claiming success.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "When continuing: do not repeat successful side-effecting tool calls; do only the missing steps; verify asset mutations from tool results or refreshed page context before claiming success.\n")
 
 	if planState := recentContinuationOperationPlanSection(branch, recentContinuationBudgetChars-builder.Len()); planState != "" {
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nAuthoritative operation plan state:\n")
@@ -753,17 +724,22 @@ func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtim
 	return &adapter.Message{Role: "system", Content: content}
 }
 
-func recentNonContinuationUserGoal(branch []*runtimemodel.Message) string {
+// openTaskGoal returns the goal of the latest assistant turn when that turn
+// left work open: it was stopped, or its operation plan has incomplete work.
+func openTaskGoal(branch []*runtimemodel.Message) string {
 	for i := len(branch) - 1; i >= 0; i-- {
 		message := branch[i]
 		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
 			continue
 		}
-		query := strings.TrimSpace(message.Query)
-		if query == "" || isContinuationIntent(query) {
-			continue
+		plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
+		if message.Status != runtimemodel.MessageStatusStopped && !operationPlanHasIncompleteWork(plan) {
+			return ""
 		}
-		return query
+		if goal := strings.TrimSpace(stringFromAny(plan["original_user_goal"])); goal != "" {
+			return goal
+		}
+		return strings.TrimSpace(message.Query)
 	}
 	return ""
 }

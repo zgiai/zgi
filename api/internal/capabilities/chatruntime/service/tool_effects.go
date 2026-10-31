@@ -47,21 +47,3 @@ func skillLoopGovernanceEffectIsMutation(effect toolgovernance.Effect) bool {
 		return false
 	}
 }
-
-func modelTurnIntentAssetEffectIsDelete(effect string) bool {
-	switch strings.ToLower(strings.TrimSpace(effect)) {
-	case "delete", "remove", "destroy":
-		return true
-	default:
-		return false
-	}
-}
-
-func modelTurnIntentAssetEffectIsMutation(effect string) bool {
-	switch strings.ToLower(strings.TrimSpace(effect)) {
-	case "create", "update", "edit", "modify", "change", "delete", "remove", "bind", "unbind", "replace", "asset_mutation":
-		return true
-	default:
-		return false
-	}
-}

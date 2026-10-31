@@ -101,10 +101,6 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 	return contextualConsoleAgentsSkillMessageForResolved(prepared, nil)
 }
 
-func requestedManagedFileTargetsFromQuery(query string) []requestedManagedFileTarget {
-	return explicitRequestedManagedFileTargetsFromQuery(query)
-}
-
 func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
 	return applyProviderPromptUsageCalibrationWithEstimate(metadata, usage, 0, "", "", "")
 }

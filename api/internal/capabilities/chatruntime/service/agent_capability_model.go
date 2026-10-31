@@ -187,19 +187,6 @@ func agentManagementConfigOnlyCapabilityDescriptors() []agentConfigOnlyCapabilit
 	}
 }
 
-func agentSkillBackedCapabilityDisplayName(candidateQuery string) string {
-	candidateQuery = strings.ToLower(strings.TrimSpace(candidateQuery))
-	if candidateQuery == "" {
-		return "skill-backed capability"
-	}
-	for _, descriptor := range agentSkillBackedCapabilityDescriptors() {
-		if strings.EqualFold(candidateQuery, descriptor.CandidateQuery) {
-			return descriptor.DisplayName
-		}
-	}
-	return "skill-backed capability"
-}
-
 func agentManagementCapabilityDefinitionsForPrompt() []map[string]interface{} {
 	out := []map[string]interface{}{}
 	addGoal := func(goal AIChatAgentCapabilityGoal) {
@@ -275,160 +262,6 @@ func agentManagementCapabilityDefinitionsForPrompt() []map[string]interface{} {
 		out = append(out, records[0])
 	}
 	return out
-}
-
-func agentManagementCapabilityGoalsFromModelIntent(intent *AIChatModelTurnIntent) []AIChatAgentCapabilityGoal {
-	if intent == nil || len(intent.RecommendedCapabilities) == 0 {
-		return nil
-	}
-	goals := []AIChatAgentCapabilityGoal{}
-	for _, hint := range intent.RecommendedCapabilities {
-		goal, ok := agentCapabilityGoalFromModelCapabilityHint(hint, intent)
-		if !ok {
-			continue
-		}
-		goals = appendAgentCapabilityGoals(goals, goal)
-	}
-	return goals
-}
-
-func agentCapabilityGoalFromModelCapabilityHint(hint string, intent *AIChatModelTurnIntent) (AIChatAgentCapabilityGoal, bool) {
-	raw, capabilityID, action, target := agentCapabilityHintParts(hint)
-	if raw == "" || capabilityID == "" {
-		return AIChatAgentCapabilityGoal{}, false
-	}
-	userIntent := modelIntentCapabilityUserIntent(intent)
-	goal := AIChatAgentCapabilityGoal{
-		CapabilityID: capabilityID,
-		GoalAction:   action,
-		UserIntent:   userIntent,
-	}
-	switch capabilityID {
-	case agentCapabilityModelSelection:
-		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
-		goal.DisplayName = "model selection"
-		goal.RequiredConfigFields = []string{"model_provider", "model"}
-		goal.CandidateTool = "list_available_models"
-		goal.CandidateUseCase = firstNonEmptyString(target, "agent_chat")
-	case agentCapabilitySystemPrompt:
-		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
-		goal.DisplayName = "system prompt"
-		goal.RequiredConfigFields = []string{"system_prompt"}
-	case agentCapabilitySuggestedQuestion:
-		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
-		goal.DisplayName = "suggested_questions"
-		goal.RequiredConfigFields = []string{"suggested_questions"}
-	case agentCapabilityAcceptUploaded:
-		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionEnable)
-		goal.DisplayName = "file upload"
-		goal.RequiredConfigFields = []string{"file_upload_enabled"}
-	case agentCapabilityMemory:
-		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
-		goal.DisplayName = "agent memory"
-		goal.RequiredConfigFields = []string{"agent_memory_enabled"}
-	case agentCapabilitySkillBacked:
-		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionEnable)
-		goal.DisplayName = agentSkillBackedCapabilityDisplayName(target)
-		goal.RequiredConfigFields = []string{"enabled_skill_ids"}
-		if target != "" {
-			goal.CandidateTool = "list_agent_skill_candidates"
-			goal.CandidateQuery = target
-		}
-		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
-			if action := operationPlanCanonicalAgentConfigBindingAction(goal.GoalAction); action != "" {
-				goal.RequiredBindingActions = map[string]string{"enabled_skill_ids": action}
-			}
-		}
-	case agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding:
-		if action == "" {
-			return AIChatAgentCapabilityGoal{}, false
-		}
-		field := operationPlanAgentResourceBindingFieldForCapability(capabilityID)
-		if field == "" {
-			return AIChatAgentCapabilityGoal{}, false
-		}
-		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionBind)
-		goal.DisplayName = field
-		goal.RequiredConfigFields = []string{field}
-		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
-			goal.RequiredBindingActions = map[string]string{field: operationPlanCanonicalAgentConfigBindingAction(goal.GoalAction)}
-		}
-	}
-	goal.GoalAction = canonicalAgentCapabilityAction(goal.GoalAction)
-	if goal.GoalAction == "" {
-		goal.GoalAction = agentCapabilityActionUpdate
-	}
-	return agentCapabilityGoalWithDefaults(goal), true
-}
-
-func agentCapabilityHintParts(hint string) (string, string, string, string) {
-	raw := strings.TrimSpace(hint)
-	if raw == "" {
-		return "", "", "", ""
-	}
-	parts := strings.Split(raw, ":")
-	for idx := range parts {
-		parts[idx] = strings.TrimSpace(parts[idx])
-	}
-	capabilityID := canonicalAgentCapabilityIDHint(parts[0])
-	if capabilityID == "" {
-		return raw, "", "", ""
-	}
-	action := ""
-	target := ""
-	for _, part := range parts[1:] {
-		if part == "" {
-			continue
-		}
-		if canonical := canonicalAgentCapabilityAction(part); canonical != "" && action == "" {
-			action = canonical
-			continue
-		}
-		if target == "" {
-			target = part
-		}
-	}
-	return raw, capabilityID, action, target
-}
-
-func canonicalAgentCapabilityIDHint(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.NewReplacer("-", "_", " ", "_").Replace(value)
-	switch value {
-	case agentCapabilityModelSelection, "agent.model", "agent.model_provider", "model", "model_selection", "llm_model":
-		return agentCapabilityModelSelection
-	case agentCapabilitySystemPrompt, "agent.prompt", "system_prompt", "prompt":
-		return agentCapabilitySystemPrompt
-	case agentCapabilitySkillBacked, "agent.skill", "agent.skills", "agent.skill_binding", "agent.skill_bindings", "agent.tool", "agent.tools", "skill", "skills", "skill_binding", "skill_bindings", "tool", "tools", "skill_backed_capability", "tool_backed_capability":
-		return agentCapabilitySkillBacked
-	case agentCapabilityAcceptUploaded, "agent.file_upload", "agent.uploaded_files", "file_upload", "accept_uploaded_files", "uploaded_files":
-		return agentCapabilityAcceptUploaded
-	case agentCapabilityMemory, "agent.agent_memory", "memory", "agent_memory":
-		return agentCapabilityMemory
-	case agentCapabilityKnowledgeBinding, "agent.knowledge", "knowledge", "knowledge_binding", "knowledge_base", "knowledge_dataset":
-		return agentCapabilityKnowledgeBinding
-	case agentCapabilityDatabaseBinding, "agent.database", "database", "database_binding", "database_table":
-		return agentCapabilityDatabaseBinding
-	case agentCapabilityWorkflowBinding, "agent.workflow", "workflow", "workflow_binding":
-		return agentCapabilityWorkflowBinding
-	case agentCapabilitySuggestedQuestion, "agent.suggested_question", "agent.opening_questions", "suggested_questions", "opening_questions", "starter_questions":
-		return agentCapabilitySuggestedQuestion
-	default:
-		return ""
-	}
-}
-
-func modelIntentCapabilityUserIntent(intent *AIChatModelTurnIntent) string {
-	if intent == nil {
-		return ""
-	}
-	if reason := strings.TrimSpace(intent.Reason); reason != "" {
-		return truncateRunes(reason, 240)
-	}
-	if len(intent.Phases) > 0 {
-		return truncateRunes(strings.Join(intent.Phases, "; "), 240)
-	}
-	return truncateRunes(strings.TrimSpace(intent.TaskType), 240)
 }
 
 type agentBindingCapabilityDescriptor struct {
@@ -725,49 +558,6 @@ func agentManagementCapabilityGoalsNeedPostUpdateRead(goals []AIChatAgentCapabil
 	return false
 }
 
-func appendAgentCapabilityGoals(current []AIChatAgentCapabilityGoal, additions ...AIChatAgentCapabilityGoal) []AIChatAgentCapabilityGoal {
-	out := append([]AIChatAgentCapabilityGoal(nil), current...)
-	for _, goal := range additions {
-		goal.CapabilityID = strings.TrimSpace(goal.CapabilityID)
-		if goal.CapabilityID == "" {
-			continue
-		}
-		duplicate := false
-		for _, existing := range out {
-			if existing.CapabilityID == goal.CapabilityID &&
-				strings.EqualFold(existing.CandidateQuery, goal.CandidateQuery) {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
-			continue
-		}
-		out = append(out, goal)
-	}
-	return out
-}
-
-func agentCapabilityGoalSuccessCriteria(goals []AIChatAgentCapabilityGoal) []string {
-	criteria := []string{}
-	for _, goal := range goals {
-		if goal.CapabilityID == "" {
-			continue
-		}
-		if len(goal.VerifyBy) == 0 {
-			criteria = appendUniqueStrings(criteria, "verify Agent capability goal before final answer: "+goal.CapabilityID)
-			continue
-		}
-		for _, verify := range goal.VerifyBy {
-			verify = strings.TrimSpace(verify)
-			if verify != "" {
-				criteria = appendUniqueStrings(criteria, "verify Agent capability goal "+goal.CapabilityID+": "+verify)
-			}
-		}
-	}
-	return criteria
-}
-
 func agentCapabilityGoalsToMaps(goals []AIChatAgentCapabilityGoal) []map[string]interface{} {
 	if len(goals) == 0 {
 		return nil
@@ -822,46 +612,6 @@ func agentCapabilityGoalsToMaps(goals []AIChatAgentCapabilityGoal) []map[string]
 		return nil
 	}
 	return out
-}
-
-func agentCapabilityGoalsFromMaps(value interface{}) []AIChatAgentCapabilityGoal {
-	records := mapSliceFromAny(value)
-	if len(records) == 0 {
-		return nil
-	}
-	var out []AIChatAgentCapabilityGoal
-	for _, record := range records {
-		if len(record) == 0 {
-			continue
-		}
-		goal := AIChatAgentCapabilityGoal{
-			CapabilityID:           stringFromAny(record["capability_id"]),
-			GoalAction:             stringFromAny(record["goal_action"]),
-			DisplayName:            stringFromAny(record["display_name"]),
-			Meaning:                stringFromAny(record["meaning"]),
-			UserIntent:             stringFromAny(record["user_intent"]),
-			RequiredConfigFields:   stringSliceFromAny(record["required_config_fields"]),
-			RequiredBindingActions: operationPlanAgentConfigBindingActionsFromAny(record["required_binding_actions"]),
-			CandidateTool:          stringFromAny(record["candidate_tool"]),
-			CandidateQuery:         stringFromAny(record["candidate_query"]),
-			CandidateUseCase:       stringFromAny(record["candidate_use_case"]),
-			EnableBy:               stringSliceFromAny(record["enable_by"]),
-			NotSufficient:          stringSliceFromAny(record["not_sufficient"]),
-			VerifyBy:               stringSliceFromAny(record["verify_by"]),
-		}
-		out = appendAgentCapabilityGoals(out, goal)
-	}
-	return out
-}
-
-func agentCapabilityGoalsFromOperationPlan(plan map[string]interface{}) []AIChatAgentCapabilityGoal {
-	if len(plan) == 0 {
-		return nil
-	}
-	if goals := agentCapabilityGoalsFromMaps(plan["capability_goals"]); len(goals) > 0 {
-		return goals
-	}
-	return nil
 }
 
 func operationPlanCompactCapabilityGoals(value interface{}, limit int) []interface{} {

@@ -438,14 +438,6 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if snapshot := turnInitialContextSnapshot(parts); snapshot != nil {
 		metadata[turnStartContextKey] = snapshot
 	}
-	if parts.ModelTurnIntent != nil {
-		metadata["model_turn_intent"] = parts.ModelTurnIntent
-		if contract := modelTurnIntentTaskContract(parts.ModelTurnIntent); len(contract) > 0 {
-			metadata["turn_task_contract"] = contract
-		}
-	} else if strings.TrimSpace(parts.ModelTurnIntentError) != "" {
-		metadata["model_turn_intent_error"] = strings.TrimSpace(parts.ModelTurnIntentError)
-	}
 	if strategy := contextualAIChatTurnStrategyFromParts(parts); strategy != nil {
 		metadata["turn_strategy"] = strategy
 		if plan := operationPlanFromTurnStrategy(taskID, parts, strategy); len(plan) > 0 {
