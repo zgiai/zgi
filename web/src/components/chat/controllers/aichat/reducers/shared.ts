@@ -246,7 +246,6 @@ export function isRecordedSkillInvocation(invocation: AIChatSkillInvocation): bo
   if (invocation.presentation_visibility?.toLowerCase() === 'internal') {
     return false;
   }
-  const record = invocation as unknown as Record<string, unknown>;
   const result =
     invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
       ? (invocation.result as Record<string, unknown>)
@@ -270,17 +269,6 @@ export function isRecordedSkillInvocation(invocation: AIChatSkillInvocation): bo
     (status === 'success' || status === 'succeeded' || status === 'completed')
   ) {
     return false;
-  }
-  if (invocation.kind === 'client_action') {
-    const actionId = String(record.action_id ?? result.action_id ?? '').toLowerCase();
-    const runtimeId = String(record.runtime_id ?? '').toLowerCase();
-    if (
-      actionType === 'asset_observation' ||
-      actionId.startsWith('asset_observation:') ||
-      runtimeId.startsWith('client_action:asset_observation:')
-    ) {
-      return false;
-    }
   }
   return (
     invocation.kind !== 'guardrail' &&

@@ -820,6 +820,7 @@ export function applyAgentProgressState(
       tool_name: payload.tool_name,
       action_id: payload.action_id,
       action_type: payload.action_type,
+      presentation_visibility: payload.presentation_visibility,
       continuation_policy: payload.continuation_policy,
       blocking: payload.blocking,
       status: payload.status,

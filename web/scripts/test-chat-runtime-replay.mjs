@@ -190,6 +190,57 @@ assert.deepEqual(
   assert.equal(second.data.tool_name !== first.data.tool_name, true);
 }
 
+// ADR 0050 step 5: the backend marks records it keeps but does not present.
+// An asset observation stays in the timeline, where the status line reads
+// it, and is not a row; a stored one is not kept as a call.
+{
+  const tools = streams.find(stream => stream.name === 'tools-1').events;
+  const start = tools[0];
+  const observation = {
+    id: null,
+    event: 'client_action_required',
+    data: {
+      conversation_id: start.data.conversation_id,
+      message_id: start.data.message_id,
+      action_id: 'asset_observation:corr-1',
+      action_type: 'asset_observation',
+      presentation_visibility: 'internal',
+      status: 'succeeded',
+      effect: 'updated',
+      asset_type: 'agent',
+      continuation_policy: 'record_only',
+    },
+  };
+  const events = tools.map(event => ({ ...event, id: null }));
+  const end = events.findIndex(event => event.event === 'message_end');
+  events.splice(end, 0, observation);
+  let checked = false;
+  replay(events.slice(0, end + 1), (state, startData, event) => {
+    if (event !== observation) return;
+    const timeline = state.streamingByMessageId[startData.message_id]?.timeline ?? [];
+    assert.ok(
+      timeline.some(item => item.action_type === 'asset_observation'),
+      'the status line still reads the observation'
+    );
+    const rows = shownRows(messageOf(state, startData), timeline);
+    assert.ok(
+      rows.every(item => item.action_type !== 'asset_observation'),
+      'an internal record is not a row'
+    );
+    checked = true;
+  });
+  assert.ok(checked);
+  assert.equal(
+    shared.isRecordedSkillInvocation({
+      kind: 'client_action',
+      action_type: 'asset_observation',
+      presentation_visibility: 'internal',
+      status: 'succeeded',
+    }),
+    false
+  );
+}
+
 // The transition table: an older report never undoes a newer one.
 const move = status.canInvocationMoveTo;
 assert.equal(move('running', 'success'), true);
