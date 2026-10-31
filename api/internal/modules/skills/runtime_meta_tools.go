@@ -105,7 +105,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "The checklist the user sees for work with three or more steps or several deliverables. Write it before the first business call, and update it as each step is done. Each call replaces the whole list; keep at most one step in_progress. Skip it for a single step or a direct answer.",
+			Description: "Keep a short checklist for work with three or more steps or several deliverables. Write it before starting, and update it as each step is done. Each call replaces the whole list; keep at most one step in_progress. Skip it for a single step or a direct answer.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

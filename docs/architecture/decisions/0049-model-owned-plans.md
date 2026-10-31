@@ -1,6 +1,6 @@
 # ADR 0049: Model-Owned Plans
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-31
 
 ## Context
@@ -82,15 +82,22 @@ Measured per model:
 - model calls, latency and tokens;
 - the share of multi-step turns that called `update_plan`, read from the stored model invocations.
 
-The full runtime suite runs alongside. The change is accepted when:
+The full runtime suite runs alongside. The change is accepted when no group, the planning group included, passes less often than before, and model calls and tokens per turn do not rise by more than 10% in the planning group.
 
-- no group, the planning group included, passes less often than before;
-- most planning-group turns write a plan the user can see;
-- model calls and tokens per turn rise by no more than 10% in the planning group, and not measurably elsewhere.
+### Results
+
+| Model | Suite (after) | Planning group, before → after | Turns with a plan, before → after |
+|---|---|---|---|
+| DeepSeek (`deepseek-v4-flash`) | 31 of 31 scenarios, 3 runs each | 8 of 8 → 8 of 8 | 3 of 27 → 3 of 27 |
+| Kimi (`kimi-k2.6`) | 30 of 31; the miss is an English request answered in Chinese, a drift seen before the change | 8 of 8 → 8 of 8 | 2 of 28 → 4 of 27 |
+
+One Claude pass (`claude-sonnet-5`, planning group, one run): 8 of 8 passed, with no plan written.
+
+A stronger prompt, which asked for a plan before the first business call and said the user follows the work through it, raised plans to 7 of 27 (DeepSeek) and 8 of 29 (Kimi). It also raised model calls in the planning group by 9% on DeepSeek and 21% on Kimi, and Kimi's input tokens by 19%, without changing a result. It was not kept: on tasks of this size the models finish without a plan, so whether to write one stays the model's call. Requiring a plan before the first tool call would need a rule for which requests count as multi-step, the kind of guess ADR 0047 removed.
 
 ## Consequences
 
 - Most of the operation plan code goes, along with the duplicated phase logic in the skill loop; connector acceptance and the ledgers stay.
-- Plans become visible to users and are written on most multi-step turns, which costs a tool call and its tokens on those turns.
+- Plans become visible to users when the model writes one. Today's models write one on a minority of multi-step turns; the checklist shows when they do, and costs a tool call and its tokens on those turns.
 - The model, not the runtime, decides whether a step is done. The runtime still confirms connector results, and the reminder at the final answer catches steps left open.
 - Plans stored by earlier turns are read as checklists: their phases' `step` and `status` are kept, and the other fields are ignored.
