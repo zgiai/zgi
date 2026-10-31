@@ -1360,7 +1360,9 @@ export function AIChatMessageBubble({
             : t('consoleChat.waitingQuestionMessage')
           : message.status === 'waiting_client_action'
             ? t('consoleChat.waitingClientActionMessage')
-            : null;
+            : message.status === 'waiting_budget'
+              ? t('consoleChat.waitingBudgetMessage')
+              : null;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
   const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(

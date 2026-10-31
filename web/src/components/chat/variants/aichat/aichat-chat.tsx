@@ -5,10 +5,10 @@ import {
   createElement,
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -111,8 +111,10 @@ import {
   type AIChatConnectedAppsSummary,
 } from '@/components/chat/variants/aichat/connected-apps-dialog';
 import {
+  createToolGovernancePendingApprovalScope,
   isToolGovernancePendingApprovalDismissed,
   ToolGovernancePendingApprovalScopeProvider,
+  useToolGovernancePendingApprovalVersion,
   type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
@@ -162,6 +164,8 @@ import {
   removeQueuedChatTurn,
   type AIChatQueuedTurn,
 } from '@/components/chat/utils/queued-turns';
+import { type AIChatShellSurface, resolveChatSurfaceProfile } from './chat-surface-profile';
+import { selectPendingInteraction } from '@/components/chat/controllers/aichat/pending-interaction';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -216,7 +220,7 @@ interface AIChatShellProps {
   showSkillEventDetails?: boolean;
   enableMessageReplay?: boolean;
   messageDensity?: 'default' | 'compact';
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
+  surface?: AIChatShellSurface;
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
@@ -381,12 +385,24 @@ export function AIChatShell({
   const tGlobal = useT();
   const { locale } = useLocale();
   const isMobile = useIsMobile();
-  const isEmbedded = variant === 'embedded';
-  const chatSurfaceBackground =
-    isEmbedded && surface !== 'agent-draft' && surface !== 'digital-human'
-      ? 'bg-bg-canvas'
-      : 'bg-background';
-  const toolGovernanceApprovalScopeId = useId();
+  // What this surface offers is decided in one place (ADR 0050).
+  const surfaceProfile = resolveChatSurfaceProfile({
+    surface,
+    variant,
+    runtimeSurface,
+    enableToolGovernance,
+    transport: {
+      supportsToolGovernanceApproval: controller.supportsToolGovernanceApproval,
+      supportsRuntimeInput: controller.supportsRuntimeInput,
+    },
+  });
+  const isEmbedded = surfaceProfile.isEmbedded;
+  const chatSurfaceBackground = surfaceProfile.background;
+  // Pending approvals belong to this chat and go away with it (ADR 0050).
+  const [toolGovernanceApprovalScope] = useState(createToolGovernancePendingApprovalScope);
+  const toolGovernanceApprovalVersion = useToolGovernancePendingApprovalVersion(
+    toolGovernanceApprovalScope
+  );
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
     const primary = themeColor ? CHAT_THEME_PRIMARY[themeColor] : undefined;
@@ -479,8 +495,7 @@ export function AIChatShell({
   const organization = useOrganizationStore.use.currentOrganization();
   const systemFeatures = useSystemFeatures();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
-  const enableAIChatSkillPreference =
-    surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
+  const enableAIChatSkillPreference = surfaceProfile.skillAndConnectorPickers;
   const connectorsEnabled = enableAIChatSkillPreference;
   const legacyEnabled =
     enableAIChatSkillPreference && Boolean(systemFeatures.data?.enable_connectors);
@@ -504,10 +519,7 @@ export function AIChatShell({
   const connectorSelectedCount = connectorConversationId
     ? connectedAppsSummary.selectedConnectionCount
     : connectorDraft.draft.bindings.length;
-  const effectiveRuntimeSurface: AIChatRuntimeSurface =
-    surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human'
-      ? 'external_page_chat'
-      : runtimeSurface;
+  const effectiveRuntimeSurface: AIChatRuntimeSurface = surfaceProfile.runtimeSurface;
   const matchingModelProps = useMemo(() => {
     const matchesSelection = (candidate: ModelSelectorModelProps | null | undefined) =>
       Boolean(
@@ -553,14 +565,8 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
-  const enableToolGovernanceApprovals =
-    surface === 'agent-webapp' ||
-    ((surface === 'aichat' || surface === 'agent-draft') &&
-      Boolean(controller.continueToolGovernanceDecision));
-  const showToolGovernancePermissionControl =
-    surface === 'aichat' &&
-    effectiveRuntimeSurface === 'contextual_sidebar' &&
-    enableToolGovernance;
+  const enableToolGovernanceApprovals = surfaceProfile.toolGovernanceApprovals;
+  const showToolGovernancePermissionControl = surfaceProfile.toolGovernancePermissionControl;
   useEffect(() => {
     if (!showToolGovernancePermissionControl) {
       setToolGovernancePermissionTierLoaded(false);
@@ -746,8 +752,7 @@ export function AIChatShell({
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const activeWorkflowApprovalRequest = useMemo(
     () =>
-      !isRecoveringMessages &&
-      (surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human')
+      !isRecoveringMessages && surfaceProfile.workflowApprovals
         ? resolveActiveWorkflowApprovalRequest(
             activeConversation,
             activeMessages,
@@ -763,6 +768,7 @@ export function AIChatShell({
       isRecoveringMessages,
       isSending,
       surface,
+      surfaceProfile.workflowApprovals,
     ]
   );
   const canStopPendingWorkflowInteraction = Boolean(
@@ -780,8 +786,41 @@ export function AIChatShell({
       : null;
   }, [activeConversation?.current_leaf_message_id, activeMessages]);
   const contextBlocked = Boolean(contextBlockedMessage);
+  const activeLeafStatus = useMemo(() => {
+    const leafId = activeConversation?.current_leaf_message_id;
+    return leafId ? (activeMessages.find(message => message.id === leafId)?.status ?? null) : null;
+  }, [activeConversation?.current_leaf_message_id, activeMessages]);
+  // Only the published approval's identity matters here; reading the approval
+  // object itself would re-render on every publish.
+  const publishedToolApprovalKey = useSyncExternalStore(
+    toolGovernanceApprovalScope.subscribe,
+    () => {
+      const approval = toolGovernanceApprovalScope.getSnapshot();
+      return approval ? JSON.stringify([approval.conversationId ?? '', approval.id]) : '';
+    },
+    () => ''
+  );
+  const [publishedToolApprovalConversationId, publishedToolApprovalId] = publishedToolApprovalKey
+    ? (JSON.parse(publishedToolApprovalKey) as [string, string])
+    : ['', ''];
+  // One answer to "what must the person resolve now" (ADR 0050). A turn paused
+  // for the person is idle on the server but not finished, so nothing queued
+  // is sent over it and its messages are not regenerated or edited meanwhile.
+  const pendingInteraction = selectPendingInteraction({
+    leafStatus: activeLeafStatus,
+    workflowApproval: Boolean(activeWorkflowApprovalRequest),
+    toolApprovalId:
+      publishedToolApprovalId &&
+      (!publishedToolApprovalConversationId ||
+        publishedToolApprovalConversationId === activeConversationId)
+        ? publishedToolApprovalId
+        : null,
+    hasQuestion: Boolean(activeUserInputRequest?.questions?.length),
+    questionRequestId: activeUserInputRequest?.request_id,
+  });
+  const hasPendingInteraction = Boolean(pendingInteraction);
   const messageActionsLocked = Boolean(
-    activeWorkflowApprovalRequest || isConversationTransitioning || contextBlocked
+    hasPendingInteraction || isConversationTransitioning || contextBlocked
   );
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
   const visiblePendingUserMessage =
@@ -790,7 +829,7 @@ export function AIChatShell({
     visiblePendingUserMessage?.showAssistantPlanning && isSending && !hasActiveStreamingMessage
   );
   const showAssetAuditControl =
-    showToolGovernancePermissionControl && surface === 'aichat' && Boolean(activeConversationId);
+    showToolGovernancePermissionControl && Boolean(activeConversationId);
   const handleOpenAssetAudit = useCallback(() => {
     setMobileSidebarOpen(false);
     setEmbeddedAssetAuditOpen(true);
@@ -1171,6 +1210,7 @@ export function AIChatShell({
       isSending ||
       pendingUserMessage ||
       activeWorkflowApprovalRequest ||
+      hasPendingInteraction ||
       activeQueuedTurns.length === 0
     ) {
       return;
@@ -1193,6 +1233,7 @@ export function AIChatShell({
     activeQueuedTurns,
     activeWorkflowApprovalRequest,
     isSending,
+    hasPendingInteraction,
     pendingUserMessage,
     removeQueuedTurn,
     sendOrdinaryTurn,
@@ -1494,19 +1535,24 @@ export function AIChatShell({
 
   const handleWorkflowApprovalSubmit = useCallback(
     (request: AIChatWorkflowApprovalRequest, payload: AIChatWorkflowApprovalSubmitPayload) => {
-      if (!controller.continueWorkflowApproval) return;
-      void controller
+      if (!controller.continueWorkflowApproval) return Promise.resolve();
+      // The returned promise rejects when the submission fails, so the form
+      // leaves its submitted state and can be sent again.
+      return controller
         .continueWorkflowApproval(request.conversationId, request.messageId, {
           approvalToken: request.approvalToken,
           inputs: payload.inputs,
           action: payload.action,
         })
-        .then(() => onTaskMutation?.())
+        .then(() => {
+          onTaskMutation?.();
+        })
         .catch(error => {
           toast.error(
             error instanceof Error ? error.message : t('consoleChat.workflow.approvalSubmitFailed')
           );
           onTaskMutation?.();
+          throw error;
         });
     },
     [controller, onTaskMutation, t]
@@ -1604,6 +1650,9 @@ export function AIChatShell({
   }, [activeConversation?.id]);
 
   const activeToolGovernanceApprovalFallback = useMemo<ToolGovernancePendingApproval | null>(() => {
+    // Dismissals live in the approval scope; its version changes with them,
+    // so a dismissed fallback approval is hidden at once.
+    if (toolGovernanceApprovalVersion < 0) return null;
     if (
       !enableToolGovernanceApprovals ||
       !activeConversation ||
@@ -1633,7 +1682,7 @@ export function AIChatShell({
     );
     if (
       approval &&
-      (isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScopeId) ||
+      (isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScope) ||
         submittedToolGovernanceDecisionKeys.has(approval.id))
     ) {
       return null;
@@ -1652,7 +1701,8 @@ export function AIChatShell({
     streamingByMessageId,
     submittedToolGovernanceDecisionKeys,
     t,
-    toolGovernanceApprovalScopeId,
+    toolGovernanceApprovalScope,
+    toolGovernanceApprovalVersion,
   ]);
 
   const handleNewChat = useCallback(() => {
@@ -1823,7 +1873,7 @@ export function AIChatShell({
         </div>
       ) : null}
 
-      <ToolGovernancePendingApprovalScopeProvider scopeId={toolGovernanceApprovalScopeId}>
+      <ToolGovernancePendingApprovalScopeProvider scope={toolGovernanceApprovalScope}>
         <main
           aria-hidden={embeddedOverlayOpen || undefined}
           inert={embeddedOverlayOpen}
@@ -1836,7 +1886,7 @@ export function AIChatShell({
             <AIChatHeader
               isHome={isHome}
               title={activeConversation?.title || ''}
-              position={surface === 'digital-human' ? 'static' : 'overlay'}
+              position={surfaceProfile.headerPosition}
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
@@ -1906,11 +1956,11 @@ export function AIChatShell({
             showAssistantModelMeta={showAssistantModelMeta}
             layout={isEmbedded ? 'embedded' : 'full'}
             messageDensity={messageDensity}
-            showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
+            showMemoryKey={surfaceProfile.memoryKey}
             // Published apps show status, not diagnostic argument/result panels.
-            showSkillEventDetails={surface !== 'agent-webapp' && showSkillEventDetails}
-            showWorkflowFailureDetails={surface !== 'agent-webapp'}
-            showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
+            showSkillEventDetails={surfaceProfile.executionDetails && showSkillEventDetails}
+            showWorkflowFailureDetails={surfaceProfile.executionDetails}
+            showContextualOperationStatus={surfaceProfile.contextualOperationStatus}
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
             speechPlayback={speechPlayback}
@@ -1978,7 +2028,7 @@ export function AIChatShell({
             isModelInitializing={isModelInitializing}
             modelMissing={modelMissing}
             isSending={isSending}
-            allowRuntimeInput={controller.supportsRuntimeInput}
+            allowRuntimeInput={surfaceProfile.runtimeInput}
             runtimeInputQueueFull={runtimeInputQueueFull}
             disabled={contextBlocked}
             canStop={canStopPendingWorkflowInteraction || activeConversationRunning}
@@ -2141,7 +2191,7 @@ export function AIChatShell({
       {enableAIChatSkillPreference ? (
         <AIChatSkillPreferenceDialog
           open={skillPreferenceOpen}
-          context={runtimeSurface === 'contextual_sidebar' ? 'platform-assistant' : 'conversation'}
+          context={surfaceProfile.skillPreferenceContext}
           locale={locale}
           skills={aichatConfigurableSkills}
           selectedSkillIds={draftSkillPreferenceIds}
@@ -2198,7 +2248,7 @@ function resolveActiveWorkflowApprovalRequest(
   messages: AIChatMessage[],
   isSending: boolean,
   hasActiveStreamingMessage: boolean,
-  surface: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human'
+  surface: AIChatShellSurface
 ): AIChatWorkflowApprovalRequest | null {
   if (
     !conversation ||

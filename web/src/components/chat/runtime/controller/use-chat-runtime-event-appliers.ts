@@ -14,6 +14,7 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenBudgetRequestedEventData,
   AIChatTokenUsageUpdatedEventData,
   AIChatMemoryMutationEventData,
   AIChatRuntimeInputAppliedEventData,
@@ -51,6 +52,7 @@ import {
   applyRuntimeInputAppliedState,
   applyMessageRetractState,
   applyMessageStartState,
+  applyTokenBudgetRequestedState,
   applyTokenUsageUpdatedState,
   applySkillArtifactCreatedState,
   applySkillCallEndState,
@@ -266,6 +268,14 @@ export function useChatRuntimeEventAppliers({
     (payload: AIChatTokenUsageUpdatedEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
       setControllerState(current => applyTokenUsageUpdatedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyTokenBudgetRequested = useCallback(
+    (payload: AIChatTokenBudgetRequestedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyTokenBudgetRequestedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -700,6 +710,7 @@ export function useChatRuntimeEventAppliers({
       applyUserInputRequested,
       applyMessageEnd,
       applyTokenUsageUpdated,
+      applyTokenBudgetRequested,
       applyStreamError,
     }),
     [
@@ -724,6 +735,7 @@ export function useChatRuntimeEventAppliers({
       applyMessageChunk,
       applyMessageEnd,
       applyTokenUsageUpdated,
+      applyTokenBudgetRequested,
       applyMessageRetract,
       applyMessageStart,
       applySkillArtifactCreated,

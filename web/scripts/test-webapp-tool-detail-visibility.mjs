@@ -7,7 +7,15 @@ import { load, read } from './connector-fixture.mjs';
 
 const chat = read('src/components/chat/variants/aichat/aichat-chat.tsx');
 assert.match(read('src/components/chat/index.tsx'), /showSkillEventDetails\?: boolean/);
-assert.match(chat, /showSkillEventDetails=\{surface !== 'agent-webapp' && showSkillEventDetails\}/);
+// The published webapp hides execution details through the surface profile (ADR 0050).
+assert.match(
+  chat,
+  /showSkillEventDetails=\{surfaceProfile\.executionDetails && showSkillEventDetails\}/
+);
+assert.match(
+  read('src/components/chat/variants/aichat/chat-surface-profile.ts'),
+  /executionDetails: surface !== 'agent-webapp'/
+);
 assert.match(chat, /showSkillEventDetails = true/, 'internal chat keeps diagnostic details');
 assert.match(
   read('src/components/digital-human/digital-human-webapp.tsx'),

@@ -688,18 +688,25 @@ export function applyWorkflowPausedState(
 ): AIChatControllerState {
   payload = normalizeWorkflowPayload(payload);
   const paused = parseWorkflowPausedEvent(payload);
-  const status =
-    paused.preferredStatus ??
-    normalizeWorkflowRunTimelineStatus(payload.status, 'pending_approval');
-  return applyWorkflowTimelineState(
-    current,
-    payload,
-    eventId,
-    status,
-    mapWorkflowNodeTimelineItem({ ...payload, status: 'paused' }, true),
-    undefined,
-    true
-  );
+  // An expired approval ends its node in the same update as the run.
+  const expired = workflowEventType(payload) === 'approval_expired';
+  const status: RunStatus = expired
+    ? 'expired'
+    : (paused.preferredStatus ??
+      normalizeWorkflowRunTimelineStatus(payload.status, 'pending_approval'));
+  const node = expired
+    ? mapWorkflowNodeTimelineItem(
+        {
+          ...payload,
+          status: 'failed',
+          node_type: 'approval',
+          title: 'Approval expired',
+          outputs: payload as Record<string, unknown>,
+        },
+        true
+      )
+    : mapWorkflowNodeTimelineItem({ ...payload, status: 'paused' }, true);
+  return applyWorkflowTimelineState(current, payload, eventId, status, node, undefined, true);
 }
 
 export function applyWorkflowApprovalRequestedState(

@@ -122,7 +122,7 @@ export function ConnectorRuntimeDialogApprovalBridge({
 }: ConnectorRuntimeDialogApprovalBridgeProps) {
   const t = useT('connectors');
   const locale = useLocale();
-  const pendingScopeId = useToolGovernancePendingApprovalScope();
+  const pendingApprovalScope = useToolGovernancePendingApprovalScope();
   const receipt = useConnectorRuntimeReceipt(result.confirmation.route_receipt);
   const confirmation = localizeConnectorRuntimeConfirmation(result.confirmation, locale);
   const checkReceipt = receipt.check;
@@ -172,8 +172,8 @@ export function ConnectorRuntimeDialogApprovalBridge({
 
   useEffect(() => {
     if (!verified || receipt.result || receipt.phase === 'submitting') return;
-    return publishToolGovernancePendingApproval(approval, pendingScopeId);
-  }, [approval, pendingScopeId, receipt.phase, receipt.result, verified]);
+    return publishToolGovernancePendingApproval(approval, pendingApprovalScope);
+  }, [approval, pendingApprovalScope, receipt.phase, receipt.result, verified]);
 
   // The existing Tool Governance approval panel owns the visible confirmation
   // UI. This bridge only registers the server-issued decision and supplies the

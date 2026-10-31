@@ -306,6 +306,8 @@ export interface AIChatController {
   isStopping: boolean;
   isSending: boolean;
   supportsRuntimeInput: boolean;
+  /** The transport can continue a turn after the person decides a tool approval. */
+  supportsToolGovernanceApproval: boolean;
   canSubmitRuntimeInput: boolean;
   connectionState: AIChatConnectionState;
   error: string | null;
