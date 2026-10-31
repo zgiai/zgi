@@ -202,3 +202,109 @@ func TestStalePredeductRecoveryMirrorsConsoleRelease(t *testing.T) {
 		t.Fatalf("attempt status=%s console_settlement_status=%v, want ROLLED_BACK", attempt.Status, attempt.ConsoleSettlementStatus)
 	}
 }
+
+// TestStalePredeductRecoveryFailureBacksOff covers a settlement Pre cannot
+// mirror: each failed sweep is counted once and backed off instead of being
+// retried (and logged) on every tick.
+func TestStalePredeductRecoveryFailureBacksOff(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	var bc *BillingContext
+	queries := 0
+	server := consoleSettlementServer(t, func(bc *BillingContext) string {
+		queries++
+		// An overage that still reports a refund is invalid and must not mirror.
+		return fmt.Sprintf(`{"found":true,"settlement_id":%q,"deduction_id":%q,"attempt_id":%q,"organization_id":%q,"request_id":%q,"settlement_status":"SETTLED","reserved_credits":100,"settled_credits":150,"refunded_credits":1,"retryable":false,"pricing_snapshot":{"currency":"USD","cny_per_usd":"7","points_per_usd":"1000"}}`,
+			bc.DeductionID, bc.DeductionID, bc.AttemptID, bc.OrganizationID, bc.RequestID)
+	}, &bc)
+	client := &countingSettleQuotaClient{}
+	remote, seeded := seedStaleRemotePrededuct(t, db, client, server.URL)
+	bc = seeded
+
+	before := time.Now()
+	if err := remote.recoverStalePredeductedRemoteAttempts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusPre || attempt.ReconcileAttempts != 1 {
+		t.Fatalf("attempt status=%s reconcile_attempts=%d, want %s/1", attempt.Status, attempt.ReconcileAttempts, billingAttemptStatusPre)
+	}
+	if attempt.NextReconcileAt == nil || attempt.NextReconcileAt.Before(before.Add(reconcileBackoff(1))) {
+		t.Fatalf("next_reconcile_at = %v, want >= %v", attempt.NextReconcileAt, before.Add(reconcileBackoff(1)))
+	}
+	if attempt.ErrorCode == nil || *attempt.ErrorCode != "STALE_PREDEDUCT_RECOVERY_FAILED" {
+		t.Fatalf("error_code = %v, want STALE_PREDEDUCT_RECOVERY_FAILED", attempt.ErrorCode)
+	}
+
+	// Still stale by updated_at, but inside the backoff window: skipped.
+	staleAt := time.Now().Add(-defaultRemotePredeductTimeout - time.Minute)
+	if err := db.Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Update("updated_at", staleAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.recoverStalePredeductedRemoteAttempts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if queries != 1 {
+		t.Fatalf("console queries = %d, want 1: a backed-off attempt must not be retried", queries)
+	}
+	if client.settleCalls != 0 {
+		t.Fatalf("settle calls = %d, want 0", client.settleCalls)
+	}
+}
+
+// TestStalePredeductRecoveryDeadLettersAfterMaxRetries pins the end of the
+// retry budget: the last counted failure moves the attempt to DEAD_LETTER.
+func TestStalePredeductRecoveryDeadLettersAfterMaxRetries(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	var bc *BillingContext
+	server := consoleSettlementServer(t, func(bc *BillingContext) string {
+		return fmt.Sprintf(`{"found":true,"settlement_id":%q,"deduction_id":%q,"attempt_id":%q,"organization_id":%q,"request_id":%q,"settlement_status":"SETTLED","reserved_credits":100,"settled_credits":-1,"refunded_credits":0,"retryable":false}`,
+			bc.DeductionID, bc.DeductionID, bc.AttemptID, bc.OrganizationID, bc.RequestID)
+	}, &bc)
+	client := &countingSettleQuotaClient{}
+	remote, seeded := seedStaleRemotePrededuct(t, db, client, server.URL)
+	bc = seeded
+	// Keep the attempt stale while spending all but the last retry.
+	staleAt := time.Now().Add(-defaultRemotePredeductTimeout - time.Minute)
+	if err := db.Model(&BillingAttempt{}).Where("attempt_id = ?", bc.AttemptID).Updates(map[string]interface{}{"reconcile_attempts": defaultReconcileMaxRetries - 1, "updated_at": staleAt}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := remote.recoverStalePredeductedRemoteAttempts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Status != billingAttemptStatusDeadLetter || attempt.ReconcileAttempts != defaultReconcileMaxRetries || attempt.NextReconcileAt != nil {
+		t.Fatalf("attempt status=%s reconcile_attempts=%d next_reconcile_at=%v, want %s/%d/nil", attempt.Status, attempt.ReconcileAttempts, attempt.NextReconcileAt, billingAttemptStatusDeadLetter, defaultReconcileMaxRetries)
+	}
+}
+
+// TestStalePredeductRecoveryFailureCountsOncePerRead pins the guard for the
+// concurrent sweep workers: a second worker that read the same retry count
+// does not count the same failure again.
+func TestStalePredeductRecoveryFailureCountsOncePerRead(t *testing.T) {
+	db := openRemoteBillingTestDB(t)
+	client := &countingSettleQuotaClient{}
+	remote, bc := seedStaleRemotePrededuct(t, db, client, "")
+	var read BillingAttempt
+	if err := db.First(&read, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := remote.scheduleStalePredeductRecoveryFailure(context.Background(), read, errors.New("mirror refused")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var attempt BillingAttempt
+	if err := db.First(&attempt, "attempt_id = ?", bc.AttemptID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if attempt.ReconcileAttempts != 1 {
+		t.Fatalf("reconcile_attempts = %d, want 1", attempt.ReconcileAttempts)
+	}
+}

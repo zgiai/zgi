@@ -25,6 +25,9 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 			}
 		}
 	}()
+	// Set only when the settlement came from a Console query, the one path that
+	// reports the reservation the overage is measured against.
+	queriedReservedCredits := int64(0)
 	if settlement == nil || bc != nil && bc.ToolPostpaid {
 		if bc == nil || strings.TrimSpace(bc.OrganizationID) == "" || strings.TrimSpace(bc.AttemptID) == "" {
 			return fmt.Errorf("missing billing identity for console settlement query")
@@ -93,9 +96,10 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		if !strings.EqualFold(result.SettlementStatus, "SETTLED") {
 			return fmt.Errorf("console settlement is not terminal: status=%s retryable=%t", result.SettlementStatus, result.Retryable)
 		}
-		if result.SettledCredits < 0 || result.RefundedCredits < 0 || (result.ReservedCredits > 0 && result.SettledCredits+result.RefundedCredits > result.ReservedCredits) {
+		if !consoleSettlementAmountsValid(result.ReservedCredits, result.SettledCredits, result.RefundedCredits) {
 			return fmt.Errorf("invalid console settlement amounts: reserved=%d settled=%d refunded=%d", result.ReservedCredits, result.SettledCredits, result.RefundedCredits)
 		}
+		queriedReservedCredits = result.ReservedCredits
 		settlement = settlementFromQueryResult(result)
 		if result.DeductionID != "" && result.DeductionID != result.SettlementID {
 			return fmt.Errorf("console settlement deduction mismatch: settlement_id=%s deduction_id=%s", result.SettlementID, result.DeductionID)
@@ -125,6 +129,7 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		}
 		return fmt.Errorf("apply platform settlement currency snapshot: %w", err)
 	}
+	recordSettlementOverageSnapshot(bc, queriedReservedCredits, settlement.OfficialPoints)
 	s.localService.applyRouteAttributionWithLookup(ctx, bc)
 	finalizeMediaTimingSnapshot(bc)
 	bc.SettledAt = time.Now().UTC()
@@ -293,6 +298,42 @@ func applyPlatformSettlementCostSnapshot(bc *BillingContext, settlement *adapter
 		return fmt.Errorf("%w: console settlement recorded no USD to CNY rate", ErrExchangeRateUnavailable)
 	}
 	return mergeExchangeRateSnapshot(bc, rate, exchangeRateSourceConsoleSystem, time.Now().UTC())
+}
+
+// settlementOverageStrategyChargeDifference mirrors Console's
+// ReservationOverageStrategyChargeDifference: an actual above the reservation
+// is charged in full and the balance may go negative.
+const settlementOverageStrategyChargeDifference = "charge_difference"
+
+// consoleSettlementAmountsValid accepts a Console settlement that Pre can
+// mirror. Console charges the difference when the actual exceeds the
+// reservation, so an overage is valid as long as nothing was refunded; within
+// the reservation, settled+refunded must still fit it. A reservation Console
+// did not report (zero) leaves only the sign check.
+func consoleSettlementAmountsValid(reserved, settled, refunded int64) bool {
+	if settled < 0 || refunded < 0 {
+		return false
+	}
+	if reserved <= 0 {
+		return true
+	}
+	if settled > reserved {
+		return refunded == 0
+	}
+	return settled+refunded <= reserved
+}
+
+// recordSettlementOverageSnapshot records an actual above the reservation in
+// the settlement snapshot, with the key names Console's settle transaction
+// metadata uses, so an overage is auditable from the usage bill alone.
+func recordSettlementOverageSnapshot(bc *BillingContext, reserved, settled int64) {
+	if bc == nil || reserved <= 0 || settled <= reserved {
+		return
+	}
+	values := pricingSnapshotMap(bc.PricingSnapshot)
+	values["overage_credits"] = settled - reserved
+	values["overage_strategy"] = settlementOverageStrategyChargeDifference
+	bc.PricingSnapshot = buildPricingSnapshot(values)
 }
 
 func validatePlatformProxySettlement(bc *BillingContext, settlement *adapter.SettlementResult) error {
