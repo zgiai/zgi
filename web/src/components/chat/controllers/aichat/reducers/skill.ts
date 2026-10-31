@@ -18,6 +18,7 @@ import {
 } from '@/components/chat/controllers/aichat/types';
 import type { AIChatPresentationPosition } from '@/services/types/aichat';
 import {
+  hasToolGovernanceDecision,
   isStaleAIChatStreamEvent,
   mergeSkillInvocationByStatus,
   preferCompleteIntermediateAnswerContent,
@@ -1333,7 +1334,7 @@ export function applySkillCallEndState(
     presentationPositionFromPayload(payload),
     true
   );
-  if (!payload.governance) {
+  if (!hasToolGovernanceDecision(payload.governance)) {
     return next;
   }
   return applyToolGovernanceDecisionState(
@@ -1380,7 +1381,7 @@ export function applySkillCallErrorState(
     presentationPositionFromPayload(payload),
     true
   );
-  if (!payload.governance) {
+  if (!hasToolGovernanceDecision(payload.governance)) {
     return next;
   }
   return applyToolGovernanceDecisionState(

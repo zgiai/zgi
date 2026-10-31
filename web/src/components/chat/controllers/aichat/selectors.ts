@@ -27,7 +27,10 @@ import {
   governanceCorrelationIdFromInvocation,
   isPendingToolGovernanceInvocation,
 } from './governance';
-import { preferCompleteIntermediateAnswerContent } from './reducers/shared';
+import {
+  hasToolGovernanceDecision,
+  preferCompleteIntermediateAnswerContent,
+} from './reducers/shared';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 
 const EMPTY_AICHAT_MESSAGES: AIChatMessage[] = [];
@@ -111,7 +114,9 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
 }
 
 function isTerminalGovernedSkillInvocation(invocation: AIChatSkillInvocation): boolean {
-  if (!invocation.governance || invocation.kind === 'tool_governance') return false;
+  if (!hasToolGovernanceDecision(invocation.governance) || invocation.kind === 'tool_governance') {
+    return false;
+  }
   const status = String(invocation.status ?? '').toLowerCase();
   return (
     status === 'success' ||
@@ -244,9 +249,7 @@ function isGenericDigitalHumanTaskGovernanceEvent(event: unknown): boolean {
   const governance = timelineRecord(root.governance);
   const approvalEvent = firstTimelineRecord(root.approval_event, governance.approval_event);
   const records = [root, governance, approvalEvent];
-  const skill = records
-    .map(record => timelineString(record.skill_id).toLowerCase())
-    .find(Boolean);
+  const skill = records.map(record => timelineString(record.skill_id).toLowerCase()).find(Boolean);
   const tool = records
     .map(record => timelineString(record.tool_name || record.tool_id).toLowerCase())
     .find(Boolean);
@@ -865,7 +868,7 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     .filter(invocation => invocation.kind !== 'memory_mutation')
     .map((invocation, index): AIChatAgenticTimelineItem => {
       const correlationId = governanceCorrelationIdFromInvocation(invocation) ?? String(index);
-      const hasGovernance = Boolean(invocation.governance);
+      const hasGovernance = hasToolGovernanceDecision(invocation.governance);
       const shouldRenderAsGovernanceDecision =
         (!isDigitalHumanTaskMutationInvocation(invocation) &&
           invocation.kind === 'tool_governance') ||
