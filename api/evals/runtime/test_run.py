@@ -98,6 +98,21 @@ class ScoreTest(unittest.TestCase):
         failed = self.failed(scenario, [turn("I used activate_skills for this."), turn("答案是四十二。")])
         self.assertEqual(failed, ["turn 1: no internal names (activate_skills)", "turn 2: answers in English (6 CJK chars)"])
 
+    def test_language_is_judged_on_prose_only(self):
+        zh = {"lang": "zh", "turns": ["q"], "expect": {}}
+        # A bare number or formula has no language to judge.
+        self.assertEqual(self.failed(zh, [turn("8760")]), [])
+        self.assertEqual(self.failed(zh, [turn("2400 × 15% = 2400 × 0.15 = **360**")]), [])
+        # Links, URLs and code are not counted against the answer's language.
+        linked = "文件已生成：[下载 squares.csv](http://localhost:8679/console/api/files/tools/abc.csv?expires_at=1&sign=xyz)，表头是 `n,n^2,n^3`。"
+        self.assertEqual(self.failed(zh, [turn(linked)]), [])
+        # A short quotation of the source is not the answer's language.
+        en = {"lang": "en", "turns": ["q"], "expect": {}}
+        quoted = 'Tomorrow at 3 p.m. in Conference Room 2. ("二号会议室" could also be "Meeting Room 2".)'
+        self.assertEqual(self.failed(en, [turn(quoted)]), [])
+        # An answer written in the wrong language still fails.
+        self.assertEqual(self.failed(zh, [turn("15% of 2400 is **360**.")]), ["answers in Chinese (0% CJK)"])
+
     def test_skill_expectations_use_the_whole_conversation(self):
         scenario = {"lang": "en", "turns": ["a", "b"], "expect": {"skills_any": ["calculator"]}}
         self.assertEqual(self.failed(scenario, [turn("ok", activated_skills=["calculator"]), turn("done")]), [])

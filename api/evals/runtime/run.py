@@ -226,6 +226,21 @@ def numbers_in(text):
     return [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", joined)]
 
 
+# Fewer letters and CJK characters than this in an answer's prose, such as a
+# bare number or formula, say nothing about its language.
+MIN_LANGUAGE_CHARS = 3
+
+
+def prose(text):
+    """Returns text without code, URLs, link targets and short quotations,
+    which are not in the answer's language whatever language it is written in."""
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"`[^`\n]*`", " ", text)
+    text = re.sub(r"\]\([^)]*\)", "]", text)
+    text = re.sub(r"https?://\S+", " ", text)
+    return re.sub(r'"[^"\n]{1,40}"|“[^”\n]{1,40}”|「[^」\n]{1,40}」', " ", text)
+
+
 def cjk_share(text):
     cjk = len(re.findall(r"[一-鿿]", text))
     latin = len(re.findall(r"[A-Za-z]", text))
@@ -244,7 +259,10 @@ def default_checks(turn, lang):
     ]
     leaked = [name for name in INTERNAL_NAMES if name in turn["visible_text"]]
     checks.append(("no internal names" + (" (" + ", ".join(leaked) + ")" if leaked else ""), not leaked))
-    share, cjk = cjk_share(turn["visible_text"])
+    text = prose(turn["visible_text"])
+    share, cjk = cjk_share(text)
+    if len(re.findall(r"[一-鿿A-Za-z]", text)) < MIN_LANGUAGE_CHARS:
+        return checks
     if lang == "zh" and turn["answer"].strip():
         checks.append((f"answers in Chinese ({share:.0%} CJK)", share >= 0.3))
     if lang == "en":

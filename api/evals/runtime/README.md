@@ -21,7 +21,7 @@ A replayable scenario suite for the Agent runtime: the native agent loop, skill 
   - Runs every scenario as its own API end user, and writes `results.json` and `report.md`.
   - Every turn also gets default checks:
     - it completes, with no runtime error, and the answer is not empty;
-    - its visible text is in the scenario's language and names no internal function or tool, such as `activate_skills`.
+    - its visible text is in the scenario's language and names no internal function or tool, such as `activate_skills`. The language is judged on prose: code, URLs, link targets and short quotations are left out, and an answer with fewer than three letters or CJK characters left, such as a bare number or formula, is not judged.
   - A failed tool call is sent back to the model, which may recover. It is counted and listed in the report, not scored.
 - `test_run.py`: tests for the scoring. Run them with `python -m unittest test_run.py`.
 
