@@ -533,7 +533,9 @@ export function dispatchAIChatStreamEvent(
           title: 'Approval expired',
           outputs: data,
         },
-        eventId
+        // The pause above already took this event id; the expired node is part
+        // of the same event, so it carries none and is not dropped as stale.
+        undefined
       );
       break;
     case 'question_answer_submitted':

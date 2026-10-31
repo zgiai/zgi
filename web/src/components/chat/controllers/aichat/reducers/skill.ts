@@ -1303,6 +1303,14 @@ export function applySkillCallEndState(
   payload: AIChatSkillCallEndEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  if (
+    isStaleAIChatStreamEvent(
+      eventId,
+      current.streamingByMessageId[payload.message_id]?.last_event_id
+    )
+  ) {
+    return current;
+  }
   const next = updateSkillInvocationMetadata(
     current,
     payload.conversation_id,
@@ -1337,11 +1345,10 @@ export function applySkillCallEndState(
   if (!hasToolGovernanceDecision(payload.governance)) {
     return next;
   }
-  return applyToolGovernanceDecisionState(
-    next,
-    toolGovernanceDecisionEventFromSkillCall(payload),
-    eventId ? `${eventId}:governance` : undefined
-  );
+  // The decision is part of this same event, so it applies with it, not as a
+  // second event: an id derived from this one compares equal to it and would
+  // be dropped as stale.
+  return applyToolGovernanceDecisionState(next, toolGovernanceDecisionEventFromSkillCall(payload));
 }
 
 export function applySkillCallErrorState(
@@ -1349,6 +1356,14 @@ export function applySkillCallErrorState(
   payload: AIChatSkillCallErrorEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  if (
+    isStaleAIChatStreamEvent(
+      eventId,
+      current.streamingByMessageId[payload.message_id]?.last_event_id
+    )
+  ) {
+    return current;
+  }
   const next = updateSkillInvocationMetadata(
     current,
     payload.conversation_id,
@@ -1384,11 +1399,10 @@ export function applySkillCallErrorState(
   if (!hasToolGovernanceDecision(payload.governance)) {
     return next;
   }
-  return applyToolGovernanceDecisionState(
-    next,
-    toolGovernanceDecisionEventFromSkillCall(payload),
-    eventId ? `${eventId}:governance` : undefined
-  );
+  // The decision is part of this same event, so it applies with it, not as a
+  // second event: an id derived from this one compares equal to it and would
+  // be dropped as stale.
+  return applyToolGovernanceDecisionState(next, toolGovernanceDecisionEventFromSkillCall(payload));
 }
 
 export function applySkillLoadStartState(
