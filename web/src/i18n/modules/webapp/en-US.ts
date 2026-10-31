@@ -926,24 +926,9 @@ const messages = {
       approvalSubmitFailed: 'Failed to submit approval',
     },
     operationCards: {
-      planTitle: 'Operation plan',
       resultTitle: 'Operation result',
       confirmationTitle: 'Confirm operation',
       hostedTaskTitle: 'Hosted task',
-      planStatuses: {
-        pending: 'Pending',
-        running: 'Running',
-        completed: 'Completed',
-        failed: 'Failed',
-        cancelled: 'Cancelled',
-      },
-      stepStatuses: {
-        pending: 'Pending',
-        running: 'Running',
-        completed: 'Completed',
-        failed: 'Failed',
-        skipped: 'Skipped',
-      },
       resultStatuses: {
         success: 'Success',
         error: 'Error',

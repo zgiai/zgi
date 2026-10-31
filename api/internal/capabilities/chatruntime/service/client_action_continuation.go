@@ -465,7 +465,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 		taskTokenBudget:                taskTokenBudgetFromMetadata(message.Metadata),
 	}
 	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
-	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req, message.Metadata)
+	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req)
 	parts.TurnStartedAt = message.CreatedAt
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
@@ -480,7 +480,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 	return prepared, nil
 }
 
-func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) string {
+func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest) string {
 	eventSkillID := strings.TrimSpace(stringFromAny(event["skill_id"]))
 	if !strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded) ||
 		(!strings.EqualFold(strings.TrimSpace(stringFromAny(event["action_type"])), "route_navigation") &&
@@ -499,11 +499,8 @@ func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[
 		result["href"],
 		event["href"],
 	))
-	// The plan's next step names its skill; the page's usual skills are the
-	// fallback. The step's wording is not read (ADR 0047).
-	if skillID := operationPlanPreferredBusinessSkillID(metadata); skillID != "" && skillIDEnabled(parts.SkillIDs, skillID) {
-		return skillID
-	}
+	// The page's usual skills; plan steps are the model's checklist and name
+	// no skill (ADR 0049).
 	for _, skillID := range preferredBusinessSkillsForRoute(route) {
 		if skillIDEnabled(parts.SkillIDs, skillID) {
 			return skillID
@@ -522,31 +519,6 @@ func preferredBusinessSkillsForRoute(route string) []string {
 	default:
 		return nil
 	}
-}
-
-func operationPlanPreferredBusinessSkillID(metadata map[string]interface{}) string {
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	for _, phase := range mapSliceFromAny(plan["phases"]) {
-		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
-		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
-			continue
-		}
-		binding := mapFromOperationContext(phase[operationPlanRuntimeBindingKey])
-		if skillID := strings.TrimSpace(stringFromAny(binding["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
-			return skillID
-		}
-		if expectedAction := mapFromOperationContext(phase["expected_action"]); len(expectedAction) > 0 {
-			if skillID := strings.TrimSpace(stringFromAny(expectedAction["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
-				return skillID
-			}
-		}
-		for _, key := range []string{"skill_id", "recommended_skill_id", "target_skill_id"} {
-			if skillID := strings.TrimSpace(stringFromAny(phase[key])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
-				return skillID
-			}
-		}
-	}
-	return ""
 }
 
 func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) {

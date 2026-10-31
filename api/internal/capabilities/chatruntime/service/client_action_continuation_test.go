@@ -88,19 +88,10 @@ func TestPreferredRestoredSkillAfterNavigationUsesDestinationBusinessSkill(t *te
 		"skill_id":    skills.SkillConsoleNavigator,
 		"tool_name":   "navigate",
 	}
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"phases": []interface{}{
-				map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusCompleted, "step": "读取章节"},
-				map[string]interface{}{"id": "phase-2", "status": operationPlanStepStatusPending, "step": "更新当前智能体配置"},
-			},
-		},
-	}
-
 	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{
 		Status: clientActionStatusSucceeded,
 		Result: map[string]interface{}{"loaded_href": "/console/agents/agent-1/agent"},
-	}, metadata)
+	})
 	if got != skills.SkillAgentManagement {
 		t.Fatalf("preferred skill = %q, want %s", got, skills.SkillAgentManagement)
 	}
@@ -108,30 +99,9 @@ func TestPreferredRestoredSkillAfterNavigationUsesDestinationBusinessSkill(t *te
 	got = preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{
 		Status: clientActionStatusSucceeded,
 		Result: map[string]interface{}{"observed_path": "/console/files"},
-	}, map[string]interface{}{})
+	})
 	if got != skills.SkillFileReader {
 		t.Fatalf("preferred files skill = %q, want %s", got, skills.SkillFileReader)
-	}
-}
-
-// After navigation, the plan's next step decides the skill by its structured
-// action; its wording does not (ADR 0047).
-func TestPreferredRestoredSkillAfterNavigationReadsThePlanStepAction(t *testing.T) {
-	parts := &chatRequestParts{SkillIDs: []string{skills.SkillConsoleNavigator, skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator}}
-	event := map[string]interface{}{"action_type": "route_navigation", "skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate"}
-	loaded := runtimedto.ClientActionResultRequest{Status: clientActionStatusSucceeded, Result: map[string]interface{}{"observed_path": "/console/files"}}
-	withAction := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
-		map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusPending, "step": "整理文件",
-			"expected_action": map[string]interface{}{"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file"}},
-	}}}
-	if got := preferredRestoredSkillAfterClientAction(parts, event, loaded, withAction); got != skills.SkillFileGenerator {
-		t.Fatalf("preferred skill = %q, want the step's %s", got, skills.SkillFileGenerator)
-	}
-	wordedOnly := map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{
-		map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusPending, "step": "生成并保存报告"},
-	}}}
-	if got := preferredRestoredSkillAfterClientAction(parts, event, loaded, wordedOnly); got != skills.SkillFileReader {
-		t.Fatalf("preferred skill = %q, want the page default %s", got, skills.SkillFileReader)
 	}
 }
 
@@ -142,7 +112,7 @@ func TestPreferredRestoredSkillAfterFailedNavigationKeepsNavigator(t *testing.T)
 		"skill_id":    skills.SkillConsoleNavigator,
 		"tool_name":   "navigate",
 	}
-	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{Status: clientActionStatusFailed}, nil)
+	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{Status: clientActionStatusFailed})
 	if got != skills.SkillConsoleNavigator {
 		t.Fatalf("preferred skill = %q, want navigator for retryable failure", got)
 	}
