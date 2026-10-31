@@ -271,6 +271,100 @@
       "expect": {
         "answer_any": ["365"]
       }
+    },
+    {
+      "id": "plan_three_deliverables_zh",
+      "category": "planning",
+      "lang": "zh",
+      "turns": ["帮我做三件事：1）算出 2026 年 3 月 1 日到 2026 年 12 月 25 日相隔多少天；2）12 万元按年利率 3.2% 复利存 3 年，到期本息和是多少；3）把这两个结果和计算过程写进一个 Markdown 文件。"],
+      "expect": {
+        "answer_values": [299, 131892.57],
+        "tolerance": 0.01,
+        "files_min": 1
+      }
+    },
+    {
+      "id": "plan_eight_items_zh",
+      "category": "planning",
+      "lang": "zh",
+      "turns": ["下面 8 个商品按各自折扣算出折后价，再算合计，最后把明细和合计生成一个 CSV 文件：耳机 399 元 85 折，键盘 259 元 9 折，鼠标 129 元 8 折，显示器 1599 元 88 折，音箱 459 元 75 折，摄像头 329 元 95 折，路由器 289 元 7 折，移动硬盘 569 元 82 折。"],
+      "expect": {
+        "answer_values": [339.15, 233.1, 103.2, 1407.12, 344.25, 312.55, 202.3, 466.58, 3408.25],
+        "tolerance": 0.01,
+        "files_min": 1
+      }
+    },
+    {
+      "id": "plan_dependent_chain_en",
+      "category": "planning",
+      "lang": "en",
+      "turns": ["A salesperson earns a base of 4,800 a month. Step 1: work out a 6.5% raise on that. Step 2: the new monthly salary. Step 3: the annual salary at the new rate. Step 4: save the three numbers to a CSV file."],
+      "expect": {
+        "answer_values": [312, 5112, 61344],
+        "files_min": 1
+      }
+    },
+    {
+      "id": "plan_six_comparisons_en",
+      "category": "planning",
+      "lang": "en",
+      "turns": ["Population last year and this year for six towns: A 1,250,000 to 1,318,750; B 860,000 to 897,840; C 2,100,000 to 2,037,000; D 450,000 to 481,500; E 1,730,000 to 1,799,200; F 990,000 to 1,051,380. Give each town's growth rate in percent, then say which grew fastest and which shrank or grew slowest."],
+      "expect": {
+        "answer_values": [5.5, 4.4, -3, 7, 4, 6.2],
+        "tolerance": 0.01,
+        "answer_all": ["D", "C"]
+      }
+    },
+    {
+      "id": "plan_revision_zh",
+      "category": "planning",
+      "lang": "zh",
+      "turns": ["分三步帮我准备活动餐费预算：1）25 人，每人 48 元，算总餐费；2）总餐费打九折；3）生成一个 CSV 预算表。", "每人餐费改成 52 元，其他不变，按新价格重新算一遍并重新生成表格。"],
+      "turn_expect": {
+        "0": {
+          "answer_values": [1080],
+          "files_min": 1
+        }
+      },
+      "expect": {
+        "answer_values": [1170],
+        "files_min": 2
+      }
+    },
+    {
+      "id": "plan_after_clarification_zh",
+      "category": "planning",
+      "lang": "zh",
+      "turns": ["帮我算一下房贷每月还多少，再把结果整理成一个还款摘要文件。", "贷款 100 万，30 年，年利率 3.5%，等额本息。"],
+      "turn_expect": {
+        "0": {
+          "asked_user": true
+        }
+      },
+      "expect": {
+        "answer_values": [4490.45],
+        "files_min": 1
+      }
+    },
+    {
+      "id": "plan_twelve_dates_zh",
+      "category": "planning",
+      "lang": "zh",
+      "turns": ["算出下面 12 个日期分别距离 2026 年 1 月 1 日多少天，每个都要算，然后把结果做成一个 Markdown 表格文件：2026-02-14、2026-03-08、2026-04-05、2026-05-01、2026-06-19、2026-07-01、2026-08-01、2026-09-10、2026-10-01、2026-11-11、2026-12-12、2026-12-31。"],
+      "expect": {
+        "answer_values": [44, 66, 94, 120, 169, 181, 212, 252, 273, 314, 345, 364],
+        "files_min": 1
+      }
+    },
+    {
+      "id": "plan_three_files_en",
+      "category": "planning",
+      "lang": "en",
+      "turns": ["Prepare three separate files for a small shop: (1) a CSV price list with Pen 2, Notebook 5 and Bag 30; (2) a Markdown note titled Opening Hours that says Monday to Friday 9 to 6; (3) a JSON file with the shop name Corner Shop and the currency USD. Make all three, then tell me what you made."],
+      "expect": {
+        "files_min": 3,
+        "answer_all": ["CSV", "Markdown", "JSON"]
+      }
     }
   ]
 }
