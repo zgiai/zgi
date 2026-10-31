@@ -29,7 +29,7 @@ The runtime had no shared notion of a call that changes nothing:
 
    A member's own skill cannot declare `side_effects: none`, and a connector operation never counts, because its dispatch keeps a ledger per call.
 2. The calculator and time skills declare `side_effects: none`. `skills.ToolIsReadOnly` and `skills.SystemSkillToolIsReadOnly` answer the question for the agent loop and for crash recovery.
-3. When a round of the native agent loop has at least two read-only calls, they start at once, at most four at a time, before the round is handled. A call is started early only if the sequential pass would run it as it stands:
+3. When a round of the native agent loop has at least two consecutive read-only calls, they start at once, at most four at a time, before the first of them is handled. Any other call ends the group: the reads after it start only once it has run, so a read the model asks for after a change sees the change (fixed 2026-10-31). A call is started early only if the sequential pass would run it as it stands:
    - its skill is active;
    - the organization's policy allows the skill;
    - no plan update after user input holds it back;

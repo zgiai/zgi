@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -107,7 +109,7 @@ func TestReadOnlyCallsOfARoundRunTogether(t *testing.T) {
 	runtime, resolved := barrierSkillRuntime(t, "none")
 	runner := &Runner{SkillRuntime: runtime}
 	loaded := map[string]struct{}{"barrier-reader": {}}
-	runner.prefetchedCalls = runner.prefetchReadOnlyCalls(context.Background(), RunRequest{}, resolved, nil, loaded, nil, barrierCalls("first", "second"))
+	runner.prefetchedCalls, _ = runner.prefetchReadOnlyCalls(context.Background(), RunRequest{}, resolved, nil, loaded, nil, barrierCalls("first", "second"))
 	if len(runner.prefetchedCalls) != 2 {
 		t.Fatalf("started %d calls ahead, want 2", len(runner.prefetchedCalls))
 	}
@@ -126,10 +128,10 @@ func TestCallsThatMayChangeSomethingStayInOrder(t *testing.T) {
 	runtime, resolved := barrierSkillRuntime(t, "")
 	runner := &Runner{SkillRuntime: runtime}
 	loaded := map[string]struct{}{"barrier-reader": {}}
-	if started := runner.prefetchReadOnlyCalls(context.Background(), RunRequest{}, resolved, nil, loaded, nil, barrierCalls("first", "second")); started != nil {
+	if started, _ := runner.prefetchReadOnlyCalls(context.Background(), RunRequest{}, resolved, nil, loaded, nil, barrierCalls("first", "second")); started != nil {
 		t.Fatalf("started %d calls of a skill that declares no effects, want none", len(started))
 	}
-	if started := (&Runner{SkillRuntime: runtime}).prefetchReadOnlyCalls(context.Background(), RunRequest{
+	if started, _ := (&Runner{SkillRuntime: runtime}).prefetchReadOnlyCalls(context.Background(), RunRequest{
 		AuthorizeSkillStep: func(context.Context, string) (bool, error) { return false, nil },
 	}, resolved, nil, loaded, nil, barrierCalls("first", "second")); started != nil {
 		t.Fatalf("started calls the organization's policy refuses")
@@ -139,7 +141,7 @@ func TestCallsThatMayChangeSomethingStayInOrder(t *testing.T) {
 func TestASingleReadOnlyCallIsNotStartedAhead(t *testing.T) {
 	runtime, resolved := barrierSkillRuntime(t, "none")
 	runner := &Runner{SkillRuntime: runtime}
-	if started := runner.prefetchReadOnlyCalls(context.Background(), RunRequest{}, resolved, nil, map[string]struct{}{"barrier-reader": {}}, nil, barrierCalls("only")); started != nil {
+	if started, _ := runner.prefetchReadOnlyCalls(context.Background(), RunRequest{}, resolved, nil, map[string]struct{}{"barrier-reader": {}}, nil, barrierCalls("only")); started != nil {
 		t.Fatalf("started a lone call ahead")
 	}
 }
@@ -170,7 +172,7 @@ func TestReadOnlyRuntimeToolCallsRunTogether(t *testing.T) {
 	runtimeTools := []RuntimeTool{tool("memory_view", true), tool("memory_search", true), tool("memory_edit", false)}
 	runner := &Runner{}
 	calls := []adapter.ToolCall{call("a", "memory_view"), call("b", "memory_search"), call("c", "memory_edit")}
-	runner.prefetchedCalls = runner.prefetchReadOnlyCalls(context.Background(), RunRequest{RuntimeTools: runtimeTools}, nil, nil, nil, nil, calls)
+	runner.prefetchedCalls, _ = runner.prefetchReadOnlyCalls(context.Background(), RunRequest{RuntimeTools: runtimeTools}, nil, nil, nil, nil, calls)
 	if len(runner.prefetchedCalls) != 2 || runner.prefetchedCalls["c"] != nil {
 		t.Fatalf("prefetched = %v, want the two reads only", runner.prefetchedCalls)
 	}
@@ -183,5 +185,52 @@ func TestReadOnlyRuntimeToolCallsRunTogether(t *testing.T) {
 	}
 	if len(runner.prefetchedCalls) != 0 {
 		t.Fatalf("prefetched calls left after use: %v", runner.prefetchedCalls)
+	}
+}
+
+// A read the model asks for after a change in the same response sees the
+// change: reads are started a group at a time, and a call that is not a read
+// ends the group.
+func TestReadOnlyCallsDoNotStartBeforeAnEarlierChange(t *testing.T) {
+	var mu sync.Mutex
+	value := 0
+	seen := map[string]int{}
+	read := func(_ context.Context, call adapter.ToolCall) RuntimeToolResult {
+		mu.Lock()
+		defer mu.Unlock()
+		seen[call.ID] = value
+		return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"value": value}}
+	}
+	write := func(context.Context, adapter.ToolCall) RuntimeToolResult {
+		mu.Lock()
+		defer mu.Unlock()
+		value = 1
+		return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"value": value}}
+	}
+	tool := func(name string, readOnly bool, handler func(context.Context, adapter.ToolCall) RuntimeToolResult) RuntimeTool {
+		return RuntimeTool{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: name}}, SkillID: "digital-human-memory", Handler: handler, ReadOnly: readOnly}
+	}
+	call := func(id, name string) adapter.ToolCall {
+		return adapter.ToolCall{ID: id, Type: "function", Function: adapter.FunctionCall{Name: name, Arguments: "{}"}}
+	}
+	client := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{
+			call("before-view", "memory_view"), call("before-search", "memory_search"),
+			call("edit", "memory_edit"),
+			call("after-view", "memory_view"), call("after-search", "memory_search"),
+		}}, FinishReason: "tool_calls"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Done."}, FinishReason: "stop"}}},
+	}}
+	runner := &Runner{LLMClient: client, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-read-after-write", "msg-read-after-write", "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "update and check"}}})
+	tools := []RuntimeTool{tool("memory_view", true, read), tool("memory_search", true, read), tool("memory_edit", false, write)}
+	if _, _, err := runner.Run(t.Context(), RunRequest{Prepared: prepared, Resolved: &skills.ResolvedSkills{}, RuntimeTools: tools}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"before-view": 0, "before-search": 0, "after-view": 1, "after-search": 1}
+	for id, expected := range want {
+		if got, ok := seen[id]; !ok || got != expected {
+			t.Fatalf("%s saw %d (ran: %v), want %d; all = %v", id, got, ok, expected, seen)
+		}
 	}
 }

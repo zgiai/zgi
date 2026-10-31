@@ -99,8 +99,15 @@ func (r *Runner) refreshNativeSkills(s *runState) {
 // A non-nil outcome ends the run.
 func (r *Runner) runToolCalls(ctx context.Context, s *runState, round int, toolCalls []adapter.ToolCall) *runOutcome {
 	rs := newRoundState()
-	r.prefetchedCalls = r.prefetchReadOnlyCalls(ctx, s.req, s.resolved, s.nativeToolSet, s.loadedSkills, s.failedToolCallReasons, toolCalls)
+	prefetchedThrough := 0
 	for callIndex, call := range toolCalls {
+		if callIndex >= prefetchedThrough {
+			// Reads are started a group at a time, each after the calls
+			// before it ran, so a read sees the changes the model made first.
+			var covered int
+			r.prefetchedCalls, covered = r.prefetchReadOnlyCalls(ctx, s.req, s.resolved, s.nativeToolSet, s.loadedSkills, s.failedToolCallReasons, toolCalls[callIndex:])
+			prefetchedThrough = callIndex + max(covered, 1)
+		}
 		result, failedCallKey := r.executeToolCall(ctx, s, rs, round, call)
 		if eventErr := s.prepared.presentationEventError(); eventErr != nil {
 			return s.stop(eventErr)
