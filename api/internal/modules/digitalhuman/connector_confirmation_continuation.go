@@ -2,11 +2,13 @@ package digitalhuman
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	chatruntime "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -17,10 +19,10 @@ type connectorConfirmationContinuationRuntime interface {
 		*chatruntime.ConnectorConfirmationContinuation, func(chatruntime.StreamEvent) error) (*chatruntime.ChatResult, error)
 }
 
-// ResumeAfterConnectorConfirmation records a decided console confirmation and
-// continues the paused turn (ADR 0024). The claim happens in the request; the
-// model pass runs after it returns, and the browser follows it on the
-// conversation's stream.
+// ResumeAfterConnectorConfirmation records a decided confirmation (console,
+// channel reply or API) and continues the paused turn (ADR 0024). The claim
+// happens in the request; the model pass runs after it returns, the browser
+// follows it on the conversation's stream, and a channel receives its answer.
 func (s *RuntimeService) ResumeAfterConnectorConfirmation(ctx context.Context, command connectorconfirmation.Command, result connectorconfirmation.Result) error {
 	if s == nil {
 		return ErrRunConflict
@@ -86,11 +88,35 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 			caller.SourceWebAppID = &parsed
 		}
 	}
-	result, err := runtime.RunConfiguredConnectorConfirmationContinuation(ctx, runtimeScope(run), caller, config, claim, nil)
+	// A channel shows the continued turn's progress as the first pass did.
+	var onEvent func(chatruntime.StreamEvent) error
+	if event.Origin.Kind == invocation.OriginChannel && s.transient != nil {
+		progress := newChannelProgressCollector(s.transient, run.ID)
+		onEvent = func(streamEvent chatruntime.StreamEvent) error { return progress.Handle(ctx, streamEvent) }
+	}
+	result, err := runtime.RunConfiguredConnectorConfirmationContinuation(ctx, runtimeScope(run), caller, config, claim, onEvent)
 	if err != nil {
+		if event.Origin.Kind == invocation.OriginChannel {
+			s.deliverChannelContinuationFailure(ctx, run, claim.RouteReceipt)
+		}
 		return fail(err)
 	}
 	return s.settleContinuedRun(ctx, run, result)
+}
+
+// channelContinuationFailedNotice tells a channel that the turn stopped after
+// the decided operation; the channel has no run page of its own.
+const channelContinuationFailedNotice = "操作已处理，但数字人继续执行时出错，请到 ZGI 控制台的运行记录查看。"
+
+// deliverChannelContinuationFailure is best effort: the run fails either way.
+func (s *RuntimeService) deliverChannelContinuationFailure(ctx context.Context, run *Run, receipt string) {
+	deliveryStore, ok := s.store.(channelFinalDeliveryStore)
+	if !ok || run == nil {
+		return
+	}
+	if err := deliveryStore.EnqueueRunChannelFinalDelivery(context.WithoutCancel(ctx), run.ID, "connector-continuation-failed:"+receipt, channelContinuationFailedNotice, s.now()); err != nil {
+		logger.WarnContext(ctx, "failed to deliver digital human channel continuation failure", "run_id", run.ID.String(), err)
+	}
 }
 
 // settleContinuedRun gives a continued run the same end as a first pass: it
@@ -109,7 +135,29 @@ func (s *RuntimeService) settleContinuedRun(ctx context.Context, run *Run, resul
 		if result.Status == runtimemodel.MessageStatusWaitingApproval {
 			s.notifyTaskApproval(ctx, run)
 		}
-		return waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now())
+		if err := waiter.MarkRunWaiting(ctx, run.ID, result.Status, s.now()); err != nil {
+			return err
+		}
+		s.deliverContinuedChannelWaitingPrompt(ctx, run, result)
+		return nil
 	}
 	return s.store.CompleteRunWithDelivery(ctx, run.ID, result.Answer, executionTraceFromMetadata(result.Metadata), s.now())
+}
+
+// deliverContinuedChannelWaitingPrompt asks a channel what a continued run now
+// waits for, as a first pass does; a further confirmation names its own
+// receipt, so it is a new prompt.
+func (s *RuntimeService) deliverContinuedChannelWaitingPrompt(ctx context.Context, run *Run, result *chatruntime.ChatResult) {
+	if run == nil || run.MessageID == nil || len(run.InvocationEvent) == 0 {
+		return
+	}
+	var event invocation.Event
+	if json.Unmarshal(run.InvocationEvent, &event) != nil || event.Origin.Kind != invocation.OriginChannel {
+		return
+	}
+	waiting := *run
+	if refreshed, err := s.store.RunByID(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, run.ID); err == nil && refreshed != nil {
+		waiting.WaitingReceipt = refreshed.WaitingReceipt
+	}
+	s.deliverChannelWaitingPrompt(ctx, &waiting, *run.MessageID, result.Status, result.Answer, result.Metadata)
 }

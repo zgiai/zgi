@@ -163,11 +163,13 @@ and background DigitalHuman runs reach a server only for inspection (ADR 0027):
 the owner must give the connection a task grant, and each call must be proven
 read-only when it runs. Changes are never unattended.
 
-When the owner decides a DigitalHuman confirmation in the console, the same
-turn continues: the DigitalHuman receives the operation's result, exactly as a
-call without confirmation would, and answers in the same message. A cancelled
-or failed operation is reported as such and is not retried with the same
-arguments. Channel replies and the external API keep their fixed outcome text.
+When a DigitalHuman confirmation is decided, in the console, by a channel
+reply or through the external API, the same turn continues: the DigitalHuman
+receives the operation's result, exactly as a call without confirmation would,
+and answers in the same message. A cancelled or failed operation is reported as
+such and is not retried with the same arguments. Running the operation never
+ends the task by itself; a channel receives the answer, or the next
+confirmation prompt, instead of a fixed outcome text.
 
 Write actions are opt-in. When a server connection is added while creating a
 DigitalHuman, only the read operations are selected by default; each write

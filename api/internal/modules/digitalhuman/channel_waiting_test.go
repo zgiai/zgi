@@ -70,12 +70,13 @@ func (s *channelConnectorStoreStub) CompleteRun(_ context.Context, _ uuid.UUID, 
 type channelConnectorConfirmerStub struct {
 	owner, receipt uuid.UUID
 	confirm        *bool
+	continued      bool
 }
 
 func (c *channelConnectorConfirmerStub) DecideChannelConnectorConfirmation(_ context.Context, _, owner, receipt uuid.UUID, confirm bool) (ChannelConnectorDecision, error) {
 	c.owner, c.receipt, c.confirm = owner, receipt, &confirm
 	if confirm {
-		return ChannelConnectorDecision{State: "completed", Title: "发送邮件"}, nil
+		return ChannelConnectorDecision{State: "completed", Title: "发送邮件", Continued: c.continued}, nil
 	}
 	return ChannelConnectorDecision{State: "cancelled", Title: "发送邮件"}, nil
 }
@@ -116,7 +117,7 @@ func TestChannelReplyDecidesConnectorConfirmation(t *testing.T) {
 	if err != nil || !handled || confirmer.confirm == nil || !*confirmer.confirm || confirmer.owner != actor || confirmer.receipt != receipt {
 		t.Fatalf("confirm: handled=%v err=%v confirmer=%+v", handled, err, confirmer)
 	}
-	if len(store.delivered) != 1 || !strings.Contains(store.delivered[0], "「发送邮件」已执行完成") || len(store.completed) != 1 {
+	if len(store.delivered) != 1 || !strings.Contains(store.delivered[0], "「发送邮件」已执行完成") || len(store.completed) != 0 {
 		t.Fatalf("confirm delivered=%v completed=%v", store.delivered, store.completed)
 	}
 
