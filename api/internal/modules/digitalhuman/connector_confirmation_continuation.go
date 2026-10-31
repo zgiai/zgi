@@ -52,7 +52,7 @@ func (s *RuntimeService) ResumeAfterConnectorConfirmation(ctx context.Context, c
 	return nil
 }
 
-func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context, runtime connectorConfirmationContinuationRuntime, claim *chatruntime.ConnectorConfirmationContinuation) error {
+func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context, runtime connectorConfirmationContinuationRuntime, claim *chatruntime.ConnectorConfirmationContinuation) (err error) {
 	run, err := s.store.RunByID(ctx, Scope{OrganizationID: claim.OrganizationID, WorkspaceID: claim.WorkspaceID}, claim.DigitalHumanID, claim.RunID)
 	if err != nil {
 		return err
@@ -60,24 +60,30 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 	if run.Status != RunStatusRunning || run.MessageID == nil || *run.MessageID != claim.MessageID {
 		return ErrRunConflict
 	}
-	fail := func(cause error) error {
-		_ = s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman execution did not complete.", s.now())
-		return cause
-	}
+	// The run is this continuation's from here: whatever stops it (preparing
+	// the pass, the pass itself, settling, or a panic) ends it the same way.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("digital human connector continuation panicked: %v", recovered)
+		}
+		if err != nil {
+			s.failConnectorContinuation(ctx, run, claim.RouteReceipt)
+		}
+	}()
 	resolved, event, err := decodeAndVerifyRun(run)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	config, err := s.brain.RunConfig(resolved)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	s.attachAttachmentReader(&config, run, resolved, event, nil)
 	// The continuation prepares what the first run had, so it sends the same
 	// system prompt and tools and reuses their cached prefix (ADR 0032).
 	s.prepareBackgroundContinuationLinux(ctx, &config, run, resolved, event)
 	if _, err := s.applyRunCapabilities(ctx, &config, run, resolved, event); err != nil {
-		return fail(err)
+		return err
 	}
 	callerID := run.DigitalHumanID
 	caller := chatruntime.Caller{
@@ -96,10 +102,7 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 	}
 	result, err := runtime.RunConfiguredConnectorConfirmationContinuation(ctx, runtimeScope(run), caller, config, claim, onEvent)
 	if err != nil {
-		if event.Origin.Kind == invocation.OriginChannel {
-			s.deliverChannelContinuationFailure(ctx, run, claim.RouteReceipt)
-		}
-		return fail(err)
+		return err
 	}
 	return s.settleContinuedRun(ctx, run, result)
 }
@@ -108,15 +111,37 @@ func (s *RuntimeService) continueAfterConnectorConfirmation(ctx context.Context,
 // the decided operation; the channel has no run page of its own.
 const channelContinuationFailedNotice = "操作已处理，但数字人继续执行时出错，请到 ZGI 控制台的运行记录查看。"
 
-// deliverChannelContinuationFailure is best effort: the run fails either way.
-func (s *RuntimeService) deliverChannelContinuationFailure(ctx context.Context, run *Run, receipt string) {
-	deliveryStore, ok := s.store.(channelFinalDeliveryStore)
-	if !ok || run == nil {
+// failConnectorContinuation ends a continuation that stopped: the run fails
+// unless it already ended (stopped or completed), and a channel run that
+// failed is told so, once per decided confirmation, since the operation may
+// already have run.
+func (s *RuntimeService) failConnectorContinuation(ctx context.Context, run *Run, receipt string) {
+	ctx = context.WithoutCancel(ctx)
+	if err := s.store.FailRun(ctx, run.ID, "digital_human.run.execution_failed", "The DigitalHuman execution did not complete.", s.now()); err != nil {
+		logger.WarnContext(ctx, "failed to fail digital human connector continuation", "run_id", run.ID.String(), err)
+	}
+	if !channelOriginRun(run) {
 		return
 	}
-	if err := deliveryStore.EnqueueRunChannelFinalDelivery(context.WithoutCancel(ctx), run.ID, "connector-continuation-failed:"+receipt, channelContinuationFailedNotice, s.now()); err != nil {
+	if current, err := s.store.RunByID(ctx, Scope{OrganizationID: run.OrganizationID, WorkspaceID: run.WorkspaceID}, run.DigitalHumanID, run.ID); err != nil ||
+		current == nil || current.Status != RunStatusFailed {
+		return
+	}
+	deliveryStore, ok := s.store.(channelFinalDeliveryStore)
+	if !ok {
+		return
+	}
+	if err := deliveryStore.EnqueueRunChannelFinalDelivery(ctx, run.ID, "connector-continuation-failed:"+receipt, channelContinuationFailedNotice, s.now()); err != nil {
 		logger.WarnContext(ctx, "failed to deliver digital human channel continuation failure", "run_id", run.ID.String(), err)
 	}
+}
+
+func channelOriginRun(run *Run) bool {
+	if run == nil || len(run.InvocationEvent) == 0 {
+		return false
+	}
+	var event invocation.Event
+	return json.Unmarshal(run.InvocationEvent, &event) == nil && event.Origin.Kind == invocation.OriginChannel
 }
 
 // settleContinuedRun gives a continued run the same end as a first pass: it
@@ -148,11 +173,7 @@ func (s *RuntimeService) settleContinuedRun(ctx context.Context, run *Run, resul
 // waits for, as a first pass does; a further confirmation names its own
 // receipt, so it is a new prompt.
 func (s *RuntimeService) deliverContinuedChannelWaitingPrompt(ctx context.Context, run *Run, result *chatruntime.ChatResult) {
-	if run == nil || run.MessageID == nil || len(run.InvocationEvent) == 0 {
-		return
-	}
-	var event invocation.Event
-	if json.Unmarshal(run.InvocationEvent, &event) != nil || event.Origin.Kind != invocation.OriginChannel {
+	if run == nil || run.MessageID == nil || !channelOriginRun(run) {
 		return
 	}
 	waiting := *run

@@ -28,6 +28,7 @@ type connectorContinuationStore struct {
 	finals      []string
 	notices     []string
 	nextReceipt *uuid.UUID
+	waitErr     error
 }
 
 func (s *connectorContinuationStore) CompleteRunWithDelivery(ctx context.Context, runID uuid.UUID, summary string, trace datatypes.JSON, now time.Time) error {
@@ -48,6 +49,9 @@ func (s *connectorContinuationStore) FailRun(ctx context.Context, runID uuid.UUI
 }
 
 func (s *connectorContinuationStore) MarkRunWaiting(_ context.Context, runID uuid.UUID, reason string, now time.Time) error {
+	if s.waitErr != nil {
+		return s.waitErr
+	}
 	run := s.runs[runID]
 	if run == nil || run.Status != RunStatusRunning {
 		return ErrRunConflict
@@ -372,7 +376,7 @@ func TestChannelConnectorConfirmationCancelledAndFailedContinuations(t *testing.
 	if f.run.Status != RunStatusFailed || f.chat.status != runtimemodel.MessageStatusError || len(f.store.finals) != 0 {
 		t.Fatalf("failure: run=%s message=%s finals=%q", f.run.Status, f.chat.status, f.store.finals)
 	}
-	if len(f.store.notices) != 1 || f.store.notices[0] != channelContinuationFailedNotice {
+	if notices := f.awaitNotices(t, 1); len(notices) != 1 || notices[0] != channelContinuationFailedNotice {
 		t.Fatalf("failure notices = %q", f.store.notices)
 	}
 }
@@ -394,5 +398,88 @@ func TestAPIConnectorConfirmationLeavesAContinuedRunToItsAnswer(t *testing.T) {
 	}
 	if len(store.completed) != 0 {
 		t.Fatalf("a continued API run was completed with %q", store.completed)
+	}
+}
+
+// awaitNotices waits for the channel notices a failed continuation sends after
+// failing its run, then returns them.
+func (f *channelConnectorContinuationFixture) awaitNotices(t *testing.T, want int) []string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		f.store.mu.Lock()
+		notices := append([]string(nil), f.store.notices...)
+		f.store.mu.Unlock()
+		if len(notices) >= want || time.Now().After(deadline) {
+			// A second notice would arrive right after the first.
+			time.Sleep(50 * time.Millisecond)
+			f.store.mu.Lock()
+			defer f.store.mu.Unlock()
+			return append([]string(nil), f.store.notices...)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type failingRunConfigBrain struct{ fakeBrainAdapter }
+
+func (failingRunConfigBrain) RunConfig(*ResolvedExecution) (chatruntime.RunConfig, error) {
+	return chatruntime.RunConfig{}, errors.New("model configuration unavailable")
+}
+
+// Once the decided operation has run, every way the continuation stops
+// (preparing the pass, settling it, or a panic) fails the run and tells the
+// channel once, instead of leaving the person with neither answer nor error.
+func TestChannelConnectorConfirmationEveryContinuationFailureTellsTheChannel(t *testing.T) {
+	cases := map[string]func(*channelConnectorContinuationFixture){
+		"preparing the pass": func(f *channelConnectorContinuationFixture) {
+			f.service.brain = failingRunConfigBrain{}
+		},
+		"settling the pass": func(f *channelConnectorContinuationFixture) {
+			f.store.waitErr = errors.New("database unavailable")
+			f.chat.pass = func(*chatruntime.ConnectorConfirmationContinuation) (*chatruntime.ChatResult, error) {
+				return &chatruntime.ChatResult{Status: runtimemodel.MessageStatusWaitingApproval, Metadata: map[string]interface{}{}}, nil
+			}
+		},
+		"a panic in the pass": func(f *channelConnectorContinuationFixture) {
+			f.chat.pass = func(*chatruntime.ConnectorConfirmationContinuation) (*chatruntime.ChatResult, error) {
+				panic("unexpected state")
+			}
+		},
+	}
+	for name, breakIt := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newChannelConnectorContinuationFixture(t)
+			breakIt(f)
+			f.reply(t, "确认")
+			if outcome := f.awaitSettled(t); outcome != "failed" {
+				t.Fatalf("continuation settled as %s", outcome)
+			}
+			notices := f.awaitNotices(t, 1)
+			if f.confirmer.executions != 1 || f.run.Status != RunStatusFailed || len(f.store.finals) != 0 {
+				t.Fatalf("executions=%d run=%s finals=%q", f.confirmer.executions, f.run.Status, f.store.finals)
+			}
+			if len(notices) != 1 || notices[0] != channelContinuationFailedNotice {
+				t.Fatalf("channel notices = %q", notices)
+			}
+		})
+	}
+}
+
+// A continuation whose run was stopped meanwhile ends with the stop: the
+// channel is not told it failed.
+func TestChannelConnectorConfirmationStoppedRunIsNotReportedAsFailed(t *testing.T) {
+	f := newChannelConnectorContinuationFixture(t)
+	f.chat.pass = func(*chatruntime.ConnectorConfirmationContinuation) (*chatruntime.ChatResult, error) {
+		now := time.Now()
+		f.run.CancelRequestedAt = &now
+		return nil, chatruntime.ErrMessageStopped
+	}
+	f.reply(t, "确认")
+	if outcome := f.awaitSettled(t); outcome != "failed" {
+		t.Fatalf("continuation settled as %s", outcome)
+	}
+	if notices := f.awaitNotices(t, 1); f.run.Status != RunStatusCanceled || len(notices) != 0 {
+		t.Fatalf("run=%s notices=%q", f.run.Status, notices)
 	}
 }
