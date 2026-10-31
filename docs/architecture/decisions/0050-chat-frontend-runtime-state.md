@@ -107,14 +107,30 @@ The steps are ordered so that each one ships alone, keeps behaviour, and makes t
    - Store invocations in one map per message with the canonical id and the transition table.
    - Keep the old metadata shape as a selector, so components change in step 4 only.
    - Tests: parallel calls to the same tool, retries, late `running` events, `message_end` replacement.
+   - 3a, done (identity and transitions, on the existing list):
+     - One rule matches a report to its call, in `reducers/shared.ts`: call id, then runtime id, then what the call did. Live events, the message_end snapshot and a reloaded message all use it; the three copies it replaces disagreed (the reload keyed on the runtime id, the live path on what the call did), so a call could be one row live and two after a reload. Different ids never fold together. The records of 3,725 messages stored on the local stack showed that call and runtime ids never name two calls; the only cross-id fold left is a page navigation and the client action that carries it out.
+     - A report that joins two records folds them into one: the call's end turns it into the governance decision that the decision event already recorded under the runtime id.
+     - `canInvocationMoveTo` in `status.ts` is the transition table on the closed outcome vocabulary. It replaces the status rank: a rejection now ends a waiting call (the rank ranked `rejected` below `needs_approval`), and an older `running` report does not undo a wait.
+     - Governance decisions keep the runtime id of their call.
+     - One rule, `isRecordedSkillInvocation`, decides which calls a message keeps; the display drops only what its own cards show.
+     - Tests: `test:chat-runtime-replay` replays the recorded streams, now with a sidebar approval turn (navigate, ask, approve, continue in the same message), through the reducers the client ships, loaded by `scripts/lib/load-ts-module.mjs`. Every step keeps one record and one row per call; a parallel call of the same tool keeps its own record; refreshing from the stored copy twice changes nothing; the stored request and decision of one approval read as one approved decision.
+   - Not done: invocations are still a list in the message metadata, not a map, and `message_end` still merges its snapshot into the live list instead of replacing it, because the snapshot may leave out what the live stream showed. Field-level event schemas are not written.
 4. **One timeline builder** (decision 3).
    - Move every visibility, supersede and dedupe rule into `buildTimeline`.
    - Use it for both the live and the reloaded view.
    - Delete the rule copies from the reducers, the selectors and `agentic-timeline.tsx`.
    - Tests: fixtures of real streams, recorded from the local stack, whose live and reloaded timelines must be equal.
+   - 4a, done (one entry point, equality tested):
+     - `messageDisplayTimeline` in `selectors.ts` is the one timeline a message shows: the live event order, then the records only the stored message has; the stored message alone when there are no live events. The message bubble and the approval card read it; the card used to merge the two timelines its own way.
+     - `visibleTimelineItems` in `agentic-timeline.tsx` is the pure row filter the component uses, exported so tests run it.
+     - Tests: for every recorded turn, the rows shown live equal the rows shown after a reload, and at each of the 172 steps the new entry point shows what the bubble showed before.
+   - Not done: the visibility, supersede and dedupe rules still live in `selectors.ts` and `agentic-timeline.tsx`; they are reached through the two entry points above, not moved into one module.
+   - Found while testing: when the model's first text is retracted before a tool call, the live view keeps it as process narration, and the stored presentation drops it, so a reload shows one row fewer. The backend's presentation persistence decides this; it is not changed here.
 5. **Backend presentation fields** (decision 3).
    - Add `presentation_visibility`, a lane or group id and `supersedes` where the backend knows them.
    - Remove the matching tool-specific branches from the client.
+   - 5a, done: `presentation_visibility`. An asset observation is kept for the status line and is not a row. The backend sets it where it builds the observation, passes a recorded invocation's visibility on to the emitted event (DigitalHuman task decisions now carry it live too), and adds it to stored messages on read. The client hides any record marked internal with one rule and no longer recognises asset observations by action names.
+   - Not done: a lane or group id and `supersedes`. A page navigation and its client action, and a governed call and its decision, are still paired on the client by what they did; the DigitalHuman task and connector branches stay.
 
 Steps 1 and 2 are small and remove most of the current user-facing risk. Steps 3 and 4 are the large ones and are worth doing once 1 and 2 have landed.
 
