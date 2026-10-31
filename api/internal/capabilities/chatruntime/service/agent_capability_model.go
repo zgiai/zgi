@@ -43,7 +43,6 @@ type AIChatAgentCapabilityGoal struct {
 type agentSkillBackedCapabilityDescriptor struct {
 	DisplayName    string
 	CandidateQuery string
-	Markers        []string
 }
 
 type agentConfigOnlyCapabilityDescriptor struct {
@@ -52,137 +51,80 @@ type agentConfigOnlyCapabilityDescriptor struct {
 	DisplayName        string
 	GoalAction         string
 	ContinuationEnable bool
-	Markers            []string
 	EnableVerify       []string
 	InspectVerify      []string
 }
 
 type agentConfigFieldDescriptor struct {
-	field                string
-	aliases              []string
-	explicitMarkers      []string
-	semanticMarkers      []string
-	bindingActionMarkers map[string][]string
+	field   string
+	aliases []string
 }
 
 func agentManagementConfigFieldDescriptors() []agentConfigFieldDescriptor {
 	return []agentConfigFieldDescriptor{
 		{
-			field:           "system_prompt",
-			aliases:         []string{"system_prompt"},
-			explicitMarkers: []string{"system_prompt"},
-			semanticMarkers: []string{"system prompt", "prompt", "\u7cfb\u7edf\u63d0\u793a\u8bcd", "\u63d0\u793a\u8bcd"},
+			field:   "system_prompt",
+			aliases: []string{"system_prompt"},
 		},
 		{
-			field:           "model",
-			aliases:         []string{"model"},
-			semanticMarkers: []string{"model", "\u6a21\u578b"},
+			field:   "model",
+			aliases: []string{"model"},
 		},
 		{
-			field:           "model_provider",
-			aliases:         []string{"model_provider"},
-			explicitMarkers: []string{"model_provider", "provider", "\u4f9b\u5e94\u5546"},
-			semanticMarkers: []string{"provider", "\u4f9b\u5e94\u5546"},
+			field:   "model_provider",
+			aliases: []string{"model_provider"},
 		},
 		{
-			field:           "model_parameters",
-			aliases:         []string{"model_parameters"},
-			explicitMarkers: []string{"model_parameters"},
+			field:   "model_parameters",
+			aliases: []string{"model_parameters"},
 		},
 		{
-			field:           "enabled_skill_ids",
-			aliases:         []string{"enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids", "agent_skill"},
-			explicitMarkers: []string{"enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids", "agent_skill"},
-			bindingActionMarkers: map[string][]string{
-				"bind":    []string{"add_enabled_skill_ids"},
-				"unbind":  []string{"remove_enabled_skill_ids"},
-				"replace": []string{"enabled_skill_ids"},
-			},
+			field:   "enabled_skill_ids",
+			aliases: []string{"enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids", "agent_skill"},
 		},
 		{
-			field:           "agent_memory_enabled",
-			aliases:         []string{"agent_memory_enabled"},
-			explicitMarkers: []string{"agent_memory_enabled"},
-			semanticMarkers: []string{"memory", "agent memory", "\u8bb0\u5fc6"},
+			field:   "agent_memory_enabled",
+			aliases: []string{"agent_memory_enabled"},
 		},
 		{
-			field:           "file_upload_enabled",
-			aliases:         []string{"file_upload_enabled"},
-			explicitMarkers: []string{"file_upload_enabled"},
-			semanticMarkers: []string{"file upload", "\u6587\u4ef6\u4e0a\u4f20"},
+			field:   "file_upload_enabled",
+			aliases: []string{"file_upload_enabled"},
 		},
 		{
-			field:           "home_title",
-			aliases:         []string{"home_title"},
-			explicitMarkers: []string{"home_title"},
-			semanticMarkers: []string{"home title", "\u9996\u9875"},
+			field:   "home_title",
+			aliases: []string{"home_title"},
 		},
 		{
-			field:           "opening_statement",
-			aliases:         []string{"opening_statement"},
-			explicitMarkers: []string{"opening_statement"},
+			field:   "opening_statement",
+			aliases: []string{"opening_statement"},
 		},
 		{
-			field:           "input_placeholder",
-			aliases:         []string{"input_placeholder"},
-			explicitMarkers: []string{"input_placeholder"},
-			semanticMarkers: []string{"placeholder", "\u5360\u4f4d"},
+			field:   "input_placeholder",
+			aliases: []string{"input_placeholder"},
 		},
 		{
-			field:           "theme_color",
-			aliases:         []string{"theme_color"},
-			explicitMarkers: []string{"theme_color"},
-			semanticMarkers: []string{"theme", "display", "\u4e3b\u9898", "\u5c55\u793a"},
+			field:   "theme_color",
+			aliases: []string{"theme_color"},
 		},
 		{
-			field:           "suggested_questions",
-			aliases:         []string{"suggested_questions"},
-			explicitMarkers: []string{"suggested_questions"},
-			semanticMarkers: []string{
-				"opening question",
-				"suggested question",
-				"starter question",
-				"example question",
-				"\u5f00\u573a\u95ee\u9898",
-				"\u5efa\u8bae\u95ee\u9898",
-				"\u793a\u4f8b\u95ee\u9898",
-				"\u5f15\u5bfc\u95ee\u9898",
-			},
+			field:   "suggested_questions",
+			aliases: []string{"suggested_questions"},
 		},
 		{
-			field:           "knowledge_dataset_ids",
-			aliases:         []string{"knowledge_dataset_ids", "dataset_ids", "add_knowledge_dataset_ids", "remove_knowledge_dataset_ids", "knowledge_base"},
-			explicitMarkers: []string{"knowledge_dataset_ids", "dataset_ids", "add_knowledge_dataset_ids", "remove_knowledge_dataset_ids"},
-			bindingActionMarkers: map[string][]string{
-				"bind":    []string{"add_knowledge_dataset_ids"},
-				"unbind":  []string{"remove_knowledge_dataset_ids"},
-				"replace": []string{"knowledge_dataset_ids", "dataset_ids"},
-			},
+			field:   "knowledge_dataset_ids",
+			aliases: []string{"knowledge_dataset_ids", "dataset_ids", "add_knowledge_dataset_ids", "remove_knowledge_dataset_ids", "knowledge_base"},
 		},
 		{
-			field:           "knowledge_retrieval_config",
-			aliases:         []string{"knowledge_retrieval_config"},
-			explicitMarkers: []string{"knowledge_retrieval_config"},
+			field:   "knowledge_retrieval_config",
+			aliases: []string{"knowledge_retrieval_config"},
 		},
 		{
-			field:           "database_bindings",
-			aliases:         []string{"database_bindings", "add_database_bindings", "remove_database_bindings", "database_table"},
-			explicitMarkers: []string{"database_bindings", "add_database_bindings", "remove_database_bindings"},
-			bindingActionMarkers: map[string][]string{
-				"bind":    []string{"add_database_bindings"},
-				"unbind":  []string{"remove_database_bindings"},
-				"replace": []string{"database_bindings"},
-			},
+			field:   "database_bindings",
+			aliases: []string{"database_bindings", "add_database_bindings", "remove_database_bindings", "database_table"},
 		},
 		{
-			field:           "workflow_bindings",
-			aliases:         []string{"workflow_bindings", "add_workflow_bindings", "remove_workflow_bindings", "workflow"},
-			explicitMarkers: []string{"workflow_bindings", "add_workflow_bindings", "remove_workflow_bindings"},
-			bindingActionMarkers: map[string][]string{
-				"bind":    []string{"add_workflow_bindings"},
-				"unbind":  []string{"remove_workflow_bindings"},
-				"replace": []string{"workflow_bindings"},
-			},
+			field:   "workflow_bindings",
+			aliases: []string{"workflow_bindings", "add_workflow_bindings", "remove_workflow_bindings", "workflow"},
 		},
 	}
 }
@@ -210,55 +152,14 @@ func agentSkillBackedCapabilityDescriptors() []agentSkillBackedCapabilityDescrip
 		{
 			DisplayName:    "file generation",
 			CandidateQuery: "file generation",
-			Markers: []string{
-				"file generation",
-				"generate file",
-				"generate files",
-				"create file",
-				"create files",
-				"generate pdf",
-				"create pdf",
-				"generate svg",
-				"create svg",
-				"\u751f\u6210\u6587\u4ef6",
-				"\u6587\u4ef6\u751f\u6210",
-				"\u521b\u5efa\u6587\u4ef6",
-				"\u751f\u6210 pdf",
-				"\u521b\u5efa pdf",
-				"\u751f\u6210 svg",
-				"\u521b\u5efa svg",
-			},
 		},
 		{
 			DisplayName:    "chart generation",
 			CandidateQuery: "chart",
-			Markers: []string{
-				"chart",
-				"charts",
-				"diagram",
-				"diagrams",
-				"generate chart",
-				"generate diagram",
-				"\u751f\u6210\u56fe\u8868",
-				"\u56fe\u8868\u751f\u6210",
-				"\u56fe\u8868",
-				"\u751f\u6210\u56fe",
-			},
 		},
 		{
 			DisplayName:    "image generation",
 			CandidateQuery: "image",
-			Markers: []string{
-				"image",
-				"images",
-				"picture",
-				"pictures",
-				"generate image",
-				"generate picture",
-				"\u751f\u6210\u56fe\u7247",
-				"\u56fe\u7247\u751f\u6210",
-				"\u56fe\u7247",
-			},
 		},
 	}
 }
@@ -271,21 +172,8 @@ func agentManagementConfigOnlyCapabilityDescriptors() []agentConfigOnlyCapabilit
 			DisplayName:        "file upload",
 			GoalAction:         agentCapabilityActionEnable,
 			ContinuationEnable: true,
-			Markers: []string{
-				"file upload",
-				"upload file",
-				"upload files",
-				"can upload file",
-				"can upload files",
-				"able to upload file",
-				"able to upload files",
-				"\u6587\u4ef6\u4e0a\u4f20",
-				"\u4e0a\u4f20\u6587\u4ef6",
-				"\u80fd\u4e0a\u4f20\u6587\u4ef6",
-				"\u80fd\u591f\u4e0a\u4f20\u6587\u4ef6",
-			},
-			EnableVerify:  []string{"get_agent_config.file_upload_enabled is true"},
-			InspectVerify: []string{"get_agent_config reports the current file_upload_enabled state"},
+			EnableVerify:       []string{"get_agent_config.file_upload_enabled is true"},
+			InspectVerify:      []string{"get_agent_config reports the current file_upload_enabled state"},
 		},
 		{
 			CapabilityID:       agentCapabilityMemory,
@@ -293,23 +181,8 @@ func agentManagementConfigOnlyCapabilityDescriptors() []agentConfigOnlyCapabilit
 			DisplayName:        "agent memory",
 			GoalAction:         agentCapabilityActionUpdate,
 			ContinuationEnable: true,
-			Markers: []string{
-				"memory",
-				"remember",
-				"long-term memory",
-				"agent memory",
-				"memory capability",
-				"can remember",
-				"able to remember",
-				"\u8bb0\u5fc6",
-				"\u8bb0\u4f4f",
-				"\u957f\u671f\u8bb0\u5fc6",
-				"\u8bb0\u5fc6\u80fd\u529b",
-				"\u80fd\u8bb0\u4f4f",
-				"\u80fd\u591f\u8bb0\u4f4f",
-			},
-			EnableVerify:  []string{"get_agent_config returns the requested agent_memory_enabled state"},
-			InspectVerify: []string{"get_agent_config reports the current agent_memory_enabled state"},
+			EnableVerify:       []string{"get_agent_config returns the requested agent_memory_enabled state"},
+			InspectVerify:      []string{"get_agent_config reports the current agent_memory_enabled state"},
 		},
 	}
 }

@@ -1038,35 +1038,7 @@ func TestAgentCapabilityDefinitionsForPromptExposeMVPContracts(t *testing.T) {
 	}
 }
 
-func TestAgentCapabilityStatusTargetMarkersCoverMVPModel(t *testing.T) {
-	markers := agentManagementCapabilityStatusTargetMarkers()
-	for _, want := range []string{
-		"file generation",
-		"file upload",
-		"memory capability",
-		"knowledge base",
-		"database table",
-		"workflow",
-		"\u751f\u6210\u6587\u4ef6",
-		"\u4e0a\u4f20\u6587\u4ef6",
-		"\u8bb0\u5fc6\u80fd\u529b",
-		"\u77e5\u8bc6\u5e93",
-		"\u6570\u636e\u8868",
-		"\u5de5\u4f5c\u6d41",
-	} {
-		if !stringSliceContainsFold(markers, want) {
-			t.Fatalf("agentManagementCapabilityStatusTargetMarkers() = %#v, missing %q", markers, want)
-		}
-	}
-	if !agentManagementCapabilityStatusTargetMentioned("\u8fd9\u4e2a Agent \u662f\u5426\u5df2\u5f00\u542f\u8bb0\u5fc6\u80fd\u529b\uff1f") {
-		t.Fatal("agentManagementCapabilityStatusTargetMentioned(memory status query) = false, want true")
-	}
-	if !agentManagementCapabilityStatusTargetMentioned("\u8fd9\u4e2a Agent \u80fd\u5426\u751f\u6210\u6587\u4ef6\uff1f") {
-		t.Fatal("agentManagementCapabilityStatusTargetMentioned(file-generation query) = false, want true")
-	}
-}
-
-func TestAgentConfigFieldDescriptorsDriveCanonicalFieldsAndBindingActions(t *testing.T) {
+func TestAgentConfigFieldDescriptorsDriveCanonicalFields(t *testing.T) {
 	for _, descriptor := range agentManagementConfigFieldDescriptors() {
 		t.Run(descriptor.field, func(t *testing.T) {
 			if descriptor.field == "" {
@@ -1078,27 +1050,6 @@ func TestAgentConfigFieldDescriptorsDriveCanonicalFieldsAndBindingActions(t *tes
 			for _, alias := range descriptor.aliases {
 				if got := operationPlanAgentConfigCanonicalField(alias); got != descriptor.field {
 					t.Fatalf("operationPlanAgentConfigCanonicalField(%q) = %q, want %q", alias, got, descriptor.field)
-				}
-			}
-			for _, marker := range descriptor.explicitMarkers {
-				fields := agentManagementExplicitConfigFieldsFromText("please update " + marker)
-				if !stringSliceContainsFold(fields, descriptor.field) {
-					t.Fatalf("agentManagementExplicitConfigFieldsFromText(%q) = %#v, missing %s", marker, fields, descriptor.field)
-				}
-			}
-			for _, marker := range descriptor.semanticMarkers {
-				query := "please update " + marker
-				if !agentManagementConfigFieldSemanticMarkerRequested(query, descriptor.field) {
-					t.Fatalf("agentManagementConfigFieldSemanticMarkerRequested(%q, %q) = false, want true", query, descriptor.field)
-				}
-				if !agentManagementConfigCapabilityMarkerRequested(query) {
-					t.Fatalf("agentManagementConfigCapabilityMarkerRequested(%q) = false, want true from descriptor marker %q", query, marker)
-				}
-			}
-			for action := range descriptor.bindingActionMarkers {
-				canonicalAction := operationPlanCanonicalAgentConfigBindingAction(action)
-				if canonicalAction == "" {
-					t.Fatalf("binding action %q for %s is not canonical", action, descriptor.field)
 				}
 			}
 		})
@@ -1173,9 +1124,6 @@ func TestAgentBindingCandidateReadDoesNotLeakNoopSkillScope(t *testing.T) {
 		"\u8bf7\u7528 update_agent_config \u4e00\u6b21\u6027\u63d0\u4ea4\u53ef\u6267\u884c\u7684\u7ed1\u5b9a\u53d8\u66f4\uff0c\u4e0d\u8981\u66ff\u6362\u6216\u6e05\u7a7a\u73b0\u6709\u7ed1\u5b9a\uff0c\u4e0d\u8981\u4fee\u6539\u540d\u79f0\u3001\u63cf\u8ff0\u3001\u56fe\u6807\u3001\u6a21\u578b\u3001Skill\u3001\u7cfb\u7edf\u63d0\u793a\u8bcd\u3001\u9996\u9875\u6807\u9898\u6216\u5f00\u573a\u95ee\u9898\u3002",
 		"\u5b8c\u6210\u540e\u5fc5\u987b\u91cd\u65b0\u8bfb\u53d6\u5f53\u524d\u914d\u7f6e\u3002",
 	}, "")
-	if agentManagementSkillBindingRequested(query) {
-		t.Fatalf("agentManagementSkillBindingRequested(%q) = true, want false for noop Skill phrase", query)
-	}
 	parts := &chatRequestParts{
 		Query:          query,
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -1689,12 +1637,6 @@ func TestSkillLoopToolEffectClassificationUsesGovernanceManifest(t *testing.T) {
 
 func TestAgentManagementDeleteIntentAllowsSeparatedChineseDeleteVerb(t *testing.T) {
 	query := "\u5e2e\u6211\u5220\u9664\u8fd9\u4e2a\u9875\u9762\u7684\u524d\u56db\u4e2a\u667a\u80fd\u4f53"
-	if !agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true", query)
-	}
-	if !agentManagementBatchDeleteRequested(query) {
-		t.Fatalf("agentManagementBatchDeleteRequested(%q) = false, want true", query)
-	}
 	parts := &chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -1727,12 +1669,6 @@ func TestAgentManagementDeleteIntentDoesNotPlanEditsFromTargetNames(t *testing.T
 
 func TestAgentManagementDeleteCreatedReferenceDoesNotPlanCreate(t *testing.T) {
 	query := "\u5220\u9664\u521a\u521a\u521b\u5efa\u7684\u8fd9\u4e24\u4e2a\u6d4b\u8bd5 Agent\uff1aAICHAT-BATCH-SMOKE-A \u548c AICHAT-BATCH-SMOKE-B\u3002\u8bf7\u4e00\u6b21\u6027\u6279\u91cf\u5220\u9664\uff0c\u5b8c\u6210\u540e\u505c\u7559\u5728\u667a\u80fd\u4f53\u5217\u8868\u9875\uff0c\u5e76\u544a\u8bc9\u6211\u6bcf\u4e2a\u5220\u9664\u7ed3\u679c\u3002"
-	if agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = true, want false for existing Agent delete target reference", query)
-	}
-	if !agentManagementCreateMentionIsDeleteTargetReference(query) {
-		t.Fatalf("agentManagementCreateMentionIsDeleteTargetReference(%q) = false, want true", query)
-	}
 	parts := &chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -1753,12 +1689,6 @@ func TestAgentManagementDeleteCreatedReferenceDoesNotPlanCreate(t *testing.T) {
 
 func TestAgentManagementDeleteJustNowCreatedReferenceDoesNotPlanCreate(t *testing.T) {
 	query := "\u8bf7\u5220\u9664\u521a\u624d\u521b\u5efa\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53 AICHAT-GOAL-SMOKE-1782754487710\u3002\u53ea\u5220\u9664\u8fd9\u4e2a\u540d\u5b57\u5b8c\u5168\u5339\u914d\u7684\u667a\u80fd\u4f53\uff0c\u5220\u9664\u540e\u786e\u8ba4\u5217\u8868\u4e2d\u5df2\u7ecf\u4e0d\u53ef\u89c1\u3002"
-	if agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = true, want false for existing Agent reference", query)
-	}
-	if !agentManagementCreateMentionIsDeleteTargetReference(query) {
-		t.Fatalf("agentManagementCreateMentionIsDeleteTargetReference(%q) = false, want true for just-now-created delete target", query)
-	}
 	parts := &chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -1781,9 +1711,6 @@ func TestAgentManagementDeleteJustNowCreatedReferenceDoesNotPlanCreate(t *testin
 
 func TestAgentManagementDeleteThenCreateStillPlansCreate(t *testing.T) {
 	query := "\u5220\u9664\u521a\u521a\u521b\u5efa\u7684\u8fd9\u4e24\u4e2a Agent\uff0c\u7136\u540e\u518d\u521b\u5efa\u4e00\u4e2a\u65b0\u7684 Agent"
-	if agentManagementCreateMentionIsDeleteTargetReference(query) {
-		t.Fatalf("agentManagementCreateMentionIsDeleteTargetReference(%q) = true, want false when user asks to create again", query)
-	}
 	parts := &chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -1799,15 +1726,6 @@ func TestAgentManagementDeleteThenCreateStillPlansCreate(t *testing.T) {
 
 func TestAgentManagementCreateThenBatchDeletePlansBothInOrder(t *testing.T) {
 	query := "\u8bf7\u521b\u5efa\u4e24\u4e2a\u4e34\u65f6\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u5206\u522b\u4e3a PLAN-A \u548c PLAN-B\u3002\u63cf\u8ff0\u90fd\u5199\u201cAIChat \u6279\u91cf\u5220\u9664\u5192\u70df\uff0c\u53ef\u4ee5\u5220\u9664\u201d\u3002\u521b\u5efa\u6210\u529f\u540e\u56de\u5230\u667a\u80fd\u4f53\u5217\u8868\uff0c\u5e76\u4e00\u6b21\u6027\u6279\u91cf\u5220\u9664\u8fd9\u4e24\u4e2a\u65b0\u5efa\u667a\u80fd\u4f53\u3002"
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
-	}
-	if !agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true for explicit delete outside quoted description", query)
-	}
-	if !agentManagementBatchDeleteRequested(query) {
-		t.Fatalf("agentManagementBatchDeleteRequested(%q) = false, want true", query)
-	}
 	parts := &chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -1825,12 +1743,6 @@ func TestAgentManagementCreateThenBatchDeletePlansBothInOrder(t *testing.T) {
 
 func TestAgentManagementCreateDescriptionDoesNotPlanDelete(t *testing.T) {
 	query := `create 2 draft agents named Smoke-A and Smoke-B with description "AIChat smoke test, deletable"; do not navigate to detail page`
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
-	}
-	if agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for descriptive deletable text", query)
-	}
 	parts := &chatRequestParts{
 		Query:           query,
 		Surface:         aiChatSurfaceContextualSidebar,
@@ -1844,15 +1756,6 @@ func TestAgentManagementCreateDescriptionDoesNotPlanDelete(t *testing.T) {
 
 func TestAgentManagementCreateQuotedChineseDescriptionDoesNotPlanDelete(t *testing.T) {
 	query := "\u5192\u70df\u51c6\u5907\uff1a\u8bf7\u521b\u5efa\u4e24\u4e2a\u8349\u7a3f\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u5206\u522b\u4e3a PLAN-A \u548c PLAN-B\uff0c\u63cf\u8ff0\u90fd\u5199\u201cAIChat \u6279\u91cf\u5220\u9664\u56de\u5f52\u6d4b\u8bd5\u201d\u3002\u4e0d\u8981\u5bfc\u822a\u5230\u8be6\u60c5\u9875\u3002\u5b8c\u6210\u540e\u544a\u8bc9\u6211\u521b\u5efa\u7ed3\u679c\u3002"
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
-	}
-	if agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for quoted description payload", query)
-	}
-	if agentManagementBatchDeleteRequested(query) {
-		t.Fatalf("agentManagementBatchDeleteRequested(%q) = true, want false for quoted description payload", query)
-	}
 	parts := &chatRequestParts{
 		Query:           query,
 		Surface:         aiChatSurfaceContextualSidebar,
@@ -1866,15 +1769,6 @@ func TestAgentManagementCreateQuotedChineseDescriptionDoesNotPlanDelete(t *testi
 
 func TestAgentManagementCreateForBatchDeleteRegressionDoesNotPlanDelete(t *testing.T) {
 	query := "Create two Agents named PLAN-DELETE-A and PLAN-DELETE-B for an AIChat planner regression case. These are literal names for new Agents."
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
-	}
-	if agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for delete-regression purpose text", query)
-	}
-	if agentManagementBatchDeleteRequested(query) {
-		t.Fatalf("agentManagementBatchDeleteRequested(%q) = true, want false for delete-regression purpose text", query)
-	}
 
 	parts := &chatRequestParts{
 		Query:           query,
@@ -1889,12 +1783,6 @@ func TestAgentManagementCreateForBatchDeleteRegressionDoesNotPlanDelete(t *testi
 
 func TestAgentManagementCreateWithInlineIdentityFieldsDoesNotPlanFollowupIdentity(t *testing.T) {
 	query := "\u521b\u5efa Agent \u5192\u70df AICHAT-GOAL-AGENT-1\uff1a\u8bf7\u5728\u5f53\u524d\u667a\u80fd\u4f53\u5217\u8868\u9875\u521b\u5efa\u4e00\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u4e3a\u201cAICHAT-GOAL-AGENT-1\u201d\uff0c\u63cf\u8ff0\u4e3a\u201cAIChat \u521b\u5efa\u95ed\u73af\u5192\u70df\u6d4b\u8bd5\uff0c\u53ef\u5220\u9664\u201d\uff0c\u56fe\u6807\u4f7f\u7528\u4e00\u4e2a\u5bb9\u6613\u8bc6\u522b\u7684\u9ed8\u8ba4\u5f69\u8272\u56fe\u6807\u3002\u521b\u5efa\u6210\u529f\u540e\u8bf7\u8fdb\u5165\u8fd9\u4e2a\u65b0\u667a\u80fd\u4f53\u7684\u8be6\u60c5/\u7f16\u8f91\u9875\uff0c\u5e76\u57fa\u4e8e\u5de5\u5177\u8fd4\u56de\u503c\u548c\u9875\u9762\u53ef\u89c1\u7ed3\u679c\u8bf4\u660e\u521b\u5efa\u7684\u667a\u80fd\u4f53\u540d\u79f0\u3002"
-	if !agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
-	}
-	if agentManagementIdentityUpdateRequested(query) {
-		t.Fatalf("agentManagementIdentityUpdateRequested(%q) = true, want false for inline create fields", query)
-	}
 
 	parts := &chatRequestParts{
 		Query:          query,
@@ -1909,12 +1797,6 @@ func TestAgentManagementCreateWithInlineIdentityFieldsDoesNotPlanFollowupIdentit
 
 func TestAgentManagementBindingFinalAnswerInstructionsDoNotPlanIdentityUpdate(t *testing.T) {
 	query := "Enable the Skill named AICHAT-CONFIG-SMOKE for the current Agent."
-	if agentManagementIdentityUpdateRequested(query) {
-		t.Fatalf("agentManagementIdentityUpdateRequested(%q) = true, want false for final-answer resource-name instruction", query)
-	}
-	if !agentManagementSkillBindingRequested(query) {
-		t.Fatalf("agentManagementSkillBindingRequested(%q) = false, want true", query)
-	}
 
 	parts := &chatRequestParts{
 		Query:          query,
@@ -1936,9 +1818,6 @@ func TestAgentManagementBindingFinalAnswerInstructionsDoNotPlanIdentityUpdate(t 
 
 func TestAgentManagementResourceBindingAnswerInstructionsDoNotPlanIdentityUpdate(t *testing.T) {
 	query := "Bind one available knowledge base, one database table, and one workflow to the current Agent."
-	if agentManagementIdentityUpdateRequested(query) {
-		t.Fatalf("agentManagementIdentityUpdateRequested(%q) = true, want false for resource-name final answer instruction", query)
-	}
 
 	parts := &chatRequestParts{
 		Query:          query,
@@ -1961,13 +1840,6 @@ func TestAgentManagementResourceBindingAnswerInstructionsDoNotPlanIdentityUpdate
 	}
 }
 
-func TestAgentManagementDeleteWithBindingPreserveClauseStillPlansDelete(t *testing.T) {
-	query := "delete this agent, but do not modify its Skill, knowledge base, database table, or workflow bindings first."
-	if !agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true for direct Agent deletion", query)
-	}
-}
-
 func TestAgentManagementCreateThenExplicitBindingSurvivesCreatePayloadPruning(t *testing.T) {
 	query := "\u8bf7\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u4e3a SMOKE-BIND\uff0c\u63cf\u8ff0\u4e3a Agent \u914d\u7f6e\u7ed1\u5b9a\u5192\u70df\u6d4b\u8bd5\uff0c\u5e76\u7ed1\u5b9a\u77e5\u8bc6\u5e93 \u6d4b\u8bd5\u5e932\u3002"
 	parts := &chatRequestParts{
@@ -1986,9 +1858,6 @@ func TestAgentManagementCreateThenExplicitBindingSurvivesCreatePayloadPruning(t 
 
 func TestAgentIdentityEditDoesNotPlanCreateFromHyphenatedAgentName(t *testing.T) {
 	query := "Rename the existing Agent GOAL-CREATE-SMOKE-1782961316067-EDITED to GOAL-CREATE-SMOKE-1782961316067-EDITED2."
-	if agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = true, want false; CREATE in a hyphenated Agent name is not a create intent", query)
-	}
 
 	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
 	parts.Query = query
@@ -2004,9 +1873,6 @@ func TestAgentIdentityEditDoesNotPlanCreateFromHyphenatedAgentName(t *testing.T)
 
 func TestAgentIdentityEditDoesNotPlanCreateFromDescriptionValue(t *testing.T) {
 	query := "\u6700\u7ec8\u590d\u6d4b\uff1a\u8bf7\u628a\u667a\u80fd\u4f53 GOAL-CREATE-SMOKE-1782961316067-EDITED2 \u7684\u540d\u79f0\u6539\u4e3a GOAL-CREATE-SMOKE-1782961316067-EDITED3\uff0c\u63cf\u8ff0\u6539\u4e3a Planner create \u8bef\u5224\u4fee\u590d\u590d\u6d4b\uff0c\u56fe\u6807\u6539\u4e3a \U0001f7e9\u3002\u4fdd\u5b58\u540e\u7528\u4e00\u53e5\u8bdd\u786e\u8ba4\u5de5\u5177\u7ed3\u679c\u548c\u9875\u9762\u53ef\u89c1\u7ed3\u679c\u3002"
-	if agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = true, want false; create inside a description value is not a create intent", query)
-	}
 
 	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
 	parts.Query = query
@@ -2018,26 +1884,6 @@ func TestAgentIdentityEditDoesNotPlanCreateFromDescriptionValue(t *testing.T) {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
 	}
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
-}
-
-func TestAgentManagementDeleteQuotedTargetStillWorks(t *testing.T) {
-	query := "\u8bf7\u5220\u9664\u540d\u4e3a\u201cPLAN-A\u201d\u7684\u667a\u80fd\u4f53"
-	if !agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true", query)
-	}
-	if agentManagementBatchDeleteRequested(query) {
-		t.Fatalf("agentManagementBatchDeleteRequested(%q) = true, want false for single target", query)
-	}
-}
-
-func TestAgentManagementDeleteBeforeApprovalTextDoesNotImplyBatch(t *testing.T) {
-	query := "\u8bf7\u5220\u9664\u5f53\u524d\u9875\u9762\u8fd9\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\uff0c\u6267\u884c\u524d\u6309\u6cbb\u7406\u6d41\u7a0b\u7533\u8bf7\u5ba1\u6279\uff1b\u5ba1\u6279\u901a\u8fc7\u540e\u8def\u7531\u56de\u667a\u80fd\u4f53\u5217\u8868\u9875\u3002"
-	if !agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true", query)
-	}
-	if agentManagementBatchDeleteRequested(query) {
-		t.Fatalf("agentManagementBatchDeleteRequested(%q) = true, want false; approval wording and current-page wording are not batch targets", query)
-	}
 }
 
 func TestAgentManagementVisiblePageTargetsDoNotPlanListOrNavigate(t *testing.T) {
@@ -2065,15 +1911,6 @@ func TestAgentManagementVisiblePageTargetsDoNotPlanListOrNavigate(t *testing.T) 
 
 func TestAgentManagementPureBatchDeleteWithRefreshDoesNotPlanConfigTools(t *testing.T) {
 	query := "Delete the visible Agents AICHAT-GOAL-SMOKE-1782844559803-EDITED and AICHAT-GOAL-BATCH-1782845202110, then refresh the list and confirm they are gone."
-	if !agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true", query)
-	}
-	if !agentManagementBatchDeleteRequested(query) {
-		t.Fatalf("agentManagementBatchDeleteRequested(%q) = false, want true", query)
-	}
-	if agentManagementDeleteHasExplicitFollowupMutation(query) {
-		t.Fatalf("agentManagementDeleteHasExplicitFollowupMutation(%q) = true, want false for refresh/confirmation only", query)
-	}
 
 	parts := consoleAgentsVisibleTargetsTestParts(query)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -2085,9 +1922,6 @@ func TestAgentManagementPureBatchDeleteWithRefreshDoesNotPlanConfigTools(t *test
 
 func TestAgentManagementDeleteThenFollowupMutationStillPlansAfterDelete(t *testing.T) {
 	query := "Delete the first visible Agent, then create a new Agent and configure its model, prompt, file generation capability, and file upload setting."
-	if !agentManagementDeleteHasExplicitFollowupMutation(query) {
-		t.Fatalf("agentManagementDeleteHasExplicitFollowupMutation(%q) = false, want true", query)
-	}
 	parts := consoleAgentsVisibleTargetsTestParts(query)
 	parts.ModelTurnIntent = &AIChatModelTurnIntent{
 		Intent:                  "manage_agent_asset",

@@ -512,13 +512,6 @@ func TestContextualAIChatTurnStrategyDoesNotPromoteFileIntentWithoutModelIntent(
 	}
 }
 
-func TestTemporaryFileGenerateIntentIgnoresReadOnlyNegativeOperations(t *testing.T) {
-	query := "SMOKE-ORDER: \u53ea\u56de\u7b54\u5f53\u524d\u6587\u4ef6\u7ba1\u7406\u9875\u53ef\u89c1\u6587\u4ef6\u603b\u6570\u548c\u524d\u4e24\u4e2a\u6587\u4ef6\u540d\uff0c\u4e0d\u8981\u521b\u5efa\u3001\u4fdd\u5b58\u3001\u5220\u9664\u6216\u5bfc\u822a\u3002"
-	if isTemporaryFileGenerateIntent(query) {
-		t.Fatal("isTemporaryFileGenerateIntent() = true, want false for read-only request with negative operations")
-	}
-}
-
 func TestContextualAIChatTurnStrategyClassifiesFilesPageRead(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSnapshotTestParts("\u603b\u7ed3\u7b2c\u4e00\u4e2a\u6587\u4ef6", []consoleFilesTestFile{
@@ -1445,21 +1438,6 @@ func TestArtifactProducerSkillsExposeEnabledProducersWithModelHintOrder(t *testi
 	}
 	if got, want := appendArtifactProducerSkills(nil, unclassifiedParts), []string{skills.SkillFileGenerator, skills.SkillChartGenerator}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("appendArtifactProducerSkills(no model hint) = %#v, want %#v", got, want)
-	}
-}
-
-func TestAgentManagementExplicitlyNegatedCreateDeleteDoesNotTriggerCreateDeleteIntent(t *testing.T) {
-	query := strings.Join([]string{
-		"Update the current Agent description to AIChat edit loop regression.",
-		"Set icon to puzzle and set home title to Edit loop regression.",
-		"Do not create or delete Agents.",
-		"After approval, reread the config and verify only those requested fields changed.",
-	}, " ")
-	if agentManagementCreateRequested(query) {
-		t.Fatalf("agentManagementCreateRequested(%q) = true, want false for negated create", query)
-	}
-	if agentManagementDeleteRequested(query) {
-		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for negated delete", query)
 	}
 }
 
