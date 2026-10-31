@@ -442,8 +442,7 @@ export function dispatchAIChatStreamEvent(
               ? 'waiting_approval'
               : String(result.state ?? 'unknown'),
           result,
-          created_at:
-            typeof envelope.created_at === 'number' ? envelope.created_at : undefined,
+          created_at: typeof envelope.created_at === 'number' ? envelope.created_at : undefined,
         },
         eventId
       );
@@ -531,22 +530,15 @@ export function dispatchAIChatStreamEvent(
       );
       break;
     case 'approval_expired':
+      // One event, one transition: the run and its approval node expire in
+      // the same update, so the event's sequence is taken once.
       callbacks.onWorkflowPaused?.(
-        { ...(payload as AIChatWorkflowPausedEventData), status: 'expired' },
-        eventId
-      );
-      callbacks.onWorkflowNodeFinished?.(
         {
-          ...(payload as AIChatWorkflowNodeEventData),
+          ...(payload as AIChatWorkflowPausedEventData),
           workflow_event: event,
-          status: 'failed',
-          node_type: 'approval',
-          title: 'Approval expired',
-          outputs: payload,
+          status: 'expired',
         },
-        // The pause above already took this event id; the expired node is part
-        // of the same event, so it carries none and is not dropped as stale.
-        undefined
+        eventId
       );
       break;
     case 'question_answer_submitted':
