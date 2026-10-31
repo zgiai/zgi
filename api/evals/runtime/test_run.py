@@ -82,6 +82,8 @@ class ScoreTest(unittest.TestCase):
         self.assertIn(4389.69, run.numbers_in("利息约 4,389.69 元"))
         self.assertIn(199800.0, run.numbers_in("共 199,800 元"))
         self.assertIn(1234.0, run.numbers_in("1234"))
+        self.assertIn(-3.0, run.numbers_in("C: **−3.0%**, D: –2%"))
+        self.assertIn(-2.0, run.numbers_in("D: –2%"))
 
     def test_answer_values_within_tolerance(self):
         scenario = {"lang": "zh", "turns": ["q"], "expect": {"answer_values": [55.77]}}

@@ -25,7 +25,15 @@ A replayable scenario suite for the Agent runtime: the native agent loop, skill 
   - A failed tool call is sent back to the model, which may recover. It is counted and listed in the report, not scored.
 - `test_run.py`: tests for the scoring. Run them with `python -m unittest test_run.py`.
 
-The report also records, per turn, the average model calls, tool calls, failed tool calls, tokens and latency. With `--container`, it reads the share of input tokens the provider served from its cache. That share comes from `llm_usage_bills` in the deployment's database, through `docker exec`.
+The report also records, per turn, the average model calls, tool calls, failed tool calls, tokens and latency. With `--container`, it reads from the deployment's database, through `docker exec`:
+
+- the share of input tokens the provider served from its cache, from `llm_usage_bills`;
+- per category, from the model invocations and the plan stored with each turn (ADR 0049):
+  - how many turns called `update_plan`;
+  - how many had a final answer held back once because the checklist still had open steps;
+  - how many ended with checklist steps still open.
+
+The `long_task` scenarios are tasks with many dependent steps and several files, some staged over two turns or interrupted by a question. They show whether the checklist and the open-steps reminder hold a long task together.
 
 ## Running
 

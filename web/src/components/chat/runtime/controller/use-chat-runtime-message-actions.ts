@@ -77,6 +77,7 @@ export function useChatRuntimeMessageActions({
     applyClientActionRequired,
     applyClientActionResult,
     applyAgentProgress,
+    applyPlanUpdated,
     applyIntermediateAnswer,
     applyUserInputRequested,
     applyTokenUsageUpdated,
@@ -635,6 +636,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applyAgentProgress(payload, eventId);
             },
+            onPlanUpdated: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyPlanUpdated(payload, eventId);
+            },
             onTokenUsageUpdated: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyTokenUsageUpdated(payload, eventId);
@@ -868,6 +873,7 @@ export function useChatRuntimeMessageActions({
     },
     [
       applyAgentProgress,
+      applyPlanUpdated,
       applyTokenUsageUpdated,
       applyTokenBudgetRequested,
       applyIntermediateAnswer,
@@ -1092,6 +1098,10 @@ export function useChatRuntimeMessageActions({
               if (abortController.signal.aborted) return;
               applyAgentProgress(payload, eventId);
             },
+            onPlanUpdated: (payload, eventId) => {
+              if (abortController.signal.aborted) return;
+              applyPlanUpdated(payload, eventId);
+            },
             onTokenUsageUpdated: (payload, eventId) => {
               if (abortController.signal.aborted) return;
               applyTokenUsageUpdated(payload, eventId);
@@ -1283,6 +1293,7 @@ export function useChatRuntimeMessageActions({
     },
     [
       applyAgentProgress,
+      applyPlanUpdated,
       applyTokenUsageUpdated,
       applyTokenBudgetRequested,
       applyIntermediateAnswer,

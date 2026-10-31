@@ -248,14 +248,6 @@ func GetPartialCompactPrompt(customInstructions string, direction string) string
 	return prompt + noToolsTrailer
 }
 
-func GetCompactPrompt(customInstructions string) string {
-	prompt := noToolsPreamble + baseCompactPrompt
-	if strings.TrimSpace(customInstructions) != "" {
-		prompt += "\n\nAdditional Instructions:\n" + customInstructions
-	}
-	return prompt + noToolsTrailer
-}
-
 var (
 	analysisBlockPattern = regexp.MustCompile(`(?s)<analysis>.*?</analysis>`)
 	summaryBlockPattern  = regexp.MustCompile(`(?s)<summary>(.*?)</summary>`)

@@ -440,9 +440,6 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	}
 	if strategy := contextualAIChatTurnStrategyFromParts(parts); strategy != nil {
 		metadata["turn_strategy"] = strategy
-		if plan := operationPlanFromTurnStrategy(taskID, parts, strategy); len(plan) > 0 {
-			metadata["operation_plan"] = plan
-		}
 	}
 	if snapshot := consoleFilesContextSnapshot(parts); snapshot != nil {
 		metadata[consoleFilesContextSnapshotKey] = snapshot

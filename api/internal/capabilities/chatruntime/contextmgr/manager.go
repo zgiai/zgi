@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
@@ -748,151 +747,6 @@ type pendingToolPreview struct {
 	preview      string
 }
 
-// fitPendingToolBatchPreviews is the hard-limit fallback for an unusually
-// large parallel batch. It externalizes every result in the pending batch and
-// applies one shared preview cap, so earlier siblings are not discarded merely
-// because they appeared first in provider order.
-func (m *Manager) fitPendingToolBatchPreviews(ctx context.Context, request *adapter.ChatRequest, tokenLimit int) (*adapter.ChatRequest, bool, int, error) {
-	if request == nil || tokenLimit <= 0 {
-		return request, false, 0, nil
-	}
-	protected := latestPendingToolBatchIndexes(request.Messages)
-	if len(protected) == 0 {
-		return request, false, 0, nil
-	}
-	base := cloneRequest(request)
-	previews := make([]pendingToolPreview, 0, len(protected))
-	newlyProjected := 0
-	for index := range protected {
-		message := base.Messages[index]
-		if _, _, expanded := decodeContextArtifactToolResult(contentString(message.Content)); expanded {
-			// Expanded artifact content must reach the model verbatim at least
-			// once. It cannot be projected into another artifact recursively.
-			continue
-		}
-		receipt, ok := decodeToolResultReceipt(contentString(message.Content))
-		if !ok {
-			replacement, err := m.toolReplacement(ctx, message, false)
-			if err != nil {
-				return nil, false, newlyProjected, err
-			}
-			message.Content = replacement.Replacement
-			base.Messages[index] = message
-			receipt, ok = decodeToolResultReceipt(replacement.Replacement)
-			if !ok {
-				return nil, false, newlyProjected, fmt.Errorf("decode projected pending tool result")
-			}
-			newlyProjected++
-		}
-		if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(receipt["status"])), "projected") {
-			continue
-		}
-		preview := strings.TrimSpace(fmt.Sprint(receipt["preview"]))
-		if preview == "" || preview == "<nil>" {
-			continue
-		}
-		previews = append(previews, pendingToolPreview{messageIndex: index, receipt: receipt, preview: preview})
-	}
-	if len(previews) == 0 {
-		return request, false, newlyProjected, nil
-	}
-	before := m.estimator.EstimateChatRequest(request).Tokens
-	baseEstimate := m.estimator.EstimateChatRequest(base).Tokens
-	selected := base
-	if baseEstimate > tokenLimit {
-		maxPreviewRunes := 0
-		for _, item := range previews {
-			maxPreviewRunes = max(maxPreviewRunes, utf8.RuneCountInString(item.preview))
-		}
-		low, high := 0, maxPreviewRunes
-		selected = m.requestWithPendingPreviewCap(base, previews, 0)
-		if m.estimator.EstimateChatRequest(selected).Tokens <= tokenLimit {
-			for low < high {
-				middle := low + (high-low+1)/2
-				candidate := m.requestWithPendingPreviewCap(base, previews, middle)
-				if m.estimator.EstimateChatRequest(candidate).Tokens <= tokenLimit {
-					low = middle
-					selected = candidate
-				} else {
-					high = middle - 1
-				}
-			}
-		}
-	}
-	after := m.estimator.EstimateChatRequest(selected).Tokens
-	if after >= before {
-		return request, false, newlyProjected, nil
-	}
-	m.rememberPendingPreviewReplacements(selected.Messages, previews)
-	return selected, true, newlyProjected, nil
-}
-
-func (m *Manager) requestWithPendingPreviewCap(base *adapter.ChatRequest, previews []pendingToolPreview, previewRunes int) *adapter.ChatRequest {
-	candidate := cloneRequest(base)
-	for _, item := range previews {
-		receipt := make(map[string]interface{}, len(item.receipt))
-		for key, value := range item.receipt {
-			receipt[key] = value
-		}
-		preview := boundedToolPreview(item.preview, previewRunes)
-		if preview == "" {
-			delete(receipt, "preview")
-		} else {
-			receipt["preview"] = preview
-		}
-		encoded, err := json.Marshal(receipt)
-		if err != nil {
-			continue
-		}
-		candidate.Messages[item.messageIndex].Content = string(encoded)
-	}
-	return candidate
-}
-
-func boundedToolPreview(preview string, limit int) string {
-	if limit <= 0 {
-		return ""
-	}
-	runes := []rune(preview)
-	if len(runes) <= limit {
-		return preview
-	}
-	return string(runes[:limit]) + "\n...[truncated]"
-}
-
-func (m *Manager) rememberPendingPreviewReplacements(messages []adapter.Message, previews []pendingToolPreview) {
-	for _, item := range previews {
-		if item.messageIndex < 0 || item.messageIndex >= len(messages) {
-			continue
-		}
-		receipt, ok := decodeToolResultReceipt(contentString(messages[item.messageIndex].Content))
-		if !ok {
-			continue
-		}
-		toolCallID := strings.TrimSpace(fmt.Sprint(receipt["tool_call_id"]))
-		contentHash := strings.TrimSpace(fmt.Sprint(receipt["content_hash"]))
-		if toolCallID == "" || contentHash == "" || toolCallID == "<nil>" || contentHash == "<nil>" {
-			continue
-		}
-		key := toolCallID + ":" + contentHash
-		replacement := m.state.ContentReplacements[key]
-		replacement.ToolCallID = toolCallID
-		replacement.ContentHash = contentHash
-		replacement.ArtifactRef = strings.TrimSpace(fmt.Sprint(receipt["artifact_ref"]))
-		if replacement.ArtifactRef == "<nil>" {
-			replacement.ArtifactRef = ""
-		}
-		replacement.OriginalTokens = intFromJSONNumber(receipt["original_tokens"])
-		preview := strings.TrimSpace(fmt.Sprint(receipt["preview"]))
-		if preview == "<nil>" {
-			preview = ""
-		}
-		replacement.PreviewTokens = m.estimator.EstimateText(preview, m.state.Model).Tokens
-		replacement.Replacement = contentString(messages[item.messageIndex].Content)
-		m.state.ContentReplacements[key] = replacement
-	}
-}
-
 func (m *Manager) toolReplacement(ctx context.Context, message adapter.Message, compact bool) (ContentReplacement, error) {
 	content := contentString(message.Content)
 	if header, expandedContent, expanded := decodeContextArtifactToolResult(content); expanded {
@@ -1338,14 +1192,6 @@ func splitSystemMessages(messages []adapter.Message) ([]adapter.Message, []adapt
 	return systems, dialogue
 }
 
-func flattenRounds(rounds []apiRound) []adapter.Message {
-	messages := make([]adapter.Message, 0)
-	for _, round := range rounds {
-		messages = append(messages, cloneMessages(round.Messages)...)
-	}
-	return messages
-}
-
 func (m *Manager) requestTokenClasses(request *adapter.ChatRequest) (int, int) {
 	systems, dialogue := splitSystemMessages(request.Messages)
 	fixedMessages := cloneMessages(systems)
@@ -1398,14 +1244,6 @@ func contentString(content interface{}) string {
 		return string(encoded)
 	}
 	return fmt.Sprint(content)
-}
-
-func truncateRunes(value string, limit int) string {
-	if limit <= 0 || utf8.RuneCountInString(value) <= limit {
-		return value
-	}
-	runes := []rune(value)
-	return string(runes[:limit]) + "\n...[truncated]"
 }
 
 func mergeUsage(left *adapter.Usage, right *adapter.Usage) *adapter.Usage {

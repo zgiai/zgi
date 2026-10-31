@@ -505,6 +505,8 @@ const messages = {
     waitingApproval: 'Waiting for approval',
     waitingQuestion: 'Waiting for your response',
     waitingClientAction: 'Waiting for page action',
+    planTitle: 'Plan',
+    planProgress: '{done} of {total} done',
     waitingApprovalMessage: 'The assistant is waiting for your approval to continue.',
     waitingQuestionMessage: 'The assistant is waiting for your response to continue.',
     waitingClientActionMessage:
@@ -926,24 +928,9 @@ const messages = {
       approvalSubmitFailed: 'Failed to submit approval',
     },
     operationCards: {
-      planTitle: 'Operation plan',
       resultTitle: 'Operation result',
       confirmationTitle: 'Confirm operation',
       hostedTaskTitle: 'Hosted task',
-      planStatuses: {
-        pending: 'Pending',
-        running: 'Running',
-        completed: 'Completed',
-        failed: 'Failed',
-        cancelled: 'Cancelled',
-      },
-      stepStatuses: {
-        pending: 'Pending',
-        running: 'Running',
-        completed: 'Completed',
-        failed: 'Failed',
-        skipped: 'Skipped',
-      },
       resultStatuses: {
         success: 'Success',
         error: 'Error',

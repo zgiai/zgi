@@ -88,19 +88,10 @@ func TestPreferredRestoredSkillAfterNavigationUsesDestinationBusinessSkill(t *te
 		"skill_id":    skills.SkillConsoleNavigator,
 		"tool_name":   "navigate",
 	}
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"phases": []interface{}{
-				map[string]interface{}{"id": "phase-1", "status": operationPlanStepStatusCompleted, "step": "读取章节"},
-				map[string]interface{}{"id": "phase-2", "status": operationPlanStepStatusPending, "step": "更新当前智能体配置"},
-			},
-		},
-	}
-
 	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{
 		Status: clientActionStatusSucceeded,
 		Result: map[string]interface{}{"loaded_href": "/console/agents/agent-1/agent"},
-	}, metadata)
+	})
 	if got != skills.SkillAgentManagement {
 		t.Fatalf("preferred skill = %q, want %s", got, skills.SkillAgentManagement)
 	}
@@ -108,7 +99,7 @@ func TestPreferredRestoredSkillAfterNavigationUsesDestinationBusinessSkill(t *te
 	got = preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{
 		Status: clientActionStatusSucceeded,
 		Result: map[string]interface{}{"observed_path": "/console/files"},
-	}, map[string]interface{}{})
+	})
 	if got != skills.SkillFileReader {
 		t.Fatalf("preferred files skill = %q, want %s", got, skills.SkillFileReader)
 	}
@@ -121,7 +112,7 @@ func TestPreferredRestoredSkillAfterFailedNavigationKeepsNavigator(t *testing.T)
 		"skill_id":    skills.SkillConsoleNavigator,
 		"tool_name":   "navigate",
 	}
-	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{Status: clientActionStatusFailed}, nil)
+	got := preferredRestoredSkillAfterClientAction(parts, event, runtimedto.ClientActionResultRequest{Status: clientActionStatusFailed})
 	if got != skills.SkillConsoleNavigator {
 		t.Fatalf("preferred skill = %q, want navigator for retryable failure", got)
 	}
@@ -258,7 +249,7 @@ func TestClientActionContinuationRouteFailureFeedbackIsRecoverable(t *testing.T)
 		"the target page is not open",
 		"/console/agents/{agent_id}/agent",
 		"retry only when it is true",
-		"first model response after this continuation",
+		"Continue with the next necessary tool call",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message missing %q in:\n%s", want, content)

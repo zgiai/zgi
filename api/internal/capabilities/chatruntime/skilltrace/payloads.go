@@ -262,39 +262,6 @@ func enrichSkillCallPayloadSemantics(payload map[string]interface{}, trace skill
 	}
 }
 
-// SkillLoadPayload builds the public skill_load_start event payload.
-func SkillLoadPayload(ids PayloadIDs, skillID string) map[string]interface{} {
-	return withPayloadTimestamp(map[string]interface{}{
-		"conversation_id": ids.ConversationID,
-		"message_id":      ids.MessageID,
-		"skill_id":        skillID,
-	})
-}
-
-// SkillLoadEndPayload builds the public skill_load_end event payload.
-func SkillLoadEndPayload(ids PayloadIDs, trace skills.SkillTrace) map[string]interface{} {
-	payload := map[string]interface{}{
-		"conversation_id": ids.ConversationID,
-		"message_id":      ids.MessageID,
-		"skill_id":        trace.SkillID,
-		"duration_ms":     trace.DurationMS,
-		"status":          trace.Status,
-	}
-	if digest, _ := trace.Result["instruction_digest"].(string); strings.TrimSpace(digest) != "" {
-		digest = strings.TrimSpace(digest)
-		payload["instruction_digest"] = digest
-	}
-	if chars, _ := trace.Result["instruction_chars"].(int); chars > 0 {
-		payload["instruction_chars"] = chars
-	}
-	for _, key := range []string{"effective_version", "policy_state", "access_status"} {
-		if value, _ := trace.Result[key].(string); strings.TrimSpace(value) != "" {
-			payload[key] = strings.TrimSpace(value)
-		}
-	}
-	return withPayloadTimestamp(payload)
-}
-
 // SkillReferenceReadPayload builds the public skill_reference_read event payload.
 func SkillReferenceReadPayload(ids PayloadIDs, trace skills.SkillTrace, path string) map[string]interface{} {
 	return withPayloadTimestamp(map[string]interface{}{

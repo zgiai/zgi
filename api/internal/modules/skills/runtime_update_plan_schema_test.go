@@ -7,7 +7,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
 
-func TestUpdatePlanSchemaRequiresExactlyOnePayloadForm(t *testing.T) {
+func TestUpdatePlanSchemaIsAChecklist(t *testing.T) {
 	schema, ok := updatePlanMetaTool().Function.Parameters.(map[string]interface{})
 	if !ok {
 		t.Fatalf("update_plan parameters type = %T, want map", updatePlanMetaTool().Function.Parameters)
@@ -15,30 +15,24 @@ func TestUpdatePlanSchemaRequiresExactlyOnePayloadForm(t *testing.T) {
 	if err := tools.ValidateJSONSchema(schema); err != nil {
 		t.Fatalf("ValidateJSONSchema() error = %v", err)
 	}
-
 	valid := []map[string]interface{}{
 		{"plan": []interface{}{map[string]interface{}{"step": "Run action", "status": "in_progress"}}},
-		{"outcomes": []interface{}{map[string]interface{}{"goal": "Run action"}}},
-		{"phase_updates": []interface{}{map[string]interface{}{"id": "phase-1", "status": "completed"}}},
+		{"explanation": "added a step", "plan": []interface{}{
+			map[string]interface{}{"step": "Read", "status": "completed"},
+			map[string]interface{}{"step": "Write", "status": "pending"},
+		}},
 	}
 	for index, value := range valid {
 		if err := tools.ValidateJSONSchemaValue(schema, value); err != nil {
 			t.Fatalf("valid payload %d rejected: %v", index, err)
 		}
 	}
-
 	invalid := []map[string]interface{}{
 		{},
-		{
-			"plan":     []interface{}{map[string]interface{}{"step": "Run action", "status": "in_progress"}},
-			"outcomes": []interface{}{map[string]interface{}{"goal": "Run action"}},
-		},
-		{
-			"outcomes":      []interface{}{map[string]interface{}{"goal": "Run action"}},
-			"phase_updates": []interface{}{map[string]interface{}{"id": "phase-1"}},
-		},
-		{"outcomes": []interface{}{map[string]interface{}{"goal": "Run action", "unexpected": true}}},
-		{"plan": []interface{}{map[string]interface{}{"step": "Run action", "status": "pending"}}, "unexpected": true},
+		{"plan": []interface{}{}},
+		{"plan": []interface{}{map[string]interface{}{"step": "Run action", "status": "done"}}},
+		{"plan": []interface{}{map[string]interface{}{"step": "Run action", "status": "pending", "expected_action": map[string]interface{}{}}}},
+		{"outcomes": []interface{}{map[string]interface{}{"goal": "Run action"}}},
 	}
 	for index, value := range invalid {
 		if err := tools.ValidateJSONSchemaValue(schema, value); err == nil {
@@ -54,7 +48,7 @@ func TestUpdatePlanToolStaysCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(encoded) > 3700 {
-		t.Fatalf("update_plan definition = %d bytes, want at most 3700", len(encoded))
+	if len(encoded) > 1200 {
+		t.Fatalf("update_plan definition = %d bytes, want at most 1200", len(encoded))
 	}
 }

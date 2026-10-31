@@ -125,10 +125,6 @@ func callerOrganizationIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-func (s *agentsService) checkWorkspacePermission(ctx context.Context, workspaceID, accountID string, permission model.WorkspacePermissionCode) (bool, bool, error) {
-	return s.checkWorkspaceAnyPermission(ctx, workspaceID, accountID, permission)
-}
-
 func (s *agentsService) checkWorkspaceAnyPermission(ctx context.Context, workspaceID, accountID string, permissions ...model.WorkspacePermissionCode) (bool, bool, error) {
 	workspaceID = strings.TrimSpace(workspaceID)
 	accountID = strings.TrimSpace(accountID)
@@ -150,10 +146,6 @@ func (s *agentsService) checkWorkspaceAnyPermission(ctx context.Context, workspa
 	}
 	allowed, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(ctx, organizationID, workspaceID, accountID, permissions...)
 	return true, allowed, err
-}
-
-func (s *agentsService) ensureWorkspacePermission(ctx context.Context, workspaceID, accountID string, permission model.WorkspacePermissionCode) error {
-	return s.ensureWorkspaceAnyPermission(ctx, workspaceID, accountID, permission)
 }
 
 func (s *agentsService) ensureWorkspaceAnyPermission(ctx context.Context, workspaceID, accountID string, permissions ...model.WorkspacePermissionCode) error {

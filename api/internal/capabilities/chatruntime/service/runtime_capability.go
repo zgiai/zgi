@@ -179,22 +179,3 @@ func NewBoundResourceGrant(boundByAccountID string, boundAtUnix int64) BoundReso
 		GrantEnabled:     boundByAccountID != "" && boundAtUnix > 0,
 	}
 }
-
-// ResolveBoundResourceGrant returns the grant to persist for a resource binding.
-func ResolveBoundResourceGrant(previous BoundResourceGrant, currentConfigured bool, unchanged bool, actorAccountID string, nowUnix int64) BoundResourceGrant {
-	if !currentConfigured {
-		return BoundResourceGrant{}
-	}
-	if unchanged && previous.GrantEnabled {
-		return previous
-	}
-	actorAccountID = strings.TrimSpace(actorAccountID)
-	if actorAccountID == "" {
-		return previous
-	}
-	return BoundResourceGrant{
-		BoundByAccountID: actorAccountID,
-		BoundAtUnix:      nowUnix,
-		GrantEnabled:     nowUnix > 0,
-	}
-}

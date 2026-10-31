@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import type { MutableRefObject } from 'react';
 import type {
   AIChatAgentProgressEventData,
+  AIChatPlanUpdatedEventData,
   AIChatClientActionRequiredEventData,
   AIChatClientActionResultEventData,
   AIChatErrorEventData,
@@ -39,6 +40,7 @@ import type {
 } from '@/components/chat/controllers/aichat';
 import {
   applyAgentProgressState,
+  applyPlanUpdatedState,
   applyFileParseEndState,
   applyFileParseErrorState,
   applyFileParseStartState,
@@ -449,6 +451,14 @@ export function useChatRuntimeEventAppliers({
     [setControllerState]
   );
 
+  const applyPlanUpdated = useCallback(
+    (payload: AIChatPlanUpdatedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyPlanUpdatedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
   const applyIntermediateAnswer = useCallback(
     (payload: AIChatIntermediateAnswerEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
@@ -695,6 +705,7 @@ export function useChatRuntimeEventAppliers({
       applyWorkflowFinished,
       applyWorkflowFailed,
       applyAgentProgress,
+      applyPlanUpdated,
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMessageEnd,
@@ -704,6 +715,7 @@ export function useChatRuntimeEventAppliers({
     }),
     [
       applyAgentProgress,
+      applyPlanUpdated,
       applyClientActionRequired,
       applyClientActionResult,
       applyFileParseEnd,

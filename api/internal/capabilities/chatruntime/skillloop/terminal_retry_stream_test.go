@@ -63,13 +63,3 @@ func terminalRetryStreamedAnswer(events []Event) string {
 	}
 	return answer.String()
 }
-
-func terminalRetryEventCount(events []Event, eventType string) int {
-	count := 0
-	for _, event := range events {
-		if event.Type == eventType {
-			count++
-		}
-	}
-	return count
-}

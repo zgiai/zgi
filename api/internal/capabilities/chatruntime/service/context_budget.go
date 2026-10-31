@@ -1073,6 +1073,12 @@ func operationPlanHasIncompleteWork(plan map[string]interface{}) bool {
 	if operationPlanIsTerminal(plan) {
 		return false
 	}
+	// A plan that holds only the runtime's ledgers names no work of its own
+	// (ADR 0049): its status tells how the turn ended, not what is left.
+	if len(mapSliceFromAny(plan["phases"])) == 0 && len(mapSliceFromAny(plan["steps"])) == 0 &&
+		len(mapSliceFromAny(mapFromOperationContext(plan["structured_plan"])["operations"])) == 0 {
+		return false
+	}
 	if status := strings.TrimSpace(stringFromAny(plan["status"])); status != "" {
 		return true
 	}
