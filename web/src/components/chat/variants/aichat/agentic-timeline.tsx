@@ -3395,17 +3395,6 @@ function invocationActionType(invocation: AIChatSkillInvocation): string {
   ).toLowerCase();
 }
 
-function invocationIsAssetObservationClientAction(invocation: AIChatSkillInvocation): boolean {
-  if (invocation.kind !== 'client_action') return false;
-  const record = invocation as unknown as Record<string, unknown>;
-  const actionType = invocationActionType(invocation);
-  if (actionType === 'asset_observation') return true;
-  const actionId = invocationString(record.action_id);
-  if (actionId.toLowerCase().startsWith('asset_observation:')) return true;
-  const runtimeId = invocationString(record.runtime_id);
-  return runtimeId.toLowerCase().startsWith('client_action:asset_observation:');
-}
-
 function invocationIsRouteNavigation(invocation: AIChatSkillInvocation): boolean {
   if (invocation.skill_id === 'console-navigator' && invocation.tool_name === 'navigate') {
     return true;
@@ -3540,22 +3529,18 @@ function toolCallClientActionKey(invocation: AIChatSkillInvocation): string | nu
   return ['route_navigation', href].map(value => value.trim().toLowerCase()).join('::');
 }
 
-function isAssetObservationClientActionTimelineItem(item: AIChatAgenticTimelineItem): boolean {
-  if (item.type === 'skill_event') {
-    return invocationIsAssetObservationClientAction(item.invocation);
-  }
-  if (item.type !== 'progress_text') {
-    return false;
-  }
-  const result = invocationRecord(item.result);
-  const actionType = (
-    invocationString(item.action_type) || invocationString(result.action_type)
-  ).toLowerCase();
-  if (actionType === 'asset_observation') return true;
-  const actionId = invocationString(item.action_id);
-  if (actionId.toLowerCase().startsWith('asset_observation:')) return true;
-  const resultActionId = invocationString(result.action_id);
-  return resultActionId.toLowerCase().startsWith('asset_observation:');
+// A record the backend keeps but does not present as a row (ADR 0050), such as
+// the observation that refreshes an asset after the call that changed it.
+function isInternalTimelineItem(item: AIChatAgenticTimelineItem): boolean {
+  const visibility =
+    item.type === 'skill_event'
+      ? item.invocation.presentation_visibility
+      : item.type === 'progress_text'
+        ? item.presentation_visibility
+        : item.type === 'tool_governance_decision'
+          ? invocationString((item.event as Record<string, unknown>).presentation_visibility)
+          : undefined;
+  return visibility?.toLowerCase() === 'internal';
 }
 
 function isSupersededByClientActionSkillEvent(
@@ -3879,7 +3864,7 @@ function filterTimelineForRendering(
         !isGovernedSkillEvent(item, governanceCorrelationIds) &&
         !isSupersededToolGovernanceSkillEvent(item, terminalGovernedToolCorrelationIds) &&
         !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
-        !isAssetObservationClientActionTimelineItem(item) &&
+        !isInternalTimelineItem(item) &&
         !isRoutineSkillLoadTimelineItem(item) &&
         !isRedundantAgentWorkflowToolEvent(item, workflowRunIds, workflowInvocationIds) &&
         !(
@@ -4137,22 +4122,40 @@ function timelineRenderItem(
   }
 }
 
+/**
+ * The timeline items a message shows as rows, live or reloaded (ADR 0050).
+ * Pure, so tests can check that a turn shows the same rows either way.
+ */
+export function visibleTimelineItems(
+  timeline: AIChatAgenticTimelineItem[],
+  messageStatus: AIChatMessage['status'] | undefined,
+  enableToolGovernanceApprovals: boolean
+): AIChatAgenticTimelineItem[] {
+  const governanceCorrelationIds = new Set(
+    timeline
+      .flatMap(item =>
+        item.type === 'tool_governance_decision' ? [governanceItemCorrelationId(item)] : []
+      )
+      .filter((correlationId): correlationId is string => Boolean(correlationId))
+  );
+  return filterTimelineForRendering(
+    timeline.filter(item => !isAgentMemoryNotice(item)),
+    messageStatus,
+    governanceCorrelationIds,
+    enableToolGovernanceApprovals
+  );
+}
+
 function buildTimelineRenderItems(
   timeline: AIChatAgenticTimelineItem[],
   skillDisplayById: AIChatSkillDisplayMap,
   locale: string,
   t: WebappTranslator,
   messageStatus: AIChatMessage['status'] | undefined,
-  governanceCorrelationIds: ReadonlySet<string>,
   enableToolGovernanceApprovals: boolean,
   recoveredInvalidArgumentTimelineItemIds: ReadonlySet<string>
 ): TimelineRenderItem[] {
-  return filterTimelineForRendering(
-    timeline.filter(item => !isAgentMemoryNotice(item)),
-    messageStatus,
-    governanceCorrelationIds,
-    enableToolGovernanceApprovals
-  ).map(item =>
+  return visibleTimelineItems(timeline, messageStatus, enableToolGovernanceApprovals).map(item =>
     timelineRenderItem(
       item,
       skillDisplayById,
@@ -4481,18 +4484,6 @@ export function AIChatAgenticTimeline({
     };
   }, [pendingApprovalScope, pendingGovernanceApprovals]);
 
-  const governanceCorrelationIds = useMemo(
-    () =>
-      new Set(
-        timeline
-          .flatMap(item =>
-            item.type === 'tool_governance_decision' ? [governanceItemCorrelationId(item)] : []
-          )
-          .filter((correlationId): correlationId is string => Boolean(correlationId))
-      ),
-    [timeline]
-  );
-
   const recoveredInvalidArgumentTimelineItemIds = useMemo(
     () => findRecoveredInvalidArgumentTimelineItemIds(timeline),
     [timeline]
@@ -4506,13 +4497,11 @@ export function AIChatAgenticTimeline({
         locale,
         t,
         messageStatus,
-        governanceCorrelationIds,
         enableToolGovernanceApprovals,
         recoveredInvalidArgumentTimelineItemIds
       ),
     [
       enableToolGovernanceApprovals,
-      governanceCorrelationIds,
       locale,
       messageStatus,
       recoveredInvalidArgumentTimelineItemIds,

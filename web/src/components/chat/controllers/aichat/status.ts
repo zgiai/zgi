@@ -70,6 +70,27 @@ export function invocationOutcome(status: unknown): InvocationOutcome {
   return INVOCATION_OUTCOMES[status.trim().toLowerCase()] ?? 'unknown';
 }
 
+/**
+ * The outcomes a call may move to. Live events, the message_end snapshot and
+ * a reloaded copy of the message can reach the client in any order, so an
+ * older report must not undo a newer one: a waiting call does not go back to
+ * running (the work after an approval is a call of its own), and a finished
+ * call only changes when a later report says it failed.
+ */
+const INVOCATION_TRANSITIONS: Record<InvocationOutcome, ReadonlySet<InvocationOutcome>> = {
+  unknown: new Set(['unknown', 'running', 'waiting', 'succeeded', 'failed', 'cancelled']),
+  running: new Set(['running', 'waiting', 'succeeded', 'failed', 'cancelled']),
+  waiting: new Set(['waiting', 'succeeded', 'failed', 'cancelled']),
+  succeeded: new Set(['succeeded', 'failed']),
+  cancelled: new Set(['cancelled', 'succeeded', 'failed']),
+  failed: new Set(['failed']),
+};
+
+/** Reports that a call whose status is `from` may take the status `to`. */
+export function canInvocationMoveTo(from: unknown, to: unknown): boolean {
+  return INVOCATION_TRANSITIONS[invocationOutcome(from)].has(invocationOutcome(to));
+}
+
 /** A tool governance decision the client acts on. */
 export type GovernanceDecisionStatus =
   | 'allowed'

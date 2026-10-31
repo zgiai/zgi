@@ -88,6 +88,7 @@ export type AIChatAgenticTimelineItem =
       tool_name?: string;
       action_id?: string;
       action_type?: string;
+      presentation_visibility?: string;
       continuation_policy?: string;
       blocking?: boolean;
       status?: string;

@@ -1,21 +1,8 @@
 import assert from 'node:assert/strict';
-import { load } from './connector-fixture.mjs';
+import { loadTsModule } from './lib/load-ts-module.mjs';
 
-const model = load('src/components/connectors/runtime/connector-runtime-model.ts');
-const source = load('src/components/connectors/runtime/connector-runtime-source.ts', {
-  './connector-runtime-model': model,
-});
-const shared = load('src/components/chat/controllers/aichat/reducers/shared.ts');
-const order = load('src/components/chat/controllers/aichat/presentation-order.ts');
-const processing = load('src/components/chat/controllers/aichat/model-processing.ts');
-const { applyAgentProgressState: apply } = load(
-  'src/components/chat/controllers/aichat/reducers/skill.ts',
-  {
-    './shared': shared,
-    '../presentation-order': order,
-    '../model-processing': processing,
-    '@/components/connectors/runtime/connector-runtime-source': source,
-  }
+const { applyAgentProgressState: apply } = await loadTsModule(
+  'components/chat/controllers/aichat/reducers/skill.ts'
 );
 const pending = receipt => ({
   state: 'requires_confirmation',

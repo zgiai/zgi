@@ -1028,6 +1028,7 @@ func clientVisibleMessageMetadata(source map[string]interface{}) map[string]inte
 		return metadata
 	}
 	filterInternalDigitalHumanTaskGovernanceInvocations(metadata)
+	annotatePresentationVisibility(metadata)
 	filtered, changed := filterFinalAnswerInvocations(metadata["skill_invocations"])
 	if !changed {
 		return metadata

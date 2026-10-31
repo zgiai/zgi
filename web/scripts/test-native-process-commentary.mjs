@@ -152,7 +152,15 @@ const messageBubbleSource = await readFile(
 assert.doesNotMatch(messageBubbleSource, /shouldPreferPersistedTimeline/);
 assert.match(
   messageBubbleSource,
-  /runtimeTimeline\.length > 0 \? runtimeTimeline : historicalTimeline/,
+  /messageDisplayTimeline\(message, runtimeTimeline\)/,
+  'the message bubble shows the one display timeline'
+);
+assert.match(
+  await readFile(
+    new URL('../src/components/chat/controllers/aichat/selectors.ts', import.meta.url),
+    'utf8'
+  ),
+  /\[\.\.\.runtimeTimeline, \.\.\.messageOnly\]/,
   'the current-page runtime timeline must remain visually authoritative after completion'
 );
 assert.match(messageBubbleSource, /const shouldOpenTimelineByDefault = isActiveMessage/);

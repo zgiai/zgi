@@ -7,6 +7,7 @@ import type {
   AIChatUserInputResponse,
 } from '@/services/types/aichat';
 import { type AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat/types';
+import { canInvocationMoveTo } from '../status';
 
 /**
  * Reports that a call carries a real governance decision. A call the governance
@@ -163,11 +164,9 @@ export function mergeMessageMetadata(
   const hasSkillInvocationMetadata = Boolean(
     existingMetadata?.skill_invocations || incomingMetadata?.skill_invocations
   );
-  const skillInvocations = mergeByIdentity(
+  const skillInvocations = mergeSkillInvocations(
     existingSkillInvocations,
-    incomingSkillInvocations,
-    skillInvocationIdentity,
-    mergeSkillInvocationByStatus
+    incomingSkillInvocations
   );
   const loadedSkillIds = uniqueStrings(
     skillInvocations
@@ -237,59 +236,52 @@ function userInputResponseIdentity(response: AIChatUserInputResponse, index: num
   return response.request_id?.trim() || `user-input-response:${response.answered_at ?? index}`;
 }
 
+/**
+ * The calls a message keeps (ADR 0050): live events, the message_end snapshot
+ * and a reloaded message all drop the same internal records, so a step the
+ * live stream left out does not appear after a reload.
+ */
+export function isRecordedSkillInvocation(invocation: AIChatSkillInvocation): boolean {
+  const status = String(invocation.status ?? '').toLowerCase();
+  if (invocation.presentation_visibility?.toLowerCase() === 'internal') {
+    return false;
+  }
+  const result =
+    invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
+      ? (invocation.result as Record<string, unknown>)
+      : {};
+  const actionType =
+    invocation.action_type ||
+    (typeof result.action_type === 'string' ? result.action_type : undefined);
+  if (invocation.kind === 'skill_load' && invocation.skill_id === 'console-navigator') {
+    return false;
+  }
+  if (
+    invocation.kind === 'tool_call' &&
+    (status === 'approved' || status === 'allowed') &&
+    Object.keys(result).length === 0
+  ) {
+    return false;
+  }
+  if (
+    invocation.kind === 'client_action' &&
+    actionType === 'route_navigation' &&
+    (status === 'success' || status === 'succeeded' || status === 'completed')
+  ) {
+    return false;
+  }
+  return (
+    invocation.kind !== 'guardrail' &&
+    invocation.kind !== 'metadata_exposed' &&
+    invocation.kind !== 'memory_planner' &&
+    invocation.kind !== 'final_answer'
+  );
+}
+
 function visibleSkillInvocations(
   invocations: AIChatSkillInvocation[] | undefined
 ): AIChatSkillInvocation[] {
-  return (invocations ?? []).filter(invocation => {
-    const status = String(invocation.status ?? '').toLowerCase();
-    if (invocation.presentation_visibility?.toLowerCase() === 'internal') {
-      return false;
-    }
-    const record = invocation as unknown as Record<string, unknown>;
-    const result =
-      invocation.result &&
-      typeof invocation.result === 'object' &&
-      !Array.isArray(invocation.result)
-        ? (invocation.result as Record<string, unknown>)
-        : {};
-    const actionType =
-      invocation.action_type ||
-      (typeof result.action_type === 'string' ? result.action_type : undefined);
-    if (invocation.kind === 'skill_load' && invocation.skill_id === 'console-navigator') {
-      return false;
-    }
-    if (
-      invocation.kind === 'tool_call' &&
-      (status === 'approved' || status === 'allowed') &&
-      Object.keys(result).length === 0
-    ) {
-      return false;
-    }
-    if (
-      invocation.kind === 'client_action' &&
-      actionType === 'route_navigation' &&
-      (status === 'success' || status === 'succeeded' || status === 'completed')
-    ) {
-      return false;
-    }
-    if (invocation.kind === 'client_action') {
-      const actionId = String(record.action_id ?? result.action_id ?? '').toLowerCase();
-      const runtimeId = String(record.runtime_id ?? '').toLowerCase();
-      if (
-        actionType === 'asset_observation' ||
-        actionId.startsWith('asset_observation:') ||
-        runtimeId.startsWith('client_action:asset_observation:')
-      ) {
-        return false;
-      }
-    }
-    return (
-      invocation.kind !== 'guardrail' &&
-      invocation.kind !== 'metadata_exposed' &&
-      invocation.kind !== 'memory_planner' &&
-      invocation.kind !== 'final_answer'
-    );
-  });
+  return (invocations ?? []).filter(isRecordedSkillInvocation);
 }
 
 function mergeByIdentity<T>(
@@ -701,19 +693,91 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
   return '';
 }
 
-function skillInvocationIdentity(invocation: AIChatSkillInvocation, index: number): string {
-  if (invocation.runtime_id) return invocation.runtime_id;
-  const semanticIdentity = skillInvocationSemanticIdentity(invocation);
-  if (semanticIdentity) return semanticIdentity;
-  return [
-    invocation.kind ?? 'tool_call',
-    invocation.skill_id ?? '',
-    invocation.tool_name ?? '',
-    invocation.path ?? '',
-    invocation.answer_id ?? '',
-    stableMetadataValue(invocation.arguments ?? {}),
-    index,
-  ].join(':');
+/**
+ * Reports that two records are different calls. A call id or a runtime id
+ * names exactly one call. A client action that carries out a tool call, such
+ * as the page navigation a navigate call asks for, has a runtime id of its own
+ * and is still the same step, so runtime ids only separate records of one kind.
+ */
+export function invocationIdsConflict(a: AIChatSkillInvocation, b: AIChatSkillInvocation): boolean {
+  if (a.invocation_id && b.invocation_id && a.invocation_id !== b.invocation_id) return true;
+  return Boolean(
+    a.runtime_id &&
+      b.runtime_id &&
+      a.runtime_id !== b.runtime_id &&
+      (a.kind ?? 'tool_call') === (b.kind ?? 'tool_call')
+  );
+}
+
+/**
+ * Finds the record of the same call, by call id, then runtime id, then what
+ * the call did (ADR 0050). Live events, the message_end snapshot and a
+ * reloaded message all match records with this one rule, so a call is never
+ * one row live and two rows after a reload.
+ */
+export function findMatchingInvocationIndex(
+  invocations: AIChatSkillInvocation[],
+  incoming: AIChatSkillInvocation
+): number {
+  if (incoming.invocation_id) {
+    const index = invocations.findIndex(
+      invocation => invocation.invocation_id === incoming.invocation_id
+    );
+    if (index >= 0) return index;
+  }
+  if (incoming.runtime_id) {
+    const index = invocations.findIndex(
+      invocation =>
+        invocation.runtime_id === incoming.runtime_id &&
+        !invocationIdsConflict(invocation, incoming)
+    );
+    if (index >= 0) return index;
+  }
+  const semanticIdentity = skillInvocationSemanticIdentity(incoming);
+  if (!semanticIdentity) return -1;
+  return invocations.findIndex(
+    invocation =>
+      !invocationIdsConflict(invocation, incoming) &&
+      skillInvocationSemanticIdentity(invocation) === semanticIdentity
+  );
+}
+
+/**
+ * Folds a report into the record of its call. A report can join two records
+ * the client held apart: a governance decision event names the runtime id, and
+ * the call's end, carrying the call id, turns the call into that decision.
+ * Both become one record, at the place of the first.
+ */
+export function upsertMatchingInvocation(
+  invocations: AIChatSkillInvocation[],
+  incoming: AIChatSkillInvocation
+): AIChatSkillInvocation[] | null {
+  let position = findMatchingInvocationIndex(invocations, incoming);
+  if (position < 0) return null;
+  let merged = mergeSkillInvocationByStatus(invocations[position], incoming);
+  const next = invocations.filter((_, index) => index !== position);
+  for (
+    let other = findMatchingInvocationIndex(next, merged);
+    other >= 0;
+    other = findMatchingInvocationIndex(next, merged)
+  ) {
+    merged = mergeSkillInvocationByStatus(next[other], merged);
+    next.splice(other, 1);
+    position = Math.min(position, other);
+  }
+  next.splice(position, 0, merged);
+  return next;
+}
+
+function mergeSkillInvocations(
+  existing: AIChatSkillInvocation[],
+  incoming: AIChatSkillInvocation[]
+): AIChatSkillInvocation[] {
+  let next = existing.slice();
+  for (const invocation of incoming) {
+    next = upsertMatchingInvocation(next, invocation) ?? [...next, invocation];
+  }
+  return next;
 }
 
 export function mergeSkillInvocationByStatus(
@@ -730,7 +794,7 @@ export function mergeSkillInvocationByStatus(
     };
   };
 
-  if (skillInvocationStatusRank(incoming.status) < skillInvocationStatusRank(existing.status)) {
+  if (!canInvocationMoveTo(existing.status, incoming.status)) {
     return mergeIntermediateAnswerMessage({ ...incoming, ...existing });
   }
   return mergeIntermediateAnswerMessage({ ...existing, ...incoming });
@@ -748,32 +812,6 @@ export function preferCompleteIntermediateAnswerContent(
   if (incoming.includes(existing)) return incoming;
   if (existing.includes(incoming)) return existing;
   return incoming.length >= existing.length ? incoming : existing;
-}
-
-function skillInvocationStatusRank(status: string | undefined): number {
-  switch (String(status ?? '').toLowerCase()) {
-    case 'error':
-    case 'blocked':
-    case 'denied':
-      return 40;
-    case 'success':
-    case 'succeeded':
-    case 'allowed':
-    case 'completed':
-    case 'approved':
-      return 30;
-    case 'needs_approval':
-    case 'waiting_approval':
-    case 'waiting_client_action':
-    case 'waiting_question':
-    case 'waiting_budget':
-      return 20;
-    case 'running':
-    case 'loading':
-      return 10;
-    default:
-      return 0;
-  }
 }
 
 function stableMetadataValue(value: unknown): string {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import Module from 'node:module';
 import path from 'node:path';
 import ts from 'typescript';
+import { loadTsModule } from './lib/load-ts-module.mjs';
 
 const root = process.cwd();
 const helperPath = path.join(root, 'src/components/chat/controllers/aichat/user-input-response.ts');
@@ -83,8 +84,8 @@ assert.deepEqual(
   [{ request_id: 'request-0', answers: [], answered_at: 100 }, authoritative]
 );
 
-const { mergeMessageMetadata } = loadTypeScriptModule(
-  path.join(root, 'src/components/chat/controllers/aichat/reducers/shared.ts')
+const { mergeMessageMetadata } = await loadTsModule(
+  'components/chat/controllers/aichat/reducers/shared.ts'
 );
 const mergedMetadata = mergeMessageMetadata(
   {

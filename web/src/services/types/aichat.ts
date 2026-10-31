@@ -928,6 +928,7 @@ export interface AIChatClientActionRequiredEventData extends Record<string, unkn
   message_id: string;
   action_id: string;
   action_type: 'route_navigation' | 'asset_observation' | (string & {});
+  presentation_visibility?: string;
   status?: 'waiting_client_action' | string;
   continuation_policy?: 'resume_model' | 'record_only' | (string & {});
   blocking?: boolean;
@@ -1126,6 +1127,8 @@ export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
 export interface AIChatToolGovernanceDecisionEventData extends Record<string, unknown> {
   conversation_id: string;
   message_id: string;
+  runtime_id?: string;
+  invocation_id?: string;
   skill_id?: string;
   tool_name?: string;
   status?: AIChatToolGovernanceDecisionStatus;
@@ -1195,6 +1198,8 @@ export interface AIChatAgentProgressEventData {
   tool_name?: string;
   action_id?: string;
   action_type?: string;
+  /** `internal`: kept for the status line, not shown as a row (ADR 0050). */
+  presentation_visibility?: string;
   continuation_policy?: string;
   blocking?: boolean;
   status?: string;

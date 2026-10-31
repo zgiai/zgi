@@ -94,6 +94,7 @@
     "test:chat-surface-profile": "node scripts/test-chat-surface-profile.mjs",
     "test:chat-stream-decoder": "node scripts/test-chat-stream-decoder.mjs",
     "test:chat-pending-interaction": "node scripts/test-chat-pending-interaction.mjs",
+    "test:chat-runtime-replay": "node scripts/test-chat-runtime-replay.mjs",
     "test:chat-runtime-status": "node scripts/test-chat-runtime-status.mjs",
     "test:chat-runtime-stream-recovery": "node scripts/test-chat-runtime-stream-recovery.mjs",
     "test:workflow-approval-expiry": "node scripts/test-workflow-approval-expiry.mjs",
