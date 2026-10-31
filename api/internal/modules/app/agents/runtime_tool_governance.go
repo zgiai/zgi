@@ -91,7 +91,7 @@ func (h *AgentsHandler) continueRuntimeToolGovernance(c *gin.Context, runtimeCtx
 			return
 		}
 	}
-	setupAgentSSE(c)
+	defer setupAgentSSE(c).Close()
 	_, err := h.chatRuntimeService.RunConfiguredToolGovernanceDecisionStream(
 		c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, runtimeCtx.RunConfig,
 		conversationID, messageID, correlationID, req,

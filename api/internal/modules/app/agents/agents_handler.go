@@ -1031,7 +1031,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		return
 	}
-	setupPreparedAgentSSE(c, prepared)
+	defer setupPreparedAgentSSE(c, prepared).Close()
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -1560,7 +1560,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		writeAgentLegacyFailure(c, gin.H{"code": "399001", "message": err.Error()}, err)
 		return
 	}
-	setupPreparedAgentSSE(c, prepared)
+	defer setupPreparedAgentSSE(c, prepared).Close()
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -1594,7 +1594,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 	writeAgentChatEnd(c, prepared, result)
 }
 
-func setupAgentSSE(c *gin.Context) {
+func setupAgentSSE(c *gin.Context) *agentSSEWriter {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
@@ -1604,6 +1604,7 @@ func setupAgentSSE(c *gin.Context) {
 	writer := newAgentSSEWriter(c)
 	c.Set(agentSSEWriterContextKey, writer)
 	writer.StartHeartbeat(c.Request.Context())
+	return writer
 }
 
 const (
@@ -1614,14 +1615,14 @@ const (
 	ExternalAgentRuntimeOutcomeFailure    = "failure"
 )
 
-func setupPreparedAgentSSE(c *gin.Context, prepared *runtimeservice.PreparedChat) {
+func setupPreparedAgentSSE(c *gin.Context, prepared *runtimeservice.PreparedChat) *agentSSEWriter {
 	if prepared != nil && prepared.Conversation != nil {
 		c.Header(agentSSEConversationIDHeader, prepared.Conversation.ID.String())
 	}
 	if prepared != nil && prepared.Message != nil {
 		c.Header(agentSSEMessageIDHeader, prepared.Message.ID.String())
 	}
-	setupAgentSSE(c)
+	return setupAgentSSE(c)
 }
 
 func writeAgentSSE(c *gin.Context, event string, data interface{}) error {

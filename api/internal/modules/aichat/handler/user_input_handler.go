@@ -39,7 +39,7 @@ func (h *Handler) ContinueUserInput(c *gin.Context) {
 		return
 	}
 
-	setupSSE(c)
+	defer setupSSE(c).Close()
 	_, err = h.service.RunUserInputContinuationStream(c.Request.Context(), scope, conversationID, messageID, requestID, req, func(event runtimeservice.StreamEvent) error {
 		return writeStreamEvent(c, event)
 	})

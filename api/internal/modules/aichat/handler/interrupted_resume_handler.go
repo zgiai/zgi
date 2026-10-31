@@ -35,7 +35,7 @@ func (h *Handler) ResumeInterruptedTurn(c *gin.Context) {
 		return
 	}
 
-	setupSSE(c)
+	defer setupSSE(c).Close()
 	_, err = h.service.RunInterruptedTurnResumeStream(c.Request.Context(), scope, conversationID, messageID, func(event runtimeservice.StreamEvent) error {
 		return writeStreamEvent(c, event)
 	})

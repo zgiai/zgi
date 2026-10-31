@@ -79,7 +79,7 @@ func (h *AgentsHandler) continueRuntimeWorkflowApproval(c *gin.Context, runtimeC
 		h.failRuntime(c, err)
 		return
 	}
-	setupAgentSSE(c)
+	defer setupAgentSSE(c).Close()
 	emit := func(event runtimeservice.StreamEvent) error {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	}
