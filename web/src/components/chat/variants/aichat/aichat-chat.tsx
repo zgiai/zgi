@@ -5,10 +5,10 @@ import {
   createElement,
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -111,8 +111,10 @@ import {
   type AIChatConnectedAppsSummary,
 } from '@/components/chat/variants/aichat/connected-apps-dialog';
 import {
+  createToolGovernancePendingApprovalScope,
   isToolGovernancePendingApprovalDismissed,
   ToolGovernancePendingApprovalScopeProvider,
+  useToolGovernancePendingApprovalVersion,
   type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
@@ -163,6 +165,7 @@ import {
   type AIChatQueuedTurn,
 } from '@/components/chat/utils/queued-turns';
 import { type AIChatShellSurface, resolveChatSurfaceProfile } from './chat-surface-profile';
+import { selectPendingInteraction } from '@/components/chat/controllers/aichat/pending-interaction';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -240,12 +243,6 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
   slate: 'hsl(215 20% 45%)',
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
-const AICHAT_WAITING_FOR_PERSON_STATUSES: ReadonlySet<AIChatMessage['status']> = new Set([
-  'waiting_approval',
-  'waiting_question',
-  'waiting_client_action',
-  'waiting_budget',
-]);
 const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
 
 type PendingVisionReplayAction =
@@ -401,7 +398,11 @@ export function AIChatShell({
   });
   const isEmbedded = surfaceProfile.isEmbedded;
   const chatSurfaceBackground = surfaceProfile.background;
-  const toolGovernanceApprovalScopeId = useId();
+  // Pending approvals belong to this chat and go away with it (ADR 0050).
+  const [toolGovernanceApprovalScope] = useState(createToolGovernancePendingApprovalScope);
+  const toolGovernanceApprovalVersion = useToolGovernancePendingApprovalVersion(
+    toolGovernanceApprovalScope
+  );
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
     const primary = themeColor ? CHAT_THEME_PRIMARY[themeColor] : undefined;
@@ -785,16 +786,33 @@ export function AIChatShell({
       : null;
   }, [activeConversation?.current_leaf_message_id, activeMessages]);
   const contextBlocked = Boolean(contextBlockedMessage);
-  // A turn paused for the person (an approval, a question, a page action or
-  // more budget) is idle on the server but not finished, so nothing queued may
-  // be sent over it.
-  const leafWaitingForPerson = useMemo(() => {
+  const activeLeafStatus = useMemo(() => {
     const leafId = activeConversation?.current_leaf_message_id;
-    const leaf = leafId ? activeMessages.find(message => message.id === leafId) : undefined;
-    return Boolean(leaf && AICHAT_WAITING_FOR_PERSON_STATUSES.has(leaf.status));
+    return leafId ? (activeMessages.find(message => message.id === leafId)?.status ?? null) : null;
   }, [activeConversation?.current_leaf_message_id, activeMessages]);
+  const publishedToolApproval = useSyncExternalStore(
+    toolGovernanceApprovalScope.subscribe,
+    toolGovernanceApprovalScope.getSnapshot,
+    () => null
+  );
+  // One answer to "what must the person resolve now" (ADR 0050). A turn paused
+  // for the person is idle on the server but not finished, so nothing queued
+  // is sent over it and its messages are not regenerated or edited meanwhile.
+  const pendingInteraction = selectPendingInteraction({
+    leafStatus: activeLeafStatus,
+    workflowApproval: Boolean(activeWorkflowApprovalRequest),
+    toolApprovalId:
+      publishedToolApproval &&
+      (!publishedToolApproval.conversationId ||
+        publishedToolApproval.conversationId === activeConversationId)
+        ? publishedToolApproval.id
+        : null,
+    hasQuestion: Boolean(activeUserInputRequest?.questions?.length),
+    questionRequestId: activeUserInputRequest?.request_id,
+  });
+  const hasPendingInteraction = Boolean(pendingInteraction);
   const messageActionsLocked = Boolean(
-    activeWorkflowApprovalRequest || isConversationTransitioning || contextBlocked
+    hasPendingInteraction || isConversationTransitioning || contextBlocked
   );
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
   const visiblePendingUserMessage =
@@ -1184,7 +1202,7 @@ export function AIChatShell({
       isSending ||
       pendingUserMessage ||
       activeWorkflowApprovalRequest ||
-      leafWaitingForPerson ||
+      hasPendingInteraction ||
       activeQueuedTurns.length === 0
     ) {
       return;
@@ -1207,7 +1225,7 @@ export function AIChatShell({
     activeQueuedTurns,
     activeWorkflowApprovalRequest,
     isSending,
-    leafWaitingForPerson,
+    hasPendingInteraction,
     pendingUserMessage,
     removeQueuedTurn,
     sendOrdinaryTurn,
@@ -1509,19 +1527,24 @@ export function AIChatShell({
 
   const handleWorkflowApprovalSubmit = useCallback(
     (request: AIChatWorkflowApprovalRequest, payload: AIChatWorkflowApprovalSubmitPayload) => {
-      if (!controller.continueWorkflowApproval) return;
-      void controller
+      if (!controller.continueWorkflowApproval) return Promise.resolve();
+      // The returned promise rejects when the submission fails, so the form
+      // leaves its submitted state and can be sent again.
+      return controller
         .continueWorkflowApproval(request.conversationId, request.messageId, {
           approvalToken: request.approvalToken,
           inputs: payload.inputs,
           action: payload.action,
         })
-        .then(() => onTaskMutation?.())
+        .then(() => {
+          onTaskMutation?.();
+        })
         .catch(error => {
           toast.error(
             error instanceof Error ? error.message : t('consoleChat.workflow.approvalSubmitFailed')
           );
           onTaskMutation?.();
+          throw error;
         });
     },
     [controller, onTaskMutation, t]
@@ -1619,6 +1642,9 @@ export function AIChatShell({
   }, [activeConversation?.id]);
 
   const activeToolGovernanceApprovalFallback = useMemo<ToolGovernancePendingApproval | null>(() => {
+    // Dismissals live in the approval scope; its version changes with them,
+    // so a dismissed fallback approval is hidden at once.
+    if (toolGovernanceApprovalVersion < 0) return null;
     if (
       !enableToolGovernanceApprovals ||
       !activeConversation ||
@@ -1648,7 +1674,7 @@ export function AIChatShell({
     );
     if (
       approval &&
-      (isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScopeId) ||
+      (isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScope) ||
         submittedToolGovernanceDecisionKeys.has(approval.id))
     ) {
       return null;
@@ -1667,7 +1693,8 @@ export function AIChatShell({
     streamingByMessageId,
     submittedToolGovernanceDecisionKeys,
     t,
-    toolGovernanceApprovalScopeId,
+    toolGovernanceApprovalScope,
+    toolGovernanceApprovalVersion,
   ]);
 
   const handleNewChat = useCallback(() => {
@@ -1838,7 +1865,7 @@ export function AIChatShell({
         </div>
       ) : null}
 
-      <ToolGovernancePendingApprovalScopeProvider scopeId={toolGovernanceApprovalScopeId}>
+      <ToolGovernancePendingApprovalScopeProvider scope={toolGovernanceApprovalScope}>
         <main
           aria-hidden={embeddedOverlayOpen || undefined}
           inert={embeddedOverlayOpen}

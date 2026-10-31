@@ -4401,7 +4401,7 @@ export function AIChatAgenticTimeline({
   const { locale } = useLocale();
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const notifiedTaskMutationKeysRef = useRef(new Set<string>());
-  const pendingApprovalScopeId = useToolGovernancePendingApprovalScope();
+  const pendingApprovalScope = useToolGovernancePendingApprovalScope();
 
   useEffect(() => {
     if (!onTaskMutation) return;
@@ -4474,12 +4474,12 @@ export function AIChatAgenticTimeline({
 
   useEffect(() => {
     const cleanups = pendingGovernanceApprovals.map(approval =>
-      publishToolGovernancePendingApproval(approval, pendingApprovalScopeId)
+      publishToolGovernancePendingApproval(approval, pendingApprovalScope)
     );
     return () => {
       cleanups.forEach(cleanup => cleanup());
     };
-  }, [pendingApprovalScopeId, pendingGovernanceApprovals]);
+  }, [pendingApprovalScope, pendingGovernanceApprovals]);
 
   const governanceCorrelationIds = useMemo(
     () =>

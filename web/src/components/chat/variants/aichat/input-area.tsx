@@ -76,6 +76,7 @@ import {
   ToolGovernanceApprovalPanel,
   useActiveToolGovernancePendingApproval,
   useToolGovernancePendingApprovalScope,
+  useToolGovernancePendingApprovalVersion,
   type ToolGovernancePendingApproval,
 } from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
@@ -223,10 +224,11 @@ interface AIChatInputAreaProps {
     answers?: Record<string, string>
   ) => void;
   activeWorkflowApprovalRequest?: AIChatWorkflowApprovalRequest | null;
+  /** Rejects when the submission fails, so the form can be sent again. */
   onWorkflowApprovalSubmit?: (
     request: AIChatWorkflowApprovalRequest,
     payload: AIChatWorkflowApprovalSubmitPayload
-  ) => void;
+  ) => void | Promise<void>;
   onStop: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
   onModelPropsChange?: (model: ModelSelectorModelProps | null) => void;
@@ -399,7 +401,8 @@ export function AIChatInputArea({
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
   const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
     useState<ToolGovernancePendingApproval | null>(null);
-  const toolGovernancePendingApprovalScopeId = useToolGovernancePendingApprovalScope();
+  const toolGovernancePendingApprovalScope = useToolGovernancePendingApprovalScope();
+  useToolGovernancePendingApprovalVersion(toolGovernancePendingApprovalScope);
 
   const handleModelPropsChange = useCallback(
     (nextModel: ModelSelectorModelProps | null) => {
@@ -595,7 +598,7 @@ export function AIChatInputArea({
     isCurrentToolGovernanceApproval(activeToolGovernanceApproval) &&
     !isToolGovernancePendingApprovalDismissed(
       activeToolGovernanceApproval.id,
-      toolGovernancePendingApprovalScopeId
+      toolGovernancePendingApprovalScope
     )
       ? activeToolGovernanceApproval
       : null;
@@ -604,7 +607,7 @@ export function AIChatInputArea({
     isCurrentToolGovernanceApproval(activeToolGovernanceApprovalFallback) &&
     !isToolGovernancePendingApprovalDismissed(
       activeToolGovernanceApprovalFallback.id,
-      toolGovernancePendingApprovalScopeId
+      toolGovernancePendingApprovalScope
     )
       ? activeToolGovernanceApprovalFallback
       : null;
@@ -1226,13 +1229,20 @@ export function AIChatInputArea({
     async (payload: { inputs: Record<string, unknown>; action: string }) => {
       if (!activeWorkflowApprovalRequest) return;
       setSubmittedApprovalAction(payload.action);
+      // A submission that fails leaves the submitted state, so the person can
+      // send it again instead of facing a form that waits for nothing.
       if (onWorkflowApprovalSubmit) {
-        onWorkflowApprovalSubmit(activeWorkflowApprovalRequest, payload);
+        try {
+          await onWorkflowApprovalSubmit(activeWorkflowApprovalRequest, payload);
+        } catch {
+          setSubmittedApprovalAction(null);
+        }
         return;
       }
       try {
         await approvalSubmitMutation.mutateAsync(payload);
       } catch (error) {
+        setSubmittedApprovalAction(null);
         toast.error(
           error instanceof Error ? error.message : t('consoleChat.workflow.approvalSubmitFailed')
         );

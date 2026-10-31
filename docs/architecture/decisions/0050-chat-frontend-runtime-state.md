@@ -96,10 +96,13 @@ The steps are ordered so that each one ships alone, keeps behaviour, and makes t
      - Tests (`test:chat-stream-decoder`, in the CI frontend gate) replay streams recorded from the local stack (`web/scripts/fixtures/chat-runtime-streams.json`), check that every event the dispatcher handles is classified, and check the cursor.
      - Field-level schemas per event are left to step 3, where the normalized invocation map defines the fields the client reads.
 2. **Pending interaction and surface profile** (decisions 5 and 6).
-   - Add `selectPendingInteraction` and `resolveChatSurfaceProfile`.
-   - Point the composer, queue, regenerate and edit at the selector.
-   - Remove the module-level approval store and the shell's string compares.
-   - Tests: the surface table, and pending-interaction cases for each waiting reason.
+   - 2a, done: `variants/aichat/chat-surface-profile.ts` turns the surface, layout, runtime surface, the host's permission-control switch and the transport's capabilities into one record. The chat shell reads it and no longer compares surface names. `test:chat-surface-profile` pins every surface as its page mounts it and the rules that hold for every combination.
+   - 2b, done:
+     - `controllers/aichat/pending-interaction.ts` returns the one interaction to resolve: a workflow approval, a tool approval or a question, in the composer's order, or the leaf message's own wait for a page action or budget. The queue, regenerate, edit and branch switching all stop while it is set.
+     - Pending approvals live in a scope each chat shell creates and drops with itself; the module-wide maps are gone. Readers subscribe to the scope, so a dismissal re-renders them.
+     - A workflow approval whose submission fails leaves its submitted state and can be sent again.
+     - `test:chat-pending-interaction` covers the selector and the scope.
+   - Left for step 3: the composer still picks the approval card from the published approval and the persisted fallback. Connector confirmations come from a receipt the bubble loads, which is not in the controller state yet; once invocations are normalized, the selector can derive the card itself and the publishing goes.
 3. **Normalized invocations** (decision 2).
    - Store invocations in one map per message with the canonical id and the transition table.
    - Keep the old metadata shape as a selector, so components change in step 4 only.
