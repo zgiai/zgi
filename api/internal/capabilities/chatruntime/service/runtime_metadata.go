@@ -448,14 +448,19 @@ func operationPlanChecklistStatus(steps []map[string]interface{}) string {
 	return operationPlanStatusCompleted
 }
 
-// operationPlanOpenSteps lists the steps still pending or in progress.
+// operationPlanOpenSteps lists the checklist steps still pending or in
+// progress. Phases of an older plan are left out: nothing advances them any
+// more, so they would keep the plan open for good.
 func operationPlanOpenSteps(plan map[string]interface{}) []string {
 	open := []string{}
+	if stringFromAny(plan["version"]) != operationPlanChecklistVersion {
+		return open
+	}
 	for _, step := range mapSliceFromAny(plan["phases"]) {
 		switch strings.ToLower(strings.TrimSpace(stringFromAny(step["status"]))) {
 		case operationPlanStepStatusCompleted, "skipped":
 		default:
-			open = append(open, strings.TrimSpace(firstNonEmptyString(step["step"], step["title"])))
+			open = append(open, strings.TrimSpace(stringFromAny(step["step"])))
 		}
 	}
 	return open

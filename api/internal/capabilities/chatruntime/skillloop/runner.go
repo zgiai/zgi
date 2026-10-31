@@ -249,7 +249,9 @@ func (r *Runner) completeSkillLoopSafetyTermination(
 	round int,
 ) (string, *adapter.Usage, error) {
 	runtimeState := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
-	if connectorExecutedOutcomesSatisfied(runtimeState) {
+	// Connector calls that all succeeded show the work that ran, not that the
+	// task is done: a checklist with open steps says more was planned.
+	if connectorExecutedOutcomesSatisfied(runtimeState) && len(planOpenSteps(r.planSteps)) == 0 {
 		return r.completeConnectorOutcomeSuccess(
 			ctx,
 			req,
@@ -425,17 +427,14 @@ func nativeInitialMessages(req RunRequest, resolved *skills.ResolvedSkills, nati
 }
 
 // planningToolsForRound is the tool list of one round before positions are
-// kept, narrowed by the run's state.
-func (r *Runner) planningToolsForRound(req RunRequest, resolved *skills.ResolvedSkills, nativeToolSet *skills.NativeToolSet, connectorOutcomesComplete bool, roundRuntimeState map[string]interface{}) []adapter.Tool {
+// kept. It stays the same through the run: a finished connector call does not
+// take update_plan away, because the checklist is the model's (ADR 0049).
+func (r *Runner) planningToolsForRound(req RunRequest, resolved *skills.ResolvedSkills, nativeToolSet *skills.NativeToolSet) []adapter.Tool {
 	tools := nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools, req.OmitPlanningTools, req.UnifiedSkillDispatch)
 	// Oversized tool results reach the model projected, with the rest
 	// readable through this tool (ADR 0037). It is always offered, so
 	// the tool list does not change when a projection first appears.
-	tools = appendContextArtifactTool(tools, r.ContextManager != nil)
-	if connectorOutcomesComplete {
-		tools = controlToolsForRound(tools, false, !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState))
-	}
-	return tools
+	return appendContextArtifactTool(tools, r.ContextManager != nil)
 }
 
 // runPlanningRound makes the model call of one round, with the native loop's
@@ -545,21 +544,6 @@ func keepToolPositions(tools []adapter.Tool, positions map[string]int) []adapter
 	return ordered
 }
 
-func controlToolsForRound(input []adapter.Tool, allowPlanUpdate bool, allowIntermediateAnswer bool) []adapter.Tool {
-	filtered := make([]adapter.Tool, 0, len(input))
-	for _, tool := range input {
-		name := strings.TrimSpace(tool.Function.Name)
-		if !allowPlanUpdate && strings.EqualFold(name, skills.MetaToolUpdatePlan) {
-			continue
-		}
-		if !allowIntermediateAnswer && strings.EqualFold(name, skills.MetaToolIntermediateAnswer) {
-			continue
-		}
-		filtered = append(filtered, tool)
-	}
-	return filtered
-}
-
 func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usage, error) {
 	prepared := req.Prepared
 	resolved := req.Resolved
@@ -601,7 +585,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		maxSkillSteps:                maxSkillStepsForTurn(resolved),
 		terminalStateGuardConfigured: req.RuntimeStateSnapshot != nil,
 		nativeCommentary:             newNativeCommentaryState(prepared.LLMRequest.Model, currentMetadataForRun(req)),
+		planSteps:                    planChecklistFromMetadata(currentMetadataForRun(req)),
 	}
+	r.planSteps = s.planSteps
 	if req.NativeSkillSession != nil {
 		for _, skillID := range req.NativeSkillSession.ActiveSkillIDs() {
 			s.loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
@@ -654,11 +640,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, s.successfulToolCalls)
 			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
-		connectorOutcomesComplete := connectorExecutedOutcomesSatisfied(roundRuntimeState)
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = s.messages
 		planningReq.Stream = false
-		planningReq.Tools = r.planningToolsForRound(req, resolved, s.nativeToolSet, connectorOutcomesComplete, roundRuntimeState)
+		planningReq.Tools = r.planningToolsForRound(req, resolved, s.nativeToolSet)
 		planningReq.Tools = keepToolPositions(planningReq.Tools, s.toolPositions)
 		if req.TerminalOnly {
 			planningReq.Tools = nil
@@ -836,22 +821,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 	}
 	return r.planningRoundsExhausted(ctx, s).result()
-}
-
-func fileDeliveryRequiresArtifactOnly(req RunRequest, runtimeState map[string]interface{}) bool {
-	plan := evidenceMapFromAny(runtimeState["operation_plan"])
-	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
-		if !operationPlanPhaseOpenForToolCall(phase) {
-			continue
-		}
-		expected := evidenceMapFromAny(phase["expected_action"])
-		skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(expected["skill_id"])))
-		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(expected["tool_name"])))
-		if skillID == skills.SkillFileGenerator || toolName == "generate_file" {
-			return true
-		}
-	}
-	return false
 }
 
 func skillInstructionDigest(instructions string) string {
@@ -1536,7 +1505,11 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 	// Reasoning from this turn's tool-call rounds goes back only to models
 	// that expect it; other APIs may reject the field.
 	if r.ContextManager == nil {
-		request.Messages = adapter.MessagesForModel(request.Model, adapter.PlaceSystemMessages(sourceMessages))
+		messages := sourceMessages
+		if restored := checklistMissingFromRequest(messages, r.planSteps); restored != nil {
+			messages = append(messages, *restored)
+		}
+		request.Messages = adapter.MessagesForModel(request.Model, adapter.PlaceSystemMessages(messages))
 		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)
 	}
 	prepared, decision, err := r.ContextManager.PrepareBeforeModelCall(ctx, request)
@@ -1734,11 +1707,8 @@ func checklistMissingFromRequest(messages []adapter.Message, steps []map[string]
 		return nil
 	}
 	for _, message := range messages {
-		if strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
-			content := assistantMessageText(message)
-			if strings.Contains(content, `"status":"recorded"`) && strings.Contains(content, `"plan"`) {
-				return nil
-			}
+		if strings.EqualFold(strings.TrimSpace(message.Role), "tool") && toolResultHoldsChecklist(assistantMessageText(message), steps) {
+			return nil
 		}
 	}
 	var builder strings.Builder
@@ -1747,4 +1717,26 @@ func checklistMissingFromRequest(messages []adapter.Message, steps []map[string]
 		builder.WriteString("\n- [" + evidenceStringFromAny(step["status"]) + "] " + evidenceStringFromAny(step["step"]))
 	}
 	return &adapter.Message{Role: "system", Content: builder.String()}
+}
+
+// toolResultHoldsChecklist reports that a tool result is the update_plan
+// result for exactly these steps; an earlier version of the checklist does
+// not count.
+func toolResultHoldsChecklist(content string, steps []map[string]interface{}) bool {
+	var result struct {
+		Status string `json:"status"`
+		Plan   []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"plan"`
+	}
+	if json.Unmarshal([]byte(content), &result) != nil || result.Status != "recorded" || len(result.Plan) != len(steps) {
+		return false
+	}
+	for index, step := range result.Plan {
+		if step.Step != evidenceStringFromAny(steps[index]["step"]) || step.Status != evidenceStringFromAny(steps[index]["status"]) {
+			return false
+		}
+	}
+	return true
 }

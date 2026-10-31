@@ -56,6 +56,15 @@ export function applyPlanUpdatedState(
   return {
     ...current,
     messagesByConversation: { ...current.messagesByConversation, [payload.conversation_id]: nextMessages },
+    streamingByMessageId: previousStreaming
+      ? {
+          ...current.streamingByMessageId,
+          [payload.message_id]: {
+            ...previousStreaming,
+            last_event_id: eventId ?? previousStreaming.last_event_id,
+          },
+        }
+      : current.streamingByMessageId,
   };
 }
 

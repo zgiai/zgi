@@ -39,23 +39,10 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 	for _, state := range states {
 		counts[state]++
 	}
-	missing := 0
-	for _, phase := range evidenceMapsFromAny(evidenceMapFromAny(evidence["operation_plan"])["phases"]) {
-		if len(connectorPhaseOperation(phase)) == 0 {
-			continue
-		}
-		if _, matched := connectorPhaseEvidence(phase, evidence); !matched {
-			missing++
-		}
-	}
 	if counts["pending"] > 0 {
 		return &terminalStateGuardDecision{Path: terminalStateGuardBlocked, Reason: "Connector confirmation is pending", Blockers: []string{"pending_protocol:connector_confirmation"}}
 	}
-	if missing > 0 && len(states) == counts["successful"] {
-		return &terminalStateGuardDecision{Path: terminalStateGuardBlocked, Reason: "Required Connector phases have no native execution outcome", Blockers: []string{"connector_plan:missing_outcome"}}
-	}
-	counts["unavailable"] += missing
-	if missing == 0 && len(states) == counts["successful"] {
+	if len(states) == counts["successful"] {
 		return nil
 	}
 	hint := evidenceStringFromAny(evidence["latest_user_request"]) + evidenceStringFromAny(evidence["user_request"]) + answer
@@ -85,7 +72,7 @@ func connectorTerminalStateDecision(evidence map[string]interface{}, answer stri
 	// step. A failed, unknown, rejected, or in-progress outcome keeps the strict
 	// replacement.
 	notRun := counts["cancelled"] + counts["unavailable"]
-	onlyNotRun := notRun > 0 && counts["successful"]+notRun == len(states) && missing == 0
+	onlyNotRun := notRun > 0 && counts["successful"]+notRun == len(states)
 	if candidate := strings.TrimSpace(answer); onlyNotRun && candidate != "" {
 		finalAnswer = candidate + "\n\n" + finalAnswer
 	}

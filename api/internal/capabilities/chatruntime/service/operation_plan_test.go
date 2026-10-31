@@ -193,6 +193,7 @@ func TestInvocationEvidenceUsesGlobalRevisionAcrossLocalToolSequences(t *testing
 func TestApplyOperationPlanCompletionVerificationMirrorsTopLevelMetadata(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
+			"version":          operationPlanChecklistVersion,
 			"status":           "running",
 			"plan_sync_status": "stale",
 			"phases": []interface{}{map[string]interface{}{
@@ -270,7 +271,8 @@ func TestApplyOperationPlanCompletionVerificationPassesWhenAllPhasesTerminal(t *
 func TestMainModelFinalDoesNotCompleteRuntimeVerifiedPhase(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
-			"status": operationPlanStatusRunning,
+			"version": operationPlanChecklistVersion,
+			"status":  operationPlanStatusRunning,
 			"phases": []interface{}{map[string]interface{}{
 				"id": "phase-1", "status": operationPlanStepStatusPending,
 				"verification_mode": "runtime_effects",

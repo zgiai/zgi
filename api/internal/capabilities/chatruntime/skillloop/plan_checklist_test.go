@@ -80,6 +80,42 @@ func TestRunnerRemindsOnceOfOpenPlanSteps(t *testing.T) {
 	}
 }
 
+// A run that continues the turn, as after an approval, starts from the
+// checklist the turn already holds, so its open steps are still pointed out.
+func TestContinuedRunKeepsTheTurnChecklist(t *testing.T) {
+	runtime := skills.NewRuntime(nil, nil)
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
+		Instructions: "Answer concisely.",
+	}}}
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Approved and sent."}, FinishReason: "stop"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Sent; the report was dropped."}, FinishReason: "stop"}}},
+	}}
+	metadata := map[string]interface{}{"operation_plan": map[string]interface{}{
+		"version": planChecklistVersion,
+		"phases": []interface{}{
+			map[string]interface{}{"id": "step-1", "step": "Send the message", "status": "in_progress"},
+			map[string]interface{}{"id": "step-2", "step": "Write the report", "status": "pending"},
+		},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-plan", "msg-plan", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Send the message and write the report"}},
+	})
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared: prepared, Resolved: resolved, NativeToolSet: &toolSet,
+		CurrentMetadata: func() map[string]interface{} { return metadata },
+	})
+	if err != nil || answer != "Sent; the report was dropped." || fakeLLM.appChatCalls != 2 {
+		t.Fatalf("answer = %q after %d calls (err %v), want one reminder of the stored checklist", answer, fakeLLM.appChatCalls, err)
+	}
+	if !strings.Contains(runnerTestMessageText(fakeLLM.appChatRequests[0].Messages), "[pending] Write the report") {
+		t.Fatal("the continued run's first request does not show the stored checklist")
+	}
+}
+
 // A request whose compaction dropped the update_plan result gets the
 // checklist back; one that still holds it does not.
 func TestChecklistIsRestoredWhenTheRequestLostIt(t *testing.T) {
@@ -91,6 +127,11 @@ func TestChecklistIsRestoredWhenTheRequestLostIt(t *testing.T) {
 	kept := []adapter.Message{skills.ToolResultMessage("plan-1", map[string]interface{}{"status": "recorded", "plan": steps})}
 	if checklistMissingFromRequest(kept, steps) != nil {
 		t.Fatal("the checklist was added although the request holds it")
+	}
+	earlier := []map[string]interface{}{{"step": "Compute", "status": "in_progress"}, {"step": "Write", "status": "pending"}}
+	stale := []adapter.Message{skills.ToolResultMessage("plan-0", map[string]interface{}{"status": "recorded", "plan": earlier})}
+	if checklistMissingFromRequest(stale, steps) == nil {
+		t.Fatal("an earlier checklist in the request kept the current one from being restored")
 	}
 	if checklistMissingFromRequest(nil, nil) != nil {
 		t.Fatal("a run without a checklist got one")

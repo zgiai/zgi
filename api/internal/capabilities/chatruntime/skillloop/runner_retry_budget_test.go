@@ -300,6 +300,26 @@ func TestCompleteSkillLoopSafetyTerminationSummarizesProviderConfirmedSuccess(t 
 		!strings.Contains(content, "native Connector execution") {
 		t.Fatalf("success summary request used the wrong terminal path:\n%s", content)
 	}
+
+	// The same successful call is not the whole task while the model's
+	// checklist still has steps open (ADR 0049).
+	fakeLLM = &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送，日程尚未创建。"}}},
+	}}}
+	runner = &Runner{LLMClient: fakeLLM, AppContext: &llmclient.AppContext{}, planSteps: []map[string]interface{}{
+		{"step": "发送消息", "status": "completed"},
+		{"step": "创建日程", "status": "pending"},
+	}}
+	completion = TerminalCompletionResult{}
+	_, _, _ = runner.completeSkillLoopSafetyTermination(context.Background(), req, prepared, prepared.LLMRequest.Messages, nil, failure, nil, "planner feedback limit reached", 6)
+	if completion.CompletionReason == connectorOutcomeRecoveryReason {
+		t.Fatalf("completion = %#v, want no connector success while a step is open", completion)
+	}
+	for _, request := range fakeLLM.appChatRequests {
+		if strings.Contains(runnerTestMessageText(request.Messages), "native Connector execution") {
+			t.Fatal("an unfinished checklist took the connector success path")
+		}
+	}
 }
 
 func TestRunnerPlannerFeedbackUsesIndependentConsecutiveLimit(t *testing.T) {

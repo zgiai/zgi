@@ -6,7 +6,6 @@ import (
 
 const (
 	operationPlanRuntimeBindingKey            = "runtime_binding"
-	governedCompletionIntentFinalizeIfSuccess = "finalize_if_success"
 )
 
 func operationPlanExpectedActionMatches(expected map[string]interface{}, skillID string, toolName string, actualTarget map[string]interface{}) bool {

@@ -4,20 +4,6 @@ import (
 	"strings"
 )
 
-const operationPlanPhaseMismatchCode = "operation_plan_phase_mismatch"
-const operationPlanPhaseSourceKey = "phase_source"
-const operationPlanPhaseSourceServerOutcome = "server_outcome"
-const operationPlanPhaseSourceModelAdvisory = "model_advisory"
-
-func operationPlanPhaseOpenForToolCall(phase map[string]interface{}) bool {
-	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(phase["status"]))) {
-	case "pending", "in_progress", "running":
-		return true
-	default:
-		return false
-	}
-}
-
 func operationPlanSkillCallTargetValue(arguments map[string]interface{}, key string) string {
 	if value := strings.TrimSpace(evidenceStringFromAny(arguments[key])); value != "" {
 		return value

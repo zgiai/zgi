@@ -172,7 +172,7 @@ func (r *Runner) executeToolCall(ctx context.Context, s *runState, rs *roundStat
 		failedCallKey = ""
 	}
 	callEvidence[runtimeStateAllowPlanUpdateKey] = true
-	callEvidence[runtimeStateAllowIntermediateAnswerKey] = !fileDeliveryRequiresArtifactOnly(req, callEvidence)
+	callEvidence[runtimeStateAllowIntermediateAnswerKey] = true
 	callEvidence[runtimeStateNativeAgentLoopKey] = true
 	callEvidence[runtimeStateKnowledgeRetrievalHistoryKey] = knowledgeRetrievalHistoryForToolCalls(s.successfulToolCalls)
 	if isAgentKnowledgeRetrievalCall(callSkillID, callToolName) {
@@ -516,11 +516,25 @@ func (r *Runner) planningRoundsExhausted(ctx context.Context, s *runState) *runO
 	return r.terminateForSafety(ctx, s, trace, "the planning loop reached its safety limit before the requested operation completed", defaultMaxSkillPlanningRounds)
 }
 
-// planOpenSteps lists the steps of the run's checklist still pending or in
-// progress.
-func (s *runState) planOpenSteps() []string {
+// planChecklistVersion marks a stored plan whose steps are the model's
+// checklist (ADR 0049).
+const planChecklistVersion = "operation_plan.v3"
+
+// planChecklistFromMetadata is the checklist the turn already holds, so a run
+// that continues the turn after an approval, a clarification or a page action
+// keeps it.
+func planChecklistFromMetadata(metadata map[string]interface{}) []map[string]interface{} {
+	plan := evidenceMapFromAny(metadata["operation_plan"])
+	if evidenceStringFromAny(plan["version"]) != planChecklistVersion {
+		return nil
+	}
+	return evidenceMapsFromAny(plan["phases"])
+}
+
+// planOpenSteps lists the checklist steps still pending or in progress.
+func planOpenSteps(steps []map[string]interface{}) []string {
 	open := []string{}
-	for _, step := range s.planSteps {
+	for _, step := range steps {
 		switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["status"]))) {
 		case "completed", "skipped":
 		default:
@@ -537,7 +551,7 @@ func (r *Runner) remindOpenPlanSteps(ctx context.Context, s *runState, text stri
 	if s.planReminderSent || s.req.TerminalOnly {
 		return false
 	}
-	open := s.planOpenSteps()
+	open := planOpenSteps(s.planSteps)
 	if len(open) == 0 {
 		return false
 	}
@@ -547,7 +561,7 @@ func (r *Runner) remindOpenPlanSteps(ctx context.Context, s *runState, text stri
 	}
 	s.messages = append(s.messages,
 		adapter.Message{Role: "assistant", Content: text},
-		adapter.Message{Role: "system", Content: "Your checklist still has open steps: " + strings.Join(open, "; ") + ". Do them now, or, if they are no longer needed, mark them skipped with update_plan. Then give the final answer."},
+		adapter.Message{Role: "system", Content: "Your checklist still has open steps: " + strings.Join(open, "; ") + ". Do them now, or, if they are no longer needed, mark them skipped with update_plan, then give the final answer. If you cannot go on without something from the user, keep those steps open and give the same answer again."},
 	)
 	return true
 }

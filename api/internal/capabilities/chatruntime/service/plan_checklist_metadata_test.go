@@ -42,3 +42,22 @@ func TestPlanChecklistIsStoredAndOpenStepsKeepItRunning(t *testing.T) {
 		t.Fatalf("plan after every step is done = %#v", plan)
 	}
 }
+
+// A plan that only holds the runtime's ledgers is no open task, and the
+// phases of an older plan, which nothing advances any more, do not keep a
+// passed turn running.
+func TestOnlyChecklistStepsKeepATurnOpen(t *testing.T) {
+	ledgerOnly := map[string]interface{}{"version": operationPlanVersion, "status": operationPlanStatusRunning, "evidence_ledger": []interface{}{map[string]interface{}{"key": "kept"}}}
+	if operationPlanHasIncompleteWork(ledgerOnly) {
+		t.Fatal("a plan with ledgers and no steps was taken as open work")
+	}
+
+	metadata := map[string]interface{}{"operation_plan": map[string]interface{}{
+		"version": operationPlanVersion,
+		"phases":  []interface{}{map[string]interface{}{"id": "phase-1", "title": "Open the page", "status": "in_progress"}},
+	}}
+	applyOperationPlanTerminalCompletionResultWithSource(metadata, "completed", "main_model", "", nil, nil, "")
+	if plan := mapFromOperationContext(metadata["operation_plan"]); plan["status"] != operationPlanStatusCompleted {
+		t.Fatalf("older plan after a passed turn = %#v, want completed", plan)
+	}
+}

@@ -45,13 +45,16 @@ A baseline of eight multi-step scenarios (below) shows what to expect from the c
    - No evidence references, expected actions or completion modes. The runtime does not reject a status the model sets.
 2. **Runtime acceptance is separate from the plan.**
    - Connector acceptance follows the operations that actually ran. A turn cannot end while an executed operation awaits its native outcome, as `connectorTerminalStateDecision` already decides from the invocations. Plan steps no longer name connector operations, so the early end once every planned operation is confirmed, and the rule that an executed connector plan cannot be reordered, go with them.
+   - Connector calls that all succeeded show only the work that ran. The tool list stays the same for the whole run, so `update_plan` is not taken away after a connector call succeeds. When the run hits its safety limit, it is reported as a connector success only if the checklist has no open steps.
+   - A plan that holds only the ledgers is not open work for the next turn. Phases of plans written before this decision no longer keep a turn open, because nothing advances them.
    - An approved call runs as it was frozen, as today; it is no longer bound to a plan phase afterwards.
    - The evidence, effect and attempt ledgers stay as the record of what succeeded, for audit and resume. They no longer drive plan steps.
    - Model-created Outcomes, server-authority phases, `expected_action` matching, and the hard-coded effect maps for built-in skills are removed.
 3. **The model keeps seeing its plan.**
    - The latest plan stays in the conversation as the `update_plan` result.
-   - When context compaction removes it, the compacted request adds the current plan back.
-   - When the model writes a final answer while steps are still `pending` or `in_progress`, the runtime returns once with a short reminder listing them. The model then continues, or marks them `skipped` and says why. This happens at most once per turn.
+   - When context compaction removes it, or keeps only an earlier version of it, the compacted request adds the current plan back.
+   - A run that continues the turn after an approval, a clarification or a page action starts from the checklist stored with the turn.
+   - When the model writes a final answer while steps are still `pending` or `in_progress`, the runtime returns once with a short reminder listing them. The model then continues, marks them `skipped` and says why, or, if it needs something from the user, gives the same answer again. This happens at most once per run.
 4. **The user sees the plan.** Each accepted `update_plan` is streamed as a plan event and stored with the turn. The AI chat, Agent and DigitalHuman views show the checklist and its progress.
 5. **Every run that can call tools can plan.** `update_plan` is offered to Agents (console and API), the AI chat and DigitalHumans, including task runs, whenever the run has a tool beyond the resident ones. Runs that only answer from the conversation do not get it.
 6. **The forcing rules go.** That covers:
