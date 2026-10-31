@@ -36,6 +36,19 @@ func taskQueueRedisOpt(cfg *config.Config) asynq.RedisClientOpt {
 	}
 }
 
+// validateWorkerConcurrency rejects a concurrency Asynq would silently
+// replace with the CPU count. Config load already enforces it; this keeps a
+// hand-built config from starting workers the operator did not ask for.
+func validateWorkerConcurrency(cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("task queue config is required")
+	}
+	if cfg.TaskQueue.Concurrency < 1 {
+		return fmt.Errorf("task queue concurrency must be at least 1, got %d", cfg.TaskQueue.Concurrency)
+	}
+	return nil
+}
+
 func mainWorkerConfig(cfg *config.Config) asynq.Config {
 	return asynq.Config{
 		Concurrency: cfg.TaskQueue.Concurrency,
@@ -45,6 +58,7 @@ func mainWorkerConfig(cfg *config.Config) asynq.Config {
 			"default":  3,
 			"low":      1,
 		},
+		ErrorHandler: NewTaskFailureHandler("main"),
 	}
 }
 
@@ -55,6 +69,7 @@ func graphFlowWorkerConfig(cfg *config.Config) asynq.Config {
 		Queues: map[string]int{
 			"graphflow": 1,
 		},
+		ErrorHandler: NewTaskFailureHandler("graphflow"),
 	}
 }
 

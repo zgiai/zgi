@@ -39,6 +39,9 @@ const (
 	defaultOutboxLease         = 2 * time.Minute
 	completedRunRecoveryWindow = 30 * time.Second
 	defaultStaleRunWindow      = 10 * time.Minute
+	undeliveredRunWindow       = 2 * time.Minute
+	runQueueUnavailableCode    = "digital_human.run.queue_unavailable"
+	runQueueUnavailableMessage = "The run could not be delivered to a worker; please send it again."
 	channelFormalHistoryTurns  = 4
 )
 
@@ -90,6 +93,12 @@ type workflowContinuationStreamRunner interface {
 type RunDispatcher interface {
 	EnqueueRun(context.Context, uuid.UUID) error
 	CancelRun(context.Context, uuid.UUID) error
+}
+
+// runDeliveryInspector is an optional dispatcher extension that reports a
+// queue delivery which will never reach a worker again.
+type runDeliveryInspector interface {
+	RunDeliveryArchived(context.Context, uuid.UUID) (bool, error)
 }
 
 // RuntimeService owns durable manual invocations and execution lifecycle.
@@ -1441,8 +1450,51 @@ func (s *RuntimeService) Reconcile(ctx context.Context) error {
 		s.recoverCompletedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
 		s.settleAnsweredWaitingRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
 		s.resumeInterruptedRuns(ctx, now.Add(-completedRunRecoveryWindow), defaultOutboxBatch),
+		s.failUndeliveredRuns(ctx, now.Add(-undeliveredRunWindow), defaultOutboxBatch),
 		s.store.MarkStaleRunsUnknown(ctx, now.Add(-defaultStaleRunWindow), now),
 	)
+}
+
+// failUndeliveredRuns settles queued runs whose delivery was archived before
+// any worker claimed them: retries ran out or no worker had the handler. The
+// run would otherwise stay queued forever, since the stale sweep only covers
+// runs a worker started.
+func (s *RuntimeService) failUndeliveredRuns(ctx context.Context, updatedBefore time.Time, limit int) error {
+	store, ok := s.store.(undeliveredRunStore)
+	if !ok {
+		return nil
+	}
+	inspector, ok := s.dispatcher.(runDeliveryInspector)
+	if !ok {
+		return nil
+	}
+	runs, err := store.ListQueuedRuns(ctx, updatedBefore, limit)
+	if err != nil {
+		return err
+	}
+	var combined error
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		archived, inspectErr := inspector.RunDeliveryArchived(ctx, run.ID)
+		if inspectErr != nil {
+			combined = errors.Join(combined, inspectErr)
+			continue
+		}
+		if !archived {
+			continue
+		}
+		failed, failErr := store.FailQueuedRun(ctx, run.ID, runQueueUnavailableCode, runQueueUnavailableMessage, s.now())
+		if failErr != nil {
+			combined = errors.Join(combined, failErr)
+			continue
+		}
+		if failed {
+			logger.WarnContext(ctx, "DigitalHuman run failed because its queue delivery was archived", "run_id", run.ID.String(), "task_id", digitalHumanRunTaskID(run.ID))
+		}
+	}
+	return combined
 }
 
 // recoverCompletedRuns closes the crash window after ChatRuntime has persisted
