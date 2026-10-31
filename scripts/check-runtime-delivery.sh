@@ -69,6 +69,7 @@ case "$mode" in
     pnpm test:chat-stream-decoder
     pnpm test:chat-surface-profile
     pnpm test:chat-pending-interaction
+    pnpm test:workflow-approval-expiry
     pnpm test:user-input-response-history
     pnpm build
     ;;
