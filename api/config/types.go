@@ -527,6 +527,10 @@ type LLMConfig struct {
 	GuardOutboundURL        bool   `json:"guard_outbound_url"`
 	GuardOutboundDNS        bool   `json:"guard_outbound_dns"`
 	AllowPrivateBaseURL     bool   `json:"allow_private_base_url"`
+	// GatewayRequestBodyLimitMB is the raw LLM_GATEWAY_REQUEST_BODY_LIMIT_MB
+	// value. It is parsed by the gateway handler so an invalid value can fall
+	// back to the default and be logged once the logger is ready.
+	GatewayRequestBodyLimitMB string `json:"gateway_request_body_limit_mb"`
 
 	guardOutboundURLSet bool
 }

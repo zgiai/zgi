@@ -2,6 +2,7 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
+	appconfig "github.com/zgiai/zgi/api/config"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
@@ -71,12 +72,18 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	speechHandler.SetErrorProjector(errorProjector)
 
 	// Create middleware
+	var bodyLimitSetting string
+	if appconfig.GlobalConfig != nil {
+		bodyLimitSetting = appconfig.GlobalConfig.LLM.GatewayRequestBodyLimitMB
+	}
+	bodyLimit := gatewayhandler.GatewayRequestBodyLimitBytes(bodyLimitSetting)
+	logger.Info("gateway request body limit configured", "bytes", bodyLimit)
 	authMiddleware := gatewayhandler.LLMAPIKeyAuthMiddleware(deps.APIKeyRepo, errorProjector)
 
 	// Register routes with authentication middleware
 	// OpenAI-compatible endpoints
 	v1 := router.Group("/v1")
-	v1.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
+	v1.Use(gatewayhandler.GatewayBodyLimit(bodyLimit, errorProjector))
 	v1.Use(authMiddleware)
 	{
 		// OpenAI-compatible endpoints
@@ -97,7 +104,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 
 	// Anthropic-compatible endpoints
 	anthropic := router.Group("/anthropic")
-	anthropic.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
+	anthropic.Use(gatewayhandler.GatewayBodyLimit(bodyLimit, errorProjector))
 	anthropic.Use(authMiddleware)
 	{
 		anthropic.POST("/v1/messages", llmHandler.CreateAnthropicMessage)
@@ -105,7 +112,7 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 	logger.Info("Anthropic-compatible gateway routes registered", "path", "/anthropic/*")
 
 	gemini := router.Group("/v1beta")
-	gemini.Use(gatewayhandler.GatewayBodyLimit(0, errorProjector))
+	gemini.Use(gatewayhandler.GatewayBodyLimit(bodyLimit, errorProjector))
 	gemini.Use(authMiddleware)
 	{
 		gemini.POST("/models/*modelAction", llmHandler.CreateGeminiContent)

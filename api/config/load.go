@@ -1211,13 +1211,15 @@ func loadLLMConfig(cfg *Config, source *envSource) {
 	_, guardOutboundURLSet := source.lookup(envLLMGuardOutboundURL)
 	guardOutboundDNS, _ := source.bool(false, envLLMGuardOutboundDNS)
 	allowPrivateBaseURL, _ := source.bool(false, envLLMAllowPrivateBaseURL)
+	gatewayRequestBodyLimitMB := strings.TrimSpace(source.string("", envLLMGatewayRequestBodyLimitMB))
 	cfg.LLM = LLMConfig{
-		EncryptionKey:           source.string("", envLLMEncryptionKey),
-		OfficialModelStrictSync: officialModelStrictSync,
-		GuardOutboundURL:        guardOutboundURL,
-		GuardOutboundDNS:        guardOutboundDNS,
-		AllowPrivateBaseURL:     allowPrivateBaseURL,
-		guardOutboundURLSet:     guardOutboundURLSet,
+		EncryptionKey:             source.string("", envLLMEncryptionKey),
+		OfficialModelStrictSync:   officialModelStrictSync,
+		GuardOutboundURL:          guardOutboundURL,
+		GuardOutboundDNS:          guardOutboundDNS,
+		AllowPrivateBaseURL:       allowPrivateBaseURL,
+		GatewayRequestBodyLimitMB: gatewayRequestBodyLimitMB,
+		guardOutboundURLSet:       guardOutboundURLSet,
 	}
 }
 
