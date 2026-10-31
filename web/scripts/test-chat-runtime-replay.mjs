@@ -11,6 +11,9 @@ const shared = await loadTsModule('components/chat/controllers/aichat/reducers/s
 const status = await loadTsModule('components/chat/controllers/aichat/status.ts');
 const store = await loadTsModule('components/chat/controllers/aichat/store.ts');
 const selectors = await loadTsModule('components/chat/controllers/aichat/selectors.ts');
+const presentationOrder = await loadTsModule(
+  'components/chat/controllers/aichat/presentation-order.ts'
+);
 const timelineView = await loadTsModule('components/chat/variants/aichat/agentic-timeline.tsx');
 const eventAppliers = await loadTsModule(
   'components/chat/runtime/controller/use-chat-runtime-event-appliers.ts'
@@ -53,12 +56,24 @@ function messageOf(state, start) {
   );
 }
 
-function shownRows(message, runtimeTimeline) {
+// The rows the message bubble shows: the display timeline ordered by the
+// presentation items (streamed ones live, stored ones after a reload), which
+// also carry the process narration.
+function shownRows(message, runtimeTimeline, presentationItems) {
+  const items =
+    presentationItems ??
+    presentationOrder.presentationProjectionFromMetadata(message.metadata)?.items;
+  const display = selectors.messageDisplayTimeline(message, runtimeTimeline);
   return timelineView.visibleTimelineItems(
-    selectors.messageDisplayTimeline(message, runtimeTimeline),
+    items?.length ? presentationOrder.orderedPresentationTimeline(items, display) : display,
     message.status,
     true
   );
+}
+
+function liveRows(state, start) {
+  const streaming = state.streamingByMessageId[start.message_id];
+  return shownRows(messageOf(state, start), streaming?.timeline, streaming?.presentationItems);
 }
 
 function rowSummary(item) {
@@ -116,10 +131,7 @@ for (const stream of streams) {
     steps += 1;
     const label = `${stream.name} after ${event.event} ${event.id ?? ''}`;
     assertOneRecordPerCall(message.metadata?.skill_invocations ?? [], label);
-    assertOneRowPerCall(
-      shownRows(message, current.streamingByMessageId[startEvent.message_id]?.timeline),
-      label
-    );
+    assertOneRowPerCall(liveRows(current, startEvent), label);
   });
 
   const live = messageOf(state, start);
@@ -130,7 +142,7 @@ for (const stream of streams) {
   compared += 1;
   const reloaded = { ...live, metadata: stored.metadata, status: stored.status };
   assert.deepEqual(
-    shownRows(live, state.streamingByMessageId[start.message_id]?.timeline).map(rowSummary),
+    liveRows(state, start).map(rowSummary),
     shownRows(reloaded, []).map(rowSummary),
     `${stream.name}: the rows shown live and after a reload differ`
   );
@@ -145,7 +157,31 @@ for (const stream of streams) {
     `${stream.name}: refreshing twice changes the records`
   );
 }
-assert.ok(steps > 150 && compared >= 5, `replayed ${steps} steps, compared ${compared} turns`);
+assert.ok(steps > 150 && compared >= 7, `replayed ${steps} steps, compared ${compared} turns`);
+
+// Text the model retracts before a tool call is process narration: the event
+// says so, and the stored copy keeps it, so a reload shows it where it was.
+{
+  const events = streams.find(stream => stream.name === 'retract-1').events;
+  const retract = events.find(event => event.event === 'message_retract');
+  const nextEvent = events
+    .slice(events.indexOf(retract) + 1)
+    .find(event => !['agent_progress', 'token_usage_updated'].includes(event.event));
+  assert.equal(nextEvent.event, 'skill_call_start', 'the recorded text is retracted before a call');
+  assert.equal(retract.data.presentation_disposition, 'process');
+  const { state, start } = replay(events);
+  const stored = storedMessages.find(message => message.id === start.message_id);
+  const rows = liveRows(state, start);
+  assert.equal(rows[0].type, 'process_text', 'the narration leads the rows');
+  assert.equal(rows[0].presentation_id, retract.data.presentation_id);
+  assert.deepEqual(
+    shownRows({ ...messageOf(state, start), metadata: stored.metadata, status: stored.status }, [])
+      .filter(row => row.type === 'process_text')
+      .map(row => row.content),
+    [retract.data.content],
+    'the reload shows the narration'
+  );
+}
 
 // The stored approval turn holds the request and the decision as two rows of
 // one runtime id; the client reads them as one decision, approved.
