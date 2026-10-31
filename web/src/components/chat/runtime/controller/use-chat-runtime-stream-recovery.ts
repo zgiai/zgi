@@ -32,6 +32,7 @@ import {
   isRecoverableStreamTransportError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import type { ChatRuntimeEventAppliers } from '@/components/chat/runtime/controller/use-chat-runtime-event-appliers';
+import { createRuntimeEventCallbacks } from '@/components/chat/runtime/controller/runtime-event-callbacks';
 
 interface UseChatRuntimeStreamRecoveryArgs {
   stateRef: MutableRefObject<AIChatControllerStore>;
@@ -354,127 +355,11 @@ export function useChatRuntimeStreamRecovery({
                   eventId
                 );
               },
-              onAgentProgress: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyAgentProgress(payload, eventId);
-              },
-              onPlanUpdated: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyPlanUpdated(payload, eventId);
-              },
-              onTokenUsageUpdated: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyTokenUsageUpdated(payload, eventId);
-              },
-              onTokenBudgetRequested: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyTokenBudgetRequested(payload, eventId);
-              },
-              onIntermediateAnswer: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyIntermediateAnswer(payload, eventId);
-              },
-              onUserInputRequested: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyUserInputRequested(payload, eventId);
-              },
-              onFileParseStart: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyFileParseStart(payload, eventId);
-              },
-              onFileParseEnd: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyFileParseEnd(payload, eventId);
-              },
-              onFileParseError: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyFileParseError(payload, eventId);
-              },
-              onSkillLoadStart: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applySkillLoadStart(payload, eventId);
-              },
-              onSkillLoadEnd: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applySkillLoadEnd(payload, eventId);
-              },
-              onSkillReferenceRead: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applySkillReferenceRead(payload, eventId);
-              },
-              onSkillCallStart: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applySkillCallStart(payload, eventId);
-              },
-              onSkillCallEnd: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applySkillCallEnd(payload, eventId);
-              },
-              onSkillCallError: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applySkillCallError(payload, eventId);
-              },
-              onSkillArtifactCreated: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applySkillArtifactCreated(payload, eventId);
-              },
-              onToolGovernanceDecision: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyToolGovernanceDecision(payload, eventId);
-              },
-              onClientActionRequired: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyClientActionRequired(payload, eventId);
-              },
-              onClientActionResult: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyClientActionResult(payload, eventId);
-              },
-              onMemoryMutation: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyMemoryMutation(payload, eventId);
-                refreshAccountMemoryAfterMemoryMutation(payload);
-              },
-              onRuntimeInputApplied: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyRuntimeInputApplied(payload, eventId);
-              },
-              onWorkflowStarted: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyWorkflowStarted(payload, eventId);
-              },
-              onWorkflowNodeStarted: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyWorkflowNodeStarted(payload, eventId);
-              },
-              onWorkflowNodeFinished: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyWorkflowNodeFinished(payload, eventId);
-              },
-              onWorkflowPaused: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyWorkflowPaused(payload, eventId);
-              },
-              onWorkflowApprovalRequested: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyWorkflowApprovalRequested(payload, eventId);
-              },
-              onWorkflowFinished: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyWorkflowFinished(payload, eventId);
-              },
-              onWorkflowFailed: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyWorkflowFailed(payload, eventId);
-              },
-              onMessageChunk: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyMessageChunk(payload, eventId);
-              },
-              onMessageRetract: (payload, eventId) => {
-                if (abortController.signal.aborted) return;
-                eventAppliers.applyMessageRetract(payload, eventId);
-              },
+              ...createRuntimeEventCallbacks({
+                appliers: eventAppliers,
+                refreshAccountMemoryAfterMemoryMutation,
+                isAborted: () => abortController.signal.aborted,
+              }),
               onMessageEnd: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 reachedTerminalEvent = true;

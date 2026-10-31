@@ -25,6 +25,7 @@ import {
   removeTransientProgressItems,
   skillInvocationSemanticIdentity,
 } from './shared';
+import { governanceDecisionStatus } from '../status';
 import {
   captureAnswerTimelineBoundary,
   presentationPositionFromPayload,
@@ -467,21 +468,14 @@ function upsertToolGovernanceTimelineItem(
 function toolGovernanceInvocationStatus(
   payload: AIChatToolGovernanceDecisionEventData
 ): AIChatSkillActivityStatus {
-  const approvalStatus = String(payload.approval_status ?? '').toLowerCase();
-  if (approvalStatus === 'approved') return 'allowed';
-  if (approvalStatus === 'rejected') return 'denied';
-  const status = String(payload.decision ?? payload.status ?? '').toLowerCase();
-  switch (status) {
-    case 'allowed':
-    case 'needs_approval':
-    case 'denied':
-    case 'needs_resolution':
-    case 'blocked':
-    case 'error':
-      return status;
-    default:
-      return 'needs_approval';
-  }
+  const decision = governanceDecisionStatus(
+    payload.decision ?? payload.status,
+    payload.approval_status
+  );
+  if (decision) return decision;
+  // A decision word the client does not know asks nothing of the person
+  // unless the event itself says approval is required (ADR 0050).
+  return payload.requires_approval === true ? 'needs_approval' : 'advisory';
 }
 
 function skillInvocationFromToolGovernanceDecision(

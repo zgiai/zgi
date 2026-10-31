@@ -65,6 +65,7 @@ case "$mode" in
     pnpm test:webapp-tool-detail-visibility
     pnpm test:protected-execution-files
     pnpm test:chat-runtime-stream-recovery
+    pnpm test:chat-runtime-status
     pnpm test:user-input-response-history
     pnpm build
     ;;

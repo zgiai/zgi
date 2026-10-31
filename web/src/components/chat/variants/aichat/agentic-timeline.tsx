@@ -30,6 +30,7 @@ import type {
 } from '@/services/types/aichat';
 import type { AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat';
 import { isPendingToolGovernanceInvocation } from '@/components/chat/controllers/aichat/governance';
+import { invocationOutcome } from '@/components/chat/controllers/aichat/status';
 import {
   getAIChatSkillResultDisplay,
   getAIChatSkillToolDisplayName,
@@ -353,16 +354,19 @@ function getInvocationTone(invocation: AIChatSkillInvocation): TimelineTone {
   if (connectorTone) return connectorTone;
   const job = getAgentExecutionJobPresentation(invocation);
   if (job) return job.tone;
-  if (invocation.status === 'loading' || invocation.status === 'running') return 'running';
+  const outcome = invocationOutcome(invocation.status);
+  if (outcome === 'running') return 'running';
   if (invocation.kind === 'guardrail') return 'success';
-  if (
-    invocation.status === 'error' ||
-    invocation.status === 'blocked' ||
-    invocation.status === 'denied'
-  ) {
-    return 'error';
+  // A call waiting on the person, stopped, or in a state the client does not
+  // know is not shown as done (ADR 0050).
+  switch (outcome) {
+    case 'succeeded':
+      return 'success';
+    case 'failed':
+      return 'error';
+    default:
+      return 'warning';
   }
-  return 'success';
 }
 
 function getStatusIcon(tone: TimelineTone) {
