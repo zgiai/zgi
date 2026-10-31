@@ -1504,20 +1504,38 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 	r.contextDecision = nil
 	// Reasoning from this turn's tool-call rounds goes back only to models
 	// that expect it; other APIs may reject the field.
+	r.restoredChecklist = ""
+	restored := checklistMissingFromRequest(sourceMessages, r.planSteps)
 	if r.ContextManager == nil {
 		messages := sourceMessages
-		if restored := checklistMissingFromRequest(messages, r.planSteps); restored != nil {
+		if restored != nil {
 			messages = append(messages, *restored)
+			r.restoredChecklist = assistantMessageText(*restored)
 		}
 		request.Messages = adapter.MessagesForModel(request.Model, adapter.PlaceSystemMessages(messages))
 		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)
+	}
+	// The checklist goes in before the context manager fits the request, so
+	// it counts against the same budget as the rest (ADR 0049).
+	if restored != nil {
+		request.Messages = append(cloneMessagesForProvider(sourceMessages), *restored)
 	}
 	prepared, decision, err := r.ContextManager.PrepareBeforeModelCall(ctx, request)
 	if err != nil {
 		return request, err
 	}
-	if restored := checklistMissingFromRequest(prepared.Messages, r.planSteps); restored != nil {
-		prepared.Messages = adapter.PlaceSystemMessages(append(prepared.Messages, *restored))
+	if restored == nil {
+		// The update_plan result was in the request, and fitting it may
+		// have compacted the result away: fit again with the checklist.
+		if restored = checklistMissingFromRequest(prepared.Messages, r.planSteps); restored != nil {
+			request.Messages = append(cloneMessagesForProvider(sourceMessages), *restored)
+			if prepared, decision, err = r.ContextManager.PrepareBeforeModelCall(ctx, request); err != nil {
+				return request, err
+			}
+		}
+	}
+	if restored != nil {
+		r.restoredChecklist = assistantMessageText(*restored)
 	}
 	prepared.Messages = adapter.MessagesForModel(prepared.Model, prepared.Messages)
 	r.contextDecision = &decision
@@ -1532,7 +1550,7 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 }
 
 func (r *Runner) finishContextRequest(ctx context.Context, request *adapter.ChatRequest, result planningResult) (planningResult, error) {
-	result.contextMessages = cloneMessagesForProvider(request.Messages)
+	result.contextMessages = withoutChecklistReminder(cloneMessagesForProvider(request.Messages), r.restoredChecklist)
 	if r.ContextManager == nil {
 		return result, nil
 	}
@@ -1549,6 +1567,9 @@ func (r *Runner) finishContextRequest(ctx context.Context, request *adapter.Chat
 
 func (r *Runner) finishFailedContextRequest(request *adapter.ChatRequest, result planningResult) planningResult {
 	result.contextMessages = cloneMessagesForProvider(request.Messages)
+	if r != nil {
+		result.contextMessages = withoutChecklistReminder(result.contextMessages, r.restoredChecklist)
+	}
 	if r != nil && r.ContextManager != nil {
 		result.usage = mergeUsage(r.ContextManager.ConsumeCompactionUsage(), result.usage)
 	}
@@ -1717,6 +1738,37 @@ func checklistMissingFromRequest(messages []adapter.Message, steps []map[string]
 		builder.WriteString("\n- [" + evidenceStringFromAny(step["status"]) + "] " + evidenceStringFromAny(step["step"]))
 	}
 	return &adapter.Message{Role: "system", Content: builder.String()}
+}
+
+// withoutChecklistReminder removes the restored checklist from the messages a
+// round sent. It is restored again when the next request still lacks it, so a
+// later round never carries two copies, and a newer checklist replaces it.
+func withoutChecklistReminder(messages []adapter.Message, checklist string) []adapter.Message {
+	if strings.TrimSpace(checklist) == "" {
+		return messages
+	}
+	// A system notice reaches the provider as a reminder in a user message
+	// (ADR 0032), possibly next to other reminders.
+	reminder := adapter.SystemReminder(checklist)
+	kept := messages[:0]
+	for _, message := range messages {
+		if text, ok := message.Content.(string); ok && strings.Contains(text, reminder) {
+			switch {
+			case strings.Contains(text, "\n\n"+reminder):
+				text = strings.Replace(text, "\n\n"+reminder, "", 1)
+			case strings.Contains(text, reminder+"\n\n"):
+				text = strings.Replace(text, reminder+"\n\n", "", 1)
+			default:
+				text = strings.Replace(text, reminder, "", 1)
+			}
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			message.Content = text
+		}
+		kept = append(kept, message)
+	}
+	return kept
 }
 
 // toolResultHoldsChecklist reports that a tool result is the update_plan
