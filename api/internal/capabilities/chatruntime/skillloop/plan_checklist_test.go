@@ -2,9 +2,11 @@ package skillloop
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -140,5 +142,79 @@ func TestChecklistIsRestoredWhenTheRequestLostIt(t *testing.T) {
 	}
 	if checklistMissingFromRequest(nil, nil) != nil {
 		t.Fatal("a run without a checklist got one")
+	}
+}
+
+func restoredChecklistTestSteps(count int, width int) []map[string]interface{} {
+	steps := make([]map[string]interface{}, 0, count)
+	for index := 0; index < count; index++ {
+		steps = append(steps, map[string]interface{}{
+			"step":   fmt.Sprintf("step %02d %s", index+1, strings.Repeat("x", width)),
+			"status": "pending",
+		})
+	}
+	return steps
+}
+
+// A restored checklist belongs to one request: the next round does not carry
+// it on, so every request holds exactly one copy (ADR 0049).
+func TestRestoredChecklistIsSentOnceEveryRound(t *testing.T) {
+	manager, err := contextmgr.New(contextmgr.Config{AgentRunID: "checklist-rounds", ModelContextWindow: 64_000, MaxOutputTokens: 4_000}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{AppContext: &llmclient.AppContext{}, ContextManager: manager, planSteps: restoredChecklistTestSteps(3, 10)}
+	messages := []adapter.Message{{Role: "system", Content: "persona"}, {Role: "user", Content: "finish the checklist"}}
+	for round := 1; round <= 5; round++ {
+		request, err := runner.prepareContextRequest(context.Background(), &adapter.ChatRequest{Model: "test-model", Messages: messages})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Count(runnerTestMessageText(request.Messages), "Your current checklist:"); got != 1 {
+			t.Fatalf("round %d sends %d checklists, want 1", round, got)
+		}
+		callID := fmt.Sprintf("call-%d", round)
+		call := adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: callID, Type: "function", Function: adapter.FunctionCall{Name: "read", Arguments: "{}"}}}}
+		result, err := runner.finishContextRequest(context.Background(), request, planningResult{message: call})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(runnerTestMessageText(result.contextMessages), "Your current checklist:") {
+			t.Fatalf("round %d hands the restored checklist on to the next round", round)
+		}
+		messages = append(result.contextMessages, call, adapter.Message{Role: "tool", ToolCallID: callID, Content: "rows"})
+	}
+}
+
+// The restored checklist is fitted with the rest of the request: what the
+// runner sends needs no further fitting (ADR 0049).
+func TestRestoredChecklistCountsAgainstTheContextBudget(t *testing.T) {
+	newManager := func(id string) *contextmgr.Manager {
+		manager, err := contextmgr.New(contextmgr.Config{AgentRunID: id, ModelContextWindow: 8_192, MaxOutputTokens: 1_024}, nil, nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return manager
+	}
+	messages := []adapter.Message{{Role: "system", Content: "persona"}}
+	for turn := 0; turn < 60; turn++ {
+		messages = append(messages,
+			adapter.Message{Role: "user", Content: fmt.Sprintf("question %d %s", turn, strings.Repeat("detail ", 40))},
+			adapter.Message{Role: "assistant", Content: fmt.Sprintf("answer %d %s", turn, strings.Repeat("finding ", 40))},
+		)
+	}
+	messages = append(messages, adapter.Message{Role: "user", Content: "continue the checklist"})
+	maxTokens := 1_024
+	runner := &Runner{AppContext: &llmclient.AppContext{}, ContextManager: newManager("checklist-budget"), planSteps: restoredChecklistTestSteps(16, 190)}
+	request, err := runner.prepareContextRequest(context.Background(), &adapter.ChatRequest{Model: "test-model", MaxTokens: &maxTokens, Messages: messages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(runnerTestMessageText(request.Messages), "step 16") {
+		t.Fatal("the request lost the restored checklist")
+	}
+	_, decision, err := newManager("checklist-budget-check").PrepareBeforeModelCall(context.Background(), request)
+	if err != nil || decision.Action != contextmgr.DecisionNone {
+		t.Fatalf("the sent request needs fitting again: action=%s prompt=%d budget=%d err=%v", decision.Action, decision.FinalPromptTokens, decision.Budget.PromptBudget, err)
 	}
 }
