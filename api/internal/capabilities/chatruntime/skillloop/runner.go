@@ -1496,7 +1496,10 @@ func (r *Runner) runModelToolRoundAttempt(ctx context.Context, prepared *Prepare
 
 func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatRequest, error) {
 	request = cloneChatRequest(request)
-	sourceMessages := cloneMessagesForProvider(request.Messages)
+	// A restored checklist belongs to the request it was sent with; one a
+	// retried or continued request still carries is dropped and restored
+	// again below if the request still lacks the update_plan result.
+	sourceMessages := withoutChecklistReminders(cloneMessagesForProvider(request.Messages))
 	// The context manager places system messages for the provider; without
 	// one, place them here (ADR 0032).
 	request.Messages = sourceMessages
@@ -1504,13 +1507,11 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 	r.contextDecision = nil
 	// Reasoning from this turn's tool-call rounds goes back only to models
 	// that expect it; other APIs may reject the field.
-	r.restoredChecklist = ""
 	restored := checklistMissingFromRequest(sourceMessages, r.planSteps)
 	if r.ContextManager == nil {
 		messages := sourceMessages
 		if restored != nil {
 			messages = append(messages, *restored)
-			r.restoredChecklist = assistantMessageText(*restored)
 		}
 		request.Messages = adapter.MessagesForModel(request.Model, adapter.PlaceSystemMessages(messages))
 		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)
@@ -1534,9 +1535,6 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 			}
 		}
 	}
-	if restored != nil {
-		r.restoredChecklist = assistantMessageText(*restored)
-	}
 	prepared.Messages = adapter.MessagesForModel(prepared.Model, prepared.Messages)
 	r.contextDecision = &decision
 	r.diagnostics.requestBudget = planningRequestBudgetDiagnostics{
@@ -1550,7 +1548,7 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 }
 
 func (r *Runner) finishContextRequest(ctx context.Context, request *adapter.ChatRequest, result planningResult) (planningResult, error) {
-	result.contextMessages = withoutChecklistReminder(cloneMessagesForProvider(request.Messages), r.restoredChecklist)
+	result.contextMessages = withoutChecklistReminders(cloneMessagesForProvider(request.Messages))
 	if r.ContextManager == nil {
 		return result, nil
 	}
@@ -1566,10 +1564,7 @@ func (r *Runner) finishContextRequest(ctx context.Context, request *adapter.Chat
 }
 
 func (r *Runner) finishFailedContextRequest(request *adapter.ChatRequest, result planningResult) planningResult {
-	result.contextMessages = cloneMessagesForProvider(request.Messages)
-	if r != nil {
-		result.contextMessages = withoutChecklistReminder(result.contextMessages, r.restoredChecklist)
-	}
+	result.contextMessages = withoutChecklistReminders(cloneMessagesForProvider(request.Messages))
 	if r != nil && r.ContextManager != nil {
 		result.usage = mergeUsage(r.ContextManager.ConsumeCompactionUsage(), result.usage)
 	}
@@ -1733,42 +1728,79 @@ func checklistMissingFromRequest(messages []adapter.Message, steps []map[string]
 		}
 	}
 	var builder strings.Builder
-	builder.WriteString("Your current checklist:")
+	builder.WriteString(checklistReminderHeading)
 	for _, step := range steps {
 		builder.WriteString("\n- [" + evidenceStringFromAny(step["status"]) + "] " + evidenceStringFromAny(step["step"]))
 	}
 	return &adapter.Message{Role: "system", Content: builder.String()}
 }
 
-// withoutChecklistReminder removes the restored checklist from the messages a
-// round sent. It is restored again when the next request still lacks it, so a
-// later round never carries two copies, and a newer checklist replaces it.
-func withoutChecklistReminder(messages []adapter.Message, checklist string) []adapter.Message {
-	if strings.TrimSpace(checklist) == "" {
-		return messages
-	}
-	// A system notice reaches the provider as a reminder in a user message
-	// (ADR 0032), possibly next to other reminders.
-	reminder := adapter.SystemReminder(checklist)
+// checklistReminderHeading starts every restored checklist.
+const checklistReminderHeading = "Your current checklist:"
+
+// withoutChecklistReminders removes restored checklists, of any version, from
+// messages. A restored checklist belongs to one request: the next round, or a
+// retry of the same request, restores it again if it is still missing, so no
+// request carries two copies and a newer checklist replaces an older one.
+func withoutChecklistReminders(messages []adapter.Message) []adapter.Message {
 	kept := messages[:0]
 	for _, message := range messages {
-		if text, ok := message.Content.(string); ok && strings.Contains(text, reminder) {
-			switch {
-			case strings.Contains(text, "\n\n"+reminder):
-				text = strings.Replace(text, "\n\n"+reminder, "", 1)
-			case strings.Contains(text, reminder+"\n\n"):
-				text = strings.Replace(text, reminder+"\n\n", "", 1)
-			default:
-				text = strings.Replace(text, reminder, "", 1)
+		switch content := message.Content.(type) {
+		case string:
+			if strings.EqualFold(strings.TrimSpace(message.Role), "system") && strings.HasPrefix(strings.TrimSpace(content), checklistReminderHeading) {
+				continue
 			}
-			if strings.TrimSpace(text) == "" {
+			// A system notice reaches the provider as a reminder in a user
+			// message (ADR 0032).
+			text := withoutChecklistReminderText(content)
+			if text != content && strings.TrimSpace(text) == "" {
 				continue
 			}
 			message.Content = text
+		case []adapter.MessageContentPart:
+			// Next to an image the reminder is a text part of its own.
+			parts := make([]adapter.MessageContentPart, 0, len(content))
+			for _, part := range content {
+				if part.Type == "text" {
+					text := withoutChecklistReminderText(part.Text)
+					if text != part.Text && strings.TrimSpace(text) == "" {
+						continue
+					}
+					part.Text = text
+				}
+				parts = append(parts, part)
+			}
+			if len(parts) == 0 {
+				continue
+			}
+			message.Content = parts
 		}
 		kept = append(kept, message)
 	}
 	return kept
+}
+
+func withoutChecklistReminderText(text string) string {
+	const opening = "<system-reminder>\n" + checklistReminderHeading
+	const closing = "\n</system-reminder>"
+	for {
+		start := strings.Index(text, opening)
+		if start < 0 {
+			return text
+		}
+		length := strings.Index(text[start:], closing)
+		if length < 0 {
+			return text
+		}
+		before, after := text[:start], text[start+length+len(closing):]
+		// Reminders merged into one message are separated by a blank line.
+		if strings.HasSuffix(before, "\n\n") {
+			before = strings.TrimSuffix(before, "\n\n")
+		} else {
+			after = strings.TrimPrefix(after, "\n\n")
+		}
+		text = before + after
+	}
 }
 
 // toolResultHoldsChecklist reports that a tool result is the update_plan
