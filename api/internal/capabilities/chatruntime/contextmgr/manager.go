@@ -573,16 +573,29 @@ func (m *Manager) compressHistoricalToolResults(ctx context.Context, request *ad
 	return current, stats, nil
 }
 
+// historicalToolBoundary returns the index in messages where the protected
+// rounds begin. System messages stay where they are, so the dialogue offset is
+// mapped back to its position among them.
 func historicalToolBoundary(messages []adapter.Message, protectedRounds int) int {
-	systems, dialogue := splitSystemMessages(messages)
+	_, dialogue := splitSystemMessages(messages)
 	if len(dialogue) == 0 {
 		return len(messages)
 	}
 	start := selectPreservedTailMessagesByRounds(dialogue, protectedRounds)
 	if start <= 0 {
-		return len(systems) + len(dialogue)
+		return len(messages)
 	}
-	return len(systems) + start
+	seen := 0
+	for index, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			continue
+		}
+		if seen == start {
+			return index
+		}
+		seen++
+	}
+	return len(messages)
 }
 
 func (m *Manager) compressToolResult(content, model string) string {

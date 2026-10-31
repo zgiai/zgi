@@ -206,6 +206,29 @@ func TestTurnTranscriptCapturesToolPairsAndTracksProjectedContent(t *testing.T) 
 	}
 }
 
+func TestHistoricalToolBoundaryCountsSystemMessagesInPlace(t *testing.T) {
+	messages := []adapter.Message{
+		{Role: "system", Content: "instructions"},
+		{Role: "user", Content: "first"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-1"}}},
+		{Role: "tool", ToolCallID: "call-1", Content: "old result"},
+		{Role: "user", Content: "second"},
+		{Role: "system", Content: "turn context"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-2"}}},
+		{Role: "tool", ToolCallID: "call-2", Content: "recent result"},
+		{Role: "system", Content: "recent execution"},
+		{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: "call-3"}}},
+		{Role: "tool", ToolCallID: "call-3", Content: "latest result"},
+		{Role: "system", Content: "turn boundary"},
+		{Role: "system", Content: "reminder"},
+	}
+	// Counting every system message as leading would put the boundary at 8
+	// and compress the recent result at index 7.
+	if got := historicalToolBoundary(messages, 2); got != 4 {
+		t.Fatalf("boundary = %d, want 4 (the turn of the second-to-last assistant round)", got)
+	}
+}
+
 func TestProjectedToolResultMicrocompactPreservesOriginalArtifact(t *testing.T) {
 	store := NewFileStore(t.TempDir())
 	manager, err := New(Config{
