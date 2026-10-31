@@ -98,73 +98,38 @@ func searchSkillsMetaTool() llmadapter.Tool {
 	}
 }
 
+// updatePlanMetaTool is the model's own checklist for multi-step work: steps
+// and their status, replaced whole on each call (ADR 0049).
 func updatePlanMetaTool() llmadapter.Tool {
-	parameters := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"explanation":   map[string]interface{}{"type": "string"},
-			"plan":          planSnapshotSchema(),
-			"phase_updates": phaseUpdateSchema(),
-			"outcomes": map[string]interface{}{
-				"type": "array",
-				"items": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"id":                   map[string]interface{}{"type": "string"},
-						"goal":                 map[string]interface{}{"type": "string"},
-						"status":               map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
-						"target_resource_type": map[string]interface{}{"type": "string"},
-						"target_resource_id":   map[string]interface{}{"type": "string"},
-						"depends_on":           map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-						"capabilities":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-						"constraints":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-						"evidence_refs":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-						"required":             map[string]interface{}{"type": "boolean"},
-					},
-					"required":             []string{"goal"},
-					"additionalProperties": false,
-				},
-			},
-		},
-		// Each branch requires exactly one payload form. If a call supplies two
-		// forms it matches more than one branch and therefore fails oneOf. Keep
-		// the handler's matching check as defense in depth.
-		"oneOf": []interface{}{
-			map[string]interface{}{"required": []string{"plan"}},
-			map[string]interface{}{"required": []string{"outcomes"}},
-			map[string]interface{}{"required": []string{"phase_updates"}},
-		},
-		"additionalProperties": false,
-	}
 	return llmadapter.Tool{
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Change the plan for this turn when the user's goal or the required outcomes change. Give exactly one of outcomes, plan, or phase_updates. The runtime records tool results and keeps binding data itself; do not call this after a successful tool call.",
-			Parameters:  parameters,
+			Description: "The checklist the user sees for work with three or more steps or several deliverables. Write it before the first business call, and update it as each step is done. Each call replaces the whole list; keep at most one step in_progress. Skip it for a single step or a direct answer.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"explanation": map[string]interface{}{"type": "string", "description": "Optional short reason for a change to the plan.", "maxLength": 500},
+					"plan": map[string]interface{}{
+						"type":     "array",
+						"minItems": 1,
+						"maxItems": 16,
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"step":   map[string]interface{}{"type": "string", "description": "What this step does, in a few words.", "maxLength": 200},
+								"status": map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+							},
+							"required":             []string{"step", "status"},
+							"additionalProperties": false,
+						},
+					},
+				},
+				"required":             []string{"plan"},
+				"additionalProperties": false,
+			},
 		},
 	}
-}
-
-func phaseUpdateSchema() map[string]interface{} {
-	item := evidenceMapCopy(planSnapshotSchema()["items"])
-	item["required"] = []string{"id"}
-	return map[string]interface{}{
-		"type":        "array",
-		"description": "Patch existing phases by ID; other phases stay unchanged.",
-		"minItems":    1,
-		"maxItems":    16,
-		"items":       item,
-	}
-}
-
-func evidenceMapCopy(value interface{}) map[string]interface{} {
-	raw, _ := value.(map[string]interface{})
-	out := make(map[string]interface{}, len(raw))
-	for key, item := range raw {
-		out[key] = item
-	}
-	return out
 }
 
 func readReferenceMetaTool(skillIDs []string, paths []string) llmadapter.Tool {
@@ -322,49 +287,6 @@ func turnStateMetaTool() llmadapter.Tool {
 				},
 				"required": []string{"items"},
 			},
-		},
-	}
-}
-
-func planSnapshotSchema() map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "array",
-		"description": "The full list of phases. Keep required phases and their expected_action.",
-		"maxItems":    16,
-		"items": map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"id":         map[string]interface{}{"type": "string"},
-				"outcome_id": map[string]interface{}{"type": "string", "description": "The outcome this phase serves."},
-				"step":       map[string]interface{}{"type": "string"},
-				"status":     map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
-				"completion_mode": map[string]interface{}{
-					"type":        "string",
-					"enum":        []string{"tool", "final_answer", "non_tool"},
-					"description": "tool when expected_action is set; otherwise final_answer or non_tool.",
-				},
-				"evidence_refs": map[string]interface{}{"type": "array", "description": "Required for a completed tool phase: tool:skill-id/tool_name or the invocation_id of a successful call.", "items": map[string]interface{}{"type": "string"}},
-				"note":          map[string]interface{}{"type": "string"},
-				"expected_action": map[string]interface{}{
-					"type":        "object",
-					"description": "The tool call expected to complete this phase.",
-					"properties": map[string]interface{}{
-						"skill_id":  map[string]interface{}{"type": "string", "description": "Required for skill tools."},
-						"tool_name": map[string]interface{}{"type": "string"},
-						"target": map[string]interface{}{
-							"type":                 "object",
-							"additionalProperties": map[string]interface{}{"type": "string"},
-						},
-						"target_arguments": map[string]interface{}{
-							"type":                 "object",
-							"description":          "Stable target values keyed by argument path, such as calendar.id.",
-							"additionalProperties": map[string]interface{}{"type": "string"},
-						},
-					},
-					"required": []string{"tool_name"},
-				},
-			},
-			"required": []string{"step", "status"},
 		},
 	}
 }

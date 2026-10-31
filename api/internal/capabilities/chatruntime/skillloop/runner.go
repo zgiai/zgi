@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
+
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -247,7 +249,7 @@ func (r *Runner) completeSkillLoopSafetyTermination(
 	round int,
 ) (string, *adapter.Usage, error) {
 	runtimeState := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
-	if connectorRequiredOutcomesSatisfied(runtimeState) {
+	if connectorExecutedOutcomesSatisfied(runtimeState) {
 		return r.completeConnectorOutcomeSuccess(
 			ctx,
 			req,
@@ -356,13 +358,9 @@ func (r *Runner) completeConnectorOutcomeSuccess(
 }
 
 // guardSkillToolCall stops a skill tool call before it runs, with a
-// recoverable result the model can act on: the plan must be revised after a
-// clarification first, the skill is not authorized, or the same call already
-// failed. It returns an empty step when the call may run.
+// recoverable result the model can act on: the skill is not authorized, or
+// the same call already failed. It returns an empty step when the call may run.
 func guardSkillToolCall(ctx context.Context, req RunRequest, resolved *skills.ResolvedSkills, callID string, skillID string, toolName string, args map[string]interface{}, failedCallKey string, failedReasons map[string]string, failedAttempts map[string]int) skillStepResult {
-	if userInputPlanRevisionRequiredForTool(req, skillID, toolName) {
-		return pendingUserInputPlanRevisionStep(callID, skillID, toolName, args, resolved)
-	}
 	if req.AuthorizeSkillStep != nil && strings.TrimSpace(skillID) != "" {
 		if allowed, policyErr := req.AuthorizeSkillStep(ctx, skillID); policyErr != nil || !allowed {
 			return unavailableSkillPolicyStep(callID, skillID, toolName, args, policyErr, resolved)
@@ -437,7 +435,7 @@ func (r *Runner) planningToolsForRound(req RunRequest, resolved *skills.Resolved
 	if connectorOutcomesComplete {
 		tools = controlToolsForRound(tools, false, !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState))
 	}
-	return updatePlanToolsForRuntimeState(tools, roundRuntimeState)
+	return tools
 }
 
 // runPlanningRound makes the model call of one round, with the native loop's
@@ -447,32 +445,24 @@ func (r *Runner) runPlanningRound(ctx context.Context, req RunRequest, prepared 
 	return result, nativeAgentOutputError(err)
 }
 
-func connectorRequiredOutcomesSatisfied(runtimeState map[string]interface{}) bool {
+// connectorExecutedOutcomesSatisfied reports that the turn ran connector
+// operations and every one reached a successful native outcome, with nothing
+// left awaiting the user (ADR 0049: acceptance follows the operations that
+// ran, not operations a plan declared).
+func connectorExecutedOutcomesSatisfied(runtimeState map[string]interface{}) bool {
 	if terminalStateGuardPendingProtocolBlocker(runtimeState) != "" || connectorTerminalStateDecision(runtimeState, "") != nil {
 		return false
 	}
-	plan := evidenceMapFromAny(runtimeState["operation_plan"])
 	native := false
-	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
-		if len(connectorPhaseOperation(phase)) > 0 {
-			proof, ok := connectorPhaseEvidence(phase, runtimeState)
-			if !ok || proof.Status != "successful" {
-				return false
-			}
-			native = true
+	for _, invocation := range terminalStateGuardInvocations(runtimeState) {
+		evidence, ok := connectortools.Evidence(invocation)
+		if !ok || !evidence.Operation.Valid() {
 			continue
 		}
-		if operationPlanPhaseRequiredByServer(phase, runtimeState) && phase["status"] != "completed" && !operationPlanPhaseServerClassifiedNonTool(phase, runtimeState) {
+		if evidence.Status != "successful" {
 			return false
 		}
-	}
-	for _, outcome := range evidenceMapsFromAny(plan["outcomes"]) {
-		if required, exists := outcome["required"].(bool); exists && !required {
-			continue
-		}
-		if outcome["status"] != "completed" && outcome["verification_mode"] != "final_answer" {
-			return false
-		}
+		native = true
 	}
 	return native
 }
@@ -664,7 +654,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, s.successfulToolCalls)
 			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
-		connectorOutcomesComplete := connectorRequiredOutcomesSatisfied(roundRuntimeState)
+		connectorOutcomesComplete := connectorExecutedOutcomesSatisfied(roundRuntimeState)
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = s.messages
 		planningReq.Stream = false
@@ -767,6 +757,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return s.stop(fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)).result()
 			}
 			s.emptyFinalAnswerRetryCount = 0
+			if r.remindOpenPlanSteps(ctx, s, text, planningResult.answerStreamed) {
+				continue
+			}
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
@@ -784,6 +777,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		s.emptyFinalAnswerRetryCount = 0
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !s.skillUsed {
 			return s.stop(fmt.Errorf("%w: required skill was not used", ErrInvalidInput)).result()
+		}
+		if text != "" && len(toolCalls) == 0 && r.remindOpenPlanSteps(ctx, s, text, planningResult.answerStreamed) {
+			continue
 		}
 		if text != "" && len(toolCalls) == 0 {
 			appendAnswerText(&s.answerBuilder, text)
@@ -957,39 +953,6 @@ func skillToolCallIdentityForCall(resolved *skills.ResolvedSkills, loadedSkills 
 		toolArgs = rawSkillToolArgumentsFingerprint(args["arguments"])
 	}
 	return skillID, toolName, toolArgs, failedToolCallKey(skillID, toolName, toolArgs)
-}
-
-func userInputPlanRevisionPending(req RunRequest) bool {
-	metadata := currentMetadataForRun(req)
-	continuation := evidenceMapFromAny(metadata["user_input_continuation"])
-	if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["status"])), userInputContinuationAnswered) ||
-		!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["next_action"])), userInputContinuationReplan) {
-		return false
-	}
-	// Only planned phases can be out of date after the user's answer. A
-	// question asked before any plan leaves nothing to revise, and requiring
-	// update_plan then cost the turn a blocked call and two extra rounds.
-	return len(evidenceMapsFromAny(evidenceMapFromAny(metadata["operation_plan"])["phases"])) > 0
-}
-
-func userInputPlanRevisionRequiredForTool(req RunRequest, skillID string, toolName string) bool {
-	return userInputPlanRevisionPending(req) && planRevisionRequiredForTool(skillID, toolName)
-}
-
-func planRevisionRequiredForTool(skillID string, toolName string) bool {
-	if strings.TrimSpace(skillID) == "" || strings.TrimSpace(toolName) == "" {
-		return false
-	}
-	return !isSkillMetaToolName(toolName)
-}
-
-func pendingUserInputPlanRevisionStep(callID string, skillID string, toolName string, args map[string]interface{}, resolved ...*skills.ResolvedSkills) skillStepResult {
-	err := fmt.Errorf("%w: update the current plan before calling a business tool after user clarification", ErrInvalidInput)
-	trace := plannerFeedbackTrace(skillID, toolName, err)
-	trace.Arguments = summarizeSkillToolArgumentsForResolved(firstResolvedSkills(resolved), skillID, toolName, args)
-	trace.Arguments["next_step"] = skills.MetaToolUpdatePlan
-	nextAction := "Revise the pending plan phases from the user's clarification with update_plan, then choose the next business tool from the revised plan. Do not repeat this business call before the plan update succeeds."
-	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName, resolved...)), false, false)
 }
 
 func unavailableSkillPolicyStep(callID string, skillID string, toolName string, args map[string]interface{}, policyErr error, resolved ...*skills.ResolvedSkills) skillStepResult {
@@ -1580,6 +1543,9 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 	if err != nil {
 		return request, err
 	}
+	if restored := checklistMissingFromRequest(prepared.Messages, r.planSteps); restored != nil {
+		prepared.Messages = adapter.PlaceSystemMessages(append(prepared.Messages, *restored))
+	}
 	prepared.Messages = adapter.MessagesForModel(prepared.Model, prepared.Messages)
 	r.contextDecision = &decision
 	r.diagnostics.requestBudget = planningRequestBudgetDiagnostics{
@@ -1758,4 +1724,27 @@ func terminalOnlySystemMessage() adapter.Message {
 		"No tools are available in this terminal response. Do not call or invent tools, load skills, update the plan, repeat completed work, or request more execution.",
 		"Reply directly with one concise, self-contained completion message in the user's language. Mention only outcomes supported by the supplied evidence.",
 	}, "\n")}
+}
+
+// checklistMissingFromRequest returns the run's checklist as a system message
+// when the request no longer holds the update_plan result that carries it,
+// as after a compaction (ADR 0049).
+func checklistMissingFromRequest(messages []adapter.Message, steps []map[string]interface{}) *adapter.Message {
+	if len(steps) == 0 {
+		return nil
+	}
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
+			content := assistantMessageText(message)
+			if strings.Contains(content, `"status":"recorded"`) && strings.Contains(content, `"plan"`) {
+				return nil
+			}
+		}
+	}
+	var builder strings.Builder
+	builder.WriteString("Your current checklist:")
+	for _, step := range steps {
+		builder.WriteString("\n- [" + evidenceStringFromAny(step["status"]) + "] " + evidenceStringFromAny(step["step"]))
+	}
+	return &adapter.Message{Role: "system", Content: builder.String()}
 }

@@ -11,17 +11,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func assertAgentManagementModelDecidesStrategyForTest(t *testing.T, parts *chatRequestParts, strategy *AIChatTurnStrategy) map[string]interface{} {
-	t.Helper()
-	if strategy == nil || strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("strategy = %#v, want Agent-management model-decides strategy", strategy)
-	}
-	assertAgentManagementModelDecidesExecutionForTest(t, strategy)
-	plan := operationPlanFromTurnStrategy("task-agent-model-decides", parts, strategy)
-	assertAgentManagementModelDecidesOperationPlanForTest(t, plan)
-	return plan
-}
-
 func assertAgentManagementModelDecidesOperationPlanForTest(t *testing.T, plan map[string]interface{}) {
 	t.Helper()
 	if len(plan) == 0 {
@@ -101,54 +90,6 @@ func TestInvocationEvidenceKeepsOutcomePlanCurrentWithoutUpdatingLegacyStepsOrPh
 	}
 }
 
-func TestInvocationEvidenceDeterministicallyCompletesBoundPlanPhase(t *testing.T) {
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":                           operationPlanStatusRunning,
-			"plan_sync_status":                 "current",
-			"evidence_revision_at_plan_update": 0,
-			"phases": []interface{}{
-				map[string]interface{}{
-					"id": "phase-generate", "status": "in_progress",
-					"expected_action": map[string]interface{}{"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file"},
-				},
-				map[string]interface{}{
-					"id": "phase-save", "status": "pending",
-					"expected_action": map[string]interface{}{"skill_id": skills.SkillFileManager, "tool_name": "save_file_to_management"},
-				},
-			},
-		},
-	}
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{map[string]interface{}{
-		"kind":       "tool_call",
-		"status":     "success",
-		"runtime_id": "runtime:generate#1",
-		"skill_id":   skills.SkillFileGenerator,
-		"tool_name":  "generate_file",
-		"arguments":  map[string]interface{}{"plan_phase_id": "phase-generate", "filename": "chapter.md"},
-		"result":     map[string]interface{}{"status": "completed", "file_id": "artifact-1"},
-	}})
-
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	phases := mapSliceFromAny(plan["phases"])
-	if got := stringFromAny(phases[0]["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("phase-generate status = %q, want completed", got)
-	}
-	if got := stringFromAny(phases[1]["status"]); got != "in_progress" {
-		t.Fatalf("phase-save status = %q, want in_progress", got)
-	}
-	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
-		t.Fatalf("plan_sync_status = %q, want current", got)
-	}
-	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 0 {
-		t.Fatalf("evidence_after_last_plan_update = %d, want 0", got)
-	}
-	refs := stringSliceFromAny(phases[0]["evidence_refs"])
-	if !containsString(refs, "tool:file-generator/generate_file") || !containsString(refs, "runtime_id:runtime:generate#1") {
-		t.Fatalf("evidence_refs = %#v, want tool and runtime refs", refs)
-	}
-}
-
 func TestInvocationEvidenceDoesNotCompleteUnstructuredPhaseFromToolCall(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -176,152 +117,6 @@ func TestInvocationEvidenceDoesNotCompleteUnstructuredPhaseFromToolCall(t *testi
 	}
 	if len(completion) != 0 {
 		t.Fatalf("completion_action = %#v, want none for unstructured phase", completion)
-	}
-}
-
-func TestOutcomePlanReconcilesFileAndAgentEffectsWithoutToolBoundPhases(t *testing.T) {
-	strategy := &AIChatTurnStrategy{
-		Intent:              "manage_agent_asset",
-		CompatibilityIntent: "manage_agent_asset",
-		ToolChoiceMode:      aiChatTurnToolChoiceModelDecides,
-		Outcomes: []AIChatTurnOutcome{
-			{ID: "outcome-file", Goal: "Generate and save the chapter", Capabilities: []string{"file_artifact", "managed_file"}},
-			{ID: "outcome-agent", Goal: "Append the chapter to the Agent instructions", DependsOn: []string{"outcome-file"}, Capabilities: []string{agentCapabilitySystemPrompt}},
-		},
-	}
-	plan := operationPlanFromTurnStrategy("task-outcomes", &chatRequestParts{Query: "Generate, save, and append the chapter."}, strategy)
-	metadata := map[string]interface{}{"operation_plan": plan}
-
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
-		{
-			"kind": "tool_call", "status": "success", "runtime_id": "generate-1",
-			"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file",
-			"arguments": map[string]interface{}{"filename": "chapter.md"},
-			"result":    map[string]interface{}{"status": "completed", "file_id": "artifact-1", "filename": "chapter.md"},
-		},
-	})
-	plan = mapFromOperationContext(metadata["operation_plan"])
-	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
-	if got := stringFromAny(outcomes[0]["status"]); got != operationPlanStepStatusPending {
-		t.Fatalf("file outcome after generation = %q, want pending until persistence", got)
-	}
-	if got := stringFromAny(outcomes[1]["status"]); got != operationPlanStepStatusPending {
-		t.Fatalf("agent outcome before dependency = %q, want pending", got)
-	}
-
-	applyOperationPlanInvocationState(metadata, append(skillInvocationsFromMetadata(nil), map[string]interface{}{
-		"kind": "tool_call", "status": "success", "runtime_id": "save-1",
-		"skill_id": skills.SkillFileManager, "tool_name": "save_file_to_management",
-		"arguments": map[string]interface{}{"source_file_id": "artifact-1", "filename": "chapter.md"},
-		"result":    map[string]interface{}{"status": "completed", "managed_file_id": "managed-1", "managed_filename": "chapter.md"},
-	}))
-	plan = mapFromOperationContext(metadata["operation_plan"])
-	outcomes = mapSliceFromAny(plan[operationPlanOutcomesKey])
-	if got := stringFromAny(outcomes[0]["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("file outcome after save = %q, want completed", got)
-	}
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
-		t.Fatalf("plan status after file outcome = %q, want running", got)
-	}
-
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
-		{
-			"kind": "tool_call", "status": "success", "runtime_id": "update-1",
-			"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_config",
-			"arguments": map[string]interface{}{"agent_id": "agent-1", "system_prompt_patch": map[string]interface{}{"operation": "append"}},
-			"result":    map[string]interface{}{"status": "completed", "agent_id": "agent-1", "updated_fields": []interface{}{"system_prompt"}},
-		},
-	})
-	plan = mapFromOperationContext(metadata["operation_plan"])
-	outcomes = mapSliceFromAny(plan[operationPlanOutcomesKey])
-	if got := stringFromAny(outcomes[1]["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("agent outcome = %q, want completed", got)
-	}
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
-		t.Fatalf("plan status = %q, want completed", got)
-	}
-	if attempts := mapSliceFromAny(plan[operationPlanActionAttemptsKey]); len(attempts) != 3 {
-		t.Fatalf("action attempts = %#v, want 3", attempts)
-	}
-	if effects := mapSliceFromAny(plan[operationPlanEffectLedgerKey]); len(effects) != 3 {
-		t.Fatalf("effect ledger = %#v, want generated, persisted, and agent update", effects)
-	}
-}
-
-func TestOutcomePlanDoesNotTreatNavigationRequestAsObservedPageOrAgentUpdate(t *testing.T) {
-	strategy := &AIChatTurnStrategy{
-		Intent:         "manage_agent_asset",
-		ToolChoiceMode: aiChatTurnToolChoiceModelDecides,
-		Outcomes: []AIChatTurnOutcome{
-			{ID: "outcome-page", Goal: "Open the Agent detail page", Capabilities: []string{"page_navigation"}},
-			{ID: "outcome-agent", Goal: "Update the Agent prompt", Capabilities: []string{agentCapabilitySystemPrompt}},
-		},
-	}
-	metadata := map[string]interface{}{
-		"operation_plan": operationPlanFromTurnStrategy("task-navigation", &chatRequestParts{Query: "Open and update the Agent."}, strategy),
-	}
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
-		"kind": "tool_call", "status": "success", "runtime_id": "navigate-request-1",
-		"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate",
-		"arguments": map[string]interface{}{"href": "/console/agents/agent-1"},
-		"result":    map[string]interface{}{"status": "completed", "href": "/console/agents/agent-1"},
-	}})
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey])
-	if stringFromAny(outcomes[0]["status"]) != operationPlanStepStatusPending || stringFromAny(outcomes[1]["status"]) != operationPlanStepStatusPending {
-		t.Fatalf("outcomes = %#v, navigation request must not complete observed page or Agent update", outcomes)
-	}
-
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
-		"kind": "client_action", "status": "success", "runtime_id": "navigate-observed-1",
-		"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate",
-		"result": map[string]interface{}{"observed_path": "/console/agents/agent-1"},
-	}})
-	plan = mapFromOperationContext(metadata["operation_plan"])
-	outcomes = mapSliceFromAny(plan[operationPlanOutcomesKey])
-	if got := stringFromAny(outcomes[0]["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("page outcome = %q, want completed after observed client action", got)
-	}
-	if got := stringFromAny(outcomes[1]["status"]); got != operationPlanStepStatusPending {
-		t.Fatalf("agent outcome = %q, want pending", got)
-	}
-}
-
-func TestInvocationEvidenceUsesExactRawTargetInsteadOfArgumentSummary(t *testing.T) {
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": operationPlanStatusRunning,
-			"phases": []interface{}{map[string]interface{}{
-				"id": "phase-update", "status": "in_progress",
-				"expected_action": map[string]interface{}{
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-					"target":    map[string]interface{}{"agent_id": "agent-exact-1"},
-				},
-			}},
-		},
-	}
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{map[string]interface{}{
-		"kind":      "tool_call",
-		"status":    "success",
-		"skill_id":  skills.SkillAgentManagement,
-		"tool_name": "update_agent_config",
-		"arguments": map[string]interface{}{
-			// UUID-like arguments are summarized for logs and must not replace the
-			// exact target captured before projection.
-			"agent_id":              map[string]interface{}{"type": "string", "length": 36},
-			"operation_plan_target": map[string]interface{}{"agent_id": "agent-exact-1"},
-		},
-		"result": map[string]interface{}{
-			"status":         "completed",
-			"agent_id":       "agent-exact-1",
-			"updated_fields": []interface{}{"system_prompt"},
-		},
-	}})
-
-	phase := mapSliceFromAny(mapFromOperationContext(metadata["operation_plan"])["phases"])[0]
-	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("phase status = %q, want completed from exact raw target", got)
 	}
 }
 
@@ -469,37 +264,6 @@ func TestApplyOperationPlanCompletionVerificationPassesWhenAllPhasesTerminal(t *
 	}
 	if got := stringFromAny(mapFromOperationContext(plan["completion_verification"])["status"]); got != "pass" {
 		t.Fatalf("verification status = %q, want pass", got)
-	}
-}
-
-func TestMainModelFinalCompletesModelReconciliationPhase(t *testing.T) {
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": operationPlanStatusRunning,
-			"phases": []interface{}{map[string]interface{}{
-				"id": "phase-1", "status": operationPlanStepStatusPending,
-				"verification_mode": "model_reconciliation",
-			}},
-		},
-	}
-
-	applyOperationPlanTerminalCompletionResultWithSource(
-		metadata, "pass", "main_model_final", "no active runtime protocol blocker", nil, nil, "",
-	)
-
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
-		t.Fatalf("plan status = %q, want completed", got)
-	}
-	phase := mapSliceFromAny(plan["phases"])[0]
-	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("phase status = %q, want completed", got)
-	}
-	if got := stringFromAny(phase["completion_source"]); got != "main_model_final" {
-		t.Fatalf("phase completion_source = %q, want main_model_final", got)
-	}
-	if got := stringFromAny(mapFromOperationContext(metadata["operation_result_summary"])["status"]); got != operationPlanStatusCompleted {
-		t.Fatalf("operation_result_summary.status = %q, want completed", got)
 	}
 }
 
@@ -719,41 +483,6 @@ func TestOperationPlanEvidenceLedgerStoresGeneratedFileFactsAndDedupesManagedSav
 	saveFacts := mapFromOperationContext(ledger[1]["result_facts"])
 	if got := stringFromAny(saveFacts["file_extension"]); got != "md" {
 		t.Fatalf("managed save file_extension = %q, want md; facts=%#v", got, saveFacts)
-	}
-}
-
-func TestModelDecidesOperationPlanStripsPendingToolScriptCriteria(t *testing.T) {
-	parts := &chatRequestParts{
-		Query:   "continue the previous task",
-		Surface: aiChatSurfaceContextualSidebar,
-	}
-	strategy := &AIChatTurnStrategy{
-		Surface:        aiChatSurfaceContextualSidebar,
-		Intent:         "continue_previous_task",
-		ToolChoiceMode: aiChatTurnToolChoiceModelDecides,
-		SuccessCriteria: []string{
-			"continue from the recent execution context instead of treating the request as a new generic question",
-			"complete pending plan step: tool:file-manager/save_file_to_management",
-			"verify the final answer against actual tool results or refreshed page context",
-		},
-	}
-
-	plan := operationPlanFromTurnStrategy("task-model-decides", parts, strategy)
-	criteria := stringSliceFromAny(plan["success_criteria"])
-	for _, item := range criteria {
-		if strings.Contains(item, "complete pending plan step:") || strings.Contains(item, "tool:file-manager/save_file_to_management") {
-			t.Fatalf("success_criteria contains scripted tool step %q; plan=%#v", item, plan)
-		}
-	}
-	if !stringSliceContains(criteria, "continue from the recent execution context instead of treating the request as a new generic question") {
-		t.Fatalf("success_criteria = %#v, want evidence continuation criterion", criteria)
-	}
-	for _, phase := range mapSliceFromAny(plan["phases"]) {
-		for _, item := range stringSliceFromAny(phase["success_criteria"]) {
-			if strings.Contains(item, "complete pending plan step:") || strings.Contains(item, "tool:file-manager/save_file_to_management") {
-				t.Fatalf("phase success_criteria contains scripted tool step %q; phase=%#v", item, phase)
-			}
-		}
 	}
 }
 
@@ -1060,20 +789,6 @@ func TestSkillLoopToolEffectClassificationUsesGovernanceManifest(t *testing.T) {
 	}
 }
 
-func TestAgentManagementCreateWithInlineIdentityFieldsDoesNotPlanFollowupIdentity(t *testing.T) {
-	query := "\u521b\u5efa Agent \u5192\u70df AICHAT-GOAL-AGENT-1\uff1a\u8bf7\u5728\u5f53\u524d\u667a\u80fd\u4f53\u5217\u8868\u9875\u521b\u5efa\u4e00\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u4e3a\u201cAICHAT-GOAL-AGENT-1\u201d\uff0c\u63cf\u8ff0\u4e3a\u201cAIChat \u521b\u5efa\u95ed\u73af\u5192\u70df\u6d4b\u8bd5\uff0c\u53ef\u5220\u9664\u201d\uff0c\u56fe\u6807\u4f7f\u7528\u4e00\u4e2a\u5bb9\u6613\u8bc6\u522b\u7684\u9ed8\u8ba4\u5f69\u8272\u56fe\u6807\u3002\u521b\u5efa\u6210\u529f\u540e\u8bf7\u8fdb\u5165\u8fd9\u4e2a\u65b0\u667a\u80fd\u4f53\u7684\u8be6\u60c5/\u7f16\u8f91\u9875\uff0c\u5e76\u57fa\u4e8e\u5de5\u5177\u8fd4\u56de\u503c\u548c\u9875\u9762\u53ef\u89c1\u7ed3\u679c\u8bf4\u660e\u521b\u5efa\u7684\u667a\u80fd\u4f53\u540d\u79f0\u3002"
-
-	parts := &chatRequestParts{
-		Query:          query,
-		Surface:        aiChatSurfaceContextualSidebar,
-		RuntimeContext: "route=/console/agents",
-		SkillMode:      skillModeAuto,
-		SkillIDs:       []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
-	}
-	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
-	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
-}
-
 func TestSkillLoopCompletionOperationResultSummaryPrefersLatestToolCallOverPlanClientAction(t *testing.T) {
 	summary := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -1146,23 +861,6 @@ func assertAgentManagementModelDecidesExecutionForTest(t *testing.T, strategy *A
 	}
 	if len(strategy.PlannedTools) != 0 {
 		t.Fatalf("planned tools = %#v, want model-decides without hard scripted tools", strategy.PlannedTools)
-	}
-}
-
-func TestOperationPlanTaskIDFollowsReplacementMessageID(t *testing.T) {
-	parts := &chatRequestParts{
-		Query:     "\u6253\u5f00\u6587\u4ef6\u7ba1\u7406",
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillConsoleNavigator},
-	}
-	source := newStreamingMessage(mustUUIDForTest(t), nil, parts)
-	source.Metadata = streamingMessageMetadataWithTaskID(parts, "source-task")
-
-	replacement := replacementRootMessage(source, parts)
-	plan := replacement.Metadata["operation_plan"].(map[string]interface{})
-	if plan["task_id"] != source.ID.String() {
-		t.Fatalf("replacement task_id = %#v, want %s", plan["task_id"], source.ID.String())
 	}
 }
 

@@ -505,6 +505,8 @@ const messages = {
     waitingApproval: 'Waiting for approval',
     waitingQuestion: 'Waiting for your response',
     waitingClientAction: 'Waiting for page action',
+    planTitle: 'Plan',
+    planProgress: '{done} of {total} done',
     waitingApprovalMessage: 'The assistant is waiting for your approval to continue.',
     waitingQuestionMessage: 'The assistant is waiting for your response to continue.',
     waitingClientActionMessage:

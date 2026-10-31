@@ -247,7 +247,7 @@ func nativeAgentLoopSystemMessage() adapter.Message {
 		"## Tools",
 		"Call business functions directly. Read-only calls may run together; make at most one call that changes something per response, then wait for its result.",
 		"Never repeat a failed call with the same arguments. Use read_skill_reference only when an active skill asks for it, and request_user_input only when missing information blocks reliable progress.",
-		"If update_plan is available, use it only when the user's goal or the required outcomes change; the runtime tracks ordinary progress and owns phase and binding fields. If submit_turn_state is available, use it to keep exact working state across an approval, a question to the user, or another pause.",
+		"If update_plan is available and the request needs three or more steps or several deliverables, call update_plan with the steps before the first business call, then update it as each step finishes; the user follows the work through this checklist. If submit_turn_state is available, use it to keep exact working state across an approval, a question to the user, or another pause.",
 		"## Progress notes",
 		"For work with several stages, write one or two short sentences before the first business call: what you found or decided, and what the next step will produce. Add another only when evidence changes the plan, the stage changes, or you recover from an error.",
 		"Skip notes for a single quick call, for repeated calls of the same kind, and for direct answers. A few notes per task are enough.",
@@ -678,7 +678,6 @@ func nativeExecutionCall(call adapter.ToolCall, toolSet *skills.NativeToolSet) a
 	if toolSet == nil {
 		return call
 	}
-	call = nativeCanonicalizeConnectorPlanCall(call, toolSet)
 	binding, _, ok := nativeToolBindingForCall(toolSet, call.Function.Name)
 	if !ok {
 		return call

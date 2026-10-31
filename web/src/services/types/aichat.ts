@@ -439,7 +439,21 @@ export interface AIChatGeneratedFile {
   created_at: number;
 }
 
+/** One step of the model's own checklist for a turn (ADR 0049). */
+export interface AIChatPlanStep {
+  id?: string;
+  step: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'skipped';
+}
+
+export interface AIChatPlanUpdatedEventData {
+  conversation_id: string;
+  message_id: string;
+  plan: AIChatPlanStep[];
+}
+
 export interface AIChatMessageMetadata {
+  operation_plan?: { phases?: AIChatPlanStep[]; status?: string } & Record<string, unknown>;
   usage?: AIChatUsage;
   task_token_budget?: AIChatTaskTokenBudget;
   task_token_budget_request?: AIChatTokenBudgetRequestedEventData;
@@ -1340,6 +1354,7 @@ export interface AIChatStopConversationResponseData {
 export type AIChatSseEventName =
   | 'message_start'
   | 'agent_progress'
+  | 'plan_updated'
   | 'agent_intermediate_answer'
   | 'user_input_requested'
   | 'skill_load_start'

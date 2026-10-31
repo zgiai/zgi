@@ -38,6 +38,12 @@ type runState struct {
 	maxSkillSteps                int
 	terminalStateGuardConfigured bool
 
+	// planSteps is the model's latest checklist in this run, and
+	// planReminderSent records that its open steps were pointed out once
+	// (ADR 0049).
+	planSteps        []map[string]interface{}
+	planReminderSent bool
+
 	answerBuilder    strings.Builder
 	usage            *adapter.Usage
 	nativeCommentary *nativeCommentaryState
@@ -109,6 +115,11 @@ func (r *Runner) runToolCalls(ctx context.Context, s *runState, round int, toolC
 			prefetchedThrough = callIndex + max(covered, 1)
 		}
 		result, failedCallKey := r.executeToolCall(ctx, s, rs, round, call)
+		if result.trace.Kind == "plan_update" && result.trace.Status == "success" {
+			s.planSteps = evidenceMapsFromAny(result.trace.Result["plan"])
+			r.planSteps = s.planSteps
+			r.emitEvent(s.prepared, EventPlanUpdated, runtimeToolEventPayload(s.prepared, map[string]interface{}{"plan": result.trace.Result["plan"]}))
+		}
 		if eventErr := s.prepared.presentationEventError(); eventErr != nil {
 			return s.stop(eventErr)
 		}
@@ -503,4 +514,40 @@ func (r *Runner) planningRoundsExhausted(ctx context.Context, s *runState) *runO
 	r.appendTrace(ctx, s, trace)
 	r.emitSkillError(ctx, s.prepared, trace)
 	return r.terminateForSafety(ctx, s, trace, "the planning loop reached its safety limit before the requested operation completed", defaultMaxSkillPlanningRounds)
+}
+
+// planOpenSteps lists the steps of the run's checklist still pending or in
+// progress.
+func (s *runState) planOpenSteps() []string {
+	open := []string{}
+	for _, step := range s.planSteps {
+		switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["status"]))) {
+		case "completed", "skipped":
+		default:
+			open = append(open, strings.TrimSpace(evidenceStringFromAny(step["step"])))
+		}
+	}
+	return open
+}
+
+// remindOpenPlanSteps holds back a final answer once when the model's own
+// checklist still has open steps, so it either finishes them or marks them
+// skipped and says why (ADR 0049). It reports whether the run continues.
+func (r *Runner) remindOpenPlanSteps(ctx context.Context, s *runState, text string, streamed bool) bool {
+	if s.planReminderSent || s.req.TerminalOnly {
+		return false
+	}
+	open := s.planOpenSteps()
+	if len(open) == 0 {
+		return false
+	}
+	s.planReminderSent = true
+	if streamed {
+		r.emitAnswerRetract(ctx, s.prepared, text)
+	}
+	s.messages = append(s.messages,
+		adapter.Message{Role: "assistant", Content: text},
+		adapter.Message{Role: "system", Content: "Your checklist still has open steps: " + strings.Join(open, "; ") + ". Do them now, or, if they are no longer needed, mark them skipped with update_plan. Then give the final answer."},
+	)
+	return true
 }

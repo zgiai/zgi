@@ -2,8 +2,6 @@ package skillloop
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,77 +23,6 @@ func nativeRunnerExpectedAction() map[string]any {
 }
 func nativeRunnerPhase(id, status string) map[string]any {
 	return map[string]any{"id": id, "step": "Send message", "status": status, "expected_action": nativeRunnerExpectedAction()}
-}
-
-func TestConnectorPlanCanonicalizationTrustsOnlyExposedOperations(t *testing.T) {
-	set := &skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{"send_alias": {SkillID: skills.SkillConnectorRuntime, ToolName: "send_message", ConnectorOperation: &skills.NativeConnectorOperation{ConnectorID: "wecom", OperationID: "wecom.message.send"}}}}
-	for _, name := range []string{"send_alias", "send_message", "unexposed"} {
-		expected := nativeRunnerExpectedAction()
-		expected["tool_name"] = name
-		expected["connector_operation"] = map[string]any{"connector_id": "forged", "operation_id": "forged.write"}
-		raw, _ := json.Marshal(map[string]any{"plan": []any{map[string]any{"id": "phase-send", "status": "pending", "expected_action": expected}}})
-		call := nativeCanonicalizeConnectorPlanCall(adapter.ToolCall{Function: adapter.FunctionCall{Name: skills.MetaToolUpdatePlan, Arguments: string(raw)}}, set)
-		var args map[string]any
-		_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
-		phase := evidenceMapsFromAny(args["plan"])[0]
-		op := connectorPhaseOperation(phase)
-		if name == "unexposed" {
-			if len(op) != 0 {
-				t.Fatal("unexposed operation acquired authority")
-			}
-		} else if op["connector_id"] != "wecom" || op["operation_id"] != "wecom.message.send" {
-			t.Fatalf("canonical operation=%v", op)
-		}
-	}
-}
-
-func TestNativePlanCompletionAndOrdinaryAuthority(t *testing.T) {
-	for _, status := range []string{"completed", "skipped"} {
-		step := (&Runner{}).handleUpdatePlanCall("plan", map[string]any{"plan": []any{nativeRunnerPhase("phase-send", status)}}, map[string]any{}, 1)
-		if !step.recoverable {
-			t.Fatal("unexecuted native phase accepted as", status)
-		}
-	}
-	state := nativeRunnerTestState("successful")
-	step := (&Runner{}).handleUpdatePlanCall("plan", map[string]any{"plan": []any{nativeRunnerPhase("phase-send", "completed")}}, state, 1)
-	if step.recoverable || step.fatalErr != nil {
-		t.Fatalf("native outcome could not complete plan: %#v", step)
-	}
-	phase := nativeRunnerPhase("phase-send", "pending")
-	phase["required"] = false
-	phase["completion_mode"] = "final_answer"
-	if err := validateConnectorPlanSnapshot([]map[string]any{phase}, map[string]any{}); err != nil || phase["required"] != true || phase["completion_mode"] != "tool" {
-		t.Fatal("native phase became optional")
-	}
-	for _, item := range []struct {
-		phase map[string]any
-		want  bool
-	}{
-		{nativeRunnerPhase("phase-send", "pending"), true},
-		{map[string]any{"phase_source": "model_advisory", "required": true}, false},
-		{map[string]any{"phase_source": "unknown", "required": true}, false},
-		{map[string]any{"required": true}, true},
-		{map[string]any{}, false},
-	} {
-		if got := operationPlanPhaseRequiredByServer(item.phase, nil); got != item.want {
-			t.Fatalf("authority=%t phase=%v", got, item.phase)
-		}
-	}
-}
-
-func TestConnectorPhaseAuthorityDoesNotRelaxOrdinaryToolEvidence(t *testing.T) {
-	state := nativeRunnerTestState("successful")
-	ordinary := map[string]any{"id": "phase-ordinary", "step": "Run script", "status": "completed", "completion_mode": "tool"}
-	step := (&Runner{}).handleUpdatePlanCall("plan", map[string]any{"plan": []any{
-		nativeRunnerPhase("phase-send", "completed"),
-		ordinary,
-	}}, state, 1)
-	if !step.recoverable {
-		t.Fatal("completed ordinary tool phase without runtime evidence was accepted")
-	}
-	if !strings.Contains(step.trace.Error, "phase-ordinary") {
-		t.Fatalf("error = %q, want the ordinary tool phase to require runtime evidence", step.trace.Error)
-	}
 }
 
 type nativeRunnerDispatcher struct {

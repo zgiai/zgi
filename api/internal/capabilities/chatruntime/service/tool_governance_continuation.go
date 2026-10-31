@@ -587,12 +587,9 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 	}
 	if executionErr == nil {
-		metadata, terminalOnly := completeApprovedFrozenInvocationSuccess(prepared.Message.Metadata, frozen, invocation)
-		prepared.Message.Metadata = metadata
-		prepared.TerminalOnly = terminalOnly
-		if terminalOnly {
-			prepared.PreferredRestoredSkillID = ""
-		}
+		// The approved call is recorded in the ledgers; the model decides what
+		// is left to do, and its checklist is its own (ADR 0049).
+		metadata := prepared.Message.Metadata
 		if s.repos != nil && s.repos.Message != nil {
 			if err := s.repos.Message.UpdateMetadata(persistCtx, prepared.Message.ID, metadata); err != nil {
 				return nil, true, finalizedRuntimePersistenceError(err)
@@ -810,7 +807,7 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 	systemPrompt := strings.Join([]string{
 		"You are continuing the same assistant turn after a governed tool call was approved and executed by runtime.",
 		"The user already saw progress emitted before approval. Do not acknowledge or restate the original request, the latest correction, or completed progress. If you emit progress, begin directly with the newly reached evidence or next concrete action.",
-		"In the first model response after this continuation, do not emit ordinary assistant content before a tool call. Call update_plan and/or the next necessary tool directly; if the task is terminal and submit_final_answer is available, call it directly.",
+		"Continue with the next necessary tool call, or answer if nothing is left. If you keep a checklist and its steps changed, update it with update_plan.",
 		"Do not repeat the same approved tool call with the same arguments.",
 		"Treat the model-visible runtime result as authoritative completed state.",
 		"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions recorded before approval.",
@@ -1557,7 +1554,7 @@ func (s *service) runToolGovernanceRejectionContinuation(ctx context.Context, pr
 func toolGovernanceApprovalContinuationMessage(event map[string]interface{}) adapter.Message {
 	lines := []string{
 		"The user approved the pending tool governance request for this same assistant message.",
-		"In the first model response after this continuation, do not emit ordinary assistant content before a tool call. Call update_plan and/or the approved tool directly; if the task is terminal and submit_final_answer is available, call it directly.",
+		"Continue with the approved tool call or the next necessary one, or answer if nothing is left.",
 		"Continue the original user task. Retry the previously blocked skill tool call only if it is still the correct next step.",
 		"The approval is scoped to the governance grant injected into runtime parameters; do not ask for the same approval again in this continuation.",
 		"The approved governance event is an authoritative asset resolution for the previously blocked tool call.",

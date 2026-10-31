@@ -468,6 +468,8 @@ const messages: WebappMessages = {
     waitingApproval: '等待审批',
     waitingQuestion: '等待你补充信息',
     waitingClientAction: '等待页面操作',
+    planTitle: '计划',
+    planProgress: '已完成 {done}/{total}',
     waitingApprovalMessage: '助手正在等待你的审批，确认后会继续执行。',
     waitingQuestionMessage: '助手正在等待你补充信息，提交后会继续执行。',
     waitingClientActionMessage: '助手正在等待页面完成操作，完成后会自动继续。',

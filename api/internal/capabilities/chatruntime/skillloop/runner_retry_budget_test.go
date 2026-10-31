@@ -246,31 +246,6 @@ func TestRunnerAlternatingSchemaAndArgumentValidationFailuresDoNotShareLimit(t *
 	}
 }
 
-func TestProviderConfirmedRequiredOutcomesSatisfiedFailsClosed(t *testing.T) {
-	base := nativeRunnerTestState("successful")
-	if !connectorRequiredOutcomesSatisfied(base) {
-		t.Fatal("exact provider-confirmed required phase was not recognized")
-	}
-
-	for _, status := range []string{"partially_succeeded", "outcome_unknown", "executing"} {
-		t.Run(status, func(t *testing.T) {
-			state := nativeRunnerTestState(status)
-			if connectorRequiredOutcomesSatisfied(state) {
-				t.Fatalf("operation_status=%q was treated as completed", status)
-			}
-		})
-	}
-
-	state := nativeRunnerTestState("successful")
-	phases := evidenceMapsFromAny(evidenceMapFromAny(state["operation_plan"])["phases"])
-	second := nativeRunnerPhase("phase-second", "pending")
-	phases = append(phases, second)
-	state["operation_plan"] = map[string]interface{}{"phases": mapsToInterfacesForRunnerRetryTest(phases)}
-	if connectorRequiredOutcomesSatisfied(state) {
-		t.Fatal("one confirmed phase hid another required pending phase")
-	}
-}
-
 func TestCompleteSkillLoopSafetyTerminationSummarizesProviderConfirmedSuccess(t *testing.T) {
 	state := nativeRunnerTestState("successful")
 	toolSet := &skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{

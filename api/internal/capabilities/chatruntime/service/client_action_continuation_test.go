@@ -279,7 +279,7 @@ func TestClientActionContinuationRouteFailureFeedbackIsRecoverable(t *testing.T)
 		"the target page is not open",
 		"/console/agents/{agent_id}/agent",
 		"retry only when it is true",
-		"first model response after this continuation",
+		"Continue with the next necessary tool call",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message missing %q in:\n%s", want, content)

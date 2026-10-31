@@ -407,221 +407,58 @@ func applySkillLoopExecutionDiagnostics(metadata map[string]interface{}, invocat
 	metadata[skillLoopControlDiagnosticsKey] = diagnostics
 }
 
+// applyPlanUpdateTraceMetadata stores the model's checklist as the plan's
+// steps (ADR 0049). The plan keeps the runtime's ledgers beside them.
 func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.SkillTrace) {
-	kind := strings.TrimSpace(trace.Kind)
-	if metadata == nil || (kind != "plan_update" && kind != "final_answer") || !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+	if metadata == nil || strings.TrimSpace(trace.Kind) != "plan_update" || !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		return
+	}
+	steps := mapSliceFromAny(trace.Result["plan"])
+	if len(steps) == 0 {
 		return
 	}
 	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
 	if plan == nil {
 		plan = map[string]interface{}{}
 	}
-	wasUserInputReplan := strings.EqualFold(strings.TrimSpace(stringFromAny(plan["pending_next_action"])), userInputPendingActionReplan)
-	if kind == "final_answer" {
-		if warning := strings.TrimSpace(stringFromAny(trace.Result["plan_warning"])); warning != "" {
-			plan["final_plan_warnings"] = []interface{}{compactForPrompt(warning, 500)}
-		} else {
-			delete(plan, "final_plan_warnings")
-		}
-		metadata["operation_plan"] = plan
-	}
-	phases := mapSliceFromAny(trace.Result["plan"])
-	outcomeSnapshot := mapSliceFromAny(trace.Result["outcomes"])
-	if len(phases) == 0 && len(outcomeSnapshot) == 0 {
-		return
-	}
-	if len(outcomeSnapshot) > 0 {
-		outcomes := reconcileOperationPlanOutcomeSnapshot(plan, outcomeSnapshot)
-		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
-		outcomePhases := operationPlanPhasesFromOutcomeSnapshot(mapSliceFromAny(plan["phases"]), outcomes)
-		if len(phases) > 0 {
-			// A joint snapshot supplies the execution contract as well as goals.
-			// Legacy joint arrays pair by position; explicit outcome_id supports
-			// multiple phases per outcome. The tool validates this association.
-			for index, phase := range phases {
-				if stringFromAny(phase["outcome_id"]) == "" && len(phases) == len(outcomes) {
-					phase["outcome_id"] = outcomes[index]["id"]
-				}
-			}
-			// Internal server plan updates may atomically declare Outcomes and
-			// attach canonical Action bindings. Reconcile the supplied phases onto
-			// the generated Outcome phases so expected_action, ledger epoch, and
-			// other server execution facts are not discarded by Outcome creation.
-			outcomePhases = reconcileOperationPlanOutcomePhaseSnapshot(outcomePhases, phases)
-		}
-		plan["phases"] = mapsToInterfaceSlice(outcomePhases)
-		operationPlanReconcileOutcomes(plan)
-	} else {
-		phases = reconcileOperationPlanPhaseSnapshot(mapSliceFromAny(plan["phases"]), phases)
-		plan["phases"] = mapsToInterfaceSlice(phases)
-	}
-	// Phase-bound completion must be rechecked when bindings are amended;
-	// a previously completed goal cannot carry proof for a different tool.
-	if outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey]); len(outcomes) > 0 {
-		for _, outcome := range outcomes {
-			if len(mapSliceFromAny(mapFromOperationContext(outcome["acceptance"])["effects"])) > 0 {
-				continue
-			}
-			for _, phase := range mapSliceFromAny(plan["phases"]) {
-				if stringFromAny(phase["outcome_id"]) == stringFromAny(outcome["id"]) &&
-					(len(mapFromOperationContext(phase["expected_action"])) > 0 || stringFromAny(phase["completion_mode"]) != "") {
-					outcome["status"] = operationPlanStepStatusPending
-					delete(outcome, "completed_at")
-					delete(outcome, "effect_refs")
-					delete(outcome, "completion_source")
-					break
-				}
-			}
-		}
-		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
-		operationPlanReconcileOutcomes(plan)
-	}
+	plan["version"] = operationPlanChecklistVersion
+	plan["phases"] = mapsToInterfaceSlice(steps)
+	plan["status"] = operationPlanChecklistStatus(steps)
 	plan["phase_revision"] = intValueFromAny(plan["phase_revision"]) + 1
 	plan["phase_updated_at"] = time.Now().UTC().Format(time.RFC3339)
 	if explanation := strings.TrimSpace(stringFromAny(trace.Result["explanation"])); explanation != "" {
 		plan["phase_explanation"] = compactForPrompt(explanation, 500)
-	}
-	plan["plan_sync_status"] = "current"
-	plan["last_plan_update_round"] = intValueFromAny(trace.Arguments["round"])
-	revision := operationPlanCurrentEvidenceRevision(plan)
-	plan["evidence_revision"] = revision
-	plan["evidence_revision_at_plan_update"] = revision
-	plan["evidence_sequence_at_plan_update"] = revision
-	plan["evidence_after_last_plan_update"] = 0
-	warnings := stringSliceFromAny(trace.Result["evidence_warnings"])
-	if warning := strings.TrimSpace(stringFromAny(trace.Result["plan_warning"])); warning != "" {
-		warnings = append(warnings, warning)
-	}
-	if len(warnings) > 0 {
-		plan["phase_evidence_warnings"] = compactStringSliceForPrompt(warnings, 16, 280)
 	} else {
-		delete(plan, "phase_evidence_warnings")
+		delete(plan, "phase_explanation")
 	}
-	if wasUserInputReplan {
-		delete(plan, "pending_next_action")
-		applyUserInputPlanRevisionState(metadata, intValueFromAny(plan["phase_revision"]))
-	}
+	delete(plan, operationPlanOutcomesKey)
 	metadata["operation_plan"] = plan
 }
 
-func reconcileOperationPlanOutcomePhaseSnapshot(generated []map[string]interface{}, supplied []map[string]interface{}) []map[string]interface{} {
-	if len(generated) == 0 {
-		return supplied
-	}
-	if len(supplied) == 0 {
-		return generated
-	}
-	used := make([]bool, len(supplied))
-	out := make([]map[string]interface{}, 0, len(generated)+len(supplied))
-	for _, baseline := range generated {
-		match := -1
-		baselineOutcomeID := strings.TrimSpace(stringFromAny(baseline["outcome_id"]))
-		baselineID := strings.TrimSpace(stringFromAny(baseline["id"]))
-		for index, phase := range supplied {
-			if used[index] {
-				continue
-			}
-			outcomeID := strings.TrimSpace(stringFromAny(phase["outcome_id"]))
-			phaseID := strings.TrimSpace(stringFromAny(phase["id"]))
-			if (baselineOutcomeID != "" && outcomeID == baselineOutcomeID) ||
-				(baselineID != "" && phaseID == baselineID) {
-				match = index
-				break
-			}
-		}
-		if match < 0 {
-			out = append(out, baseline)
-			continue
-		}
-		used[match] = true
-		out = append(out, reconcileOperationPlanPhaseSnapshot(
-			[]map[string]interface{}{baseline},
-			[]map[string]interface{}{supplied[match]},
-		)[0])
-	}
-	for index, phase := range supplied {
-		if !used[index] {
-			out = append(out, phase)
-		}
-	}
-	return out
-}
-
-func reconcileOperationPlanPhaseSnapshot(current []map[string]interface{}, next []map[string]interface{}) []map[string]interface{} {
-	if len(current) == 0 || len(next) == 0 {
-		return next
-	}
-	byID := make(map[string]map[string]interface{}, len(current))
-	for _, phase := range current {
-		if id := strings.TrimSpace(stringFromAny(phase["id"])); id != "" {
-			byID[id] = phase
-		}
-	}
-	for _, phase := range next {
-		id := strings.TrimSpace(stringFromAny(phase["id"]))
-		previous := byID[id]
-		if len(previous) == 0 {
-			continue
-		}
-		if len(mapFromOperationContext(phase["expected_action"])) == 0 {
-			if expected := mapFromOperationContext(previous["expected_action"]); len(expected) > 0 {
-				phase["expected_action"] = copyStringAnyMap(expected)
-			}
-		}
-		refs := appendUniqueStrings(stringSliceFromAny(previous["evidence_refs"]), stringSliceFromAny(phase["evidence_refs"])...)
-		if len(refs) > 0 {
-			phase["evidence_refs"] = refs
-		}
-		for _, key := range []string{
-			"outcome_id", "required", "verification_mode", "completion_source", "completed_at",
-			operationPlanRuntimeBindingKey,
-		} {
-			if _, exists := phase[key]; exists {
-				continue
-			}
-			if value, exists := previous[key]; exists && value != nil {
-				phase[key] = value
-			}
-		}
-		previousSource := strings.ToLower(strings.TrimSpace(stringFromAny(previous[operationPlanPhaseSourceKey])))
-		switch previousSource {
-		case operationPlanPhaseSourceServerOutcome:
-			// A model snapshot cannot demote or replace an existing server-owned
-			// phase source. The server source remains authoritative across updates.
-			phase[operationPlanPhaseSourceKey] = previousSource
+// operationPlanChecklistStatus is running while a step is pending or in
+// progress, and completed once every step is completed or skipped.
+func operationPlanChecklistStatus(steps []map[string]interface{}) string {
+	for _, step := range steps {
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(step["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped":
 		default:
-			if _, exists := phase[operationPlanPhaseSourceKey]; !exists && previousSource != "" {
-				phase[operationPlanPhaseSourceKey] = previousSource
-			}
-		}
-		if refs := appendUniqueStrings(stringSliceFromAny(previous["effect_refs"]), stringSliceFromAny(phase["effect_refs"])...); len(refs) > 0 {
-			phase["effect_refs"] = refs
-		}
-		if strings.EqualFold(strings.TrimSpace(stringFromAny(previous["status"])), operationPlanStepStatusCompleted) {
-			phase["status"] = operationPlanStepStatusCompleted
+			return operationPlanStatusRunning
 		}
 	}
-	return next
+	return operationPlanStatusCompleted
 }
 
-func applyUserInputPlanRevisionState(metadata map[string]interface{}, phaseRevision int) {
-	summary := copyStringAnyMap(mapFromOperationContext(metadata["operation_result_summary"]))
-	if len(summary) > 0 && strings.EqualFold(strings.TrimSpace(stringFromAny(summary["pending_next_action"])), userInputPendingActionReplan) {
-		delete(summary, "pending_next_action")
-		summary["status"] = operationPlanStatusRunning
-		summary["plan_status"] = operationPlanStatusRunning
-		summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
-		metadata["operation_result_summary"] = summary
+// operationPlanOpenSteps lists the steps still pending or in progress.
+func operationPlanOpenSteps(plan map[string]interface{}) []string {
+	open := []string{}
+	for _, step := range mapSliceFromAny(plan["phases"]) {
+		switch strings.ToLower(strings.TrimSpace(stringFromAny(step["status"]))) {
+		case operationPlanStepStatusCompleted, "skipped":
+		default:
+			open = append(open, strings.TrimSpace(firstNonEmptyString(step["step"], step["title"])))
+		}
 	}
-	continuation := copyStringAnyMap(mapFromOperationContext(metadata["user_input_continuation"]))
-	if len(continuation) == 0 || !strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["status"])), userInputContinuationStatusAnswered) {
-		return
-	}
-	continuation["status"] = "plan_updated"
-	continuation["plan_revision"] = phaseRevision
-	continuation["plan_updated_at"] = time.Now().UTC().Format(time.RFC3339)
-	delete(continuation, "next_action")
-	metadata["user_input_continuation"] = continuation
+	return open
 }
 
 func applyTurnStateTraceMetadata(metadata map[string]interface{}, trace skills.SkillTrace) {
