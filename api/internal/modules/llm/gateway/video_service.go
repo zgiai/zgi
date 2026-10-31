@@ -691,7 +691,7 @@ func (s *llmGatewayServiceImpl) videoBillingTenant(ctx context.Context, apiKey *
 }
 
 func (s *llmGatewayServiceImpl) callVideoCreate(ctx context.Context, selection *ProviderSelection, organizationID uuid.UUID, req *adapter.VideoRequest) (*adapter.VideoResponse, error) {
-	config := s.createAdapterConfig(selection, organizationID)
+	config := s.createAdapterConfig(ctx, selection, organizationID)
 	providerAdapter, err := s.adapterFactory.CreateAdapter(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get adapter for provider %s: %w", config.ProviderName, err)
@@ -704,7 +704,7 @@ func (s *llmGatewayServiceImpl) callVideoCreate(ctx context.Context, selection *
 }
 
 func (s *llmGatewayServiceImpl) callVideoTask(ctx context.Context, selection *ProviderSelection, organizationID uuid.UUID, req *adapter.VideoTaskRequest) (*adapter.VideoResponse, error) {
-	config := s.createAdapterConfig(selection, organizationID)
+	config := s.createAdapterConfig(ctx, selection, organizationID)
 	providerAdapter, err := s.adapterFactory.CreateAdapter(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get adapter for provider %s: %w", config.ProviderName, err)

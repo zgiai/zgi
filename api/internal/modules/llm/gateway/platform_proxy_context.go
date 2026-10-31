@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/requesttimeout"
 )
 
 const (
@@ -80,6 +83,11 @@ func withPlatformProxyMetadata(ctx context.Context, bc *BillingContext) context.
 func applyPlatformProxyHeaders(req *http.Request) {
 	if req == nil {
 		return
+	}
+	// Only an explicit caller timeout is forwarded: without it Console applies
+	// its own default and channel override, exactly as for a direct caller.
+	if timeout, ok := requesttimeout.Requested(req.Context()); ok {
+		req.Header.Set(requesttimeout.HeaderName, strconv.Itoa(int(timeout/time.Second)))
 	}
 	meta, ok := req.Context().Value(platformProxyContextKey{}).(platformProxyMetadata)
 	if !ok {

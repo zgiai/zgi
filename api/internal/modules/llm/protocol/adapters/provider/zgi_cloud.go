@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/requesttimeout"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -87,7 +88,7 @@ func NewZGICloudAdapter(config *adapter.AdapterConfig) (*ZGICloudAdapter, error)
 
 	timeout := config.Timeout
 	if timeout == 0 {
-		timeout = 120 * time.Second
+		timeout = requesttimeout.Default()
 	}
 
 	maxRetries := config.MaxRetries

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/requesttimeout"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	_ "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters/provider"
@@ -29,7 +31,7 @@ func TestCreateAdapterConfig_OfficialRouteUsesZGICloudTransport(t *testing.T) {
 		APIBaseURL:        "http://console.internal/v1/internal",
 	}
 
-	cfg := svc.createAdapterConfig(selection, orgID)
+	cfg := svc.createAdapterConfig(context.Background(), selection, orgID)
 
 	if cfg.ProviderName != "zgi-cloud" {
 		t.Fatalf("ProviderName = %q, want %q for official transport", cfg.ProviderName, "zgi-cloud")
@@ -55,7 +57,7 @@ func TestCreateAdapterConfig_OfficialImageRouteUsesZGICloudTransport(t *testing.
 	setGatewayTestConfig(t)
 
 	svc := &llmGatewayServiceImpl{}
-	cfg := svc.createAdapterConfig(&ProviderSelection{
+	cfg := svc.createAdapterConfig(context.Background(), &ProviderSelection{
 		Provider: providermodel.LLMProvider{
 			ID:       uuid.New(),
 			Provider: "qwen",
@@ -91,7 +93,7 @@ func TestCreateAdapterConfig_OfficialRouteCanCreateAdapterWithoutBearerAPIKey(t 
 	setGatewayTestConfig(t)
 
 	svc := &llmGatewayServiceImpl{}
-	cfg := svc.createAdapterConfig(&ProviderSelection{
+	cfg := svc.createAdapterConfig(context.Background(), &ProviderSelection{
 		Provider: providermodel.LLMProvider{
 			ID:       uuid.New(),
 			Provider: "cohere",
@@ -119,7 +121,7 @@ func setGatewayTestConfig(t *testing.T) {
 
 func TestCreateAdapterConfig_PrivateImageRouteDoesNotInferAdapterFromModelName(t *testing.T) {
 	svc := &llmGatewayServiceImpl{}
-	cfg := svc.createAdapterConfig(&ProviderSelection{
+	cfg := svc.createAdapterConfig(context.Background(), &ProviderSelection{
 		Provider: providermodel.LLMProvider{
 			ID:       uuid.New(),
 			Provider: "openai",
@@ -150,7 +152,7 @@ func TestCreateAdapterConfig_PrivateImageRouteDoesNotInferAdapterFromModelName(t
 
 func TestCreateAdapterConfig_QwenImageOpenAIProtocolUsesCompatibleAdapter(t *testing.T) {
 	svc := &llmGatewayServiceImpl{}
-	cfg := svc.createAdapterConfig(&ProviderSelection{
+	cfg := svc.createAdapterConfig(context.Background(), &ProviderSelection{
 		Provider: providermodel.LLMProvider{
 			ID:       uuid.New(),
 			Provider: "qwen",
@@ -205,7 +207,7 @@ func TestAdapterProviderOverrideForRoute_QwenImageOpenAIProtocolOnly(t *testing.
 func TestCreateAdapterConfig_OfficialRouteUsesCloudDefaultTimeout(t *testing.T) {
 	setGatewayTestConfig(t)
 	svc := &llmGatewayServiceImpl{}
-	cfg := svc.createAdapterConfig(&ProviderSelection{
+	cfg := svc.createAdapterConfig(context.Background(), &ProviderSelection{
 		UseSystemProvider: true,
 		ChannelProvider:   "zgi-cloud",
 		APIBaseURL:        "http://console.internal/v1/internal",
@@ -213,15 +215,61 @@ func TestCreateAdapterConfig_OfficialRouteUsesCloudDefaultTimeout(t *testing.T) 
 			"upstream_timeout_seconds": json.Number("15"),
 		},
 	}, uuid.New())
-	if cfg.Timeout != defaultOfficialAdapterTimeout {
-		t.Fatalf("official timeout = %s, want %s", cfg.Timeout, defaultOfficialAdapterTimeout)
+	// The pre-side override is ignored: Console's channel override governs the
+	// provider call. The hop to Console follows the request default plus margin.
+	if want := requesttimeout.Default() + officialAdapterMargin; cfg.Timeout != want {
+		t.Fatalf("official timeout = %s, want %s", cfg.Timeout, want)
+	}
+}
+
+func TestCreateAdapterConfig_OfficialRouteFollowsRequestTimeout(t *testing.T) {
+	setGatewayTestConfig(t)
+	svc := &llmGatewayServiceImpl{}
+	ctx := requesttimeout.WithTimeout(context.Background(), 2400*time.Second)
+	cfg := svc.createAdapterConfig(ctx, &ProviderSelection{
+		UseSystemProvider: true,
+		ChannelProvider:   "zgi-cloud",
+		APIBaseURL:        "http://console.internal/v1/internal",
+	}, uuid.New())
+	// Above both old caps (120s official, 600s overall).
+	if want := 2400*time.Second + officialAdapterMargin; cfg.Timeout != want {
+		t.Fatalf("official timeout = %s, want %s", cfg.Timeout, want)
+	}
+}
+
+func TestCreateAdapterConfig_PrivateRouteTimeoutPriority(t *testing.T) {
+	setGatewayTestConfig(t)
+	svc := &llmGatewayServiceImpl{}
+	selection := func(override interface{}) *ProviderSelection {
+		sel := &ProviderSelection{ChannelProvider: "openai", APIBaseURL: "https://api.openai.com/v1"}
+		if override != nil {
+			sel.ParamOverride = map[string]interface{}{"upstream_timeout_seconds": override}
+		}
+		return sel
+	}
+	requested := requesttimeout.WithTimeout(context.Background(), 1800*time.Second)
+	cases := []struct {
+		name string
+		ctx  context.Context
+		sel  *ProviderSelection
+		want time.Duration
+	}{
+		{"header beats override", requested, selection(json.Number("90")), 1800 * time.Second},
+		{"override without header", context.Background(), selection(json.Number("900")), 900 * time.Second},
+		{"default without either", context.Background(), selection(nil), defaultPrivateAdapterTimeout},
+		{"override bounded by request max", context.Background(), selection(json.Number("99999")), requesttimeout.Max()},
+	}
+	for _, tc := range cases {
+		if got := svc.createAdapterConfig(tc.ctx, tc.sel, uuid.New()).Timeout; got != tc.want {
+			t.Fatalf("%s: timeout = %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }
 
 func TestCreateAdapterConfig_PrivateRouteReadsUpstreamTimeoutOverride(t *testing.T) {
 	setGatewayTestConfig(t)
 	svc := &llmGatewayServiceImpl{}
-	cfg := svc.createAdapterConfig(&ProviderSelection{
+	cfg := svc.createAdapterConfig(context.Background(), &ProviderSelection{
 		UseSystemProvider: false,
 		ChannelProvider:   "openai",
 		APIBaseURL:        "https://api.openai.com/v1",

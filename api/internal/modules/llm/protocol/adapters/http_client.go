@@ -112,6 +112,18 @@ func OutboundDialContext(config *AdapterConfig) func(context.Context, string, st
 	})
 }
 
+// minStreamResponseHeaderTimeout is how long a streaming call may wait for
+// response headers. A caller that allows a longer request (the Console platform
+// proxy forwards X-ZGI-Request-Timeout) raises it to that request's budget.
+const minStreamResponseHeaderTimeout = 600 * time.Second
+
+func streamResponseHeaderTimeout(timeout time.Duration) time.Duration {
+	if timeout > minStreamResponseHeaderTimeout {
+		return timeout
+	}
+	return minStreamResponseHeaderTimeout
+}
+
 func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPClientOptions) *HTTPClient {
 	if timeout == 0 {
 		timeout = 60 * time.Second
@@ -168,7 +180,7 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     true, // IMPORTANT: Disable keep-alives for streaming to avoid stale data issues
-		ResponseHeaderTimeout: 600 * time.Second,
+		ResponseHeaderTimeout: streamResponseHeaderTimeout(timeout),
 		DialContext:           dialContext,
 	}
 

@@ -316,7 +316,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		traceCtx = ctx
 		traceBillingCtx = billingCtx
 
-		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(providerSelection, organizationID))
+		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(ctx, providerSelection, organizationID))
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
@@ -504,7 +504,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		traceCtx = ctx
 		traceBillingCtx = billingCtx
 
-		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(providerSelection, organizationID))
+		providerAdapter, err := s.adapterFactory.CreateAdapter(s.createAdapterConfig(ctx, providerSelection, organizationID))
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
