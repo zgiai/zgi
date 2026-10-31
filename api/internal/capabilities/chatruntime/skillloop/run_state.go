@@ -556,6 +556,7 @@ func (r *Runner) remindOpenPlanSteps(ctx context.Context, s *runState, text stri
 		return false
 	}
 	s.planReminderSent = true
+	r.diagnostics.planReminded = true
 	if streamed {
 		r.emitAnswerRetract(ctx, s.prepared, text)
 	}

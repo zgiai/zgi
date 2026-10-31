@@ -62,7 +62,9 @@ func TestRunnerRemindsOnceOfOpenPlanSteps(t *testing.T) {
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Here is the total."}, FinishReason: "stop"}}},
 		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The file was not needed after all."}, FinishReason: "stop"}}},
 	}}
-	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	var calls []bool
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{},
+		OnModelInvocation: func(trace ModelInvocationTrace) { calls = append(calls, trace.PlanReminded) }}
 	prepared := NewPreparedChat("conv-plan", "msg-plan", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "Compute the total and write a file"}},
 	})
@@ -77,6 +79,9 @@ func TestRunnerRemindsOnceOfOpenPlanSteps(t *testing.T) {
 	reminded := fakeLLM.appChatRequests[2].Messages
 	if !strings.Contains(assistantMessageText(reminded[len(reminded)-1]), "Write the file") {
 		t.Fatalf("reminder request = %#v, want the open step named", reminded[len(reminded)-1])
+	}
+	if len(calls) != 3 || calls[1] || !calls[2] {
+		t.Fatalf("plan_reminded per model call = %v, want only the call after the reminder", calls)
 	}
 }
 

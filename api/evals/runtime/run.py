@@ -382,17 +382,25 @@ def plan_usage(container, db, results):
     if not by_conversation:
         return {}
     ids = ",".join("'" + conversation.replace("'", "") + "'" for conversation in by_conversation)
-    query = ("select m.conversation_id, m.id, bool_or(coalesce(r.payload->'response'->'tool_call_names', '[]'::jsonb) ? 'update_plan') "
+    # Model calls after the open-steps reminder are marked plan_reminded; a
+    # checklist still running when the turn ended was left with open steps.
+    query = ("select m.conversation_id, m.id, "
+             "bool_or(coalesce(r.payload->'response'->'tool_call_names', '[]'::jsonb) ? 'update_plan'), "
+             "bool_or(coalesce(r.payload->>'plan_reminded', '') = 'true'), "
+             "bool_or(m.metadata->'operation_plan'->>'version' = 'operation_plan.v3' and m.metadata->'operation_plan'->>'status' = 'running') "
              "from chat_runtime_messages m left join chat_runtime_message_records r on r.message_id = m.id and r.kind = 'model_invocations' "
              f"where m.conversation_id in ({ids}) and m.answer is not null group by m.conversation_id, m.id")
     out = subprocess.run(["docker", "exec", container, "psql", "-U", "postgres", "-d", db, "-AtF", "\t", "-c", query],
                          capture_output=True, text=True, check=True).stdout.strip()
     usage = {}
     for line in out.splitlines():
-        conversation, _, called = line.split("\t")
-        bucket = usage.setdefault(by_conversation.get(conversation, "unknown"), {"turns": 0, "turns_with_plan": 0})
+        conversation, _, called, reminded, left_open = line.split("\t")
+        bucket = usage.setdefault(by_conversation.get(conversation, "unknown"),
+                                  {"turns": 0, "turns_with_plan": 0, "turns_reminded": 0, "turns_left_open": 0})
         bucket["turns"] += 1
         bucket["turns_with_plan"] += called == "t"
+        bucket["turns_reminded"] += reminded == "t"
+        bucket["turns_left_open"] += left_open == "t"
     return dict(sorted(usage.items()))
 
 
@@ -463,9 +471,11 @@ def write_report(path, meta, summary, results, baseline=None):
         lines.append(f"\nProvider cache: {cache['cache_read_tokens']} of {cache['cache_read_tokens'] + cache['uncached_input_tokens']} input tokens "
                      f"({cache['cache_read_share']:.0%}) over {cache['model_calls']} model calls.")
     plans = summary.get("plan_usage", {})
-    lines += ["", "| Category | Passed | Turns with a plan |", "|---|---|---|"]
+    lines += ["", "| Category | Passed | Turns with a plan | Answers held back for open steps | Turns ending with open steps |",
+              "|---|---|---|---|---|"]
     lines += [f"| {k} | {v['passed']}/{v['total']} | "
-              + (f"{plans[k]['turns_with_plan']}/{plans[k]['turns']}" if k in plans else "") + " |"
+              + (f"{plans[k]['turns_with_plan']}/{plans[k]['turns']} | {plans[k].get('turns_reminded', 0)} | {plans[k].get('turns_left_open', 0)}"
+                 if k in plans else " | ") + " |"
               for k, v in summary["by_category"].items()]
     lines += ["", "| Scenario | Run | Result | Model calls | Failed checks | Failed tool calls |", "|---|---|---|---|---|---|"]
     for r in sorted(results, key=lambda x: (x["scenario"], x["run"])):

@@ -28,7 +28,12 @@ A replayable scenario suite for the Agent runtime: the native agent loop, skill 
 The report also records, per turn, the average model calls, tool calls, failed tool calls, tokens and latency. With `--container`, it reads from the deployment's database, through `docker exec`:
 
 - the share of input tokens the provider served from its cache, from `llm_usage_bills`;
-- per category, how many turns called `update_plan`, from the model invocations stored with each turn (ADR 0049).
+- per category, from the model invocations and the plan stored with each turn (ADR 0049):
+  - how many turns called `update_plan`;
+  - how many had a final answer held back once because the checklist still had open steps;
+  - how many ended with checklist steps still open.
+
+The `long_task` scenarios are tasks with many dependent steps and several files, some staged over two turns or interrupted by a question. They show whether the checklist and the open-steps reminder hold a long task together.
 
 ## Running
 

@@ -365,6 +365,130 @@
         "files_min": 3,
         "answer_all": ["CSV", "Markdown", "JSON"]
       }
+    },
+    {
+      "id": "long_monthly_report_zh",
+      "category": "long_task",
+      "lang": "zh",
+      "turns": [
+        "下面是今年 12 个月的收入（万元）：1 月 120，2 月 135，3 月 128，4 月 150，5 月 162，6 月 158，7 月 171，8 月 180，9 月 176，10 月 190，11 月 205，12 月 230。请算出每个月的环比增长率（百分比保留两位小数）、全年合计、月均收入和收入最高的月份；然后生成一个 CSV 明细表（月份、收入、环比），再生成一份 Markdown 年度总结文件。最后告诉我合计、月均和最高月份。"
+      ],
+      "expect": {
+        "answer_values": [
+          2005,
+          167.08,
+          230
+        ],
+        "tolerance": 0.01,
+        "files_min": 2
+      }
+    },
+    {
+      "id": "long_trip_budget_en",
+      "category": "long_task",
+      "lang": "en",
+      "turns": [
+        "Plan the budget for a 14-day trip. Hotels: Paris 3 nights at 180 EUR, Rome 2 nights at 150 EUR, Barcelona 4 nights at 120 EUR, Vienna 2 nights at 160 EUR, Prague 3 nights at 90 EUR. Trains between the cities cost 260 EUR in total, and food is 55 EUR a day for 14 days. Work out the hotel total, the total in EUR, the total in USD at 1.08 USD per EUR, and the USD total with a 10% buffer. Then make a JSON itinerary file with each city, its nights and its hotel cost, and a Markdown budget summary file. Tell me the totals at the end."
+      ],
+      "expect": {
+        "answer_values": [
+          1910,
+          2940,
+          3175.2,
+          3492.72
+        ],
+        "tolerance": 0.01,
+        "files_min": 2
+      }
+    },
+    {
+      "id": "long_staged_review_zh",
+      "category": "long_task",
+      "lang": "zh",
+      "turns": [
+        "我要准备季度复盘，一共四件事：① 算 Q1 销售额合计（1 月 82 万、2 月 91 万、3 月 105 万）；② 算 Q2 合计（4 月 98 万、5 月 110 万、6 月 121 万）；③ 算 Q2 相比 Q1 的增长率；④ 生成一份 Markdown 复盘文件。先做 ① 和 ②，告诉我结果后停下，等我说继续再做后面两件。",
+        "继续"
+      ],
+      "turn_expect": {
+        "0": {
+          "answer_values": [
+            278,
+            329
+          ]
+        }
+      },
+      "expect": {
+        "answer_values": [
+          18.35
+        ],
+        "tolerance": 0.01,
+        "files_min": 1
+      }
+    },
+    {
+      "id": "long_payment_schedule_en",
+      "category": "long_task",
+      "lang": "en",
+      "turns": [
+        "A loan of 36,000 is repaid in 8 equal installments, one every 45 days, and the first payment is on 2027-01-10. List each payment date with its weekday and amount, then make a CSV payment schedule. Tell me the date and weekday of the last payment."
+      ],
+      "expect": {
+        "answer_values": [
+          4500
+        ],
+        "answer_regex": "(2027-11-21|Nov(ember)?\\.? 21)",
+        "answer_all": [
+          "Sunday"
+        ],
+        "files_min": 1
+      }
+    },
+    {
+      "id": "long_budget_clarify_zh",
+      "category": "long_task",
+      "lang": "zh",
+      "turns": [
+        "给销售、研发、市场三个部门各做一份明年预算文件：销售部基数 120 万、上浮 8%；研发部基数 300 万、上浮 12%；市场部的基数和上浮比例先问我。每个部门单独一个文件，最后告诉我三个部门预算各是多少、合计多少。",
+        "市场部基数 80 万，上浮 15%。"
+      ],
+      "turn_expect": {
+        "0": {
+          "asked_user": true
+        }
+      },
+      "expect": {
+        "answer_values": [
+          129.6,
+          336,
+          92,
+          557.6
+        ],
+        "tolerance": 0.01,
+        "files_min": 3
+      }
+    },
+    {
+      "id": "long_reorder_zh",
+      "category": "long_task",
+      "lang": "zh",
+      "turns": [
+        "帮我做补货分析。规则：再订货点 = 日均销量 × 到货天数 + 日均销量 × 3（安全库存）；库存低于再订货点的商品需要补货，补货量 = 日均销量 × 30 − 当前库存。商品数据（库存、日均销量、到货天数）：A1 40、5、7；B2 120、8、10；C3 15、3、4；D4 300、12、14；E5 60、10、5；F6 25、1、20；G7 95、6、12；H8 10、2、6；J9 200、15、9；K10 55、4、8。请逐个算出再订货点，判断是否需要补货并算补货量，生成一个 CSV 明细文件和一份 Markdown 补货清单文件，最后告诉我哪些商品要补货、各补多少。"
+      ],
+      "expect": {
+        "answer_all": [
+          "A1",
+          "C3",
+          "E5",
+          "H8"
+        ],
+        "answer_values": [
+          110,
+          75,
+          240,
+          50
+        ],
+        "files_min": 2
+      }
     }
   ]
 }

@@ -1268,6 +1268,9 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 	if continuationType := strings.TrimSpace(trace.ContinuationType); continuationType != "" {
 		invocation["continuation_type"] = continuationType
 	}
+	if trace.PlanReminded {
+		invocation["plan_reminded"] = true
+	}
 	if trace.TerminalOnly {
 		invocation["terminal_only"] = true
 	}

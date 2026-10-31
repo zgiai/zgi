@@ -363,6 +363,7 @@ type ModelInvocationTrace struct {
 	ProjectedChars             int
 	ContinuationType           string
 	TerminalOnly               bool
+	PlanReminded               bool
 	BudgetSafeContextLimit     int
 	BudgetPromptLimit          int
 	BudgetOriginalPromptTokens int
@@ -401,7 +402,9 @@ type modelInvocationDiagnostics struct {
 	projectedChars   int
 	continuationType string
 	terminalOnly     bool
-	requestBudget    planningRequestBudgetDiagnostics
+	// planReminded marks the calls after the open-steps reminder (ADR 0049).
+	planReminded  bool
+	requestBudget planningRequestBudgetDiagnostics
 }
 
 type PreparedChat struct {
@@ -539,6 +542,7 @@ func (r *Runner) recordModelInvocation(trace ModelInvocationTrace) {
 	trace.ProjectedChars = r.diagnostics.projectedChars
 	trace.ContinuationType = r.diagnostics.continuationType
 	trace.TerminalOnly = r.diagnostics.terminalOnly
+	trace.PlanReminded = r.diagnostics.planReminded
 	trace.BudgetSafeContextLimit = r.diagnostics.requestBudget.safeContextLimit
 	trace.BudgetPromptLimit = r.diagnostics.requestBudget.promptBudget
 	trace.BudgetOriginalPromptTokens = r.diagnostics.requestBudget.originalPromptTokens
