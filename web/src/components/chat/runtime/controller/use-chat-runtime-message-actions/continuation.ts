@@ -71,6 +71,7 @@ export function useWorkflowContinuationActions({
     applyIntermediateAnswer,
     applyUserInputRequested,
     applyTokenUsageUpdated,
+    applyTokenBudgetRequested,
     applyMessageEnd,
     applyStreamError,
   } = eventAppliers;
@@ -358,6 +359,11 @@ export function useWorkflowContinuationActions({
             if (abortController.signal.aborted) return;
             streamStarted = true;
             applyTokenUsageUpdated(payload, eventId);
+          },
+          onTokenBudgetRequested: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            streamStarted = true;
+            applyTokenBudgetRequested(payload, eventId);
           },
           onIntermediateAnswer: (payload, eventId) => {
             if (abortController.signal.aborted) return;
@@ -702,6 +708,7 @@ export function useWorkflowContinuationActions({
     [
       applyAgentProgress,
       applyTokenUsageUpdated,
+      applyTokenBudgetRequested,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,

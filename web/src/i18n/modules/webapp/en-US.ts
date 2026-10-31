@@ -509,6 +509,8 @@ const messages = {
     waitingQuestionMessage: 'The assistant is waiting for your response to continue.',
     waitingClientActionMessage:
       'The assistant is waiting for the page action to finish and will continue automatically.',
+    waitingBudgetMessage:
+      'This task used up its token budget. It continues when its caller adds budget, or it can be stopped.',
     taskProposal: {
       title: 'Ready to create task',
       pending: 'Needs confirmation',

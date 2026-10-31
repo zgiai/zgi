@@ -471,6 +471,7 @@ const messages: WebappMessages = {
     waitingApprovalMessage: '助手正在等待你的审批，确认后会继续执行。',
     waitingQuestionMessage: '助手正在等待你补充信息，提交后会继续执行。',
     waitingClientActionMessage: '助手正在等待页面完成操作，完成后会自动继续。',
+    waitingBudgetMessage: '这次任务已用完 token 预算，等待调用方追加预算后继续，或停止任务。',
     taskProposal: {
       title: '准备创建待办',
       pending: '等待确认',
