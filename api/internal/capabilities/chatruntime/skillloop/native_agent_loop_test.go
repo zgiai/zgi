@@ -1035,16 +1035,6 @@ func runnerTestMessagesContain(messages []adapter.Message, target string) bool {
 	return false
 }
 
-func runnerTestEventsContainText(events []Event, target string) bool {
-	for _, event := range events {
-		encoded, _ := json.Marshal(event.Payload)
-		if strings.Contains(string(encoded), target) {
-			return true
-		}
-	}
-	return false
-}
-
 func TestNativeAgentToolsForRunIncludesRuntimeToolWithoutSkills(t *testing.T) {
 	runtimeTool := RuntimeTool{
 		Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: "mutate_agent_memory"}},

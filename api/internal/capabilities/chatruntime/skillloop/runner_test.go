@@ -3820,37 +3820,6 @@ func runnerTestRequestContains(req *adapter.ChatRequest, text string) bool {
 	return false
 }
 
-func runnerTestRequestHasTool(req *adapter.ChatRequest, toolName string) bool {
-	if req == nil {
-		return false
-	}
-	for _, tool := range req.Tools {
-		if strings.EqualFold(strings.TrimSpace(tool.Function.Name), toolName) {
-			return true
-		}
-	}
-	return false
-}
-
-func runnerTestRequestToolChoiceName(req *adapter.ChatRequest) string {
-	if req == nil || req.ToolChoice == nil {
-		return ""
-	}
-	return functionToolChoiceName(req.ToolChoice)
-}
-
-func functionToolChoiceName(choice interface{}) string {
-	root, ok := choice.(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	fn, ok := root["function"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(fn["name"]))
-}
-
 func (f *runnerTestLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	return nil, errors.New("not implemented")
 }

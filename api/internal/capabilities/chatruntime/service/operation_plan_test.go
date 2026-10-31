@@ -900,17 +900,6 @@ func TestAgentConfigFieldDescriptorsDriveCanonicalFields(t *testing.T) {
 	}
 }
 
-func agentManagementToolInvocationForTest(toolName string, runtimeID string, result map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"kind":       "tool_call",
-		"status":     "success",
-		"skill_id":   skills.SkillAgentManagement,
-		"tool_name":  toolName,
-		"runtime_id": runtimeID,
-		"result":     result,
-	}
-}
-
 func TestSkillLoopRuntimeStateSnapshotEmbedsOperationLedgerInExecutionLedger(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "Use the selected page resource.",
@@ -1145,36 +1134,6 @@ func TestSkillLoopCompletionOperationResultSummaryPrefersLatestToolCallOverPlanC
 	if got := stringFromAny(operationSummary["status"]); got != operationPlanStatusRunning {
 		t.Fatalf("operation_result_summary.status = %q, want running while plan is still running; summary=%#v", got, operationSummary)
 	}
-}
-
-func operationPlanCapabilityGoalsContainForTest(goals []map[string]interface{}, capabilityID string) bool {
-	for _, goal := range goals {
-		if stringFromAny(goal["capability_id"]) == capabilityID {
-			return true
-		}
-	}
-	return false
-}
-
-func operationPlanCapabilityGoalsContainRequiredFieldForTest(goals []map[string]interface{}, field string) bool {
-	field = strings.TrimSpace(field)
-	for _, goal := range goals {
-		if stringSliceContainsFold(stringSliceFromAny(goal["required_config_fields"]), field) {
-			return true
-		}
-	}
-	return false
-}
-
-func agentCapabilityGoalsContainBindingActionForTest(goals []AIChatAgentCapabilityGoal, field string, action string) bool {
-	field = operationPlanAgentConfigCanonicalField(field)
-	action = operationPlanCanonicalAgentConfigBindingAction(action)
-	for _, goal := range goals {
-		if got := operationPlanCanonicalAgentConfigBindingAction(goal.RequiredBindingActions[field]); got == action {
-			return true
-		}
-	}
-	return false
 }
 
 func assertAgentManagementModelDecidesExecutionForTest(t *testing.T, strategy *AIChatTurnStrategy) {

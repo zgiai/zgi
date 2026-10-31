@@ -95,12 +95,6 @@ func (h *AgentsHandler) authorizePublishedExecutionVersion(ctx context.Context, 
 	return h.executionApprovals.validate(access.organization.String(), current.Config.ExecutionRuntime)
 }
 
-// File reading does not depend on Linux admission, but still uses the frozen
-// publication, live application access and immutable upload ownership.
-func (h *AgentsHandler) attachPublishedAttachmentReader(config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID) {
-	h.attachPublishedAttachmentReaderVersion(config, scope, caller, published, authenticated, keyID, false)
-}
-
 func (h *AgentsHandler) attachPublishedAttachmentReaderVersion(config *runtimeservice.RunConfig, scope runtimeservice.Scope, caller runtimeservice.Caller, published *dto.AgentWebAppRuntimeConfigResponse, authenticated bool, keyID uuid.UUID, continuation bool) {
 	if config == nil {
 		return
@@ -120,10 +114,6 @@ func (h *AgentsHandler) attachPublishedAttachmentReaderVersion(config *runtimese
 			ApplicationType: "agent", ApplicationID: access.application.String(), Entry: access.entry, SubjectKind: string(access.kind), SubjectID: access.user.String()}
 		return authorizeAgentExecutionUpload(ctx, h.db, owner, file)
 	}
-}
-
-func (h *AgentsHandler) authorizePublishedAttachmentAccess(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID) (*dto.AgentWebAppRuntimeConfigResponse, error) {
-	return h.authorizePublishedAttachmentVersion(ctx, access, keyID, false)
 }
 
 func (h *AgentsHandler) authorizePublishedAttachmentVersion(ctx context.Context, access publishedExecutionAccess, keyID uuid.UUID, continuation bool) (*dto.AgentWebAppRuntimeConfigResponse, error) {

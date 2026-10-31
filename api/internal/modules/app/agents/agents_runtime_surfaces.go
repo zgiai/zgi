@@ -157,14 +157,6 @@ func (s *agentsService) UpdateAgentRuntimeSurfaces(ctx context.Context, agentID,
 	return s.GetAgentRuntimeSurfaces(ctx, agentID, accountID)
 }
 
-func (s *agentsService) publishedRuntimePolicyForAgent(ctx context.Context, ag *Agent) (runtimeauth.PublishedRuntimePolicy, error) {
-	fallback, auth, err := s.publishedRuntimeAuthorizationForAgent(ctx, ag)
-	if err != nil {
-		return runtimeauth.PublishedRuntimePolicy{}, err
-	}
-	return runtimeauth.PolicyFromAuthorization(fallback, auth), nil
-}
-
 func (s *agentsService) publishedRuntimeAuthorizationForAgent(ctx context.Context, ag *Agent) (runtimeauth.PublishedRuntimePolicy, *runtimeauth.ResourceAuthorization, error) {
 	if ag == nil {
 		return runtimeauth.PublishedRuntimePolicy{}, nil, fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
