@@ -194,10 +194,6 @@ type Runner struct {
 	// planSteps is the run's latest checklist, restored to a request whose
 	// compaction dropped the update_plan result that holds it (ADR 0049).
 	planSteps []map[string]interface{}
-	// restoredChecklist is the checklist reminder the current request
-	// carries. It belongs to that request only and is left out of the
-	// messages the next round starts from.
-	restoredChecklist string
 }
 
 type RunRequest struct {

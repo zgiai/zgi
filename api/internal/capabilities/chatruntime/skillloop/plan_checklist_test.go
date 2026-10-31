@@ -156,33 +156,106 @@ func restoredChecklistTestSteps(count int, width int) []map[string]interface{} {
 	return steps
 }
 
-// A restored checklist belongs to one request: the next round does not carry
-// it on, so every request holds exactly one copy (ADR 0049).
-func TestRestoredChecklistIsSentOnceEveryRound(t *testing.T) {
-	manager, err := contextmgr.New(contextmgr.Config{AgentRunID: "checklist-rounds", ModelContextWindow: 64_000, MaxOutputTokens: 4_000}, nil, nil, nil, nil)
-	if err != nil {
-		t.Fatal(err)
+func restoredChecklistCount(messages []adapter.Message) int {
+	count := 0
+	for _, message := range messages {
+		switch content := message.Content.(type) {
+		case string:
+			count += strings.Count(content, checklistReminderHeading)
+		case []adapter.MessageContentPart:
+			for _, part := range content {
+				count += strings.Count(part.Text, checklistReminderHeading)
+			}
+		}
 	}
-	runner := &Runner{AppContext: &llmclient.AppContext{}, ContextManager: manager, planSteps: restoredChecklistTestSteps(3, 10)}
-	messages := []adapter.Message{{Role: "system", Content: "persona"}, {Role: "user", Content: "finish the checklist"}}
-	for round := 1; round <= 5; round++ {
-		request, err := runner.prepareContextRequest(context.Background(), &adapter.ChatRequest{Model: "test-model", Messages: messages})
-		if err != nil {
-			t.Fatal(err)
+	return count
+}
+
+// A restored checklist belongs to one request: the next round does not carry
+// it on, and preparing a request again (as the fallback after a stream fails
+// to open does) does not add a second copy, also when the reminder sits next
+// to an image (ADR 0049).
+func TestRestoredChecklistIsSentOnceEveryRound(t *testing.T) {
+	questions := map[string]interface{}{
+		"text": "finish the checklist",
+		"image": []adapter.MessageContentPart{
+			{Type: "text", Text: "finish the checklist for this screenshot"},
+			{Type: "image_url", ImageURL: &adapter.ImageURL{URL: "https://example.invalid/screen.png"}},
+		},
+	}
+	for name, question := range questions {
+		t.Run(name, func(t *testing.T) {
+			manager, err := contextmgr.New(contextmgr.Config{AgentRunID: "checklist-rounds-" + name, ModelContextWindow: 64_000, MaxOutputTokens: 4_000}, nil, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &Runner{AppContext: &llmclient.AppContext{}, ContextManager: manager, planSteps: restoredChecklistTestSteps(3, 10)}
+			messages := []adapter.Message{{Role: "system", Content: "persona"}, {Role: "user", Content: question}}
+			for round := 1; round <= 5; round++ {
+				request, err := runner.prepareContextRequest(context.Background(), &adapter.ChatRequest{Model: "test-model", Messages: messages})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := restoredChecklistCount(request.Messages); got != 1 {
+					t.Fatalf("round %d sends %d checklists, want 1", round, got)
+				}
+				again, err := runner.prepareContextRequest(context.Background(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := restoredChecklistCount(again.Messages); got != 1 {
+					t.Fatalf("round %d prepared again sends %d checklists, want 1", round, got)
+				}
+				if name == "image" && !requestHoldsImage(again.Messages) {
+					t.Fatal("the image was dropped with the checklist")
+				}
+				callID := fmt.Sprintf("call-%d", round)
+				call := adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: callID, Type: "function", Function: adapter.FunctionCall{Name: "read", Arguments: "{}"}}}}
+				result, err := runner.finishContextRequest(context.Background(), again, planningResult{message: call})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := restoredChecklistCount(result.contextMessages); got != 0 {
+					t.Fatalf("round %d hands %d restored checklists on to the next round", round, got)
+				}
+				messages = append(result.contextMessages, call, adapter.Message{Role: "tool", ToolCallID: callID, Content: "rows"})
+			}
+		})
+	}
+}
+
+func requestHoldsImage(messages []adapter.Message) bool {
+	for _, message := range messages {
+		if parts, ok := message.Content.([]adapter.MessageContentPart); ok {
+			for _, part := range parts {
+				if part.ImageURL != nil && strings.HasSuffix(part.ImageURL.URL, "screen.png") {
+					return true
+				}
+			}
 		}
-		if got := strings.Count(runnerTestMessageText(request.Messages), "Your current checklist:"); got != 1 {
-			t.Fatalf("round %d sends %d checklists, want 1", round, got)
+	}
+	return false
+}
+
+func TestWithoutChecklistRemindersKeepsWhatThePersonWrote(t *testing.T) {
+	reminder := adapter.SystemReminder(checklistReminderHeading + "\n- [pending] Write")
+	other := adapter.SystemReminder("page context")
+	for input, want := range map[string]string{
+		reminder:                                   "",
+		"question\n\n" + reminder:                  "question",
+		reminder + "\n\nquestion":                  "question",
+		other + "\n\n" + reminder + "\n\nquestion": other + "\n\nquestion",
+	} {
+		got := withoutChecklistReminders([]adapter.Message{{Role: "user", Content: input}})
+		if want == "" {
+			if len(got) != 0 {
+				t.Fatalf("%q left %#v", input, got)
+			}
+			continue
 		}
-		callID := fmt.Sprintf("call-%d", round)
-		call := adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: callID, Type: "function", Function: adapter.FunctionCall{Name: "read", Arguments: "{}"}}}}
-		result, err := runner.finishContextRequest(context.Background(), request, planningResult{message: call})
-		if err != nil {
-			t.Fatal(err)
+		if len(got) != 1 || got[0].Content != want {
+			t.Fatalf("%q became %#v, want %q", input, got, want)
 		}
-		if strings.Contains(runnerTestMessageText(result.contextMessages), "Your current checklist:") {
-			t.Fatalf("round %d hands the restored checklist on to the next round", round)
-		}
-		messages = append(result.contextMessages, call, adapter.Message{Role: "tool", ToolCallID: callID, Content: "rows"})
 	}
 }
 
