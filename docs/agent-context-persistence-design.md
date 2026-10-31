@@ -293,9 +293,9 @@ project(conversation, at = 当前 tail):
 | 逐轮重放的末尾去重 | `dropDuplicatedFinalAnswer`：entry 日志保留该轮最终回答（事实），但逐轮重放会丢掉末尾那条 assistant 回答，因为调用方（历史组装）随后自己会 append `message.Answer`，否则回答会重复一次 | ✅ |
 | 悬空 `tool_call` 补齐 | `closeDanglingToolCalls`，投影必然过一遍（合成结果明确写"结果未记录、不要盲目重试"） | ✅ |
 | 重建 | 摘要 + `cseq > 边界`：一轮的组装走 `conversationHistoryMessages` → `projectConversationRegion`；分支流程走 `loadProjectedConversationContext` | ✅ |
-| 分支复制 | `copyConversationTranscriptForBranch`（重铸 entry id、保留 seq/cseq、重写 preview 里的 ref） | ✅ 供分支流程调用 |
+| 分支复制 | 不需要：会话内分支（重新生成、编辑中间轮）沿消息父链投影 entry，不复制。曾为"把会话分支成新会话"实现过 `copyConversationTranscriptForBranch`（重铸 entry id、保留 seq/cseq、重写 preview 里的 ref），但产品没有这个功能、从未调用，已随不可达代码删除；将来做跨会话分支时再实现 | — |
 | 本轮交换的逐轮重放（续跑用） | `historicalAgentTranscript` / `appendPersistedAgentTranscript`：跳掉本轮自己的提问、丢掉调用方会再 append 的末尾回答；4 个续跑入口 | ✅ |
 | 只允许删除最后一轮 | `DeleteMessage` 用 `CountChildren` 拦截，中间轮提示"从该轮开分支" | ✅ |
 | 会话删除清理 entry | `DeleteConversation` 在同一事务里 `DeleteByConversation`（会话是软删，外键级联不会触发） | ✅ |
 | 窄查询白名单 | `transcriptEntryPreviewColumns` + SQL 守卫测试（payload 不进投影/列表查询） | ✅ |
-| **工具执行状态机**：派发前 fail-closed 写"已开始"意图，区分"未开始 / 结果未知" | 需要在 `skillloop` 的 `handleProgressiveSkillCall` 之前提供 dispatch 钩子（`RunRequest` 上加回调），service 侧写 intent entry（log-only，kind 不进投影） | ⏳ 第二个 PR |
+| **工具执行状态机**：派发前 fail-closed 写"已开始"意图，区分"未开始 / 结果未知" | 没有另建 intent entry：`skill_call_start` 事件在派发前同步写入消息 metadata 的 `skill_invocations`（status `running`），这条记录就是"已开始"。写入失败时 `skillloop` 不执行该调用、直接以错误结束（`unrecordedCallStep`），所以没有记录 = 未开始；只读运行时工具的记录带 `read_only: true`，续跑时按只读处理（ADR 0035 decision 2） | ✅ |

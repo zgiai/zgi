@@ -498,18 +498,6 @@ func (b *attachmentBundle) promptFiles() []attachmentFile {
 	return files
 }
 
-func (b *attachmentBundle) hasDocumentFiles() bool {
-	if b == nil {
-		return false
-	}
-	for _, file := range b.Files {
-		if !file.isImage() {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *attachmentBundle) imageParts() []adapter.MessageContentPart {
 	if b == nil {
 		return nil
@@ -664,7 +652,7 @@ func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBu
 }
 
 func (s *service) currentUserContent(parts *chatRequestParts, text string) interface{} {
-	text = userContentWithRuntimeContext(parts, text)
+	text = queryWithLanguageReminder(parts, userContentWithRuntimeContext(parts, text))
 	if parts == nil || parts.Attachments == nil {
 		return strings.TrimSpace(text)
 	}

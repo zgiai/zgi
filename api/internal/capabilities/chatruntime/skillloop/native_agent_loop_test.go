@@ -73,10 +73,9 @@ func TestRunnerNativeAgentLoopCallsBusinessToolDirectly(t *testing.T) {
 	})
 
 	answer, usage, err := runner.Run(context.Background(), RunRequest{
-		Prepared:        prepared,
-		Resolved:        resolved,
-		NativeAgentLoop: true,
-		NativeToolSet:   &toolSet,
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
 		ExecutionContext: skills.ExecutionContext{
 			OrganizationID: "org-1",
 			UserID:         "user-1",
@@ -92,7 +91,7 @@ func TestRunnerNativeAgentLoopCallsBusinessToolDirectly(t *testing.T) {
 		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
 	}
 	first := fakeLLM.appChatRequests[0]
-	if !runnerTestMessagesContain(first.Messages, "before the first business stage include one brief user-visible process note") {
+	if !runnerTestMessagesContain(first.Messages, "write one or two short sentences before the first business call") {
 		t.Fatalf("first request messages = %#v, want native semantic process-note policy", first.Messages)
 	}
 	for _, excluded := range []string{
@@ -132,7 +131,7 @@ func TestRunnerNativeRuntimeToolRetainsProcessTextAndMeasuresDuration(t *testing
 	}}
 	runner := &Runner{LLMClient: client, SkillRuntime: skills.NewRuntime(nil, nil), AppContext: &llmclient.AppContext{}, OnEvent: func(event Event) error { events = append(events, event); return nil }}
 	prepared := NewPreparedChat("conv-runtime", "msg-runtime", "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "处理文件"}}})
-	if _, _, err := runner.Run(t.Context(), RunRequest{Prepared: prepared, Resolved: &skills.ResolvedSkills{}, NativeAgentLoop: true, RuntimeTools: []RuntimeTool{tool}}); err != nil {
+	if _, _, err := runner.Run(t.Context(), RunRequest{Prepared: prepared, Resolved: &skills.ResolvedSkills{}, RuntimeTools: []RuntimeTool{tool}}); err != nil {
 		t.Fatal(err)
 	}
 	assertNativeProcessCommentaryBeforeSkillCall(t, events)
@@ -189,10 +188,9 @@ func TestRunnerNativeStreamConvertsProcessCommentaryBeforeBusinessTool(t *testin
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:        prepared,
-		Resolved:        resolved,
-		NativeAgentLoop: true,
-		NativeToolSet:   &toolSet,
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
 		ExecutionContext: skills.ExecutionContext{
 			OrganizationID: "org-1",
 			UserID:         "user-1",
@@ -263,10 +261,10 @@ func TestRunnerNativeAgentLoopActivatesSkillBeforeDirectBusinessCall(t *testing.
 		t.Fatalf("register calculator: %v", err)
 	}
 	runtime := skills.NewRuntime(tools.NewToolEngine(manager), manager)
-	resolved := nativeCalculatorResolvedSkills()
+	resolved := nativeActivatableMathResolvedSkills()
 	catalog := skills.BuildNativeSkillCatalog(resolved, nil, skills.DefaultNativeSkillCatalogBudgetChars, 0, nil)
 	session := skills.NewNativeSkillSession(runtime, resolved, catalog, skills.NativeToolSetOptions{BudgetChars: 10000})
-	activateArguments, _ := json.Marshal(map[string]interface{}{"skill_ids": []string{skills.SkillCalculator}})
+	activateArguments, _ := json.Marshal(map[string]interface{}{"skill_ids": []string{nativeActivatableMathSkillID}})
 	calculateArguments, _ := json.Marshal(map[string]interface{}{"operation": "multiply", "left": 6, "right": 7})
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
 		{Choices: []adapter.Choice{{
@@ -300,7 +298,6 @@ func TestRunnerNativeAgentLoopActivatesSkillBeforeDirectBusinessCall(t *testing.
 	answer, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:           prepared,
 		Resolved:           resolved,
-		NativeAgentLoop:    true,
 		NativeSkillSession: session,
 		ExecutionContext: skills.ExecutionContext{
 			OrganizationID: "org-1",
@@ -421,7 +418,7 @@ func TestRunnerNativePreloadedScriptVersionReachesModel(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Ready."}, FinishReason: "stop"}}}}}
 	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
 	prepared := NewPreparedChat("conv-portable-native", "msg-portable-native", "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "Run the Skill script."}}})
-	if _, _, err := runner.Run(t.Context(), RunRequest{Prepared: prepared, Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &toolSet, RuntimeTools: []RuntimeTool{shell}}); err != nil {
+	if _, _, err := runner.Run(t.Context(), RunRequest{Prepared: prepared, Resolved: resolved, NativeToolSet: &toolSet, RuntimeTools: []RuntimeTool{shell}}); err != nil {
 		t.Fatal(err)
 	}
 	digest, err := skills.SkillPackageSHA256(root)
@@ -471,10 +468,9 @@ func TestRunnerNativeToolNarrationDoesNotBlockBusinessTool(t *testing.T) {
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:        prepared,
-		Resolved:        resolved,
-		NativeAgentLoop: true,
-		NativeToolSet:   &toolSet,
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
 		ExecutionContext: skills.ExecutionContext{
 			OrganizationID: "org-1",
 			UserID:         "user-1",
@@ -491,39 +487,164 @@ func TestRunnerNativeToolNarrationDoesNotBlockBusinessTool(t *testing.T) {
 	assertNativeDiscardedCommentary(t, events, "intentionally overlong action update")
 }
 
-func TestRunnerNativeAgentLoopDoesNotRetryLengthTermination(t *testing.T) {
+// A response that stops at the output limit before any output is sent again
+// with a larger limit, at most twice, and then fails as truncated (ADR 0041).
+func TestRunnerNativeAgentLoopRetriesLengthTerminationTwice(t *testing.T) {
 	runtime := skills.NewRuntime(nil, nil)
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
 		Instructions: "Answer concisely.",
 	}}}
 	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
-	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
-		Choices: []adapter.Choice{{
-			Message:      adapter.Message{Role: "assistant", ReasoningContent: "unfinished reasoning"},
-			FinishReason: "length",
-		}},
-		Usage: &adapter.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
-	}}}
+	cutOff := func() *adapter.ChatResponse {
+		return &adapter.ChatResponse{
+			Choices: []adapter.Choice{{
+				Message:      adapter.Message{Role: "assistant", ReasoningContent: "unfinished reasoning"},
+				FinishReason: "length",
+			}},
+			Usage: &adapter.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30},
+		}
+	}
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{cutOff(), cutOff(), cutOff()}}
 	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
 	prepared := NewPreparedChat("conv-length", "msg-length", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "Do a long task"}},
 	})
 
 	_, usage, err := runner.Run(context.Background(), RunRequest{
-		Prepared:        prepared,
-		Resolved:        resolved,
-		NativeAgentLoop: true,
-		NativeToolSet:   &toolSet,
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
 	})
 	if !errors.Is(err, ErrAgentOutputTruncated) {
 		t.Fatalf("Run() error = %v, want ErrAgentOutputTruncated", err)
 	}
-	if fakeLLM.appChatCalls != 1 {
-		t.Fatalf("AppChat calls = %d, want exactly 1", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want 3", fakeLLM.appChatCalls)
 	}
-	if usage == nil || usage.TotalTokens != 30 {
-		t.Fatalf("usage = %#v, want actual single-call usage", usage)
+	if usage == nil || usage.TotalTokens != 90 {
+		t.Fatalf("usage = %#v, want the usage of all three calls", usage)
+	}
+	retry := fakeLLM.appChatRequests[1]
+	if retry.MaxTokens == nil || *retry.MaxTokens < 8192 || !strings.Contains(assistantMessageText(retry.Messages[len(retry.Messages)-1]), retryToolCallNotice) {
+		t.Fatalf("retry request = %#v, want a larger output limit and the notice", retry)
+	}
+}
+
+// An answer cut off as text is continued where it stopped, and the parts are
+// joined into one answer (ADR 0041).
+func TestRunnerNativeAgentLoopContinuesAnAnswerCutOffAsText(t *testing.T) {
+	runtime := skills.NewRuntime(nil, nil)
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
+		Instructions: "Answer concisely.",
+	}}}
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The report starts here and"}, FinishReason: "length"}}},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: " ends here."}, FinishReason: "stop"}}},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-continue", "msg-continue", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Write a long report"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "The report starts here and ends here." {
+		t.Fatalf("answer = %q", answer)
+	}
+	continuation := fakeLLM.appChatRequests[1].Messages
+	if len(continuation) < 2 || assistantMessageText(continuation[len(continuation)-2]) != "The report starts here and" || !strings.Contains(assistantMessageText(continuation[len(continuation)-1]), continueAnswerNotice) {
+		t.Fatalf("continuation request = %#v", continuation)
+	}
+}
+
+// A response whose output went mostly where the message does not show, such as
+// a tool call the provider streams only when complete, is sent again with a
+// larger limit instead of continuing the note before it (ADR 0041).
+func TestRunnerNativeAgentLoopRetriesOutputSpentOutOfSight(t *testing.T) {
+	runtime := skills.NewRuntime(nil, nil)
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
+		Instructions: "Answer concisely.",
+	}}}
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Checked; now writing the file."}, FinishReason: "max_tokens"}},
+			Usage:   &adapter.Usage{PromptTokens: 100, CompletionTokens: 1024, TotalTokens: 1124},
+		},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Done."}, FinishReason: "stop"}}},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-hidden", "msg-hidden", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Write a 400-row CSV file"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("answer = %q, want the retried response without the cut-off note", answer)
+	}
+	retry := fakeLLM.appChatRequests[1]
+	if retry.MaxTokens == nil || *retry.MaxTokens < 8192 || !strings.Contains(assistantMessageText(retry.Messages[len(retry.Messages)-1]), retryToolCallNotice) {
+		t.Fatalf("retry request = %#v, want a larger output limit and the retry notice", retry)
+	}
+}
+
+func TestOutputLimitSpentOutOfSightComparesVisibleOutputWithTokens(t *testing.T) {
+	note := adapter.Message{Content: "Checked; now writing the file."}
+	if !outputLimitSpentOutOfSight(note, &adapter.Usage{CompletionTokens: 1024}) {
+		t.Fatal("a short note that used the whole limit was not flagged")
+	}
+	long := adapter.Message{Content: strings.Repeat("The report goes on. ", 150)}
+	if outputLimitSpentOutOfSight(long, &adapter.Usage{CompletionTokens: 1024}) {
+		t.Fatal("a long answer cut off as text was flagged")
+	}
+	if outputLimitSpentOutOfSight(note, nil) {
+		t.Fatal("a response without usage was flagged")
+	}
+}
+
+// An answer that reaches a max_tokens set in the model parameters is not
+// continued past it (ADR 0041).
+func TestRunnerNativeAgentLoopKeepsAConfiguredAnswerLimit(t *testing.T) {
+	runtime := skills.NewRuntime(nil, nil)
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
+		Instructions: "Answer concisely.",
+	}}}
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "A short answer that"}, FinishReason: "length"}}},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	maxTokens := 64
+	prepared := NewPreparedChat("conv-limit", "msg-limit", "", "auto", &adapter.ChatRequest{
+		Messages:  []adapter.Message{{Role: "user", Content: "Write a long report"}},
+		MaxTokens: &maxTokens,
+	})
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
+	})
+	if !errors.Is(err, ErrAgentOutputTruncated) || fakeLLM.appChatCalls != 1 {
+		t.Fatalf("Run() error = %v with %d calls, want ErrAgentOutputTruncated after one call", err, fakeLLM.appChatCalls)
 	}
 }
 
@@ -760,10 +881,9 @@ func TestRunnerNativeAgentLoopDoesNotFallbackAfterEmptyStream(t *testing.T) {
 	})
 
 	_, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:        prepared,
-		Resolved:        resolved,
-		NativeAgentLoop: true,
-		NativeToolSet:   &toolSet,
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
 	})
 	if !errors.Is(err, ErrAgentOutputTruncated) {
 		t.Fatalf("Run() error = %v, want ErrAgentOutputTruncated", err)
@@ -772,6 +892,16 @@ func TestRunnerNativeAgentLoopDoesNotFallbackAfterEmptyStream(t *testing.T) {
 		t.Fatalf("stream calls = %d AppChat calls = %d, want 1 and 0", fakeLLM.appChatStreamCalls, fakeLLM.appChatCalls)
 	}
 }
+
+// nativeActivatableMathResolvedSkills is the calculator under an ID that is
+// not resident, for tests of activation (ADR 0043).
+func nativeActivatableMathResolvedSkills() *skills.ResolvedSkills {
+	resolved := nativeCalculatorResolvedSkills()
+	resolved.Skills[0].Metadata.ID = nativeActivatableMathSkillID
+	return resolved
+}
+
+const nativeActivatableMathSkillID = "exact-math"
 
 func nativeCalculatorResolvedSkills() *skills.ResolvedSkills {
 	return &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
@@ -922,7 +1052,7 @@ func TestNativeAgentToolsForRunIncludesRuntimeToolWithoutSkills(t *testing.T) {
 			return RuntimeToolResult{Status: "success", Result: map[string]interface{}{"status": "success"}}
 		},
 	}
-	tools := nativeAgentToolsForRun(&skills.ResolvedSkills{}, nil, nil, []RuntimeTool{runtimeTool})
+	tools := nativeAgentToolsForRun(&skills.ResolvedSkills{}, nil, nil, []RuntimeTool{runtimeTool}, false)
 	if !runnerTestHasTool(tools, "mutate_agent_memory") {
 		t.Fatalf("tools = %#v, want runtime memory tool", tools)
 	}

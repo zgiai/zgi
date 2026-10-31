@@ -213,6 +213,7 @@ func provideGinEngine(cfg *config.Config, reporter *observability.ZGIReporter, o
 
 	engine := gin.New()
 	engine.Use(middleware.RequestID())
+	engine.Use(middleware.RequestLocale())
 	if otelResource != nil && otelResource.Enabled {
 		engine.Use(otelgin.Middleware(cfg.OpenTelemetry.ServiceName))
 		engine.Use(middleware.OpenTelemetryRequestAttributes())

@@ -102,10 +102,15 @@ func TestConnectorLocalizedProjectionBothPathsRespectBudgetAndAliases(t *testing
 					if len(set.ProviderTools) == 0 || len(set.ProviderTools) >= len(projections) || len(set.SkippedTools) == 0 {
 						t.Fatalf("surface=%s progressive=%t: budget did not select a bounded subset: tools=%d skipped=%#v", surface, progressive, len(set.ProviderTools), set.SkippedTools)
 					}
-					first := set.ProviderTools[0].Function
-					binding := set.ToolBindings[first.Name]
-					if binding.ConnectorOperation == nil || binding.ConnectorOperation.OperationID != requested.operation {
-						t.Fatalf("surface=%s progressive=%t: tight budget lost relevant operation: %#v", surface, progressive, binding)
+					// Relevance decides what survives the cut; the order is fixed (ADR 0032).
+					var first adapter.Function
+					for _, tool := range set.ProviderTools {
+						if binding := set.ToolBindings[tool.Function.Name]; binding.ConnectorOperation != nil && binding.ConnectorOperation.OperationID == requested.operation {
+							first = tool.Function
+						}
+					}
+					if first.Name == "" {
+						t.Fatalf("surface=%s progressive=%t: tight budget lost relevant operation: %#v", surface, progressive, set.ProviderTools)
 					}
 					if first.Name == requested.toolName || !strings.Contains(first.Description, requested.query) {
 						t.Fatalf("reserved-name alias or Chinese model description was lost: %#v", first)

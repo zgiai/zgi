@@ -234,8 +234,24 @@ func turnTranscriptWithQuery(prepared *PreparedChat, transcript []adapter.Messag
 	if query == "" {
 		return transcript
 	}
+	// The question is stored with the reminders it was sent with, so the next
+	// turn replays this turn's request and reads it from the provider's cache
+	// (ADR 0043). Transient page context and attachment previews are not stored.
+	query = queryWithLanguageReminder(prepared.parts, query)
+	var content interface{} = query
+	if prepared.parts != nil && len(prepared.parts.TurnReminders) > 0 {
+		content = adapter.PrependSystemReminders(prepared.parts.TurnReminders, query)
+	}
+	// The loop may have merged more guidance after the question, such as the
+	// instructions of skills active from the start. Its form is kept only when
+	// the question was sent as plain text.
+	if sent, ok := prepared.turnUserContent.(string); ok {
+		if base, isText := content.(string); isText && strings.HasPrefix(sent, base) {
+			content = sent
+		}
+	}
 	messages := make([]adapter.Message, 0, len(transcript)+1)
-	messages = append(messages, adapter.Message{Role: "user", Content: query})
+	messages = append(messages, adapter.Message{Role: "user", Content: content})
 	return append(messages, transcript...)
 }
 
@@ -308,11 +324,6 @@ func appendTurnAnswer(prepared *PreparedChat, messages []adapter.Message) []adap
 		}
 	}
 	return append(messages, adapter.Message{Role: "assistant", Content: answer})
-}
-
-func (w *contextEntrySync) sync(ctx context.Context, repos *repository.Repositories, transcript []adapter.Message) error {
-	_, err := w.syncWithOrigins(ctx, repos, transcript)
-	return err
 }
 
 func (w *contextEntrySync) syncWithOrigins(ctx context.Context, repos *repository.Repositories, transcript []adapter.Message) ([]contextEntryOrigin, error) {
@@ -551,7 +562,7 @@ func (s *service) persistAgentContextSummary(ctx context.Context, prepared *Prep
 	}
 	if boundary, err := uuid.Parse(strings.TrimSpace(boundaryID)); err == nil && boundary != uuid.Nil && s.repos.TranscriptEntry != nil {
 		head := cloneUUID(prepared.Message.TranscriptHeadEntryID)
-		newHead, appendErr := s.repos.TranscriptEntry.AppendSummaryForMessage(ctx, prepared.Message.ID, head, &boundary, contextmgr.GetCompactUserSummaryMessage(contextmgr.FormatCompactSummary(summary), true, "", true), "summary:"+boundary.String())
+		newHead, appendErr := s.repos.TranscriptEntry.AppendSummaryForMessage(ctx, prepared.Message.ID, head, &boundary, contextmgr.GetCompactUserSummaryMessage(contextmgr.FormatCompactSummary(summary), false, "", true), "summary:"+boundary.String())
 		if appendErr != nil {
 			logger.WarnContext(ctx, "failed to append agent context summary entry", "message_id", prepared.Message.ID.String(), "boundary_entry_id", boundary.String(), appendErr)
 			return

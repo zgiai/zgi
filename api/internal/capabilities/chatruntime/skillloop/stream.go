@@ -12,19 +12,6 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-func (r *Runner) runSkillPlanningStream(
-	ctx context.Context,
-	prepared *PreparedChat,
-	planningReq *adapter.ChatRequest,
-	round int,
-	onEvent func(Event) error,
-	terminalProtocol bool,
-	terminalStreamingAllowed bool,
-	suppressNaturalProgress bool,
-) (planningResult, bool, error) {
-	return r.runModelToolRoundStream(ctx, prepared, planningReq, round, onEvent, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress, "skill_planning", nil)
-}
-
 func (r *Runner) runModelToolRoundStream(
 	ctx context.Context,
 	prepared *PreparedChat,
@@ -154,7 +141,7 @@ func (r *Runner) runModelToolRoundStream(
 					Usage:      usage,
 					Error:      response.Error.Error(),
 				})
-				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedAnswerOnError())
+				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(connectionLost(response.Error), streamedAnswerOnError())
 			}
 			if len(response.Choices) == 0 {
 				if response.Done {
@@ -447,7 +434,7 @@ func shouldStreamSkillPlanning(prepared *PreparedChat) bool {
 	provider := strings.ToLower(strings.TrimSpace(prepared.parts.Provider))
 	switch provider {
 	case "openai", "openai-compatible", "deepseek", "openrouter", "zgi-cloud", "zgi_cloud", "dashscope",
-		"aliyun", "qwen", "claude", "anthropic", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
+		"aliyun", "qwen", "claude", "anthropic", "moonshot", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
 		return true
 	default:
 		return false

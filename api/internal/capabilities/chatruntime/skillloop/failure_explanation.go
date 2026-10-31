@@ -240,14 +240,6 @@ func toolFailureExplanationSystemPrompt(evidence toolFailureExplanationEvidence,
 	return strings.Join(instructions, "\n")
 }
 
-func buildToolFailureExplanationEvidence(
-	failure skills.SkillTrace,
-	successfulToolCalls []SkillToolCallRef,
-	stopReason string,
-) toolFailureExplanationEvidence {
-	return buildToolFailureExplanationEvidenceWithRuntimeState(failure, successfulToolCalls, stopReason, nil)
-}
-
 func buildToolFailureExplanationEvidenceWithRuntimeState(
 	failure skills.SkillTrace,
 	successfulToolCalls []SkillToolCallRef,

@@ -5,65 +5,31 @@ import (
 	"strings"
 
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
-
-func MetaTools() []llmadapter.Tool {
-	return metaTools(true)
-}
-
-func MetaToolsForSkills(resolved *ResolvedSkills) []llmadapter.Tool {
-	return metaTools(resolvedHasToolSkills(resolved))
-}
 
 type MetaToolOptions struct {
 	RequireFinalPlanSnapshot bool
 }
 
-func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}) []llmadapter.Tool {
-	return MetaToolsForSkillStateWithOptions(resolved, loadedSkillIDs, MetaToolOptions{})
-}
-
-func MetaToolsForSkillStateWithOptions(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}, options MetaToolOptions) []llmadapter.Tool {
-	loaded := normalizedLoadedSkillIDs(loadedSkillIDs)
-	tools := []llmadapter.Tool{
-		requestUserInputMetaTool(),
-		turnStateMetaTool(),
-		updatePlanMetaTool(),
-		intermediateAnswerMetaTool(),
-		finalAnswerMetaToolWithOptions(options),
-	}
-	if skillIDs := unloadedSkillIDs(resolved, loaded); len(skillIDs) > 0 {
-		tools = append([]llmadapter.Tool{loadSkillMetaTool(skillIDs)}, tools...)
-	}
-	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
-		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
-	}
-	if toolSkillIDs, toolNames, pairs, contracts := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
-		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, contracts))
-	}
-	return tools
-}
-
-// NativeControlToolsForSkills returns only the lightweight state and reference
-// tools used by the native agent loop. Business tools are projected separately.
-func NativeControlToolsForSkills(resolved *ResolvedSkills, activeSkillIDs []string) []llmadapter.Tool {
-	return NativeControlToolsForSession(resolved, activeSkillIDs, nil, false)
-}
-
 // NativeControlToolsForSession returns state, reference, and progressive
 // discovery controls for one native skill session.
 func NativeControlToolsForSession(resolved *ResolvedSkills, activeSkillIDs []string, exposedCandidateSkillIDs []string, searchAvailable bool) []llmadapter.Tool {
+	return NativeControlToolsForRun(resolved, activeSkillIDs, exposedCandidateSkillIDs, searchAvailable, true)
+}
+
+// NativeControlToolsForRun is NativeControlToolsForSession for a run that may
+// have no business action to plan. Without one, update_plan and
+// submit_turn_state are left out (ADR 0043).
+func NativeControlToolsForRun(resolved *ResolvedSkills, activeSkillIDs []string, exposedCandidateSkillIDs []string, searchAvailable bool, planning bool) []llmadapter.Tool {
 	active := make(map[string]struct{}, len(activeSkillIDs))
 	for _, skillID := range activeSkillIDs {
 		if normalized := normalizeSkillID(skillID); normalized != "" {
 			active[normalized] = struct{}{}
 		}
 	}
-	result := []llmadapter.Tool{
-		requestUserInputMetaTool(),
-		turnStateMetaTool(),
-		updatePlanMetaTool(),
+	result := []llmadapter.Tool{requestUserInputMetaTool()}
+	if planning {
+		result = append(result, turnStateMetaTool(), updatePlanMetaTool())
 	}
 	if len(exposedCandidateSkillIDs) > 0 {
 		result = append(result, activateSkillsMetaTool(exposedCandidateSkillIDs))
@@ -132,22 +98,6 @@ func searchSkillsMetaTool() llmadapter.Tool {
 	}
 }
 
-func metaTools(includeToolCaller bool) []llmadapter.Tool {
-	tools := []llmadapter.Tool{
-		loadSkillMetaTool(nil),
-		readReferenceMetaTool(nil, nil),
-		requestUserInputMetaTool(),
-		turnStateMetaTool(),
-		updatePlanMetaTool(),
-		intermediateAnswerMetaTool(),
-		finalAnswerMetaTool(),
-	}
-	if includeToolCaller {
-		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil))
-	}
-	return tools
-}
-
 func updatePlanMetaTool() llmadapter.Tool {
 	parameters := map[string]interface{}{
 		"type": "object",
@@ -190,7 +140,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the user-visible outcome contract when its structure changes, or patch existing phases after the goal or route changes. Joint outcomes and plan preserve both contracts: bind each phase with outcome_id, or supply equally sized ordered arrays to pair them by position. Use phase_updates for server-owned phases before a projected external Action; the server preserves hidden attestations and maintains projected bindings automatically. Ordinary tool success is reconciled automatically and must not trigger this tool.",
+			Description: "Change the plan for this turn when the user's goal or the required outcomes change. Give exactly one of outcomes, plan, or phase_updates. The runtime records tool results and keeps binding data itself; do not call this after a successful tool call.",
 			Parameters:  parameters,
 		},
 	}
@@ -201,7 +151,7 @@ func phaseUpdateSchema() map[string]interface{} {
 	item["required"] = []string{"id"}
 	return map[string]interface{}{
 		"type":        "array",
-		"description": "Patch existing phases by exact ID after the goal or route changes. Unmentioned phases and all server-owned binding data remain unchanged; prefer this before a projected external Action expected_action binding.",
+		"description": "Patch existing phases by ID; other phases stay unchanged.",
 		"minItems":    1,
 		"maxItems":    16,
 		"items":       item,
@@ -215,23 +165,6 @@ func evidenceMapCopy(value interface{}) map[string]interface{} {
 		out[key] = item
 	}
 	return out
-}
-
-func loadSkillMetaTool(skillIDs []string) llmadapter.Tool {
-	return llmadapter.Tool{
-		Type: "function",
-		Function: llmadapter.Function{
-			Name:        MetaToolLoadSkill,
-			Description: "Load the full instructions for an enabled skill before using that skill.",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"skill_id": stringSchema("The enabled skill ID to load.", skillIDs),
-				},
-				"required": []string{"skill_id"},
-			},
-		},
-	}
 }
 
 func readReferenceMetaTool(skillIDs []string, paths []string) llmadapter.Tool {
@@ -257,47 +190,47 @@ func requestUserInputMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolRequestUserInput,
-			Description: "Ask the user up to five concise questions and pause this turn until they answer. Provide options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; the user can always type freely. Use this only when missing information or ambiguity blocks reliable progress.",
+			Description: "Ask the user up to five short questions and pause the turn until they answer. Use it only when missing information blocks reliable progress.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"message": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional user-visible explanation shown as the assistant message alongside the questions. Use this to briefly explain what has been checked, why user input is needed, and what will happen next. Do not include internal tool names, JSON, IDs, or parameter names.",
+						"description": "Shown with the questions: what you checked, why you need the answer, and what happens next.",
 						"maxLength":   2000,
 					},
 					"questions": map[string]interface{}{
 						"type":        "array",
-						"description": "One to five user-visible questions. Prefer one to three questions, and only ask what blocks reliable progress.",
+						"description": "One to five questions; prefer one to three.",
 						"maxItems":    5,
 						"items": map[string]interface{}{
 							"type": "object",
 							"properties": map[string]interface{}{
 								"id": map[string]interface{}{
 									"type":        "string",
-									"description": "Optional stable short identifier for the question. This is not shown to the user.",
+									"description": "Optional short ID, not shown.",
 									"maxLength":   80,
 								},
 								"question": map[string]interface{}{
 									"type":        "string",
-									"description": "The natural-language question to show to the user.",
+									"description": "The question.",
 									"maxLength":   1000,
 								},
 								"options": map[string]interface{}{
 									"type":        "array",
-									"description": "Optional concrete quick replies for this question. Every option must be a definite answer that can be used directly. Omit options for open-ended or uncertain questions.",
+									"description": "Optional quick replies, each a definite answer. Never add vague ones such as Other or Not sure; the user can always type.",
 									"maxItems":    5,
 									"items": map[string]interface{}{
 										"type": "object",
 										"properties": map[string]interface{}{
 											"label": map[string]interface{}{
 												"type":        "string",
-												"description": "Short user-visible option label containing a concrete answer, not a vague placeholder such as Other or Freestyle.",
+												"description": "The answer.",
 												"maxLength":   80,
 											},
 											"description": map[string]interface{}{
 												"type":        "string",
-												"description": "Optional short explanation for this option.",
+												"description": "Optional short explanation.",
 												"maxLength":   200,
 											},
 										},
@@ -320,13 +253,13 @@ func turnStateMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolTurnState,
-			Description: "Record concise structured state for this same AIChat turn. Use this as a state handoff before approvals, page navigation, refresh, or another phase when implicit working memory may become unreliable. Tool-produced files and resource results are recorded automatically; reference their IDs, digest, and concise summary instead of copying full documents or configuration payloads. Use working_fact for model-only derived facts that later steps must reuse exactly. Use user_deliverable only when content should also be visible to the user; submit_intermediate_answer remains a compatibility shortcut for that case.",
+			Description: "Keep short structured state for this turn so it survives an approval, a question to the user, page navigation, or another pause. Files and tool results are recorded automatically: refer to their IDs and a short summary instead of copying them. Use working_fact for derived facts later steps must reuse exactly, and user_deliverable only for content the user should also see.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"items": map[string]interface{}{
 						"type":        "array",
-						"description": "One to eight structured turn-state items.",
+						"description": "One to eight items.",
 						"minItems":    1,
 						"maxItems":    8,
 						"items": map[string]interface{}{
@@ -339,37 +272,37 @@ func turnStateMetaTool() llmadapter.Tool {
 								},
 								"visibility": map[string]interface{}{
 									"type":        "string",
-									"description": "Use model_only for internal state; use user_visible only for user-facing deliverables.",
+									"description": "model_only for internal state, user_visible for deliverables.",
 									"enum":        []string{"model_only", "user_visible", "audit"},
 								},
 								"key": map[string]interface{}{
 									"type":        "string",
-									"description": "Stable short key for later reuse, for example agent_theme or selected_file_content.",
+									"description": "Short key for later reuse.",
 									"maxLength":   120,
 								},
 								"value": map[string]interface{}{
 									"type":        "string",
-									"description": "The concise fact, decision, assumption, verification result, or structured reference serialized as short JSON. Keep exact short user-derived values exact; never copy full documents or complete configuration payloads.",
+									"description": "The fact, decision or reference, as short text or JSON. Keep user-given values exact; never copy whole documents.",
 									"maxLength":   1024,
 								},
 								"title": map[string]interface{}{
 									"type":        "string",
-									"description": "Short user-facing title when kind is user_deliverable.",
+									"description": "Title of a user_deliverable.",
 									"maxLength":   120,
 								},
 								"content": map[string]interface{}{
 									"type":        "string",
-									"description": "Concise Markdown content when kind is user_deliverable. Save full documents as artifacts and reference them by file ID instead.",
+									"description": "Short Markdown of a user_deliverable; refer to files by ID.",
 									"maxLength":   1024,
 								},
 								"source": map[string]interface{}{
 									"type":        "string",
-									"description": "Optional source, such as file-reader/read_file or page_context.",
+									"description": "Optional source.",
 									"maxLength":   200,
 								},
 								"used_for": map[string]interface{}{
 									"type":        "array",
-									"description": "Optional later use labels, such as agent.name or agent.prompt.",
+									"description": "Optional labels for where it is used.",
 									"maxItems":    8,
 									"items": map[string]interface{}{
 										"type":      "string",
@@ -378,7 +311,7 @@ func turnStateMetaTool() llmadapter.Tool {
 								},
 								"confidence": map[string]interface{}{
 									"type":        "number",
-									"description": "Optional confidence from 0 to 1.",
+									"description": "Optional, 0 to 1.",
 									"minimum":     0,
 									"maximum":     1,
 								},
@@ -393,90 +326,30 @@ func turnStateMetaTool() llmadapter.Tool {
 	}
 }
 
-func intermediateAnswerMetaTool() llmadapter.Tool {
-	return llmadapter.Tool{
-		Type: "function",
-		Function: llmadapter.Function{
-			Name:        MetaToolIntermediateAnswer,
-			Description: "Submit a substantial new intermediate answer or draft that should be visible to the user before continuing with more skill/tool calls. Do not use this to repeat content that was already visible in an earlier assistant answer; for export/save/convert/file-generation requests, pass the existing content directly to the relevant tool instead.",
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"title": map[string]interface{}{
-						"type":        "string",
-						"description": "A short title for the intermediate answer, such as Novel outline or Draft plan.",
-					},
-					"content": map[string]interface{}{
-						"type":        "string",
-						"description": "The markdown content of the intermediate answer or draft.",
-					},
-				},
-				"required": []string{"content"},
-			},
-		},
-	}
-}
-
-func finalAnswerMetaTool() llmadapter.Tool {
-	return finalAnswerMetaToolWithOptions(MetaToolOptions{})
-}
-
-func finalAnswerMetaToolWithOptions(options MetaToolOptions) llmadapter.Tool {
-	description := "Submit the final user-facing answer and end the current skill loop when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. A plan snapshot is optional audit metadata and never determines whether the answer is accepted."
-	required := []string{"answer"}
-	if options.RequireFinalPlanSnapshot {
-		description = "Submit the final user-facing answer and the latest execution plan snapshot in the same call when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. The plan is required for synchronization but remains advisory and never determines whether the answer is accepted."
-		required = append(required, "plan")
-	}
-	return llmadapter.Tool{
-		Type: "function",
-		Function: llmadapter.Function{
-			Name:        MetaToolFinalAnswer,
-			Description: description,
-			Parameters: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"answer": map[string]interface{}{
-						"type":        "string",
-						"description": "The complete final answer shown to the user, in the same language as the latest user request.",
-					},
-					"explanation": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional concise explanation for the final plan update. This is audit metadata and is not shown as the answer.",
-						"maxLength":   500,
-					},
-					"plan": planSnapshotSchema(),
-				},
-				"required": required,
-			},
-		},
-	}
-}
-
 func planSnapshotSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type":        "array",
-		"description": "Execution plan snapshot used when the requested outcome structure changes. Before a projected external Action it is the required completeness ledger; preserve required outcome phases and expected_action hints. Projected bindings and hidden attestations are created and maintained by the server.",
+		"description": "The full list of phases. Keep required phases and their expected_action.",
 		"maxItems":    16,
 		"items": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"id":         map[string]interface{}{"type": "string"},
-				"outcome_id": map[string]interface{}{"type": "string", "description": "Outcome served by this phase. In a joint snapshot, every outcome must have a phase. If all IDs are omitted, equally sized outcome and plan arrays pair by position."},
+				"outcome_id": map[string]interface{}{"type": "string", "description": "The outcome this phase serves."},
 				"step":       map[string]interface{}{"type": "string"},
 				"status":     map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
 				"completion_mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"tool", "final_answer", "non_tool"},
-					"description": "Classify a phase that intentionally has no expected_action as final-answer-only or non-tool work. Use tool when expected_action is present.",
+					"description": "tool when expected_action is set; otherwise final_answer or non_tool.",
 				},
-				"evidence_refs": map[string]interface{}{"type": "array", "description": "Completed tool phases require references to successful runtime evidence, such as tool:skill-id/tool_name or the exact invocation_id from the evidence ledger. A note or a claimed status is not execution evidence.", "items": map[string]interface{}{"type": "string"}},
+				"evidence_refs": map[string]interface{}{"type": "array", "description": "Required for a completed tool phase: tool:skill-id/tool_name or the invocation_id of a successful call.", "items": map[string]interface{}{"type": "string"}},
 				"note":          map[string]interface{}{"type": "string"},
 				"expected_action": map[string]interface{}{
 					"type":        "object",
-					"description": "Optional structured action expected to complete this phase. For a projected external Action, provide its exact exposed tool_name and stable target IDs when known; server-owned binding identity and attestations cannot be created or changed by this field.",
+					"description": "The tool call expected to complete this phase.",
 					"properties": map[string]interface{}{
-						"skill_id":  map[string]interface{}{"type": "string", "description": "Optional for a projected external Action; required for ordinary skill tools."},
+						"skill_id":  map[string]interface{}{"type": "string", "description": "Required for skill tools."},
 						"tool_name": map[string]interface{}{"type": "string"},
 						"target": map[string]interface{}{
 							"type":                 "object",
@@ -484,7 +357,7 @@ func planSnapshotSchema() map[string]interface{} {
 						},
 						"target_arguments": map[string]interface{}{
 							"type":                 "object",
-							"description":          "Optional stable Action target values keyed by their exact business-argument path (for example recipient_ref or calendar.id). The server keeps only paths authorized by the projected Action binding.",
+							"description":          "Stable target values keyed by argument path, such as calendar.id.",
 							"additionalProperties": map[string]interface{}{"type": "string"},
 						},
 					},
@@ -496,70 +369,6 @@ func planSnapshotSchema() map[string]interface{} {
 	}
 }
 
-func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, contracts []SkillToolArgumentContract) llmadapter.Tool {
-	description := "Call a tool allowed by a loaded skill after reading its instructions."
-	if len(pairs) > 0 {
-		description += " Allowed skill/tool pairs: " + strings.Join(pairs, "; ") + "."
-	}
-	argumentsSchema := map[string]interface{}{
-		"type":        "object",
-		"description": "Arguments for the selected skill tool. Pass an object that satisfies that exact skill/tool pair's parameters.",
-	}
-	parameters := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"skill_id":      stringSchema("The loaded skill ID that allows the tool.", skillIDs),
-			"tool_name":     stringSchema("The allowed tool name to call.", toolNames),
-			"plan_phase_id": map[string]interface{}{"type": "string", "description": "Optional outcome-phase ID. Include it only when this tool's successful result is sufficient to complete that phase; omit it for prerequisite reads, inspections, and helper calls."},
-			"completion_intent": map[string]interface{}{
-				"type":        "string",
-				"enum":        []string{"continue", "finalize_if_success"},
-				"description": "Use finalize_if_success only when this exact tool call is the final remaining user-requested effect and all prerequisites are already complete. It never bypasses approval or proves success by itself.",
-			},
-			"arguments": argumentsSchema,
-		},
-		"required": []string{"skill_id", "tool_name", "arguments"},
-	}
-	if branches := callSkillToolPairBranches(contracts); len(branches) > 0 {
-		parameters["oneOf"] = branches
-	}
-	return llmadapter.Tool{
-		Type: "function",
-		Function: llmadapter.Function{
-			Name:        MetaToolCallSkillTool,
-			Description: description,
-			Parameters:  parameters,
-		},
-	}
-}
-
-func callSkillToolPairBranches(contracts []SkillToolArgumentContract) []interface{} {
-	options := make([]interface{}, 0, len(contracts))
-	seen := make(map[string]struct{}, len(contracts))
-	for _, contract := range contracts {
-		skillID := normalizeSkillID(contract.SkillID)
-		toolName := strings.TrimSpace(contract.ToolName)
-		if skillID == "" || toolName == "" || len(contract.Schema) == 0 {
-			continue
-		}
-		key := skillID + "/" + toolName
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		options = append(options, map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"skill_id":  map[string]interface{}{"const": skillID},
-				"tool_name": map[string]interface{}{"const": toolName},
-				"arguments": contract.Schema,
-			},
-			"required": []string{"skill_id", "tool_name", "arguments"},
-		})
-	}
-	return options
-}
-
 func stringSchema(description string, values []string) map[string]interface{} {
 	schema := map[string]interface{}{
 		"type":        "string",
@@ -569,46 +378,6 @@ func stringSchema(description string, values []string) map[string]interface{} {
 		schema["enum"] = values
 	}
 	return schema
-}
-
-func resolvedSkillIDs(resolved *ResolvedSkills) []string {
-	if resolved == nil {
-		return nil
-	}
-	ids := make([]string, 0, len(resolved.Skills))
-	for _, doc := range resolved.Skills {
-		if id := normalizeSkillID(doc.Metadata.ID); id != "" {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	return ids
-}
-
-func normalizedLoadedSkillIDs(loadedSkillIDs map[string]struct{}) map[string]struct{} {
-	out := make(map[string]struct{}, len(loadedSkillIDs))
-	for raw := range loadedSkillIDs {
-		id := normalizeSkillID(raw)
-		if id != "" {
-			out[id] = struct{}{}
-		}
-	}
-	return out
-}
-
-func unloadedSkillIDs(resolved *ResolvedSkills, loaded map[string]struct{}) []string {
-	ids := resolvedSkillIDs(resolved)
-	if len(ids) == 0 || len(loaded) == 0 {
-		return ids
-	}
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if _, ok := loaded[normalizeSkillID(id)]; ok {
-			continue
-		}
-		out = append(out, id)
-	}
-	return out
 }
 
 func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string) {
@@ -643,78 +412,4 @@ func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}
 	sort.Strings(skillIDs)
 	sort.Strings(paths)
 	return skillIDs, paths
-}
-
-func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []SkillToolArgumentContract) {
-	if resolved == nil || len(loaded) == 0 {
-		return nil, nil, nil, nil
-	}
-	skillSeen := map[string]struct{}{}
-	toolSeen := map[string]struct{}{}
-	skillIDs := []string{}
-	toolNames := []string{}
-	pairs := []string{}
-	contracts := []SkillToolArgumentContract{}
-	for _, doc := range resolved.Skills {
-		skillID := normalizeSkillID(doc.Metadata.ID)
-		if _, ok := loaded[skillID]; !ok || len(doc.Tools) == 0 {
-			continue
-		}
-		if _, exists := skillSeen[skillID]; !exists {
-			skillSeen[skillID] = struct{}{}
-			skillIDs = append(skillIDs, skillID)
-		}
-		docToolNames := make([]string, 0, len(doc.Tools))
-		for _, tool := range doc.Tools {
-			name := strings.TrimSpace(tool.Name)
-			if name == "" {
-				continue
-			}
-			docToolNames = append(docToolNames, name)
-			if _, exists := toolSeen[name]; !exists {
-				toolSeen[name] = struct{}{}
-				toolNames = append(toolNames, name)
-			}
-			if len(tool.InputSchema) > 0 {
-				modelSchema := tools.ModelVisibleJSONSchema(tool.InputSchema)
-				if len(modelSchema) == 0 {
-					modelSchema = map[string]interface{}{
-						"type":                 "object",
-						"properties":           map[string]interface{}{},
-						"additionalProperties": false,
-					}
-				}
-				contracts = append(contracts, SkillToolArgumentContract{
-					SkillID:     skillID,
-					ToolName:    name,
-					Description: tool.RuntimeDescription,
-					Schema:      modelSchema,
-				})
-			} else if contract, ok := SkillToolArgumentContractFor(skillID, name); ok {
-				contracts = append(contracts, contract)
-			} else {
-				contracts = append(contracts, SkillToolArgumentContract{
-					SkillID:  skillID,
-					ToolName: name,
-					Schema: map[string]interface{}{
-						"type":        "object",
-						"description": "Arguments for a skill tool that does not expose a structured argument schema.",
-					},
-				})
-			}
-		}
-		sort.Strings(docToolNames)
-		if len(docToolNames) > 0 {
-			pairs = append(pairs, skillID+": "+strings.Join(docToolNames, ", "))
-		}
-	}
-	sort.Strings(skillIDs)
-	sort.Strings(toolNames)
-	sort.Strings(pairs)
-	sort.Slice(contracts, func(i, j int) bool {
-		left := contracts[i].SkillID + "/" + contracts[i].ToolName
-		right := contracts[j].SkillID + "/" + contracts[j].ToolName
-		return left < right
-	})
-	return skillIDs, toolNames, pairs, contracts
 }

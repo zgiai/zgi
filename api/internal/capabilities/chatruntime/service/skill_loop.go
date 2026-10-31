@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -26,8 +25,6 @@ import (
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
-
-var agentManagementSkillIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func (p *PreparedChat) toolLoopEnabled() bool {
 	return p != nil && chatPartsToolLoopEnabled(p.parts)
@@ -126,28 +123,27 @@ func (s *service) runPreparedToolLoop(
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
-	nativeLoop := isNativeExecutionMode(prepared.parts.ExecutionMode)
-	preferExplicitFinalAnswer := !nativeLoop && skillLoopPrefersExplicitFinalAnswer(prepared) && !prepared.TerminalOnly
+	// Every tool loop is the native loop (ADR 0046).
+	nativeLoop := true
 	if prepared.Message.Metadata == nil {
 		prepared.Message.Metadata = map[string]interface{}{}
 	}
-	if nativeLoop {
-		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
-	} else if prepared.TerminalOnly {
-		prepared.Message.Metadata["final_answer_protocol"] = "terminal_assistant_content"
-	} else if preferExplicitFinalAnswer {
-		prepared.Message.Metadata["final_answer_protocol"] = skills.MetaToolFinalAnswer + "_preferred"
-	} else {
-		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
-	}
+	prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
 	authorizeSkillStep := s.currentAgentSkillStepAuthorizer(prepared)
 	additionalSystemMessages := skillLoopAdditionalSystemMessagesForResolved(prepared, resolved)
+	// The memory rules and the builder's memory instructions change only with
+	// the Agent's configuration, so the native loop keeps them in the system
+	// prompt, where providers cache them.
+	systemPromptAdditions := []adapter.Message{}
+	if unifiedSkillDispatchEnabled() && skills.HasNonResidentSkill(resolved) {
+		systemPromptAdditions = append(systemPromptAdditions, unifiedSkillDispatchSystemMessage())
+	}
 	if len(runtimeTools) > 0 {
 		proactiveAllowed := prepared.parts.AgentMemoryAutoExtractionEnabled && globalAgentMemoryAutoExtractionEnabled()
 		if hasAgentMemoryRuntimeTool(runtimeTools) {
-			additionalSystemMessages = append(additionalSystemMessages, agentmemoryruntime.FilePolicyMessage(proactiveAllowed))
+			systemPromptAdditions = append(systemPromptAdditions, agentmemoryruntime.FilePolicyMessage(proactiveAllowed))
 			if instructions := agentmemoryruntime.InstructionsMessage(prepared.parts.AgentMemoryInstructions); instructions != nil {
-				additionalSystemMessages = append(additionalSystemMessages, *instructions)
+				systemPromptAdditions = append(systemPromptAdditions, *instructions)
 			}
 		}
 	}
@@ -166,7 +162,7 @@ func (s *service) runPreparedToolLoop(
 		if len(nativeConnectorTools) > 0 {
 			directTools = skills.RankNativeToolProjections(append(directTools, nativeConnectorTools...), prepared.parts.Query)
 		}
-		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, additionalSystemMessages)
+		budgetTokens, budgetChars, estimateNativeTokens := s.nativeSkillProjectionBudget(prepared, resolved, append(append([]adapter.Message(nil), additionalSystemMessages...), systemPromptAdditions...))
 		reservedNativeToolNames := nativeProjectionReservedToolNames(runtimeTools)
 		toolSetOptions := skills.NativeToolSetOptions{
 			TenantID:          prepared.Scope.OrganizationID.String(),
@@ -176,6 +172,7 @@ func (s *service) runPreparedToolLoop(
 			AuthorizeSkill:    authorizeSkillStep,
 			EstimateTokens:    estimateNativeTokens,
 			ReservedToolNames: reservedNativeToolNames,
+			UnifiedDispatch:   unifiedSkillDispatchEnabled(),
 		}
 		protocol := nativeSkillProtocolForPrepared(prepared)
 		prepared.Message.Metadata["native_skill_protocol"] = protocol
@@ -184,7 +181,7 @@ func (s *service) runPreparedToolLoop(
 			nativeToolSet = &projected
 			prepared.Message.Metadata["native_skill_diagnostics"] = nativeSkillDiagnostics(projected)
 		} else if protocol == skills.NativeSkillProtocolProgressiveV1 {
-			initialSkillIDs := nativeInitialActiveSkillIDs(prepared, resolved)
+			initialSkillIDs := nativeSkillIDsWithout(nativeInitialActiveSkillIDs(prepared, resolved), skills.ResidentSkillIDs(resolved))
 			for _, projection := range directTools {
 				initialSkillIDs = appendUniqueNativeSkillID(initialSkillIDs, projection.Binding.SkillID)
 			}
@@ -207,6 +204,7 @@ func (s *service) runPreparedToolLoop(
 				toolSetOptions.BudgetChars = max(1, toolSetOptions.BudgetChars-len([]rune(content)))
 			}
 			nativeSkillSession = skills.NewNativeSkillSession(s.skillRuntime, projectionResolved, catalog, toolSetOptions)
+			nativeSkillSession.ActivateResident(ctx, "runtime_resident")
 			nativeSkillSession.Activate(ctx, initialSkillIDs, "runtime_preload")
 			projectNativeDirectToolsToSession(nativeSkillSession, directTools, reservedNativeToolNames, estimateNativeTokens)
 			projected := nativeSkillSession.ToolSet()
@@ -244,25 +242,20 @@ func (s *service) runPreparedToolLoop(
 	runtimeStateSnapshot := skillLoopRuntimeStateSnapshot(prepared)
 	onTerminalStateGuardDecision := skillLoopTerminalStateGuardDecision(prepared)
 	onTerminalCompletion := skillLoopTerminalCompletionResult(prepared)
-	if prepared.parts.ExecutionMode == executionModeLegacyToolChat {
-		runtimeStateSnapshot = nil
-		onTerminalStateGuardDecision = nil
-		onTerminalCompletion = nil
-	}
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
-		ProtocolToolsOnly:              len(resolved.Skills) == 0 && len(runtimeTools) == 0,
-		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
-		NativeAgentLoop:                nativeLoop,
+		OmitPlanningTools:              nativeLoop && !skills.HasNonResidentSkill(resolved),
+		UnifiedSkillDispatch:           nativeLoop && unifiedSkillDispatchEnabled(),
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
+		OnTurnUserContent:              func(content interface{}) { prepared.turnUserContent = content },
 		RuntimeTools:                   runtimeTools,
 		PlatformModel:                  platformModel,
 		ExecutionContext:               executionContext,
-		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
 		AdditionalSystemMessages:       additionalSystemMessages,
+		SystemPromptAdditions:          systemPromptAdditions,
 		RuntimeStateSnapshot:           runtimeStateSnapshot,
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
 		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
@@ -343,10 +336,6 @@ func projectNativeDirectToolsToSession(
 		ReservedToolNames: reservedToolNames,
 		EstimateTokens:    estimateTokens,
 	})
-}
-
-func nativeToolSetHasActiveSkill(toolSet skills.NativeToolSet, skillID string) bool {
-	return containsNativeSkillID(toolSet.ActiveSkillIDs, skillID)
 }
 
 func containsNativeSkillID(values []string, skillID string) bool {
@@ -589,29 +578,12 @@ func nativeInitialActiveSkillIDs(prepared *PreparedChat, resolved *skills.Resolv
 		}
 	}
 	if prepared.parts != nil {
+		for _, skillID := range prepared.parts.RecentSkillIDs {
+			appendID(skillID)
+		}
 		if strategy := contextualAIChatTurnStrategyFromParts(prepared.parts); strategy != nil {
 			for _, planned := range strategy.PlannedTools {
 				appendID(planned.SkillID)
-			}
-		}
-		query := strings.ToLower(strings.TrimSpace(prepared.parts.Query))
-		if query != "" && resolved != nil {
-			nameCounts := make(map[string]int, len(resolved.Skills))
-			for _, doc := range resolved.Skills {
-				if name := strings.ToLower(strings.TrimSpace(doc.Metadata.Name)); name != "" {
-					nameCounts[name]++
-				}
-			}
-			for _, doc := range resolved.Skills {
-				skillID := strings.ToLower(strings.TrimSpace(doc.Metadata.ID))
-				if len([]rune(skillID)) >= 3 && strings.Contains(query, skillID) {
-					appendID(doc.Metadata.ID)
-					continue
-				}
-				name := strings.ToLower(strings.TrimSpace(doc.Metadata.Name))
-				if nameCounts[name] == 1 && len([]rune(name)) >= 3 && strings.Contains(query, name) {
-					appendID(doc.Metadata.ID)
-				}
 			}
 		}
 	}
@@ -801,6 +773,10 @@ func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(c
 		if err != nil || !allowed {
 			return allowed, err
 		}
+		// The time Skill is inherent to every tool run, not a binding (ADR 0043).
+		if strings.EqualFold(strings.TrimSpace(skillID), skills.SkillTime) {
+			return true, nil
+		}
 		// Runtime-managed hidden Skills are derived from their concrete resource
 		// bindings and are checked again by Tool Governance before invocation.
 		if skills.SystemSkillExposureProfile(skillID).RuntimeManaged {
@@ -933,19 +909,6 @@ func skillLoopHasOperationPlan(prepared *PreparedChat) bool {
 		return false
 	}
 	return len(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) > 0
-}
-
-func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
-	if prepared == nil {
-		return false
-	}
-	if prepared.parts != nil && prepared.parts.ExecutionMode == executionModeLegacyToolChat {
-		return false
-	}
-	if isAutonomousSubjectCaller(prepared.Caller.Type) {
-		return false
-	}
-	return skillLoopHasOperationPlan(prepared)
 }
 
 func skillLoopTerminalCompletionResult(prepared *PreparedChat) func(skillloop.TerminalCompletionResult) {
@@ -1662,168 +1625,6 @@ func operationPlanCompactOutcomesForPrompt(value interface{}, limit int) []inter
 	return out
 }
 
-func operationPlanCompactStructuredPlanForPrompt(value interface{}, limit int) map[string]interface{} {
-	plan := mapFromOperationContext(value)
-	if len(plan) == 0 || limit <= 0 {
-		return nil
-	}
-	out := map[string]interface{}{}
-	for _, key := range []string{
-		"schema_version",
-		"domain",
-		"intent",
-		"target",
-		"status",
-		"if_blocked",
-	} {
-		if text := strings.TrimSpace(stringFromAny(plan[key])); text != "" {
-			out[key] = compactForPrompt(text, 500)
-		}
-	}
-	for _, key := range []string{"requires_approval", "read_before_write"} {
-		if value, ok := plan[key].(bool); ok {
-			out[key] = value
-		}
-	}
-	if counts := mapFromOperationContext(plan["operation_counts"]); len(counts) > 0 {
-		out["operation_counts"] = counts
-	}
-	if operations := operationPlanCompactStructuredOperationsForPrompt(plan["operations"], limit); len(operations) > 0 {
-		out["operations"] = operations
-	}
-	if goals := operationPlanCompactCapabilityGoals(plan["capability_goals"], 6); len(goals) > 0 {
-		out["capability_goals"] = goals
-	}
-	if criteria := stringSliceFromAny(plan["completion_criteria"]); len(criteria) > 0 {
-		out["completion_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
-	}
-	if warnings := stringSliceFromAny(plan["validation_warnings"]); len(warnings) > 0 {
-		out["validation_warnings"] = compactStringSliceForPrompt(warnings, 8, 240)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func operationPlanCompactStructuredOperationsForPrompt(value interface{}, limit int) []interface{} {
-	operations := mapSliceFromAny(value)
-	if len(operations) == 0 || limit <= 0 {
-		return nil
-	}
-	out := make([]interface{}, 0, minInt(len(operations), limit))
-	for _, operation := range operations {
-		if len(out) >= limit {
-			break
-		}
-		compact := map[string]interface{}{}
-		for _, key := range []string{
-			"action",
-			"resource_type",
-			"resource_name",
-			"effect",
-			"if_missing",
-			"status",
-			"last_invocation_id",
-			"last_invocation_kind",
-			"goal",
-			"error",
-		} {
-			if text := strings.TrimSpace(stringFromAny(operation[key])); text != "" {
-				compact[key] = compactForPrompt(text, 500)
-			}
-		}
-		if fields := stringSliceFromAny(operation["fields"]); len(fields) > 0 {
-			compact["fields"] = compactStringSliceForPrompt(fields, 8, 160)
-		}
-		if group := mapFromOperationContext(operation["operation_group"]); len(group) > 0 {
-			compact["operation_group"] = operationPlanCompactOperationGroup(group)
-		}
-		if items := operationPlanCompactOperationItems(operation["item_steps"], 20); len(items) > 0 {
-			compact["item_steps"] = items
-		}
-		if len(compact) > 0 {
-			out = append(out, compact)
-		}
-	}
-	return out
-}
-
-func cleanStringAnyStringMap(values map[string]interface{}) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := map[string]string{}
-	for key, value := range values {
-		key = strings.TrimSpace(key)
-		text := strings.TrimSpace(stringFromAny(value))
-		if key == "" || text == "" {
-			continue
-		}
-		out[key] = text
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func operationPlanCompactStepsForPrompt(value interface{}, limit int) []interface{} {
-	steps := mapSliceFromAny(value)
-	if len(steps) == 0 || limit <= 0 {
-		return nil
-	}
-	promptSteps := operationPlanPromptSteps(steps, limit)
-	out := make([]interface{}, 0, len(promptSteps))
-	for _, step := range promptSteps {
-		item := map[string]interface{}{}
-		for _, key := range []string{"id", "title", "status", "skill_id", "tool_name"} {
-			if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
-				item[key] = compactForPrompt(value, 180)
-			}
-		}
-		if index := intValueFromAny(step["sequence_index"]); index > 0 {
-			item["sequence_index"] = index
-		}
-		if target := mapFromOperationContext(step["asset_target"]); len(target) > 0 {
-			item["asset_target"] = target
-		}
-		if goal := strings.TrimSpace(stringFromAny(step[operationPlanConfigGoalKey])); goal != "" {
-			item[operationPlanConfigGoalKey] = compactForPrompt(goal, 240)
-		}
-		if len(item) > 0 {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func skillLoopCompletionPlanDeviations(value interface{}, limit int) []interface{} {
-	deviations := mapSliceFromAny(value)
-	if len(deviations) == 0 || limit <= 0 {
-		return nil
-	}
-	out := make([]interface{}, 0, minInt(len(deviations), limit))
-	for _, item := range deviations {
-		if len(out) >= limit {
-			break
-		}
-		compact := map[string]interface{}{}
-		for _, key := range []string{"skill_id", "tool_name", "reason", "outcome"} {
-			if value, ok := item[key]; ok && value != nil {
-				compact[key] = value
-			}
-		}
-		if target := mapFromOperationContext(item["asset_target"]); len(target) > 0 {
-			compact["asset_target"] = target
-		}
-		if len(compact) > 0 {
-			out = append(out, compact)
-		}
-	}
-	return out
-}
-
 func skillLoopCompletionToolResults(invocations []map[string]interface{}, limit int) []interface{} {
 	if len(invocations) == 0 || limit <= 0 {
 		return nil
@@ -2020,7 +1821,7 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		MessageID:          prepared.Message.ID.String(),
 		InvokeFrom:         invokeFrom,
 		RuntimeParameters:  runtimeParameters,
-		Timezone:           strings.TrimSpace(prepared.RunConfig.UserTimezone),
+		Timezone:           preparedUserTimezone(prepared),
 	}
 	if s == nil {
 		return executionContext
@@ -2373,10 +2174,6 @@ func preparedSkillWorkspaceID(prepared *PreparedChat) string {
 	return ""
 }
 
-func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message {
-	return skillLoopAdditionalSystemMessagesForResolved(prepared, nil)
-}
-
 func skillLoopAdditionalSystemMessagesForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) []adapter.Message {
 	if prepared == nil {
 		return nil
@@ -2473,26 +2270,6 @@ func aiChatTurnStrategyModelDecidesTools(strategy *AIChatTurnStrategy) bool {
 	return strings.EqualFold(strings.TrimSpace(strategy.ToolChoiceMode), aiChatTurnToolChoiceModelDecides)
 }
 
-func operationPlanModelDecidesTools(plan map[string]interface{}) bool {
-	if len(plan) == 0 {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(plan["tool_choice_mode"])), aiChatTurnToolChoiceModelDecides)
-}
-
-func skillLoopModelDecidesToolChoice(prepared *PreparedChat) bool {
-	if prepared == nil {
-		return false
-	}
-	if prepared.Message != nil {
-		plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
-		if len(plan) > 0 {
-			return operationPlanModelDecidesTools(plan)
-		}
-	}
-	return aiChatTurnStrategyModelDecidesTools(contextualAIChatTurnStrategy(prepared))
-}
-
 // AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
 // It is guidance for the skill loop, not an executable action plan.
 type AIChatTurnStrategy struct {
@@ -2522,8 +2299,6 @@ type AIChatTurnStrategy struct {
 	ObservationPoints        []string                    `json:"observation_points"`
 	ArtifactSource           string                      `json:"artifact_source,omitempty"`
 	ToolChoiceMode           string                      `json:"tool_choice_mode,omitempty"`
-	ExecutionScope           string                      `json:"execution_scope,omitempty"`
-	WaitForContinue          bool                        `json:"wait_for_continue,omitempty"`
 	Avoid                    []string                    `json:"avoid,omitempty"`
 	CapabilityGoals          []AIChatAgentCapabilityGoal `json:"capability_goals,omitempty"`
 
@@ -2571,10 +2346,6 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) || !chatPartsBusinessSkillsEnabled(parts) {
 		return nil
 	}
-	strategyParts, stagedCurrent, stagedResume := stagedExecutionScopedParts(parts)
-	if strategyParts != nil {
-		parts = strategyParts
-	}
 	currentPage := contextualTurnCurrentPage(parts)
 	strategy := &AIChatTurnStrategy{
 		Surface:          normalizeAIChatSurface(parts.Surface),
@@ -2597,52 +2368,6 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		ObservationPoints: []string{"current_page_context"},
 		ToolChoiceMode:    aiChatTurnToolChoiceModelDecides,
 	}
-	if stagedCurrent {
-		strategy.ExecutionScope = "current_turn_before_continue"
-		strategy.WaitForContinue = true
-		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
-			"complete only the instructions before the user's continue marker in this turn",
-			"wait for the user's continue message before executing deferred instructions",
-		)
-		strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-			"do not execute instructions after the user's continue marker in this turn",
-		)
-	} else if stagedResume {
-		strategy.ExecutionScope = "staged_goal_after_continue"
-		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
-			"execute the deferred instructions from the prior staged goal",
-		)
-	}
-
-	// Continuation is a turn protocol command, not a business-domain intent.
-	// It must win over stale or broad model intents because approve/retry/refresh
-	// resumes should continue the frozen task state instead of starting a new
-	// asset-management turn.
-	if stagedResume || partsRequestsContinuationWithFallback(parts, "") {
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceTurnProtocol, "continuation_query_rule")
-		strategy = contextualContinuationStrategy(parts, strategy)
-		return finalizeAIChatTurnStrategy(parts, strategy)
-	}
-
-	if modelIntent := parts.ModelTurnIntent; modelIntent != nil {
-		if modeled, ok := contextualAIChatTurnStrategyFromModelIntent(parts, strategy, modelIntent); ok {
-			return finalizeAIChatTurnStrategy(parts, modeled)
-		}
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceModelIntent, "model_intent_not_accepted_"+strings.TrimSpace(modelIntent.Intent))
-		strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
-		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
-		}
-		return finalizeAIChatTurnStrategy(parts, strategy)
-	}
-
-	if stagedCurrent {
-		if len(consoleNavigationResolvedTargetsForParts(parts)) > 0 {
-			strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceTurnProtocol, "staged_current_navigation_scope")
-			return finalizeAIChatTurnStrategy(parts, contextualNavigationStrategy(parts, strategy))
-		}
-	}
-
 	strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceDefault, "main_model_contextual_task")
 	strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
 	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
@@ -2699,24 +2424,6 @@ func enrichAIChatTurnStrategyPlannedTools(parts *chatRequestParts, strategy *AIC
 func appendAgentManagementModelDecidesGuidance(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
 	if parts == nil || strategy == nil || !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
 		return strategy
-	}
-	capabilityGoals := agentManagementCapabilityGoalsFromModelIntent(parts.ModelTurnIntent)
-	if len(capabilityGoals) > 0 {
-		strategy.CapabilityGoals = appendAgentCapabilityGoals(strategy.CapabilityGoals, capabilityGoals...)
-		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, agentCapabilityGoalSuccessCriteria(capabilityGoals)...)
-		if agentManagementCapabilityGoalsNeedSkillCandidateLookup(strategy.CapabilityGoals) {
-			strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-				"do not treat system_prompt or file_upload_enabled alone as proof of a skill-backed Agent capability; resolve and bind a matching Skill, then verify enabled_skill_ids",
-			)
-		}
-	}
-	if agentManagementNeedsFileReadPrecondition(parts) {
-		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileReader)
-		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
-			"when the Agent task depends on file content, read the requested file before deriving Agent name, prompt, or configuration",
-			"use the file-reader/read_file result as the source evidence for downstream Agent edits instead of page metadata or guessed content",
-		)
-		strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "files_page_visible_list", "read_file_result")
 	}
 	if agentManagementStrategyNeedsAvailableModelResolution(strategy) {
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
@@ -2797,161 +2504,6 @@ func aiChatTurnStrategyHasPlannedTool(strategy *AIChatTurnStrategy, skillID stri
 	return false
 }
 
-func agentManagementNeedsFileReadPrecondition(parts *chatRequestParts) bool {
-	if parts == nil || !skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) {
-		return false
-	}
-	if !modelTurnIntentHasRecommendedCapability(parts.ModelTurnIntent, "visible_file_content", "file_content", "source_file_content") {
-		return false
-	}
-	if consoleFilesRouteAlreadyAvailable(parts) {
-		return true
-	}
-	return modelTurnIntentHasRecommendedCapability(parts.ModelTurnIntent, "page_navigation")
-}
-
-func agentManagementCurrentAgentIDFromParts(parts *chatRequestParts) string {
-	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		return ""
-	}
-	if agentID := agentIDFromConsoleAgentPageRoute(contextualTurnCurrentPage(parts)); agentID != "" {
-		return agentID
-	}
-	agents := consoleAgentsPromptVisibleAgents(parts)
-	selectedID := ""
-	selectedCount := 0
-	for _, agent := range agents {
-		selected, _ := agent["selected"].(bool)
-		if !selected {
-			continue
-		}
-		if id := strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"], agent["resource_id"])); id != "" {
-			selectedID = id
-			selectedCount++
-		}
-	}
-	if selectedCount == 1 {
-		return selectedID
-	}
-	return ""
-}
-
-func agentManagementModelIntentResolvesVisibleTarget(parts *chatRequestParts) bool {
-	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		return false
-	}
-	if parts.ModelTurnIntent == nil || parts.ModelTurnIntent.TargetVisibleIndex <= 0 {
-		return false
-	}
-	if len(consoleAgentsPromptVisibleAgents(parts)) == 0 {
-		return false
-	}
-	return true
-}
-
-func appendPlannedToolWithStep(strategy *AIChatTurnStrategy, skillID string, toolName string, arguments map[string]string, stepID string, waitForStepID string) *AIChatTurnStrategy {
-	if strategy == nil {
-		return strategy
-	}
-	skillID = strings.TrimSpace(skillID)
-	toolName = strings.TrimSpace(toolName)
-	if skillID == "" || toolName == "" {
-		return strategy
-	}
-	id := strings.TrimSpace(stepID)
-	if id == "" {
-		id = operationPlanToolStepID(skillID, toolName)
-	}
-	for idx, existing := range strategy.PlannedTools {
-		if aiChatTurnStrategyToolStepID(existing) == id {
-			if len(arguments) > 0 {
-				strategy.PlannedTools[idx].Arguments = mergeTurnStrategyToolArguments(strategy.PlannedTools[idx].Arguments, arguments)
-			}
-			return strategy
-		}
-	}
-	tool := AIChatTurnStrategyTool{
-		SkillID:  skillID,
-		ToolName: toolName,
-	}
-	if len(arguments) > 0 {
-		tool.Arguments = arguments
-	}
-	if strings.TrimSpace(stepID) != "" {
-		tool.StepID = strings.TrimSpace(stepID)
-	}
-	if strings.TrimSpace(waitForStepID) != "" {
-		tool.WaitForStepID = strings.TrimSpace(waitForStepID)
-	}
-	strategy.PlannedTools = append(strategy.PlannedTools, tool)
-	return strategy
-}
-
-func mergeTurnStrategyToolArguments(current map[string]string, additions map[string]string) map[string]string {
-	if len(additions) == 0 {
-		return current
-	}
-	next := map[string]string{}
-	for key, value := range current {
-		key = strings.TrimSpace(key)
-		if key != "" {
-			next[key] = value
-		}
-	}
-	for key, value := range additions {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key == "" || value == "" {
-			continue
-		}
-		if key == operationPlanExpectedUpdatedFieldsKey {
-			next[key] = strings.Join(mergeCommaSeparatedValues(next[key], value), ",")
-			continue
-		}
-		if key == operationPlanExpectedBindingActionsKey {
-			next[key] = mergeAgentConfigBindingActionSpecs(next[key], value)
-			continue
-		}
-		if strings.TrimSpace(next[key]) == "" {
-			next[key] = value
-		}
-	}
-	if len(next) == 0 {
-		return nil
-	}
-	return next
-}
-
-func mergeAgentConfigBindingActionSpecs(values ...string) string {
-	merged := map[string]string{}
-	for _, value := range values {
-		for field, action := range operationPlanAgentConfigBindingActionsFromAny(value) {
-			merged[field] = action
-		}
-	}
-	return operationPlanEncodeAgentConfigBindingActions(merged)
-}
-
-func mergeCommaSeparatedValues(values ...string) []string {
-	out := []string{}
-	for _, value := range values {
-		for _, item := range strings.Split(value, ",") {
-			item = strings.TrimSpace(item)
-			if item != "" {
-				out = appendUniqueStrings(out, item)
-			}
-		}
-	}
-	return out
-}
-
-func aiChatTurnStrategyToolStepID(tool AIChatTurnStrategyTool) string {
-	if id := strings.TrimSpace(tool.StepID); id != "" {
-		return id
-	}
-	return operationPlanToolStepID(tool.SkillID, tool.ToolName)
-}
-
 func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.SkillMode != skillModeDisabled &&
 		(len(parts.SkillIDs) > 0 || parts.ConnectorToolsEnabled)
@@ -2983,288 +2535,6 @@ func nativeProjectionReservedToolNames(runtimeTools []skillloop.RuntimeTool) []s
 		}
 	}
 	return append(names, skillloop.ContextArtifactToolName)
-}
-
-func continuationMessageForExecutionMode(message adapter.Message, mode string) adapter.Message {
-	if normalizeExecutionMode(mode) != executionModeLegacyToolChat {
-		return message
-	}
-	message.Content = strings.TrimSpace(stringFromAny(message.Content)) + "\n" + strings.Join([]string{
-		"Legacy tool-chat override for this continuation:",
-		"The Agent planning and terminal-answer protocol tools are not available. Ignore any instruction above to call update_plan, submit_turn_state, submit_intermediate_answer, or submit_final_answer.",
-		"Call only the tools exposed in this request when more work is needed; otherwise answer the user directly.",
-	}, "\n")
-	return message
-}
-
-func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	strategy.Intent = "manage_agent_asset"
-	strategy.TargetPage = agentManagementTargetPage(parts, strategy)
-	if strings.TrimSpace(strategy.AssetEffect) == "" || strings.EqualFold(strings.TrimSpace(strategy.AssetEffect), "none") {
-		strategy.AssetEffect = "agent_asset_change_or_inspection"
-	}
-	strategy.AssetRisk = "medium"
-	strategy.Approval = "agent-management mutations are governed; delete always requires approval"
-	strategy.SuccessCriteria = []string{
-		"Agent page or Agent detail context is available before mutating Agent assets",
-		"agent-management uses a resolved Agent ID for edit, config, or delete operations",
-		"only supported MVP fields are changed; publishing, rollback, invocation, API keys, and WebApp online/offline state are not attempted",
-		"binding and unbinding edits use supported draft config binding lists when exact current bindings and candidates are known",
-		"agent-management tool results and get_agent_config reads are authoritative backend evidence for Agent state",
-	}
-	strategy.ObservationPoints = nil
-
-	primary := append([]string(nil), strategy.PrimarySkills...)
-	supporting := append([]string(nil), strategy.SupportingSkills...)
-	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		if detailTarget, ok := agentManagementExplicitDetailNavigationTarget(parts); ok {
-			strategy.TargetPage = detailTarget.Href
-			strategy.RouteRequired = !consoleNavigationRouteAlreadyAvailable(parts, detailTarget.Href) &&
-				!clientActionContinuationLoadedRoute(parts, detailTarget.Href)
-			if strategy.RouteRequired && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-				primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
-			}
-			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
-				"console-navigator/navigate opens the explicitly requested Agent detail page before claiming it is open",
-			)
-		} else {
-			strategy.RouteRequired = false
-		}
-		if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
-			primary = appendUniqueStrings(primary, skills.SkillAgentManagement)
-		}
-		if agentManagementModelIntentResolvesVisibleTarget(parts) {
-			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
-				"visible Agent targets from current page context are used directly when model intent resolves a visible Agent ordinal target",
-			)
-			strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-				"avoid redundant agent-management/list_agents before operating on visible ordinal Agent targets already present in page context",
-				"avoid navigation after an Agent list-page mutation unless the user explicitly asked to open a page or the current detail page was deleted",
-				"avoid waiting for asset_observation or refreshed page context after Agent mutations when agent-management tool results already confirm the state",
-			)
-		}
-	} else {
-		strategy.RouteRequired = true
-		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-			primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
-		}
-		if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
-			supporting = appendUniqueStrings(supporting, skills.SkillAgentManagement)
-		}
-	}
-	strategy.PrimarySkills = primary
-	strategy.SupportingSkills = supporting
-	return strategy
-}
-
-func contextualContinuationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	strategy.Intent = "continue_previous_task"
-	strategy.RouteRequired = false
-	strategy.AssetEffect = "continue_prior_effect"
-	strategy.AssetRisk = "context_dependent"
-	strategy.Approval = "reuse the prior task's tool governance rules; do not skip approval for new asset mutations"
-	strategy.SuccessCriteria = []string{
-		"continue from the recent execution context instead of treating the request as a new generic question",
-		"do not repeat successful side-effecting tool calls from the recent task",
-		"perform only the remaining requested step and report the actual tool result",
-	}
-	strategy.ObservationPoints = []string{"recent_execution_context", "current_page_context", "remaining_task_step"}
-	if turnTaskContractRequestsManagedFileCreate(parts, nil, "") {
-		strategy.TargetPage = consoleFilesRouteHint().Href
-		strategy.RouteRequired = !consoleNavigationRouteAlreadyAvailable(parts, consoleFilesRouteHint().Href) &&
-			!clientActionContinuationLoadedRoute(parts, consoleFilesRouteHint().Href)
-		strategy.AssetEffect = "create"
-		strategy.AssetRisk = "medium"
-		strategy.Approval = "continue the prior task while applying file-manager/save_file_to_management governance for each managed file"
-		strategy.SuccessCriteria = []string{
-			"continue from the recent execution context instead of treating the request as a new generic question",
-			"do not repeat successful side-effecting tool calls from the recent task",
-			"each requested destination file has exactly one generated artifact selected",
-			"file-manager/save_file_to_management succeeds for each selected artifact",
-			"asset observation or refreshed page context confirms every created file is visible",
-		}
-		strategy.ObservationPoints = []string{"recent_execution_context", "route_loaded:/console/files", "asset_observation:file.create", "files_page_visible_list"}
-		if strategy.RouteRequired {
-			if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-				strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
-			}
-			if len(parts.RecentGeneratedArtifacts) == 0 {
-				strategy.SupportingSkills = appendArtifactProducerSkills(strategy.SupportingSkills, parts)
-			}
-			if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
-				strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileManager)
-			}
-		} else {
-			if len(parts.RecentGeneratedArtifacts) == 0 {
-				strategy.PrimarySkills = appendArtifactProducerSkills(strategy.PrimarySkills, parts)
-			} else {
-				strategy.PrimarySkills = removeArtifactProducerSkills(strategy.PrimarySkills)
-				strategy.ArtifactSource = "recent_generated_file"
-			}
-			if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
-				strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillFileManager)
-			}
-		}
-		strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-			"after an artifact is generated, do not regenerate it; save each unsaved generated artifact with file-manager/save_file_to_management",
-		)
-	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
-	}
-	if isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		for _, skillID := range []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator, skills.SkillChartGenerator} {
-			if skillIDEnabled(parts.SkillIDs, skillID) {
-				strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skillID)
-			}
-		}
-	}
-	strategy = applyRecentOperationPlanToContinuationStrategy(parts, strategy)
-	return ensureContinuationFileArtifactSkills(parts, strategy)
-}
-
-func ensureContinuationFileArtifactSkills(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	if parts == nil || strategy == nil || strategy.ExecutionScope != "staged_goal_after_continue" {
-		return strategy
-	}
-	hasExplicitFileTargets := len(requestedManagedFileTargetsFromParts(parts)) > 0
-	targetsFilesPage := consoleNavigationLoadedHrefMatchesTarget(strategy.TargetPage, consoleFilesRouteHint().Href)
-	if !hasExplicitFileTargets && !targetsFilesPage {
-		return strategy
-	}
-	if len(parts.RecentGeneratedArtifacts) == 0 {
-		strategy.SupportingSkills = appendArtifactProducerSkills(strategy.SupportingSkills, parts)
-	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
-		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileManager)
-	}
-	strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
-		"continue the deferred file-related goal using the explicitly named file targets from the prior instruction",
-	)
-	return strategy
-}
-
-func contextualManagedFileCreateStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	strategy.Intent = "save_generated_file_to_file_management"
-	strategy.TargetPage = consoleFilesRouteHint().Href
-	strategy.AssetEffect = "create"
-	strategy.AssetRisk = "medium"
-	strategy.Approval = "file-manager/save_file_to_management is governed; approval depends on the user's permission tier"
-	strategy.SuccessCriteria = []string{
-		"Files page context is loaded before File Management mutation when needed",
-		"each requested destination file has exactly one generated artifact selected",
-		"file-manager/save_file_to_management succeeds for each selected artifact",
-		"asset observation or refreshed page context confirms the created file is visible",
-	}
-	strategy.ObservationPoints = []string{"route_loaded:/console/files", "asset_observation:file.create", "files_page_visible_list"}
-
-	primary := append([]string(nil), strategy.PrimarySkills...)
-	supporting := append([]string(nil), strategy.SupportingSkills...)
-	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
-		strategy.RouteRequired = true
-		primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
-		if len(parts.RecentGeneratedArtifacts) == 0 {
-			supporting = appendArtifactProducerSkills(supporting, parts)
-		}
-		supporting = appendUniqueStrings(supporting, skills.SkillFileManager)
-	} else if shouldReuseRecentGeneratedArtifactForManagedCreate(parts) {
-		primary = removeArtifactProducerSkills(primary)
-		primary = appendUniqueStrings(primary, skills.SkillFileManager)
-		strategy.ArtifactSource = "recent_generated_file"
-		strategy.Avoid = []string{"do not generate another file when the user refers to a recent generated file"}
-	} else {
-		primary = appendArtifactProducerSkills(primary, parts)
-		primary = appendUniqueStrings(primary, skills.SkillFileManager)
-	}
-	strategy.PrimarySkills = primary
-	strategy.SupportingSkills = supporting
-	return strategy
-}
-
-func contextualTemporaryFileGenerateStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	strategy.Intent = "generate_temporary_file_artifact"
-	strategy.AssetEffect = "create_temporary_artifact"
-	strategy.AssetRisk = "medium"
-	strategy.Approval = "artifact generation follows the producing skill manifest; do not save into File Management unless the user explicitly asks"
-	strategy.SuccessCriteria = []string{
-		"the appropriate artifact-producing skill creates exactly one generated artifact per requested file",
-		"generated_files metadata records the generated artifact",
-		"file-manager/save_file_to_management is not called unless the user explicitly asks to save or create in File Management",
-	}
-	strategy.ObservationPoints = []string{"generated_file_metadata", "message_file_card"}
-	strategy.PrimarySkills = appendArtifactProducerSkills(strategy.PrimarySkills, parts)
-	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
-	}
-	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-		"do not answer that a file was generated until an artifact-producing tool succeeds",
-		"do not call file-manager/save_file_to_management for temporary-only generation requests",
-	)
-	return strategy
-}
-
-func contextualFileDeleteStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	strategy.Intent = "delete_visible_file"
-	strategy.TargetPage = "/console/files"
-	strategy.RouteRequired = false
-	strategy.AssetEffect = "delete"
-	strategy.AssetRisk = "high"
-	strategy.Approval = "file-manager/delete_file always requires governed approval unless an approved session grant applies"
-	if skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
-		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillFileManager)
-	}
-	strategy.SuccessCriteria = []string{
-		"resolved visible file target is used as the tool argument",
-		"file-manager/delete_file succeeds or reports the actual failure",
-		"asset observation or refreshed page context confirms deletion state",
-	}
-	strategy.ObservationPoints = []string{"resolved_files_page_target", "asset_observation:file.delete", "files_page_visible_list"}
-	return strategy
-}
-
-func contextualFileReadStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	strategy.Intent = "read_visible_file_content"
-	strategy.TargetPage = "/console/files"
-	strategy.RouteRequired = false
-	strategy.AssetEffect = "read"
-	strategy.AssetRisk = "low"
-	strategy.Approval = "none for ordinary file read when workspace permissions allow it"
-	if skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) {
-		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillFileReader)
-	}
-	strategy.SuccessCriteria = []string{
-		"resolved visible file target is used as the tool argument",
-		"file-reader/read_file returns extracted content or an explicit read failure",
-		"final answer is based on the returned file content instead of page metadata only",
-	}
-	strategy.ObservationPoints = []string{"resolved_files_page_target", "read_file_result"}
-	return strategy
-}
-
-func contextualNavigationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	strategy.Intent = "navigate_console_page"
-	strategy.AssetEffect = "none"
-	strategy.AssetRisk = "low"
-	strategy.Approval = "none"
-	if targets := consoleNavigationResolvedTargetsForParts(parts); len(targets) > 0 {
-		target := targets[0]
-		strategy.TargetPage = target.Href
-		routeRequired := !clientActionContinuationLoadedRoute(parts, target.Href)
-		if consoleNavigationRouteAlreadyAvailable(parts, target.Href) {
-			routeRequired = false
-		}
-		strategy.RouteRequired = routeRequired
-	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
-	}
-	strategy.SuccessCriteria = []string{
-		"console-navigator/navigate succeeds for the resolved route",
-		"frontend client action reports route_loaded for the same href",
-		"the same assistant turn continues from updated page context",
-	}
-	strategy.ObservationPoints = []string{"route_navigation_client_action", "updated_page_context"}
-	return strategy
 }
 
 func contextualTurnCurrentPage(parts *chatRequestParts) string {
@@ -3435,10 +2705,6 @@ func consoleNavigationAccessibleRouteSnapshot(prepared *PreparedChat) (map[strin
 		}
 	}
 	return nil, false
-}
-
-func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
-	return contextualConsoleAgentsSkillMessageForResolved(prepared, nil)
 }
 
 func contextualConsoleAgentsSkillMessageForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
@@ -3763,84 +3029,6 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 	return adapter.Message{Role: "system", Content: content}, true
 }
 
-func stringSliceContainsFold(values []string, target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
-	}
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), target) {
-			return true
-		}
-	}
-	return false
-}
-
-func clientActionMetadataHasCompletedRoute(metadata map[string]interface{}, href string) bool {
-	href = normalizeConsoleNavigationGuardHref(href)
-	if len(metadata) == 0 || href == "" {
-		return false
-	}
-	for _, action := range mapSliceFromAny(metadata["client_actions"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["status"])), clientActionStatusSucceeded) {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") {
-			continue
-		}
-		if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(action["href"]), href) {
-			return true
-		}
-		if consoleNavigationResultMatchesTarget(governanceMapFromAny(action["result"]), href) {
-			return true
-		}
-	}
-	return false
-}
-
-func clientActionMetadataHasActiveRoute(metadata map[string]interface{}, href string) bool {
-	href = normalizeConsoleNavigationGuardHref(href)
-	if len(metadata) == 0 || href == "" {
-		return false
-	}
-	if clientActionRouteRecordActiveForTarget(governanceMapFromAny(metadata["client_action_continuation"]), href) {
-		return true
-	}
-	for _, action := range mapSliceFromAny(metadata["client_actions"]) {
-		if clientActionRouteRecordActiveForTarget(action, href) {
-			return true
-		}
-	}
-	for _, invocation := range skillInvocationsFromMetadata(metadata["skill_invocations"]) {
-		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "client_action" {
-			continue
-		}
-		if clientActionRouteRecordActiveForTarget(invocation, href) {
-			return true
-		}
-	}
-	return false
-}
-
-func clientActionRouteRecordActiveForTarget(action map[string]interface{}, href string) bool {
-	if len(action) == 0 || href == "" {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(stringFromAny(action["action_type"])), "route_navigation") &&
-		!isConsoleNavigatorNavigateTool(stringFromAny(action["skill_id"]), stringFromAny(action["tool_name"])) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(stringFromAny(action["status"]))) {
-	case clientActionStatusWaiting, clientActionStatusRunning, "pending", "loading", "streaming":
-	default:
-		return false
-	}
-	if consoleNavigationLoadedHrefMatchesTarget(stringFromAny(action["href"]), href) {
-		return true
-	}
-	return consoleNavigationResultMatchesTarget(governanceMapFromAny(action["result"]), href)
-}
-
 func isFileManagerSaveToolCall(skillID string, toolName string) bool {
 	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileManager) &&
 		strings.EqualFold(strings.TrimSpace(toolName), "save_file_to_management")
@@ -3874,166 +3062,11 @@ func successfulMetadataToolCalls(metadata map[string]interface{}, skillID string
 	return calls
 }
 
-func matchingSkillToolCalls(calls []skillloop.SkillToolCallRef, skillID string, toolName string) []skillloop.SkillToolCallRef {
-	matches := make([]skillloop.SkillToolCallRef, 0)
-	for _, call := range calls {
-		if strings.EqualFold(strings.TrimSpace(call.SkillID), skillID) &&
-			strings.EqualFold(strings.TrimSpace(call.ToolName), toolName) {
-			matches = append(matches, call)
-		}
-	}
-	return matches
-}
-
 func skillToolCallArgumentString(arguments map[string]interface{}, key string) string {
 	if len(arguments) == 0 {
 		return ""
 	}
 	return strings.TrimSpace(stringFromAny(arguments[key]))
-}
-
-func stagedExecutionScopedParts(parts *chatRequestParts) (*chatRequestParts, bool, bool) {
-	if parts == nil {
-		return nil, false, false
-	}
-	if partsRequestsContinuationWithFallback(parts, "") {
-		if current, ok := stagedContinuationResumeQuery(parts); ok {
-			return chatRequestPartsWithQueryAndIntent(parts, current, "continue_previous_task"), false, true
-		}
-		return parts, false, false
-	}
-	current, _, ok := splitStagedContinuationQuery(parts.Query)
-	if ok {
-		if strings.TrimSpace(current) == "" {
-			return parts, true, false
-		}
-		return chatRequestPartsWithQuery(parts, current), true, false
-	}
-	return parts, false, false
-}
-
-func chatRequestPartsWithQuery(parts *chatRequestParts, query string) *chatRequestParts {
-	if parts == nil {
-		return nil
-	}
-	next := *parts
-	next.Query = strings.TrimSpace(query)
-	return &next
-}
-
-func chatRequestPartsWithQueryAndIntent(parts *chatRequestParts, query string, intent string) *chatRequestParts {
-	next := chatRequestPartsWithQuery(parts, query)
-	if next == nil {
-		return nil
-	}
-	intent = strings.TrimSpace(intent)
-	if intent == "" {
-		return next
-	}
-	modelIntent := AIChatModelTurnIntent{}
-	if next.ModelTurnIntent != nil {
-		modelIntent = *next.ModelTurnIntent
-	}
-	modelIntent.Intent = intent
-	next.ModelTurnIntent = &modelIntent
-	return next
-}
-
-func stagedContinuationResumeQuery(parts *chatRequestParts) (string, bool) {
-	goal := recentOperationPlanOriginalGoal(parts)
-	if goal == "" {
-		return "", false
-	}
-	_, deferred, ok := splitStagedContinuationQuery(goal)
-	if !ok || strings.TrimSpace(deferred) == "" {
-		return "", false
-	}
-	return stagedContinuationDeferredExecutionQuery(deferred), true
-}
-
-func splitStagedContinuationQuery(query string) (string, string, bool) {
-	raw := strings.TrimSpace(query)
-	if raw == "" {
-		return "", "", false
-	}
-	lower := strings.ToLower(raw)
-	for _, marker := range stagedContinuationRawMarkers() {
-		if marker == "" {
-			continue
-		}
-		if idx := strings.Index(lower, marker); idx >= 0 {
-			return strings.TrimSpace(raw[:idx]), strings.TrimSpace(raw[idx:]), true
-		}
-	}
-	normalized := normalizeConsoleNavigationQuery(raw)
-	if !isStagedContinuationInstruction(normalized) {
-		return raw, "", false
-	}
-	if idx := strings.Index(lower, "\u7ee7\u7eed"); idx >= 0 {
-		return strings.TrimSpace(raw[:idx]), strings.TrimSpace(raw[idx:]), true
-	}
-	if idx := strings.Index(lower, "continue"); idx >= 0 {
-		return strings.TrimSpace(raw[:idx]), strings.TrimSpace(raw[idx:]), true
-	}
-	return raw, "", true
-}
-
-func stagedContinuationRawMarkers() []string {
-	return []string{
-		"\u7b49\u5f85\u6211\u8bf4",
-		"\u7b49\u6211\u8bf4",
-		"\u7b49\u6211\u8f93\u5165",
-		"\u7b49\u6211\u53d1",
-		"\u5f53\u6211\u8bf4",
-		"\u6211\u8bf4\u7ee7\u7eed\u540e",
-		"\u6211\u8bf4\u4e86\u7ee7\u7eed",
-		"\u8bf4\u7ee7\u7eed\u540e",
-		"wait for me to say continue",
-		"wait until i say continue",
-		"after i say continue",
-		"when i say continue",
-		"once i say continue",
-		"wait for my continue",
-	}
-}
-
-func stagedContinuationDeferredExecutionQuery(deferred string) string {
-	deferred = strings.TrimSpace(deferred)
-	if deferred == "" {
-		return ""
-	}
-	for _, separator := range []string{"\uff1a", ":"} {
-		if idx := strings.Index(deferred, separator); idx >= 0 && idx+len(separator) < len(deferred) {
-			return strings.TrimSpace(deferred[idx+len(separator):])
-		}
-	}
-	replacer := strings.NewReplacer(
-		"\u7b49\u5f85\u6211\u8bf4", "",
-		"\u7b49\u6211\u8bf4", "",
-		"\u6211\u8bf4\u201c\u7ee7\u7eed\u201d\u540e", "",
-		"\u6211\u8bf4\u2018\u7ee7\u7eed\u2019\u540e", "",
-		"\u6211\u8bf4\u7ee7\u7eed\u540e", "",
-		"\u6211\u8bf4\u4e86\u7ee7\u7eed", "",
-		"\u8bf4\u7ee7\u7eed\u540e", "",
-		"\u201c\u7ee7\u7eed\u201d", "",
-		"\u2018\u7ee7\u7eed\u2019", "",
-		"\u7ee7\u7eed", "",
-		"\u540e\u518d\u6267\u884c", "",
-		"\u540e\u518d", "",
-	)
-	cleaned := strings.TrimSpace(replacer.Replace(deferred))
-	cleaned = strings.TrimLeftFunc(cleaned, func(r rune) bool {
-		if unicode.IsSpace(r) {
-			return true
-		}
-		switch r {
-		case '.', ',', ';', ':', '\uff0c', '\u3002', '\uff1b', '\uff1a', '\u3001':
-			return true
-		default:
-			return false
-		}
-	})
-	return strings.TrimSpace(cleaned)
 }
 
 func skillIDEnabled(skillIDs []string, target string) bool {
@@ -4551,27 +3584,4 @@ func mergeUsage(current *adapter.Usage, next *adapter.Usage) *adapter.Usage {
 	current.CompletionTokens += next.CompletionTokens
 	current.TotalTokens += next.TotalTokens
 	return current
-}
-
-func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
-	if source == nil {
-		return &adapter.ChatRequest{}
-	}
-	cloned := *source
-	cloned.Messages = append([]adapter.Message{}, source.Messages...)
-	cloned.Stop = append([]string{}, source.Stop...)
-	if source.AdditionalParameters != nil {
-		cloned.AdditionalParameters = copyStringAnyMap(source.AdditionalParameters)
-	}
-	if source.LogitBias != nil {
-		cloned.LogitBias = make(map[string]float64, len(source.LogitBias))
-		for key, value := range source.LogitBias {
-			cloned.LogitBias[key] = value
-		}
-	}
-	return &cloned
-}
-
-func agenticSkillLoopSystemMessage() adapter.Message {
-	return skillloop.AgenticSkillLoopSystemMessage()
 }

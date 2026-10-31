@@ -57,6 +57,7 @@ import type {
   AITaskProposalActionPayload,
 } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
+  AICHAT_INTERRUPTED_TURN_ERROR,
   getAIChatMessageErrorInput,
   resolveAIChatErrorMessage,
 } from '@/components/chat/variants/aichat/error-utils';
@@ -103,6 +104,8 @@ interface AIChatMessageBubbleProps {
   isLastMessage?: boolean;
   canReplaceRoot?: boolean;
   onRegenerate?: (message: AIChatMessage) => void;
+  /** Resumes the latest turn after its server process stopped. */
+  onResumeInterrupted?: (message: AIChatMessage) => void;
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
   ) => void | Promise<void>;
@@ -1248,6 +1251,7 @@ export function AIChatMessageBubble({
   isLastMessage = false,
   canReplaceRoot = false,
   onRegenerate,
+  onResumeInterrupted,
   onToolGovernanceDecision,
   onTaskProposalAction,
   onTaskMutation,
@@ -1312,6 +1316,15 @@ export function AIChatMessageBubble({
   const canEdit =
     Boolean(onEditStart && (canReplaceRoot || canCreateBranch)) && !isSending && !isActiveMessage;
   const canRegenerateMessage = Boolean(onRegenerate && (canReplaceRoot || canCreateBranch));
+  // Only the latest turn, stopped with its process and not resumed before, can
+  // be resumed; the server checks again.
+  const canResumeInterrupted =
+    Boolean(onResumeInterrupted) &&
+    isError &&
+    isLastMessage &&
+    !isSending &&
+    message.error?.trim().toLowerCase() === AICHAT_INTERRUPTED_TURN_ERROR &&
+    !message.metadata?.interrupted_turn_resume;
   const canSwitchBranch =
     Boolean(branchNavigation && onSwitchBranch) && !isSending && !isActiveMessage;
   const shouldHideAssistantToolbar = isLastMessage && isActiveMessage;
@@ -1800,6 +1813,17 @@ export function AIChatMessageBubble({
             <AlertCircle className="mt-0.5 size-4 shrink-0" />
             <div className="min-w-0 flex-1 space-y-2">
               <div>{errorDisplay?.description || t('consoleChat.streamError')}</div>
+              {canResumeInterrupted ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => onResumeInterrupted?.(message)}
+                >
+                  {t('consoleChat.resumeInterrupted')}
+                </Button>
+              ) : null}
               {isBillingAdmin && errorDisplay?.href && errorDisplay.actionLabel ? (
                 <a
                   href={errorDisplay.href}

@@ -10,6 +10,7 @@ const (
 	defaultMaxToolResult              = 32_000
 	DefaultCompressedToolResultTokens = 10_000
 	defaultToolPreviewRunes           = 12_000
+	defaultProjectToolResult          = 16_000
 	defaultPreservedRounds            = 4
 	contextTriggerNumerator           = 80
 	contextTriggerDenominator         = 100
@@ -24,6 +25,9 @@ func normalizeConfig(config Config) (Config, error) {
 	}
 	if config.ToolResultPreviewRunes <= 0 {
 		config.ToolResultPreviewRunes = defaultToolPreviewRunes
+	}
+	if config.ProjectToolResultTokens <= 0 {
+		config.ProjectToolResultTokens = defaultProjectToolResult
 	}
 	return config, nil
 }
@@ -47,7 +51,12 @@ func budgetForRequest(config Config, requestedOutput int) (Budget, error) {
 	if mainOutput <= 0 {
 		mainOutput = min(16_000, modelWindow/8)
 	}
+	// The prompt stays under 80% of the window and leaves room for the
+	// answer (ADR 0038).
 	promptBudget := modelWindow * contextTriggerNumerator / contextTriggerDenominator
+	if mainOutput > 0 && mainOutput < modelWindow {
+		promptBudget = min(promptBudget, modelWindow-mainOutput)
+	}
 	if config.MaxInputTokens > 0 {
 		promptBudget = min(promptBudget, config.MaxInputTokens)
 	}

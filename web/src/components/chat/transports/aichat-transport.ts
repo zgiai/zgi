@@ -313,6 +313,13 @@ export interface AIChatRuntimeTransport {
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
+  /** Resumes a turn whose server process stopped in the middle of it. */
+  resumeInterruptedTurn?(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
 }
 
 export function mapAIChatSearchResult(item: AIChatSearchResult): ConversationSearchResult {
@@ -804,6 +811,27 @@ export class AIChatTransport implements AIChatRuntimeTransport {
       messageId,
       requestId,
       payload,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onOpen: () => callbacks.onOpen?.(),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  resumeInterruptedTurn(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.resumeInterruptedTurn(
+      conversationId,
+      messageId,
       {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);

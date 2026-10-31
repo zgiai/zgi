@@ -61,8 +61,8 @@ func TestClaudeAdapterConvertToClaude_UsesBlocksAndToolUseID(t *testing.T) {
 		t.Fatalf("convertToClaude() error = %v", err)
 	}
 
-	if req.System != "system-a\n\nsystem-b" {
-		t.Fatalf("system = %q, want %q", req.System, "system-a\n\nsystem-b")
+	if len(req.System) != 1 || req.System[0].Text != "system-a\n\nsystem-b" {
+		t.Fatalf("system = %#v, want one block %q", req.System, "system-a\n\nsystem-b")
 	}
 	if len(req.Messages) != 3 {
 		t.Fatalf("len(messages) = %d, want 3", len(req.Messages))

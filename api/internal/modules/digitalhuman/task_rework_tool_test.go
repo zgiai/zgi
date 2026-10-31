@@ -52,8 +52,8 @@ func TestTheDigitalHumanReworksAReportFromTheConversation(t *testing.T) {
 			rework, handlerIndex = &preparation.Tools[index].Definition, index
 		}
 	}
-	if rework == nil || !strings.Contains(preparation.SystemPromptAddendum, taskReworkToolName) ||
-		!strings.Contains(preparation.SystemPromptAddendum, "Never ask the user to reply with a keyword") {
+	if rework == nil || !strings.Contains(preparation.StableGuidance, taskReworkToolName) ||
+		!strings.Contains(preparation.StableGuidance, "Never ask the user to reply with a keyword") {
 		t.Fatalf("conversation tools = %#v", preparation.Tools)
 	}
 	result := preparation.Tools[handlerIndex].Handler(t.Context(), adapter.ToolCall{ID: "rework", Function: adapter.FunctionCall{

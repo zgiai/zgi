@@ -44,7 +44,7 @@ func TestFinalPlanningRequestBudgetUsesInitialReserveInsteadOfRetryCeiling(t *te
 func TestFinalPlanningRequestBudgetLeavesNativeOutputLimitToProvider(t *testing.T) {
 	metadata := map[string]interface{}{"context_control": map[string]interface{}{"agent_context_window": 900000, "prompt_budget": 883616, "reserved_output_tokens": 16384}}
 	request := &adapter.ChatRequest{Model: "deepseek-chat", Messages: []adapter.Message{{Role: "user", Content: "current goal"}}}
-	runRequest := RunRequest{Prepared: NewPreparedChat("conversation", "message", "openai", "auto", request), NativeAgentLoop: true, CurrentMetadata: func() map[string]interface{} { return metadata }}
+	runRequest := RunRequest{Prepared: NewPreparedChat("conversation", "message", "openai", "auto", request), CurrentMetadata: func() map[string]interface{} { return metadata }}
 	runner := &Runner{requestBudget: planningRequestBudgetForRun(runRequest)}
 	if err := runner.applyFinalPlanningRequestBudget(request, request.Messages); err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/tiktoken-go/tokenizer"
@@ -71,6 +72,9 @@ func (e *Estimator) EstimateMessages(messages []adapter.Message, model string) R
 			total += e.estimateText(message.Name, model, tokenizerName)
 		}
 		total += e.estimateContent(message.Content, model, tokenizerName)
+		if message.ReasoningContent != "" && adapter.ModelReplaysReasoningContent(model) {
+			total += e.estimateText(message.ReasoningContent, model, tokenizerName)
+		}
 		if message.FunctionCall != nil {
 			total += e.estimateText(fmt.Sprintf("%v", message.FunctionCall), model, tokenizerName)
 		}
@@ -248,7 +252,7 @@ func (e *Estimator) estimateText(text string, model string, tokenizerName string
 			return count
 		}
 	}
-	return estimateTextFallback(text)
+	return estimateTextFallback(text, tokenizerName == fallbackCJKCompact)
 }
 
 func (e *Estimator) codecFor(model string, tokenizerName string) (tokenizer.Codec, bool) {
@@ -274,10 +278,18 @@ func (e *Estimator) codecFor(model string, tokenizerName string) (tokenizer.Code
 	return codec, true
 }
 
+const (
+	fallbackConservative = "fallback:conservative"
+	// fallbackCJKCompact is the fallback for models whose tokenizers encode
+	// Chinese, Japanese and Korean compactly, about 0.6 to 0.7 tokens per
+	// character.
+	fallbackCJKCompact = "fallback:cjk-compact"
+)
+
 func (e *Estimator) tokenizerName(model string) string {
 	name := strings.ToLower(strings.TrimSpace(model))
 	if name == "" {
-		return "fallback:conservative"
+		return fallbackConservative
 	}
 	if isO200KModel(name) {
 		return "tiktoken:o200k_base"
@@ -285,7 +297,24 @@ func (e *Estimator) tokenizerName(model string) string {
 	if isCl100KModel(name) {
 		return "tiktoken:cl100k_base"
 	}
-	return "fallback:conservative"
+	if isCJKCompactModel(name) {
+		return fallbackCJKCompact
+	}
+	return fallbackConservative
+}
+
+// isCJKCompactModel reports model families trained with tokenizers that
+// encode CJK text compactly.
+func isCJKCompactModel(name string) bool {
+	if index := strings.LastIndex(name, "/"); index >= 0 {
+		name = name[index+1:]
+	}
+	for _, family := range []string{"deepseek", "qwen", "qwq", "glm", "chatglm", "kimi", "moonshot", "doubao", "minimax", "abab", "baichuan", "yi-", "hunyuan", "ernie", "step-", "spark"} {
+		if strings.Contains(name, family) {
+			return true
+		}
+	}
+	return false
 }
 
 func isO200KModel(name string) bool {
@@ -305,22 +334,38 @@ func isCl100KModel(name string) bool {
 		strings.HasPrefix(name, "text-embedding-ada-002")
 }
 
-func estimateTextFallback(text string) int {
-	runes := utf8.RuneCountInString(text)
-	if runes == 0 {
+// estimateTextFallback estimates text by character class, so that one
+// non-ASCII character no longer makes a whole string count as two bytes per
+// token: ASCII at three bytes per token, CJK characters at 1.5 tokens each,
+// or 0.8 for tokenizers that encode them compactly, and other characters at
+// two bytes per token. Every rate stays above what common tokenizers produce.
+func estimateTextFallback(text string, cjkCompact bool) int {
+	if text == "" {
 		return 0
 	}
-	bytes := len(text)
-	if bytes > runes {
-		tokens := (bytes + 1) / 2
-		if tokens < 1 {
-			return 1
+	asciiBytes, cjkRunes, otherBytes := 0, 0, 0
+	for _, r := range text {
+		switch {
+		case r < utf8.RuneSelf:
+			asciiBytes++
+		case isCJKRune(r):
+			cjkRunes++
+		default:
+			otherBytes += utf8.RuneLen(r)
 		}
-		return tokens
 	}
-	tokens := (bytes + 2) / 3
+	cjkTenths := 15
+	if cjkCompact {
+		cjkTenths = 8
+	}
+	tokens := (asciiBytes+2)/3 + (cjkRunes*cjkTenths+9)/10 + (otherBytes+1)/2
 	if tokens < 1 {
 		return 1
 	}
 	return tokens
+}
+
+func isCJKRune(r rune) bool {
+	return unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) ||
+		unicode.Is(unicode.Hangul, r) || (r >= 0x3000 && r <= 0x303F) || (r >= 0xFF00 && r <= 0xFFEF)
 }

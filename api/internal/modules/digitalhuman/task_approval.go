@@ -13,8 +13,10 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/invocation"
 	"github.com/zgiai/zgi/api/internal/capabilities/usersubject"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
 type channelApprovalMessageLister interface {
@@ -151,37 +153,21 @@ func (s *RuntimeService) taskApprovalContinuationConfigForRun(ctx context.Contex
 		return service.RunConfig{}, err
 	}
 	s.attachAttachmentReader(&config, run, resolved, event, nil)
-	applyRunEndUserBilling(&config, run)
-	if s.tasks == nil {
-		return config, nil
-	}
-	preparation, err := s.tasks.Prepare(ctx, run, event)
-	if err != nil {
+	// The continuation prepares what the first run had, so it sends the same
+	// system prompt and tools and reuses their cached prefix (ADR 0032).
+	s.prepareBackgroundContinuationLinux(ctx, &config, run, resolved, event)
+	if _, err := s.applyRunCapabilities(ctx, &config, run, resolved, event); err != nil {
 		return service.RunConfig{}, err
 	}
-	if preparation == nil {
-		return config, nil
-	}
-	if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-		if strings.TrimSpace(config.SystemPrompt) != "" {
-			config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
-		} else {
-			config.SystemPrompt = addendum
-		}
-	}
-	if allowTaskMutationTools {
-		config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
-	} else {
-		// Keep read-only task context available for the final answer, but remove
-		// the mutation tool. The authoritative mutation has already been applied
-		// above; removing this tool makes an accidental second approval impossible
-		// even if the model ignores the continuation instruction.
-		for _, tool := range preparation.Tools {
-			if strings.EqualFold(strings.TrimSpace(tool.Definition.Function.Name), taskManageToolName) {
-				continue
-			}
-			config.RuntimeTools = append(config.RuntimeTools, tool)
-		}
+	if !allowTaskMutationTools {
+		// The authoritative mutation has already been applied above. The
+		// mutation tool keeps its definition, so the tool list matches the
+		// first run, but it refuses every call: an accidental second approval
+		// stays impossible even if the model ignores the continuation
+		// instruction.
+		refuseRuntimeTool(&config, taskManageToolName, func(context.Context, adapter.ToolCall) skillloop.RuntimeToolResult {
+			return taskToolFailure(taskApprovalAppliedCode, false)
+		})
 	}
 	return config, nil
 }

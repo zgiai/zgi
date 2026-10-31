@@ -526,6 +526,9 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		invocation := newSkillInvocation("tool_call", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), "running", invocationTimelineFields(payload, map[string]interface{}{
 			"arguments": payloadMap(payload, "arguments_summary", "arguments"),
 		}))
+		if readOnly, _ := payload[skillCallReadOnlyKey].(bool); readOnly {
+			invocation[skillCallReadOnlyKey] = true
+		}
 		invocation["runtime_id"] = r.runtimeIDForStart(invocation)
 		return invocation
 	case streamEventSkillCallEnd:
@@ -1113,4 +1116,15 @@ func copyInvocationRuntimeFields(payload map[string]interface{}, invocation map[
 			payload[key] = value
 		}
 	}
+}
+
+func trimRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
@@ -455,6 +456,10 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 	if scope.RuntimeFileAuthorizer != nil && scope.RuntimeWorkspaceID != nil && scope.RuntimeSubjectID != nil {
 		parts.AttachmentReadAllowed = true
 	}
+	s.applyCurrentTimeContext(ctx, scope, parts, time.Now())
+	if len(conversationIDs) > 0 {
+		s.applyUserLanguageContext(ctx, scope, parts, conversationIDs[0])
+	}
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
 		rendered, err := renderAIChatSystemPrompt(parts.Surface)
@@ -513,6 +518,7 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		}
 		branch := contextState.RawMessages
 		parts.AgentMemoryRecentUserMessages = recentUserQueries(branch, agentMemoryEvidenceWindow)
+		parts.RecentSkillIDs = recentlyUsedSkillIDs(branch, recentSkillTurns)
 		registerAttachmentReadFiles(parts, branch)
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
@@ -576,6 +582,9 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		}
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(ctx, parts, branch)
+	}
+	if turnContext := turnContextMessage(parts); turnContext != nil {
+		messages = append(messages, *turnContext)
 	}
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil
@@ -787,10 +796,6 @@ func applyAgentMemoryToolsPolicy(parts *chatRequestParts) {
 		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
 }
 
-func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope, parts *chatRequestParts) error {
-	return s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts)
-}
-
 func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Caller, config *RunConfig, parts *chatRequestParts) error {
 	if parts == nil {
 		return nil
@@ -870,6 +875,7 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	if parts.ConnectorToolsDisabled {
 		enabled = skillIDsWithout(enabled, []string{skills.SkillConnectorRuntime})
 	}
+	enabled = withInherentTimeSkill(enabled, catalog, orgEnabled, callerType, parts)
 	parts.BaseSkillIDs, parts.BaseToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	parts.MarketSkillIDs = s.marketSkillIDs(ctx, scope, caller)
 	parts.SkillIDs = mergeNormalizedSkillIDs(parts.BaseSkillIDs, parts.ConnectorSkillIDs, parts.MarketSkillIDs)

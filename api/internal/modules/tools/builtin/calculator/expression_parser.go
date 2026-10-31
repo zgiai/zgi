@@ -264,11 +264,29 @@ func decimalPower(base decimal.Decimal, exponent decimal.Decimal) (decimal.Decim
 	if absExp < 0 {
 		absExp = -absExp
 	}
-	for i := int64(0); i < absExp; i++ {
-		result = result.Mul(base)
+	for square := base; absExp > 0; absExp >>= 1 {
+		if absExp&1 == 1 {
+			result = roundSignificant(result.Mul(square))
+		}
+		if absExp > 1 {
+			square = roundSignificant(square.Mul(square))
+		}
 	}
 	if exp < 0 {
-		return decimal.NewFromInt(1).Div(result), nil
+		return decimal.NewFromInt(1).DivRound(result, int32(powerSignificantDigits+integerDigits(result))), nil
 	}
 	return result, nil
+}
+
+// integerDigits returns the number of digits before the decimal point, or,
+// for a value below one, minus the number of zeros after it.
+func integerDigits(value decimal.Decimal) int {
+	if value.IsZero() {
+		return 1
+	}
+	return value.NumDigits() + int(value.Exponent())
+}
+
+func roundSignificant(value decimal.Decimal) decimal.Decimal {
+	return value.Round(int32(powerSignificantDigits - integerDigits(value)))
 }

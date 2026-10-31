@@ -25,6 +25,12 @@ type Manager struct {
 	checkpoint   CheckpointFunc
 	state        AgentContextState
 	pendingUsage *adapter.Usage
+	// originals holds the complete content of projected tool results by
+	// content hash, read back with read_context_artifact (ADR 0037).
+	originals map[string]string
+	// lastRequestEstimate is the estimate of the last request sent, compared
+	// with the provider's prompt tokens to calibrate the estimator.
+	lastRequestEstimate int
 }
 
 func New(config Config, compactor Compactor, toolStore ToolResultStore, observer RequestObserver, checkpoint CheckpointFunc) (*Manager, error) {
@@ -44,7 +50,7 @@ func New(config Config, compactor Compactor, toolStore ToolResultStore, observer
 			AgentRunID:          strings.TrimSpace(normalized.AgentRunID),
 			NextRound:           1,
 			ContentReplacements: map[string]ContentReplacement{},
-			EstimatorScale:      1,
+			EstimatorScale:      clampEstimateScale(normalized.EstimateScale),
 			CreatedAt:           time.Now().UTC(),
 		},
 	}
@@ -79,8 +85,10 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// System messages keep their positions here; only the request handed back
+	// is placed for the provider, so later guidance stays after the cached
+	// prefix (ADR 0032).
 	prepared := cloneRequest(request)
-	prepared.Messages = adapter.NormalizeSystemMessages(prepared.Messages)
 	round := m.state.NextRound
 	if round <= 0 {
 		round = 1
@@ -95,6 +103,10 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	if err != nil {
 		return nil, Decision{}, err
 	}
+	// The budget is in real tokens; comparing it with estimates needs it in
+	// estimated tokens, through the scale the provider's usage showed
+	// (ADR 0038).
+	budget = scaledBudget(budget, clampEstimateScale(m.state.EstimatorScale))
 	m.state.SchemaVersion = 1
 	m.state.Provider = strings.TrimSpace(prepared.Provider)
 	m.state.Model = strings.TrimSpace(prepared.Model)
@@ -113,8 +125,19 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 		RequestType:   RequestTypeMain,
 		Action:        DecisionNone,
 		Budget:        budget,
-		EstimateScale: 1,
+		EstimateScale: clampEstimateScale(m.state.EstimatorScale),
 	}
+
+	// An oversized tool result reaches the model as its beginning and end
+	// with a reference to the rest. Only the outgoing request is projected:
+	// the run and its transcript keep the original, so the projection is the
+	// same in every request and the rest can be read back (ADR 0037).
+	projectedMessages, projection, projectErr := m.projectOversizedToolResults(ctx, prepared.Messages)
+	if projectErr != nil {
+		return nil, decision, projectErr
+	}
+	prepared.Messages = projectedMessages
+	decision.ToolProjectionCount = projection.count
 
 	estimate := m.estimator.EstimateChatRequest(prepared)
 	decision.BeforeTokens = estimate.Tokens
@@ -123,6 +146,12 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 		return nil, decision, fmt.Errorf("validate model request tool pairing: %w", err)
 	}
 
+	if estimate.Tokens >= budget.PromptBudget && withoutEarlierTurnReasoning(prepared) {
+		// The reasoning of earlier turns is the first thing to give up when
+		// the request does not fit (ADR 0045).
+		decision.ReasoningDropped = true
+		estimate = m.estimator.EstimateChatRequest(prepared)
+	}
 	if estimate.Tokens >= budget.PromptBudget {
 		compressed, compression, compressErr := m.compressHistoricalToolResults(ctx, prepared, budget.PromptBudget)
 		if compressErr != nil {
@@ -141,7 +170,7 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 			}
 		}
 	}
-	if estimate.Tokens >= budget.PromptBudget && m.compactor != nil {
+	if estimate.Tokens >= budget.PromptBudget && m.compactor != nil && m.state.Compaction.RunCompactions < maxCompactionsPerRun {
 		beforeSemantic := cloneRequest(prepared)
 		compacted, summary, compactDecision, compactErr := m.semanticCompact(ctx, prepared, decision, false)
 		if compactErr != nil {
@@ -157,8 +186,18 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 			m.state.Compaction.ConsecutiveFailures = 0
 			m.state.Compaction.LastFailure = ""
 			m.state.Compaction.LastCompactedAt = time.Now().UTC()
+			m.state.Compaction.RunCompactions++
 		}
 		estimate = m.estimator.EstimateChatRequest(prepared)
+	}
+	if estimate.Tokens >= budget.PromptBudget {
+		// Compaction failed, was capped or could not make the request fit:
+		// leave the oldest history out instead of failing the turn (ADR 0038).
+		if fitted, ok := m.fitByDroppingHistory(prepared, budget.PromptBudget); ok {
+			prepared = fitted
+			decision.Action = DecisionDropHistory
+			estimate = m.estimator.EstimateChatRequest(prepared)
+		}
 	}
 	m.syncTurnTranscriptMessages(prepared.Messages)
 
@@ -180,6 +219,8 @@ func (m *Manager) PrepareBeforeModelCall(ctx context.Context, request *adapter.C
 	}
 
 	m.state.Messages = cloneMessages(prepared.Messages)
+	m.lastRequestEstimate = estimate.Tokens
+	prepared.Messages = adapter.PlaceSystemMessages(prepared.Messages)
 	return prepared, decision, nil
 }
 
@@ -234,6 +275,7 @@ func (m *Manager) PrepareReactiveCompact(ctx context.Context, request *adapter.C
 	m.state.Compaction.ConsecutiveFailures = 0
 	m.state.Compaction.LastFailure = ""
 	m.state.Compaction.LastCompactedAt = time.Now().UTC()
+	compacted.Messages = adapter.PlaceSystemMessages(compacted.Messages)
 	return compacted, decision, nil
 }
 
@@ -242,11 +284,16 @@ func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Mess
 		return nil
 	}
 	m.mu.Lock()
-	message.ReasoningContent = ""
+	// The active request keeps reasoning for the rest of the turn; the
+	// durable transcript stores it only for models that replay it (ADR 0045).
 	message = cloneMessage(message)
 	m.state.Messages = append(m.state.Messages, message)
 	if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
-		m.state.TurnTranscript = append(m.state.TurnTranscript, cloneMessage(message))
+		transcript := cloneMessage(message)
+		if !adapter.KeepsReasoningHistory(m.state.Model) {
+			transcript.ReasoningContent = ""
+		}
+		m.state.TurnTranscript = append(m.state.TurnTranscript, transcript)
 	}
 	if m.state.NextRound <= 0 {
 		m.state.NextRound = 1
@@ -255,6 +302,9 @@ func (m *Manager) ObserveModelResponse(ctx context.Context, message adapter.Mess
 	if usage != nil {
 		cloned := *usage
 		m.state.LastUsage = &cloned
+		if usage.PromptTokens > 0 && m.lastRequestEstimate > 0 {
+			m.state.EstimatorScale = clampEstimateScale(float64(usage.PromptTokens) / float64(m.lastRequestEstimate))
+		}
 	}
 	m.mu.Unlock()
 	// The response is durable before anything acts on it: a tool call that is
@@ -354,6 +404,57 @@ func (m *Manager) appendNewTurnToolMessages(messages []adapter.Message) {
 		m.state.TurnTranscript = append(m.state.TurnTranscript, cloneMessage(message))
 		knownResults[id] = struct{}{}
 	}
+	if adapter.KeepsReasoningHistory(m.state.Model) {
+		m.appendNewTurnReminders(messages, knownCalls)
+	}
+}
+
+// appendNewTurnReminders records the guidance the loop added after this
+// turn's tool calls, such as the instructions of a skill activated mid-turn,
+// as the user turn a provider receives it in. With reasoning kept across
+// turns, the next turn's request then extends this turn's requests past its
+// tool calls, and the provider's cache covers them (ADR 0043).
+func (m *Manager) appendNewTurnReminders(messages []adapter.Message, knownCalls map[string]struct{}) {
+	recorded := make(map[string]struct{})
+	for _, message := range m.state.TurnTranscript {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+			if text, ok := message.Content.(string); ok {
+				recorded[text] = struct{}{}
+			}
+		}
+	}
+	afterTurnCall := false
+	pending := make([]string, 0, 2)
+	flush := func() {
+		if len(pending) == 0 {
+			return
+		}
+		content := strings.Join(pending, "\n\n")
+		pending = pending[:0]
+		if _, exists := recorded[content]; exists {
+			return
+		}
+		recorded[content] = struct{}{}
+		m.state.TurnTranscript = append(m.state.TurnTranscript, adapter.Message{Role: "user", Content: content})
+	}
+	for _, message := range messages {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role == "assistant" {
+			for _, call := range message.ToolCalls {
+				if _, known := knownCalls[strings.TrimSpace(call.ID)]; known {
+					afterTurnCall = true
+				}
+			}
+		}
+		if role == "system" && afterTurnCall {
+			if text, ok := message.Content.(string); ok && strings.TrimSpace(text) != "" {
+				pending = append(pending, adapter.SystemReminder(text))
+				continue
+			}
+		}
+		flush()
+	}
+	flush()
 }
 
 // syncTurnTranscriptMessages keeps the durable turn transcript aligned with
@@ -368,7 +469,9 @@ func (m *Manager) syncTurnTranscriptMessages(messages []adapter.Message) {
 	current := make(map[string]adapter.Message)
 	for _, message := range messages {
 		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
-			message.ReasoningContent = ""
+			if !adapter.KeepsReasoningHistory(m.state.Model) {
+				message.ReasoningContent = ""
+			}
 			for _, call := range message.ToolCalls {
 				if id := strings.TrimSpace(call.ID); id != "" {
 					currentAssistants[id] = cloneMessage(message)
@@ -394,6 +497,12 @@ func (m *Manager) syncTurnTranscriptMessages(messages []adapter.Message) {
 			continue
 		}
 		if replacement, ok := current[strings.TrimSpace(message.ToolCallID)]; ok {
+			// A projection is applied to each request again; the transcript
+			// keeps the original it is made from.
+			if receipt, projected := decodeToolResultReceipt(contentString(replacement.Content)); projected &&
+				strings.EqualFold(strings.TrimSpace(fmt.Sprint(receipt["status"])), "projected") {
+				continue
+			}
 			m.state.TurnTranscript[index] = replacement
 		}
 	}
@@ -456,24 +565,37 @@ func (m *Manager) compressHistoricalToolResults(ctx context.Context, request *ad
 			stats.count++
 		}
 		if m.estimator.EstimateChatRequest(current).Tokens < promptBudget {
-			current.Messages = adapter.NormalizeSystemMessages(current.Messages)
 			return current, stats, nil
 		}
 	}
-	current.Messages = adapter.NormalizeSystemMessages(current.Messages)
+	// System messages keep their positions; only the request handed to the
+	// provider is placed for it (ADR 0032).
 	return current, stats, nil
 }
 
+// historicalToolBoundary returns the index in messages where the protected
+// rounds begin. System messages stay where they are, so the dialogue offset is
+// mapped back to its position among them.
 func historicalToolBoundary(messages []adapter.Message, protectedRounds int) int {
-	systems, dialogue := splitSystemMessages(messages)
+	_, dialogue := splitSystemMessages(messages)
 	if len(dialogue) == 0 {
 		return len(messages)
 	}
 	start := selectPreservedTailMessagesByRounds(dialogue, protectedRounds)
 	if start <= 0 {
-		return len(systems) + len(dialogue)
+		return len(messages)
 	}
-	return len(systems) + start
+	seen := 0
+	for index, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "system") {
+			continue
+		}
+		if seen == start {
+			return index
+		}
+		seen++
+	}
+	return len(messages)
 }
 
 func (m *Manager) compressToolResult(content, model string) string {
@@ -536,7 +658,7 @@ func (m *Manager) projectOversizedToolResults(ctx context.Context, messages []ad
 			}
 		}
 		stats.originalTokens += originalTokens
-		if result.Tokens <= m.config.MaxToolResultTokens {
+		if result.Tokens <= m.config.ProjectToolResultTokens {
 			stats.projectedTokens += result.Tokens
 			continue
 		}
@@ -798,8 +920,10 @@ func (m *Manager) toolReplacement(ctx context.Context, message adapter.Message, 
 			return ContentReplacement{}, fmt.Errorf("store oversized tool result: %w", err)
 		}
 		artifactRef = ref
+	} else if ref, err := m.rememberOriginal(hash, content); err == nil {
+		artifactRef = ref
 	}
-	preview := truncateRunes(content, m.config.ToolResultPreviewRunes)
+	preview := headAndTail(content, m.config.ToolResultPreviewRunes)
 	status := "projected"
 	if compact {
 		status = "compacted"

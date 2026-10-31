@@ -98,6 +98,9 @@ type NativeToolSetOptions struct {
 	ReservedToolNames     []string
 	AuthorizeSkill        func(context.Context, string) (bool, error)
 	EstimateTokens        func([]llmadapter.Message, []llmadapter.Tool) int
+	// UnifiedDispatch lists an activated skill's tools in its instructions,
+	// for a run that calls them through the unified tool (ADR 0044).
+	UnifiedDispatch bool
 }
 
 type nativeSkillCandidate struct {
@@ -176,6 +179,9 @@ func (r *Runtime) BuildNativeToolSet(ctx context.Context, resolved *ResolvedSkil
 			result.SkippedSkills = append(result.SkippedSkills, *skip)
 			continue
 		}
+		if options.UnifiedDispatch {
+			candidate = withUnifiedToolUsage(skillID, candidate, options.EstimateTokens)
+		}
 		requiredChars := candidate.instructionChars + candidate.schemaChars
 		if options.BudgetTokens > 0 && options.EstimateTokens != nil && usedTokens+candidate.totalTokens > options.BudgetTokens {
 			result.SkippedSkills = append(result.SkippedSkills, NativeSkillSkip{
@@ -197,7 +203,9 @@ func (r *Runtime) BuildNativeToolSet(ctx context.Context, resolved *ResolvedSkil
 		}
 
 		result.ActiveSkillIDs = append(result.ActiveSkillIDs, skillID)
-		result.InstructionMessages = append(result.InstructionMessages, candidate.instruction)
+		if candidate.instructionChars > 0 {
+			result.InstructionMessages = append(result.InstructionMessages, candidate.instruction)
+		}
 		result.ProviderTools = append(result.ProviderTools, candidate.tools...)
 		for name, binding := range candidate.bindings {
 			result.ToolBindings[name] = binding
@@ -266,6 +274,7 @@ func AppendNativeToolProjections(
 		}
 	}
 	added := 0
+	firstAdded := len(toolSet.ProviderTools)
 	for _, projection := range projections {
 		requestedName := strings.TrimSpace(projection.Name)
 		binding := cloneNativeToolBinding(projection.Binding)
@@ -342,6 +351,13 @@ func AppendNativeToolProjections(
 		localNames[providerName] = struct{}{}
 		added++
 	}
+	// Relevance decides which projections fit, not where they go: the same
+	// tools in a different order would invalidate the provider's prompt cache
+	// from the tools onward on every turn (ADR 0032).
+	appended := toolSet.ProviderTools[firstAdded:]
+	sort.SliceStable(appended, func(i, j int) bool {
+		return appended[i].Function.Name < appended[j].Function.Name
+	})
 	return added
 }
 
@@ -380,10 +396,14 @@ func (r *Runtime) nativeSkillCandidate(ctx context.Context, doc SkillDocument, t
 			}, "\n"),
 		},
 	}
-	candidate.instructionChars = len([]rune(fmt.Sprint(candidate.instruction.Content)))
+	if IsResidentSkill(skillID) {
+		candidate.instruction = llmadapter.Message{}
+	} else {
+		candidate.instructionChars = len([]rune(fmt.Sprint(candidate.instruction.Content)))
+	}
 
 	localNames := make(map[string]struct{}, len(doc.Tools))
-	for _, definition := range doc.Tools {
+	for _, definition := range residentTools(skillID, doc.Tools) {
 		toolName := strings.TrimSpace(definition.Name)
 		if toolName == "" {
 			return nativeSkillCandidate{}, &NativeSkillSkip{SkillID: skillID, Reason: "tool_name_invalid"}
@@ -411,9 +431,12 @@ func (r *Runtime) nativeSkillCandidate(ctx context.Context, doc SkillDocument, t
 		localNames[providerName] = struct{}{}
 	}
 	if estimateTokens != nil {
-		candidate.instructionTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, nil)
 		candidate.schemaTokens = estimateTokens(nil, candidate.tools)
-		candidate.totalTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, candidate.tools)
+		candidate.totalTokens = candidate.schemaTokens
+		if candidate.instructionChars > 0 {
+			candidate.instructionTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, nil)
+			candidate.totalTokens = estimateTokens([]llmadapter.Message{candidate.instruction}, candidate.tools)
+		}
 	}
 	return candidate, nil
 }

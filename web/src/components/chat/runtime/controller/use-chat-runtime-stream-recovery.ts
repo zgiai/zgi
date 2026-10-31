@@ -23,6 +23,8 @@ import {
   upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
 import {
+  AICHAT_DISCONNECTED_STATUS_POLL_LIMIT,
+  AICHAT_DISCONNECTED_STATUS_POLL_MS,
   AICHAT_RECOVERY_RETRY_DELAYS,
   AICHAT_STREAM_EVENTS_EXPIRED,
   clearStreamingRuntimeMessageMetadata,
@@ -89,6 +91,35 @@ export function useChatRuntimeStreamRecovery({
           // Fall back to the cached conversation; a later refresh still recovers.
         }
       }
+
+      // Checks a disconnected conversation until the server settles its turn,
+      // then loads the settled messages. Reconnecting or leaving the
+      // conversation clears the timer with the other recovery retries.
+      const watchUntilSettled = (poll: number) => {
+        if (poll >= AICHAT_DISCONNECTED_STATUS_POLL_LIMIT) return;
+        recoveryRetryTimeoutsRef.current[conversationId] = setTimeout(() => {
+          delete recoveryRetryTimeoutsRef.current[conversationId];
+          void transportRef.current
+            .refreshConversation(conversationId)
+            .then(conversation => {
+              if (conversation.runtime_status === 'streaming' && conversation.active_message_id) {
+                watchUntilSettled(poll + 1);
+                return;
+              }
+              setControllerState(current => ({
+                ...current,
+                conversations: replaceAIChatConversation(current.conversations, conversation),
+                isSending: getNextActiveSendingState(current, conversationId, false),
+                connectionByConversation: {
+                  ...current.connectionByConversation,
+                  [conversationId]: 'idle',
+                },
+              }));
+              refreshMessagesSilently(conversationId);
+            })
+            .catch(() => watchUntilSettled(poll + 1));
+        }, AICHAT_DISCONNECTED_STATUS_POLL_MS);
+      };
 
       const connect = (attempt: number) => {
         const currentState = stateRef.current;
@@ -268,6 +299,8 @@ export function useChatRuntimeStreamRecovery({
                 }));
                 if (!stillRunning) {
                   refreshMessagesSilently(conversationId);
+                } else {
+                  watchUntilSettled(0);
                 }
               })
               .catch(() => {
@@ -282,6 +315,9 @@ export function useChatRuntimeStreamRecovery({
                     [conversationId]: 'disconnected',
                   },
                 }));
+                // The server may be down; keep checking until it settles
+                // the turn.
+                watchUntilSettled(0);
               });
             return;
           }

@@ -1,8 +1,6 @@
 package contextmgr
 
 import (
-	"crypto/sha256"
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -27,27 +25,32 @@ func TestCompactSummaryRequiresNonEmptySummaryBlock(t *testing.T) {
 
 func TestCompactPromptIncludesNoToolsGuard(t *testing.T) {
 	prompt := GetPartialCompactPrompt("", "up_to")
-	for _, expected := range []string{"CRITICAL: Respond with TEXT ONLY", "newer messages that build on this context will follow", "Tool calls will be rejected"} {
+	for _, expected := range []string{"CRITICAL: Respond with TEXT ONLY", "newer messages that build on it will follow", "Tool calls will be rejected"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("prompt missing %q", expected)
 		}
 	}
 }
 
-func TestClaudeCompactTemplateSnapshots(t *testing.T) {
-	cases := map[string]struct {
-		value string
-		hash  string
-	}{
-		"base":    {value: GetCompactPrompt(""), hash: "042f6d6d58d27ee21ab5ed7a248c5a3fbb24019a3738cc683af2644f8b9d55eb"},
-		"partial": {value: GetPartialCompactPrompt("", "from"), hash: "86e8aeeeaedfca9cb12e8963376644a3c0b7f36adacb22b04d90687dbab0a59c"},
-		"up_to":   {value: GetPartialCompactPrompt("", "up_to"), hash: "ce99ed3b6e51a59811453c391287b5617011701e11b2f96a7fa40948e214a569"},
-		"wrapper": {value: GetCompactUserSummaryMessage("<summary>snapshot</summary>", true, "", true), hash: "e5f216cd688f4abe1611e2150addad323a2633ebf78345b7aeb631d88bbaaf9c"},
-	}
-	for name, testCase := range cases {
-		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(testCase.value)))
-		if digest != testCase.hash {
-			t.Errorf("%s compact template hash = %s", name, digest)
+// The summary serves an agent product: it keeps what is known about the user,
+// exact identifiers and references, and the user's language; a summary stored
+// for later turns does not ask them to continue a task (ADR 0038).
+func TestCompactPromptFitsAnAgentProduct(t *testing.T) {
+	prompt := GetPartialCompactPrompt("", "up_to")
+	for _, expected := range []string{"About the user", "Copy identifiers", "agent-context://", "in the language the user writes in", "approvals given or refused"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("prompt missing %q", expected)
 		}
+	}
+	for _, unwanted := range []string{"Files and Code Sections", "full code snippets", "Bash, Grep"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt still contains %q", unwanted)
+		}
+	}
+	if stored := GetCompactUserSummaryMessage("<summary>s</summary>", false, "", true); strings.Contains(stored, "Continue the current task") {
+		t.Fatalf("stored summary asks to continue a task: %q", stored)
+	}
+	if inTurn := GetCompactUserSummaryMessage("<summary>s</summary>", true, "", true); !strings.Contains(inTurn, "Continue the current task") {
+		t.Fatalf("in-turn summary should continue the task: %q", inTurn)
 	}
 }

@@ -83,10 +83,8 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
-	executionModeAgentLoop       = "agent_loop"
 	executionModeNativeAgentLoop = "native_agent_loop"
 	executionModeNativeToolLoop  = "native_tool_loop"
-	executionModeLegacyToolChat  = "legacy_tool_chat"
 	executionModeDirectChat      = "direct_chat"
 
 	executionRouteNativeAgent                = "native_agent"
@@ -153,6 +151,13 @@ func (s Scope) AgentResourceWorkspaceID() *uuid.UUID {
 	return s.WorkspaceID
 }
 
+// Execution modes of the retired protocol loop. Messages persisted with them
+// continue in the native loop (ADR 0046).
+const (
+	retiredExecutionModeAgentLoop      = "agent_loop"
+	retiredExecutionModeLegacyToolChat = "legacy_tool_chat"
+)
+
 func isNativeExecutionMode(mode string) bool {
 	switch normalizeExecutionMode(mode) {
 	case executionModeNativeAgentLoop, executionModeNativeToolLoop:
@@ -164,9 +169,9 @@ func isNativeExecutionMode(mode string) bool {
 
 func executionModeModelUseCase(mode string) string {
 	switch normalizeExecutionMode(mode) {
-	case executionModeAgentLoop, executionModeNativeAgentLoop:
+	case executionModeNativeAgentLoop:
 		return "agent"
-	case executionModeNativeToolLoop, executionModeLegacyToolChat, executionModeDirectChat:
+	case executionModeNativeToolLoop, executionModeDirectChat:
 		return "text-chat"
 	default:
 		return ""
@@ -225,8 +230,23 @@ type RunConfig struct {
 	// conversation; empty for every other origin (ADR 0028).
 	ConnectorRequesterID string
 	// UserTimezone is the IANA timezone of the person the run serves; the
-	// time Skill defaults to it. Empty keeps the Skill's UTC default.
-	UserTimezone              string
+	// time Skill and the current time in the turn context use it. Empty uses
+	// the account's timezone, or Asia/Shanghai.
+	UserTimezone string
+	// CurrentTimeProvided reports that TurnContext already tells the time, so
+	// the runtime adds none of its own (ADR 0043).
+	CurrentTimeProvided bool
+	// TurnContext is server-owned guidance that changes from run to run, such
+	// as the current time, memory, or channel context. It is sent after the
+	// conversation history rather than in SystemPrompt, so the prompt prefix
+	// stays identical across runs and provider prompt caches can reuse it
+	// (ADR 0032).
+	TurnContext string
+	// TurnContextSections are the parts of TurnContext, each sent as its own
+	// reminder. A section already in the replayed history verbatim, such as
+	// unchanged memory, is not sent again (ADR 0043). Empty means TurnContext
+	// is one section.
+	TurnContextSections       []string
 	AgentMemoryConfigScope    string
 	AgentMemoryConfigRevision string
 	// AgentMemoryInstructions is the builder's guidance on what to remember.
@@ -472,6 +492,8 @@ type Service interface {
 	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredUserInputContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	RunConfiguredTaskTokenBudgetContinuationStream(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, requestID string, req runtimedto.TaskTokenBudgetContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunInterruptedTurnResumeStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunConfiguredInterruptedTurnResume(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID, onEvent func(StreamEvent) error) (*ChatResult, error)
 	CreatePendingMessage(ctx context.Context, scope Scope, req CreatePendingMessageRequest) (*runtimemodel.Message, error)
 	CreateConversationWithPendingMessage(ctx context.Context, scope Scope, caller Caller, req CreateConversationWithPendingMessageRequest) (*runtimemodel.Conversation, *runtimemodel.Message, error)
 	CompleteMessage(ctx context.Context, scope Scope, req CompleteMessageRequest) (*runtimemodel.Message, error)
@@ -667,6 +689,9 @@ type PreparedChat struct {
 	contextBudget                  *contextBudgetResult
 	contextManager                 *contextmgr.Manager
 	contextEntries                 *contextEntrySync
+	// turnUserContent is the question as the native loop sent it, with the
+	// reminders after it merged in (ADR 0043).
+	turnUserContent interface{}
 	// continuationTranscript holds the messages that resume a paused turn,
 	// such as the resolved approval. They reach the model only through the
 	// request, so they are stored ahead of the resumed run's own output.
@@ -742,10 +767,32 @@ type ExistingSkill struct {
 }
 
 type chatRequestParts struct {
-	ConversationID                   string
-	Query                            string
-	Surface                          string
-	RuntimeContext                   string
+	ConversationID string
+	Query          string
+	Surface        string
+	RuntimeContext string
+	// TurnContext is the server-owned per-run guidance of RunConfig.TurnContext.
+	TurnContext         string
+	TurnContextSections []string
+	// RecentSkillIDs are the skills whose tools succeeded in the conversation's
+	// recent turns; they are active from the start of this turn (ADR 0043).
+	RecentSkillIDs []string
+	// TurnReminders are the reminders sent before the current question; the
+	// transcript stores the question with them (ADR 0043).
+	TurnReminders []string
+	// CurrentTimeContext is the current time the runtime adds to the turn
+	// context when the caller provides none (ADR 0043).
+	CurrentTimeContext  string
+	// UserLanguageContext names the user's interface language when the run
+	// knows it; it follows the user's request (ADR 0048).
+	UserLanguageContext string
+	CurrentTimeProvided bool
+	// TurnStartedAt is when the turn's message was created; a continuation
+	// soon after keeps that time in its turn context.
+	TurnStartedAt time.Time
+	// UserTimezone is the timezone of the person the run serves, from the run
+	// configuration or their account.
+	UserTimezone                     string
 	RawOperationContext              map[string]interface{}
 	OperationContext                 map[string]interface{}
 	OperationLedger                  map[string]interface{}
@@ -815,12 +862,10 @@ type chatRequestParts struct {
 	// UserInputAnswers are the user's answers to questions asked in this
 	// turn. They are the user's words for the turn as much as the query, so
 	// memory evidence may quote them.
-	UserInputAnswers     []string
-	AgentMemoryContext   string
-	RuntimeTools         []skillloop.RuntimeTool
-	SourceMessageID      *uuid.UUID
-	BillingSource        string
-	ModelTurnIntent      *AIChatModelTurnIntent
-	ModelTurnIntentError string
-	HistoryPolicy        *runtimedto.ConversationHistoryPolicy
+	UserInputAnswers   []string
+	AgentMemoryContext string
+	RuntimeTools       []skillloop.RuntimeTool
+	SourceMessageID    *uuid.UUID
+	BillingSource      string
+	HistoryPolicy      *runtimedto.ConversationHistoryPolicy
 }

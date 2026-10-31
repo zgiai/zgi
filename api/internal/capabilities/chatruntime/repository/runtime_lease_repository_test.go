@@ -39,6 +39,26 @@ func TestRuntimeLeaseMarksOnlyExpiredRuns(t *testing.T) {
 	}
 }
 
+// A turn the lease sweep stops becomes its conversation's leaf before its
+// stream is cleared, so the conversation shows the stopped turn.
+func TestClearActiveMessagesMakesTheStoppedTurnTheLeaf(t *testing.T) {
+	db, mock := newRuntimeLeaseMockDB(t)
+	repo := NewConversationRepository(db)
+	stopped := uuid.New()
+
+	mock.ExpectExec(`(?s)UPDATE chat_runtime_conversations AS c\s+SET current_leaf_message_id = c.active_message_id.*FROM chat_runtime_messages AS m.*c.active_message_id IN .*current_leaf_message_id = m.parent_id`).
+		WithArgs(stopped).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*active_message_id.*runtime_status.*WHERE active_message_id IN`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := repo.ClearActiveMessages(context.Background(), []uuid.UUID{stopped}); err != nil {
+		t.Fatalf("ClearActiveMessages: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestRuntimeRunOwnershipPreventsOldCompletion(t *testing.T) {
 	db, mock := newRuntimeLeaseMockDB(t)
 	repo := NewMessageRepository(db)

@@ -48,12 +48,6 @@ func TestInjectClientActionContinuationContextPromotesLoadedRouteContext(t *test
 	if got := contextualTurnCurrentPage(parts); got != "/console/files" {
 		t.Fatalf("contextualTurnCurrentPage() = %q, want /console/files", got)
 	}
-	if !clientActionContinuationLoadedRoute(parts, "/console/files") {
-		t.Fatal("clientActionContinuationLoadedRoute() = false, want true for loaded_href")
-	}
-	if !consoleNavigationRouteAlreadyAvailable(parts, "/console/files") {
-		t.Fatal("consoleNavigationRouteAlreadyAvailable() = false, want true")
-	}
 
 	evidence := skillLoopCompletionPageContextEvidence(parts)
 	resources := operationItemsFromValue(evidence["resources"])
@@ -237,9 +231,6 @@ func TestClientActionContinuationRouteFailureFeedbackIsRecoverable(t *testing.T)
 	}
 
 	injectClientActionContinuationContext(parts, event, req, nil)
-	if clientActionContinuationLoadedRoute(parts, "/console/agents/agent-1/agent") {
-		t.Fatal("clientActionContinuationLoadedRoute() = true for failed route, want false")
-	}
 	resources := operationItemsFromValue(parts.OperationContext["resources"])
 	for _, item := range resources {
 		resource := mapFromOperationContext(item)
@@ -411,49 +402,5 @@ func TestClientActionContinuationMessageIncludesTurnState(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message missing %q in:\n%s", want, content)
 		}
-	}
-}
-
-func agentCreateProgressPlanForTest(description string) map[string]interface{} {
-	return map[string]interface{}{
-		"agent_create_count":       2,
-		"agent_create_targets":     []interface{}{"Agent One", "Agent Two"},
-		"agent_create_description": description,
-	}
-}
-
-func agentCreateInvocationForTest(id, name string) map[string]interface{} {
-	return map[string]interface{}{
-		"kind":      "tool_call",
-		"status":    "success",
-		"skill_id":  skills.SkillAgentManagement,
-		"tool_name": "create_agent",
-		"result": map[string]interface{}{
-			"status":     "completed",
-			"effect":     "created",
-			"agent_id":   id,
-			"agent_name": name,
-		},
-	}
-}
-
-func agentCreateObservationForTest(name string) map[string]interface{} {
-	return map[string]interface{}{
-		"kind":      "client_action",
-		"status":    clientActionStatusSucceeded,
-		"skill_id":  skills.SkillAgentManagement,
-		"tool_name": "create_agent",
-		"result": map[string]interface{}{
-			"effect":        "create",
-			"asset_type":    "agent",
-			"visible_count": 1,
-			"observed_assets": []interface{}{
-				map[string]interface{}{
-					"name":    name,
-					"type":    "agent",
-					"visible": true,
-				},
-			},
-		},
 	}
 }

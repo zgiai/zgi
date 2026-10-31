@@ -14,6 +14,7 @@ supported_callers:
   - digital_human
   - workflow
 max_calls_per_turn: 20
+side_effects: none
 timeout_seconds: 5
 display:
   icon: clock
@@ -46,8 +47,8 @@ Use this skill for current time and date calculation tasks.
 
 ## Workflow
 
-1. For current time or today's date, call `call_skill_tool` with `tool_name` set to `current_time`.
-2. For date addition, date subtraction, deadlines, or date differences, call `call_skill_tool` with `tool_name` set to `date_calculate`.
+1. For current time or today's date, call `current_time`.
+2. For date addition, date subtraction, deadlines, or date differences, call `date_calculate`.
 3. Always include the relevant timezone in the final answer when current time or today is involved.
 4. Do not guess current time or today's date without calling the tool.
 

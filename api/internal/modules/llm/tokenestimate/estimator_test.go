@@ -1,6 +1,7 @@
 package tokenestimate
 
 import (
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -98,8 +99,40 @@ func TestEstimateTextSupportsMultilingualActionProgress(t *testing.T) {
 		if result.Tokens <= 0 {
 			t.Fatalf("EstimateText(%q) = %#v, want positive token count", text, result)
 		}
-		if result.Tokenizer != "fallback:conservative" {
-			t.Fatalf("EstimateText(%q) tokenizer = %q, want conservative fallback", text, result.Tokenizer)
+		if result.Tokenizer != fallbackCJKCompact {
+			t.Fatalf("EstimateText(%q) tokenizer = %q, want the CJK-compact fallback for DeepSeek", text, result.Tokenizer)
 		}
+	}
+}
+
+func TestFallbackEstimatesEachCharacterClassAtItsOwnRate(t *testing.T) {
+	estimator := NewEstimator()
+	chinese := strings.Repeat("数据整理完成生成报告", 100) // 1,000 Han characters
+	if got := estimator.EstimateText(chinese, "deepseek-v4-flash").Tokens; got != 800 {
+		t.Fatalf("DeepSeek estimate for 1,000 Han characters = %d, want 800", got)
+	}
+	if got := estimator.EstimateText(chinese, "claude-sonnet-5-5").Tokens; got != 1500 {
+		t.Fatalf("Claude estimate for 1,000 Han characters = %d, want 1500", got)
+	}
+	// One emoji no longer makes a whole English text count as two bytes per token.
+	english := strings.Repeat("abc ", 300) + "🚀"
+	if got := estimator.EstimateText(english, "deepseek-v4-flash").Tokens; got != 400+2 {
+		t.Fatalf("English estimate = %d, want 402", got)
+	}
+	if got := estimator.EstimateText("报告", "qwen/qwen3-max").Tokenizer; got != fallbackCJKCompact {
+		t.Fatalf("a provider-prefixed Qwen model uses %q", got)
+	}
+}
+
+// Reasoning counts for models that are sent it, and only for them.
+func TestEstimateMessagesCountsReasoningForModelsThatReplayIt(t *testing.T) {
+	estimator := NewEstimator()
+	plain := []adapter.Message{{Role: "assistant", Content: "done"}}
+	withReasoning := []adapter.Message{{Role: "assistant", Content: "done", ReasoningContent: strings.Repeat("thinking ", 200)}}
+	if estimator.EstimateMessages(withReasoning, "deepseek-v4-flash").Tokens <= estimator.EstimateMessages(plain, "deepseek-v4-flash").Tokens {
+		t.Fatal("want reasoning counted for DeepSeek")
+	}
+	if estimator.EstimateMessages(withReasoning, "gpt-5").Tokens != estimator.EstimateMessages(plain, "gpt-5").Tokens {
+		t.Fatal("want reasoning not counted for a model that is not sent it")
 	}
 }

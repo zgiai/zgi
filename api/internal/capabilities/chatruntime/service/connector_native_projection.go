@@ -101,18 +101,6 @@ func restrictConnectorNativeExecutionTools(resolved *skills.ResolvedSkills, tool
 	return result
 }
 
-func onlyConnectorNativeTools(doc *skills.SkillDocument) bool {
-	if doc == nil || len(doc.Tools) == 0 {
-		return false
-	}
-	for _, definition := range doc.Tools {
-		if !definition.ConnectorNative {
-			return false
-		}
-	}
-	return true
-}
-
 func hasConnectorNativeTools(doc *skills.SkillDocument) bool {
 	if doc != nil {
 		for _, definition := range doc.Tools {

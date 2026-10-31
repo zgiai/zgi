@@ -211,10 +211,6 @@ func globalAgentMemoryInlineToolsEnabled() bool {
 	return value == "" || value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
-func agentMemoryRuntimeSlots(input []AgentMemorySlotConfig) []agentmemory.RuntimeSlot {
-	return agentmemoryruntime.RuntimeSlots(enabledAgentMemorySlots(input))
-}
-
 func enabledAgentMemorySlots(input []AgentMemorySlotConfig) []AgentMemorySlotConfig {
 	normalized := normalizeAgentMemorySlots(input)
 	out := make([]AgentMemorySlotConfig, 0, len(normalized))
@@ -438,12 +434,6 @@ func memoryRuntimeFailure(code string, recoverable bool) skillloop.RuntimeToolRe
 		Result: map[string]interface{}{"status": "failed", "error_code": code, "retry_allowed": recoverable},
 		Error:  context.Canceled, Recoverable: recoverable,
 	}
-}
-
-func (s *service) emitAgentMemoryMutationEvents(ctx context.Context, prepared *PreparedChat, response *agentmemory.MutateValuesResponse, onEvent func(StreamEvent) error) {
-	s.forEachAgentMemoryMutationEvent(prepared, response, func(eventType string, payload map[string]interface{}) {
-		_ = s.emitPreparedEvent(ctx, prepared, eventType, payload, onEvent)
-	})
 }
 
 func (s *service) recordAgentMemoryMutationEvents(ctx context.Context, prepared *PreparedChat, response *agentmemory.MutateValuesResponse, timeline *processTimelineRecorder) {

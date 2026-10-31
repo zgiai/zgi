@@ -11,6 +11,9 @@ var (
 	systemToolGovernanceOnce sync.Once
 	systemToolGovernance     map[string]toolgovernance.Manifest
 	systemToolGovernanceErr  error
+	// systemSideEffectFreeSkills are the system skills that declare
+	// side_effects: none.
+	systemSideEffectFreeSkills map[string]bool
 )
 
 func SystemSkillToolGovernanceManifest(skillID, toolName string) (toolgovernance.Manifest, bool) {
@@ -56,11 +59,15 @@ func loadSystemToolGovernanceCatalog() {
 	}
 
 	manifests := map[string]toolgovernance.Manifest{}
+	sideEffectFree := map[string]bool{}
 	for _, location := range locations {
 		doc, err := runtime.loadSkillDocumentFromLocation(location)
 		if err != nil {
 			systemToolGovernanceErr = err
 			return
+		}
+		if doc.Metadata.SideEffects == SkillSideEffectsNone {
+			sideEffectFree[normalizeSkillID(doc.Metadata.ID)] = true
 		}
 		for _, tool := range doc.Tools {
 			if tool.Governance == nil {
@@ -74,6 +81,7 @@ func loadSystemToolGovernanceCatalog() {
 		return
 	}
 	systemToolGovernance = manifests
+	systemSideEffectFreeSkills = sideEffectFree
 }
 
 func systemToolGovernanceKey(skillID, toolName string) string {

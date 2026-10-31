@@ -67,7 +67,7 @@ func planningRequestBudgetForRun(req RunRequest) planningRequestBudget {
 		promptBudget:          promptBudget,
 		initialOutputTokens:   numericValue(control["reserved_output_tokens"]),
 		outputTokenLimit:      req.PlanningOutputTokenLimit,
-		providerManagedOutput: req.NativeAgentLoop,
+		providerManagedOutput: true,
 		estimateScale:         reusablePromptEstimateScale(metadata, provider, model),
 	}
 }

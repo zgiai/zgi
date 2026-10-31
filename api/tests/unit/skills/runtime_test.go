@@ -34,62 +34,6 @@ func TestRuntime_ResolveEnabledSkills_LoadsCatalogMetadata(t *testing.T) {
 	if !containsString(got.Metadata.Tools, "current_time") || !containsString(got.Metadata.Tools, "date_calculate") {
 		t.Fatalf("tools = %v, want current_time and date_calculate", got.Metadata.Tools)
 	}
-	message := skills.SkillMetadataSystemMessage(resolved.PromptMetadata())
-	content := message.Content.(string)
-	if strings.Contains(content, "current_time") || strings.Contains(content, "date_calculate") {
-		t.Fatalf("prompt metadata content = %q, did not want business tool names", content)
-	}
-}
-
-func TestSkillMetadataSystemMessageWithBudget_TruncatesLongFields(t *testing.T) {
-	longDescription := strings.Repeat("description ", 120)
-	message, stats := skills.SkillMetadataSystemMessageWithBudget([]skills.SkillPromptMetadata{
-		{
-			ID:          "long-skill",
-			Source:      skills.SkillSourceCustom,
-			Name:        "Long Skill",
-			Description: longDescription,
-			WhenToUse:   strings.Repeat("when ", 120),
-			RuntimeType: skills.SkillRuntimeTypePrompt,
-		},
-	}, 1200)
-
-	content := message.Content.(string)
-	if !stats.Truncated || stats.ExposedCount != 1 || stats.OmittedCount != 0 {
-		t.Fatalf("stats = %#v, want one exposed truncated skill", stats)
-	}
-	if strings.Contains(content, longDescription) {
-		t.Fatal("metadata prompt contains the full long description, want truncated content")
-	}
-	if !strings.Contains(content, "long-skill") {
-		t.Fatal("metadata prompt omitted the skill id, want it preserved")
-	}
-}
-
-func TestSkillMetadataSystemMessageWithBudget_OmitsSkillsOverBudget(t *testing.T) {
-	metadata := make([]skills.SkillPromptMetadata, 0, 20)
-	for i := range 20 {
-		metadata = append(metadata, skills.SkillPromptMetadata{
-			ID:          fmt.Sprintf("skill-%02d", i),
-			Source:      skills.SkillSourceCustom,
-			Name:        fmt.Sprintf("Skill %02d", i),
-			Description: strings.Repeat("description ", 20),
-			WhenToUse:   strings.Repeat("when ", 20),
-			RuntimeType: skills.SkillRuntimeTypePrompt,
-		})
-	}
-
-	message, stats := skills.SkillMetadataSystemMessageWithBudget(metadata, 900)
-	content := message.Content.(string)
-	if stats.EnabledCount != len(metadata) || stats.ExposedCount == 0 || stats.ExposedCount >= len(metadata) || stats.OmittedCount == 0 {
-		t.Fatalf("stats = %#v, want partial exposure with omitted skills", stats)
-	}
-	if !stats.Truncated {
-		t.Fatalf("stats.Truncated = false, want true when skills are omitted")
-	}
-	if strings.Contains(content, "skill-19") {
-		t.Fatal("metadata prompt contains omitted skill-19")
-	}
 }
 
 func TestRuntime_ResolveEnabledSkills_NotFound_ReturnsError(t *testing.T) {
@@ -125,18 +69,6 @@ func TestRuntime_ListSkills_ReturnsSortedLightweightMetadata(t *testing.T) {
 	}
 	if metadata[0].Display.Icon != "calculator" || metadata[0].Display.Label["en_US"] != "Calculator" || metadata[0].Display.Label["zh_Hans"] != "Calculator Localized" {
 		t.Fatalf("calculator display = %#v, want display metadata", metadata[0].Display)
-	}
-	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"calculator"})
-	if err != nil {
-		t.Fatalf("ResolveEnabledSkills() error = %v", err)
-	}
-	message := skills.SkillMetadataSystemMessage(resolved.PromptMetadata())
-	content := message.Content.(string)
-	if strings.Contains(content, "evaluate_expression") || strings.Contains(content, "calculate") || strings.Contains(content, "percentage") {
-		t.Fatalf("prompt metadata content = %q, did not want business tool names", content)
-	}
-	if strings.Contains(content, "productivity") || strings.Contains(content, "Math") {
-		t.Fatalf("prompt metadata content = %q, did not want display metadata", content)
 	}
 }
 

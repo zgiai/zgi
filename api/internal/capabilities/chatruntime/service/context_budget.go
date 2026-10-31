@@ -72,21 +72,15 @@ func (s *service) buildTokenBudgetMessages(
 	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, parentMessages)
 	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
 	turnBoundaryContext := currentTurnBoundaryMessage(parts)
-	extraContextMessages := make([]adapter.Message, 0, 3)
-	if memoryContext := agentMemoryContextMessage(parts); memoryContext != nil {
-		extraContextMessages = append(extraContextMessages, *memoryContext)
+	historyMessages, err := s.conversationHistoryMessages(ctx, parentMessages, parts)
+	if err != nil {
+		return nil, err
 	}
-	if recentExecutionContext != nil {
-		extraContextMessages = append(extraContextMessages, *recentExecutionContext)
-	}
-	if continuationContext != nil {
-		extraContextMessages = append(extraContextMessages, *continuationContext)
-	}
-	if unbound := databaseBindingsRemovedMessage(parts, parentMessages); unbound != nil {
-		extraContextMessages = append(extraContextMessages, *unbound)
-	}
-	if turnBoundaryContext != nil {
-		extraContextMessages = append(extraContextMessages, *turnBoundaryContext)
+	reminders := currentTurnReminders(parts, historyMessages, recentExecutionContext, continuationContext, databaseBindingsRemovedMessage(parts, parentMessages), turnBoundaryContext)
+	parts.TurnReminders = reminders
+	extraContextMessages := make([]adapter.Message, 0, 1)
+	if len(reminders) > 0 {
+		extraContextMessages = append(extraContextMessages, adapter.Message{Role: "user", Content: adapter.PrependSystemReminders(reminders, "")})
 	}
 
 	baseMessages := []adapter.Message{
@@ -109,19 +103,17 @@ func (s *service) buildTokenBudgetMessages(
 	}
 	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, extraContextTokens)
 
-	historyMessages, err := s.conversationHistoryMessages(ctx, parentMessages, parts)
-	if err != nil {
-		return nil, err
-	}
 	historyBefore := len(historyMessages)
 	estimatedPromptTokens += s.tokenEstimator.EstimateMessages(historyMessages, parts.ModelName).Tokens
 
 	systemMessage := adapter.Message{Role: "system", Content: systemPrompt}
-	currentUserMessage := adapter.Message{Role: "user", Content: currentContent}
+	// The turn's context travels in its user message, which the transcript
+	// stores as sent: the next turn replays this request unchanged and reads
+	// it from the provider's cache (ADR 0043).
+	currentUserMessage := adapter.Message{Role: "user", Content: adapter.PrependSystemReminders(reminders, currentContent)}
 	messages := make([]adapter.Message, 0, 2+historyBefore)
 	messages = append(messages, systemMessage)
 	messages = append(messages, historyMessages...)
-	messages = append(messages, extraContextMessages...)
 	messages = append(messages, currentUserMessage)
 
 	metadata := contextControlMetadata(spec, budget, estimatedPromptTokens, historyBefore, historyBefore)
@@ -287,8 +279,16 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	if minPrompt > maxMinPrompt {
 		minPrompt = maxMinPrompt
 	}
-	if minPrompt < baseEstimate.Tokens {
-		minPrompt = baseEstimate.Tokens
+	// The native agent loop's context manager makes an oversized request fit,
+	// down to the beginning and end of an oversized first message, so a large
+	// input is budgeted at the limit instead of refused (ADR 0038).
+	contextManaged := parts != nil && isNativeExecutionMode(parts.ExecutionMode)
+	baseTokens := baseEstimate.Tokens
+	if contextManaged {
+		baseTokens = min(baseTokens, maxMinPrompt)
+	}
+	if minPrompt < baseTokens {
+		minPrompt = baseTokens
 	}
 
 	maxAllowedOutput := safeLimit - minPrompt
@@ -329,7 +329,7 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	if spec.MaxInputTokens > 0 && promptBudget > spec.MaxInputTokens {
 		promptBudget = spec.MaxInputTokens
 	}
-	if baseEstimate.Tokens > promptBudget {
+	if baseTokens > promptBudget {
 		return nil, errQueryTooLong()
 	}
 
@@ -361,8 +361,15 @@ func (s *service) conversationHistoryMessages(ctx context.Context, branch []*run
 	if parts != nil {
 		includeImages = parts.ModelSupportsVision
 	}
+	// A supplemental history, such as a channel turn's, keeps only its newest
+	// turns and leaves out what the channel context already carries. The
+	// transcript chain replays every earlier turn, so it is not used then.
+	supplemental := parts != nil && parts.HistoryPolicy != nil && parts.HistoryPolicy.Mode == runtimedto.ConversationHistoryModeSupplemental
+	if supplemental {
+		branch = supplementalHistoryBranch(branch, parts)
+	}
 	tip := conversationBranchTip(branch)
-	if tip != nil && s != nil && s.repos != nil && s.repos.TranscriptEntry != nil {
+	if !supplemental && tip != nil && s != nil && s.repos != nil && s.repos.TranscriptEntry != nil {
 		if tip.TranscriptHeadEntryID != nil && *tip.TranscriptHeadEntryID != uuid.Nil {
 			byID := make(map[uuid.UUID]*runtimemodel.Message, len(branch))
 			for _, row := range branch {
@@ -474,15 +481,6 @@ func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	if partsRequestsContinuationWithFallback(parts, "") {
-		return false
-	}
-	if intent := parts.ModelTurnIntent; intent != nil {
-		switch strings.ToLower(strings.TrimSpace(intent.AssetEffect)) {
-		case "create", "update", "delete", "write", "mutation", "mutate":
-			return true
-		}
-	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		return false
@@ -517,30 +515,79 @@ func buildRecentExecutionContextMessageForRequest(parts *chatRequestParts, branc
 	return buildRecentExecutionContextMessage(branch)
 }
 
+// recentExecutionContextAppliesToCurrentRequest reports whether the recent
+// execution facts are offered. They are offered whenever the turn has a query;
+// the builder adds them only when earlier turns ran tools or produced files, and
+// the model decides whether they matter (ADR 0047).
 func recentExecutionContextAppliesToCurrentRequest(parts *chatRequestParts) bool {
-	if parts == nil {
-		return true
-	}
-	query := strings.TrimSpace(parts.Query)
-	if query == "" {
-		return false
-	}
-	if partsRequestsContinuationWithFallback(parts, "") {
-		return true
-	}
-	return queryReferencesRecentExecutionContext(query)
+	return parts == nil || strings.TrimSpace(parts.Query) != ""
 }
 
-func queryReferencesRecentExecutionContext(query string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(query))
-	if normalized == "" {
-		return false
+// turnContextMessage carries the run's changing guidance after the history, so
+// the system prompt and history form a stable, cacheable prefix (ADR 0032).
+func turnContextMessage(parts *chatRequestParts) *adapter.Message {
+	if parts == nil {
+		return nil
 	}
-	for _, marker := range []string{
-		"刚才", "刚刚", "上次", "上一", "前面", "之前", "先前", "继续", "接着", "后续", "用这个", "把这个", "该文件", "这个文件", "这个图", "上述", "以上", "已生成", "生成的文件", "保存它", "下载它", "预览它",
-		"previous", "last", "earlier", "continue", "reuse", "use it", "that file", "this file", "generated file", "save it", "download it", "preview it",
-	} {
-		if strings.Contains(normalized, marker) {
+	sections := make([]string, 0, 2)
+	for _, section := range []string{parts.CurrentTimeContext, parts.TurnContext} {
+		if section = strings.TrimSpace(section); section != "" {
+			sections = append(sections, section)
+		}
+	}
+	if len(sections) == 0 {
+		return nil
+	}
+	return &adapter.Message{Role: "system", Content: strings.Join(sections, "\n\n")}
+}
+
+// currentTurnReminders is the context of the current turn, in the order it is
+// sent before the user's request: today's date, the caller's turn context,
+// memory, execution notes, continuation state and the turn boundary. The date,
+// turn context sections and memory that the replayed history already holds
+// verbatim are left out, so a conversation does not repeat them every turn
+// (ADR 0043).
+func currentTurnReminders(parts *chatRequestParts, history []adapter.Message, extra ...*adapter.Message) []string {
+	if parts == nil {
+		return nil
+	}
+	reminders := make([]string, 0, 6)
+	if text := strings.TrimSpace(parts.CurrentTimeContext); text != "" && !historyHoldsReminder(history, text) {
+		reminders = append(reminders, text)
+	}
+	sections := parts.TurnContextSections
+	if len(sections) == 0 && strings.TrimSpace(parts.TurnContext) != "" {
+		sections = []string{parts.TurnContext}
+	}
+	for _, section := range sections {
+		if text := strings.TrimSpace(section); text != "" && !historyHoldsReminder(history, text) {
+			reminders = append(reminders, text)
+		}
+	}
+	if text := strings.TrimSpace(parts.AgentMemoryContext); text != "" && !historyHoldsReminder(history, text) {
+		reminders = append(reminders, text)
+	}
+	for _, message := range extra {
+		if message == nil {
+			continue
+		}
+		if text := strings.TrimSpace(messageContentText(message.Content)); text != "" {
+			reminders = append(reminders, text)
+		}
+	}
+	return reminders
+}
+
+// historyHoldsReminder reports whether a replayed user message carries the
+// reminder verbatim. A compacted or isolated history does not, so the
+// reminder is sent again.
+func historyHoldsReminder(history []adapter.Message, text string) bool {
+	wrapped := adapter.SystemReminder(text)
+	for _, message := range history {
+		if !strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+			continue
+		}
+		if strings.Contains(messageContentText(message.Content), wrapped) {
 			return true
 		}
 	}
@@ -548,7 +595,7 @@ func queryReferencesRecentExecutionContext(query string) bool {
 }
 
 func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {
-	if parts == nil || partsRequestsContinuationWithFallback(parts, "") {
+	if parts == nil {
 		return nil
 	}
 	content := strings.Join([]string{
@@ -568,12 +615,8 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	var builder strings.Builder
-	builder.WriteString("Recent assistant execution context for continuity.\n")
-	builder.WriteString("Older turns are represented only by their final assistant answers in the conversation history.\n")
-	builder.WriteString("Use these notes as context; do not mention these storage rules to the user.\n")
-	builder.WriteString("Do not resubmit these notes as intermediate answers; reuse them directly for export, save, convert, or file-generation requests.\n")
-	builder.WriteString("For a new user request, do not recap or claim completion of prior generated files unless the user explicitly references them or asks to continue.\n")
-	builder.WriteString("Prior generated files are candidates for reuse only when the current request asks to reuse, save, convert, download, preview, or continue previous output.\n")
+	builder.WriteString("Notes on what earlier turns produced, for a request that refers back to them. Do not mention these notes to the user.\n")
+	builder.WriteString("Reuse earlier files and results only when the current request asks to reuse, save, convert, download, preview, or continue them, and pass them to tools directly. Otherwise do not recap them or claim them as done.\n")
 
 	remaining := recentExecutionContextBudgetChars - builder.Len()
 	generatedSection, generatedStats := recentGeneratedFilesSection(branch, remaining)
@@ -631,27 +674,29 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	return &adapter.Message{Role: "system", Content: content}, stats
 }
 
+// buildContinuationTaskStateMessage describes the task the previous turn left
+// open, if any. Whether the latest request continues it is the model's call
+// (ADR 0047), so the state is offered rather than asserted.
 func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtimemodel.Message) *adapter.Message {
-	if parts == nil || !partsRequestsContinuationWithFallback(parts, "") || len(branch) == 0 {
+	if parts == nil || len(branch) == 0 {
 		return nil
 	}
-	goal := recentNonContinuationUserGoal(branch)
+	goal := openTaskGoal(branch)
 	if goal == "" {
 		return nil
 	}
 
 	var builder strings.Builder
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Assistant continuation task state.\n")
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "The user is asking to continue the most recent unfinished task, not starting a new generic page Q&A turn.\n")
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Use this compact state as authoritative continuity guidance; do not mention these internal notes to the user.\n")
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Most recent non-continuation user goal: "+compactForPrompt(goal, 500)+"\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Open task state.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "The previous turn left this task unfinished. If the latest user request continues it, use this state; if the latest request is a different task, ignore it. Do not mention these internal notes to the user.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Open task goal: "+compactForPrompt(goal, 500)+"\n")
 	if activeGoals := continuationTaskGoals(goal, branch, 3); len(activeGoals) > 1 {
-		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nPrior active operation goals still relevant to this continuation:\n")
+		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nOther unfinished goals:\n")
 		for _, activeGoal := range activeGoals[1:] {
 			appendBudgetedLine(&builder, recentContinuationBudgetChars, "- "+compactForPrompt(activeGoal, 500)+"\n")
 		}
 	}
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Rules for this continuation: do not repeat successful side-effecting tool calls; continue only missing requested steps; verify asset mutations from tool results or refreshed page context before claiming success.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "When continuing: do not repeat successful side-effecting tool calls; do only the missing steps; verify asset mutations from tool results or refreshed page context before claiming success.\n")
 
 	if planState := recentContinuationOperationPlanSection(branch, recentContinuationBudgetChars-builder.Len()); planState != "" {
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nAuthoritative operation plan state:\n")
@@ -679,17 +724,22 @@ func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtim
 	return &adapter.Message{Role: "system", Content: content}
 }
 
-func recentNonContinuationUserGoal(branch []*runtimemodel.Message) string {
+// openTaskGoal returns the goal of the latest assistant turn when that turn
+// left work open: it was stopped, or its operation plan has incomplete work.
+func openTaskGoal(branch []*runtimemodel.Message) string {
 	for i := len(branch) - 1; i >= 0; i-- {
 		message := branch[i]
 		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
 			continue
 		}
-		query := strings.TrimSpace(message.Query)
-		if query == "" || isContinuationIntent(query) {
-			continue
+		plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
+		if message.Status != runtimemodel.MessageStatusStopped && !operationPlanHasIncompleteWork(plan) {
+			return ""
 		}
-		return query
+		if goal := strings.TrimSpace(stringFromAny(plan["original_user_goal"])); goal != "" {
+			return goal
+		}
+		return strings.TrimSpace(message.Query)
 	}
 	return ""
 }
@@ -745,7 +795,7 @@ func recentOperationResultSummarySection(branch []*runtimemodel.Message, budget 
 			continue
 		}
 		summary := operationResultSummaryForPrompt(message.Metadata)
-		if len(summary) == 0 {
+		if len(summary) == 0 || memoryToolSkillID(stringFromAny(summary["skill_id"])) {
 			continue
 		}
 		turns++
@@ -976,44 +1026,6 @@ func compactTaskContractForPrompt(contract map[string]interface{}) map[string]in
 	return out
 }
 
-func operationPlanPromptSteps(steps []map[string]interface{}, limit int) []map[string]interface{} {
-	if limit <= 0 || len(steps) == 0 {
-		return nil
-	}
-	if len(steps) <= limit {
-		return steps
-	}
-	selected := make([]map[string]interface{}, 0, limit)
-	used := map[int]struct{}{}
-	add := func(index int) bool {
-		if index < 0 || index >= len(steps) {
-			return false
-		}
-		if _, ok := used[index]; ok {
-			return len(selected) < limit
-		}
-		step := copyStringAnyMap(steps[index])
-		step["sequence_index"] = index + 1
-		selected = append(selected, step)
-		used[index] = struct{}{}
-		return len(selected) < limit
-	}
-	for index, step := range steps {
-		status := operationPlanNormalizeStepStatus(stringFromAny(step["status"]))
-		if status != operationPlanStepStatusCompleted {
-			if !add(index) {
-				return selected
-			}
-		}
-	}
-	for index := range steps {
-		if !add(index) {
-			return selected
-		}
-	}
-	return selected
-}
-
 func continuationStateInvocations(metadata map[string]interface{}) []map[string]interface{} {
 	invocations := skillInvocationMaps(metadata)
 	out := make([]map[string]interface{}, 0, len(invocations))
@@ -1097,25 +1109,6 @@ func continuationPendingHints(branch []*runtimemodel.Message) []string {
 		return []string{"A generated artifact and a managed copy already exist in recent execution state. Reuse their exact facts and decide the next action from the user's current request."}
 	}
 	return []string{"A generated artifact already exists in recent execution state. Reuse its exact facts when they satisfy the current request instead of regenerating it."}
-}
-
-func operationPlanStepMatchesExactTool(step map[string]interface{}, skillID, toolName string) bool {
-	skillID = strings.TrimSpace(skillID)
-	toolName = strings.TrimSpace(toolName)
-	if skillID == "" {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skillID) {
-		return false
-	}
-	stepToolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
-	if toolName == "" {
-		return stepToolName == ""
-	}
-	if stepToolName != "" {
-		return strings.EqualFold(stepToolName, toolName)
-	}
-	return strings.EqualFold(strings.TrimSpace(stringFromAny(step["id"])), operationPlanToolStepID(skillID, toolName))
 }
 
 func continuationHasSuccessfulTool(branch []*runtimemodel.Message, skillID, toolName string) bool {
@@ -1222,7 +1215,7 @@ func recentToolHistorySection(branch []*runtimemodel.Message, budget int) (strin
 		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
 			continue
 		}
-		invocations := toolHistoryInvocations(message.Metadata)
+		invocations := withoutMemoryToolInvocations(toolHistoryInvocations(message.Metadata))
 		if len(invocations) == 0 {
 			continue
 		}
@@ -1245,6 +1238,27 @@ func recentToolHistorySection(branch []*runtimemodel.Message, budget int) (strin
 		}
 	}
 	return builder.String(), stats
+}
+
+// memoryToolSkillID reports a memory skill. Its edits are visible in the memory
+// files themselves, so the execution notes leave them out (ADR 0043).
+func memoryToolSkillID(skillID string) bool {
+	switch strings.ToLower(strings.TrimSpace(skillID)) {
+	case skills.SkillAgentMemory, skills.SkillDigitalHumanMemory:
+		return true
+	default:
+		return false
+	}
+}
+
+func withoutMemoryToolInvocations(invocations []map[string]interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(invocations))
+	for _, invocation := range invocations {
+		if !memoryToolSkillID(stringFromAny(invocation["skill_id"])) {
+			out = append(out, invocation)
+		}
+	}
+	return out
 }
 
 func recentIntermediateAnswerSection(branch []*runtimemodel.Message, budget int) (string, recentExecutionContextStats) {

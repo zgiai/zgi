@@ -22,6 +22,9 @@ const (
 	DecisionMicrocompact    = "microcompact"
 	DecisionSemanticCompact = "semantic_compact"
 	DecisionReactiveCompact = "reactive_compact"
+	// DecisionDropHistory left the oldest history out of the request because
+	// compaction could not make it fit (ADR 0038).
+	DecisionDropHistory = "drop_history"
 )
 
 // Config is immutable for one logical Agent run. Context limits are derived
@@ -34,6 +37,14 @@ type Config struct {
 	DefaultMainOutputTokens int
 	MaxToolResultTokens     int
 	ToolResultPreviewRunes  int
+	// EstimateScale is the provider's prompt tokens per estimated token last
+	// observed for this model; the manager updates it from every response
+	// (ADR 0038). Zero means 1.
+	EstimateScale float64
+	// ProjectToolResultTokens is the size above which a tool result reaches
+	// the model as its beginning and end with a reference to the rest
+	// (ADR 0037). The original stays in the run and its transcript.
+	ProjectToolResultTokens int
 	// TailMinMessages is retained for source compatibility with older callers.
 	// Runtime callers leave it unset and use the newest four complete model
 	// rounds.
@@ -76,6 +87,7 @@ type Decision struct {
 	ToolProjectionCount           int            `json:"tool_projection_count"`
 	LossyRecoveryDroppedRounds    int            `json:"lossy_recovery_dropped_rounds,omitempty"`
 	LossyRecoveryDroppedBatches   int            `json:"lossy_recovery_dropped_batches,omitempty"`
+	ReasoningDropped              bool           `json:"reasoning_dropped,omitempty"`
 	Estimator                     string         `json:"estimator"`
 	EstimateScale                 float64        `json:"estimate_scale"`
 	CompactionFailure             string         `json:"compaction_failure,omitempty"`
@@ -111,12 +123,31 @@ type ContextArtifactResult struct {
 	Content          string `json:"content"`
 	ReturnedTokens   int    `json:"returned_tokens"`
 	TotalTokens      int    `json:"total_tokens"`
+	// Offset and TotalChars locate a part of the original; Complete reports
+	// that Content is the whole original. Query is the search that selected
+	// the lines of a part.
+	Offset     int    `json:"offset"`
+	TotalChars int    `json:"total_chars"`
+	Complete   bool   `json:"complete"`
+	Query      string `json:"query,omitempty"`
+}
+
+// ContextArtifactPart selects what to read of an original tool result: the
+// characters from Offset, at most Limit of them, or, with Query, the lines
+// that contain it.
+type ContextArtifactPart struct {
+	Offset int
+	Limit  int
+	Query  string
 }
 
 type CompactionTracking struct {
 	ConsecutiveFailures int       `json:"consecutive_failures"`
 	LastFailure         string    `json:"last_failure,omitempty"`
 	LastCompactedAt     time.Time `json:"last_compacted_at,omitempty"`
+	// RunCompactions counts the semantic compactions of this run, which are
+	// capped (maxCompactionsPerRun).
+	RunCompactions int `json:"run_compactions,omitempty"`
 }
 
 type AgentContextState struct {

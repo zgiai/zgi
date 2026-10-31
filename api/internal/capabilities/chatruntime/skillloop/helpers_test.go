@@ -2,10 +2,10 @@ package skillloop
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestNormalizeToolCallsRepairsBareQuotesInArguments(t *testing.T) {
@@ -57,23 +57,31 @@ Use \draft and call it "alpha", then continue.	Done."}`
 	}
 }
 
-func TestNormalizeToolCallsClosesCompleteIntermediateAnswerObject(t *testing.T) {
-	calls := normalizeToolCalls([]adapter.ToolCall{{
-		Function: adapter.FunctionCall{
-			Name:      "submit_intermediate_answer",
-			Arguments: `{"title":"Draft","content":"Complete body"`,
-		},
-	}})
+// Arguments cut off inside an object may look whole once closed, such as a
+// file body missing its end, so they are never closed and run.
+func TestNormalizeToolCallsDoesNotCloseCutOffArguments(t *testing.T) {
+	for _, raw := range []string{
+		`{"title":"Draft","content":"Complete body"`,
+		`{"path":"index.html","content":"<html><body>half`,
+		`{"files":[{"path":"a.txt"}`,
+	} {
+		calls := normalizeToolCalls([]adapter.ToolCall{{
+			Function: adapter.FunctionCall{Name: "write_file", Arguments: raw},
+		}})
 
-	var args map[string]interface{}
-	if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &args); err != nil {
-		t.Fatalf("normalized arguments are not JSON: %v\n%s", err, calls[0].Function.Arguments)
-	}
-	if got := args["content"]; got != "Complete body" {
-		t.Fatalf("content = %#v, want Complete body", got)
-	}
-	if got := args["_invalid_tool_arguments"]; got != nil {
-		t.Fatalf("_invalid_tool_arguments = %#v, want nil", got)
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &args); err != nil {
+			t.Fatalf("fallback arguments are not JSON: %v\n%s", err, calls[0].Function.Arguments)
+		}
+		if got := args["_invalid_tool_arguments"]; got != true {
+			t.Fatalf("%s: _invalid_tool_arguments = %#v, want true", raw, got)
+		}
+		if got, _ := args["error"].(string); !strings.Contains(got, "before the JSON object was complete") {
+			t.Fatalf("%s: error = %q, want the cut-off explained", raw, got)
+		}
+		if _, ok := args["content"]; ok {
+			t.Fatalf("%s: args = %#v, want no partial values", raw, args)
+		}
 	}
 }
 
@@ -159,20 +167,6 @@ func TestProviderCompatibleFunctionToolsRemovesUnsupportedRootKeywords(t *testin
 	original, _ := source[0].Function.Parameters.(map[string]interface{})
 	if _, retained := original["oneOf"]; !retained {
 		t.Fatal("source tool schema was mutated")
-	}
-}
-
-func TestProviderCompatibleFunctionToolsAcceptsAllMetaToolRoots(t *testing.T) {
-	for _, tool := range providerCompatibleFunctionTools(skills.MetaTools()) {
-		parameters, ok := tool.Function.Parameters.(map[string]interface{})
-		if !ok || parameters["type"] != "object" {
-			t.Fatalf("tool %s parameters = %#v, want root object", tool.Function.Name, tool.Function.Parameters)
-		}
-		for _, keyword := range unsupportedProviderRootSchemaKeywords {
-			if _, exists := parameters[keyword]; exists {
-				t.Fatalf("tool %s contains unsupported root keyword %q", tool.Function.Name, keyword)
-			}
-		}
 	}
 }
 

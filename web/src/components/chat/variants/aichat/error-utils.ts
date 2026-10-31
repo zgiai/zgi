@@ -127,7 +127,12 @@ type AIChatRuntimeErrorCode =
   | WorkflowRuntimeErrorKind
   | 'agent_final_answer_unavailable'
   | 'aichat.context.compaction_unavailable'
+  | 'runtime_lease_expired'
+  | 'interrupted_turn_not_resumable'
   | typeof QUERY_TOO_LONG_ERROR_CODE;
+
+/** The error a turn carries after its server process stopped in the middle. */
+export const AICHAT_INTERRUPTED_TURN_ERROR = 'runtime_lease_expired';
 
 function resolveAIChatRuntimeErrorCode(
   code: string | number | undefined,
@@ -143,6 +148,9 @@ function resolveAIChatRuntimeErrorCode(
   if (normalizedCode === 'agent_final_answer_unavailable') {
     return 'agent_final_answer_unavailable';
   }
+  if (normalizedCode === 'interrupted_turn_not_resumable') {
+    return 'interrupted_turn_not_resumable';
+  }
   if (
     normalizedCode === 'model_service_timeout' ||
     normalizedCode === 'model_service_unavailable' ||
@@ -155,6 +163,12 @@ function resolveAIChatRuntimeErrorCode(
   }
 
   const normalizedMessage = message?.trim().toLowerCase();
+  if (normalizedMessage === AICHAT_INTERRUPTED_TURN_ERROR) {
+    return 'runtime_lease_expired';
+  }
+  if (normalizedMessage?.includes('interrupted turn cannot be resumed')) {
+    return 'interrupted_turn_not_resumable';
+  }
   if (
     normalizedMessage?.includes('could not generate a usable final response after retrying') ||
     normalizedMessage?.includes('final answer unavailable')
@@ -187,6 +201,18 @@ function resolveStructuredRuntimeError(
         kind: 'server',
         title: t('webapp.consoleChat.contextCompactionBlocked.title'),
         description: t('webapp.consoleChat.contextCompactionBlocked.description'),
+      };
+    case 'runtime_lease_expired':
+      return {
+        kind: 'server',
+        title: t('webapp.consoleChat.errors.interrupted.title'),
+        description: t('webapp.consoleChat.errors.interrupted.description'),
+      };
+    case 'interrupted_turn_not_resumable':
+      return {
+        kind: 'server',
+        title: t('webapp.consoleChat.errors.notResumable.title'),
+        description: t('webapp.consoleChat.errors.notResumable.description'),
       };
     case QUERY_TOO_LONG_ERROR_CODE:
       return {

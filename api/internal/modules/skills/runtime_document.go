@@ -135,6 +135,7 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			RequiredConfig:        normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
 			DependencyType:        skillDependencyType(frontmatter.ConnectorRequirements),
 			ConnectorRequirements: normalizeSkillConnectorRequirements(frontmatter.ConnectorRequirements),
+			SideEffects:           strings.ToLower(strings.TrimSpace(frontmatter.SideEffects)),
 		},
 		Instructions: strings.TrimSpace(body),
 		Tools:        tools,

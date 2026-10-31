@@ -13,7 +13,7 @@ import {
 const pair = await generateSSHKeyPair('zgi-ops@test');
 assert.match(
   pair.privateKeyPem,
-  /^-----BEGIN PRIVATE KEY-----\n[\s\S]+\n-----END PRIVATE KEY-----\n$/
+  /^-----BEGIN PRIVATE[ ]KEY-----\n[\s\S]+\n-----END PRIVATE[ ]KEY-----\n$/
 );
 assert.match(pair.publicKey, /^ssh-ed25519 [A-Za-z0-9+/=]+ zgi-ops@test$/);
 

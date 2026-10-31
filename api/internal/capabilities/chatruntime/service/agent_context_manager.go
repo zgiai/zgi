@@ -54,6 +54,7 @@ func (s *service) newAgentContextManager(ctx context.Context, prepared *Prepared
 		MaxInputTokens:          spec.MaxInputTokens,
 		MaxOutputTokens:         spec.MaxOutputTokens,
 		DefaultMainOutputTokens: mainOutput,
+		EstimateScale:           s.contextEstimateScale(ctx, prepared),
 	}, &serviceContextCompactor{service: s, prepared: prepared}, nil, func(requestType string, round int, request *adapter.ChatRequest, decision contextmgr.Decision) {
 		s.writeAgentContextPromptDumpBestEffort(context.Background(), prepared, requestType, round, request, &decision)
 	}, func(ctx context.Context, transcript []adapter.Message) {
@@ -194,4 +195,50 @@ func (c *serviceContextCompactor) persistInvocation(call contextmgr.CompactCall,
 		trace.Error = callErr.Error()
 	}
 	c.service.persistModelInvocationBestEffort(context.Background(), c.prepared, trace)
+}
+
+// contextEstimateScale is the provider's prompt tokens per estimated token
+// last recorded for this model in this conversation: on the message itself
+// for a continuation, else on the turn it answers. A record made by another
+// estimator does not count. It lets the first request of a turn use the
+// budget the provider's usage showed, instead of the conservative estimate
+// alone (ADR 0038).
+func (s *service) contextEstimateScale(ctx context.Context, prepared *PreparedChat) float64 {
+	if s == nil || prepared == nil || prepared.LLMRequest == nil {
+		return 1
+	}
+	provider := strings.TrimSpace(prepared.LLMRequest.Provider)
+	if provider == "" && prepared.parts != nil {
+		provider = strings.TrimSpace(prepared.parts.Provider)
+	}
+	model := strings.TrimSpace(prepared.LLMRequest.Model)
+	key := promptUsageCalibrationKey(provider, model)
+	if key == "" || s.tokenEstimator == nil {
+		return 1
+	}
+	tokenizer := s.tokenEstimator.EstimateText("x", model).Tokenizer
+	scaleFrom := func(metadata map[string]interface{}) float64 {
+		record := mapFromOperationContext(mapFromOperationContext(metadata["prompt_usage_calibration"])[key])
+		if len(record) == 0 || !strings.EqualFold(strings.TrimSpace(stringFromAny(record["tokenizer"])), tokenizer) {
+			return 0
+		}
+		scale, _ := record["prompt_estimate_scale"].(float64)
+		return scale
+	}
+	if prepared.Message != nil {
+		if scale := scaleFrom(prepared.Message.Metadata); scale > 0 {
+			return scale
+		}
+	}
+	if prepared.ParentID == nil || s.repos == nil || s.repos.Message == nil {
+		return 1
+	}
+	parent, err := s.repos.Message.GetScoped(ctx, *prepared.ParentID, prepared.Scope.OrganizationID, prepared.Scope.AccountID)
+	if err != nil || parent == nil {
+		return 1
+	}
+	if scale := scaleFrom(parent.Metadata); scale > 0 {
+		return scale
+	}
+	return 1
 }

@@ -393,10 +393,6 @@ func (s *service) ensureRecoverableEventStream(ctx context.Context, conversation
 	return false, nil
 }
 
-func (s *service) isConversationMessageStreaming(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID) (bool, error) {
-	return s.isConversationMessageStreamingForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, conversationID, messageID)
-}
-
 func (s *service) isConversationMessageStreamingForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (bool, error) {
 	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
@@ -448,7 +444,7 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
 		return nil, err
 	}
-	prepared.LLMRequest.Messages = adapter.NormalizeSystemMessages(prepared.LLMRequest.Messages)
+	prepared.LLMRequest.Messages = adapter.PlaceSystemMessages(prepared.LLMRequest.Messages)
 	contextManager, err := s.newAgentContextManager(ctx, prepared)
 	if err != nil {
 		return nil, err
@@ -532,6 +528,9 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
 	}
+	if prepared.Message != nil {
+		prepared.parts.TurnStartedAt = prepared.Message.CreatedAt
+	}
 	contextResult, err := s.buildUpstreamMessages(ctx, prepared.Scope, prepared.ParentID, prepared.parts, prepared.Conversation.ID)
 	if err != nil {
 		return err
@@ -602,10 +601,6 @@ func preparedModelUseCase(prepared *PreparedChat) string {
 		mode = normalizeExecutionMode(stringMetadataValue(prepared.Message.Metadata["execution_mode"]))
 	}
 	return executionModeModelUseCase(mode)
-}
-
-func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onChunk func(string) error) (string, *adapter.Usage, error) {
-	return s.collectStreamAnswerWithEvents(ctx, prepared, stream, nil, onChunk)
 }
 
 func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error) (string, *adapter.Usage, error) {
@@ -1185,13 +1180,6 @@ func shouldSuppressDigitalHumanTaskGovernanceEvent(caller Caller, eventType stri
 	return isDigitalHumanCaller(caller.Type) &&
 		strings.TrimSpace(eventType) == streamEventToolGovernanceDecision &&
 		isDigitalHumanTaskGovernancePayload(payload)
-}
-
-// BuildStreamErrorPayload returns the public SSE error payload for an AIChat turn.
-// requestID is the transport request identity when the caller has one; it is
-// omitted for runtime-internal emissions that never crossed an HTTP boundary.
-func BuildStreamErrorPayload(prepared *PreparedChat, err error, requestID string) map[string]interface{} {
-	return BuildLocalizedStreamErrorPayload(prepared, err, requestID, "")
 }
 
 // BuildLocalizedStreamErrorPayload is BuildStreamErrorPayload with the caller's

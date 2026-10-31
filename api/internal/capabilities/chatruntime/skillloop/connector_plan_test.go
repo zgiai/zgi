@@ -142,7 +142,7 @@ func TestRunnerNativeSuccessSurvivesLaterPlannerFeedbackLimit(t *testing.T) {
 	ledger := dispatch.ActionLedger{}
 	var completion TerminalCompletionResult
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared: NewPreparedChat(uuid.NewString(), uuid.NewString(), "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "发送消息"}}}), Resolved: resolved, NativeAgentLoop: true, NativeToolSet: &set,
+		Prepared: NewPreparedChat(uuid.NewString(), uuid.NewString(), "", "auto", &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "发送消息"}}}), Resolved: resolved, NativeToolSet: &set,
 		ExecutionContext: skills.ExecutionContext{OrganizationID: uuid.NewString(), UserID: uuid.NewString(), ConversationID: uuid.NewString(), MessageID: uuid.NewString(), InvokeFrom: tools.ToolInvokeFromAIChat, ConnectorIdentityResolver: dispatcher, ConnectorActionResolver: func(_ context.Context, id dispatch.Identity, input any) (dispatch.Identity, error) {
 			id.PlanPhaseID = "phase-send"
 			step, _, err := dispatch.ResolveActionPlanStep(&ledger, []dispatch.PlanPhaseRef{{ID: "phase-send", ConnectorID: id.ConnectorID, OperationID: id.OperationID}}, "phase-send", id)

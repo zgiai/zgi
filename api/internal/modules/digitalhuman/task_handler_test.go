@@ -185,46 +185,6 @@ func TestTaskApprovalActionForPausedPendingStatusBecomesResume(t *testing.T) {
 	}
 }
 
-func TestAugmentTaskApprovalRequestedInputsCombinesScheduleAndResume(t *testing.T) {
-	run := &Run{Query: "恢复一下股票汇报，改为三分钟后给我单次汇报"}
-	task := &Task{LifecycleStatus: "paused"}
-	inputs := map[string]interface{}{"schedule": &TaskSchedule{Type: TaskScheduleOnce}}
-	augmentTaskApprovalRequestedInputs(run, task, "schedule", inputs)
-	if got := inputs["lifecycle_status"]; got != "active" {
-		t.Fatalf("lifecycle_status = %#v, want active", got)
-	}
-}
-
-func TestAugmentTaskApprovalRequestedInputsDoesNotInferResumeFromUnrelatedScheduleChange(t *testing.T) {
-	run := &Run{Query: "把汇报改到明天早上九点"}
-	task := &Task{LifecycleStatus: "paused"}
-	inputs := map[string]interface{}{"schedule": &TaskSchedule{Type: TaskScheduleCron, Cron: "0 9 * * *"}}
-	augmentTaskApprovalRequestedInputs(run, task, "schedule", inputs)
-	if _, ok := inputs["lifecycle_status"]; ok {
-		t.Fatalf("unexpected lifecycle_status for unrelated schedule change: %#v", inputs)
-	}
-}
-
-func TestAugmentTaskApprovalRequestedInputsPreservesExplicitLifecycle(t *testing.T) {
-	run := &Run{Query: "改时间"}
-	task := &Task{LifecycleStatus: "paused"}
-	inputs := map[string]interface{}{"lifecycle_status": "paused"}
-	augmentTaskApprovalRequestedInputs(run, task, "update", inputs)
-	if got := inputs["lifecycle_status"]; got != "paused" {
-		t.Fatalf("explicit lifecycle_status = %#v, want paused", got)
-	}
-}
-
-func TestAugmentTaskApprovalRequestedInputsIgnoresNegatedResume(t *testing.T) {
-	run := &Run{Query: "改时间，但不要恢复任务"}
-	task := &Task{LifecycleStatus: "paused"}
-	inputs := map[string]interface{}{"schedule": &TaskSchedule{Type: TaskScheduleOnce}}
-	augmentTaskApprovalRequestedInputs(run, task, "schedule", inputs)
-	if _, ok := inputs["lifecycle_status"]; ok {
-		t.Fatalf("unexpected lifecycle_status for negated resume request: %#v", inputs)
-	}
-}
-
 func TestMergeTaskApprovalInputsKeepsModelProposalOnApproval(t *testing.T) {
 	state := map[string]interface{}{
 		"requested_inputs": map[string]interface{}{

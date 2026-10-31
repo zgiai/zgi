@@ -241,6 +241,7 @@ func TestPublicDocumentationRoutesExposeCurrentAgentContract(t *testing.T) {
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/tool-governance/{correlation_id}/continue"},
 		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue"},
+		{http.MethodPost, "/agents/conversations/{conversation_id}/messages/{message_id}/resume"},
 		{http.MethodGet, "/agents/memory"},
 		{http.MethodDelete, "/agents/memory"},
 		{http.MethodGet, "/agents/memory/export"},

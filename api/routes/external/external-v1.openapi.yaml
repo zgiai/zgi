@@ -457,6 +457,22 @@ paths:
           $ref: '#/components/responses/AgentEventStream'
         default:
           $ref: '#/components/responses/Error'
+  /agents/conversations/{conversation_id}/messages/{message_id}/resume:
+    post:
+      tags: [Continuations]
+      summary: Resume a task stopped by a server restart
+      operationId: resumeAgentInterruptedTurn
+      description: Resumes the same message after the process running it stopped, which leaves the message `error` with `runtime_lease_expired`. The task continues from its recorded model responses and tool results instead of starting over. A message can be resumed once, only while it is the latest turn of its conversation, and only when no unfinished tool call could have changed anything; otherwise the stream sends an `error` event with code `interrupted_turn_not_resumable`.
+      parameters:
+        - $ref: '#/components/parameters/ConversationID'
+        - $ref: '#/components/parameters/MessageID'
+        - $ref: '#/components/parameters/ExternalUserID'
+        - $ref: '#/components/parameters/LegacyUser'
+      responses:
+        '200':
+          $ref: '#/components/responses/AgentEventStream'
+        default:
+          $ref: '#/components/responses/Error'
   /agents/memory:
     get:
       tags: [Memory]

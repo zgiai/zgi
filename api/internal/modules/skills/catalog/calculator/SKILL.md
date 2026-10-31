@@ -15,6 +15,7 @@ supported_callers:
   - digital_human
   - workflow
 max_calls_per_turn: 50
+side_effects: none
 timeout_seconds: 5
 display:
   icon: calculator
@@ -47,7 +48,7 @@ Use this skill for exact arithmetic and percentage tasks.
 
 ## Workflow
 
-1. Prefer one `call_skill_tool` call with `tool_name` set to `evaluate_expression` when the task can be represented as one arithmetic expression.
+1. Prefer one `evaluate_expression` call when the task can be represented as one arithmetic expression.
 2. For totals followed by discounts, markups, taxes, or fixed reductions, fold the full final arithmetic into one expression whenever the condition is clear from the problem statement.
 3. If a condition must be verified numerically first, use at most two expression calls: one for the condition value and one for the final result.
 4. Use `calculate` only when a single binary operation is clearer than a full expression.

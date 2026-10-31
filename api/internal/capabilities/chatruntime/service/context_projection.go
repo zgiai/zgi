@@ -62,7 +62,9 @@ func protocolMessageFromJSON(payload map[string]interface{}) (adapter.Message, e
 	if err := json.Unmarshal(encoded, &message); err != nil {
 		return adapter.Message{}, fmt.Errorf("decode stored protocol message: %w", err)
 	}
-	message.ReasoningContent = ""
+	if !adapter.ReasoningHistoryKept() {
+		message.ReasoningContent = ""
+	}
 	return message, nil
 }
 
@@ -136,24 +138,6 @@ func projectContextMessages(entries []*runtimemodel.TranscriptEntryPreview) ([]a
 		messages = append(messages, message)
 	}
 	return messages, nil
-}
-
-// snapContextWindowStart moves a retention-window start backwards to the
-// nearest legal protocol boundary. A window must never open with a tool result
-// whose assistant tool_call fell outside it, and it must never cut a tool-call
-// batch in half, so the window may grow but not shrink.
-func snapContextWindowStart(messages []adapter.Message, start int) int {
-	if start <= 0 {
-		return 0
-	}
-	if start > len(messages) {
-		start = len(messages)
-	}
-	for start > 0 && start < len(messages) &&
-		strings.EqualFold(strings.TrimSpace(messages[start].Role), "tool") {
-		start--
-	}
-	return start
 }
 
 // closeDanglingToolCalls makes a projected message list provider-valid by

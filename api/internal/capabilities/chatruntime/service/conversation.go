@@ -946,6 +946,7 @@ func (s *service) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, sco
 	}
 	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)
+	s.hydrateModelInvocationRecords(ctx, messages...)
 	return messages, total, nil
 }
 
@@ -982,6 +983,7 @@ func (s *service) GetMessageByCallerRuntimeLog(ctx context.Context, scope Scope,
 	}
 	hydrateMessageGeneratedFileState(ctx, message)
 	hydrateMessagePublicError(message)
+	s.hydrateModelInvocationRecords(ctx, message)
 	return message, conversation, nil
 }
 

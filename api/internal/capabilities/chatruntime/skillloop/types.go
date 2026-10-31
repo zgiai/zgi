@@ -168,16 +168,22 @@ type Event struct {
 }
 
 type Runner struct {
-	LLMClient             llmclient.LLMClient
-	SkillRuntime          *skills.Runtime
-	AppContext            *llmclient.AppContext
-	OnEvent               func(Event) error
-	OnTrace               func([]skills.SkillTrace, skills.SkillTrace)
-	OnArtifact            func(map[string]interface{})
-	OnModelRequest        func(phase string, round int, request *adapter.ChatRequest, decision *contextmgr.Decision)
-	OnModelInvocation     func(ModelInvocationTrace)
-	FallbackDelay         time.Duration
-	ModelIdleTimeout      time.Duration
+	LLMClient         llmclient.LLMClient
+	SkillRuntime      *skills.Runtime
+	AppContext        *llmclient.AppContext
+	OnEvent           func(Event) error
+	OnTrace           func([]skills.SkillTrace, skills.SkillTrace)
+	OnArtifact        func(map[string]interface{})
+	OnModelRequest    func(phase string, round int, request *adapter.ChatRequest, decision *contextmgr.Decision)
+	OnModelInvocation func(ModelInvocationTrace)
+	FallbackDelay     time.Duration
+	ModelIdleTimeout  time.Duration
+	// ModelRetryDelays are the waits before each retry of a model call that
+	// failed with a transient error; nil uses defaultModelRetryDelays.
+	ModelRetryDelays []time.Duration
+	// prefetchedCalls are the read-only calls of the current round already
+	// started (prefetchReadOnlyCalls).
+	prefetchedCalls       map[string]*prefetchedCall
 	ModelProgressSchedule ModelProgressSchedule
 	ContextManager        *contextmgr.Manager
 	diagnostics           modelInvocationDiagnostics
@@ -186,31 +192,42 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared                       *PreparedChat
-	Resolved                       *skills.ResolvedSkills
-	ProtocolToolsOnly              bool
-	LegacyToolChat                 bool
-	NativeAgentLoop                bool
+	Prepared *PreparedChat
+	Resolved *skills.ResolvedSkills
+	// OnTurnUserContent receives the current question as it is sent, with the
+	// reminders the turn adds after it merged in, so the transcript can store
+	// what the next turn will replay (ADR 0043).
+	OnTurnUserContent func(content interface{})
+	// OmitPlanningTools leaves update_plan and submit_turn_state out of a
+	// native run that has no business action to plan (ADR 0043).
+	OmitPlanningTools bool
+	// UnifiedSkillDispatch offers the tools of activatable skills through the
+	// unified tool instead of as native functions (ADR 0044).
+	UnifiedSkillDispatch           bool
 	NativeToolSet                  *skills.NativeToolSet
 	NativeSkillSession             *skills.NativeSkillSession
 	RuntimeTools                   []RuntimeTool
 	PlatformModel                  func(context.Context, string, int) (string, error)
 	ExecutionContext               skills.ExecutionContext
-	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool
 	AdditionalSystemMessages       []adapter.Message
-	RuntimeStateSnapshot           RuntimeStateSnapshotFunc
-	CurrentMetadata                func() map[string]interface{}
-	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
-	OnTerminalCompletion           func(TerminalCompletionResult)
-	OnChunk                        func(string) error
-	BeforeModelRound               func(context.Context, int) ([]adapter.Message, error)
-	AfterModelRound                func(context.Context, int, bool) error
-	PlanningOutputTokenLimit       int
-	AuthorizeSkillStep             func(context.Context, string) (bool, error)
-	PreferredRestoredSkillID       string
-	ContinuationType               string
-	TerminalOnly                   bool
+	// SystemPromptAdditions are guidance that stays the same from turn to
+	// turn, such as the memory rules. The native loop appends them to the
+	// system prompt so they are part of the cached prefix; other loops send
+	// them as additional system messages.
+	SystemPromptAdditions        []adapter.Message
+	RuntimeStateSnapshot         RuntimeStateSnapshotFunc
+	CurrentMetadata              func() map[string]interface{}
+	OnTerminalStateGuardDecision func(TerminalStateGuardDecisionRecord)
+	OnTerminalCompletion         func(TerminalCompletionResult)
+	OnChunk                      func(string) error
+	BeforeModelRound             func(context.Context, int) ([]adapter.Message, error)
+	AfterModelRound              func(context.Context, int, bool) error
+	PlanningOutputTokenLimit     int
+	AuthorizeSkillStep           func(context.Context, string) (bool, error)
+	PreferredRestoredSkillID     string
+	ContinuationType             string
+	TerminalOnly                 bool
 }
 
 // RuntimeTool is a first-party capability owned by the chat runtime rather
@@ -230,6 +247,10 @@ type RuntimeTool struct {
 	// PlatformInteractiveApproval is granted only by a server-owned interactive
 	// execution factory; ordinary Skill calls retain their original policy.
 	PlatformInteractiveApproval bool `json:"-"`
+	// ReadOnly marks a tool whose Handler changes nothing, keeps no state
+	// between calls and uses no platform services, so a round may run it
+	// alongside its other reads (ADR 0036).
+	ReadOnly bool `json:"-"`
 }
 
 // RuntimePlatformServices exposes no routing credentials or arbitrary API
@@ -582,11 +603,4 @@ func (r *Runner) modelIdleTimeout() time.Duration {
 		return r.ModelIdleTimeout
 	}
 	return 5 * time.Minute
-}
-
-func backgroundContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }

@@ -145,52 +145,14 @@ func (s *RuntimeService) userInputContinuationConfig(
 	}
 	cleanup := func() {}
 	s.attachAttachmentReader(&config, run, resolved, event, &scope)
-	config.ConnectorRunID = run.ID.String()
-	config.ConnectorInteractive = connectorInteractive(event)
-	config.ConnectorRequesterID = connectorRequester(event)
-	applyRunEndUserBilling(&config, run)
 	if s.linux != nil {
 		config.RuntimeToolFactory, err = s.prepareContinuationLinux(ctx, run, resolved, event, scope)
 		if err != nil {
 			return runtimeservice.RunConfig{}, cleanup, err
 		}
 	}
-
-	if s.channelContext != nil && event.Origin.Kind == invocation.OriginChannel {
-		preparation, prepareErr := s.channelContext.Prepare(ctx, run, resolved, event, config.ModelProvider, config.Model)
-		if prepareErr != nil {
-			return runtimeservice.RunConfig{}, cleanup, prepareErr
-		}
-		if preparation != nil {
-			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
-			}
-			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
-		}
-	}
-	if s.memory != nil && !previewRun(run) {
-		preparation, prepareErr := s.memory.Prepare(ctx, run, resolved, event)
-		if prepareErr != nil {
-			return runtimeservice.RunConfig{}, cleanup, prepareErr
-		}
-		if preparation != nil {
-			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
-			}
-			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
-		}
-	}
-	if s.tasks != nil && !previewRun(run) {
-		preparation, prepareErr := s.tasks.Prepare(ctx, run, event)
-		if prepareErr != nil {
-			return runtimeservice.RunConfig{}, cleanup, prepareErr
-		}
-		if preparation != nil {
-			if addendum := strings.TrimSpace(preparation.SystemPromptAddendum); addendum != "" {
-				config.SystemPrompt = strings.TrimSpace(config.SystemPrompt) + "\n\n" + addendum
-			}
-			config.RuntimeTools = append(config.RuntimeTools, preparation.Tools...)
-		}
+	if _, err := s.applyRunCapabilities(ctx, &config, run, resolved, event); err != nil {
+		return runtimeservice.RunConfig{}, cleanup, err
 	}
 	return config, cleanup, nil
 }

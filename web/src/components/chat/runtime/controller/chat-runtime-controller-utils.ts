@@ -54,6 +54,12 @@ export function isContinuationLikelyStartedError(error: unknown): boolean {
 }
 
 export const AICHAT_RECOVERY_RETRY_DELAYS = [800, 1600, 3200] as const;
+// After reconnecting fails while the server still reports the turn running,
+// its process may have stopped. The server marks such a turn interrupted once
+// its lease expires (about two minutes), so the conversation is checked until
+// then and the turn's resume action appears without a reload.
+export const AICHAT_DISCONNECTED_STATUS_POLL_MS = 10_000;
+export const AICHAT_DISCONNECTED_STATUS_POLL_LIMIT = 30;
 export const AICHAT_STREAM_EVENTS_EXPIRED = 'stream events expired';
 
 export function createClientDraftId(prefix: string): string {

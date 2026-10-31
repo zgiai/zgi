@@ -70,7 +70,9 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
-	if len(invocation) > 0 {
+	// A model call is a message record (ADR 0039); without the record store,
+	// or if the record cannot be written, it stays in metadata as before.
+	if len(invocation) > 0 && !s.recordModelInvocation(ctx, prepared, metadata, invocation) {
 		metadata = mergeModelInvocationMetadata(metadata, invocation)
 	}
 	if prepared.taskTokenBudget != nil {
@@ -117,10 +119,6 @@ func modelInvocationTraceWithoutContent(trace skillloop.ModelInvocationTrace) sk
 	}
 	trace.Response = nil
 	return trace
-}
-
-func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
-	return applyProviderPromptUsageCalibrationWithEstimate(metadata, usage, 0, "", "", "")
 }
 
 func applyProviderPromptUsageCalibrationWithEstimate(metadata map[string]interface{}, usage *adapter.Usage, finalEstimate int, estimator string, provider string, model string) map[string]interface{} {

@@ -34,26 +34,15 @@ func StreamRequestID(ctx context.Context) string {
 	return strings.TrimSpace(requestID)
 }
 
-// streamLocaleKey carries the caller's Accept-Language from the HTTP edge into
-// the stream so error frames are rendered in the caller's language.
-type streamLocaleKey struct{}
-
 // WithStreamLocale records the locale negotiated from an Accept-Language
-// header. An unsupported or empty header records nothing, and the catalog's
-// fallback language applies.
+// header, so error frames are rendered in the caller's language. An
+// unsupported or empty header records nothing, and the catalog's fallback
+// language applies.
 func WithStreamLocale(ctx context.Context, acceptLanguage string) context.Context {
-	locale := apptransport.LocaleFromAcceptLanguage(acceptLanguage)
-	if locale == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, streamLocaleKey{}, locale)
+	return apptransport.WithLocale(ctx, acceptLanguage)
 }
 
 // StreamLocale returns the locale recorded on the context, or the zero Locale.
 func StreamLocale(ctx context.Context) appcatalog.Locale {
-	if ctx == nil {
-		return ""
-	}
-	locale, _ := ctx.Value(streamLocaleKey{}).(appcatalog.Locale)
-	return locale
+	return apptransport.LocaleFromContext(ctx)
 }

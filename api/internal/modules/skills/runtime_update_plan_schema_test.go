@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -43,5 +44,17 @@ func TestUpdatePlanSchemaRequiresExactlyOnePayloadForm(t *testing.T) {
 		if err := tools.ValidateJSONSchemaValue(schema, value); err == nil {
 			t.Fatalf("invalid payload %d was accepted: %#v", index, value)
 		}
+	}
+}
+
+// The schema stays small: its descriptions say what each field is for, and
+// the server's own bookkeeping is not explained to the model (ADR 0043).
+func TestUpdatePlanToolStaysCompact(t *testing.T) {
+	encoded, err := json.Marshal(updatePlanMetaTool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > 3700 {
+		t.Fatalf("update_plan definition = %d bytes, want at most 3700", len(encoded))
 	}
 }

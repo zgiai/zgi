@@ -426,6 +426,37 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
     );
   }
 
+  resumeInterruptedTurn(
+    conversationId: string,
+    messageId: string,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return this.client.sse<AIChatSseEnvelope, Record<string, never>>(
+      `${this.runtimeBasePath}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/resume`,
+      {
+        method: 'POST',
+        body: {},
+        abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
+        isTerminalMessage: runtimeTerminalMessage,
+        onOpen: response => notifyAgentRuntimeStreamOpen(response, callbacks),
+        onMessage: message =>
+          dispatchAIChatStreamEvent(
+            String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+            (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+            message.id,
+            callbacks
+          ),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      }
+    );
+  }
+
   continueWorkflowApproval(
     conversationId: string,
     messageId: string,

@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "notes": "Agent runtime scenarios. Each scenario is one conversation of one API end user; turns run in order, and a turn that follows a question from the Agent is sent as the answer to it. expect applies to the last turn and to facts collected over the whole conversation; turn_expect applies to single turns by index. Every turn also gets the default checks in run.py: it completes, reports no error, gives a non-empty answer in the scenario's language, and names no internal tool. answer_values compares numbers with thousands separators removed, within tolerance (default 0.005). observe marks scenarios that are reported but not scored.",
+  "scenarios": [
+    {
+      "id": "direct_explain_zh",
+      "category": "tool_choice",
+      "lang": "zh",
+      "turns": ["用两三句话解释一下 TCP 三次握手。"],
+      "expect": {
+        "skills_none": true,
+        "model_calls_max": 1,
+        "answer_any": ["SYN"]
+      }
+    },
+    {
+      "id": "direct_translate_en",
+      "category": "tool_choice",
+      "lang": "en",
+      "turns": ["Translate into English: 明天下午三点在二号会议室开会。"],
+      "expect": {
+        "skills_none": true,
+        "model_calls_max": 1,
+        "answer_any": ["3 p.m.", "3 pm", "3:00", "three o'clock", "3 PM", "3PM"],
+        "answer_regex": "(?i)(room|conference room)\\s*(no\\.?\\s*)?(2|two)\\b|room\\s*#?2"
+      }
+    },
+    {
+      "id": "calc_interest_zh",
+      "category": "tool_choice",
+      "lang": "zh",
+      "turns": ["一笔 386,250 元的货款，先打 8.7 折，再加 13% 增值税，最后按年化 4.35% 计算 97 天的利息（按 365 天计），利息是多少元？保留两位小数。"],
+      "expect": {
+        "skills_any": ["calculator"],
+        "answer_values": [4389.69]
+      }
+    },
+    {
+      "id": "date_diff_zh",
+      "category": "tool_choice",
+      "lang": "zh",
+      "turns": ["2026 年 3 月 14 日到 2027 年 1 月 1 日之间相隔多少天？"],
+      "expect": {
+        "skills_any": ["time", "calculator"],
+        "answer_values": [293]
+      }
+    },
+    {
+      "id": "weekday_en",
+      "category": "tool_choice",
+      "lang": "en",
+      "turns": ["What day of the week is July 4, 2031?"],
+      "expect": {
+        "answer_all": ["Friday"]
+      }
+    },
+    {
+      "id": "markup_discount_en",
+      "category": "tool_choice",
+      "lang": "en",
+      "turns": ["A store marks up a $48.60 item by 35%, then offers 15% off the marked-up price. What is the final price, to two decimals?"],
+      "expect": {
+        "answer_values": [55.77]
+      }
+    },
+    {
+      "id": "growth_compare_en",
+      "category": "multi_step",
+      "lang": "en",
+      "turns": ["For a base of 2,348,900: (a) what is 17.5% of it, (b) what does it grow to at 3.2% a year compounded for 7 years, to two decimals, and (c) how much larger is (b) than the base?"],
+      "expect": {
+        "skills_any": ["calculator"],
+        "answer_values": [411057.5, 2928346.13, 579446.13]
+      }
+    },
+    {
+      "id": "deadline_and_fee_zh",
+      "category": "multi_step",
+      "lang": "zh",
+      "turns": ["合同在 2026 年 11 月 3 日签订，45 天后到期，到期日是哪天？如果逾期 12 天，按合同金额 386,250 元每天 0.05% 计算滞纳金，滞纳金是多少元？"],
+      "expect": {
+        "skills_any": ["time", "calculator"],
+        "answer_regex": "12\\s*月\\s*18|2026-12-18",
+        "answer_values": [2317.5]
+      }
+    },
+    {
+      "id": "missing_info_mortgage_zh",
+      "category": "user_input",
+      "lang": "zh",
+      "turns": [
+        "帮我算一下房贷每月要还多少。",
+        "贷款 100 万，30 年，年利率 3.5%，等额本息。"
+      ],
+      "turn_expect": {
+        "0": {"asked_user": true}
+      },
+      "expect": {
+        "answer_values": [4490.45]
+      }
+    },
+    {
+      "id": "multi_turn_budget_zh",
+      "category": "continuity",
+      "lang": "zh",
+      "turns": [
+        "我们团队有 7 个人，每人每月预算 1,850 元，先了解一下这个情况，不用计算。",
+        "一年的总预算是多少？",
+        "如果人数增加到 9 个人，一年总预算又是多少？"
+      ],
+      "turn_expect": {
+        "1": {"answer_values": [155400]}
+      },
+      "expect": {
+        "answer_values": [199800]
+      }
+    },
+    {
+      "id": "csv_400_rows_zh",
+      "category": "long_arguments",
+      "lang": "zh",
+      "turns": ["生成一个 CSV 文件，三列分别是 n、n 的平方、n 的立方，n 从 1 到 400，每个 n 一行，不要省略任何一行。"],
+      "expect": {
+        "tools_any": ["generate_file"],
+        "files_min": 1,
+        "tool_content_min_chars": 6500
+      }
+    },
+    {
+      "id": "no_email_tool_zh",
+      "category": "honesty",
+      "lang": "zh",
+      "turns": ["把 386,250 元打 8.7 折后的金额算出来，然后发邮件给财务 finance@example.com。"],
+      "expect": {
+        "answer_values": [336037.5],
+        "answer_any": ["无法", "不能", "没有"],
+        "answer_none": ["已发送给", "已发送至", "已经发送给", "已经发到", "邮件已发送", "邮件已经发送"]
+      }
+    },
+    {
+      "id": "staged_continue_zh",
+      "category": "intent",
+      "lang": "zh",
+      "turns": ["分三步算：第一步算 1234 乘以 5678；第二步把结果除以 7；第三步再加 100。每次只做一步，做完一步就停下，等我说继续再做下一步。", "继续", "继续"],
+      "turn_expect": {
+        "0": {
+          "answer_values": [7006652],
+          "answer_values_none": [1000950.29, 1001050.29],
+          "tolerance": 0.01
+        },
+        "1": {
+          "answer_values": [1000950.29],
+          "answer_values_none": [1001050.29],
+          "tolerance": 0.01
+        }
+      },
+      "expect": {
+        "answer_values": [1001050.29],
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "staged_paraphrase_en",
+      "category": "intent",
+      "lang": "en",
+      "turns": ["Two steps, and stop after the first one until I tell you to go on: first work out 15% of 2400, then add 80 to that.", "Okay, finish the rest."],
+      "turn_expect": {
+        "0": {
+          "answer_values": [360],
+          "answer_values_none": [440]
+        }
+      },
+      "expect": {
+        "answer_values": [440]
+      }
+    },
+    {
+      "id": "continue_paraphrase_zh",
+      "category": "intent",
+      "lang": "zh",
+      "turns": ["先帮我算 2026 年 1 月 1 日是星期几，算完先停一下，后面还有事。", "刚才没弄完的接着弄：再算 2027 年 3 月 15 日是星期几。"],
+      "turn_expect": {
+        "0": {
+          "answer_any": ["星期四", "周四"]
+        }
+      },
+      "expect": {
+        "answer_any": ["星期一", "周一"]
+      }
+    },
+    {
+      "id": "negated_continue_zh",
+      "category": "intent",
+      "lang": "zh",
+      "turns": ["分两步：先算 48 乘以 25，算完停下等我说继续，再把结果减去 200。", "不要继续算了，换个问题：2026 年 1 月 1 日是星期几？"],
+      "turn_expect": {
+        "0": {
+          "answer_values": [1200]
+        }
+      },
+      "expect": {
+        "answer_any": ["星期四", "周四"],
+        "answer_values_none": [1000]
+      }
+    },
+    {
+      "id": "quoted_continue_zh",
+      "category": "intent",
+      "lang": "zh",
+      "turns": ["帮我算一下 365 乘以 24，用一句话回答。", "帮我写一条发给同事的简短消息，里面原样包含这句话：“请继续保持当前的进度。”"],
+      "expect": {
+        "answer_all": ["请继续保持当前的进度"],
+        "answer_values_none": [8760]
+      }
+    },
+    {
+      "id": "reuse_file_no_marker_zh",
+      "category": "intent",
+      "lang": "zh",
+      "turns": ["生成一个 CSV 文件，列出苹果 5 元、香蕉 3 元、橙子 4 元三种水果和单价。", "价格都涨 20%，另外生成一份新的 CSV。"],
+      "expect": {
+        "files_min": 2,
+        "answer_none": ["哪个文件", "哪份文件"]
+      }
+    },
+    {
+      "id": "reuse_file_marker_en",
+      "category": "intent",
+      "lang": "en",
+      "turns": ["Create a CSV file listing three products: Pen 2, Notebook 5, Bag 30 (name and price).", "Take that file and add a column with each price doubled, as a new CSV."],
+      "expect": {
+        "files_min": 2
+      }
+    },
+    {
+      "id": "inline_body_requested_zh",
+      "category": "intent",
+      "lang": "zh",
+      "turns": ["生成一个 txt 文件，内容是一月到十二月这十二个月份的名称，每行一个，同时在聊天里把全文也展示出来。"],
+      "expect": {
+        "files_min": 1,
+        "answer_all": ["六月", "七月", "十二月"]
+      }
+    },
+    {
+      "id": "inline_body_not_requested_en",
+      "category": "intent",
+      "lang": "en",
+      "turns": ["Create a txt file whose content is the codes QK-01 through QK-20, one per line. Just give me the file, no need to paste the contents in the chat."],
+      "expect": {
+        "files_min": 1,
+        "answer_none": ["QK-07", "QK-13"]
+      }
+    },
+    {
+      "id": "interface_language_mixed_zh",
+      "category": "language",
+      "lang": "zh",
+      "accept_language": "zh-CN",
+      "turns": ["What is 15% of 2400?"],
+      "expect": {
+        "answer_values": [360]
+      }
+    },
+    {
+      "id": "requested_language_overrides_en",
+      "category": "language",
+      "lang": "en",
+      "accept_language": "zh-CN",
+      "turns": ["请用英文回答：一年通常有多少天？"],
+      "expect": {
+        "answer_any": ["365"]
+      }
+    }
+  ]
+}

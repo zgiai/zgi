@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -159,112 +158,5 @@ func TestPlanUpdateTraceCompilesOutcomeAcceptanceAndDoesNotTrustCompletedStatus(
 	}
 	if stringFromAny(effects[0]["resource_id"]) != "agent-1" {
 		t.Fatalf("acceptance resource = %#v, want agent-1", effects[0])
-	}
-}
-
-func TestFinalizeOperationPlanCannotBypassUnsatisfiedStructuredOutcome(t *testing.T) {
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": operationPlanStatusRunning,
-			operationPlanOutcomesKey: []interface{}{map[string]interface{}{
-				"id": "outcome-agent", "goal": "Update Agent", "status": operationPlanStepStatusPending,
-				"required": true, "verification_mode": "runtime_effects",
-			}},
-			"phases": []interface{}{map[string]interface{}{
-				"id": "phase-1", "outcome_id": "outcome-agent", "status": operationPlanStepStatusCompleted,
-			}},
-		},
-	}
-	finalizeOperationPlanForCompletedResult(metadata)
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
-		t.Fatalf("plan status = %q, want running while required outcome is unsatisfied", got)
-	}
-	verification := mapFromOperationContext(plan["completion_verification"])
-	if got := stringFromAny(verification["status"]); got != "incomplete" {
-		t.Fatalf("completion verification = %#v, want incomplete", verification)
-	}
-}
-
-func TestSkillLoopPrefersExplicitFinalAnswerOnlyForPlannedAIChatTurn(t *testing.T) {
-	tests := []struct {
-		name       string
-		callerType string
-		metadata   map[string]interface{}
-		want       bool
-	}{
-		{
-			name:       "webapp agent without plan",
-			callerType: runtimemodel.ConversationCallerAgent,
-			metadata:   map[string]interface{}{},
-		},
-		{
-			name:       "webapp agent with plan remains ordinary agent chat",
-			callerType: runtimemodel.ConversationCallerAgent,
-			metadata: map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "running"},
-			},
-		},
-		{
-			name:       "aichat without plan",
-			callerType: runtimemodel.ConversationCallerAIChat,
-			metadata:   map[string]interface{}{},
-		},
-		{
-			name:       "planned aichat operation",
-			callerType: runtimemodel.ConversationCallerAIChat,
-			metadata: map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "running"},
-			},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			prepared := &PreparedChat{
-				Caller:  Caller{Type: tt.callerType},
-				Message: &runtimemodel.Message{Metadata: tt.metadata},
-			}
-			if got := skillLoopPrefersExplicitFinalAnswer(prepared); got != tt.want {
-				t.Fatalf("skillLoopPrefersExplicitFinalAnswer() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestContextualTurnIntentClassifierPayloadIncludesRecentTaskContext(t *testing.T) {
-	parts := &chatRequestParts{
-		Query:   "do not delete it; update it directly",
-		Surface: aiChatSurfaceContextualSidebar,
-		RecentOperationPlans: []map[string]interface{}{{
-			"status":              "running",
-			"original_user_goal":  "generate a chapter, then update the current Agent with it",
-			"pending_next_action": "continue_from_phase_success_criteria",
-			"phases": []interface{}{
-				map[string]interface{}{
-					"id":     "phase-delete",
-					"step":   "delete the Agent",
-					"status": "pending",
-				},
-				map[string]interface{}{
-					"id":     "phase-update",
-					"step":   "update the Agent system prompt with the generated chapter",
-					"status": "pending",
-				},
-			},
-		}},
-	}
-	payload := contextualTurnIntentClassifierPayload(parts)
-	recent := mapSliceFromAny(payload["recent_task_context"])
-	if len(recent) != 1 {
-		t.Fatalf("recent_task_context = %#v, want one plan", payload["recent_task_context"])
-	}
-	if got := stringFromAny(recent[0]["original_user_goal"]); got != "generate a chapter, then update the current Agent with it" {
-		t.Fatalf("original_user_goal = %q", got)
-	}
-	phases := mapSliceFromAny(recent[0]["phases"])
-	if len(phases) != 2 || stringFromAny(phases[1]["id"]) != "phase-update" {
-		t.Fatalf("phases = %#v, want pending update context", phases)
 	}
 }

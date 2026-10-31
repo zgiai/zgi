@@ -37,17 +37,6 @@ func (s *service) catalogSkillMetadata(ctx context.Context, organizationID uuid.
 	return metadata, nil
 }
 
-func excludeSkillMetadata(metadata []skills.SkillDiscoveryMetadata, skillID string) []skills.SkillDiscoveryMetadata {
-	skillID = strings.ToLower(strings.TrimSpace(skillID))
-	filtered := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
-	for _, item := range metadata {
-		if !strings.EqualFold(strings.TrimSpace(item.ID), skillID) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
 func (s *service) customSkillCatalogEntries(ctx context.Context, organizationID uuid.UUID) ([]skills.CustomSkillCatalogEntry, error) {
 	if s.repos == nil || s.repos.CustomSkill == nil {
 		return nil, nil
@@ -198,8 +187,29 @@ func validateSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMe
 	return out, nil
 }
 
-func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, runConfig *RunConfig) []string {
-	return effectiveBoundSkillIDs(input, catalog, organizationEnabled, runConfig, runtimemodel.ConversationCallerAgent)
+// withInherentTimeSkill gives a run that uses tools the time skill, whose
+// tools are inherent rather than selected (ADR 0043). Agents and DigitalHumans
+// always use tools; an AI chat uses them when it has another skill or memory,
+// so a run that would be a direct chat stays one. An organization that
+// disabled the skill keeps it off.
+func withInherentTimeSkill(enabled []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, callerType string, parts *chatRequestParts) []string {
+	id := skills.SkillTime
+	for _, existing := range enabled {
+		if strings.EqualFold(strings.TrimSpace(existing), id) {
+			return enabled
+		}
+	}
+	if !isAutonomousSubjectCaller(callerType) && len(enabled) == 0 && (parts == nil || !parts.AgentMemoryToolsEnabled) {
+		return enabled
+	}
+	if _, ok := stringSet(organizationEnabled)[id]; !ok {
+		return enabled
+	}
+	item, ok := catalogSkillByID(catalog)[id]
+	if !ok || !skillSupportsCaller(item, callerType) {
+		return enabled
+	}
+	return append(append([]string(nil), enabled...), id)
 }
 
 func effectiveBoundSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, runConfig *RunConfig, callerType string) []string {
@@ -263,17 +273,6 @@ func filterDigitalHumanSkillIDs(input []string) []string {
 		}
 	}
 	return out
-}
-
-func runtimeManagedSkillAvailableForCaller(catalog []skills.SkillDiscoveryMetadata, skillID string, callerType string) bool {
-	for _, item := range catalog {
-		if strings.EqualFold(strings.TrimSpace(item.ID), strings.TrimSpace(skillID)) &&
-			item.Status != skills.SkillStatusInvalid &&
-			skillSupportsCaller(item, callerType) {
-			return true
-		}
-	}
-	return false
 }
 
 func organizationAllowsSkillID(skillID string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string) bool {
@@ -439,10 +438,6 @@ func allowAIChatAgentManagementSkill(parts *chatRequestParts) bool {
 			hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext))
 }
 
-func addContextualAIChatSkillIDs(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, parts *chatRequestParts) []string {
-	return addContextualAIChatSkillIDsWithCapabilities(enabled, organizationEnabled, catalog, parts, contextualAIChatSkillCapabilitiesFromClientContext(parts))
-}
-
 type contextualAIChatSkillCapabilities struct {
 	Navigation  bool
 	FileRead    bool
@@ -490,21 +485,6 @@ func shouldAddAIChatAgentManagementSkill(parts *chatRequestParts, capabilities c
 	return capabilities.AgentRead || capabilities.AgentManage
 }
 
-func contextualAIChatSkillCapabilitiesFromClientContext(parts *chatRequestParts) contextualAIChatSkillCapabilities {
-	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
-		return contextualAIChatSkillCapabilities{}
-	}
-	capabilities := contextualAIChatSkillCapabilities{
-		Navigation:  true,
-		FileRead:    hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
-		FileDelete:  hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext),
-		FileCreate:  hasConsoleFilesCreateCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
-		AgentRead:   hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
-		AgentManage: hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext),
-	}
-	return capabilities
-}
-
 func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, scope Scope, parts *chatRequestParts) contextualAIChatSkillCapabilities {
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return contextualAIChatSkillCapabilities{}
@@ -526,12 +506,10 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		return capabilities
 	}
 	if isAgentsContext {
-		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-			modelTurnIntentRequestsAgentRead(parts.ModelTurnIntent) {
+		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 			capabilities.AgentRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentView)
 		}
-		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-			modelTurnIntentRequestsAgentMutation(parts.ModelTurnIntent) {
+		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 			// This only makes the skill discoverable; it does not grant authorization
 			// to execute any tool or mutate its target.
 			capabilities.AgentManage = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentCreate) ||
@@ -558,20 +536,7 @@ func contextualAIChatAgentManagementToolingRequested(parts *chatRequestParts) bo
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-		modelTurnIntentRequestsAgentRead(parts.ModelTurnIntent) ||
-		modelTurnIntentRequestsAgentMutation(parts.ModelTurnIntent)
-}
-
-func modelTurnIntentRequestsAgentRead(intent *AIChatModelTurnIntent) bool {
-	if intent == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(intent.Intent), "manage_agent_asset")
-}
-
-func modelTurnIntentRequestsAgentMutation(intent *AIChatModelTurnIntent) bool {
-	return modelTurnIntentRequestsAgentRead(intent)
+	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
 }
 
 func contextualAIChatWorkspaceIDFromContext(parts *chatRequestParts) string {
@@ -917,14 +882,6 @@ func runConfigHasWorkflowBindings(runConfig *RunConfig) bool {
 	return false
 }
 
-func runConfigHasAgentMemory(runConfig *RunConfig) bool {
-	return runConfig != nil && runConfig.AgentMemoryEnabled
-}
-
-func agentKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
-	return boundKnowledgeAvailable(catalog, runtimemodel.ConversationCallerAgent)
-}
-
 func boundKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata, callerType string) bool {
 	for _, item := range catalog {
 		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentKnowledge) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, callerType) {
@@ -934,10 +891,6 @@ func boundKnowledgeAvailable(catalog []skills.SkillDiscoveryMetadata, callerType
 	return false
 }
 
-func agentDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
-	return boundDatabaseAvailable(catalog, runtimemodel.ConversationCallerAgent)
-}
-
 func boundDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata, callerType string) bool {
 	for _, item := range catalog {
 		if strings.EqualFold(strings.TrimSpace(item.ID), skills.SkillAgentDatabase) && item.Status != skills.SkillStatusInvalid && skillSupportsCaller(item, callerType) {
@@ -945,10 +898,6 @@ func boundDatabaseAvailable(catalog []skills.SkillDiscoveryMetadata, callerType 
 		}
 	}
 	return false
-}
-
-func agentWorkflowAvailable(catalog []skills.SkillDiscoveryMetadata) bool {
-	return boundWorkflowAvailable(catalog, runtimemodel.ConversationCallerAgent)
 }
 
 func boundWorkflowAvailable(catalog []skills.SkillDiscoveryMetadata, callerType string) bool {

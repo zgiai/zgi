@@ -2,45 +2,11 @@ package service
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
-	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
-
-func TestStreamingMessageMetadataPersistsExecutionMode(t *testing.T) {
-	parts := &chatRequestParts{
-		Surface:              aiChatSurfaceWorkChat,
-		ExecutionMode:        executionModeLegacyToolChat,
-		ExecutionRouteReason: executionRoutePersistedMode,
-	}
-	metadata := streamingMessageMetadata(parts)
-	if got := stringMetadataValue(metadata["execution_mode"]); got != executionModeLegacyToolChat {
-		t.Fatalf("execution_mode = %q, want %q", got, executionModeLegacyToolChat)
-	}
-	if got := stringMetadataValue(metadata["model_use_case"]); got != "text-chat" {
-		t.Fatalf("model_use_case = %q, want text-chat", got)
-	}
-	if got := stringMetadataValue(metadata["execution_route_reason"]); got != executionRoutePersistedMode {
-		t.Fatalf("execution_route_reason = %q, want %q", got, executionRoutePersistedMode)
-	}
-
-	restored := &chatRequestParts{}
-	restoreExecutionModeFromMetadata(restored, metadata)
-	if restored.ExecutionMode != executionModeLegacyToolChat {
-		t.Fatalf("restored ExecutionMode = %q, want %q", restored.ExecutionMode, executionModeLegacyToolChat)
-	}
-}
-
-func TestRestoreExecutionModeKeepsLegacyContinuationOnAgentLoop(t *testing.T) {
-	parts := &chatRequestParts{}
-	restoreExecutionModeFromMetadata(parts, nil)
-	if parts.ExecutionMode != executionModeAgentLoop {
-		t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeAgentLoop)
-	}
-}
 
 func TestNativeExecutionModePersistsForContinuation(t *testing.T) {
 	for _, mode := range []string{executionModeNativeAgentLoop, executionModeNativeToolLoop} {
@@ -132,172 +98,6 @@ func TestApplyRootRegenerationModelCapabilitiesKeepsPersistedModeForSameModel(t 
 	}
 }
 
-func TestApplyRootRegenerationModelCapabilitiesRetiresLegacyExecutionModes(t *testing.T) {
-	for _, tt := range []struct {
-		name          string
-		persistedMode string
-		caller        Caller
-		skillIDs      []string
-		wantMode      string
-	}{
-		{
-			name:          "agent loop",
-			persistedMode: executionModeAgentLoop,
-			caller:        Caller{Type: runtimemodel.ConversationCallerAgent},
-			wantMode:      executionModeNativeAgentLoop,
-		},
-		{
-			name:          "legacy tool chat",
-			persistedMode: executionModeLegacyToolChat,
-			caller:        Caller{Type: runtimemodel.ConversationCallerAIChat},
-			skillIDs:      []string{"calculator"},
-			wantMode:      executionModeNativeToolLoop,
-		},
-		{
-			name:     "message without persisted mode",
-			caller:   Caller{Type: runtimemodel.ConversationCallerAgent},
-			wantMode: executionModeNativeAgentLoop,
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := "private"
-			message := &runtimemodel.Message{
-				ModelProvider: &provider,
-				ModelName:     "model",
-				Metadata:      map[string]interface{}{},
-			}
-			if tt.persistedMode != "" {
-				message.Metadata["execution_mode"] = tt.persistedMode
-			}
-			parts := &chatRequestParts{
-				Provider:  provider,
-				ModelName: message.ModelName,
-				Surface:   aiChatSurfaceWorkChat,
-				SkillIDs:  tt.skillIDs,
-			}
-			svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
-				return ModelSpec{UseCases: []string{"text-chat", "agent"}, SupportsToolCall: true}, true, nil
-			})}
-
-			if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, tt.caller, message, parts); err != nil {
-				t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
-			}
-			if parts.ExecutionMode != "" {
-				t.Fatalf("ExecutionMode before finalization = %q, want empty", parts.ExecutionMode)
-			}
-			if err := finalizeExecutionMode(tt.caller, parts); err != nil {
-				t.Fatalf("finalizeExecutionMode() error = %v", err)
-			}
-			if parts.ExecutionMode != tt.wantMode {
-				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, tt.wantMode)
-			}
-		})
-	}
-}
-
-func TestApplyRootRegenerationModelCapabilitiesRecomputesModeForChangedModelIdentity(t *testing.T) {
-	for _, tt := range []struct {
-		name     string
-		provider string
-		model    string
-	}{
-		{name: "provider changed", provider: "other", model: "old-model"},
-		{name: "model changed", provider: "private", model: "new-model"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			persistedProvider := "private"
-			message := &runtimemodel.Message{
-				ModelProvider: &persistedProvider,
-				ModelName:     "old-model",
-				Metadata: map[string]interface{}{
-					"execution_mode": executionModeLegacyToolChat,
-				},
-			}
-			parts := &chatRequestParts{
-				Provider:  tt.provider,
-				ModelName: tt.model,
-				Surface:   aiChatSurfaceWorkChat,
-			}
-			svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
-				return ModelSpec{UseCases: []string{"text-chat"}}, true, nil
-			})}
-
-			if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, Caller{}, message, parts); err != nil {
-				t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
-			}
-			if err := finalizeExecutionMode(Caller{}, parts); err != nil {
-				t.Fatalf("finalizeExecutionMode() error = %v", err)
-			}
-			if parts.ExecutionMode != executionModeDirectChat {
-				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeDirectChat)
-			}
-		})
-	}
-}
-
-func TestRetiredAgentLoopRegenerationRejectsLostRequiredCapability(t *testing.T) {
-	provider := "private"
-	message := &runtimemodel.Message{
-		ModelProvider: &provider,
-		ModelName:     "model",
-		Metadata: map[string]interface{}{
-			"execution_mode": executionModeAgentLoop,
-		},
-	}
-	parts := &chatRequestParts{
-		Provider:  provider,
-		ModelName: message.ModelName,
-		Surface:   aiChatSurfaceWorkChat,
-	}
-	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
-		return ModelSpec{UseCases: []string{"text-chat"}}, true, nil
-	})}
-
-	caller := Caller{Type: runtimemodel.ConversationCallerAgent}
-	if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, caller, message, parts); err != nil {
-		t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
-	}
-	if err := finalizeExecutionMode(caller, parts); err != nil {
-		t.Fatalf("finalizeExecutionMode() error = %v", err)
-	}
-	if parts.ExecutionMode != executionModeDirectChat {
-		t.Fatalf("execution mode = %q, want direct-chat fallback", parts.ExecutionMode)
-	}
-}
-
-func TestLegacyToolChatContinuationOverridesAgentProtocolInstructions(t *testing.T) {
-	message := continuationMessageForExecutionMode(adapter.Message{
-		Role:    "system",
-		Content: "Call update_plan before continuing.",
-	}, executionModeLegacyToolChat)
-	content := stringFromAny(message.Content)
-	if !strings.Contains(content, "Agent planning and terminal-answer protocol tools are not available") {
-		t.Fatalf("continuation content = %q, want legacy override", content)
-	}
-}
-
-func TestPreparedModelUseCaseUsesPersistedExecutionMode(t *testing.T) {
-	prepared := &PreparedChat{
-		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
-		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
-			"execution_mode": executionModeLegacyToolChat,
-		}},
-	}
-	if got := preparedModelUseCase(prepared); got != "text-chat" {
-		t.Fatalf("preparedModelUseCase() = %q, want text-chat", got)
-	}
-
-	prepared.parts = &chatRequestParts{ExecutionMode: executionModeAgentLoop}
-	if got := preparedModelUseCase(prepared); got != "agent" {
-		t.Fatalf("preparedModelUseCase() = %q, want agent", got)
-	}
-
-	prepared.parts = &chatRequestParts{ExecutionMode: executionModeNativeToolLoop}
-	if got := preparedModelUseCase(prepared); got != "text-chat" {
-		t.Fatalf("preparedModelUseCase() = %q, want text-chat", got)
-	}
-}
-
 func TestDirectChatNeverEnablesToolLoop(t *testing.T) {
 	parts := &chatRequestParts{
 		ExecutionMode:        executionModeDirectChat,
@@ -325,14 +125,20 @@ func TestNativeToolLoopUsesSkillLoopAndTextChatRouting(t *testing.T) {
 	}
 }
 
-func TestLegacyToolChatUsesNaturalFinalAnswer(t *testing.T) {
-	prepared := &PreparedChat{
-		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
-			"operation_plan": map[string]interface{}{"status": "in_progress"},
-		}},
-		parts: &chatRequestParts{ExecutionMode: executionModeLegacyToolChat},
-	}
-	if skillLoopPrefersExplicitFinalAnswer(prepared) {
-		t.Fatal("skillLoopPrefersExplicitFinalAnswer() = true for legacy tool chat")
+// Messages persisted with a mode of the retired protocol loop, or with no
+// mode, continue in the native loop (ADR 0046).
+func TestRestoreExecutionModeContinuesRetiredModesNatively(t *testing.T) {
+	for persisted, want := range map[string]string{
+		"agent_loop":                 executionModeNativeAgentLoop,
+		"legacy_tool_chat":           executionModeNativeToolLoop,
+		"":                           executionModeNativeAgentLoop,
+		executionModeNativeToolLoop:  executionModeNativeToolLoop,
+		executionModeNativeAgentLoop: executionModeNativeAgentLoop,
+	} {
+		parts := &chatRequestParts{}
+		restoreExecutionModeFromMetadata(parts, map[string]interface{}{"execution_mode": persisted})
+		if parts.ExecutionMode != want {
+			t.Fatalf("persisted %q restored as %q, want %q", persisted, parts.ExecutionMode, want)
+		}
 	}
 }

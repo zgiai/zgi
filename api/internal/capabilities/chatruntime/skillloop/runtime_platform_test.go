@@ -23,7 +23,7 @@ func TestRuntimePlatformToolsUseLoadedScopeLivePolicyAndParentBudget(t *testing.
 	set := runtime.BuildNativeToolSet(t.Context(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
 	loaded := map[string]struct{}{skills.SkillCalculator: {}}
 	allowed := true
-	req := RunRequest{NativeAgentLoop: true, ExecutionContext: skills.ExecutionContext{OrganizationID: "org-1", UserID: "user-1"}, AuthorizeSkillStep: func(context.Context, string) (bool, error) { return allowed, nil }}
+	req := RunRequest{ExecutionContext: skills.ExecutionContext{OrganizationID: "org-1", UserID: "user-1"}, AuthorizeSkillStep: func(context.Context, string) (bool, error) { return allowed, nil }}
 	prepared := NewPreparedChat("conversation-1", "message-1", "", "auto", &adapter.ChatRequest{})
 	count := 0
 	skillCounts := map[string]int{}

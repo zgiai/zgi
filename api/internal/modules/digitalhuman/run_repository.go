@@ -224,6 +224,21 @@ func (r *GormRepository) ListRecoverableRuns(ctx context.Context, updatedBefore 
 	return items, nil
 }
 
+// ListRunningRunsWithMessage lists running runs of any surface whose turn has
+// a message, oldest first, for resuming turns a stopped process left behind.
+func (r *GormRepository) ListRunningRunsWithMessage(ctx context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
+	if limit <= 0 {
+		limit = defaultOutboxBatch
+	}
+	items := make([]*Run, 0, limit)
+	if err := r.db.WithContext(ctx).Where(
+		"status = ? AND message_id IS NOT NULL AND conversation_id IS NOT NULL AND updated_at < ?", RunStatusRunning, updatedBefore,
+	).Order("updated_at ASC, id ASC").Limit(limit).Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list running DigitalHuman runs: %w", err)
+	}
+	return items, nil
+}
+
 func (r *GormRepository) CompleteRun(ctx context.Context, runID uuid.UUID, summary string, trace datatypes.JSON, now time.Time) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var run Run
@@ -407,10 +422,14 @@ func (r *GormRepository) RequeueStaleRunOutbox(ctx context.Context, claimedBefor
 }
 
 func (r *GormRepository) MarkStaleRunsUnknown(ctx context.Context, updatedBefore, now time.Time) error {
+	// A streaming message has a live owner: a resumed turn (ADR 0035) can run
+	// past the stale window, and if its process stops, the chat runtime's
+	// lease sweep moves the message to error within minutes.
 	return r.db.WithContext(ctx).Model(&Run{}).
 		Where("status IN ? AND updated_at < ?", []RunStatus{RunStatusRunning, RunStatusCanceling}, updatedBefore).
 		Where("message_id IS NULL OR NOT EXISTS (?)", r.db.Model(&runtimemodel.Message{}).
-			Select("1").Where("chat_runtime_messages.id = digital_human_runs.message_id AND chat_runtime_messages.status = ?", runtimemodel.MessageStatusCompleted)).
+			Select("1").Where("chat_runtime_messages.id = digital_human_runs.message_id AND chat_runtime_messages.status IN ?",
+			[]string{runtimemodel.MessageStatusCompleted, runtimemodel.MessageStatusStreaming})).
 		Updates(map[string]any{
 			"status": RunStatusUnknown, "error_code": "digital_human.run.interrupted",
 			"error_message": "Execution was interrupted and its external side effects may be unknown.",

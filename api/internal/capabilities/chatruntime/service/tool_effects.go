@@ -16,6 +16,9 @@ func skillLoopToolLooksAssetMutation(skillID string, toolName string) bool {
 }
 
 func skillLoopToolLooksReadOnly(skillID string, toolName string) bool {
+	if strings.TrimSpace(skillID) != "" {
+		return skills.SystemSkillToolIsReadOnly(skillID, toolName)
+	}
 	manifest, ok := skillLoopToolGovernanceManifest(skillID, toolName)
 	return ok && toolgovernance.NormalizeManifest(manifest).Effect == toolgovernance.EffectRead
 }
@@ -39,24 +42,6 @@ func skillLoopGovernanceEffectIsMutation(effect toolgovernance.Effect) bool {
 		toolgovernance.EffectInvoke,
 		toolgovernance.EffectSchedule,
 		toolgovernance.EffectExternalSend:
-		return true
-	default:
-		return false
-	}
-}
-
-func modelTurnIntentAssetEffectIsDelete(effect string) bool {
-	switch strings.ToLower(strings.TrimSpace(effect)) {
-	case "delete", "remove", "destroy":
-		return true
-	default:
-		return false
-	}
-}
-
-func modelTurnIntentAssetEffectIsMutation(effect string) bool {
-	switch strings.ToLower(strings.TrimSpace(effect)) {
-	case "create", "update", "edit", "modify", "change", "delete", "remove", "bind", "unbind", "replace", "asset_mutation":
 		return true
 	default:
 		return false

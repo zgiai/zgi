@@ -159,3 +159,59 @@ func TestTranscriptEntryLoadDetectsParentCycle(t *testing.T) {
 		t.Fatal("expected parent cycle to fail")
 	}
 }
+
+// A preview equal to its payload is stored once and read back as the payload;
+// the chain stops at stopAt and at the boundary of the newest summary, and a
+// missing parent is an error (ADR 0040).
+func TestTranscriptPreviewIsStoredOnceAndChainStops(t *testing.T) {
+	db := newTranscriptEntryTestDB(t, "transcript-preview-once")
+	repo := NewTranscriptEntryRepository(db)
+	ctx := context.Background()
+	conversation, message := seedTranscriptMessage(t, db)
+	first := chainEntry(conversation, message, nil, runtimemodel.TranscriptEntryKindUser, "one", "one")
+	second := chainEntry(conversation, message, &first.ID, runtimemodel.TranscriptEntryKindTool, "two", "two")
+	second.Preview = map[string]interface{}{"role": "tool", "content": "receipt"}
+	third := chainEntry(conversation, message, &second.ID, runtimemodel.TranscriptEntryKindAssistant, "three", "three")
+	head, err := repo.AppendForMessage(ctx, message.ID, nil, []*runtimemodel.TranscriptEntry{first, second, third})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Preview == nil {
+		t.Fatal("the caller's preview was not restored")
+	}
+	var stored int64
+	db.Model(&runtimemodel.TranscriptEntry{}).Where("preview IS NULL").Count(&stored)
+	if stored != 2 {
+		t.Fatalf("entries with a NULL preview = %d, want 2", stored)
+	}
+	chain, err := repo.LoadPreviewChain(ctx, head, nil, 0)
+	if err != nil || len(chain) != 3 || chain[2].Preview["content"] != "one" || chain[1].Preview["content"] != "receipt" {
+		t.Fatalf("chain = %+v, err = %v", chain, err)
+	}
+	if chain, err = repo.LoadPreviewChain(ctx, head, &second.ID, 0); err != nil || len(chain) != 2 {
+		t.Fatalf("chain to stopAt = %d, err = %v", len(chain), err)
+	}
+	if _, err = repo.LoadPreviewChain(ctx, head, nil, 2); err == nil {
+		t.Fatal("expected a chain over the limit to fail")
+	}
+
+	summary, err := repo.AppendSummaryForMessage(ctx, message.ID, &head, &second.ID, "summary", "summary:event")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain, err = repo.LoadPreviewChain(ctx, summary, nil, 0)
+	if err != nil || len(chain) != 3 || chain[0].Preview["content"] != "summary" || chain[2].ID != second.ID {
+		t.Fatalf("chain through summary = %+v, err = %v", chain, err)
+	}
+	copied, err := repo.ListForCopyByHead(ctx, head, nil)
+	if err != nil || len(copied) != 3 || copied[0].Preview["content"] != "one" {
+		t.Fatalf("copy = %+v, err = %v", copied, err)
+	}
+
+	if err := db.Where("id = ?", first.ID).Delete(&runtimemodel.TranscriptEntry{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.LoadPreviewChain(ctx, head, nil, 0); err == nil {
+		t.Fatal("expected a missing parent to fail")
+	}
+}

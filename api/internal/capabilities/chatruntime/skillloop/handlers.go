@@ -42,8 +42,10 @@ func (r *Runner) handleProgressiveSkillCall(
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, stringArg(args, "next_action"))), false, false)
 	}
 	// Tool visibility is scoped to the current skill session. A model may carry
-	// a previously visible tool name into a new user turn; require explicit
-	// activation instead of restoring the skill from conversation history.
+	// a previously visible tool name into a new user turn; the native loop
+	// activates the skill through the session first when it is still a
+	// candidate (activateNativeSkillForToolCall), and any other inactive skill
+	// is not restored from conversation history.
 	if !isSkillMetaToolName(call.Function.Name) {
 		if skillID, ok := uniqueResolvedSkillForToolName(resolved, call.Function.Name); ok {
 			if _, active := loadedSkills[skillID]; !active {
@@ -69,8 +71,6 @@ func (r *Runner) handleProgressiveSkillCall(
 	switch call.Function.Name {
 	case contextArtifactToolName:
 		return r.handleReadContextArtifactCall(ctx, call.ID, args)
-	case skills.MetaToolLoadSkill:
-		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent, execCtx)
 	case skills.MetaToolReadSkillReference:
 		if _, ok := loadedSkills[normalizedSkillArg(args, "skill_id")]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), "", "skill must be loaded before reading references")
@@ -97,12 +97,6 @@ func (r *Runner) handleProgressiveSkillCall(
 				return skippedControlToolStep(call.ID, skills.MetaToolUpdatePlan, "continue with the current outcome contract; runtime effects are reconciled automatically")
 			}
 			return r.handleUpdatePlanCall(call.ID, toolArgs, runtimeState, round)
-		}
-		if strings.EqualFold(toolName, skills.MetaToolIntermediateAnswer) {
-			if !runtimeControlToolAllowed(runtimeState, runtimeStateAllowIntermediateAnswerKey) {
-				return skippedControlToolStep(call.ID, skills.MetaToolIntermediateAnswer, "send the complete body directly to the file tool; only summarize the saved artifact afterward")
-			}
-			return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, toolArgs, onEvent)
 		}
 		if _, ok := loadedSkills[skillID]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), toolName, "skill must be loaded before calling its tools")
@@ -166,24 +160,13 @@ func (r *Runner) handleProgressiveSkillCall(
 			return skippedControlToolStep(call.ID, skills.MetaToolUpdatePlan, "continue with the current outcome contract; runtime effects are reconciled automatically")
 		}
 		return r.handleUpdatePlanCall(call.ID, args, runtimeState, round)
-	case skills.MetaToolIntermediateAnswer:
-		if !runtimeControlToolAllowed(runtimeState, runtimeStateAllowIntermediateAnswerKey) {
-			return skippedControlToolStep(call.ID, skills.MetaToolIntermediateAnswer, "send the complete body directly to the file tool; only summarize the saved artifact afterward")
-		}
-		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
-	case skills.MetaToolFinalAnswer:
-		err := fmt.Errorf("%w: submit_final_answer must be handled as the terminal skill-loop action", ErrInvalidInput)
-		return failedFinalAnswerSkillStep(call.ID, err, "submit the final answer as the only terminal action")
 	default:
 		if isInjectedContextPseudoToolName(call.Function.Name) {
 			return injectedContextPseudoToolFeedbackStep(call.ID, call.Function.Name)
 		}
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		nextAction := "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer"
-		if native, _ := runtimeState[runtimeStateNativeAgentLoopKey].(bool); native {
-			nextAction = "call one of the business functions exposed in this request directly, use an available control tool, or provide the final answer as ordinary assistant content"
-		}
+		nextAction := "call one of the business functions exposed in this request directly, use an available control tool, or provide the final answer as ordinary assistant content"
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, nextAction)), false, false)
 	}
 }
@@ -469,50 +452,6 @@ func (r *Runner) handleRequestUserInputCall(
 	return result
 }
 
-func (r *Runner) handleIntermediateAnswerCall(
-	ctx context.Context,
-	prepared *PreparedChat,
-	callID string,
-	args map[string]interface{},
-	onEvent func(Event) error,
-) skillStepResult {
-	content := strings.TrimSpace(stringArg(args, "content"))
-	if content == "" {
-		return successfulSkillStep(skills.SkillTrace{}, skills.ToolResultMessage(callID, map[string]interface{}{
-			"status":      "skipped",
-			"instruction": "No intermediate answer was shown because content was empty. Continue with the task and provide a normal final answer when ready.",
-		}), false, false)
-	}
-	title := strings.TrimSpace(stringArg(args, "title"))
-	answerID := strings.TrimSpace(stringArg(args, streamedIntermediateAnswerArg+"_id"))
-	trace := skills.SkillTrace{
-		Kind:    "intermediate_answer",
-		Title:   title,
-		Message: content,
-		Status:  "success",
-		Arguments: map[string]interface{}{
-			"title":   title,
-			"call_id": strings.TrimSpace(callID),
-		},
-	}
-	if boolArg(args, streamedIntermediateAnswerArg) {
-		if answerID == "" {
-			answerID = callID
-		}
-		r.emitEvent(prepared, EventIntermediateAnswer, intermediateAnswerPayload(prepared, trace, answerID, "", 0, true, "success"))
-	} else {
-		r.emitIntermediateAnswer(ctx, prepared, callID, trace, onEvent)
-	}
-	return successfulSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
-		"status": "recorded",
-		"instruction": strings.Join([]string{
-			"The intermediate answer is visible to the user and saved in the run trace.",
-			"Continue with any remaining tool callr.",
-			"Your eventual user-facing reply must still be complete and self-contained; do not say see above.",
-		}, " "),
-	}), false, false)
-}
-
 func (r *Runner) emitIntermediateAnswer(
 	ctx context.Context,
 	prepared *PreparedChat,
@@ -569,113 +508,6 @@ func splitIntermediateAnswerContent(content string, chunkRunes int) []string {
 		start = split
 	}
 	return chunks
-}
-
-func (r *Runner) handleLoadSkillCall(
-	ctx context.Context,
-	prepared *PreparedChat,
-	resolved *skills.ResolvedSkills,
-	callID string,
-	args map[string]interface{},
-	loadedSkills map[string]struct{},
-	onEvent func(Event) error,
-	executions ...skills.ExecutionContext,
-) skillStepResult {
-	skillID := stringArg(args, "skill_id")
-	doc, ok := resolved.Get(skillID)
-	if !ok {
-		return unavailableSkillLoadFeedbackStep(callID, skillID)
-	}
-	canonicalSkillID := strings.TrimSpace(doc.Metadata.ID)
-	if canonicalSkillID == "" {
-		canonicalSkillID = strings.TrimSpace(skillID)
-	}
-	if _, alreadyLoaded := loadedSkills[canonicalSkillID]; alreadyLoaded {
-		if len(doc.Metadata.ConnectorRequirements) > 0 {
-			if _, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, canonicalSkillID, executions...); err != nil {
-				delete(loadedSkills, canonicalSkillID)
-				return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "repair the required Connector binding before using this skill")), false, false)
-			}
-		}
-		attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
-		trace := skills.SkillTrace{
-			Kind:     "skill_load_attempt",
-			SkillID:  canonicalSkillID,
-			ToolName: skills.MetaToolLoadSkill,
-			Status:   "already_loaded",
-			Arguments: map[string]interface{}{
-				"runtime_id":         attemptRuntimeID,
-				"created_at_ms":      time.Now().UnixMilli(),
-				"requested_skill_id": canonicalSkillID,
-				"instruction_digest": skillInstructionDigest(doc.Instructions),
-				"effective_version":  skillEffectiveVersion(doc),
-				"policy_state":       "allowed",
-				"access_status":      "authorized",
-				"outcome":            "already_loaded",
-			},
-		}
-		return skillStepResult{
-			trace: trace,
-			toolMessage: skills.ToolResultMessage(callID, map[string]interface{}{
-				"status":             "already_loaded",
-				"skill_id":           canonicalSkillID,
-				"instruction_digest": skillInstructionDigest(doc.Instructions),
-				"next_action":        "Use the already active skill instructions and call its tool directly; do not load this skill again in the same user turn.",
-			}),
-			usedSkill: true,
-		}
-	}
-	r.emitEvent(prepared, EventSkillLoadStart, skillLoadPayload(prepared, skillID))
-	attemptRuntimeID := newSkillLoadAttemptRuntimeID(canonicalSkillID)
-	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID, executions...)
-	if err != nil {
-		if trace.Arguments == nil {
-			trace.Arguments = map[string]interface{}{}
-		}
-		trace.Arguments["runtime_id"] = attemptRuntimeID
-		trace.Arguments["created_at_ms"] = time.Now().UnixMilli()
-		trace.Arguments["outcome"] = "load_failed"
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "choose an enabled skill_id from the exposed metadata and retry")), false, false)
-	}
-	trace.Result = map[string]interface{}{
-		"runtime_id":         attemptRuntimeID,
-		"created_at_ms":      time.Now().UnixMilli(),
-		"outcome":            "first_load",
-		"instruction_digest": skillInstructionDigest(doc.Instructions),
-		"instruction_chars":  len([]rune(strings.TrimSpace(doc.Instructions))),
-		"effective_version":  skillEffectiveVersion(doc),
-		"policy_state":       "allowed",
-		"access_status":      "authorized",
-	}
-	loadedSkills[doc.Metadata.ID] = struct{}{}
-	logger.DebugContext(ctx, "aichat skill loaded",
-		"conversation_id", prepared.Conversation.ID.String(),
-		"message_id", prepared.Message.ID.String(),
-		"skill_id", doc.Metadata.ID,
-	)
-	r.emitEvent(prepared, EventSkillLoadEnd, skillLoadEndPayload(prepared, trace))
-	return successfulSkillStep(trace, skills.ToolResultMessage(callID, skillDocumentPayload(doc)), true, false)
-}
-
-func unavailableSkillLoadFeedbackStep(callID string, skillID string) skillStepResult {
-	normalizedSkillID := strings.ToLower(strings.TrimSpace(skillID))
-	err := fmt.Errorf("%w: skill %s is not enabled for this turn", ErrInvalidInput, normalizedSkillID)
-	trace := skills.SkillTrace{
-		Kind:     "skill_load_attempt",
-		SkillID:  normalizedSkillID,
-		ToolName: skills.MetaToolLoadSkill,
-		Status:   "blocked",
-		Error:    err.Error(),
-		Arguments: map[string]interface{}{
-			"runtime_id":         newSkillLoadAttemptRuntimeID(normalizedSkillID),
-			"created_at_ms":      time.Now().UnixMilli(),
-			"requested_skill_id": normalizedSkillID,
-			"outcome":            "not_enabled",
-			"next_step":          "choose_enabled_skill_or_continue_from_context",
-		},
-	}
-	nextAction := "Choose an enabled skill_id from the exposed metadata. If the unavailable skill was console-navigator, continue from current page evidence unless navigation is explicitly required and available."
-	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, nextAction)), false, false)
 }
 
 func (r *Runner) handleReadReferenceCall(
@@ -735,6 +567,9 @@ func (r *Runner) handleCallSkillTool(
 		argumentSummary["completion_intent"] = completionIntent
 	}
 	r.emitEvent(prepared, EventSkillCallStart, skillCallStartPayload(prepared, callID, skillID, toolName, argumentSummary))
+	if err := prepared.presentationEventError(); err != nil {
+		return unrecordedCallStep(callID, skillID, toolName, err)
+	}
 	if isAgentWorkflowRunTool(skillID, toolName) {
 		execCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)
 		if execCtx.RuntimeParameters == nil {
@@ -789,7 +624,7 @@ func (r *Runner) handleCallSkillTool(
 		})
 	}
 	ctx = connectordispatch.WithActionPlanPhase(ctx, planPhaseID)
-	invocation, err := r.SkillRuntime.CallSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
+	invocation, err := r.callSkillTool(ctx, resolved, skillID, toolName, toolArgs, execCtx, callID)
 	if invocation == nil {
 		r.discardAgentWorkflowDelegateOutput(ctx, prepared, delegateOutput)
 		if err == nil {
@@ -1225,6 +1060,23 @@ func terminalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, use
 		usedTool:    usedTool,
 		terminal:    true,
 	}
+}
+
+// skillCallReadOnlyKey marks the start of a call whose tool is read-only, so a
+// turn that stops before the call's result can repeat it (ADR 0035).
+const skillCallReadOnlyKey = "read_only"
+
+// unrecordedCallStep ends a run before a call whose start could not be
+// recorded. Had the call run, a process that stops before its result could
+// not tell later whether it changed something (ADR 0035).
+func unrecordedCallStep(callID, skillID, toolName string, err error) skillStepResult {
+	trace := failedSkillTrace("tool_call", toolName, err)
+	trace.InvocationID = strings.TrimSpace(callID)
+	trace.SkillID = skillID
+	return fatalSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"status": "not_run",
+		"error":  "the call was not run because its start could not be recorded",
+	}), err)
 }
 
 func fatalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, err error) skillStepResult {

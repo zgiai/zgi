@@ -264,16 +264,20 @@ func normalizeToolCallArguments(raw string) string {
 			return normalized
 		}
 	}
-	if closed, ok := closeOpenJSONContainers(repaired); ok {
-		if normalized, normalizedOK := normalizeJSONObjectString(closed); normalizedOK {
-			return normalized
-		}
+	// Arguments that stop inside an object were cut off. Closing them would
+	// run the tool with whatever arrived, such as half of a file's content, so
+	// the model is asked to send the call again instead.
+	errorText := "tool arguments were not valid JSON"
+	nextAction := "retry the same tool with valid JSON arguments"
+	if jsonEndsInsideContainer(repaired) {
+		errorText = "tool arguments ended before the JSON object was complete"
+		nextAction = "send the whole call again with complete JSON arguments; if a value is long, write it in smaller parts"
 	}
 	payload := map[string]interface{}{
 		"_invalid_tool_arguments": true,
-		"error":                   "tool arguments were not valid JSON",
+		"error":                   errorText,
 		"raw_preview":             truncateRunesForHelper(raw, maxInvalidToolArgumentPreviewRunes),
-		"next_action":             "retry the same tool with valid JSON arguments",
+		"next_action":             nextAction,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -455,7 +459,9 @@ func isJSONHexDigit(ch byte) bool {
 		ch >= 'A' && ch <= 'F'
 }
 
-func closeOpenJSONContainers(raw string) (string, bool) {
+// jsonEndsInsideContainer reports whether raw opens an object or array, or a
+// string inside one, that it never closes.
+func jsonEndsInsideContainer(raw string) bool {
 	stack := make([]byte, 0, 4)
 	inString := false
 	escaped := false
@@ -481,25 +487,12 @@ func closeOpenJSONContainers(raw string) (string, bool) {
 			stack = append(stack, ch)
 		case '}', ']':
 			if len(stack) == 0 || !jsonContainerMatches(stack[len(stack)-1], ch) {
-				return raw, false
+				return false
 			}
 			stack = stack[:len(stack)-1]
 		}
 	}
-	if inString || escaped || len(stack) == 0 {
-		return raw, false
-	}
-	var builder strings.Builder
-	builder.Grow(len(raw) + len(stack))
-	builder.WriteString(raw)
-	for idx := len(stack) - 1; idx >= 0; idx-- {
-		if stack[idx] == '{' {
-			builder.WriteByte('}')
-		} else {
-			builder.WriteByte(']')
-		}
-	}
-	return builder.String(), true
+	return len(stack) > 0
 }
 
 func jsonContainerMatches(open byte, close byte) bool {

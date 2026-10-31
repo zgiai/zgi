@@ -152,17 +152,20 @@ func objectSchema(properties map[string]interface{}, required []string) map[stri
 }
 
 func numberSchema(description string) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "number",
-		"description": description,
-	}
+	return describedSchema(map[string]interface{}{"type": "number"}, description)
 }
 
 func stringValueSchema(description string) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "string",
-		"description": description,
+	return describedSchema(map[string]interface{}{"type": "string"}, description)
+}
+
+// describedSchema adds a description only when there is one: a field whose
+// name says what it is costs no words in every request (ADR 0043).
+func describedSchema(schema map[string]interface{}, description string) map[string]interface{} {
+	if description != "" {
+		schema["description"] = description
 	}
+	return schema
 }
 
 func enumStringSchema(description string, values []string) map[string]interface{} {
@@ -174,49 +177,45 @@ func enumStringSchema(description string, values []string) map[string]interface{
 }
 
 func arraySchema(description string, items map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "array",
-		"description": description,
-		"items":       items,
-	}
+	return describedSchema(map[string]interface{}{"type": "array", "items": items}, description)
 }
 
 func docxDocumentSchema() map[string]interface{} {
 	cell := docxTableCellSchema()
-	row := arraySchema("Table row cells.", cell)
+	row := arraySchema("", cell)
 	row["maxItems"] = 20
-	rows := arraySchema("Rectangular table rows.", row)
+	rows := arraySchema("Rows of equal length.", row)
 	rows["maxItems"] = 200
-	headers := arraySchema("Optional table header cells.", cell)
+	headers := arraySchema("", cell)
 	headers["maxItems"] = 20
-	columnWidths := arraySchema("Optional table column widths in points; the count must match the table columns.", numberSchema("Column width in points."))
+	columnWidths := arraySchema("In points, one per column.", numberSchema(""))
 	columnWidths["maxItems"] = 20
 
 	block := objectSchema(
 		map[string]interface{}{
-			"type":          enumStringSchema("Document block type.", []string{"heading", "paragraph", "table", "page_break"}),
-			"level":         boundedIntegerSchema("Heading level from 1 to 3.", 1, 3),
-			"text":          stringValueSchema("Visible heading or paragraph text. Use runs instead when inline styles are needed."),
-			"runs":          arraySchema("Inline styled text runs.", docxRunSchema()),
-			"style":         docxParagraphStyleSchema("Paragraph or heading style overrides."),
+			"type":          enumStringSchema("", []string{"heading", "paragraph", "table", "page_break"}),
+			"level":         boundedIntegerSchema("", 1, 3),
+			"text":          stringValueSchema("Plain text; use runs for inline styles."),
+			"runs":          arraySchema("", docxRunSchema()),
+			"style":         docxParagraphStyleSchema(""),
 			"headers":       headers,
 			"rows":          rows,
 			"column_widths": columnWidths,
-			"border":        booleanSchema("Legacy table border flag."),
-			"header_bold":   booleanSchema("Whether table header cells are bold. Defaults to true."),
+			"border":        booleanSchema("Legacy."),
+			"header_bold":   booleanSchema("Defaults to true."),
 			"table_style": objectSchema(
 				map[string]interface{}{
-					"alignment":    enumStringSchema("Table alignment.", []string{"left", "center", "right"}),
-					"width":        numberSchema("Optional table width in points."),
-					"border":       booleanSchema("Whether table borders are shown."),
-					"border_color": stringValueSchema("Optional RRGGBB table border color."),
+					"alignment":    enumStringSchema("", []string{"left", "center", "right"}),
+					"width":        numberSchema("Points."),
+					"border":       booleanSchema(""),
+					"border_color": stringValueSchema("RRGGBB."),
 				},
 				nil,
 			),
 		},
 		[]string{"type"},
 	)
-	blocks := arraySchema("Document blocks in render order.", block)
+	blocks := arraySchema("", block)
 	blocks["minItems"] = 1
 	blocks["maxItems"] = 200
 
@@ -224,21 +223,21 @@ func docxDocumentSchema() map[string]interface{} {
 		map[string]interface{}{
 			"page": objectSchema(
 				map[string]interface{}{
-					"size":        enumStringSchema("Page size. A4 is currently supported.", []string{"a4"}),
-					"orientation": enumStringSchema("Page orientation.", []string{"portrait", "landscape"}),
+					"size":        enumStringSchema("", []string{"a4"}),
+					"orientation": enumStringSchema("", []string{"portrait", "landscape"}),
 					"margins": objectSchema(
 						map[string]interface{}{
-							"top":    numberSchema("Top margin in points."),
-							"right":  numberSchema("Right margin in points."),
-							"bottom": numberSchema("Bottom margin in points."),
-							"left":   numberSchema("Left margin in points."),
+							"top":    numberSchema("Points."),
+							"right":  numberSchema("Points."),
+							"bottom": numberSchema("Points."),
+							"left":   numberSchema("Points."),
 						},
 						nil,
 					),
 				},
 				nil,
 			),
-			"default_style": docxParagraphStyleSchema("Default document text and paragraph style."),
+			"default_style": docxParagraphStyleSchema(""),
 			"blocks":        blocks,
 		},
 		[]string{"blocks"},
@@ -248,12 +247,12 @@ func docxDocumentSchema() map[string]interface{} {
 func docxTableCellSchema() map[string]interface{} {
 	return objectSchema(
 		map[string]interface{}{
-			"text":             stringValueSchema("Visible cell text. Use runs instead when inline styles are needed."),
-			"runs":             arraySchema("Inline styled cell text runs.", docxRunSchema()),
-			"style":            docxParagraphStyleSchema("Cell text and paragraph style."),
-			"background_color": stringValueSchema("Optional RRGGBB cell background color."),
-			"vertical_align":   enumStringSchema("Cell vertical alignment.", []string{"top", "center", "bottom"}),
-			"col_span":         boundedIntegerSchema("Optional number of columns spanned by the cell.", 1, 20),
+			"text":             stringValueSchema("Plain text; use runs for inline styles."),
+			"runs":             arraySchema("", docxRunSchema()),
+			"style":            docxParagraphStyleSchema(""),
+			"background_color": stringValueSchema("RRGGBB."),
+			"vertical_align":   enumStringSchema("", []string{"top", "center", "bottom"}),
+			"col_span":         boundedIntegerSchema("", 1, 20),
 		},
 		nil,
 	)
@@ -261,94 +260,94 @@ func docxTableCellSchema() map[string]interface{} {
 
 func docxRunSchema() map[string]interface{} {
 	properties := docxTextStyleProperties()
-	properties["text"] = stringValueSchema("Required non-empty visible text for this run.")
+	properties["text"] = stringValueSchema("Non-empty.")
 	return objectSchema(properties, []string{"text"})
 }
 
 func docxParagraphStyleSchema(description string) map[string]interface{} {
 	properties := docxTextStyleProperties()
-	properties["alignment"] = enumStringSchema("Paragraph alignment.", []string{"left", "center", "right", "justify", "distribute"})
-	properties["line_spacing"] = numberSchema("Non-negative line spacing multiplier.")
-	properties["space_before"] = numberSchema("Non-negative space before in points.")
-	properties["space_after"] = numberSchema("Non-negative space after in points.")
-	properties["indent_left"] = numberSchema("Non-negative left indent in points.")
-	properties["first_line_indent"] = numberSchema("Non-negative first-line indent in points.")
+	properties["alignment"] = enumStringSchema("", []string{"left", "center", "right", "justify", "distribute"})
+	properties["line_spacing"] = numberSchema("Multiplier.")
+	properties["space_before"] = numberSchema("Points.")
+	properties["space_after"] = numberSchema("Points.")
+	properties["indent_left"] = numberSchema("Points.")
+	properties["first_line_indent"] = numberSchema("Points.")
 	schema := objectSchema(properties, nil)
-	schema["description"] = description
+	describedSchema(schema, description)
 	return schema
 }
 
 func docxTextStyleProperties() map[string]interface{} {
 	return map[string]interface{}{
-		"font_family":    stringValueSchema("Font family applied to all scripts unless overridden."),
-		"east_asia_font": stringValueSchema("East Asian font family."),
-		"ascii_font":     stringValueSchema("ASCII font family."),
-		"font_size":      boundedNumberSchema("Font size in points.", 1, 200),
-		"bold":           booleanSchema("Whether text is bold."),
-		"italic":         booleanSchema("Whether text is italic."),
-		"underline": enumStringSchema("Underline style. Use none to disable it.", []string{
+		"font_family":    stringValueSchema(""),
+		"east_asia_font": stringValueSchema(""),
+		"ascii_font":     stringValueSchema(""),
+		"font_size":      boundedNumberSchema("Points.", 1, 200),
+		"bold":           booleanSchema(""),
+		"italic":         booleanSchema(""),
+		"underline": enumStringSchema("", []string{
 			"none", "single", "words", "double", "thick", "dotted", "dash", "dotDash", "dotDotDash", "wave", "dashLong", "wavyDouble",
 		}),
-		"color":     stringValueSchema("Optional RRGGBB text color."),
-		"highlight": enumStringSchema("Word highlight color.", []string{"none", "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "darkblue", "darkcyan", "darkgreen", "darkmagenta", "darkred", "darkyellow", "darkgray", "lightgray"}),
+		"color":     stringValueSchema("RRGGBB."),
+		"highlight": enumStringSchema("", []string{"none", "black", "blue", "cyan", "green", "magenta", "red", "yellow", "white", "darkblue", "darkcyan", "darkgreen", "darkmagenta", "darkred", "darkyellow", "darkgray", "lightgray"}),
 	}
 }
 
 func pptxPresentationSchema() map[string]interface{} {
-	row := arraySchema("Table row values.", stringValueSchema("Table cell text."))
+	row := arraySchema("", stringValueSchema(""))
 	row["maxItems"] = 20
-	rows := arraySchema("Table rows.", row)
+	rows := arraySchema("", row)
 	rows["maxItems"] = 200
-	headers := arraySchema("Optional table header labels.", stringValueSchema("Header cell text."))
+	headers := arraySchema("", stringValueSchema(""))
 	headers["maxItems"] = 20
-	columnWidths := arraySchema("Optional table column widths in inches.", boundedNumberSchema("Column width in inches.", 0.000001, 20))
+	columnWidths := arraySchema("Inches.", boundedNumberSchema("", 0.000001, 20))
 	columnWidths["maxItems"] = 20
 
 	element := objectSchema(
 		map[string]interface{}{
-			"type":              enumStringSchema("Slide element type.", []string{"title", "text", "table", "shape"}),
-			"text":              stringValueSchema("Visible title or text content."),
-			"x":                 numberSchema("Optional horizontal position in inches."),
-			"y":                 numberSchema("Optional vertical position in inches."),
-			"w":                 numberSchema("Optional width in inches."),
-			"h":                 numberSchema("Optional height in inches."),
-			"style":             pptxTextStyleSchema("Element text style."),
+			"type":              enumStringSchema("", []string{"title", "text", "table", "shape"}),
+			"text":              stringValueSchema(""),
+			"x":                 numberSchema("Inches."),
+			"y":                 numberSchema("Inches."),
+			"w":                 numberSchema("Inches."),
+			"h":                 numberSchema("Inches."),
+			"style":             pptxTextStyleSchema(""),
 			"headers":           headers,
 			"rows":              rows,
 			"column_widths":     columnWidths,
-			"fill_color":        stringValueSchema("Optional RRGGBB shape fill color."),
-			"line_color":        stringValueSchema("Optional RRGGBB shape line color."),
-			"border_color":      stringValueSchema("Optional RRGGBB table border color."),
-			"header_fill_color": stringValueSchema("Optional RRGGBB table header fill color."),
-			"header_color":      stringValueSchema("Optional RRGGBB table header text color."),
-			"row_fill_color":    stringValueSchema("Optional RRGGBB table row fill color."),
-			"margin":            boundedNumberSchema("Optional text or table margin in inches.", 0, 1),
-			"break_line":        booleanSchema("Whether text wrapping is enabled."),
-			"line_spacing":      boundedNumberSchema("Line spacing multiplier.", 0.5, 3),
-			"rotation":          boundedNumberSchema("Shape rotation in degrees.", -360, 360),
-			"transparency":      boundedNumberSchema("Shape transparency percentage.", 0, 100),
+			"fill_color":        stringValueSchema("RRGGBB."),
+			"line_color":        stringValueSchema("RRGGBB."),
+			"border_color":      stringValueSchema("RRGGBB."),
+			"header_fill_color": stringValueSchema("RRGGBB."),
+			"header_color":      stringValueSchema("RRGGBB."),
+			"row_fill_color":    stringValueSchema("RRGGBB."),
+			"margin":            boundedNumberSchema("Inches.", 0, 1),
+			"break_line":        booleanSchema("Whether text wraps."),
+			"line_spacing":      boundedNumberSchema("Multiplier.", 0.5, 3),
+			"rotation":          boundedNumberSchema("Degrees.", -360, 360),
+			"transparency":      boundedNumberSchema("Percent.", 0, 100),
 		},
 		[]string{"type"},
 	)
-	elements := arraySchema("Slide elements in render order.", element)
+	elements := arraySchema("", element)
 	elements["minItems"] = 1
 	elements["maxItems"] = 120
 	slide := objectSchema(
 		map[string]interface{}{
-			"background_color": stringValueSchema("Optional RRGGBB slide background color."),
+			"background_color": stringValueSchema("RRGGBB."),
 			"elements":         elements,
 		},
 		[]string{"elements"},
 	)
-	slides := arraySchema("Presentation slides.", slide)
+	slides := arraySchema("", slide)
 	slides["minItems"] = 1
 	slides["maxItems"] = 80
 
 	return objectSchema(
 		map[string]interface{}{
-			"layout":        enumStringSchema("Slide layout. Defaults to wide.", []string{"wide", "4:3"}),
-			"language":      stringValueSchema("Optional BCP 47 language tag. Defaults to en-US."),
-			"default_style": pptxTextStyleSchema("Default presentation text style."),
+			"layout":        enumStringSchema("Defaults to wide.", []string{"wide", "4:3"}),
+			"language":      stringValueSchema("BCP 47 tag; defaults to en-US."),
+			"default_style": pptxTextStyleSchema(""),
 			"slides":        slides,
 		},
 		[]string{"slides"},
@@ -358,24 +357,24 @@ func pptxPresentationSchema() map[string]interface{} {
 func pptxTextStyleSchema(description string) map[string]interface{} {
 	schema := objectSchema(
 		map[string]interface{}{
-			"font_face":    stringValueSchema("Font face."),
+			"font_face":    stringValueSchema(""),
 			"font_family":  stringValueSchema("Legacy alias for font_face."),
-			"font_size":    boundedNumberSchema("Font size in points.", 4, 96),
-			"font_weight":  enumStringSchema("Font weight.", []string{"normal", "regular", "medium", "semibold", "bold", "bolder", "400", "500", "600", "700", "800", "900"}),
-			"color":        stringValueSchema("Optional RRGGBB text color."),
-			"bold":         booleanSchema("Whether text is bold."),
-			"italic":       booleanSchema("Whether text is italic."),
-			"underline":    booleanSchema("Whether text is underlined."),
-			"strike":       booleanSchema("Whether text is struck through."),
-			"align":        enumStringSchema("Horizontal text alignment.", []string{"left", "center", "right", "justify"}),
-			"valign":       enumStringSchema("Vertical text alignment.", []string{"top", "mid", "bottom"}),
-			"line_spacing": boundedNumberSchema("Line spacing multiplier.", 0.5, 3),
-			"margin":       boundedNumberSchema("Text box margin in inches.", 0, 1),
-			"break_line":   booleanSchema("Whether text wrapping is enabled."),
+			"font_size":    boundedNumberSchema("Points.", 4, 96),
+			"font_weight":  enumStringSchema("", []string{"normal", "regular", "medium", "semibold", "bold", "bolder", "400", "500", "600", "700", "800", "900"}),
+			"color":        stringValueSchema("RRGGBB."),
+			"bold":         booleanSchema(""),
+			"italic":       booleanSchema(""),
+			"underline":    booleanSchema(""),
+			"strike":       booleanSchema(""),
+			"align":        enumStringSchema("", []string{"left", "center", "right", "justify"}),
+			"valign":       enumStringSchema("", []string{"top", "mid", "bottom"}),
+			"line_spacing": boundedNumberSchema("Multiplier.", 0.5, 3),
+			"margin":       boundedNumberSchema("Inches.", 0, 1),
+			"break_line":   booleanSchema("Whether text wraps."),
 		},
 		nil,
 	)
-	schema["description"] = description
+	describedSchema(schema, description)
 	return schema
 }
 
@@ -583,10 +582,7 @@ func imageFileObjectSchema(description string) map[string]interface{} {
 }
 
 func booleanSchema(description string) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "boolean",
-		"description": description,
-	}
+	return describedSchema(map[string]interface{}{"type": "boolean"}, description)
 }
 
 func stringArrayOrCSVSchema(description string) map[string]interface{} {
@@ -621,21 +617,11 @@ func intentStringArraySchema(description string) map[string]interface{} {
 }
 
 func boundedNumberSchema(description string, minimum float64, maximum float64) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "number",
-		"description": description,
-		"minimum":     minimum,
-		"maximum":     maximum,
-	}
+	return describedSchema(map[string]interface{}{"type": "number", "minimum": minimum, "maximum": maximum}, description)
 }
 
 func boundedIntegerSchema(description string, minimum int, maximum int) map[string]interface{} {
-	return map[string]interface{}{
-		"type":        "integer",
-		"description": description,
-		"minimum":     minimum,
-		"maximum":     maximum,
-	}
+	return describedSchema(map[string]interface{}{"type": "integer", "minimum": minimum, "maximum": maximum}, description)
 }
 
 func intentTaskTypes() []string {

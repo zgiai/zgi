@@ -74,7 +74,7 @@ func (r *Runner) runtimePlatformServices(req RunRequest, prepared *PreparedChat,
 			}
 			encoded, _ := json.Marshal(map[string]interface{}{"skill_id": binding.SkillID, "tool_name": binding.ToolName, "arguments": args})
 			evidence := runtimeStateWithSuccessfulToolCalls(req, *successful)
-			evidence[runtimeStateNativeAgentLoopKey] = req.NativeAgentLoop
+			evidence[runtimeStateNativeAgentLoopKey] = true
 			evidence[runtimeStateAllowPlanUpdateKey] = false
 			evidence[runtimeStateAllowIntermediateAnswerKey] = false
 			evidence[runtimeStateKnowledgeRetrievalHistoryKey] = knowledgeRetrievalHistoryForToolCalls(*successful)

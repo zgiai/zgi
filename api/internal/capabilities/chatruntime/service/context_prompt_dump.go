@@ -227,13 +227,6 @@ func redactPromptValue(value interface{}) interface{} {
 	}
 }
 
-func chineseYesNo(value bool) string {
-	if value {
-		return "是"
-	}
-	return "否"
-}
-
 func firstPositive(values ...int) int {
 	for _, value := range values {
 		if value > 0 {

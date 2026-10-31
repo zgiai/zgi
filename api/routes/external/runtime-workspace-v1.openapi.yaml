@@ -244,6 +244,19 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/AgentEventStream'}
         default: {$ref: '#/components/responses/Error'}
+  /apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/resume:
+    parameters:
+      - $ref: '#/components/parameters/AppKey'
+      - $ref: '#/components/parameters/ConversationID'
+      - $ref: '#/components/parameters/MessageID'
+      - $ref: '#/components/parameters/ExternalUserID'
+    post:
+      summary: Resume a task stopped by a server restart
+      description: Resumes the same Agent message after the process running it stopped, which leaves the message `error` with `runtime_lease_expired`. The task continues from its recorded model responses and tool results. A message can be resumed once, only while it is the latest turn, and only when no unfinished tool call could have changed anything; otherwise the stream sends an `error` event with code `interrupted_turn_not_resumable`. DigitalHuman apps resume their own runs, so this is not available for them.
+      operationId: resumeRuntimeWorkspaceInterruptedTurn
+      responses:
+        '200': {$ref: '#/components/responses/AgentEventStream'}
+        default: {$ref: '#/components/responses/Error'}
   /apps/{app_key}/conversations/{conversation_id}/events:
     parameters:
       - $ref: '#/components/parameters/AppKey'

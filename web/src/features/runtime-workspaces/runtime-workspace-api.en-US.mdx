@@ -194,6 +194,7 @@ Conversations are scoped by external access, External User ID, and App.
 | POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation` | Continue an approval or workflow question |
 | POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue` | Submit Skill input and continue |
 | POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue` | Add task tokens or stop the task |
+| POST | `/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/resume` | Resume an Agent task stopped by a server restart |
 
 <CodeGroup title="Create a conversation">
 
@@ -228,6 +229,10 @@ For approvals, send `{"type":"approval","approval_token":"...","action":"approve
 <Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue" method="POST" title="Continue a task token budget" name="#Continue-Token-Budget" />
 
 Read `request_id` from `token_budget_requested`. Send `{"action":"add","additional_tokens":2048}` to add budget, or `{"action":"stop"}` to terminate the current task. The response continues the same message as SSE and does not accept `answers`.
+
+<Heading url="/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/resume" method="POST" title="Resume an interrupted task" name="#Resume-Interrupted-Turn" />
+
+When the server process running an Agent task stops, the message ends with `status=error` and `error=runtime_lease_expired`. Call this endpoint without a body to continue the same message as SSE from its recorded model responses and tool results. A message can be resumed once, only while it is the latest turn, and only when no unfinished tool call could have changed anything; otherwise the stream sends an `error` event with code `interrupted_turn_not_resumable`. DigitalHuman apps resume their own runs and do not offer this endpoint.
 
 ---
 

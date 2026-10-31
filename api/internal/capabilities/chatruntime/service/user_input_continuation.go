@@ -570,6 +570,7 @@ func (s *service) prepareUserInputContinuationChat(
 		return nil, err
 	}
 	applyAgentMemoryToolsPolicy(parts)
+	parts.TurnStartedAt = message.CreatedAt
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
 		return nil, err
@@ -595,7 +596,7 @@ func (s *service) prepareUserInputContinuationChat(
 		contextBudget:    contextResult,
 		taskTokenBudget:  taskTokenBudgetFromMetadata(message.Metadata),
 	}
-	prepared.resumeWith(continuationMessageForExecutionMode(userInputContinuationMessage(message, continuation.Request, continuation.Response), parts.ExecutionMode))
+	prepared.resumeWith(userInputContinuationMessage(message, continuation.Request, continuation.Response))
 	return prepared, nil
 }
 

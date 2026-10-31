@@ -13,7 +13,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool) []adapter.Tool {
+func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool, omitPlanning bool, unified ...bool) []adapter.Tool {
+	if len(unified) > 0 && unified[0] {
+		return unifiedAgentToolsForRun(resolved, toolSet, session, runtimeTools, omitPlanning)
+	}
 	runtimeDefinitions := make([]adapter.Tool, 0, len(runtimeTools))
 	for _, runtimeTool := range runtimeTools {
 		if strings.TrimSpace(runtimeTool.Definition.Function.Name) != "" && runtimeTool.Handler != nil {
@@ -24,20 +27,135 @@ func nativeAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.Nat
 		current := session.ToolSet()
 		tools := append([]adapter.Tool(nil), current.ProviderTools...)
 		tools = append(tools, runtimeDefinitions...)
-		return append(tools, skills.NativeControlToolsForSession(
+		return append(tools, skills.NativeControlToolsForRun(
 			resolved,
 			current.ActiveSkillIDs,
-			session.ExposedSkillIDs(),
+			session.OfferedSkillIDs(),
 			session.SearchAvailable(),
+			!omitPlanning,
 		)...)
 	}
 	if toolSet == nil {
-		return append(runtimeDefinitions, skills.NativeControlToolsForSkills(resolved, nil)...)
+		return append(runtimeDefinitions, skills.NativeControlToolsForRun(resolved, nil, nil, false, !omitPlanning)...)
 	}
 	tools := append([]adapter.Tool(nil), toolSet.ProviderTools...)
 	tools = append(tools, runtimeDefinitions...)
-	tools = append(tools, skills.NativeControlToolsForSkills(resolved, toolSet.ActiveSkillIDs)...)
+	tools = append(tools, skills.NativeControlToolsForRun(resolved, toolSet.ActiveSkillIDs, nil, false, !omitPlanning)...)
 	return tools
+}
+
+// unifiedAgentToolsForRun is the tool list of a run in unified mode (ADR
+// 0044): resident tools, connector operations, runtime tools and protocol
+// tools stay native, and the tools of activatable skills are reached through
+// the unified tool. Activation changes none of it.
+func unifiedAgentToolsForRun(resolved *skills.ResolvedSkills, toolSet *skills.NativeToolSet, session *skills.NativeSkillSession, runtimeTools []RuntimeTool, omitPlanning bool) []adapter.Tool {
+	current := skills.NativeToolSet{}
+	if session != nil {
+		current = session.ToolSet()
+	} else if toolSet != nil {
+		current = *toolSet
+	}
+	tools := make([]adapter.Tool, 0, len(current.ProviderTools)+len(runtimeTools)+6)
+	for _, tool := range current.ProviderTools {
+		if binding, ok := current.ToolBindings[tool.Function.Name]; !ok || skills.UnifiedDispatchExposesTool(binding) {
+			tools = append(tools, tool)
+		}
+	}
+	if skills.HasNonResidentSkill(resolved) {
+		tools = append(tools, skills.UnifiedSkillTool())
+	}
+	for _, runtimeTool := range runtimeTools {
+		if strings.TrimSpace(runtimeTool.Definition.Function.Name) != "" && runtimeTool.Handler != nil {
+			tools = append(tools, runtimeTool.Definition)
+		}
+	}
+	// References are offered for every skill from the start, so activation
+	// does not add read_skill_reference later in the turn.
+	offered, search := []string(nil), false
+	if session != nil {
+		offered, search = session.OfferedSkillIDs(), session.SearchAvailable()
+	}
+	var everySkill []string
+	if resolved != nil {
+		everySkill = resolved.SkillIDs()
+	}
+	return append(tools, skills.NativeControlToolsForRun(resolved, everySkill, offered, search, !omitPlanning)...)
+}
+
+// translateUnifiedSkillCalls turns each unified call into the native call it
+// names, keeping its ID, so the rest of the loop handles it as a direct call:
+// governance, prefetching and traces are unchanged (ADR 0044). A call that
+// names no tool stays unified and is answered with a recoverable error.
+func translateUnifiedSkillCalls(calls []adapter.ToolCall, toolSet *skills.NativeToolSet, resolved *skills.ResolvedSkills) []adapter.ToolCall {
+	out := make([]adapter.ToolCall, len(calls))
+	for index, call := range calls {
+		out[index] = call
+		if strings.TrimSpace(call.Function.Name) != skills.UnifiedSkillToolName {
+			continue
+		}
+		var args struct {
+			Command string                 `json:"command"`
+			Input   map[string]interface{} `json:"input"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			continue
+		}
+		fields := strings.Fields(strings.ReplaceAll(args.Command, "/", " "))
+		if len(fields) != 2 {
+			continue
+		}
+		skillID, toolName := strings.ToLower(fields[0]), fields[1]
+		name := unifiedProviderToolName(toolSet, resolved, skillID, toolName)
+		if name == "" {
+			continue
+		}
+		if args.Input == nil {
+			args.Input = map[string]interface{}{}
+		}
+		encoded, err := json.Marshal(args.Input)
+		if err != nil {
+			continue
+		}
+		out[index].Function.Name = name
+		out[index].Function.Arguments = string(encoded)
+	}
+	return out
+}
+
+// unifiedProviderToolName is the function name of a skill tool: its projected
+// name when the skill is active, or the tool name of a candidate skill, which
+// a direct call activates.
+func unifiedProviderToolName(toolSet *skills.NativeToolSet, resolved *skills.ResolvedSkills, skillID string, toolName string) string {
+	if toolSet != nil {
+		for name, binding := range toolSet.ToolBindings {
+			if strings.EqualFold(binding.SkillID, skillID) && binding.ToolName == toolName {
+				return name
+			}
+		}
+	}
+	if resolved == nil {
+		return ""
+	}
+	doc, ok := resolved.Get(skillID)
+	if !ok {
+		return ""
+	}
+	for _, definition := range doc.Tools {
+		if strings.TrimSpace(definition.Name) == toolName {
+			return toolName
+		}
+	}
+	return ""
+}
+
+func unifiedSkillCallErrorStep(callID string) skillStepResult {
+	err := fmt.Errorf("%w: zgi command must name an available skill and tool, such as \"file-generator generate_file\"", ErrInvalidInput)
+	trace := plannerFeedbackTrace("", skills.UnifiedSkillToolName, err)
+	trace.Arguments["reason_code"] = "unified_command_unknown"
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(
+		err,
+		"Activate the candidate skill to see its tools, then call zgi with command \"<skill_id> <tool_name>\" and input matching the tool's schema.",
+	)), false, false)
 }
 
 func runtimeToolForCall(runtimeTools []RuntimeTool, call adapter.ToolCall) (RuntimeTool, bool) {
@@ -121,25 +239,24 @@ func runtimeToolEventPayload(prepared *PreparedChat, payload map[string]interfac
 
 func nativeAgentLoopSystemMessage() adapter.Message {
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
-		"Only active skills have complete instructions and visible business functions. Candidate skills are lightweight metadata until activated.",
-		"Answer knowledge questions, explanations, translations, rewrites, summaries, and tasks fully supported by the current conversation context directly without activating a skill.",
-		"Activate or search for skills only when the user outcome genuinely requires an external read, generation, mutation, governed action, or page operation. Never activate, search, update a plan, or submit state merely to inspect capabilities or prepare an answer.",
-		"If a candidate skill is needed, call activate_skills with the smallest relevant set before doing the business work. Use search_skills only when the compact candidate directory omitted the needed capability.",
-		"Skill discovery and activation are internal. Do not name, narrate, summarize, or expose that mechanism to the user. A useful user-facing process note may accompany the same turn when it describes the actual task stage rather than the internal preparation.",
-		"When a business action is needed, call the exposed business function directly. Never call or invent load_skill, call_skill_tool, submit_intermediate_answer, or submit_final_answer. An active script Skill is already loaded; use its supplied session_scripts package_sha256 with shell_exec. Activate a candidate only if it is not already active.",
-		"Call a projected external business function directly when it is needed. Do not call update_plan merely to prepare a single Action: the runtime creates the authoritative Outcome, phase, target binding, and execution ledger fields. Use update_plan only when the user's outcome structure genuinely changes; never invent or pass server-owned phase or binding fields.",
-		"For complex or multi-step work, before the first business stage include one brief user-visible process note in ordinary assistant content before the business function call. Add another note only after important evidence arrives, when the work changes stage, when the approach changes, or when recovering from an error.",
-		"A process note must use the language of the user's latest request and state the current judgment or evidence plus the result the next action will produce. Do not merely repeat the request.",
-		"Keep each process note concise, normally one to four short sentences and about 60 to 180 estimated tokens. Never exceed 384 estimated tokens for one note. Across one user task, produce at most eight notes and about 1920 estimated tokens total.",
-		"Do not add a process note for one fast business call, repeated calls of the same kind, or an ordinary direct answer. Internal control work alone is not worth announcing, but when the same stage has a useful task-level update, describe only the user-visible work and outcome without naming the control operation.",
-		"Process notes must not reveal hidden reasoning, skill names, function or tool names, parameters, IDs, JSON, protocols, or hidden plans. Put artifact bodies and all content required by a function only in its arguments.",
-		"If an active skill document mentions those legacy wrapper functions, this native-loop instruction overrides that wording; preserve the skill's business rules and call its exposed function instead.",
-		"When no more tool calls are needed, provide the complete user-facing final answer as ordinary assistant content. For complex work, briefly state the completed result, the key basis for the work, and any material limitation or unfinished item.",
-		"Use update_plan only for short outcome or step status changes, never for detailed reasoning. Use submit_turn_state when exact working state must survive approval, navigation, refresh, user input, or another continuation boundary.",
-		"Use read_skill_reference only when an active skill's instructions require a reference. Use request_user_input only when missing information blocks reliable progress.",
-		"All user-visible progress, questions, and final answers must use the language of the user's latest request. Never expose internal protocol details, hidden reasoning, tool aliases, IDs, or bookkeeping.",
-		"Never claim an external action succeeded without a matching successful tool result. Do not repeat a failed tool call with unchanged arguments.",
-		"Read-only calls may be grouped when useful, but call at most one side-effecting or governed mutation in one assistant turn, then wait for its result.",
+		"## Skills",
+		"Candidate skills are listed by name only; their instructions and business functions are available after activate_skills. Resident tools need no activation.",
+		"Answer directly when the conversation already holds what the user needs, such as knowledge questions, explanations, translations, rewrites and summaries.",
+		"Activate a skill only when the request needs an external read, a generated file, a change, or a page operation, and activate the smallest set that covers it. Use search_skills only when the directory says some skills were left out.",
+		"An active script skill is already loaded: run its session_scripts package with shell_exec, using the package_sha256 it gives.",
+		"## Tools",
+		"Call business functions directly. Read-only calls may run together; make at most one call that changes something per response, then wait for its result.",
+		"Never repeat a failed call with the same arguments. Use read_skill_reference only when an active skill asks for it, and request_user_input only when missing information blocks reliable progress.",
+		"If update_plan is available, use it only when the user's goal or the required outcomes change; the runtime tracks ordinary progress and owns phase and binding fields. If submit_turn_state is available, use it to keep exact working state across an approval, a question to the user, or another pause.",
+		"## Progress notes",
+		"For work with several stages, write one or two short sentences before the first business call: what you found or decided, and what the next step will produce. Add another only when evidence changes the plan, the stage changes, or you recover from an error.",
+		"Skip notes for a single quick call, for repeated calls of the same kind, and for direct answers. A few notes per task are enough.",
+		"## Answers",
+		"When no more calls are needed, answer as ordinary assistant content. For complex work, give the result, what it is based on, and anything left unfinished.",
+		"Never say an action succeeded without a matching successful tool result.",
+		"## Language and privacy",
+		"Write notes, questions and answers in the language the user asked for, in this conversation or in their saved preferences. Otherwise use the user's interface language when the context names it; writing in another language is not a request for it. Without either, use the language the user writes in.",
+		"Never show internal details: skill or tool names, parameters, IDs, JSON, hidden reasoning or plans. Put file bodies and other function content only in the function arguments.",
 	}, "\n")}
 }
 
@@ -181,6 +298,85 @@ func nativeReferenceReadContinuationSystemMessage(trace skills.SkillTrace) (adap
 		"If the user request and source data are sufficient, call the relevant business function now instead of drafting the deliverable in ordinary assistant content.",
 		"Keep the complete artifact body only in the function arguments. A brief process note is allowed only when the shared native-loop process-note policy calls for one.",
 	}, "\n")}, true
+}
+
+// withSystemPromptAdditions appends guidance that stays the same from turn to
+// turn, such as the native-loop rules, to the system prompt. There it is part
+// of the prefix a provider caches; sent after the history, as it was, every
+// turn's first request paid for it in full (ADR 0032). Without a leading text
+// system prompt, the guidance becomes one.
+func withSystemPromptAdditions(messages []adapter.Message, additions []adapter.Message) []adapter.Message {
+	parts := make([]string, 0, len(additions))
+	for _, addition := range additions {
+		if text := strings.TrimSpace(messageContent(addition.Content)); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	if len(parts) == 0 {
+		return messages
+	}
+	guidance := strings.Join(parts, "\n\n")
+	if len(messages) > 0 && strings.EqualFold(messages[0].Role, "system") {
+		if prompt, ok := messages[0].Content.(string); ok {
+			out := append([]adapter.Message(nil), messages...)
+			if prompt = strings.TrimSpace(prompt); prompt != "" {
+				guidance = prompt + "\n\n" + guidance
+			}
+			out[0].Content = guidance
+			return out
+		}
+	}
+	return append([]adapter.Message{{Role: "system", Content: guidance}}, messages...)
+}
+
+// withoutRemindersInHistory leaves out guidance the conversation already
+// holds verbatim, such as the instructions of a skill a previous turn
+// activated: they are not sent again every turn (ADR 0043).
+func withoutRemindersInHistory(messages []adapter.Message, additions []adapter.Message) []adapter.Message {
+	out := make([]adapter.Message, 0, len(additions))
+	for _, addition := range additions {
+		text := strings.TrimSpace(messageContent(addition.Content))
+		if text != "" && strings.EqualFold(strings.TrimSpace(addition.Role), "system") && messagesHoldReminder(messages, text) {
+			continue
+		}
+		out = append(out, addition)
+	}
+	return out
+}
+
+func messagesHoldReminder(messages []adapter.Message, text string) bool {
+	wrapped := adapter.SystemReminder(text)
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "user") && strings.Contains(messageContent(message.Content), wrapped) {
+			return true
+		}
+	}
+	return false
+}
+
+// placedTurnUserContent is the current question as the provider receives it:
+// the last user message with the system messages after it merged in. It is
+// reported only when nothing but system messages follows the question.
+func placedTurnUserContent(messages []adapter.Message) (interface{}, bool) {
+	last := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		role := strings.ToLower(strings.TrimSpace(messages[index].Role))
+		if role == "system" {
+			continue
+		}
+		if role == "user" && messages[index].ToolCallID == "" {
+			last = index
+		}
+		break
+	}
+	if last <= 0 {
+		return nil, false
+	}
+	placed := adapter.PlaceSystemMessages(append([]adapter.Message{{Role: "system", Content: "-"}}, messages[last:]...))
+	if len(placed) != 2 {
+		return nil, false
+	}
+	return placed[1].Content, true
 }
 
 // NativeAgentLoopSystemMessage exposes the native-loop prompt for the service's
@@ -386,6 +582,45 @@ func (r *Runner) handleNativeSessionControlCall(
 	return nativeSessionControlResult{step: step, instructions: activation.InstructionMessages}, true
 }
 
+// activateNativeSkillForToolCall activates the skill of a business tool the
+// model called without activating it first, typically a tool it used in an
+// earlier turn of the conversation. Skills start inactive in every turn, and
+// bouncing the call cost the turn a round. Activation goes through the
+// session, so only a skill that is still a candidate for this turn and passes
+// its checks becomes active; any other call keeps the not-active feedback.
+func activateNativeSkillForToolCall(
+	ctx context.Context,
+	call adapter.ToolCall,
+	session *skills.NativeSkillSession,
+	resolved *skills.ResolvedSkills,
+	toolSet *skills.NativeToolSet,
+	loadedSkills map[string]struct{},
+) (skills.NativeSkillActivationResult, bool) {
+	name := strings.TrimSpace(call.Function.Name)
+	if session == nil || name == "" || isSkillMetaToolName(name) || name == skills.MetaToolActivateSkills || name == skills.MetaToolSearchSkills {
+		return skills.NativeSkillActivationResult{}, false
+	}
+	if toolSet != nil {
+		if _, _, bound := nativeToolBindingForCall(toolSet, name); bound {
+			return skills.NativeSkillActivationResult{}, false
+		}
+	}
+	skillID, ok := uniqueResolvedSkillForToolName(resolved, name)
+	if !ok {
+		return skills.NativeSkillActivationResult{}, false
+	}
+	if _, active := loadedSkills[skillID]; active {
+		return skills.NativeSkillActivationResult{}, false
+	}
+	activation := session.Activate(ctx, []string{skillID}, "tool_call")
+	for _, activated := range activation.ActivatedSkillIDs {
+		if strings.EqualFold(strings.TrimSpace(activated), skillID) {
+			return activation, true
+		}
+	}
+	return activation, false
+}
+
 func nativeRuntimeToolAvailable(runtimeTools []RuntimeTool, name string) bool {
 	for _, runtimeTool := range runtimeTools {
 		if runtimeTool.Handler != nil && strings.EqualFold(strings.TrimSpace(runtimeTool.Definition.Function.Name), name) {
@@ -483,29 +718,6 @@ func nativeToolBindingForCall(toolSet *skills.NativeToolSet, name string) (skill
 		}
 	}
 	return skills.NativeToolBinding{}, "", false
-}
-
-func nativeExecutionCalls(calls []adapter.ToolCall, toolSet *skills.NativeToolSet) []adapter.ToolCall {
-	out := make([]adapter.ToolCall, 0, len(calls))
-	for _, call := range calls {
-		out = append(out, nativeExecutionCall(call, toolSet))
-	}
-	return out
-}
-
-func nativeSessionControlCallsOnly(calls []adapter.ToolCall) bool {
-	if len(calls) == 0 {
-		return false
-	}
-	for _, call := range calls {
-		switch strings.TrimSpace(call.Function.Name) {
-		case skills.MetaToolActivateSkills, skills.MetaToolSearchSkills, contextArtifactToolName:
-			continue
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func nativeForbiddenProtocolTool(name string) bool {

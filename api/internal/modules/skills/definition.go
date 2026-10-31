@@ -304,21 +304,24 @@ type SkillToolDefinition struct {
 }
 
 type SkillFrontmatter struct {
-	ScriptInputSchema     map[string]interface{}             `yaml:"script_input_schema"`
-	Name                  string                             `yaml:"name"`
-	Description           string                             `yaml:"description"`
-	WhenToUse             string                             `yaml:"when_to_use"`
-	ProviderType          tools.ToolProviderType             `yaml:"provider_type"`
-	ProviderID            string                             `yaml:"provider_id"`
-	Tools                 []string                           `yaml:"tools"`
-	ToolGovernance        map[string]toolgovernance.Manifest `yaml:"tool_governance"`
-	RuntimeType           string                             `yaml:"runtime_type"`
-	MaxCallsPerTurn       int                                `yaml:"max_calls_per_turn"`
-	TimeoutSeconds        int                                `yaml:"timeout_seconds"`
-	Display               SkillDisplayMetadata               `yaml:"display"`
-	SupportedCallers      []string                           `yaml:"supported_callers"`
-	RequiredConfig        []string                           `yaml:"required_config"`
-	ConnectorRequirements []SkillConnectorRequirement        `yaml:"connector_requirements"`
+	ScriptInputSchema map[string]interface{}             `yaml:"script_input_schema"`
+	Name              string                             `yaml:"name"`
+	Description       string                             `yaml:"description"`
+	WhenToUse         string                             `yaml:"when_to_use"`
+	ProviderType      tools.ToolProviderType             `yaml:"provider_type"`
+	ProviderID        string                             `yaml:"provider_id"`
+	Tools             []string                           `yaml:"tools"`
+	ToolGovernance    map[string]toolgovernance.Manifest `yaml:"tool_governance"`
+	RuntimeType       string                             `yaml:"runtime_type"`
+	MaxCallsPerTurn   int                                `yaml:"max_calls_per_turn"`
+	// SideEffects "none" declares that no tool of the skill changes anything.
+	// It is honored only for system skills (ToolIsReadOnly).
+	SideEffects           string                      `yaml:"side_effects"`
+	TimeoutSeconds        int                         `yaml:"timeout_seconds"`
+	Display               SkillDisplayMetadata        `yaml:"display"`
+	SupportedCallers      []string                    `yaml:"supported_callers"`
+	RequiredConfig        []string                    `yaml:"required_config"`
+	ConnectorRequirements []SkillConnectorRequirement `yaml:"connector_requirements"`
 }
 
 type SkillDisplayMetadata struct {
@@ -351,6 +354,7 @@ type SkillMetadata struct {
 	RequiredConfig        []string                    `json:"required_config,omitempty"`
 	DependencyType        string                      `json:"dependency_type"`
 	ConnectorRequirements []SkillConnectorRequirement `json:"connector_requirements,omitempty"`
+	SideEffects           string                      `json:"side_effects,omitempty"`
 }
 
 type SkillPromptMetadata struct {

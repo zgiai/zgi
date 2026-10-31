@@ -715,7 +715,18 @@ const messages = {
     },
     stopped: 'Stopped',
     streamError: 'The response failed.',
+    resumeInterrupted: 'Continue',
     errors: {
+      interrupted: {
+        title: 'The reply was interrupted',
+        description:
+          'The service restarted while this reply was in progress. Continue to pick up where it stopped.',
+      },
+      notResumable: {
+        title: 'This reply cannot be continued',
+        description:
+          'It was continued before, the conversation has moved on, or an action may have run without a recorded result. Regenerate the reply instead.',
+      },
       server: {
         title: 'Unable to generate a response right now',
         adminDescription:

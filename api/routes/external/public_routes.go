@@ -56,6 +56,7 @@ func RegisterPublicRoutes(r *gin.RouterGroup) {
 					"POST /api/v1/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation",
 					"POST /api/v1/agents/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue",
 					"POST /api/v1/agents/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue",
+					"POST /api/v1/agents/conversations/{conversation_id}/messages/{message_id}/resume",
 				},
 				"memory": []string{
 					"GET|DELETE /api/v1/agents/memory",
@@ -95,6 +96,7 @@ func RegisterPublicRoutes(r *gin.RouterGroup) {
 					"POST /api/connect/v1/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/workflow-continuation",
 					"POST /api/connect/v1/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/user-input/{request_id}/continue",
 					"POST /api/connect/v1/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/token-budget/{request_id}/continue",
+					"POST /api/connect/v1/apps/{app_key}/conversations/{conversation_id}/messages/{message_id}/resume",
 					"GET|DELETE /api/connect/v1/apps/{app_key}/memory",
 					"GET /api/connect/v1/apps/{app_key}/memory/export",
 					"PUT|DELETE /api/connect/v1/apps/{app_key}/memory/{key}",

@@ -151,7 +151,7 @@ func TestRetryFailureBudgetStateSeparatesTerminalProtocolAndPlanner(t *testing.T
 		rounds = plannerRounds
 	}
 	for index := 0; index < rounds; index++ {
-		state.recordStandaloneFailure(
+		state.recordStandaloneFailureForTest(
 			retryFailureTerminalProtocol,
 			"protocol",
 			retryBudgetTestTrace(retryFailureTerminalProtocol, index),
@@ -180,7 +180,7 @@ func TestRetryFailureBudgetStateSeparatesTerminalProtocolAndPlanner(t *testing.T
 		t.Fatalf("planner_schema metrics = %#v, want %d independent rounds/calls", planner, rounds)
 	}
 
-	state.recordStandaloneFailure(
+	state.recordStandaloneFailureForTest(
 		retryFailureTerminalProtocol,
 		"protocol",
 		retryBudgetTestTrace(retryFailureTerminalProtocol, rounds),
@@ -229,7 +229,7 @@ func TestRunnerAlternatingSchemaAndArgumentValidationFailuresDoNotShareLimit(t *
 		Prepared: NewPreparedChat("conv-independent-retry", "msg-independent-retry", "", "auto", &adapter.ChatRequest{
 			Messages: []adapter.Message{{Role: "user", Content: "执行测试操作"}},
 		}),
-		Resolved: runnerTestResolvedSkills(), NativeAgentLoop: true,
+		Resolved:             runnerTestResolvedSkills(),
 		NativeToolSet:        &skills.NativeToolSet{},
 		RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
@@ -356,7 +356,7 @@ func TestRunnerPlannerFeedbackUsesIndependentConsecutiveLimit(t *testing.T) {
 		Messages: []adapter.Message{{Role: "user", Content: "执行测试操作"}},
 	})
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared: prepared, Resolved: runnerTestResolvedSkills(), NativeAgentLoop: true,
+		Prepared: prepared, Resolved: runnerTestResolvedSkills(),
 		NativeToolSet: &skills.NativeToolSet{}, RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
@@ -433,4 +433,10 @@ func runnerTestMessageText(messages []adapter.Message) string {
 		parts = append(parts, messageContent(message.Content))
 	}
 	return strings.Join(parts, "\n")
+}
+
+// recordStandaloneFailureForTest records one failed call as a round of its own.
+func (s *retryFailureBudgetState) recordStandaloneFailureForTest(class retryFailureClass, category string, trace skills.SkillTrace) {
+	s.recordCall(class, category, trace)
+	s.finishRound(map[retryFailureClass]bool{class: true}, map[retryFailureClass]bool{}, false)
 }

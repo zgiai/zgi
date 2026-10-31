@@ -92,6 +92,13 @@ func restoreTurnInitialContextFromMetadata(parts *chatRequestParts, metadata map
 	if strings.TrimSpace(parts.RuntimeContext) != "" {
 		return
 	}
+	// Restore page context only for a turn that sent some. Adding it to a
+	// continuation of a turn without it, such as a DigitalHuman run, changed
+	// the request from the turn's first message on and lost the prefix the
+	// provider had cached for it (ADR 0032).
+	if included, _ := mapFromOperationContext(snapshot["runtime_context"])["included"].(bool); !included {
+		return
+	}
 	route := strings.TrimSpace(stringFromAny(snapshot["route"]))
 	page := strings.TrimSpace(stringFromAny(snapshot["page"]))
 	if route == "" && page == "" && parts.OperationLedger == nil {

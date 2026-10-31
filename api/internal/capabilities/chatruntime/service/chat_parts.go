@@ -47,6 +47,10 @@ func applyRunConfigToParts(config RunConfig, parts *chatRequestParts) {
 	}
 	parts.SystemPrompt = strings.TrimSpace(config.SystemPrompt)
 	parts.SystemPromptVersion = strings.TrimSpace(config.SystemPromptVersion)
+	parts.TurnContext = strings.TrimSpace(config.TurnContext)
+	parts.TurnContextSections = append([]string(nil), config.TurnContextSections...)
+	parts.CurrentTimeProvided = config.CurrentTimeProvided
+	parts.UserTimezone = strings.TrimSpace(config.UserTimezone)
 	parts.ConfiguredSkillIDs = normalizedSkillIDs(config.EnabledSkillIDs)
 	parts.KnowledgeDatasetIDs = normalizedSkillIDs(config.KnowledgeDatasetIDs)
 	parts.KnowledgeRetrievalConfig = copyStringAnyMap(config.KnowledgeRetrievalConfig)
@@ -365,10 +369,6 @@ func cloneUUIDPointer(value *uuid.UUID) *uuid.UUID {
 	return &cloned
 }
 
-func streamingMessageMetadata(parts *chatRequestParts) map[string]interface{} {
-	return streamingMessageMetadataWithTaskID(parts, "")
-}
-
 func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) map[string]interface{} {
 	version := systemPromptVersion
 	if strings.TrimSpace(parts.SystemPromptVersion) != "" {
@@ -432,17 +432,11 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if parts.OperationLedger != nil {
 		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
+	// The snapshot is stored once, as turn_start_context. Messages from before
+	// also carry it as turn_initial_context_snapshot, which is still read
+	// (ADR 0040).
 	if snapshot := turnInitialContextSnapshot(parts); snapshot != nil {
-		metadata[turnInitialContextSnapshotKey] = snapshot
 		metadata[turnStartContextKey] = snapshot
-	}
-	if parts.ModelTurnIntent != nil {
-		metadata["model_turn_intent"] = parts.ModelTurnIntent
-		if contract := modelTurnIntentTaskContract(parts.ModelTurnIntent); len(contract) > 0 {
-			metadata["turn_task_contract"] = contract
-		}
-	} else if strings.TrimSpace(parts.ModelTurnIntentError) != "" {
-		metadata["model_turn_intent_error"] = strings.TrimSpace(parts.ModelTurnIntentError)
 	}
 	if strategy := contextualAIChatTurnStrategyFromParts(parts); strategy != nil {
 		metadata["turn_strategy"] = strategy
@@ -469,10 +463,10 @@ func normalizeExecutionMode(value string) string {
 		return executionModeNativeAgentLoop
 	case executionModeNativeToolLoop:
 		return executionModeNativeToolLoop
-	case executionModeAgentLoop:
-		return executionModeAgentLoop
-	case executionModeLegacyToolChat:
-		return executionModeLegacyToolChat
+	case retiredExecutionModeAgentLoop:
+		return executionModeNativeAgentLoop
+	case retiredExecutionModeLegacyToolChat:
+		return executionModeNativeToolLoop
 	case executionModeDirectChat:
 		return executionModeDirectChat
 	default:
@@ -487,10 +481,9 @@ func restoreExecutionModeFromMetadata(parts *chatRequestParts, metadata map[stri
 	parts.ExecutionMode = normalizeExecutionMode(stringMetadataValue(metadata["execution_mode"]))
 	parts.ExecutionRouteReason = executionRoutePersistedMode
 	if parts.ExecutionMode == "" {
-		// Messages created before execution mode was persisted already entered the
-		// Agent loop. Keep their continuation semantics instead of switching the
-		// in-flight turn to a different runtime after an upgrade.
-		parts.ExecutionMode = executionModeAgentLoop
+		// Messages created before execution mode was persisted entered the
+		// retired protocol loop; they continue in the native loop (ADR 0046).
+		parts.ExecutionMode = executionModeNativeAgentLoop
 	}
 }
 

@@ -65,7 +65,7 @@ func TestTaskRuntimeMemberSeesSharedTasksAndOccupancyWhenEnabled(t *testing.T) {
 	if items, ok := data["other_open_work"].([]TaskOccupancy); !ok || len(items) != 1 {
 		t.Fatalf("other_open_work = %#v", data["other_open_work"])
 	}
-	guidance := prepared.SystemPromptAddendum
+	guidance := prepared.StableGuidance
 	if !strings.Contains(guidance, "other_open_work") || strings.Contains(guidance, "current external conversation") || strings.Contains(guidance, "Shared DigitalHuman tasks and other users' private tasks are intentionally hidden") {
 		t.Fatalf("member guidance = %q", guidance)
 	}
@@ -89,8 +89,8 @@ func TestTaskRuntimeChannelOccupancyKeepsConversationScope(t *testing.T) {
 	if scope := data["scope"].(taskListToolScope); scope.Visibility != "current_conversation" {
 		t.Fatalf("scope = %#v", scope)
 	}
-	if !strings.Contains(prepared.SystemPromptAddendum, "current group conversation") || !strings.Contains(prepared.SystemPromptAddendum, "other_open_work") {
-		t.Fatalf("channel guidance = %q", prepared.SystemPromptAddendum)
+	if !strings.Contains(prepared.StableGuidance, "current group conversation") || !strings.Contains(prepared.StableGuidance, "other_open_work") {
+		t.Fatalf("channel guidance = %q", prepared.StableGuidance)
 	}
 }
 

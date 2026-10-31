@@ -33,6 +33,11 @@ const (
 )
 
 type TaskRuntimePreparation struct {
+	// StableGuidance is the task and artifact rules, which stay the same from
+	// run to run of a conversation; they go in the system prompt.
+	StableGuidance string
+	// SystemPromptAddendum changes from run to run, such as the index of
+	// recent artifacts; it is sent as turn context.
 	SystemPromptAddendum string
 	Tools                []skillloop.RuntimeTool
 	// BindConversation tells the tools the conversation of a run that had
@@ -108,7 +113,7 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 		boundary.writable = boundary.currentTaskID != uuid.Nil
 	}
 	if !boundary.writable {
-		return &TaskRuntimePreparation{SystemPromptAddendum: "Task management is not enabled for this invocation. Do not claim that a task was created, scheduled, or changed."}, nil
+		return &TaskRuntimePreparation{StableGuidance: "Task management is not enabled for this invocation. Do not claim that a task was created, scheduled, or changed."}, nil
 	}
 	access, err := taskAccessForRun(run, event, boundary)
 	if err != nil {
@@ -124,7 +129,7 @@ func (p *DefaultTaskRuntimeProvider) Prepare(ctx context.Context, run *Run, even
 	} else if ok && boundary.currentTaskID == uuid.Nil {
 		tools = append(tools, p.reworkTool(run, boundary, reporter))
 	}
-	preparation := &TaskRuntimePreparation{SystemPromptAddendum: taskRuntimeGuidance(boundary), Tools: tools}
+	preparation := &TaskRuntimePreparation{StableGuidance: taskRuntimeGuidance(boundary), Tools: tools}
 	if boundary.replyTo == nil {
 		preparation.BindConversation = func(id uuid.UUID) {
 			if conversation == "" && id != uuid.Nil {
@@ -349,7 +354,7 @@ func (p *DefaultTaskRuntimeProvider) listTool(run *Run, boundary taskRuntimeBoun
 		}
 		return taskToolSuccess(call, payload)
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler, ReadOnly: true}
 }
 
 type taskListToolScope struct {
@@ -489,7 +494,7 @@ func (p *DefaultTaskRuntimeProvider) getTool(run *Run, boundary taskRuntimeBound
 		}
 		return taskToolSuccess(call, result)
 	}
-	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler}
+	return skillloop.RuntimeTool{Definition: definition, SkillID: skills.SkillDigitalHumanTasks, Handler: handler, ReadOnly: true}
 }
 
 // reworkTool reruns a task with the user's feedback on its latest report. The
@@ -939,7 +944,6 @@ func taskApprovalPayload(run *Run, boundary taskRuntimeBoundary, task *Task, arg
 	}
 	defaults := map[string]interface{}{"name": task.Name, "goal": task.Goal}
 	requestedInputs := taskApprovalRequestedInputs(args, action)
-	augmentTaskApprovalRequestedInputs(run, task, action, requestedInputs)
 	// Resuming a scheduler-blocked task changes both dimensions of state:
 	// lifecycle paused -> active and work blocked -> pending. Keep the latter
 	// in the approval preview so the user can see exactly what will be fixed.
@@ -1171,37 +1175,6 @@ func taskApprovalRequestedInputs(args manageTaskArguments, action string) map[st
 	return inputs
 }
 
-// augmentTaskApprovalRequestedInputs turns the common compound request
-// "change the schedule and restore this paused task" into one approval plan.
-// The model can provide lifecycle_status explicitly; the query fallback keeps
-// older model snapshots from splitting the same user intent into two approvals.
-func augmentTaskApprovalRequestedInputs(run *Run, task *Task, action string, inputs map[string]interface{}) {
-	if run == nil || task == nil || inputs == nil || task.LifecycleStatus != "paused" {
-		return
-	}
-	if action != "schedule" && action != "update" {
-		return
-	}
-	if lifecycle := strings.TrimSpace(stringValue(inputs["lifecycle_status"])); lifecycle != "" {
-		return
-	}
-	query := strings.ToLower(strings.TrimSpace(run.Query))
-	if containsTaskResumeIntent(query) {
-		inputs["lifecycle_status"] = "active"
-	}
-}
-
-func containsTaskResumeIntent(query string) bool {
-	for _, phrase := range []string{"恢复", "重新启动", "重新启用", "resume", "reactivate", "activate"} {
-		if strings.Contains(query, phrase) &&
-			!strings.Contains(query, "不要"+phrase) &&
-			!strings.Contains(query, "不"+phrase) &&
-			!strings.Contains(query, "别"+phrase) {
-			return true
-		}
-	}
-	return false
-}
 func taskToolFailure(code string, recoverable bool) skillloop.RuntimeToolResult {
 	modelResult := map[string]any{"status": "rejected", "error_code": code, "retry_allowed": recoverable, "next_action": taskToolNextAction(code)}
 	return skillloop.RuntimeToolResult{
@@ -1211,8 +1184,14 @@ func taskToolFailure(code string, recoverable bool) skillloop.RuntimeToolResult 
 	}
 }
 
+// taskApprovalAppliedCode answers a task change asked for in the
+// continuation of an approval that has already been applied.
+const taskApprovalAppliedCode = "digital_human.task.approval_applied"
+
 func taskToolNextAction(code string) string {
 	switch code {
+	case taskApprovalAppliedCode:
+		return "The approved change has already been applied. Do not change tasks in this continuation; report the approved result."
 	case "invalid_arguments":
 		return "Correct the task fields and retry once. Existing-task actions require task_id and expected_revision; use create for a new explicit request."
 	case "digital_human.task.not_found":

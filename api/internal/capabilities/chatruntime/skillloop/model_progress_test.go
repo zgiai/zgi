@@ -39,10 +39,8 @@ func TestNativeModelProgressNonStreamingEmitsAllStages(t *testing.T) {
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:          prepared,
-		Resolved:          &skills.ResolvedSkills{},
-		ProtocolToolsOnly: true,
-		NativeAgentLoop:   true,
+		Prepared: prepared,
+		Resolved: &skills.ResolvedSkills{},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -81,10 +79,8 @@ func TestNativeModelProgressShortCallDoesNotFlicker(t *testing.T) {
 	})
 
 	_, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:          prepared,
-		Resolved:          &skills.ResolvedSkills{},
-		ProtocolToolsOnly: true,
-		NativeAgentLoop:   true,
+		Prepared: prepared,
+		Resolved: &skills.ResolvedSkills{},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -125,10 +121,8 @@ func TestNativeModelProgressStreamIncludesOpenWaitAndTracksReasoningDelta(t *tes
 	})
 
 	answer, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:          prepared,
-		Resolved:          &skills.ResolvedSkills{},
-		ProtocolToolsOnly: true,
-		NativeAgentLoop:   true,
+		Prepared: prepared,
+		Resolved: &skills.ResolvedSkills{},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -224,10 +218,8 @@ func TestNativeModelProgressStopsOnTimeout(t *testing.T) {
 	})
 
 	_, _, err := runner.Run(context.Background(), RunRequest{
-		Prepared:          prepared,
-		Resolved:          &skills.ResolvedSkills{},
-		ProtocolToolsOnly: true,
-		NativeAgentLoop:   true,
+		Prepared: prepared,
+		Resolved: &skills.ResolvedSkills{},
 	})
 	if !errors.Is(err, ErrModelIdleTimeout) {
 		t.Fatalf("Run() error = %v, want model idle timeout", err)
@@ -265,10 +257,8 @@ func TestNativeModelProgressStopsOnCancellation(t *testing.T) {
 	time.AfterFunc(20*time.Millisecond, cancel)
 
 	_, _, err := runner.Run(ctx, RunRequest{
-		Prepared:          prepared,
-		Resolved:          &skills.ResolvedSkills{},
-		ProtocolToolsOnly: true,
-		NativeAgentLoop:   true,
+		Prepared: prepared,
+		Resolved: &skills.ResolvedSkills{},
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context canceled", err)

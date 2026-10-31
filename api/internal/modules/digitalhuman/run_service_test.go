@@ -492,13 +492,13 @@ func TestRuntimeServiceUsesCopyPasteGuidanceWhenChannelContextReadFails(t *testi
 		"ask one brief clarification",
 		"only recovery action",
 	} {
-		if !strings.Contains(chat.config.SystemPrompt, expected) {
-			t.Fatalf("fallback prompt missing %q: %s", expected, chat.config.SystemPrompt)
+		if !strings.Contains(chat.config.TurnContext, expected) {
+			t.Fatalf("fallback prompt missing %q: %s", expected, chat.config.TurnContext)
 		}
 	}
 	for _, unwanted := range []string{"ask the user to quote", "reply directly to it"} {
-		if strings.Contains(chat.config.SystemPrompt, unwanted) {
-			t.Fatalf("fallback prompt contains unsupported guidance %q: %s", unwanted, chat.config.SystemPrompt)
+		if strings.Contains(chat.config.TurnContext, unwanted) {
+			t.Fatalf("fallback prompt contains unsupported guidance %q: %s", unwanted, chat.config.TurnContext)
 		}
 	}
 }
@@ -774,6 +774,7 @@ func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T
 	store, dispatcher, chat := newFakeRunStore(), &fakeRunDispatcher{}, &fakeDigitalHumanChat{}
 	now := time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)
 	memory := &fakeMemoryRuntimeProvider{preparation: &MemoryRuntimePreparation{
+		StableGuidance:       "Memory rules.",
 		SystemPromptAddendum: "Authorized active long-term memory:\n- launch is September 8",
 		Tools:                []skillloop.RuntimeTool{{Definition: adapter.Tool{Type: "function", Function: adapter.Function{Name: memoryEditToolName}}}},
 	}}
@@ -786,7 +787,11 @@ func TestRuntimeServiceAddsSubjectMemoryWithoutEnablingLegacyMemory(t *testing.T
 	if err := service.Execute(t.Context(), run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if memory.calls != 1 || memory.finalizeCalls != 1 || !strings.Contains(chat.config.SystemPrompt, "launch is September 8") || len(chat.config.RuntimeTools) != 1 {
+	if memory.calls != 1 || memory.finalizeCalls != 1 || !strings.Contains(chat.config.TurnContext, "launch is September 8") || len(chat.config.RuntimeTools) != 1 ||
+		// The system prompt holds the persona and the rules that are the same
+		// on every run; the memory itself and the time are turn context (ADR 0032).
+		chat.config.SystemPrompt != "Researcher\n\nMemory rules." || strings.Contains(chat.config.TurnContext, "Memory rules.") ||
+		!strings.Contains(chat.config.TurnContext, "Current time:") {
 		t.Fatalf("memory preparation calls=%d finalization calls=%d config=%#v", memory.calls, memory.finalizeCalls, chat.config)
 	}
 	if chat.config.AgentMemoryEnabled || chat.config.AgentMemoryAutoExtractionEnabled {

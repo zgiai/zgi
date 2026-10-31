@@ -669,7 +669,16 @@ const messages: WebappMessages = {
     },
     stopped: '已停止',
     streamError: '回复生成失败。',
+    resumeInterrupted: '继续执行',
     errors: {
+      interrupted: {
+        title: '回复被中断',
+        description: '服务在回复过程中重启了。点击继续执行，可以从中断处接着完成。',
+      },
+      notResumable: {
+        title: '这条回复无法继续',
+        description: '它已经继续过一次、对话已有新的内容，或某个操作可能已执行但没有记录结果。请重新生成回复。',
+      },
       server: {
         title: '暂时无法生成回复',
         adminDescription:

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -104,18 +103,6 @@ func turnStateItemReceipts(items []map[string]interface{}) []map[string]interfac
 		receipts = append(receipts, receipt)
 	}
 	return receipts
-}
-
-func turnStatePrefersChinese(prepared *PreparedChat) bool {
-	if prepared == nil {
-		return false
-	}
-	for _, r := range prepared.Query {
-		if unicode.Is(unicode.Han, r) {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeTurnStateItems(args map[string]interface{}) ([]map[string]interface{}, error) {

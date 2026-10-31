@@ -33,15 +33,6 @@ func terminalStateGuardEvaluate(evidence map[string]interface{}, candidateAnswer
 	return terminalStateGuardDecision{Path: terminalStateGuardAccepted, Reason: "main model submitted a terminal answer with no active runtime protocol blocker", FinalAnswer: candidateAnswer}
 }
 
-func terminalStateGuardContainsAny(text string, markers []string) bool {
-	for _, marker := range markers {
-		if strings.Contains(text, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func terminalStateGuardInvocations(evidence map[string]interface{}) []map[string]interface{} {
 	// The top-level runtime snapshot is the authoritative ordered timeline for
 	// the current turn. The nested execution ledger is a compatibility fallback
@@ -62,25 +53,6 @@ func terminalStateGuardInvocations(evidence map[string]interface{}) []map[string
 func terminalStateGuardInvocationIsExecutionEvidence(record map[string]interface{}) bool {
 	kind := strings.TrimSpace(evidenceStringFromAny(record["kind"]))
 	return kind == "" || strings.EqualFold(kind, "tool_call")
-}
-
-func terminalStateGuardStatusFromMap(source map[string]interface{}) string {
-	for _, key := range []string{"operation_status", "status", "result_status", "outcome"} {
-		if status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(source[key]))); status != "" {
-			return status
-		}
-	}
-	return ""
-}
-
-func terminalStateGuardFailureStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "error", "failed", "failure", "failed_safe", "partial_failed", "partially_failed", "partially_succeeded", "outcome_unknown",
-		"executing", "pending", "blocked", "rejected", "denied", "cancelled", "canceled", "expired", "needs_approval", "waiting_approval":
-		return true
-	default:
-		return false
-	}
 }
 
 func terminalStateGuardCanStream(evidence map[string]interface{}) bool {

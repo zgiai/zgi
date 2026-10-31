@@ -71,10 +71,12 @@ func (s *RuntimeService) ContinueToolGovernance(ctx context.Context, scope Scope
 		return nil, err
 	}
 	caller.RunID = cloneUUIDPointer(&run.ID)
-	config.ConnectorRunID = run.ID.String()
-	config.ConnectorInteractive = connectorInteractive(event)
-	config.ConnectorRequesterID = connectorRequester(event)
-	applyRunEndUserBilling(&config, run)
+	// The continuation prepares what the first run had, so it sends the same
+	// system prompt and tools and reuses their cached prefix (ADR 0032). A
+	// rejected command still gets no Linux tools.
+	if _, err := s.applyRunCapabilities(ctx, &config, run, resolved, event); err != nil {
+		return nil, err
+	}
 	result, err := runtime.RunConfiguredToolGovernanceDecisionStream(ctx, chatScope, caller, config, conversationID, messageID, strings.TrimSpace(correlation), request, onEvent)
 	if err != nil {
 		return result, err

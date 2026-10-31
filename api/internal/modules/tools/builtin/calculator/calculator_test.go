@@ -187,6 +187,24 @@ func TestExpressionTool_EvaluatesComplexArithmetic(t *testing.T) {
 			precision:  2,
 			want:       -2,
 		},
+		{
+			name:       "monthly mortgage payment over 360 months",
+			expression: "1000000 * (0.035/12) * (1 + 0.035/12)^360 / ((1 + 0.035/12)^360 - 1)",
+			precision:  2,
+			want:       4490.45,
+		},
+		{
+			name:       "negative exponent of a fractional base",
+			expression: "(1 + 0.035/12)^-360",
+			precision:  6,
+			want:       0.350473,
+		},
+		{
+			name:       "large integer power",
+			expression: "2^64",
+			precision:  0,
+			want:       18446744073709551616,
+		},
 	}
 
 	tool := calculator.NewExpressionTool("")
@@ -217,7 +235,8 @@ func TestExpressionTool_InvalidInput_ReturnsClearError(t *testing.T) {
 		{name: "division by zero", params: map[string]interface{}{"expression": "1 / 0"}, want: "division by zero"},
 		{name: "modulo by zero", params: map[string]interface{}{"expression": "1 % 0"}, want: "modulo by zero"},
 		{name: "non integer exponent", params: map[string]interface{}{"expression": "4 ^ 0.5"}, want: "power exponent must be an integer"},
-		{name: "exponent too large", params: map[string]interface{}{"expression": "2 ^ 101"}, want: "power exponent absolute value"},
+		{name: "exponent too large", params: map[string]interface{}{"expression": "2 ^ 1201"}, want: "power exponent absolute value"},
+		{name: "result too large", params: map[string]interface{}{"expression": "10 ^ 1200"}, want: "result is not a finite number"},
 		{name: "mismatched parentheses", params: map[string]interface{}{"expression": "(1 + 2"}, want: "mismatched parentheses"},
 		{name: "unsupported syntax", params: map[string]interface{}{"expression": "1 << 2"}, want: "unsupported character"},
 		{name: "too long", params: map[string]interface{}{"expression": strings.Repeat("1+", 300) + "1"}, want: "expression length"},

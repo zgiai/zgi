@@ -55,14 +55,6 @@ func runtimeStateForRun(req RunRequest) map[string]interface{} {
 	return state
 }
 
-func stringSliceInterfaces(values []string) []interface{} {
-	out := make([]interface{}, 0, len(values))
-	for _, value := range values {
-		out = append(out, value)
-	}
-	return out
-}
-
 func runtimeStateWithSuccessfulToolCalls(req RunRequest, successful []SkillToolCallRef) map[string]interface{} {
 	state := runtimeStateForRun(req)
 	if len(successful) == 0 {

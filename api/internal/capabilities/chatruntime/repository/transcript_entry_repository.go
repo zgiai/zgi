@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,10 +56,37 @@ func (r *transcriptEntryRepository) Append(ctx context.Context, entries []*runti
 			entry.CreatedAt = now
 		}
 	}
+	restore := omitPayloadPreviews(entries...)
+	defer restore()
 	if err := r.db.WithContext(ctx).Create(&entries).Error; err != nil {
 		return fmt.Errorf("append transcript entries: %w", err)
 	}
 	return nil
+}
+
+// omitPayloadPreviews clears each preview that equals its payload, so that it
+// is stored as NULL instead of a second copy of the payload (ADR 0040). The
+// returned function puts the previews back for the caller.
+func omitPayloadPreviews(entries ...*runtimemodel.TranscriptEntry) func() {
+	saved := make(map[*runtimemodel.TranscriptEntry]map[string]interface{}, len(entries))
+	for _, entry := range entries {
+		if entry != nil && len(entry.Preview) > 0 && reflect.DeepEqual(entry.Preview, entry.Payload) {
+			saved[entry] = entry.Preview
+			entry.Preview = nil
+		}
+	}
+	return func() {
+		for entry, preview := range saved {
+			entry.Preview = preview
+		}
+	}
+}
+
+// fillPayloadPreview reads a NULL preview back as the payload.
+func fillPayloadPreview(entry *runtimemodel.TranscriptEntry) {
+	if entry != nil && len(entry.Preview) == 0 {
+		entry.Preview = entry.Payload
+	}
 }
 
 // AppendForMessage appends a parent-linked batch and advances the owning
@@ -111,7 +140,10 @@ func (r *transcriptEntryRepository) AppendForMessage(ctx context.Context, messag
 			if entry.EventID == "" {
 				entry.EventID = entry.ID.String()
 			}
-			if err := tx.Create(entry).Error; err != nil {
+			restore := omitPayloadPreviews(entry)
+			err := tx.Create(entry).Error
+			restore()
+			if err != nil {
 				return fmt.Errorf("append transcript chain entry %s: %w", entry.ID, err)
 			}
 			id := entry.ID
@@ -215,7 +247,7 @@ func (r *transcriptEntryRepository) AppendSummaryForMessage(ctx context.Context,
 			ID: entryID, MessageID: messageID, ConversationID: message.ConversationID,
 			OrganizationID: organizationID, ParentEntryID: cloneUUIDPtr(expectedHead),
 			CoversThroughEntryID: cloneUUIDPtr(boundary), EventID: eventID,
-			Kind: runtimemodel.TranscriptEntryKindSummary, Preview: payload, Payload: payload,
+			Kind: runtimemodel.TranscriptEntryKindSummary, Payload: payload,
 			ByteSize: len(summary), CreatedAt: time.Now().UTC(),
 		}
 		if err := tx.Create(entry).Error; err != nil {
@@ -254,6 +286,10 @@ func (r *transcriptEntryRepository) SetMessageHead(ctx context.Context, messageI
 	return nil
 }
 
+// LoadPreviewChain returns the entries from headID back through their parents,
+// newest first. It stops after stopAt, after the boundary the newest summary
+// covers through, or at the root. The chain is read in one recursive query
+// instead of one query per entry (ADR 0040).
 func (r *transcriptEntryRepository) LoadPreviewChain(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID, limit int) ([]*runtimemodel.TranscriptEntryPreview, error) {
 	if headID == uuid.Nil {
 		return nil, nil
@@ -261,40 +297,73 @@ func (r *transcriptEntryRepository) LoadPreviewChain(ctx context.Context, headID
 	if limit <= 0 {
 		limit = 10000
 	}
-	chain := make([]*runtimemodel.TranscriptEntryPreview, 0, minTranscriptChainLimit(limit))
-	seen := make(map[uuid.UUID]struct{}, minTranscriptChainLimit(limit))
-	current := headID
-	var summaryBoundary *uuid.UUID
-	for len(chain) < limit && current != uuid.Nil {
-		if _, ok := seen[current]; ok {
+	stop, args := "", []interface{}{headID, limit}
+	if stopAt != nil && *stopAt != uuid.Nil {
+		stop = " AND c.id <> ?"
+		args = append(args, *stopAt)
+	}
+	// One row past the limit shows that the chain is longer than allowed. A
+	// cycle repeats ids until the limit, so it is found from the rows too.
+	var rows []transcriptChainRow
+	if err := r.db.WithContext(ctx).Raw(`
+		WITH RECURSIVE chain AS (
+			SELECT e.id, e.parent_entry_id, 1 AS depth,
+				CASE WHEN e.kind = 'summary' THEN e.covers_through_entry_id END AS boundary
+			FROM chat_runtime_message_transcript_entries e
+			WHERE e.id = ?
+			UNION ALL
+			SELECT p.id, p.parent_entry_id, c.depth + 1,
+				COALESCE(c.boundary, CASE WHEN p.kind = 'summary' THEN p.covers_through_entry_id END)
+			FROM chain c
+			JOIN chat_runtime_message_transcript_entries p ON p.id = c.parent_entry_id
+			WHERE c.depth <= ? AND (c.boundary IS NULL OR c.id <> c.boundary)`+stop+`
+		)
+		SELECT c.depth, e.id, e.message_id, e.parent_entry_id, e.covers_through_entry_id, e.kind,
+			COALESCE(e.preview, e.payload) AS preview, e.byte_size
+		FROM chain c
+		JOIN chat_runtime_message_transcript_entries e ON e.id = c.id
+		ORDER BY c.depth`, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("load transcript entry chain at %s: %w", headID, err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("load transcript entry chain at %s: %w", headID, gorm.ErrRecordNotFound)
+	}
+	chain := make([]*runtimemodel.TranscriptEntryPreview, 0, len(rows))
+	seen := make(map[uuid.UUID]struct{}, len(rows))
+	for index := range rows {
+		if _, ok := seen[rows[index].ID]; ok {
 			return nil, fmt.Errorf("cycle detected in transcript entry parent chain")
 		}
-		seen[current] = struct{}{}
-		var entry runtimemodel.TranscriptEntryPreview
-		if err := r.db.WithContext(ctx).Model(&runtimemodel.TranscriptEntry{}).
-			Select("id, message_id, parent_entry_id, covers_through_entry_id, kind, preview, byte_size").
-			Where("id = ?", current).Take(&entry).Error; err != nil {
-			return nil, fmt.Errorf("load transcript entry chain at %s: %w", current, err)
+		seen[rows[index].ID] = struct{}{}
+		if len(chain) == limit {
+			return nil, fmt.Errorf("transcript entry parent chain exceeds limit %d", limit)
 		}
-		chain = append(chain, &entry)
-		if entry.Kind == runtimemodel.TranscriptEntryKindSummary && summaryBoundary == nil {
-			summaryBoundary = cloneUUIDPtr(entry.CoversThroughEntryID)
-		}
-		if summaryBoundary != nil && current == *summaryBoundary {
-			break
-		}
-		if stopAt != nil && *stopAt != uuid.Nil && current == *stopAt {
-			break
-		}
-		if entry.ParentEntryID == nil || *entry.ParentEntryID == uuid.Nil {
-			break
-		}
-		current = *entry.ParentEntryID
+		chain = append(chain, &rows[index].TranscriptEntryPreview)
 	}
-	if len(chain) >= limit && current != uuid.Nil {
-		return nil, fmt.Errorf("transcript entry parent chain exceeds limit %d", limit)
+	if last := chain[len(chain)-1]; last.ParentEntryID != nil && *last.ParentEntryID != uuid.Nil && !transcriptChainStopsAt(chain, stopAt) {
+		return nil, fmt.Errorf("load transcript entry chain at %s: %w", *last.ParentEntryID, gorm.ErrRecordNotFound)
 	}
 	return chain, nil
+}
+
+type transcriptChainRow struct {
+	Depth int
+	runtimemodel.TranscriptEntryPreview
+}
+
+// transcriptChainStopsAt reports whether the chain ends where it should stop
+// rather than at a missing parent.
+func transcriptChainStopsAt(chain []*runtimemodel.TranscriptEntryPreview, stopAt *uuid.UUID) bool {
+	last := chain[len(chain)-1].ID
+	if stopAt != nil && *stopAt == last {
+		return true
+	}
+	for _, entry := range chain {
+		if strings.EqualFold(entry.Kind, runtimemodel.TranscriptEntryKindSummary) {
+			return entry.CoversThroughEntryID != nil && *entry.CoversThroughEntryID == last
+		}
+	}
+	return false
 }
 
 func (r *transcriptEntryRepository) ListForCopyByHead(ctx context.Context, headID uuid.UUID, stopAt *uuid.UUID) ([]*runtimemodel.TranscriptEntry, error) {
@@ -313,6 +382,7 @@ func (r *transcriptEntryRepository) ListForCopyByHead(ctx context.Context, headI
 		if err := r.db.WithContext(ctx).Where("id = ?", current).Take(&entry).Error; err != nil {
 			return nil, fmt.Errorf("load transcript entry for copy at %s: %w", current, err)
 		}
+		fillPayloadPreview(&entry)
 		chain = append(chain, &entry)
 		if stopAt != nil && *stopAt != uuid.Nil && current == *stopAt {
 			break
@@ -376,17 +446,10 @@ func newUUIDValue(value *uuid.UUID) interface{} {
 	return *value
 }
 
-func minTranscriptChainLimit(limit int) int {
-	if limit < 32 {
-		return limit
-	}
-	return 32
-}
-
 // previewColumns is the explicit whitelist for every projection/list read.
 // payload deliberately stays out of it: reading it would detoast the largest
 // column in the table on each message list and each context projection.
-const transcriptEntryPreviewColumns = "id, message_id, parent_entry_id, covers_through_entry_id, kind, preview, byte_size"
+const transcriptEntryPreviewColumns = "id, message_id, parent_entry_id, covers_through_entry_id, kind, COALESCE(preview, payload) AS preview, byte_size"
 
 func (r *transcriptEntryRepository) ListPreviewsByMessage(ctx context.Context, messageID uuid.UUID) ([]*runtimemodel.TranscriptEntryPreview, error) {
 	var message runtimemodel.Message
@@ -448,7 +511,9 @@ func (r *transcriptEntryRepository) UpdatePreview(ctx context.Context, id uuid.U
 	if err != nil {
 		return wrapNotFound(err, "transcript entry")
 	}
-	entry.Preview = preview
+	// Payload and preview are written together, so the preview is the payload
+	// and is stored as NULL.
+	entry.Preview = nil
 	entry.Payload = preview
 	entry.ByteSize = byteSize
 	if err := r.db.WithContext(ctx).

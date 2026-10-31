@@ -26,18 +26,18 @@ func TestSkillPlanningStreamDoesNotAddRepeatedUsageSnapshots(t *testing.T) {
 	runner := &Runner{LLMClient: client}
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
-	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, false)
+	result, ok, err := runner.runModelToolRoundStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, false, "skill_planning", nil)
 	if err != nil {
-		t.Fatalf("runSkillPlanningStream() error = %v", err)
+		t.Fatalf("runModelToolRoundStream() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("runSkillPlanningStream() ok = false, want true")
+		t.Fatal("runModelToolRoundStream() ok = false, want true")
 	}
 	if result.usage == nil {
-		t.Fatal("runSkillPlanningStream() usage = nil")
+		t.Fatal("runModelToolRoundStream() usage = nil")
 	}
 	want := adapter.Usage{PromptTokens: 5078, CompletionTokens: 239, TotalTokens: 5317}
 	if *result.usage != want {
-		t.Fatalf("runSkillPlanningStream() usage = %+v, want %+v", *result.usage, want)
+		t.Fatalf("runModelToolRoundStream() usage = %+v, want %+v", *result.usage, want)
 	}
 }

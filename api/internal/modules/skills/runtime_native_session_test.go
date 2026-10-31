@@ -12,7 +12,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/tools/builtin/calculator"
 )
 
-func TestBuildNativeSkillCatalogUsesTopFiveWhenManySkillsAreAvailable(t *testing.T) {
+// Every candidate that fits the budget is listed, one line each (ADR 0043).
+func TestBuildNativeSkillCatalogListsEveryCandidateThatFits(t *testing.T) {
 	resolved := &ResolvedSkills{}
 	for index := 0; index < 20; index++ {
 		resolved.Skills = append(resolved.Skills, SkillDocument{
@@ -32,11 +33,8 @@ func TestBuildNativeSkillCatalogUsesTopFiveWhenManySkillsAreAvailable(t *testing
 	if len(catalog.CandidateSkillIDs) != 20 {
 		t.Fatalf("candidate skills = %d, want 20", len(catalog.CandidateSkillIDs))
 	}
-	if len(catalog.ExposedSkillIDs) != DefaultNativeSkillSearchLimit {
-		t.Fatalf("exposed skills = %#v, want top %d", catalog.ExposedSkillIDs, DefaultNativeSkillSearchLimit)
-	}
-	if catalog.OmittedCount != 15 {
-		t.Fatalf("omitted count = %d, want 15", catalog.OmittedCount)
+	if len(catalog.ExposedSkillIDs) <= DefaultNativeSkillSearchLimit || catalog.OmittedCount != 20-len(catalog.ExposedSkillIDs) || catalog.OmittedCount == 0 {
+		t.Fatalf("exposed skills = %#v, omitted %d; want more than %d listed and the rest omitted", catalog.ExposedSkillIDs, catalog.OmittedCount, DefaultNativeSkillSearchLimit)
 	}
 	content := stringFromNativeMessage(catalog.Message.Content)
 	if strings.Contains(content, "Full instructions must not appear") {
@@ -65,7 +63,7 @@ func TestNativeSkillSessionSearchFindsOmittedSkill(t *testing.T) {
 			WhenToUse:   whenToUse,
 		}})
 	}
-	catalog := BuildNativeSkillCatalog(resolved, nil, DefaultNativeSkillCatalogBudgetChars, 0, nil)
+	catalog := BuildNativeSkillCatalog(resolved, nil, 400, 0, nil)
 	session := NewNativeSkillSession(NewRuntime(nil, nil), resolved, catalog, NativeToolSetOptions{BudgetChars: 10000})
 	initiallyExposed := append([]string(nil), session.ExposedSkillIDs()...)
 
@@ -91,7 +89,7 @@ func TestNativeSkillSessionActivatesCompleteSkillsIncrementally(t *testing.T) {
 	runtime := NewRuntime(tools.NewToolEngine(manager), manager)
 	resolved := &ResolvedSkills{Skills: []SkillDocument{
 		{
-			Metadata:     SkillMetadata{ID: SkillCalculator, Description: "Exact arithmetic"},
+			Metadata:     SkillMetadata{ID: "exact-math", Description: "Exact arithmetic"},
 			Instructions: "Use exact arithmetic.",
 			Tools: []SkillToolDefinition{{
 				Name:         "calculate",
@@ -110,8 +108,8 @@ func TestNativeSkillSessionActivatesCompleteSkillsIncrementally(t *testing.T) {
 		t.Fatalf("initial tool set = %#v, want no active skills", current)
 	}
 
-	calculatorResult := session.Activate(context.Background(), []string{SkillCalculator}, "runtime_activation")
-	if !reflect.DeepEqual(calculatorResult.ActivatedSkillIDs, []string{SkillCalculator}) {
+	calculatorResult := session.Activate(context.Background(), []string{"exact-math"}, "runtime_activation")
+	if !reflect.DeepEqual(calculatorResult.ActivatedSkillIDs, []string{"exact-math"}) {
 		t.Fatalf("calculator activation = %#v", calculatorResult)
 	}
 	current := session.ToolSet()
@@ -119,8 +117,10 @@ func TestNativeSkillSessionActivatesCompleteSkillsIncrementally(t *testing.T) {
 		t.Fatalf("calculator tool set = %#v, want complete instruction and calculate schema", current)
 	}
 	candidateMessage := stringFromNativeMessage(session.CatalogMessage().Content)
-	if strings.Contains(candidateMessage, `"skill_id":"calculator"`) || !strings.Contains(candidateMessage, `"skill_id":"prompt-only"`) {
-		t.Fatalf("candidate message = %s, want inactive prompt-only without active calculator", candidateMessage)
+	// A stable directory stays in the cached system prompt, so it keeps
+	// listing a candidate after it is activated (ADR 0043).
+	if !strings.Contains(candidateMessage, "- exact-math:") || !strings.Contains(candidateMessage, "- prompt-only:") {
+		t.Fatalf("candidate message = %s, want every candidate listed", candidateMessage)
 	}
 
 	promptResult := session.Activate(context.Background(), []string{"prompt-only"}, "runtime_activation")
@@ -132,9 +132,64 @@ func TestNativeSkillSessionActivatesCompleteSkillsIncrementally(t *testing.T) {
 		t.Fatalf("prompt-only tool set = %#v, want second instruction without another tool", current)
 	}
 
-	repeated := session.Activate(context.Background(), []string{SkillCalculator}, "runtime_activation")
-	if !reflect.DeepEqual(repeated.AlreadyActiveSkillIDs, []string{SkillCalculator}) || len(repeated.ActivatedSkillIDs) != 0 {
+	repeated := session.Activate(context.Background(), []string{"exact-math"}, "runtime_activation")
+	if !reflect.DeepEqual(repeated.AlreadyActiveSkillIDs, []string{"exact-math"}) || len(repeated.ActivatedSkillIDs) != 0 {
 		t.Fatalf("repeated activation = %#v, want already active", repeated)
+	}
+}
+
+// Resident skills are active from the start without their documents, are
+// never candidates, and come first in the tool list (ADR 0043).
+func TestNativeSkillSessionActivatesResidentSkillsWithoutDocuments(t *testing.T) {
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator: %v", err)
+	}
+	runtime := NewRuntime(tools.NewToolEngine(manager), manager)
+	resolved := &ResolvedSkills{Skills: []SkillDocument{
+		{Metadata: SkillMetadata{ID: "writer", Description: "Writing guidance", RuntimeType: SkillRuntimeTypePrompt}, Instructions: "Write clearly."},
+		{
+			Metadata:     SkillMetadata{ID: SkillCalculator, Description: "Exact arithmetic"},
+			Instructions: "This document must not be sent.",
+			Tools:        []SkillToolDefinition{{Name: "calculate", ProviderType: tools.ToolProviderTypeBuiltin, ProviderID: "calculator"}},
+		},
+	}}
+	catalog := BuildNativeSkillCatalog(resolved, nil, DefaultNativeSkillCatalogBudgetChars, 0, nil)
+	if !reflect.DeepEqual(catalog.CandidateSkillIDs, []string{"writer"}) {
+		t.Fatalf("candidates = %#v, want only writer", catalog.CandidateSkillIDs)
+	}
+	session := NewNativeSkillSession(runtime, resolved, catalog, NativeToolSetOptions{BudgetChars: 10000})
+	session.ActivateResident(context.Background(), "runtime_resident")
+	session.Activate(context.Background(), []string{"writer"}, "runtime_preload")
+	current := session.ToolSet()
+	if !reflect.DeepEqual(current.ActiveSkillIDs, []string{SkillCalculator, "writer"}) {
+		t.Fatalf("active skills = %#v, want the calculator first", current.ActiveSkillIDs)
+	}
+	if len(current.ProviderTools) != 1 || current.ProviderTools[0].Function.Name != "calculate" {
+		t.Fatalf("provider tools = %#v, want calculate", current.ProviderTools)
+	}
+	for _, message := range current.InstructionMessages {
+		if strings.Contains(stringFromNativeMessage(message.Content), "must not be sent") {
+			t.Fatalf("instructions = %#v, want no resident document", current.InstructionMessages)
+		}
+	}
+	if result := session.Activate(context.Background(), []string{SkillCalculator}, "model"); len(result.ActivatedSkillIDs) != 0 {
+		t.Fatalf("activating a resident skill = %#v, want nothing activated", result)
+	}
+}
+
+// A resident calculator offers only evaluate_expression; a document without
+// it keeps its tools (ADR 0043).
+func TestResidentCalculatorOffersOnlyItsExpressionTool(t *testing.T) {
+	definitions := []SkillToolDefinition{{Name: "evaluate_expression"}, {Name: "calculate"}, {Name: "percentage"}}
+	if kept := residentTools(SkillCalculator, definitions); len(kept) != 1 || kept[0].Name != "evaluate_expression" {
+		t.Fatalf("resident calculator tools = %#v, want evaluate_expression", kept)
+	}
+	if kept := residentTools(SkillCalculator, definitions[1:]); len(kept) != 2 {
+		t.Fatalf("calculator without evaluate_expression = %#v, want its tools kept", kept)
+	}
+	if kept := residentTools("exact-math", definitions); len(kept) != 3 {
+		t.Fatalf("non-resident tools = %#v, want all", kept)
 	}
 }
 

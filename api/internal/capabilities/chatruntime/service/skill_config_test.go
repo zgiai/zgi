@@ -362,105 +362,6 @@ func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	}
 }
 
-func TestAddContextualAIChatSkillIDsAddsFileReaderForConsoleFileCapability(t *testing.T) {
-	catalog := []skills.SkillDiscoveryMetadata{
-		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-	}
-	parts := consoleFilesSnapshotTestParts("delete the first file", []consoleFilesTestFile{
-		{ID: "file-1", Name: "old.pdf", Extension: "pdf", MimeType: "application/pdf"},
-	})
-	parts.Surface = aiChatSurfaceContextualSidebar
-
-	got := addContextualAIChatSkillIDs(
-		[]string{skills.SkillCalculator},
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader},
-		catalog,
-		parts,
-	)
-	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("contextual skills = %#v, want %#v", got, want)
-	}
-}
-
-func TestAddContextualAIChatSkillIDsAddsFileGeneratorForConsoleFileCreateCapability(t *testing.T) {
-	catalog := []skills.SkillDiscoveryMetadata{
-		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillFileGenerator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-	}
-	parts := consoleFilesCreateCapabilityTestParts("create a txt file in File Management")
-	parts.Surface = aiChatSurfaceContextualSidebar
-
-	got := addContextualAIChatSkillIDs(
-		[]string{skills.SkillCalculator},
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileReader},
-		catalog,
-		parts,
-	)
-	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("contextual skills = %#v, want %#v", got, want)
-	}
-}
-
-func TestAddContextualAIChatSkillIDsAddsConsoleNavigatorForSidebar(t *testing.T) {
-	catalog := []skills.SkillDiscoveryMetadata{
-		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-	}
-
-	got := addContextualAIChatSkillIDs(
-		[]string{skills.SkillCalculator},
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
-		catalog,
-		&chatRequestParts{Surface: aiChatSurfaceContextualSidebar, RuntimeContext: "route=/console/files"},
-	)
-	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("contextual skills = %#v, want %#v", got, want)
-	}
-}
-
-func TestAddContextualAIChatSkillIDsAddsConsoleNavigatorWhenOrganizationDisabled(t *testing.T) {
-	catalog := []skills.SkillDiscoveryMetadata{
-		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-	}
-
-	got := addContextualAIChatSkillIDs(
-		[]string{skills.SkillCalculator},
-		[]string{skills.SkillCalculator},
-		catalog,
-		&chatRequestParts{Surface: aiChatSurfaceContextualSidebar, RuntimeContext: "route=/console/files"},
-	)
-	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("contextual skills = %#v, want %#v", got, want)
-	}
-}
-
-func TestAddContextualAIChatSkillIDsAddsAgentManagementForConsoleAgents(t *testing.T) {
-	catalog := contextualAIChatFileSkillCatalogForTest()
-	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
-
-	got := addContextualAIChatSkillIDs(
-		[]string{skills.SkillCalculator},
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
-		catalog,
-		parts,
-	)
-	want := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("contextual agent skills = %#v, want %#v", got, want)
-	}
-}
-
 func TestAddContextualAIChatSkillIDsDefersAgentManagementUntilAgentContext(t *testing.T) {
 	catalog := contextualAIChatFileSkillCatalogForTest()
 	parts := contextualConsoleFilesAllCapabilityPartsForTest()
@@ -516,43 +417,6 @@ func TestAddContextualAIChatSkillIDsRespectsOrganizationDisabledUserSelectableSk
 	want := []string{skills.SkillCalculator}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("contextual skills = %#v, want %#v", got, want)
-	}
-}
-
-func TestAddContextualAIChatSkillIDsSkipsWorkChatSurface(t *testing.T) {
-	catalog := []skills.SkillDiscoveryMetadata{
-		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillAgentManagement, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
-	}
-	parts := consoleFilesSnapshotTestParts("delete the first file", []consoleFilesTestFile{
-		{ID: "file-1", Name: "old.pdf", Extension: "pdf", MimeType: "application/pdf"},
-	})
-	parts.Surface = aiChatSurfaceWorkChat
-
-	got := addContextualAIChatSkillIDs(
-		[]string{skills.SkillCalculator},
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileReader},
-		catalog,
-		parts,
-	)
-	want := []string{skills.SkillCalculator}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("contextual skills = %#v, want %#v", got, want)
-	}
-
-	agentParts := contextualConsoleAgentsManageCapabilityPartsForTest()
-	agentParts.Surface = aiChatSurfaceWorkChat
-	got = addContextualAIChatSkillIDs(
-		[]string{skills.SkillCalculator},
-		[]string{skills.SkillCalculator, skills.SkillConsoleNavigator},
-		catalog,
-		agentParts,
-	)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("work chat agent skills = %#v, want %#v", got, want)
 	}
 }
 
@@ -715,51 +579,6 @@ func TestAddContextualAIChatSkillIDsDoesNotUseTextToInjectCrossPageAgentManageme
 	wantAllowed := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
 	if !reflect.DeepEqual(allowed, wantAllowed) {
 		t.Fatalf("managed cross-page mutation skills = %#v, want %#v", allowed, wantAllowed)
-	}
-}
-
-func TestContextualAIChatSkillIDsUseModelIntentForCrossPageAgentManagement(t *testing.T) {
-	workspaceID := uuid.New()
-	catalog := contextualAIChatFileSkillCatalogForTest()
-	organizationEnabled := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
-	parts := contextualConsoleFilesAllCapabilityPartsForTest()
-	parts.ModelTurnIntent = &AIChatModelTurnIntent{
-		Intent:      "manage_agent_asset",
-		TaskType:    "agent_lifecycle_and_configuration",
-		TargetPage:  "/console/files",
-		AssetEffect: "delete existing agent, create and configure new agent",
-		RecommendedCapabilities: []string{
-			"visible_file_content",
-			"agent.model_selection",
-			"agent.system_prompt",
-		},
-	}
-
-	permissionService := &skillConfigWorkspacePermissionService{
-		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
-			workspacemodel.WorkspacePermissionAgentView:   true,
-			workspacemodel.WorkspacePermissionAgentCreate: true,
-		},
-	}
-	capabilities := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
-		OrganizationID: uuid.New(),
-		AccountID:      uuid.New(),
-		WorkspaceID:    &workspaceID,
-	}, parts)
-	if !capabilities.AgentRead || !capabilities.AgentManage {
-		t.Fatalf("trusted contextual capabilities = %#v, want AgentRead and AgentManage from model intent", capabilities)
-	}
-
-	allowed := addContextualAIChatSkillIDsWithCapabilities(
-		[]string{skills.SkillCalculator},
-		organizationEnabled,
-		catalog,
-		parts,
-		capabilities,
-	)
-	wantAllowed := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
-	if !reflect.DeepEqual(allowed, wantAllowed) {
-		t.Fatalf("model-intent cross-page agent skills = %#v, want %#v", allowed, wantAllowed)
 	}
 }
 

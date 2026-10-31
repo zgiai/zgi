@@ -76,11 +76,6 @@ func applyUserInputWaitingState(metadata map[string]interface{}) map[string]inte
 	return metadata
 }
 
-func (s *service) persistUserInputRequestPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
-	metadata, _ := s.persistUserInputRequestPendingResult(ctx, prepared, payload, usage)
-	return metadata
-}
-
 func (s *service) persistUserInputRequestPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
 		return map[string]interface{}{}, nil

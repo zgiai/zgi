@@ -14,22 +14,6 @@ const (
 	agentTranscriptSchemaVersion      = 1
 )
 
-func mergeAgentTranscriptMetadata(source map[string]interface{}, transcript []adapter.Message, answer string) map[string]interface{} {
-	metadata := copyStringAnyMap(source)
-	if metadata == nil {
-		metadata = map[string]interface{}{}
-	}
-	normalized := normalizeAgentTranscript(transcript, answer)
-	if len(normalized) == 0 {
-		delete(metadata, agentTranscriptMetadataKey)
-		delete(metadata, agentTranscriptVersionMetadataKey)
-		return metadata
-	}
-	metadata[agentTranscriptVersionMetadataKey] = agentTranscriptSchemaVersion
-	metadata[agentTranscriptMetadataKey] = normalized
-	return metadata
-}
-
 func agentTranscriptFromMetadata(metadata map[string]interface{}, answer string) []adapter.Message {
 	if len(metadata) == 0 {
 		return nil

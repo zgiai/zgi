@@ -122,7 +122,8 @@ func TestNativeInitialActiveSkillsUsesOnlyDeterministicSignals(t *testing.T) {
 	}
 
 	got := nativeInitialActiveSkillIDs(prepared, resolved)
-	want := []string{"planned", "used", "explicit"}
+	// A skill named in the query is not activated by name (ADR 0047).
+	want := []string{"planned", "used"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("nativeInitialActiveSkillIDs() = %#v, want %#v", got, want)
 	}

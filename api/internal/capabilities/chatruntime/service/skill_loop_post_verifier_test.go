@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -92,8 +91,8 @@ func TestRunPreparedSkillStreamUsesMainModelTerminalDecisionForLegacyOnlyEvidenc
 	if answer != "The operation is complete." {
 		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
 	}
-	if len(llm.appChatRequests) != 1 {
-		t.Fatalf("AppChat requests = %d, want one main-model terminal decision", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 0 {
+		t.Fatalf("AppChat requests = %d, want the main-model decision in the streamed native call", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 1 {
 		t.Fatalf("AppChatStream requests = %d, want the main-model answer to stream normally", len(llm.streamRequests))
@@ -142,29 +141,6 @@ func postVerifierServiceTestChatResponse(content string) *adapter.ChatResponse {
 	return &adapter.ChatResponse{
 		Choices: []adapter.Choice{{
 			Message: adapter.Message{Role: "assistant", Content: content},
-		}},
-	}
-}
-
-func postVerifierServiceTestFinalAnswerResponse(answer string, planJSON string) *adapter.ChatResponse {
-	arguments := `{"answer":` + strconv.Quote(answer)
-	if strings.TrimSpace(planJSON) != "" {
-		arguments += `,"plan":` + planJSON
-	}
-	arguments += `}`
-	return &adapter.ChatResponse{
-		Choices: []adapter.Choice{{
-			Message: adapter.Message{
-				Role: "assistant",
-				ToolCalls: []adapter.ToolCall{{
-					ID:   "final-answer",
-					Type: "function",
-					Function: adapter.FunctionCall{
-						Name:      skills.MetaToolFinalAnswer,
-						Arguments: arguments,
-					},
-				}},
-			},
 		}},
 	}
 }
