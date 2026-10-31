@@ -340,9 +340,10 @@ func connectorResolutionConversationMatches(
 }
 
 // resumeDigitalHumanRun moves the exact paused DigitalHuman run that owns this
-// route receipt to its terminal state. The decision itself executes the
-// operation and nothing re-enters the model loop afterwards, so a completed
-// operation ends the run as succeeded on every surface. The WHERE clause
+// route receipt to its terminal state without re-entering the model loop. A
+// host that continues the turn claims it instead
+// (ClaimConnectorConfirmationContinuation); this records the decision only
+// where no continuation is wired. The WHERE clause
 // pins the tenant, owner, host, published version, conversation, message,
 // waiting status, and the stored receipt, so a confirmation can never resume a
 // run from another owner, host, or pinned version.

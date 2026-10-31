@@ -439,8 +439,9 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// Channel replies decide connector confirmations through the same path.
 	if digitalHumanRuntime != nil && digitalHumanRuntime.Runtime != nil {
 		digitalHumanRuntime.Runtime.SetChannelConnectorConfirmer(digitalHumanChannelConnectorConfirmer{
-			service:  serviceContainer.GetConnectorRuntimeConfirmationService(),
-			recorder: connectorRuntimeConfirmationSurfaceRecorder{chatAndAgent: chatService, workflow: workflowService},
+			service:      serviceContainer.GetConnectorRuntimeConfirmationService(),
+			recorder:     connectorRuntimeConfirmationSurfaceRecorder{chatAndAgent: chatService, workflow: workflowService},
+			digitalHuman: digitalHumanRuntime.Runtime,
 		})
 	}
 	if llmModule != nil && llmModule.LLMModelModule != nil {

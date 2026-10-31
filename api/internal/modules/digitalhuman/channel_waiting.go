@@ -42,6 +42,10 @@ type ChannelConnectorDecision struct {
 	Title     string
 	Summary   string
 	ErrorCode string
+	// Continued reports that the paused turn continues with the operation's
+	// result: the run's answer, or its next wait, reaches the person instead
+	// of this outcome.
+	Continued bool
 }
 
 // ChannelConnectorConfirmer decides a pending connector confirmation for the
@@ -460,17 +464,20 @@ func (s *RuntimeService) continueChannelConnectorConfirmation(ctx context.Contex
 		return notify(channelConnectorReplyNotice)
 	}
 	decision, err := s.channelConnectors.DecideChannelConnectorConfirmation(ctx, run.OrganizationID, *run.ActorID, *run.WaitingReceipt, action == "approve")
+	if errors.Is(err, ErrRunConflict) {
+		// Another reply, or the same event delivered again, already decided
+		// this operation: it ran once, and that decision's turn answers.
+		return true, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	text := channelConnectorOutcomeText(decision)
-	// The decision resumed or ended the run; a completed operation ends it here.
-	if decision.State == "completed" {
-		if completeErr := s.store.CompleteRun(context.WithoutCancel(ctx), run.ID, text, nil, s.now()); completeErr != nil && !errors.Is(completeErr, ErrRunConflict) {
-			logger.WarnContext(ctx, "failed to complete digital human channel connector run", "run_id", run.ID.String(), completeErr)
-		}
+	// The operation is one step of the task, not its end: the turn continues
+	// with the result and delivers its own answer or next wait.
+	if decision.Continued {
+		return true, nil
 	}
-	return true, s.deliverChannelWorkflowApprovalMessage(ctx, channelScope, digitalHumanID, pending, "connector:"+run.WaitingReceipt.String(), text)
+	return true, s.deliverChannelWorkflowApprovalMessage(ctx, channelScope, digitalHumanID, pending, "connector:"+run.WaitingReceipt.String(), channelConnectorOutcomeText(decision))
 }
 
 func channelConnectorOutcomeText(decision ChannelConnectorDecision) string {

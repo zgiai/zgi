@@ -219,12 +219,26 @@ func (handler *connectorRuntimeConfirmationHandler) recordResolution(
 	command connectorconfirmation.Command,
 	result connectorconfirmation.Result,
 ) error {
-	if result.Origin.Surface == connectorcore.TargetTypeDigitalHuman && handler.digitalHuman != nil {
-		return handler.digitalHuman.ResumeAfterConnectorConfirmation(ctx, command, result)
+	_, err := projectConnectorConfirmation(ctx, handler.digitalHuman, handler.recorder, command, result)
+	return err
+}
+
+// projectConnectorConfirmation is the one projection of a decided
+// confirmation wherever a person decides it (console, channel reply, API).
+// It reports whether a DigitalHuman turn continues with the result.
+func projectConnectorConfirmation(
+	ctx context.Context,
+	digitalHuman ConnectorRuntimeConfirmationContinuer,
+	recorder ConnectorRuntimeConfirmationResolutionRecorder,
+	command connectorconfirmation.Command,
+	result connectorconfirmation.Result,
+) (bool, error) {
+	if result.Origin.Surface == connectorcore.TargetTypeDigitalHuman && digitalHuman != nil {
+		return true, digitalHuman.ResumeAfterConnectorConfirmation(ctx, command, result)
 	}
 	resolution := result
 	resolution.ExecutionResult = nil
-	return handler.recorder.RecordConnectorConfirmationResolution(ctx, command, resolution)
+	return false, recorder.RecordConnectorConfirmationResolution(ctx, command, resolution)
 }
 
 // confirmationPresentationLocale prefers the console's own language cookie,

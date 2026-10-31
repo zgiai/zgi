@@ -14,8 +14,8 @@ import (
 // DecideAPIConnectorConfirmation lets the requester of an API run confirm or
 // cancel the connector operation the run waits for (ADR 0007). The requester
 // decides whether the operation uses their own credential or one its owner
-// delegated to the DigitalHuman; the decision executes the operation, and a
-// completed operation ends the run, as a channel reply does.
+// delegated to the DigitalHuman; the decision executes the operation, and the
+// turn continues with its result, as after a channel reply or the console.
 func (s *RuntimeService) DecideAPIConnectorConfirmation(ctx context.Context, scope Scope, app, conversationID, messageID uuid.UUID, confirm bool) (ChannelConnectorDecision, error) {
 	if s == nil || app == uuid.Nil || conversationID == uuid.Nil || messageID == uuid.Nil ||
 		scope.Surface != SurfaceAPI || scope.UserSubjectID == nil || *scope.UserSubjectID == uuid.Nil {
@@ -38,7 +38,8 @@ func (s *RuntimeService) DecideAPIConnectorConfirmation(ctx context.Context, sco
 	if err != nil {
 		return ChannelConnectorDecision{}, err
 	}
-	if decision.State == "completed" {
+	// A continued turn ends the run with its own answer, or waits again.
+	if !decision.Continued && decision.State == "completed" {
 		if completeErr := s.store.CompleteRun(context.WithoutCancel(ctx), run.ID, strings.TrimSpace(decision.Summary), nil, s.now()); completeErr != nil && !errors.Is(completeErr, ErrRunConflict) {
 			logger.WarnContext(ctx, "failed to complete digital human API connector run", "run_id", run.ID.String(), completeErr)
 		}
