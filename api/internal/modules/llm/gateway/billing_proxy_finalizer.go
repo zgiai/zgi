@@ -8,7 +8,6 @@ import (
 	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -131,8 +130,13 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		return fmt.Errorf("apply platform settlement currency snapshot: %w", err)
 	}
 	overageReservedCredits := queriedReservedCredits
-	if overageReservedCredits <= 0 {
-		overageReservedCredits = synchronousSettlementReservedCredits(ctx, bc)
+	if overageReservedCredits <= 0 && !bc.ToolPostpaid {
+		// The settlement on the proxied response carries no reservation; the
+		// org_funds entry holds the one Console booked for this attempt.
+		if err := s.localService.restoreConsoleReservedCredits(ctx, s.localService.db, bc); err != nil {
+			return err
+		}
+		overageReservedCredits = fundReservedCredits(bc)
 	}
 	recordSettlementOverageSnapshot(bc, overageReservedCredits, settlement.OfficialPoints)
 	s.localService.applyRouteAttributionWithLookup(ctx, bc)
@@ -339,28 +343,6 @@ func recordSettlementOverageSnapshot(bc *BillingContext, reserved, settled int64
 	values["overage_credits"] = settled - reserved
 	values["overage_strategy"] = settlementOverageStrategyChargeDifference
 	bc.PricingSnapshot = buildPricingSnapshot(values)
-}
-
-// synchronousSettlementReservedCredits returns the Console reservation an
-// overage is measured against when the settlement rode back on the proxied
-// response, which carries no reserved amount. The token pre-deduct sends
-// bc.EstimatedCredits and Console reserves exactly that, so it is the hold.
-// Tool-postpaid and metered requests return 0 (no overage keys): Console
-// prices a metered reservation from the declared quantity, so the local
-// estimate is not the hold. Image and video are matched by operation because
-// a video settles on a later retrieve whose ctx no longer carries the fact.
-func synchronousSettlementReservedCredits(ctx context.Context, bc *BillingContext) int64 {
-	if bc == nil || bc.ToolPostpaid {
-		return 0
-	}
-	switch bc.PricingOperation {
-	case PricingOperationImage, PricingOperationVideo:
-		return 0
-	}
-	if _, metered := shared.MeteredUsageFromContext(ctx); metered {
-		return 0
-	}
-	return bc.EstimatedCredits
 }
 
 func validatePlatformProxySettlement(bc *BillingContext, settlement *adapter.SettlementResult) error {

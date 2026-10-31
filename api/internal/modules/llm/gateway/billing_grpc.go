@@ -1688,6 +1688,13 @@ func (s *RemoteBilling) preDeductMeteredViaGRPC(ctx context.Context, bc *Billing
 		}
 		return mapMeteredPreDeductError(resp.ErrorCode, resp.ErrorMessage)
 	}
+	// Console prices a metered hold from the declared quantity, so the local
+	// estimate is not what it reserved. A Console that predates the field
+	// reports 0; keep the estimate then rather than record an empty hold.
+	if resp.ReservedCredits > 0 && resp.ReservedCredits != bc.EstimatedCredits {
+		reserved := resp.ReservedCredits
+		bc.ConsoleReservedCredits = &reserved
+	}
 	return s.finalizeRemotePreDeductBinding(ctx, bc, resp.DeductionID)
 }
 
