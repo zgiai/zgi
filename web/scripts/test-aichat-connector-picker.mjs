@@ -132,9 +132,10 @@ assert.match(dialog, /target=\{setup\.replacedBinding \? undefined : setup\.targ
 
 assert.doesNotMatch(chat, /enable_external_integrations/);
 assert.match(chat, /const connectorsEnabled = enableAIChatSkillPreference;/);
+assert.match(chat, /const enableAIChatSkillPreference = surfaceProfile\.skillAndConnectorPickers;/);
 assert.match(
-  chat,
-  /const enableAIChatSkillPreference =\s*surface === 'aichat' && \(!isEmbedded \|\| runtimeSurface === 'contextual_sidebar'\)/,
+  read('src/components/chat/variants/aichat/chat-surface-profile.ts'),
+  /skillAndConnectorPickers: isAIChat && \(!isEmbedded \|\| isSidebar\)/,
   'always-on Connectors must retain the independent AI Chat surface capability boundary'
 );
 assert.match(chat, /systemFeatures\.data\?\.enable_connectors/);

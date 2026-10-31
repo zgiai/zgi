@@ -162,6 +162,7 @@ import {
   removeQueuedChatTurn,
   type AIChatQueuedTurn,
 } from '@/components/chat/utils/queued-turns';
+import { type AIChatShellSurface, resolveChatSurfaceProfile } from './chat-surface-profile';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -216,7 +217,7 @@ interface AIChatShellProps {
   showSkillEventDetails?: boolean;
   enableMessageReplay?: boolean;
   messageDensity?: 'default' | 'compact';
-  surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';
+  surface?: AIChatShellSurface;
   runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
   enableToolGovernance?: boolean;
@@ -387,11 +388,19 @@ export function AIChatShell({
   const tGlobal = useT();
   const { locale } = useLocale();
   const isMobile = useIsMobile();
-  const isEmbedded = variant === 'embedded';
-  const chatSurfaceBackground =
-    isEmbedded && surface !== 'agent-draft' && surface !== 'digital-human'
-      ? 'bg-bg-canvas'
-      : 'bg-background';
+  // What this surface offers is decided in one place (ADR 0050).
+  const surfaceProfile = resolveChatSurfaceProfile({
+    surface,
+    variant,
+    runtimeSurface,
+    enableToolGovernance,
+    transport: {
+      supportsToolGovernanceApproval: controller.supportsToolGovernanceApproval,
+      supportsRuntimeInput: controller.supportsRuntimeInput,
+    },
+  });
+  const isEmbedded = surfaceProfile.isEmbedded;
+  const chatSurfaceBackground = surfaceProfile.background;
   const toolGovernanceApprovalScopeId = useId();
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
@@ -485,8 +494,7 @@ export function AIChatShell({
   const organization = useOrganizationStore.use.currentOrganization();
   const systemFeatures = useSystemFeatures();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
-  const enableAIChatSkillPreference =
-    surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
+  const enableAIChatSkillPreference = surfaceProfile.skillAndConnectorPickers;
   const connectorsEnabled = enableAIChatSkillPreference;
   const legacyEnabled =
     enableAIChatSkillPreference && Boolean(systemFeatures.data?.enable_connectors);
@@ -510,10 +518,7 @@ export function AIChatShell({
   const connectorSelectedCount = connectorConversationId
     ? connectedAppsSummary.selectedConnectionCount
     : connectorDraft.draft.bindings.length;
-  const effectiveRuntimeSurface: AIChatRuntimeSurface =
-    surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human'
-      ? 'external_page_chat'
-      : runtimeSurface;
+  const effectiveRuntimeSurface: AIChatRuntimeSurface = surfaceProfile.runtimeSurface;
   const matchingModelProps = useMemo(() => {
     const matchesSelection = (candidate: ModelSelectorModelProps | null | undefined) =>
       Boolean(
@@ -559,14 +564,8 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
-  // Approvals follow what the transport can continue, not the surface name:
-  // a DigitalHuman chat that pauses for approval needs the card as much as an
-  // Agent does, and a preview transport that cannot continue shows none.
-  const enableToolGovernanceApprovals = controller.supportsToolGovernanceApproval;
-  const showToolGovernancePermissionControl =
-    surface === 'aichat' &&
-    effectiveRuntimeSurface === 'contextual_sidebar' &&
-    enableToolGovernance;
+  const enableToolGovernanceApprovals = surfaceProfile.toolGovernanceApprovals;
+  const showToolGovernancePermissionControl = surfaceProfile.toolGovernancePermissionControl;
   useEffect(() => {
     if (!showToolGovernancePermissionControl) {
       setToolGovernancePermissionTierLoaded(false);
@@ -752,8 +751,7 @@ export function AIChatShell({
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const activeWorkflowApprovalRequest = useMemo(
     () =>
-      !isRecoveringMessages &&
-      (surface === 'agent-draft' || surface === 'agent-webapp' || surface === 'digital-human')
+      !isRecoveringMessages && surfaceProfile.workflowApprovals
         ? resolveActiveWorkflowApprovalRequest(
             activeConversation,
             activeMessages,
@@ -769,6 +767,7 @@ export function AIChatShell({
       isRecoveringMessages,
       isSending,
       surface,
+      surfaceProfile.workflowApprovals,
     ]
   );
   const canStopPendingWorkflowInteraction = Boolean(
@@ -804,7 +803,7 @@ export function AIChatShell({
     visiblePendingUserMessage?.showAssistantPlanning && isSending && !hasActiveStreamingMessage
   );
   const showAssetAuditControl =
-    showToolGovernancePermissionControl && surface === 'aichat' && Boolean(activeConversationId);
+    showToolGovernancePermissionControl && Boolean(activeConversationId);
   const handleOpenAssetAudit = useCallback(() => {
     setMobileSidebarOpen(false);
     setEmbeddedAssetAuditOpen(true);
@@ -1852,7 +1851,7 @@ export function AIChatShell({
             <AIChatHeader
               isHome={isHome}
               title={activeConversation?.title || ''}
-              position={surface === 'digital-human' ? 'static' : 'overlay'}
+              position={surfaceProfile.headerPosition}
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
@@ -1922,11 +1921,11 @@ export function AIChatShell({
             showAssistantModelMeta={showAssistantModelMeta}
             layout={isEmbedded ? 'embedded' : 'full'}
             messageDensity={messageDensity}
-            showMemoryKey={surface !== 'agent-webapp' && surface !== 'digital-human'}
+            showMemoryKey={surfaceProfile.memoryKey}
             // Published apps show status, not diagnostic argument/result panels.
-            showSkillEventDetails={surface !== 'agent-webapp' && showSkillEventDetails}
-            showWorkflowFailureDetails={surface !== 'agent-webapp'}
-            showContextualOperationStatus={effectiveRuntimeSurface === 'contextual_sidebar'}
+            showSkillEventDetails={surfaceProfile.executionDetails && showSkillEventDetails}
+            showWorkflowFailureDetails={surfaceProfile.executionDetails}
+            showContextualOperationStatus={surfaceProfile.contextualOperationStatus}
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
             speechPlayback={speechPlayback}
@@ -1994,7 +1993,7 @@ export function AIChatShell({
             isModelInitializing={isModelInitializing}
             modelMissing={modelMissing}
             isSending={isSending}
-            allowRuntimeInput={controller.supportsRuntimeInput}
+            allowRuntimeInput={surfaceProfile.runtimeInput}
             runtimeInputQueueFull={runtimeInputQueueFull}
             disabled={contextBlocked}
             canStop={canStopPendingWorkflowInteraction || activeConversationRunning}
@@ -2157,7 +2156,7 @@ export function AIChatShell({
       {enableAIChatSkillPreference ? (
         <AIChatSkillPreferenceDialog
           open={skillPreferenceOpen}
-          context={runtimeSurface === 'contextual_sidebar' ? 'platform-assistant' : 'conversation'}
+          context={surfaceProfile.skillPreferenceContext}
           locale={locale}
           skills={aichatConfigurableSkills}
           selectedSkillIds={draftSkillPreferenceIds}
@@ -2214,7 +2213,7 @@ function resolveActiveWorkflowApprovalRequest(
   messages: AIChatMessage[],
   isSending: boolean,
   hasActiveStreamingMessage: boolean,
-  surface: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human'
+  surface: AIChatShellSurface
 ): AIChatWorkflowApprovalRequest | null {
   if (
     !conversation ||

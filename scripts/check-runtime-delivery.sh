@@ -67,6 +67,7 @@ case "$mode" in
     pnpm test:chat-runtime-stream-recovery
     pnpm test:chat-runtime-status
     pnpm test:chat-stream-decoder
+    pnpm test:chat-surface-profile
     pnpm test:user-input-response-history
     pnpm build
     ;;
