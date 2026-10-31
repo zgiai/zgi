@@ -94,7 +94,7 @@ func (r *Runner) handleProgressiveSkillCall(
 		}
 		if strings.EqualFold(toolName, skills.MetaToolUpdatePlan) {
 			if !runtimeControlToolAllowed(runtimeState, runtimeStateAllowPlanUpdateKey) {
-				return skippedControlToolStep(call.ID, skills.MetaToolUpdatePlan, "continue with the current outcome contract; runtime effects are reconciled automatically")
+				return skippedControlToolStep(call.ID, skills.MetaToolUpdatePlan, "planning is not available at this point; continue with the task")
 			}
 			return r.handleUpdatePlanCall(call.ID, toolArgs, runtimeState, round)
 		}
@@ -125,21 +125,8 @@ func (r *Runner) handleProgressiveSkillCall(
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
-		planPhaseID, enforcePlanPhase, phaseErr := resolveOperationPlanPhaseForSkillCall(
-			runtimeState,
-			strings.TrimSpace(stringArg(args, "plan_phase_id")),
-			skillID,
-			toolName,
-			toolArgs,
-		)
-		if phaseErr != nil {
-			return operationPlanPhaseMismatchStep(call.ID, skillID, toolName, toolArgs, phaseErr)
-		}
-		if enforcePlanPhase && planPhaseID != "" {
-			args["plan_phase_id"] = planPhaseID
-		} else {
-			delete(args, "plan_phase_id")
-		}
+		// Plan steps are the model's checklist and name no tool calls (ADR 0049).
+		delete(args, "plan_phase_id")
 		callExecCtx := execCtx
 		if isAgentKnowledgeRetrievalCall(skillID, toolName) {
 			callExecCtx.RuntimeParameters = copyStringAnyMap(execCtx.RuntimeParameters)

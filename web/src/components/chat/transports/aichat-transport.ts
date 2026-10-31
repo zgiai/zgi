@@ -7,6 +7,7 @@ import type {
   ExecutionFileReader,
   AIChatChatRequest,
   AIChatAgentProgressEventData,
+  AIChatPlanUpdatedEventData,
   AIChatClientActionRequiredEventData,
   AIChatClientActionResultEventData,
   AIChatClientActionResultRequest,
@@ -151,6 +152,7 @@ export interface AIChatStreamCallbacks {
   onOpen?: (metadata?: AIChatStreamOpenMetadata) => void;
   onMessageStart: (payload: AIChatMessageStartEventData, eventId?: string | null) => void;
   onAgentProgress: (payload: AIChatAgentProgressEventData, eventId?: string | null) => void;
+  onPlanUpdated?: (payload: AIChatPlanUpdatedEventData, eventId?: string | null) => void;
   onIntermediateAnswer: (
     payload: AIChatIntermediateAnswerEventData,
     eventId?: string | null
@@ -345,6 +347,9 @@ export function dispatchAIChatStreamEvent(
       break;
     case 'agent_progress':
       callbacks.onAgentProgress((data ?? {}) as AIChatAgentProgressEventData, eventId);
+      break;
+    case 'plan_updated':
+      callbacks.onPlanUpdated?.((data ?? {}) as AIChatPlanUpdatedEventData, eventId);
       break;
     case 'agent_intermediate_answer':
       callbacks.onIntermediateAnswer((data ?? {}) as AIChatIntermediateAnswerEventData, eventId);

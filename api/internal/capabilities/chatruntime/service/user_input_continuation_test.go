@@ -44,7 +44,7 @@ func TestNormalizeUserInputContinuationResponseRequiresEveryAnswer(t *testing.T)
 	}
 }
 
-func TestUserInputContinuationMessageRequiresPlanRevisionBeforeBusinessTools(t *testing.T) {
+func TestUserInputContinuationMessageMentionsTheChecklist(t *testing.T) {
 	message := userInputContinuationMessage(
 		&runtimemodel.Message{Query: "Update the Agent after I choose the target"},
 		map[string]interface{}{"message": "Choose the target."},
@@ -54,7 +54,7 @@ func TestUserInputContinuationMessageRequiresPlanRevisionBeforeBusinessTools(t *
 		},
 	)
 	content := stringFromAny(message.Content)
-	for _, want := range []string{"revise the current plan with update_plan", "update_plan first and the next business tool in the same assistant response", "Preserve completed phases"} {
+	for _, want := range []string{"If you keep a checklist and the clarification changes its steps, update it with update_plan"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message = %q, want %q", content, want)
 		}

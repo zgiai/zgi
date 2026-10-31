@@ -68,6 +68,7 @@ export function useWorkflowContinuationActions({
     applyClientActionRequired,
     applyClientActionResult,
     applyAgentProgress,
+    applyPlanUpdated,
     applyIntermediateAnswer,
     applyUserInputRequested,
     applyTokenUsageUpdated,
@@ -353,6 +354,10 @@ export function useWorkflowContinuationActions({
             if (abortController.signal.aborted) return;
             streamStarted = true;
             applyAgentProgress(payload, eventId);
+          },
+          onPlanUpdated: (payload, eventId) => {
+            if (abortController.signal.aborted) return;
+            applyPlanUpdated(payload, eventId);
           },
           onTokenUsageUpdated: (payload, eventId) => {
             if (abortController.signal.aborted) return;
@@ -701,6 +706,7 @@ export function useWorkflowContinuationActions({
     },
     [
       applyAgentProgress,
+      applyPlanUpdated,
       applyTokenUsageUpdated,
       applyFileParseEnd,
       applyFileParseError,

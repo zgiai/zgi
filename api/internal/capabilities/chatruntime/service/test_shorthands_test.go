@@ -97,10 +97,6 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 	return skillLoopAdditionalSystemMessagesForResolved(prepared, nil)
 }
 
-func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
-	return contextualConsoleAgentsSkillMessageForResolved(prepared, nil)
-}
-
 func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
 	return applyProviderPromptUsageCalibrationWithEstimate(metadata, usage, 0, "", "", "")
 }

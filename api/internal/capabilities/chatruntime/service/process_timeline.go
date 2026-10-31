@@ -101,7 +101,7 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		}
 		return r.Emit(eventType, payload)
 	}
-	if eventType == streamEventAgentProgress {
+	if eventType == streamEventAgentProgress || eventType == streamEventPlanUpdated {
 		return r.Emit(eventType, payload)
 	}
 	if !r.activePresentationSegmentIsFinalOutput() {

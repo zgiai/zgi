@@ -39,32 +39,6 @@ export interface OperationCardTextBlock {
   icon?: ReactNode;
 }
 
-export type OperationPlanStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-
-export type OperationPlanStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-
-export interface OperationPlanStep {
-  id: string;
-  title: ReactNode;
-  description?: ReactNode;
-  status?: OperationPlanStepStatus;
-  statusLabel?: string;
-  meta?: OperationCardMetaItem[];
-}
-
-export interface OperationPlanCardProps {
-  title?: ReactNode;
-  description?: ReactNode;
-  status?: OperationPlanStatus;
-  statusLabel?: string;
-  eyebrow?: ReactNode;
-  steps?: OperationPlanStep[];
-  meta?: OperationCardMetaItem[];
-  actions?: OperationCardAction[];
-  compact?: boolean;
-  className?: string;
-}
-
 export type OperationConfirmationStatus = 'pending' | 'confirmed' | 'rejected' | 'expired';
 
 export interface OperationConfirmationCardProps {

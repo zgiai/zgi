@@ -31,13 +31,15 @@ const (
 	EventSkillLoadEnd           = "skill_load_end"
 	EventSkillReferenceRead     = "skill_reference_read"
 	EventSkillArtifactCreated   = "skill_artifact_created"
-	EventWorkflowStarted        = "workflow_started"
-	EventWorkflowNodeStarted    = "node_started"
-	EventWorkflowNodeFinished   = "node_finished"
-	EventWorkflowPaused         = "workflow_paused"
-	EventWorkflowApproval       = "approval_requested"
-	EventWorkflowFinished       = "workflow_finished"
-	EventWorkflowFailed         = "workflow_failed"
+	// EventPlanUpdated carries the model's checklist after each update (ADR 0049).
+	EventPlanUpdated          = "plan_updated"
+	EventWorkflowStarted      = "workflow_started"
+	EventWorkflowNodeStarted  = "node_started"
+	EventWorkflowNodeFinished = "node_finished"
+	EventWorkflowPaused       = "workflow_paused"
+	EventWorkflowApproval     = "approval_requested"
+	EventWorkflowFinished     = "workflow_finished"
+	EventWorkflowFailed       = "workflow_failed"
 )
 
 const (
@@ -189,6 +191,9 @@ type Runner struct {
 	diagnostics           modelInvocationDiagnostics
 	requestBudget         planningRequestBudget
 	contextDecision       *contextmgr.Decision
+	// planSteps is the run's latest checklist, restored to a request whose
+	// compaction dropped the update_plan result that holds it (ADR 0049).
+	planSteps []map[string]interface{}
 }
 
 type RunRequest struct {
@@ -358,6 +363,7 @@ type ModelInvocationTrace struct {
 	ProjectedChars             int
 	ContinuationType           string
 	TerminalOnly               bool
+	PlanReminded               bool
 	BudgetSafeContextLimit     int
 	BudgetPromptLimit          int
 	BudgetOriginalPromptTokens int
@@ -396,7 +402,9 @@ type modelInvocationDiagnostics struct {
 	projectedChars   int
 	continuationType string
 	terminalOnly     bool
-	requestBudget    planningRequestBudgetDiagnostics
+	// planReminded marks the calls after the open-steps reminder (ADR 0049).
+	planReminded  bool
+	requestBudget planningRequestBudgetDiagnostics
 }
 
 type PreparedChat struct {
@@ -534,6 +542,7 @@ func (r *Runner) recordModelInvocation(trace ModelInvocationTrace) {
 	trace.ProjectedChars = r.diagnostics.projectedChars
 	trace.ContinuationType = r.diagnostics.continuationType
 	trace.TerminalOnly = r.diagnostics.terminalOnly
+	trace.PlanReminded = r.diagnostics.planReminded
 	trace.BudgetSafeContextLimit = r.diagnostics.requestBudget.safeContextLimit
 	trace.BudgetPromptLimit = r.diagnostics.requestBudget.promptBudget
 	trace.BudgetOriginalPromptTokens = r.diagnostics.requestBudget.originalPromptTokens

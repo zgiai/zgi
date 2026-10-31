@@ -468,6 +468,8 @@ const messages: WebappMessages = {
     waitingApproval: '等待审批',
     waitingQuestion: '等待你补充信息',
     waitingClientAction: '等待页面操作',
+    planTitle: '计划',
+    planProgress: '已完成 {done}/{total}',
     waitingApprovalMessage: '助手正在等待你的审批，确认后会继续执行。',
     waitingQuestionMessage: '助手正在等待你补充信息，提交后会继续执行。',
     waitingClientActionMessage: '助手正在等待页面完成操作，完成后会自动继续。',
@@ -868,24 +870,9 @@ const messages: WebappMessages = {
       approvalSubmitFailed: '审批提交失败',
     },
     operationCards: {
-      planTitle: '操作计划',
       resultTitle: '操作结果',
       confirmationTitle: '确认操作',
       hostedTaskTitle: '托管任务',
-      planStatuses: {
-        pending: '待处理',
-        running: '执行中',
-        completed: '已完成',
-        failed: '失败',
-        cancelled: '已取消',
-      },
-      stepStatuses: {
-        pending: '待处理',
-        running: '执行中',
-        completed: '已完成',
-        failed: '失败',
-        skipped: '已跳过',
-      },
       resultStatuses: {
         success: '成功',
         error: '错误',

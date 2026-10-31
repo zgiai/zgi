@@ -90,6 +90,8 @@ import {
 } from '@/components/connectors/runtime/connector-runtime-source';
 import { useConnectorRuntimeReceipt } from '@/components/connectors/runtime/use-runtime-receipt';
 import { ProtectedGeneratedFileCard } from './protected-generated-file-card';
+import { AIChatPlanChecklist } from './plan-checklist';
+import { messagePlanChecklist } from '@/components/chat/controllers/aichat/reducers/plan';
 
 interface AIChatMessageBubbleProps {
   readExecutionFile?: ExecutionFileReader;
@@ -1337,6 +1339,7 @@ export function AIChatMessageBubble({
   const deliveredTaskResult = Boolean((message.metadata as Record<string, unknown> | undefined)?.digital_human_task_result);
   const hasUserQuery = !deliveredTaskResult && Boolean(message.query.trim() || files.length > 0);
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
+  const planSteps = useMemo(() => messagePlanChecklist(message.metadata?.operation_plan), [message.metadata?.operation_plan]);
   const visibleGeneratedFiles = generatedFiles;
   const generatedImagePreviewFilesForDisplay = useMemo(
     () => generatedImagePreviewFiles(displayAnswer, visibleGeneratedFiles, !isSensitiveBlocked),
@@ -1710,6 +1713,8 @@ export function AIChatMessageBubble({
             </span>
           ) : null}
         </div>
+
+        <AIChatPlanChecklist steps={planSteps} active={isStreaming} />
 
         {hasTimeline ? (
           <AIChatAgenticTimeline

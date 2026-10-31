@@ -24,10 +24,6 @@ type Module struct {
 	Service service.Service
 }
 
-func NewModule(db *gorm.DB, llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) *Module {
-	return NewModuleWithDependencies(db, llmClient, defaultModelSvc, nil, nil, nil, nil)
-}
-
 func NewModuleWithDependencies(
 	db *gorm.DB,
 	llmClient llmclient.LLMClient,

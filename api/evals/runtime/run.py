@@ -221,8 +221,10 @@ def contains(text, needle):
 
 
 def numbers_in(text):
-    """Returns the numbers written in text, with thousands separators removed."""
+    """Returns the numbers written in text, with thousands separators removed
+    and a typographic minus or dash before a number read as a minus sign."""
     joined = re.sub(r"(?<=\d)[,，](?=\d{3}(?!\d))", "", text)
+    joined = re.sub(r"[−–](?=\d)", "-", joined)
     return [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", joined)]
 
 
@@ -369,6 +371,39 @@ def provider_cache(container, db, agent_id):
             "cache_read_share": round(cached / max(cached + uncached, 1), 3)}
 
 
+def plan_usage(container, db, results):
+    """Reads, per category, how many of the Agent's turns called update_plan,
+    from the model invocations stored with each turn (ADR 0049)."""
+    by_conversation = {}
+    for result in results:
+        for turn in result["turns"]:
+            if turn.get("conversation_id"):
+                by_conversation[turn["conversation_id"]] = result["category"]
+    if not by_conversation:
+        return {}
+    ids = ",".join("'" + conversation.replace("'", "") + "'" for conversation in by_conversation)
+    # Model calls after the open-steps reminder are marked plan_reminded; a
+    # checklist still running when the turn ended was left with open steps.
+    query = ("select m.conversation_id, m.id, "
+             "bool_or(coalesce(r.payload->'response'->'tool_call_names', '[]'::jsonb) ? 'update_plan'), "
+             "bool_or(coalesce(r.payload->>'plan_reminded', '') = 'true'), "
+             "bool_or(m.metadata->'operation_plan'->>'version' = 'operation_plan.v3' and m.metadata->'operation_plan'->>'status' = 'running') "
+             "from chat_runtime_messages m left join chat_runtime_message_records r on r.message_id = m.id and r.kind = 'model_invocations' "
+             f"where m.conversation_id in ({ids}) and m.answer is not null group by m.conversation_id, m.id")
+    out = subprocess.run(["docker", "exec", container, "psql", "-U", "postgres", "-d", db, "-AtF", "\t", "-c", query],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    usage = {}
+    for line in out.splitlines():
+        conversation, _, called, reminded, left_open = line.split("\t")
+        bucket = usage.setdefault(by_conversation.get(conversation, "unknown"),
+                                  {"turns": 0, "turns_with_plan": 0, "turns_reminded": 0, "turns_left_open": 0})
+        bucket["turns"] += 1
+        bucket["turns_with_plan"] += called == "t"
+        bucket["turns_reminded"] += reminded == "t"
+        bucket["turns_left_open"] += left_open == "t"
+    return dict(sorted(usage.items()))
+
+
 def summarize(results):
     scored = [r for r in results if not r["observe"]]
     by_category = {}
@@ -435,8 +470,13 @@ def write_report(path, meta, summary, results, baseline=None):
     if cache:
         lines.append(f"\nProvider cache: {cache['cache_read_tokens']} of {cache['cache_read_tokens'] + cache['uncached_input_tokens']} input tokens "
                      f"({cache['cache_read_share']:.0%}) over {cache['model_calls']} model calls.")
-    lines += ["", "| Category | Passed |", "|---|---|"]
-    lines += [f"| {k} | {v['passed']}/{v['total']} |" for k, v in summary["by_category"].items()]
+    plans = summary.get("plan_usage", {})
+    lines += ["", "| Category | Passed | Turns with a plan | Answers held back for open steps | Turns ending with open steps |",
+              "|---|---|---|---|---|"]
+    lines += [f"| {k} | {v['passed']}/{v['total']} | "
+              + (f"{plans[k]['turns_with_plan']}/{plans[k]['turns']} | {plans[k].get('turns_reminded', 0)} | {plans[k].get('turns_left_open', 0)}"
+                 if k in plans else " | ") + " |"
+              for k, v in summary["by_category"].items()]
     lines += ["", "| Scenario | Run | Result | Model calls | Failed checks | Failed tool calls |", "|---|---|---|---|---|---|"]
     for r in sorted(results, key=lambda x: (x["scenario"], x["run"])):
         tag = "observe" if r["observe"] else ("pass" if r["passed"] else "FAIL")
@@ -511,6 +551,7 @@ def main():
     summary = summarize(results)
     if args.container:
         summary["provider_cache"] = provider_cache(args.container, args.db, agent["agent_id"])
+        summary["plan_usage"] = plan_usage(args.container, args.db, results)
     out_dir = os.path.join(args.out, f"{started:%Y%m%d-%H%M%S}-{args.label}")
     os.makedirs(out_dir, exist_ok=True)
     meta = {"label": args.label, "repeat": args.repeat, "skills": SKILLS, "started_at": started.isoformat(timespec="seconds"),

@@ -11,47 +11,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
-	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
-
-func (s *agentsService) validateAgentBindingGrantChanges(ctx context.Context, ag *Agent, cfg *AgentsConfig, accountID string, req dto.AgentConfigRequest) error {
-	if ag == nil {
-		return fmt.Errorf("agent is required")
-	}
-	previous := agentRuntimeModeFromConfig(cfg)
-	workspaceID := ag.TenantID.String()
-	organizationID := workspaceID
-	if s.enterpriseService != nil {
-		org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
-		if err != nil {
-			return fmt.Errorf("resolve agent organization: %w", err)
-		}
-		if org != nil && strings.TrimSpace(org.ID) != "" {
-			organizationID = strings.TrimSpace(org.ID)
-		}
-	}
-	if bindingGrantNeedsRefresh(previous.KnowledgeDatasetIDs, previous.KnowledgeBoundByAccountID, previous.KnowledgeBoundAtUnix, req.KnowledgeDatasetIDs) {
-		if err := s.validateKnowledgeBindingGrant(ctx, organizationID, workspaceID, accountID, req.KnowledgeDatasetIDs); err != nil {
-			return err
-		}
-	}
-	if databaseBindingGrantNeedsRefresh(previous.DatabaseBindings, previous.DatabaseBoundByAccountID, previous.DatabaseBoundAtUnix, req.DatabaseBindings) {
-		if err := s.validateDatabaseBindingGrant(ctx, organizationID, workspaceID, accountID, req.DatabaseBindings); err != nil {
-			return err
-		}
-	}
-	if workflowBindingGrantNeedsRefresh(previous.WorkflowBindings, previous.WorkflowBoundByAccountID, previous.WorkflowBoundAtUnix, req.WorkflowBindings) {
-		if err := s.validateWorkflowBindingGrant(ctx, workspaceID, req.WorkflowBindings); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func (s *agentsService) validateKnowledgeBindingGrant(ctx context.Context, organizationID, workspaceID, accountID string, datasetIDs []string) error {
 	if len(normalizeStringIDs(datasetIDs)) == 0 {
@@ -793,78 +758,6 @@ func boolFromMap(values map[string]interface{}, key string) bool {
 	}
 }
 
-func bindingGrantNeedsRefresh(previous []string, previousActor string, previousAtUnix int64, current []string) bool {
-	current = normalizeStringIDs(current)
-	if len(current) == 0 {
-		return false
-	}
-	if strings.TrimSpace(previousActor) == "" || previousAtUnix <= 0 {
-		return true
-	}
-	return !stringIDsEqual(normalizeStringIDs(previous), current)
-}
-
-func databaseBindingGrantNeedsRefresh(previous []dto.AgentDatabaseBinding, previousActor string, previousAtUnix int64, current []dto.AgentDatabaseBinding) bool {
-	current = normalizeAgentDatabaseBindings(current)
-	if len(current) == 0 {
-		return false
-	}
-	if strings.TrimSpace(previousActor) == "" || previousAtUnix <= 0 {
-		return true
-	}
-	return !databaseBindingsEqual(normalizeAgentDatabaseBindings(previous), current)
-}
-
-func workflowBindingGrantNeedsRefresh(previous []dto.AgentWorkflowBinding, previousActor string, previousAtUnix int64, current []dto.AgentWorkflowBinding) bool {
-	current = normalizeAgentWorkflowBindings(current)
-	if len(current) == 0 {
-		return false
-	}
-	if strings.TrimSpace(previousActor) == "" || previousAtUnix <= 0 {
-		return true
-	}
-	return !workflowBindingsEqual(normalizeAgentWorkflowBindings(previous), current)
-}
-
-func bindingGrantForStringIDs(previous []string, previousActor string, previousAtUnix int64, current []string, actorAccountID string, nowUnix int64) (string, int64) {
-	current = normalizeStringIDs(current)
-	previous = normalizeStringIDs(previous)
-	grant := runtimeservice.ResolveBoundResourceGrant(
-		runtimeservice.NewBoundResourceGrant(previousActor, previousAtUnix),
-		len(current) > 0,
-		stringIDsEqual(previous, current),
-		actorAccountID,
-		nowUnix,
-	)
-	return grant.BoundByAccountID, grant.BoundAtUnix
-}
-
-func bindingGrantForDatabaseBindings(previous []dto.AgentDatabaseBinding, previousActor string, previousAtUnix int64, current []dto.AgentDatabaseBinding, actorAccountID string, nowUnix int64) (string, int64) {
-	current = normalizeAgentDatabaseBindings(current)
-	previous = normalizeAgentDatabaseBindings(previous)
-	grant := runtimeservice.ResolveBoundResourceGrant(
-		runtimeservice.NewBoundResourceGrant(previousActor, previousAtUnix),
-		len(current) > 0,
-		databaseBindingsEqual(previous, current),
-		actorAccountID,
-		nowUnix,
-	)
-	return grant.BoundByAccountID, grant.BoundAtUnix
-}
-
-func bindingGrantForWorkflowBindings(previous []dto.AgentWorkflowBinding, previousActor string, previousAtUnix int64, current []dto.AgentWorkflowBinding, actorAccountID string, nowUnix int64) (string, int64) {
-	current = normalizeAgentWorkflowBindings(current)
-	previous = normalizeAgentWorkflowBindings(previous)
-	grant := runtimeservice.ResolveBoundResourceGrant(
-		runtimeservice.NewBoundResourceGrant(previousActor, previousAtUnix),
-		len(current) > 0,
-		workflowBindingsEqual(previous, current),
-		actorAccountID,
-		nowUnix,
-	)
-	return grant.BoundByAccountID, grant.BoundAtUnix
-}
-
 func resolveAgentBindingAuthorizations(
 	previous dto.AgentRuntimeModeConfig,
 	current dto.AgentConfigRequest,
@@ -1153,30 +1046,6 @@ func aggregateAgentBindingAuthorization(
 		return "", 0
 	}
 	return actor, atUnix
-}
-
-func stringIDsEqual(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func databaseBindingsEqual(left []dto.AgentDatabaseBinding, right []dto.AgentDatabaseBinding) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i].DataSourceID != right[i].DataSourceID || !stringIDsEqual(left[i].TableIDs, right[i].TableIDs) || !stringIDsEqual(left[i].WritableTableIDs, right[i].WritableTableIDs) {
-			return false
-		}
-	}
-	return true
 }
 
 func workflowBindingsEqual(left []dto.AgentWorkflowBinding, right []dto.AgentWorkflowBinding) bool {

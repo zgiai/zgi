@@ -2,7 +2,6 @@ package service
 
 import (
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
@@ -41,26 +40,6 @@ func connectorPlanInvocationPhase(plan, invocation map[string]any) (int, connect
 		match = index
 	}
 	return match, evidence
-}
-
-func connectorCompleteInvocationPhase(plan, invocation map[string]any) bool {
-	index, evidence := connectorPlanInvocationPhase(plan, invocation)
-	if index < 0 || evidence.Status != "successful" {
-		return false
-	}
-	phases := mapSliceFromAny(plan["phases"])
-	phase := phases[index]
-	phase["status"] = operationPlanStepStatusCompleted
-	phase["completed_at"] = time.Now().UTC().Format(time.RFC3339)
-	phase["evidence_refs"] = appendUniqueStrings(stringSliceFromAny(phase["evidence_refs"]), "connector-outcome:"+evidence.OutcomeID.String())
-	operationPlanAdvanceNextPendingPhase(phases)
-	plan["phases"] = mapsToInterfaceSlice(phases)
-	if operationPlanPhasesTerminal(plan, phases) {
-		plan["status"], plan["pending_next_action"] = operationPlanStatusCompleted, "none"
-	} else {
-		plan["status"], plan["pending_next_action"] = operationPlanStatusRunning, "continue_next_plan_phase"
-	}
-	return true
 }
 
 func connectorPlanEffects(plan, invocation map[string]any) []map[string]any {

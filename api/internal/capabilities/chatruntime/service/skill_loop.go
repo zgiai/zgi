@@ -243,9 +243,11 @@ func (s *service) runPreparedToolLoop(
 	onTerminalStateGuardDecision := skillLoopTerminalStateGuardDecision(prepared)
 	onTerminalCompletion := skillLoopTerminalCompletionResult(prepared)
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
-		Prepared:                       loopPrepared,
-		Resolved:                       resolved,
-		OmitPlanningTools:              nativeLoop && !skills.HasNonResidentSkill(resolved),
+		Prepared: loopPrepared,
+		Resolved: resolved,
+		// Any run that can call tools beyond the resident ones can keep a
+		// checklist (ADR 0049).
+		OmitPlanningTools:              nativeLoop && !skills.HasNonResidentSkill(resolved) && len(runtimeTools) == 0,
 		UnifiedSkillDispatch:           nativeLoop && unifiedSkillDispatchEnabled(),
 		NativeToolSet:                  nativeToolSet,
 		NativeSkillSession:             nativeSkillSession,
