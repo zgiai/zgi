@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -125,6 +126,10 @@ type RuntimeService struct {
 	approvalNotifier TaskApprovalNotifier
 	// channelConnectors decides connector confirmations from channel replies.
 	channelConnectors ChannelConnectorConfirmer
+	// undeliveredCursor is where the next undelivered-run sweep resumes, so
+	// queued runs whose delivery is still live never hide later ones.
+	undeliveredMu     sync.Mutex
+	undeliveredCursor *queuedRunCursor
 	now               func() time.Time
 }
 
@@ -1458,7 +1463,9 @@ func (s *RuntimeService) Reconcile(ctx context.Context) error {
 // failUndeliveredRuns settles queued runs whose delivery was archived before
 // any worker claimed them: retries ran out or no worker had the handler. The
 // run would otherwise stay queued forever, since the stale sweep only covers
-// runs a worker started.
+// runs a worker started. Each sweep resumes after the last run it inspected
+// and starts over once it reaches the end, so a batch of runs that stay
+// queued with a live delivery cannot keep later archived runs from a check.
 func (s *RuntimeService) failUndeliveredRuns(ctx context.Context, updatedBefore time.Time, limit int) error {
 	store, ok := s.store.(undeliveredRunStore)
 	if !ok {
@@ -1468,9 +1475,16 @@ func (s *RuntimeService) failUndeliveredRuns(ctx context.Context, updatedBefore 
 	if !ok {
 		return nil
 	}
-	runs, err := store.ListQueuedRuns(ctx, updatedBefore, limit)
+	s.undeliveredMu.Lock()
+	defer s.undeliveredMu.Unlock()
+	runs, err := store.ListQueuedRuns(ctx, updatedBefore, s.undeliveredCursor, limit)
 	if err != nil {
 		return err
+	}
+	if len(runs) < limit {
+		s.undeliveredCursor = nil
+	} else if last := runs[len(runs)-1]; last != nil {
+		s.undeliveredCursor = &queuedRunCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
 	}
 	var combined error
 	for _, run := range runs {

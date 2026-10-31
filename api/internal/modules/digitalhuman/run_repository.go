@@ -47,8 +47,15 @@ type runWaitingStore interface {
 // undeliveredRunStore is an optional persistence extension for settling
 // queued runs whose queue delivery was archived before a worker claimed them.
 type undeliveredRunStore interface {
-	ListQueuedRuns(context.Context, time.Time, int) ([]*Run, error)
+	ListQueuedRuns(context.Context, time.Time, *queuedRunCursor, int) ([]*Run, error)
 	FailQueuedRun(context.Context, uuid.UUID, string, string, time.Time) (bool, error)
+}
+
+// queuedRunCursor is the keyset position of the last queued run a sweep
+// inspected, in (updated_at, id) order.
+type queuedRunCursor struct {
+	UpdatedAt time.Time
+	ID        uuid.UUID
 }
 
 // runtimeInputFollowUpStore is an optional persistence extension used by the
@@ -355,12 +362,15 @@ func (r *GormRepository) FailRun(ctx context.Context, runID uuid.UUID, code, mes
 	})
 }
 
-// ListQueuedRuns returns the oldest runs no worker has claimed since before
-// updatedBefore.
-func (r *GormRepository) ListQueuedRuns(ctx context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
+// ListQueuedRuns returns runs no worker has claimed since before updatedBefore,
+// in (updated_at, id) order and after the cursor when one is given.
+func (r *GormRepository) ListQueuedRuns(ctx context.Context, updatedBefore time.Time, after *queuedRunCursor, limit int) ([]*Run, error) {
 	runs := make([]*Run, 0, limit)
-	if err := r.db.WithContext(ctx).Where("status = ? AND updated_at < ?", RunStatusQueued, updatedBefore).
-		Order("updated_at ASC, id ASC").Limit(limit).Find(&runs).Error; err != nil {
+	query := r.db.WithContext(ctx).Where("status = ? AND updated_at < ?", RunStatusQueued, updatedBefore)
+	if after != nil {
+		query = query.Where("(updated_at > ? OR (updated_at = ? AND id > ?))", after.UpdatedAt, after.UpdatedAt, after.ID)
+	}
+	if err := query.Order("updated_at ASC, id ASC").Limit(limit).Find(&runs).Error; err != nil {
 		return nil, fmt.Errorf("list queued DigitalHuman runs: %w", err)
 	}
 	return runs, nil

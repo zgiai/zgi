@@ -2,6 +2,9 @@ package digitalhuman
 
 import (
 	"context"
+	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,23 +16,42 @@ import (
 
 type archivingRunDispatcher struct {
 	*fakeRunDispatcher
-	archived  map[uuid.UUID]bool
-	inspected []uuid.UUID
+	archived   map[uuid.UUID]bool
+	unreadable map[uuid.UUID]bool
+	inspected  []uuid.UUID
 }
 
 func (d *archivingRunDispatcher) RunDeliveryArchived(_ context.Context, runID uuid.UUID) (bool, error) {
 	d.inspected = append(d.inspected, runID)
+	if d.unreadable[runID] {
+		return false, errors.New("queue inspection failed")
+	}
 	return d.archived[runID], nil
 }
 
-func (s *fakeRunStore) ListQueuedRuns(_ context.Context, updatedBefore time.Time, limit int) ([]*Run, error) {
-	runs := make([]*Run, 0, limit)
+func (s *fakeRunStore) ListQueuedRuns(_ context.Context, updatedBefore time.Time, after *queuedRunCursor, limit int) ([]*Run, error) {
+	runs := make([]*Run, 0, len(s.runs))
 	for _, run := range s.runs {
-		if run.Status == RunStatusQueued && run.UpdatedAt.Before(updatedBefore) && len(runs) < limit {
-			runs = append(runs, run)
+		if run.Status != RunStatusQueued || !run.UpdatedAt.Before(updatedBefore) {
+			continue
 		}
+		if after != nil && compareQueuedRun(run, after) <= 0 {
+			continue
+		}
+		runs = append(runs, run)
+	}
+	slices.SortFunc(runs, func(a, b *Run) int { return compareQueuedRun(a, &queuedRunCursor{UpdatedAt: b.UpdatedAt, ID: b.ID}) })
+	if len(runs) > limit {
+		runs = runs[:limit]
 	}
 	return runs, nil
+}
+
+func compareQueuedRun(run *Run, cursor *queuedRunCursor) int {
+	if c := run.UpdatedAt.Compare(cursor.UpdatedAt); c != 0 {
+		return c
+	}
+	return strings.Compare(run.ID.String(), cursor.ID.String())
 }
 
 func (s *fakeRunStore) FailQueuedRun(_ context.Context, runID uuid.UUID, code, message string, now time.Time) (bool, error) {
@@ -84,6 +106,44 @@ func TestRuntimeServiceFailsQueuedRunWhoseDeliveryWasArchived(t *testing.T) {
 	}
 }
 
+// A full batch of old runs whose deliveries are live or unreadable must not
+// keep a later archived run from ever being checked.
+func TestRuntimeServiceUndeliveredSweepReachesRunsBeyondOneBatch(t *testing.T) {
+	store := newFakeRunStore()
+	now := time.Date(2026, 10, 31, 8, 0, 0, 0, time.UTC)
+	service := newTestRuntimeService(t, store, &fakeRunDispatcher{}, &fakeDigitalHumanChat{})
+	service.now = func() time.Time { return now }
+	dispatcher := &archivingRunDispatcher{fakeRunDispatcher: &fakeRunDispatcher{}, archived: map[uuid.UUID]bool{}, unreadable: map[uuid.UUID]bool{}}
+	service.dispatcher = dispatcher
+	base := now.Add(-time.Hour)
+	for i := 0; i < defaultOutboxBatch; i++ {
+		run := &Run{ID: uuid.New(), Status: RunStatusQueued, UpdatedAt: base.Add(time.Duration(i) * time.Second)}
+		store.runs[run.ID] = run
+		if i%2 == 1 {
+			dispatcher.unreadable[run.ID] = true
+		}
+	}
+	late := &Run{ID: uuid.New(), Status: RunStatusQueued, UpdatedAt: base.Add(time.Duration(defaultOutboxBatch) * time.Second)}
+	store.runs[late.ID] = late
+	dispatcher.archived[late.ID] = true
+
+	updatedBefore := now.Add(-undeliveredRunWindow)
+	for sweep := 0; sweep < 2; sweep++ {
+		_ = service.failUndeliveredRuns(t.Context(), updatedBefore, defaultOutboxBatch)
+	}
+	if late.Status != RunStatusFailed || late.ErrorCode != runQueueUnavailableCode {
+		t.Fatalf("run after a full unresolved batch = %s %q, want failed with %s", late.Status, late.ErrorCode, runQueueUnavailableCode)
+	}
+
+	// The sweep starts over after reaching the end, so earlier runs are
+	// checked again on a later pass.
+	inspected := len(dispatcher.inspected)
+	_ = service.failUndeliveredRuns(t.Context(), updatedBefore, defaultOutboxBatch)
+	if len(dispatcher.inspected) != inspected+defaultOutboxBatch {
+		t.Fatalf("third sweep inspected %d runs, want the first %d again", len(dispatcher.inspected)-inspected, defaultOutboxBatch)
+	}
+}
+
 func TestGormRepositoryFailQueuedRunKeepsClaimedRuns(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
 	if err != nil {
@@ -105,9 +165,13 @@ func TestGormRepositoryFailQueuedRunKeepsClaimedRuns(t *testing.T) {
 		}
 	}
 
-	listed, err := repo.ListQueuedRuns(t.Context(), now.Add(-time.Minute), 10)
+	listed, err := repo.ListQueuedRuns(t.Context(), now.Add(-time.Minute), nil, 10)
 	if err != nil || len(listed) != 1 || listed[0].ID != queued.ID {
 		t.Fatalf("ListQueuedRuns() = %v, %v, want only the old queued run", listed, err)
+	}
+	listed, err = repo.ListQueuedRuns(t.Context(), now.Add(-time.Minute), &queuedRunCursor{UpdatedAt: queued.UpdatedAt, ID: queued.ID}, 10)
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("ListQueuedRuns(after the last run) = %v, %v, want none", listed, err)
 	}
 	failed, err := repo.FailQueuedRun(t.Context(), queued.ID, runQueueUnavailableCode, runQueueUnavailableMessage, now)
 	if err != nil || !failed {
@@ -135,6 +199,53 @@ func TestGormRepositoryFailQueuedRunKeepsClaimedRuns(t *testing.T) {
 	}
 	if claimed.Status != RunStatusRunning {
 		t.Fatalf("running run = %s, want running", claimed.Status)
+	}
+}
+
+func TestGormRepositoryListQueuedRunsPagesByKeyset(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, _ := db.DB()
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&Run{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(db)
+	now := time.Date(2026, 10, 31, 8, 0, 0, 0, time.UTC)
+	// Two runs share a timestamp so the id breaks the tie across pages.
+	shared := now.Add(-time.Hour)
+	want := map[uuid.UUID]bool{}
+	for _, updatedAt := range []time.Time{shared, shared, shared.Add(time.Second), shared.Add(2 * time.Second), shared.Add(3 * time.Second)} {
+		run := storedRun(RunStatusQueued, updatedAt)
+		if err := db.Create(run).Error; err != nil {
+			t.Fatal(err)
+		}
+		want[run.ID] = true
+	}
+
+	seen := map[uuid.UUID]bool{}
+	var cursor *queuedRunCursor
+	for page := 0; page < 3; page++ {
+		runs, err := repo.ListQueuedRuns(t.Context(), now, cursor, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, run := range runs {
+			if seen[run.ID] {
+				t.Fatalf("page %d repeated run %s", page, run.ID)
+			}
+			seen[run.ID] = true
+		}
+		if len(runs) == 0 {
+			break
+		}
+		last := runs[len(runs)-1]
+		cursor = &queuedRunCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
+	}
+	if len(seen) != len(want) {
+		t.Fatalf("paged %d runs, want %d", len(seen), len(want))
 	}
 }
 
