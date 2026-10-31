@@ -499,48 +499,29 @@ func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[
 		result["href"],
 		event["href"],
 	))
-	phaseText := firstOpenOperationPlanPhaseText(metadata)
-	for _, skillID := range preferredBusinessSkillsForRoute(route, phaseText) {
+	// The plan's next step names its skill; the page's usual skills are the
+	// fallback. The step's wording is not read (ADR 0047).
+	if skillID := operationPlanPreferredBusinessSkillID(metadata); skillID != "" && skillIDEnabled(parts.SkillIDs, skillID) {
+		return skillID
+	}
+	for _, skillID := range preferredBusinessSkillsForRoute(route) {
 		if skillIDEnabled(parts.SkillIDs, skillID) {
 			return skillID
 		}
 	}
-	if skillID := operationPlanPreferredBusinessSkillID(metadata); skillID != "" && skillIDEnabled(parts.SkillIDs, skillID) {
-		return skillID
-	}
 	return ""
 }
 
-func preferredBusinessSkillsForRoute(route string, phaseText string) []string {
+func preferredBusinessSkillsForRoute(route string) []string {
 	route = strings.ToLower(strings.TrimSpace(route))
-	phaseText = strings.ToLower(strings.TrimSpace(phaseText))
 	switch {
 	case strings.HasPrefix(route, "/console/agents"):
 		return []string{skills.SkillAgentManagement}
 	case strings.HasPrefix(route, "/console/files"):
-		switch {
-		case containsAnyFold(phaseText, "续写", "生成", "创建", "撰写", "generate", "write", "create"):
-			return []string{skills.SkillFileGenerator, skills.SkillFileReader, skills.SkillFileManager}
-		case containsAnyFold(phaseText, "保存", "删除", "移动", "导入", "save", "delete", "move", "import"):
-			return []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator}
-		default:
-			return []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator}
-		}
+		return []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator}
 	default:
 		return nil
 	}
-}
-
-func firstOpenOperationPlanPhaseText(metadata map[string]interface{}) string {
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	for _, phase := range mapSliceFromAny(plan["phases"]) {
-		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
-		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
-			continue
-		}
-		return strings.TrimSpace(firstNonEmptyString(phase["step"], phase["title"], phase["note"]))
-	}
-	return ""
 }
 
 func operationPlanPreferredBusinessSkillID(metadata map[string]interface{}) string {
@@ -566,16 +547,6 @@ func operationPlanPreferredBusinessSkillID(metadata map[string]interface{}) stri
 		}
 	}
 	return ""
-}
-
-func containsAnyFold(value string, candidates ...string) bool {
-	value = strings.ToLower(value)
-	for _, candidate := range candidates {
-		if strings.Contains(value, strings.ToLower(strings.TrimSpace(candidate))) {
-			return true
-		}
-	}
-	return false
 }
 
 func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) {
