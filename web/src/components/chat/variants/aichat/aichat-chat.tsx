@@ -239,6 +239,12 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
   slate: 'hsl(215 20% 45%)',
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
+const AICHAT_WAITING_FOR_PERSON_STATUSES: ReadonlySet<AIChatMessage['status']> = new Set([
+  'waiting_approval',
+  'waiting_question',
+  'waiting_client_action',
+  'waiting_budget',
+]);
 const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
 
 type PendingVisionReplayAction =
@@ -780,6 +786,14 @@ export function AIChatShell({
       : null;
   }, [activeConversation?.current_leaf_message_id, activeMessages]);
   const contextBlocked = Boolean(contextBlockedMessage);
+  // A turn paused for the person (an approval, a question, a page action or
+  // more budget) is idle on the server but not finished, so nothing queued may
+  // be sent over it.
+  const leafWaitingForPerson = useMemo(() => {
+    const leafId = activeConversation?.current_leaf_message_id;
+    const leaf = leafId ? activeMessages.find(message => message.id === leafId) : undefined;
+    return Boolean(leaf && AICHAT_WAITING_FOR_PERSON_STATUSES.has(leaf.status));
+  }, [activeConversation?.current_leaf_message_id, activeMessages]);
   const messageActionsLocked = Boolean(
     activeWorkflowApprovalRequest || isConversationTransitioning || contextBlocked
   );
@@ -1171,6 +1185,7 @@ export function AIChatShell({
       isSending ||
       pendingUserMessage ||
       activeWorkflowApprovalRequest ||
+      leafWaitingForPerson ||
       activeQueuedTurns.length === 0
     ) {
       return;
@@ -1193,6 +1208,7 @@ export function AIChatShell({
     activeQueuedTurns,
     activeWorkflowApprovalRequest,
     isSending,
+    leafWaitingForPerson,
     pendingUserMessage,
     removeQueuedTurn,
     sendOrdinaryTurn,
