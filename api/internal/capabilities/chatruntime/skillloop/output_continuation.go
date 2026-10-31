@@ -3,6 +3,7 @@ package skillloop
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -28,13 +29,14 @@ const (
 func (r *Runner) runNativeAgentRoundContinuing(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool, suppressNaturalProgress bool, outputTokenLimit int) (planningResult, error) {
 	result, err := r.runNativeAgentRound(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress)
 	contextMessages := result.contextMessages
+	attemptUsage := result.usage
 	// A max_tokens set in the model parameters limits the answer, so an
 	// answer that reaches it is not continued past it.
 	configuredLimit := planningReq.MaxTokens != nil && *planningReq.MaxTokens > 0
 	for attempt := 1; attempt <= maxOutputContinuations && isPlanningOutputLimitError(err); attempt++ {
 		partial := result.message
 		text := assistantMessageText(partial)
-		continuing := len(normalizeToolCalls(partial.ToolCalls)) == 0 && strings.TrimSpace(text) != ""
+		continuing := len(normalizeToolCalls(partial.ToolCalls)) == 0 && strings.TrimSpace(text) != "" && !outputLimitSpentOutOfSight(partial, attemptUsage)
 		if continuing && configuredLimit {
 			break
 		}
@@ -46,6 +48,11 @@ func (r *Runner) runNativeAgentRoundContinuing(ctx context.Context, prepared *Pr
 				{Role: "system", Content: continueAnswerNotice},
 			}
 		} else {
+			if result.answerStreamed && strings.TrimSpace(text) != "" {
+				// The discarded response's text reached the user; the retry
+				// writes its own.
+				r.emitAnswerRetract(ctx, prepared, text)
+			}
 			current := planningReq.MaxTokens
 			if effective := r.diagnostics.requestBudget.effectiveMaxTokens; effective > 0 {
 				current = &effective
@@ -62,6 +69,7 @@ func (r *Runner) runNativeAgentRoundContinuing(ctx context.Context, prepared *Pr
 			"continuing_answer", continuing,
 		)
 		nextResult, nextErr := r.runNativeAgentRound(ctx, prepared, next, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress)
+		attemptUsage = nextResult.usage
 		nextResult.usage = mergeUsage(result.usage, nextResult.usage)
 		if continuing {
 			nextText := assistantMessageText(nextResult.message)
@@ -108,4 +116,19 @@ func withoutAppendedMessages(messages, appended, fallback []adapter.Message) []a
 		}
 	}
 	return messages[:len(messages)-len(appended)]
+}
+
+// outputLimitSpentOutOfSight reports that most of a cut-off response's output
+// went somewhere the message does not show. Some providers stream a tool call
+// only once it is complete, so a call cut off by the limit leaves just the note
+// written before it; hidden reasoning can use up the limit the same way. Such a
+// response is sent again with a larger limit: continuing the note would only
+// repeat it. A token is at least one character of text, so the visible output
+// is generously counted in characters.
+func outputLimitSpentOutOfSight(message adapter.Message, usage *adapter.Usage) bool {
+	if usage == nil || usage.CompletionTokens <= 0 {
+		return false
+	}
+	visible := utf8.RuneCountInString(assistantMessageText(message)) + utf8.RuneCountInString(message.ReasoningContent)
+	return visible*2 < usage.CompletionTokens
 }

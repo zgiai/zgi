@@ -22,6 +22,7 @@ A round whose output stops at the limit continues, at most twice:
 2. **A response cut off inside a tool call, or before any output, is discarded.**
    - It is sent again with a larger output limit: double the current one, at least 8,192 tokens, and no more than the model's output limit.
    - A notice asks for a compact response, with large content split over several tool calls.
+   - Some providers stream a tool call only once it is complete, so a call cut off by the limit leaves just the note written before it. A response whose visible text and reasoning together are fewer characters than half its output tokens is treated the same way, instead of continuing the note. Text of the discarded response that reached the user is retracted. (Found with claude-sonnet-5 through an Anthropic-protocol proxy, whose adapter default limit is 1,024 tokens: the continuation repeated the note and the turn ended without the file.)
 3. **Later rounds see no trace of the continuation.** The cut-off output and the notices are left out of the history, which holds only the joined result.
 4. **After two continuations, the turn fails as before** with `agent_output_truncated`, and keeps the answer streamed so far.
 

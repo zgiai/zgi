@@ -566,6 +566,59 @@ func TestRunnerNativeAgentLoopContinuesAnAnswerCutOffAsText(t *testing.T) {
 	}
 }
 
+// A response whose output went mostly where the message does not show, such as
+// a tool call the provider streams only when complete, is sent again with a
+// larger limit instead of continuing the note before it (ADR 0041).
+func TestRunnerNativeAgentLoopRetriesOutputSpentOutOfSight(t *testing.T) {
+	runtime := skills.NewRuntime(nil, nil)
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: "prompt-only", RuntimeType: skills.SkillRuntimeTypePrompt},
+		Instructions: "Answer concisely.",
+	}}}
+	toolSet := runtime.BuildNativeToolSet(context.Background(), resolved, skills.NativeToolSetOptions{BudgetChars: 10000})
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Checked; now writing the file."}, FinishReason: "max_tokens"}},
+			Usage:   &adapter.Usage{PromptTokens: 100, CompletionTokens: 1024, TotalTokens: 1124},
+		},
+		{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Done."}, FinishReason: "stop"}}},
+	}}
+	runner := &Runner{LLMClient: fakeLLM, SkillRuntime: runtime, AppContext: &llmclient.AppContext{}}
+	prepared := NewPreparedChat("conv-hidden", "msg-hidden", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Write a 400-row CSV file"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:      prepared,
+		Resolved:      resolved,
+		NativeToolSet: &toolSet,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("answer = %q, want the retried response without the cut-off note", answer)
+	}
+	retry := fakeLLM.appChatRequests[1]
+	if retry.MaxTokens == nil || *retry.MaxTokens < 8192 || !strings.Contains(assistantMessageText(retry.Messages[len(retry.Messages)-1]), retryToolCallNotice) {
+		t.Fatalf("retry request = %#v, want a larger output limit and the retry notice", retry)
+	}
+}
+
+func TestOutputLimitSpentOutOfSightComparesVisibleOutputWithTokens(t *testing.T) {
+	note := adapter.Message{Content: "Checked; now writing the file."}
+	if !outputLimitSpentOutOfSight(note, &adapter.Usage{CompletionTokens: 1024}) {
+		t.Fatal("a short note that used the whole limit was not flagged")
+	}
+	long := adapter.Message{Content: strings.Repeat("The report goes on. ", 150)}
+	if outputLimitSpentOutOfSight(long, &adapter.Usage{CompletionTokens: 1024}) {
+		t.Fatal("a long answer cut off as text was flagged")
+	}
+	if outputLimitSpentOutOfSight(note, nil) {
+		t.Fatal("a response without usage was flagged")
+	}
+}
+
 // An answer that reaches a max_tokens set in the model parameters is not
 // continued past it (ADR 0041).
 func TestRunnerNativeAgentLoopKeepsAConfiguredAnswerLimit(t *testing.T) {
