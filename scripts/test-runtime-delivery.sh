@@ -113,5 +113,7 @@ if MOCK_PNPM_FAIL=lint "${gate[@]}" --web; then echo "lint failure did not stop 
 : >"$TEST_CALLS"
 "${gate[@]}" --web
 [[ "$(tail -1 "$TEST_CALLS")" == 'pnpm build' ]]
-[[ "$(wc -l <"$TEST_CALLS")" == 8 ]]
+# Every command the --web gate lists runs, however many tests it gains.
+web_commands="$(awk '/^  --web\)/,/;;/' "$repo_root/scripts/check-runtime-delivery.sh" | grep -c '^ *pnpm ')"
+[[ "$web_commands" -gt 1 && "$(wc -l <"$TEST_CALLS")" == "$web_commands" ]]
 echo 'runtime-delivery preflight and fail-fast tests passed'
