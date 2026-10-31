@@ -112,15 +112,20 @@ sidebar.publish(approval('new', 2));
 assert.equal(sidebar.getSnapshot().id, 'new', 'the latest approval is shown');
 assert.equal(page.getSnapshot(), null, 'another chat does not see it');
 assert.equal(notified, 2);
-assert.ok(sidebar.getVersion() > versionAtStart);
+// Publishing does not move the version: the timeline publishes on every
+// render, and a reader re-rendering on each publish would loop.
+assert.equal(sidebar.getVersion(), versionAtStart);
 
 const restore = sidebar.dismiss(approval('new', 2));
+const versionAfterDismissal = sidebar.getVersion();
+assert.ok(versionAfterDismissal > versionAtStart, 'a dismissal moves the version');
 assert.equal(sidebar.isDismissed('new'), true);
 assert.equal(page.isDismissed('new'), false, 'a dismissal stays in its chat');
 assert.equal(sidebar.getSnapshot().id, 'old');
 sidebar.publish(approval('new', 2));
 assert.equal(sidebar.getSnapshot().id, 'old', 'a dismissed approval is not published again');
 restore();
+assert.ok(sidebar.getVersion() > versionAfterDismissal, 'undoing a dismissal moves the version');
 assert.equal(sidebar.isDismissed('new'), false);
 assert.equal(sidebar.getSnapshot().id, 'new', 'restoring brings it back');
 

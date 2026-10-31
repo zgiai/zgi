@@ -64,7 +64,11 @@ export interface ToolGovernancePendingApprovalScope {
   isDismissed: (approvalId: string) => boolean;
   subscribe: (listener: () => void) => () => void;
   getSnapshot: () => ToolGovernancePendingApproval | null;
-  /** Changes on every publish and dismissal, for readers of isDismissed. */
+  /**
+   * Changes when a dismissal is made or undone, for readers of isDismissed.
+   * Publishing does not change it: the timeline publishes on every render, and
+   * a reader that re-rendered on each publish would loop.
+   */
   getVersion: () => number;
 }
 
@@ -84,7 +88,6 @@ export function createToolGovernancePendingApprovalScope(): ToolGovernancePendin
       return right.sequence - left.sequence;
     })[0];
     snapshot = latest?.approval ?? null;
-    version += 1;
     listeners.forEach(listener => listener());
   };
 
@@ -103,9 +106,11 @@ export function createToolGovernancePendingApprovalScope(): ToolGovernancePendin
     dismiss: approval => {
       dismissed.add(approval.id);
       entries.delete(approval.id);
+      version += 1;
       emit();
       return () => {
         dismissed.delete(approval.id);
+        version += 1;
         scope.publish(approval);
       };
     },

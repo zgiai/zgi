@@ -790,11 +790,19 @@ export function AIChatShell({
     const leafId = activeConversation?.current_leaf_message_id;
     return leafId ? (activeMessages.find(message => message.id === leafId)?.status ?? null) : null;
   }, [activeConversation?.current_leaf_message_id, activeMessages]);
-  const publishedToolApproval = useSyncExternalStore(
+  // Only the published approval's identity matters here; reading the approval
+  // object itself would re-render on every publish.
+  const publishedToolApprovalKey = useSyncExternalStore(
     toolGovernanceApprovalScope.subscribe,
-    toolGovernanceApprovalScope.getSnapshot,
-    () => null
+    () => {
+      const approval = toolGovernanceApprovalScope.getSnapshot();
+      return approval ? JSON.stringify([approval.conversationId ?? '', approval.id]) : '';
+    },
+    () => ''
   );
+  const [publishedToolApprovalConversationId, publishedToolApprovalId] = publishedToolApprovalKey
+    ? (JSON.parse(publishedToolApprovalKey) as [string, string])
+    : ['', ''];
   // One answer to "what must the person resolve now" (ADR 0050). A turn paused
   // for the person is idle on the server but not finished, so nothing queued
   // is sent over it and its messages are not regenerated or edited meanwhile.
@@ -802,10 +810,10 @@ export function AIChatShell({
     leafStatus: activeLeafStatus,
     workflowApproval: Boolean(activeWorkflowApprovalRequest),
     toolApprovalId:
-      publishedToolApproval &&
-      (!publishedToolApproval.conversationId ||
-        publishedToolApproval.conversationId === activeConversationId)
-        ? publishedToolApproval.id
+      publishedToolApprovalId &&
+      (!publishedToolApprovalConversationId ||
+        publishedToolApprovalConversationId === activeConversationId)
+        ? publishedToolApprovalId
         : null,
     hasQuestion: Boolean(activeUserInputRequest?.questions?.length),
     questionRequestId: activeUserInputRequest?.request_id,
