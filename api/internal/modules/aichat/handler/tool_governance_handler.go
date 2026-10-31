@@ -73,7 +73,7 @@ func (h *Handler) ContinueToolGovernanceDecision(c *gin.Context) {
 		return
 	}
 
-	setupSSE(c)
+	defer setupSSE(c).Close()
 	_, err = h.service.RunToolGovernanceDecisionStream(c.Request.Context(), scope, conversationID, messageID, correlationID, req, func(event runtimeservice.StreamEvent) error {
 		return writeStreamEvent(c, event)
 	})
@@ -117,7 +117,7 @@ func (h *Handler) ContinueClientAction(c *gin.Context) {
 		return
 	}
 
-	setupSSE(c)
+	defer setupSSE(c).Close()
 	_, err = h.service.RunClientActionContinuationStream(c.Request.Context(), scope, conversationID, messageID, actionID, req, func(event runtimeservice.StreamEvent) error {
 		return writeStreamEvent(c, event)
 	})

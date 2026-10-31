@@ -684,7 +684,7 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	setupAgentSSE(c)
+	defer setupAgentSSE(c).Close()
 	err = h.chatRuntimeService.StreamConversationEventsForCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
