@@ -3,9 +3,29 @@ import type {
   AIChatGeneratedFile,
   AIChatMessageMetadata,
   AIChatSkillInvocation,
+  AIChatToolGovernanceDecision,
   AIChatUserInputResponse,
 } from '@/services/types/aichat';
 import { type AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat/types';
+
+/**
+ * Reports that a call carries a real governance decision. A call the governance
+ * policy never saw, such as a page navigation, may still arrive with an empty
+ * governance object; it is an ordinary tool call, not a decision to show.
+ */
+export function hasToolGovernanceDecision(
+  governance: AIChatToolGovernanceDecision | null | undefined
+): boolean {
+  if (!governance || typeof governance !== 'object') return false;
+  return Boolean(
+    governance.status ||
+      governance.correlation_id ||
+      governance.approval_status ||
+      governance.approval_event ||
+      governance.manifest ||
+      typeof governance.requires_approval === 'boolean'
+  );
+}
 
 interface RedisStreamEventIdParts {
   timestamp: number;

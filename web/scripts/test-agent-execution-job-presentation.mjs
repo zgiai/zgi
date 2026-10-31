@@ -138,10 +138,26 @@ const selectorsAst = ts.createSourceFile(
   ts.ScriptTarget.Latest,
   true
 );
-const selectorsSource = selectorsAst.statements
-  .filter(statement => !ts.isImportDeclaration(statement))
-  .map(statement => statement.getText(selectorsAst))
-  .join('\n');
+// The selectors call this governance check from the shared reducers on the
+// timeline paths tested here, so its real source is included with them.
+const sharedText = await readFile(
+  new URL('../src/components/chat/controllers/aichat/reducers/shared.ts', import.meta.url),
+  'utf8'
+);
+const sharedAst = ts.createSourceFile('shared.ts', sharedText, ts.ScriptTarget.Latest, true);
+const sharedHelpers = sharedAst.statements
+  .filter(
+    statement =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === 'hasToolGovernanceDecision'
+  )
+  .map(statement => statement.getText(sharedAst).replace(/^export /, ''));
+assert.equal(sharedHelpers.length, 1, 'hasToolGovernanceDecision must stay in reducers/shared.ts');
+const selectorsSource = [
+  ...sharedHelpers,
+  ...selectorsAst.statements
+    .filter(statement => !ts.isImportDeclaration(statement))
+    .map(statement => statement.getText(selectorsAst)),
+].join('\n');
 const selectorsCompiled = ts.transpileModule(selectorsSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;

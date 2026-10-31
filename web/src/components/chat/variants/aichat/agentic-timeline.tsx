@@ -3082,8 +3082,9 @@ function buildToolGovernanceDecisionViewModel(
     effect === 'external_send' ||
     riskLevel === 'high' ||
     riskLevel === 'critical';
-  const isAllowed =
-    !needsApproval && !approvalStatus && governanceDecisionStatus(item) === 'allowed';
+  // A call that ran successfully passed governance, so it reads as allowed, not
+  // as something still waiting on the person.
+  const isAllowed = !needsApproval && !approvalStatus && isFinalGovernanceOutcome(item);
   const correlationId = governanceItemCorrelationId(item) ?? '';
   const canSubmit = needsApproval && Boolean(correlationId) && Boolean(onToolGovernanceDecision);
 
@@ -3105,8 +3106,20 @@ function buildToolGovernanceDecisionViewModel(
 
   // The pending approval shows this sentence and nothing of the reason: a market tool that asks
   // for its cost alone says so here, or the person approves without knowing why they are asked.
+  // Without an effect or asset to describe, the tool's own name says more
+  // than a generic "run this tool".
+  const describedAction = governanceActionSentence(
+    item,
+    approvalAssets,
+    assetCount,
+    t,
+    locale,
+    skillDisplayById
+  );
   const actionSentence = withMarketCostReason(
-    governanceActionSentence(item, approvalAssets, assetCount, t, locale, skillDisplayById),
+    describedAction === t('consoleChat.governance.approvalPanel.generic') && toolLabel
+      ? toolLabel
+      : describedAction,
     rawReason,
     values => t('consoleChat.governance.approvalPanel.withMarketCost', values)
   );
