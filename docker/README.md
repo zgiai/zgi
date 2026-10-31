@@ -159,6 +159,17 @@ Host ports can be changed in `docker/.env`:
 - Redis: `${REDIS_HOST_PORT:-6381}`
 - Weaviate: `${WEAVIATE_PORT:-18080}`
 
+Public gateway request body limit (`/v1`, `/anthropic`, `/v1beta`):
+
+- API: `LLM_GATEWAY_REQUEST_BODY_LIMIT_MB` in `docker/.env` (MiB, default `100`).
+  Compose passes it to the API, and it overrides the same key in `api/.env.docker`.
+  Invalid or non-positive values fall back to `100` and log a warning.
+- Edge: `client_max_body_size 100m` and `client_body_timeout 300s` on those
+  locations in `nginx/nginx.conf`. This file is not templated; when raising the
+  API limit above 100, raise `client_max_body_size` to match and recreate nginx.
+- Over-limit requests get a JSON `413` with code `llm.request.too_large` from
+  either layer.
+
 Application images can also be changed in `docker/.env` with `API_IMAGE_NAME`,
 `WEB_IMAGE_NAME`, `SANDBOX_IMAGE_NAME`, `RUNNER_IMAGE_NAME`, and `IMAGE_TAG`.
 This lets sibling worktrees reuse the same images while keeping compose project

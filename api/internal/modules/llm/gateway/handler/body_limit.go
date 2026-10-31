@@ -4,16 +4,53 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/pkg/apperror"
 	apptransport "github.com/zgiai/zgi/api/pkg/apperror/transport"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-const defaultGatewayRequestBodyLimit int64 = 10 << 20
+const (
+	// GatewayRequestBodyLimitEnv names the setting that caps public gateway
+	// request bodies, in MiB.
+	GatewayRequestBodyLimitEnv = "LLM_GATEWAY_REQUEST_BODY_LIMIT_MB"
+	// DefaultGatewayRequestBodyLimitMB is used when the setting is unset or invalid.
+	DefaultGatewayRequestBodyLimitMB int64 = 100
+
+	defaultGatewayRequestBodyLimit int64 = DefaultGatewayRequestBodyLimitMB << 20
+)
+
+// GatewayRequestBodyLimitBytes converts the raw LLM_GATEWAY_REQUEST_BODY_LIMIT_MB
+// value to bytes. An empty value uses the default; a value that is not a
+// positive whole number of MiB (or would overflow) falls back to the default
+// and logs a warning, so a typo never takes the gateway down.
+func GatewayRequestBodyLimitBytes(raw string) int64 {
+	return resolveGatewayRequestBodyLimit(raw, logger.Warn)
+}
+
+func resolveGatewayRequestBodyLimit(raw string, warn func(msg string, args ...interface{})) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultGatewayRequestBodyLimit
+	}
+	mb, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || mb <= 0 || mb > math.MaxInt64>>20 {
+		if warn != nil {
+			warn("invalid gateway request body limit, using default",
+				"env", GatewayRequestBodyLimitEnv,
+				"value", raw,
+				"default_mb", DefaultGatewayRequestBodyLimitMB)
+		}
+		return defaultGatewayRequestBodyLimit
+	}
+	return mb << 20
+}
 
 // GatewayBodyLimit rejects oversized public LLM protocol requests before API
 // key lookup, JSON parsing, model discovery, routing, or billing.

@@ -701,6 +701,9 @@ const (
 	envLLMGuardOutboundDNS = "LLM_GUARD_OUTBOUND_DNS"
 	// envLLMAllowPrivateBaseURL allows Ollama to target private or localhost base URLs. Default: false.
 	envLLMAllowPrivateBaseURL = "LLM_ALLOW_PRIVATE_BASE_URL"
+	// envLLMGatewayRequestBodyLimitMB caps public gateway request bodies (/v1, /anthropic, /v1beta) in MiB.
+	// Default: 100. Invalid or non-positive values fall back to the default with a warning.
+	envLLMGatewayRequestBodyLimitMB = "LLM_GATEWAY_REQUEST_BODY_LIMIT_MB"
 
 	// Automation dispatch behavior.
 	// envAutomationDispatchEnabled controls whether this API instance registers automation due-task dispatch. Default: true.
