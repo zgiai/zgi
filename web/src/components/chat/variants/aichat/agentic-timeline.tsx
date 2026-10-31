@@ -4137,22 +4137,40 @@ function timelineRenderItem(
   }
 }
 
+/**
+ * The timeline items a message shows as rows, live or reloaded (ADR 0050).
+ * Pure, so tests can check that a turn shows the same rows either way.
+ */
+export function visibleTimelineItems(
+  timeline: AIChatAgenticTimelineItem[],
+  messageStatus: AIChatMessage['status'] | undefined,
+  enableToolGovernanceApprovals: boolean
+): AIChatAgenticTimelineItem[] {
+  const governanceCorrelationIds = new Set(
+    timeline
+      .flatMap(item =>
+        item.type === 'tool_governance_decision' ? [governanceItemCorrelationId(item)] : []
+      )
+      .filter((correlationId): correlationId is string => Boolean(correlationId))
+  );
+  return filterTimelineForRendering(
+    timeline.filter(item => !isAgentMemoryNotice(item)),
+    messageStatus,
+    governanceCorrelationIds,
+    enableToolGovernanceApprovals
+  );
+}
+
 function buildTimelineRenderItems(
   timeline: AIChatAgenticTimelineItem[],
   skillDisplayById: AIChatSkillDisplayMap,
   locale: string,
   t: WebappTranslator,
   messageStatus: AIChatMessage['status'] | undefined,
-  governanceCorrelationIds: ReadonlySet<string>,
   enableToolGovernanceApprovals: boolean,
   recoveredInvalidArgumentTimelineItemIds: ReadonlySet<string>
 ): TimelineRenderItem[] {
-  return filterTimelineForRendering(
-    timeline.filter(item => !isAgentMemoryNotice(item)),
-    messageStatus,
-    governanceCorrelationIds,
-    enableToolGovernanceApprovals
-  ).map(item =>
+  return visibleTimelineItems(timeline, messageStatus, enableToolGovernanceApprovals).map(item =>
     timelineRenderItem(
       item,
       skillDisplayById,
@@ -4481,18 +4499,6 @@ export function AIChatAgenticTimeline({
     };
   }, [pendingApprovalScope, pendingGovernanceApprovals]);
 
-  const governanceCorrelationIds = useMemo(
-    () =>
-      new Set(
-        timeline
-          .flatMap(item =>
-            item.type === 'tool_governance_decision' ? [governanceItemCorrelationId(item)] : []
-          )
-          .filter((correlationId): correlationId is string => Boolean(correlationId))
-      ),
-    [timeline]
-  );
-
   const recoveredInvalidArgumentTimelineItemIds = useMemo(
     () => findRecoveredInvalidArgumentTimelineItemIds(timeline),
     [timeline]
@@ -4506,13 +4512,11 @@ export function AIChatAgenticTimeline({
         locale,
         t,
         messageStatus,
-        governanceCorrelationIds,
         enableToolGovernanceApprovals,
         recoveredInvalidArgumentTimelineItemIds
       ),
     [
       enableToolGovernanceApprovals,
-      governanceCorrelationIds,
       locale,
       messageStatus,
       recoveredInvalidArgumentTimelineItemIds,

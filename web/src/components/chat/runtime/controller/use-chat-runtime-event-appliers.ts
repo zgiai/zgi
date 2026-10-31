@@ -124,7 +124,7 @@ function shouldRefreshConversationAfterMessageEnd(
   return false;
 }
 
-function clientActionProgressPayload(
+export function clientActionProgressPayload(
   payload: AIChatClientActionRequiredEventData | AIChatClientActionResultEventData,
   phase: AIChatAgentProgressEventData['phase']
 ): AIChatAgentProgressEventData | null {

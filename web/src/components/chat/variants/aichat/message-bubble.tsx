@@ -66,10 +66,7 @@ import type {
   AIChatAgenticTimelineItem,
   AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat';
-import {
-  sanitizeTimelineForMessage,
-  timelineFromAIChatMessage,
-} from '@/components/chat/controllers/aichat/selectors';
+import { messageDisplayTimeline } from '@/components/chat/controllers/aichat/selectors';
 import {
   debugAIChatTimeline,
   summarizeAIChatTimeline,
@@ -1365,18 +1362,10 @@ export function AIChatMessageBubble({
               : null;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
-  const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
-    () => timelineFromAIChatMessage(message),
-    [message]
-  );
   const runtimeTimeline = timeline;
   const displayTimeline = useMemo(
-    () =>
-      sanitizeTimelineForMessage(
-        message,
-        runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline
-      ),
-    [historicalTimeline, message, runtimeTimeline]
+    () => messageDisplayTimeline(message, runtimeTimeline),
+    [message, runtimeTimeline]
   );
   useEffect(() => {
     debugAIChatTimeline('render:message_bubble', {
@@ -1384,17 +1373,14 @@ export function AIChatMessageBubble({
       conversation_id: message.conversation_id,
       status: message.status,
       answer_len: displayAnswer.length,
-      historical_count: historicalTimeline.length,
       runtime_count: runtimeTimeline.length,
       display_count: displayTimeline.length,
-      historical: summarizeAIChatTimeline(historicalTimeline),
       runtime: summarizeAIChatTimeline(runtimeTimeline),
       display: summarizeAIChatTimeline(displayTimeline),
     });
   }, [
     displayAnswer.length,
     displayTimeline,
-    historicalTimeline,
     message.conversation_id,
     message.id,
     message.status,

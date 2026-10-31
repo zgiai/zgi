@@ -1126,6 +1126,8 @@ export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
 export interface AIChatToolGovernanceDecisionEventData extends Record<string, unknown> {
   conversation_id: string;
   message_id: string;
+  runtime_id?: string;
+  invocation_id?: string;
   skill_id?: string;
   tool_name?: string;
   status?: AIChatToolGovernanceDecisionStatus;

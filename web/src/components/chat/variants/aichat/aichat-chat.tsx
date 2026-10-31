@@ -36,8 +36,7 @@ import {
   selectIsLoadingOlderMessages,
   selectIsStopping,
   shouldTreatConversationAsRunning,
-  mergeRuntimeTimelineWithMessageTimeline,
-  timelineFromAIChatMessage,
+  messageDisplayTimeline,
 } from '@/components/chat/controllers/aichat/selectors';
 import { applyConnectorRuntimeResolutionState } from '@/components/chat/controllers/aichat/state-reducers';
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
@@ -1667,12 +1666,11 @@ export function AIChatShell({
     if (!leafMessageId) return null;
     const leafMessage = activeMessages.find(message => message.id === leafMessageId) ?? null;
     if (!leafMessage || leafMessage.status !== 'waiting_approval') return null;
-    const persistedTimeline = timelineFromAIChatMessage(leafMessage);
     const streamingTimeline =
       streamingByMessageId[leafMessage.id]?.conversation_id === activeConversation.id
         ? streamingByMessageId[leafMessage.id]?.timeline
         : undefined;
-    const timeline = mergeRuntimeTimelineWithMessageTimeline(persistedTimeline, streamingTimeline);
+    const timeline = messageDisplayTimeline(leafMessage, streamingTimeline);
     const approval = resolvePendingToolGovernanceApprovalFromTimeline(
       timeline,
       skillDisplayById,
