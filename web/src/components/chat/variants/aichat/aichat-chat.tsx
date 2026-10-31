@@ -553,10 +553,10 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
-  const enableToolGovernanceApprovals =
-    surface === 'agent-webapp' ||
-    ((surface === 'aichat' || surface === 'agent-draft') &&
-      Boolean(controller.continueToolGovernanceDecision));
+  // Approvals follow what the transport can continue, not the surface name:
+  // a DigitalHuman chat that pauses for approval needs the card as much as an
+  // Agent does, and a preview transport that cannot continue shows none.
+  const enableToolGovernanceApprovals = controller.supportsToolGovernanceApproval;
   const showToolGovernancePermissionControl =
     surface === 'aichat' &&
     effectiveRuntimeSurface === 'contextual_sidebar' &&

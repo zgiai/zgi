@@ -278,6 +278,7 @@ export function useChatRuntimeController(options?: {
     isStopping: viewModel.isStopping,
     isSending: viewModel.isSending,
     supportsRuntimeInput: Boolean(transportRef.current.supportsRuntimeInput),
+    supportsToolGovernanceApproval: Boolean(transportRef.current.continueToolGovernanceDecision),
     canSubmitRuntimeInput: Boolean(
       transportRef.current.supportsRuntimeInput &&
         viewModel.activeConversation?.runtime_status === 'streaming' &&
