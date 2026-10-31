@@ -26,7 +26,7 @@ In use it does little:
   - Continuation prompts push the model to call `update_plan`.
 - **Built for built-in skills:** acceptance effects, evidence keys and result summaries are hard-coded for console navigation, file and Agent-management tools, so custom skills and connectors get none of it. Intent branches the server never sets, duplicate phase logic in the service and skill loop, and fields nothing reads remain.
 
-Mature agents use a plan differently. Claude Code's TodoWrite and Codex's `update_plan` are the same idea:
+Mature agents use a plan differently. Widely used coding agents share one design:
 
 - **Shape:** a flat checklist of steps with a status, replaced whole on each call, with at most one step in progress.
 - **Ownership:** the model owns it, and the runtime does not validate it.
