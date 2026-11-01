@@ -800,6 +800,11 @@ type chatRequestParts struct {
 	ModelName                        string
 	Provider                         string
 	ProviderPtr                      *string
+	// CatalogProvider is the provider the model catalog names for ModelName.
+	// It decides how the model is called (streaming) when the request names
+	// no provider, as a DigitalHuman's configured model does; it never
+	// changes routing.
+	CatalogProvider                  string
 	RoutingStrategy                  string
 	Parameters                       map[string]interface{}
 	ContextControl                   map[string]interface{}

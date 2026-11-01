@@ -116,7 +116,7 @@ func (s *service) runPreparedToolLoop(
 	loopPrepared := skillloop.NewPreparedChat(
 		prepared.Conversation.ID.String(),
 		prepared.Message.ID.String(),
-		prepared.parts.Provider,
+		modelCallProvider(prepared.parts),
 		prepared.parts.SkillMode,
 		prepared.LLMRequest,
 	)
@@ -2537,6 +2537,19 @@ func nativeProjectionReservedToolNames(runtimeTools []skillloop.RuntimeTool) []s
 		}
 	}
 	return append(names, skillloop.ContextArtifactToolName)
+}
+
+// modelCallProvider names the provider the tool loop calls, which decides
+// whether the model streams. A request that names only a model, as a
+// DigitalHuman run does, uses the provider the model catalog gives it.
+func modelCallProvider(parts *chatRequestParts) string {
+	if parts == nil {
+		return ""
+	}
+	if provider := strings.TrimSpace(parts.Provider); provider != "" {
+		return provider
+	}
+	return parts.CatalogProvider
 }
 
 func contextualTurnCurrentPage(parts *chatRequestParts) string {
