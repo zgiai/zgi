@@ -230,7 +230,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		return nil, fmt.Errorf("failed to create adapter: %w", adapterErr)
 	}
 
-	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection, false)
 
 	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
 		return nil, err
@@ -470,7 +470,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		return nil, fmt.Errorf("failed to create adapter: %w", err)
 	}
 
-	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection, true)
 
 	if normalizedReq.StreamOptions == nil {
 		normalizedReq.StreamOptions = &adapter.StreamOptions{IncludeUsage: true}
