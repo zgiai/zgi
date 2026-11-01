@@ -9,7 +9,14 @@ import {
   parseConnectorRuntimeExecutionResult,
   resolveConnectorRuntimeDecision,
 } from '../src/components/connectors/runtime/connector-runtime-model.ts';
-import { ConnectorRuntimeDecisionTransport } from '../src/components/connectors/runtime/connector-runtime-transport.ts';
+import {
+  ConnectorRuntimeDecisionTransport,
+  isConnectorRuntimeDecisionRejected,
+} from '../src/components/connectors/runtime/connector-runtime-transport.ts';
+import {
+  connectorConfirmationIsOneShot,
+  parseConnectorConfirmationPresentation,
+} from '../src/components/connectors/runtime/connector-confirmation-presentation.ts';
 
 const confirmationResult = {
   state: 'requires_confirmation',
@@ -373,6 +380,79 @@ const rememberedResult = await remembered.submit({
 assert.equal(rememberedResult.state, 'completed');
 assert.equal(rememberedResult.remember_for_session, true);
 
+// A one-shot surface refuses a session grant before anything runs. That
+// refusal leaves the receipt open for a corrected decision; any other failure
+// is still an unknown outcome that consumes it.
+const httpError = (status, code) =>
+  Object.assign(new Error('Request failed'), { response: { status, data: { code } } });
+let rejectedSendCount = 0;
+const rejectedTransport = new ConnectorRuntimeDecisionTransport(async command => {
+  rejectedSendCount += 1;
+  if (command.remember_for_session) {
+    throw httpError(403, 'connector_session_grant_unsupported');
+  }
+  return { state: 'completed', decision_id: 'one-shot' };
+});
+const rejectedCommand = {
+  route_receipt: 'one-shot-receipt',
+  decision: 'confirmed',
+  remember_for_session: true,
+};
+const firstRejected = rejectedTransport.submit(rejectedCommand);
+assert.equal(
+  rejectedTransport.submit(rejectedCommand),
+  firstRejected,
+  'a duplicate click while refused shares the one request'
+);
+await assert.rejects(firstRejected, error => isConnectorRuntimeDecisionRejected(error));
+assert.equal(rejectedTransport.getPhase(rejectedCommand.route_receipt), undefined);
+assert.equal(rejectedTransport.getResult(rejectedCommand.route_receipt), undefined);
+const retried = await rejectedTransport.submit({
+  route_receipt: rejectedCommand.route_receipt,
+  decision: 'confirmed',
+});
+assert.equal(retried.state, 'completed', 'a refused receipt may be confirmed once more');
+await rejectedTransport.submit({
+  route_receipt: rejectedCommand.route_receipt,
+  decision: 'confirmed',
+});
+assert.equal(rejectedSendCount, 2, 'the corrected decision still consumes the receipt');
+
+for (const [label, failure] of [
+  ['timeout', Object.assign(new Error('timeout'), { code: 'ECONNABORTED' })],
+  ['server error', httpError(500, 'connector_internal')],
+  ['other access denial', httpError(403, 'connector_access_denied')],
+  ['code on another status', httpError(409, 'connector_session_grant_unsupported')],
+]) {
+  let sends = 0;
+  const transport = new ConnectorRuntimeDecisionTransport(async () => {
+    sends += 1;
+    throw failure;
+  });
+  const command = { route_receipt: `locked-${label}`, decision: 'confirmed' };
+  assert.equal((await transport.submit(command)).state, 'transport_unconfirmed', label);
+  assert.equal((await transport.submit(command)).state, 'transport_unconfirmed', label);
+  assert.equal(sends, 1, `${label} must never be replayed`);
+}
+
+assert.equal(connectorConfirmationIsOneShot({ version: 1, preview: null, one_shot: true }), true);
+assert.equal(connectorConfirmationIsOneShot({ version: 1, preview: null }), false);
+const oneShotPreview = {
+  account_name: 'ops',
+  account_identity: 'ops@example.com',
+  kind: 'resource',
+  complete: true,
+  fields: [{ label: 'Command', label_i18n: {}, value: 'uptime', truncated: false }],
+};
+assert.ok(
+  parseConnectorConfirmationPresentation({ version: 1, preview: oneShotPreview, one_shot: true }),
+  'a one-shot presentation keeps its preview'
+);
+assert.equal(
+  parseConnectorConfirmationPresentation({ version: 1, preview: oneShotPreview, one_shot: 'yes' }),
+  null
+);
+
 const root = process.cwd();
 const source = relativePath => readFileSync(path.join(root, relativePath), 'utf8');
 const confirmationSource = source(
@@ -447,7 +527,7 @@ assert.match(contractSource, /route_receipt: string;/);
 assert.match(contractSource, /decision: ConnectorRuntimeConfirmationDecision;/);
 assert.match(transportSource, /pendingByReceipt/);
 assert.match(transportSource, /settledByReceipt/);
-assert.match(transportSource, /\.catch\(\(\) => unknownResult/);
+assert.match(transportSource, /return unknownResult\(command\.route_receipt\);\n {6}\}\)/);
 assert.match(chatSource, /<ConnectorRuntimeSurface/);
 assert.match(chatSource, /parseConnectorRuntimeExecutionResult/);
 assert.match(chatHostSource, /recoverStreamingConversation/);
@@ -464,6 +544,8 @@ assert.match(streamSource, /connector_confirmation_required/);
 assert.match(streamSource, /connector_confirmation_resolved/);
 assert.match(streamSource, /error_code: envelope\.error_code/);
 assert.match(dialogBridgeSource, /rememberForSession/);
+assert.match(dialogBridgeSource, /allowRememberForSession: allowsSessionGrant/);
+assert.match(dialogBridgeSource, /runtime\.confirmation\.sessionGrantUnsupported/);
 assert.doesNotMatch(connectorRuntimeSource, /localStorage|sessionStorage|components\/integrations/);
 assert.doesNotMatch(`${surfaceSource}\n${confirmationSource}`, /connectorService|axios|fetch\(/);
 assert.doesNotMatch(blockedSource, /onClick|onDecision|confirmAction|cancelAction/);

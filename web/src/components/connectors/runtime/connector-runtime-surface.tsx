@@ -10,6 +10,7 @@ import {
 import { useT } from '@/i18n/translations';
 import { localizeConnectorRuntimeConfirmation } from '@/components/connectors/connector-metadata';
 import { useConnectorRuntimeReceipt } from './use-runtime-receipt';
+import { isConnectorRuntimeDecisionRejected } from './connector-runtime-transport';
 import type {
   ConnectorRuntimeConfirmation,
   ConnectorRuntimeDecisionHandler,
@@ -46,17 +47,21 @@ function connectorRuntimePendingApproval({
   locale,
   preview,
   verified,
+  allowsSessionGrant,
   conversationId,
   messageId,
   scope,
   onDecision,
+  onRejected,
   t,
 }: ConnectorRuntimeDialogApprovalBridgeProps & {
   confirmation: ConnectorRuntimeConfirmation;
   locale: string;
   preview: ReturnType<typeof useConnectorRuntimeReceipt>['preview'];
   verified: boolean;
+  allowsSessionGrant: boolean;
   scope: string;
+  onRejected: () => void;
   t: ReturnType<typeof useT<'connectors'>>;
 }): ToolGovernancePendingApproval {
   return {
@@ -89,20 +94,32 @@ function connectorRuntimePendingApproval({
     permissionLabel: null,
     canSubmit: verified && Boolean(preview?.complete),
     isHighImpact: result.confirmation.risk_classification === 'high',
+    allowRememberForSession: allowsSessionGrant,
     onSubmitDecision: async (action, rememberForSession) => {
       if (action === 'approve' && !preview?.complete) {
         throw new Error(t('runtime.confirmation.previewUnavailable'));
       }
       const decision = action === 'approve' ? 'confirmed' : 'cancelled';
-      await onDecision(
-        {
-          route_receipt: result.confirmation.route_receipt,
-          decision,
-          ...(action === 'approve' && rememberForSession ? { remember_for_session: true } : {}),
-        },
-        scope,
-        action === 'approve' ? rememberForSession : false
-      );
+      const remember = action === 'approve' && allowsSessionGrant && rememberForSession;
+      try {
+        await onDecision(
+          {
+            route_receipt: result.confirmation.route_receipt,
+            decision,
+            ...(remember ? { remember_for_session: true } : {}),
+          },
+          scope,
+          remember
+        );
+      } catch (error) {
+        // Refused before anything ran: the receipt stays open for a one-shot
+        // decision, and a fresh status read hides the session option.
+        if (isConnectorRuntimeDecisionRejected(error)) {
+          onRejected();
+          throw new Error(t('runtime.confirmation.sessionGrantUnsupported'));
+        }
+        throw error;
+      }
       // The Chat host records transport_unconfirmed as an explicit unknown
       // terminal so the original approval panel can close without offering a
       // duplicate send. A later status refresh may replace that projection.
@@ -150,18 +167,22 @@ export function ConnectorRuntimeDialogApprovalBridge({
         locale,
         preview: receipt.preview,
         verified,
+        allowsSessionGrant: receipt.allowsSessionGrant,
         conversationId,
         messageId,
         scope: receipt.scope,
         onDecision,
+        onRejected: () => void checkReceipt().catch(() => undefined),
         t,
       }),
     [
+      checkReceipt,
       confirmation,
       conversationId,
       locale,
       messageId,
       onDecision,
+      receipt.allowsSessionGrant,
       receipt.preview,
       receipt.scope,
       result,

@@ -2,7 +2,10 @@
 
 import { useCallback, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { parseConnectorConfirmationPresentation } from './connector-confirmation-presentation';
+import {
+  connectorConfirmationIsOneShot,
+  parseConnectorConfirmationPresentation,
+} from './connector-confirmation-presentation';
 import type { ConnectorConfirmationPreview } from '@/services/types/connector';
 import { useAuthStore } from '@/store/auth-store';
 import { useOrganizationStore } from '@/store/organization-store';
@@ -19,6 +22,7 @@ export function useConnectorRuntimeReceipt(receipt: string) {
   const [presentation, setPresentation] = useState<{
     identity: string;
     preview: ConnectorConfirmationPreview | null;
+    oneShot: boolean;
   }>();
   const [readFailure, setReadFailure] = useState<{ identity: string }>();
   const phase = useSyncExternalStore(
@@ -43,7 +47,11 @@ export function useConnectorRuntimeReceipt(receipt: string) {
         return;
       }
       const { presentation: payload, ...status } = response.data;
-      setPresentation({ identity, preview: parseConnectorConfirmationPresentation(payload) });
+      setPresentation({
+        identity,
+        preview: parseConnectorConfirmationPresentation(payload),
+        oneShot: connectorConfirmationIsOneShot(payload),
+      });
       setReadFailure(undefined);
       if (status.resolution === 'unresolved' && Object.keys(status).length === 1) {
         return;
@@ -69,6 +77,8 @@ export function useConnectorRuntimeReceipt(receipt: string) {
   return {
     scope,
     preview: presentation?.identity === identity ? presentation.preview : null,
+    // Until the status is read the session grant is not offered.
+    allowsSessionGrant: presentation?.identity === identity && !presentation.oneShot,
     phase,
     result: connectorRuntimeDecisionTransport.getResult(receipt, scope),
     readFailed: readFailure?.identity === identity,

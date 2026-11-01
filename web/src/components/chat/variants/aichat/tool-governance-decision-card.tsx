@@ -41,6 +41,11 @@ export interface ToolGovernancePendingApproval {
   permissionLabel?: string | null;
   canSubmit: boolean;
   isHighImpact: boolean;
+  /**
+   * Whether the host can remember the approval for the session. A one-shot
+   * host (a DigitalHuman confirmation) sets false; the option is then hidden.
+   */
+  allowRememberForSession?: boolean;
   createdAt?: number;
   onSubmitDecision?: (
     action: ToolGovernanceDecisionAction,
@@ -500,6 +505,7 @@ export function ToolGovernanceApprovalPanel({
   );
   const [resolvedAction, setResolvedAction] = useState<ToolGovernanceDecisionAction | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const allowRememberForSession = approval.allowRememberForSession !== false;
   const submitEnabled =
     approval.canSubmit &&
     Boolean(approval.onSubmitDecision) &&
@@ -545,7 +551,10 @@ export function ToolGovernanceApprovalPanel({
         approval,
         pendingApprovalScope
       );
-      await approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false);
+      await approval.onSubmitDecision(
+        action,
+        action === 'approve' && allowRememberForSession ? rememberForSession : false
+      );
     } catch (error) {
       if (isAIChatContinuationLikelyStarted(error)) {
         return;
@@ -627,17 +636,19 @@ export function ToolGovernanceApprovalPanel({
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <label className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-          <Checkbox
-            checked={rememberForSession}
-            onCheckedChange={checked => setRememberForSession(checked === true)}
-            disabled={Boolean(submittingAction || resolvedAction)}
-          />
-          <span className="min-w-0 break-words">
-            {t('consoleChat.governance.approvalPanel.rememberForSession')}
-          </span>
-        </label>
-        <div className="flex shrink-0 items-center gap-2">
+        {allowRememberForSession ? (
+          <label className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+            <Checkbox
+              checked={rememberForSession}
+              onCheckedChange={checked => setRememberForSession(checked === true)}
+              disabled={Boolean(submittingAction || resolvedAction)}
+            />
+            <span className="min-w-0 break-words">
+              {t('consoleChat.governance.approvalPanel.rememberForSession')}
+            </span>
+          </label>
+        ) : null}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <Button
             type="button"
             size="sm"

@@ -174,6 +174,11 @@ func TestConnectorRuntimeConfirmationRouteProjectsOwnerAndInternalErrorsSafely(t
 			wantStatus: http.StatusForbidden, wantCode: connectorcore.ErrorCodeAccessDenied,
 		},
 		{
+			name:       "session grant on a one-shot surface",
+			err:        connectorcore.NewError(connectorcore.ErrorCodeSessionGrantUnsupported, false, nil),
+			wantStatus: http.StatusForbidden, wantCode: connectorcore.ErrorCodeSessionGrantUnsupported,
+		},
+		{
 			name: "unstructured internal", err: errors.New(connectorRuntimeConfirmationRouteSecret),
 			wantStatus: http.StatusInternalServerError, wantCode: connectorcore.ErrorCodeInternal,
 		},

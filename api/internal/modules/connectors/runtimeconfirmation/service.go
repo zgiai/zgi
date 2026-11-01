@@ -203,12 +203,12 @@ func (service *Service) Continue(ctx context.Context, command Command) (Result, 
 	// The surface is selected only by the trusted frozen origin. Remembering a
 	// session grant is a Chat/Agent/Workflow governance preference that the
 	// DigitalHuman surface never supports: execution ignores session grants for
-	// it, the UI never offers the flag, and the host resumes exactly one pinned
-	// run. Reject the forged preference against the restored origin before the
-	// durable host guard or Router.Route so no continuation state can resolve
-	// credentials, invoke a provider, or mint a session grant. The error is
-	// deliberately sanitized.
-	if err := rejectDigitalHumanSessionGrant(command, continuation.Frozen.Origin); err != nil {
+	// it, the status presentation marks the confirmation one-shot so the UI does
+	// not offer the flag, and the host resumes exactly one pinned run. Reject the
+	// preference against the restored origin before the durable host guard or
+	// Router.Route so no continuation state can resolve credentials, invoke a
+	// provider, or mint a session grant.
+	if err := service.rejectDigitalHumanSessionGrant(ctx, command, continuation, decider); err != nil {
 		return Result{}, err
 	}
 	if continuation.State != execution.ConfirmationContinuationPending {
@@ -458,15 +458,32 @@ func authorizeFrozenRequest(command Command, frozen execution.FrozenConfirmation
 // preference when the trusted frozen origin is a DigitalHuman surface.
 // DigitalHuman confirmations are always one-shot; only the server-restored
 // origin may select the surface, so a forged remember_for_session flag can
-// never widen governance. Every rejection is a sanitized access-denied error.
-func rejectDigitalHumanSessionGrant(
+// never widen governance.
+//
+// The rejection names its reason so the client can confirm the same receipt
+// again without the preference. The reason reveals the surface, so a decider
+// who is not the owner must first be the run's requester, as for a status
+// read; anyone else gets the sanitized access-denied error.
+func (service *Service) rejectDigitalHumanSessionGrant(
+	ctx context.Context,
 	command Command,
-	origin execution.ConfirmationOrigin,
+	continuation execution.ConfirmationContinuation,
+	decider uuid.UUID,
 ) error {
-	if command.RememberForSession && origin.Surface == core.TargetTypeDigitalHuman {
-		return core.NewError(core.ErrorCodeAccessDenied, false, nil)
+	if !command.RememberForSession || continuation.Frozen.Origin.Surface != core.TargetTypeDigitalHuman {
+		return nil
 	}
-	return nil
+	if decider != continuation.Frozen.Request.OwnerAccountID {
+		request, err := digitalHumanGuardRequest(continuation)
+		if err != nil || service.digitalHumanGuard == nil {
+			return core.NewError(core.ErrorCodeAccessDenied, false, nil)
+		}
+		request.DeciderID = decider
+		if err := service.digitalHumanGuard.AuthorizeDecider(ctx, request); err != nil {
+			return core.NewError(core.ErrorCodeAccessDenied, false, nil)
+		}
+	}
+	return core.NewError(core.ErrorCodeSessionGrantUnsupported, false, nil)
 }
 
 // authorizeDigitalHumanContinuation runs the fail-closed durable host gate for

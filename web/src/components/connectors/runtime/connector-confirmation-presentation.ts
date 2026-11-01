@@ -19,7 +19,14 @@ export function parseConnectorConfirmationPresentation(
   value: unknown
 ): ConnectorConfirmationPreview | null {
   const envelope = object(value);
-  if (!envelope || !only(envelope, ['version', 'preview']) || envelope.version !== 1) return null;
+  if (
+    !envelope ||
+    !only(envelope, ['version', 'preview', 'one_shot']) ||
+    envelope.version !== 1 ||
+    (envelope.one_shot !== undefined && typeof envelope.one_shot !== 'boolean')
+  ) {
+    return null;
+  }
   const preview = object(envelope.preview);
   if (
     !preview ||
@@ -65,4 +72,12 @@ export function parseConnectorConfirmationPresentation(
     fields,
     complete: preview.complete && Boolean(preview.account_identity) && fields.length > 0,
   };
+}
+
+/**
+ * Whether the server marked the confirmation one-shot: its surface
+ * (DigitalHuman) confirms each operation once and rejects a session grant.
+ */
+export function connectorConfirmationIsOneShot(value: unknown): boolean {
+  return object(value)?.one_shot === true;
 }

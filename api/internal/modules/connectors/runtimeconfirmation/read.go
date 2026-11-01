@@ -28,6 +28,10 @@ type StatusResult struct {
 type Presentation struct {
 	Version int                            `json:"version"`
 	Preview *execution.ConfirmationPreview `json:"preview"`
+	// OneShot marks a confirmation whose surface confirms each operation once
+	// (DigitalHuman), so the client does not offer to remember it for the
+	// session. It comes from the trusted frozen origin.
+	OneShot bool `json:"one_shot,omitempty"`
 }
 
 type PendingResult struct {
@@ -90,7 +94,10 @@ func (service *Service) ReadStatus(ctx context.Context, query StatusQuery) (Stat
 	}
 	var presentation *Presentation
 	if query.PresentationVersion == 1 {
-		presentation = &Presentation{Version: 1, Preview: continuation.Frozen.Preview}
+		presentation = &Presentation{
+			Version: 1, Preview: continuation.Frozen.Preview,
+			OneShot: continuation.Frozen.Origin.Surface == core.TargetTypeDigitalHuman,
+		}
 	}
 	if continuation.State == execution.ConfirmationContinuationPending {
 		return StatusResult{Resolution: "unresolved", Presentation: presentation}, nil

@@ -18,6 +18,42 @@ function unknownResult(routeReceipt: string): ConnectorRuntimeDecisionResult {
   return { route_receipt: routeReceipt, state: 'transport_unconfirmed' };
 }
 
+/**
+ * Error codes the server returns only before a decision is routed: nothing
+ * ran, so the receipt stays open and may be decided again.
+ */
+const PRE_ROUTING_REJECTIONS = new Set(['connector_session_grant_unsupported']);
+
+/** The server refused a decision before anything ran; the receipt is not consumed. */
+export class ConnectorRuntimeDecisionRejectedError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(code);
+    this.name = 'ConnectorRuntimeDecisionRejectedError';
+    this.code = code;
+  }
+}
+
+export function isConnectorRuntimeDecisionRejected(
+  error: unknown
+): error is ConnectorRuntimeDecisionRejectedError {
+  return error instanceof ConnectorRuntimeDecisionRejectedError;
+}
+
+// Only an HTTP response that carries a pre-routing code proves nothing ran.
+// A timeout, a dropped connection or any other error stays an unknown outcome.
+function preRoutingRejection(error: unknown): string | null {
+  const response =
+    error && typeof error === 'object'
+      ? (error as { response?: { status?: unknown; data?: unknown } }).response
+      : undefined;
+  const data = response?.data;
+  const code = data && typeof data === 'object' ? (data as { code?: unknown }).code : undefined;
+  return response?.status === 403 && typeof code === 'string' && PRE_ROUTING_REJECTIONS.has(code)
+    ? code
+    : null;
+}
+
 function validRouteReceipt(value: string): boolean {
   return (
     value.length > 0 &&
@@ -188,16 +224,28 @@ export class ConnectorRuntimeDecisionTransport {
 
     const promise = this.sender(command, scope)
       .then(result => normalizeDecisionResult(command, result))
-      .catch(() => unknownResult(command.route_receipt))
-      .then(result => {
-        this.pendingByReceipt.delete(key);
-        this.settledByReceipt.set(key, {
-          decision: command.decision,
-          result,
-        });
-        this.emit();
-        return result;
-      });
+      .catch(error => {
+        const rejection = preRoutingRejection(error);
+        if (rejection) throw new ConnectorRuntimeDecisionRejectedError(rejection);
+        return unknownResult(command.route_receipt);
+      })
+      .then(
+        result => {
+          this.pendingByReceipt.delete(key);
+          this.settledByReceipt.set(key, {
+            decision: command.decision,
+            result,
+          });
+          this.emit();
+          return result;
+        },
+        error => {
+          // A pre-routing rejection leaves the receipt open for a corrected decision.
+          this.pendingByReceipt.delete(key);
+          this.emit();
+          throw error;
+        }
+      );
     this.pendingByReceipt.set(key, {
       decision: command.decision,
       promise,

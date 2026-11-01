@@ -12,6 +12,9 @@ var (
 	AppCodeApplicationNotReady   = apperror.MustCode("connector.application.not_ready")
 	AppCodeRateLimited           = apperror.MustCode("connector.onboarding.rate_limited")
 	AppCodeFlowExpired           = apperror.MustCode("connector.onboarding.expired")
+	// AppCodeSessionGrantUnsupported keeps the legacy route's 403 and
+	// connector_session_grant_unsupported code; only its message is localized.
+	AppCodeSessionGrantUnsupported = apperror.MustCode("connector.confirmation.session_grant_unsupported")
 )
 
 // CatalogDefinitions owns new Connector errors. Existing Key error wire values
@@ -24,6 +27,7 @@ func CatalogDefinitions() []appcatalog.Definition {
 		appDefinition(AppCodeApplicationNotReady, appcatalog.CategoryConflict, 409, "The application is not available. Check its activation, publication and authorization status.", "应用尚不可用，请检查启用、发布与授权状态。"),
 		appDefinition(AppCodeRateLimited, appcatalog.CategoryRateLimit, 429, "Too many connection requests. Wait before trying again.", "连接请求过于频繁，请稍后再试。"),
 		appDefinition(AppCodeFlowExpired, appcatalog.CategoryConflict, 410, "This registration has expired. Start a new registration when ready.", "本次扫码流程已过期，请重新开始。"),
+		appDefinition(AppCodeSessionGrantUnsupported, appcatalog.CategoryAuthorization, 403, "This confirmation applies to one operation only and cannot be remembered for the session. Confirm it again without remembering.", "此确认仅对本次操作有效，不能在本会话中记住。请取消“记住”后重新确认。"),
 	}, authCatalogDefinitions()...)
 	return append(definitions, executionPresentationDefinitions()...)
 }
@@ -51,6 +55,8 @@ func ApplicationError(err error) (error, bool) {
 		code = AppCodeRateLimited
 	case ErrorCodeFlowExpired:
 		code = AppCodeFlowExpired
+	case ErrorCodeSessionGrantUnsupported:
+		code = AppCodeSessionGrantUnsupported
 	default:
 		return authApplicationError(ErrorCodeOf(err))
 	}

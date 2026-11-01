@@ -972,8 +972,8 @@ func TestServiceContinueDigitalHumanRejectsRememberForSessionBeforeRouting(t *te
 	service := mustRuntimeConfirmationService(t, store, router).
 		WithDigitalHumanContinuationGuard(guard)
 
-	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
-		t.Fatalf("Continue(DigitalHuman remember) error = %v, want access denied", err)
+	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeSessionGrantUnsupported) {
+		t.Fatalf("Continue(DigitalHuman remember) error = %v, want session grant unsupported", err)
 	}
 	if guard.calls != 0 || router.calls != 0 || store.recordCalls != 0 {
 		t.Fatalf(
@@ -995,8 +995,8 @@ func TestServiceContinueDigitalHumanRejectsRememberForSessionInTerminalState(t *
 	router := &runtimeConfirmationRouterSpy{}
 	service := mustRuntimeConfirmationService(t, store, router)
 
-	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeAccessDenied) {
-		t.Fatalf("Continue(DigitalHuman terminal remember) error = %v, want access denied", err)
+	if _, err := service.Continue(context.Background(), command); !core.IsErrorCode(err, core.ErrorCodeSessionGrantUnsupported) {
+		t.Fatalf("Continue(DigitalHuman terminal remember) error = %v, want session grant unsupported", err)
 	}
 	if router.calls != 0 || store.recordCalls != 0 {
 		t.Fatalf("terminal forged remember routed=%d recorded=%d, want 0/0", router.calls, store.recordCalls)

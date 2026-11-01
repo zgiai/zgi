@@ -1342,7 +1342,7 @@ func connectorLegacyError(err error) (int, connectorErrorResponse) {
 		status = http.StatusBadRequest
 	case connectorcore.ErrorCodeNotFound:
 		status = http.StatusNotFound
-	case connectorcore.ErrorCodeAccessDenied:
+	case connectorcore.ErrorCodeAccessDenied, connectorcore.ErrorCodeSessionGrantUnsupported:
 		status = http.StatusForbidden
 	case connectorcore.ErrorCodeConflict, connectorcore.ErrorCodeConnectionNotReady, connectorcore.ErrorCodeTargetNotReady, connectorcore.ErrorCodeOutcomeUnknown:
 		status = http.StatusConflict
@@ -1378,6 +1378,8 @@ func connectorPublicMessage(code connectorcore.ErrorCode) string {
 		return "The target is not ready"
 	case connectorcore.ErrorCodeOutcomeUnknown:
 		return "The operation outcome is unknown"
+	case connectorcore.ErrorCodeSessionGrantUnsupported:
+		return "This confirmation applies to one operation only"
 	default:
 		return "Connector request failed"
 	}

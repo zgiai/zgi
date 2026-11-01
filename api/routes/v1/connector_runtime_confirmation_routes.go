@@ -50,6 +50,9 @@ type ConnectorRuntimeConfirmationRouteDeps struct {
 	Recorder       ConnectorRuntimeConfirmationResolutionRecorder
 	DigitalHuman   ConnectorRuntimeConfirmationContinuer
 	AccountService interfaces.AccountService
+	// ApplicationErrorCatalog localizes cataloged refusals; without it the
+	// route keeps the legacy English message.
+	ApplicationErrorCatalog *appcatalog.Catalog
 }
 
 // RegisterConnectorRuntimeConfirmationRoutes registers authenticated one-shot
@@ -65,6 +68,9 @@ func RegisterConnectorRuntimeConfirmationRoutes(
 		panic("connector runtime confirmation routes require confirmation, recorder, and account services")
 	}
 	handler := &connectorRuntimeConfirmationHandler{service: deps.Service, recorder: deps.Recorder, digitalHuman: deps.DigitalHuman}
+	if deps.ApplicationErrorCatalog != nil {
+		handler.errorProjector, _ = apptransport.NewProjector(deps.ApplicationErrorCatalog)
+	}
 	group := router.Group("")
 	group.Use(middleware.SetupRequired())
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -72,9 +78,10 @@ func RegisterConnectorRuntimeConfirmationRoutes(
 }
 
 type connectorRuntimeConfirmationHandler struct {
-	service      ConnectorRuntimeConfirmationService
-	recorder     ConnectorRuntimeConfirmationResolutionRecorder
-	digitalHuman ConnectorRuntimeConfirmationContinuer
+	service        ConnectorRuntimeConfirmationService
+	recorder       ConnectorRuntimeConfirmationResolutionRecorder
+	digitalHuman   ConnectorRuntimeConfirmationContinuer
+	errorProjector *apptransport.Projector
 }
 
 func (handler *connectorRuntimeConfirmationHandler) register(group *gin.RouterGroup) {
@@ -193,7 +200,7 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 	}
 	result, err := handler.service.Continue(ctx, command)
 	if err != nil {
-		connectorRouteError(c, err)
+		handler.continueError(c, err)
 		return
 	}
 	if err := handler.recordResolution(ctx, command, result); err != nil {
@@ -209,6 +216,20 @@ func (handler *connectorRuntimeConfirmationHandler) continueConfirmation(c *gin.
 		projected.DecisionID = &decisionID
 	}
 	connectorSuccess(c, http.StatusOK, projected)
+}
+
+// continueError keeps the legacy status, code and retryable flag, and takes
+// the public message from the error catalog in the person's language when the
+// code is cataloged.
+func (handler *connectorRuntimeConfirmationHandler) continueError(c *gin.Context, err error) {
+	status, presentation := connectorLegacyError(err)
+	if projectable, ok := connectorcore.ApplicationError(err); ok && handler.errorProjector != nil {
+		locale := appcatalog.Locale(confirmationPresentationLocale(c))
+		projected := handler.errorProjector.ProjectWithRequestID(projectable, locale, c.Writer.Header().Get("X-Request-ID")).Presentation
+		c.Header(apptransport.HeaderApplicationErrorCode, projected.Code.String())
+		presentation.Message = projected.Message
+	}
+	c.JSON(status, presentation)
 }
 
 // recordResolution projects the decision into its host. A DigitalHuman turn
