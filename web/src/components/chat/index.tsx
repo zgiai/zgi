@@ -28,6 +28,7 @@ import type { AvailableModelUseCase, ModelUseCase } from '@/services/types/model
 import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
 import type { AIChatSpeechSynthesizer } from '@/components/chat/variants/aichat/voice/speech-playback';
 import type { AITaskProposalActionPayload } from '@/components/chat/variants/aichat/agentic-timeline';
+import type { AIChatReasoningToggle } from '@/components/chat/variants/aichat/reasoning';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -171,6 +172,7 @@ interface AIChatVariantProps {
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
   showSkillEventDetails?: boolean;
+  reasoningToggle?: AIChatReasoningToggle;
   enableMessageReplay?: boolean;
   messageDensity?: 'default' | 'compact';
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp' | 'digital-human';

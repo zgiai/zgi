@@ -77,6 +77,8 @@ interface AIChatMessageListProps {
   showPlanningPlaceholder?: boolean;
   pendingUserMessage?: AIChatPendingUserMessage | null;
   speechPlayback?: AIChatSpeechPlaybackController;
+  /** Shows the thinking block on assistant messages (ZGI-13). */
+  showReasoning?: boolean;
 }
 
 export interface AIChatPendingUserMessage {
@@ -183,6 +185,7 @@ export function AIChatMessageList({
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
   showPlanningPlaceholder = false,
+  showReasoning = false,
   pendingUserMessage = null,
   speechPlayback,
 }: AIChatMessageListProps) {
@@ -283,6 +286,8 @@ export function AIChatMessageList({
                   enableToolGovernanceApprovals={enableToolGovernanceApprovals}
                   suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
                   speechPlayback={speechPlayback}
+                  showReasoning={showReasoning}
+                  reasoningActive={streamingByMessageId[message.id]?.reasoning_active === true}
                 />
               </div>
             ))}
