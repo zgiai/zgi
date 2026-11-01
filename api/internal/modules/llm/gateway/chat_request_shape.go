@@ -18,7 +18,7 @@ const (
 	// The Anthropic Messages API requires max_tokens, while OpenAI-compatible
 	// upstreams use the model's own output limit when it is omitted. A request
 	// without max_tokens therefore gets the model's catalog limit, bounded so
-	// latency stays reasonable (zgi-pre#2914). The values follow Claude Code:
+	// latency stays reasonable (#2914). The values follow Anthropic's own client defaults:
 	// 32,000 by default, and at most 16,000 without streaming, where the
 	// Anthropic SDKs expect long requests to stream to avoid HTTP timeouts.
 	anthropicDefaultMaxTokens      = 32000
