@@ -1302,8 +1302,14 @@ export function AIChatMessageBubble({
   // only this client sees: the host either resumes the turn (DigitalHuman) or
   // completes the message, and the refresh that follows the decision brings
   // that status. Until then the turn reads as running, so the header and the
-  // open timeline do not flicker to an idle state between the two.
-  const isContinuingAfterDecision = Boolean(connectorWaitingResolved);
+  // open timeline do not flicker to an idle state between the two. An unknown
+  // outcome is not a decision: the POST may never have reached the host, so
+  // nothing is running and no event will end the label; it stays to verify.
+  const isContinuingAfterDecision = Boolean(
+    connectorWaitingResolved &&
+      connectorPhase !== 'transport_unconfirmed' &&
+      connectorPhase !== 'unknown'
+  );
   const isActiveMessage =
     isStreaming || isWaitingForUser || isWaitingForClientAction || isContinuingAfterDecision;
   const isError = message.status === 'error';
