@@ -35,6 +35,11 @@ func (s *RuntimeService) ResumeAfterConnectorConfirmation(ctx context.Context, c
 	if err != nil {
 		return err
 	}
+	summary := ""
+	if result.Presentation != nil {
+		summary = result.Presentation.Summary
+	}
+	s.updateChannelConnectorPrompt(ctx, claim.RunID, claim.MessageID, claim.RouteReceipt, string(claim.State), summary)
 	background := context.WithoutCancel(ctx)
 	go func() {
 		runCtx, cancel := context.WithTimeout(background, runTaskTimeout)

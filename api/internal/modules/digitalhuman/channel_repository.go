@@ -1004,7 +1004,7 @@ func createRunDelivery(ctx context.Context, tx *gorm.DB, run *Run, summary strin
 	}
 	return createRunChannelDelivery(
 		ctx, tx, run, channelruntime.DeliveryKindFinal, "final", math.MaxInt64,
-		summary, channelDeliveryArtifacts(trace), nil, now,
+		summary, channelDeliveryArtifacts(trace), nil, nil, now,
 	)
 }
 
@@ -1033,7 +1033,7 @@ func (r *GormRepository) EnqueueRunChannelDelivery(
 		default:
 			return nil
 		}
-		return createRunChannelDelivery(ctx, tx, &run, kind, deliveryKey, sequence, text, nil, nil, now)
+		return createRunChannelDelivery(ctx, tx, &run, kind, deliveryKey, sequence, text, nil, nil, nil, now)
 	})
 }
 
@@ -1048,7 +1048,7 @@ func (r *GormRepository) EnqueueRunChannelFinalDelivery(
 	text string,
 	now time.Time,
 ) error {
-	return r.EnqueueRunChannelPromptDelivery(ctx, runID, deliveryKey, text, nil, now)
+	return r.EnqueueRunChannelPromptDelivery(ctx, runID, deliveryKey, text, nil, nil, now)
 }
 
 // EnqueueRunChannelPromptDelivery appends a follow-up message that may carry
@@ -1059,6 +1059,7 @@ func (r *GormRepository) EnqueueRunChannelPromptDelivery(
 	deliveryKey string,
 	text string,
 	actions []channelruntime.DeliveryAction,
+	card *channelruntime.DeliveryCard,
 	now time.Time,
 ) error {
 	deliveryKey = strings.TrimSpace(deliveryKey)
@@ -1071,8 +1072,77 @@ func (r *GormRepository) EnqueueRunChannelPromptDelivery(
 		if err := tx.Where("id = ?", runID).Take(&run).Error; err != nil {
 			return err
 		}
-		return createRunChannelDelivery(ctx, tx, &run, channelruntime.DeliveryKindFinal, deliveryKey, math.MaxInt64, text, nil, actions, now)
+		return createRunChannelDelivery(ctx, tx, &run, channelruntime.DeliveryKindFinal, deliveryKey, math.MaxInt64, text, nil, actions, card, now)
 	})
+}
+
+// EnqueueRunChannelPromptUpdate stages an edit of a delivered prompt's card to
+// its decided state. It goes to the prompt's own conversation and installation
+// whatever later messages changed, and a prompt sent without a card has
+// nothing to edit. Each state is staged once.
+func (r *GormRepository) EnqueueRunChannelPromptUpdate(
+	ctx context.Context,
+	runID uuid.UUID,
+	promptKey string,
+	state channelruntime.DeliveryCardState,
+	outcome string,
+	now time.Time,
+) error {
+	promptKey = strings.TrimSpace(promptKey)
+	updateKey := "update:" + promptKey
+	if runID == uuid.Nil || promptKey == "" || utf8.RuneCountInString(updateKey) > 128 || state == "" || state == channelruntime.DeliveryCardPending {
+		return ErrInvalidRequest
+	}
+	var prompt channelruntime.Delivery
+	err := r.db.WithContext(ctx).Where(
+		"run_id = ? AND delivery_kind = ? AND delivery_key = ?", runID, channelruntime.DeliveryKindFinal, promptKey,
+	).Take(&prompt).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load channel prompt delivery: %w", err)
+	}
+	var payload channelDeliveryPayloadData
+	if json.Unmarshal(prompt.Payload, &payload) != nil || payload.Card == nil {
+		return nil
+	}
+	card := *payload.Card
+	card.State, card.Outcome = state, boundedRunes(strings.TrimSpace(outcome), maxChannelDeliveryRunes)
+	promptID := prompt.ID
+	encoded, digest, err := channelDeliveryPayloadData{
+		Kind: channelruntime.DeliveryKindFinal, Text: card.Outcome, Card: &card, EditOf: &promptID,
+	}.encode()
+	if err != nil {
+		return err
+	}
+	update := &channelruntime.Delivery{
+		ID: channelDeliveryStageID(runID, channelruntime.DeliveryKindFinal, updateKey), OrganizationID: prompt.OrganizationID,
+		WorkspaceID: prompt.WorkspaceID, InstallationID: prompt.InstallationID, BindingID: prompt.BindingID,
+		InboundEventID: prompt.InboundEventID, RunID: runID, Kind: channelruntime.DeliveryKindFinal, DeliveryKey: updateKey,
+		Sequence: math.MaxInt64, Provider: prompt.Provider, ConnectionID: prompt.ConnectionID, ActorID: prompt.ActorID,
+		SubjectType: prompt.SubjectType, SubjectID: prompt.SubjectID,
+		ExternalConversationID: prompt.ExternalConversationID, ExternalThreadID: prompt.ExternalThreadID,
+		Payload: encoded, PayloadDigest: digest, Status: channelruntime.DeliveryPending, AvailableAt: now,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(update).Error; err != nil {
+		return fmt.Errorf("create channel prompt update: %w", err)
+	}
+	return nil
+}
+
+// ChannelDeliveryByID loads one delivery for the dispatcher, which edits the
+// prompt an update names.
+func (r *GormRepository) ChannelDeliveryByID(ctx context.Context, id uuid.UUID) (*channelruntime.Delivery, error) {
+	var delivery channelruntime.Delivery
+	if err := r.db.WithContext(ctx).Where("id = ?", id).Take(&delivery).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrChannelNotReady
+		}
+		return nil, fmt.Errorf("load channel delivery: %w", err)
+	}
+	return &delivery, nil
 }
 
 func (r *GormRepository) RunChannelTransientTarget(ctx context.Context, runID uuid.UUID) (*ChannelTransientTarget, error) {
@@ -1185,6 +1255,7 @@ func createRunChannelDelivery(
 	text string,
 	artifacts []channelDeliveryArtifact,
 	actions []channelruntime.DeliveryAction,
+	card *channelruntime.DeliveryCard,
 	now time.Time,
 ) error {
 	var event invocation.Event
@@ -1254,7 +1325,7 @@ func createRunChannelDelivery(
 		return nil
 	}
 	mentions := channelDeliveryMentions(event, kind)
-	payload, digest, err := channelDeliveryPayloadWithActions(kind, text, mentions, actions, artifacts...)
+	payload, digest, err := channelDeliveryPayloadData{Kind: kind, Text: text, Mentions: mentions, Artifacts: artifacts, Actions: actions, Card: card}.encode()
 	if err != nil {
 		return err
 	}
@@ -1477,26 +1548,20 @@ func channelDeliveryPayloadWithMentions(
 	mentions []channelruntime.DeliveryMention,
 	artifacts ...channelDeliveryArtifact,
 ) (datatypes.JSON, string, error) {
-	return channelDeliveryPayloadWithActions(kind, text, mentions, nil, artifacts...)
+	return channelDeliveryPayloadData{Kind: kind, Text: text, Mentions: mentions, Artifacts: artifacts}.encode()
 }
 
-func channelDeliveryPayloadWithActions(
-	kind channelruntime.DeliveryKind,
-	text string,
-	mentions []channelruntime.DeliveryMention,
-	actions []channelruntime.DeliveryAction,
-	artifacts ...channelDeliveryArtifact,
-) (datatypes.JSON, string, error) {
-	if len(actions) > maxChannelDeliveryActions {
-		actions = actions[:maxChannelDeliveryActions]
+func (data channelDeliveryPayloadData) encode() (datatypes.JSON, string, error) {
+	if len(data.Actions) > maxChannelDeliveryActions {
+		data.Actions = data.Actions[:maxChannelDeliveryActions]
 	}
-	if len(artifacts) > maxChannelDeliveryArtifacts {
-		artifacts = artifacts[:maxChannelDeliveryArtifacts]
+	if len(data.Artifacts) > maxChannelDeliveryArtifacts {
+		data.Artifacts = data.Artifacts[:maxChannelDeliveryArtifacts]
 	}
-	if len(mentions) > maxChannelDeliveryMentions {
-		mentions = mentions[:maxChannelDeliveryMentions]
+	if len(data.Mentions) > maxChannelDeliveryMentions {
+		data.Mentions = data.Mentions[:maxChannelDeliveryMentions]
 	}
-	payload, err := json.Marshal(channelDeliveryPayloadData{Kind: kind, Text: text, Mentions: mentions, Artifacts: artifacts, Actions: actions})
+	payload, err := json.Marshal(data)
 	if err != nil {
 		return nil, "", fmt.Errorf("encode channel delivery payload: %w", err)
 	}

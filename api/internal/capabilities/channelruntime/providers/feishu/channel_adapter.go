@@ -64,6 +64,7 @@ func (adapter *ChannelAdapter) Capabilities() channelruntime.ProviderCapabilitie
 		NativeAttachments:          true,
 		MaxAttachmentBytes:         maxChannelFileBytes,
 		ContextRead:                true,
+		Edit:                       adapter.directProviderAvailable(),
 		ProcessingMarker:           adapter.directProviderAvailable(),
 		MessageRoundTripTest:       true,
 		ConversationCapabilityTest: true,
@@ -451,8 +452,39 @@ func (adapter *ChannelAdapter) resolveDirectConnection(ctx context.Context, orga
 	return connection, cleanup, nil
 }
 
-func (*ChannelAdapter) Edit(context.Context, channelruntime.DeliveryRequest, string) (*channelruntime.DeliveryReceipt, error) {
-	return nil, channelruntime.ErrUnsupportedEvent
+// Edit replaces a delivered structured card with its new state. Only cards
+// can be edited: a prompt sent as text, or a request without a card, is left
+// as it is.
+func (adapter *ChannelAdapter) Edit(ctx context.Context, request channelruntime.DeliveryRequest, providerMessageID string) (*channelruntime.DeliveryReceipt, error) {
+	providerMessageID = strings.TrimSpace(providerMessageID)
+	if adapter == nil || !adapter.directProviderAvailable() || request.Card == nil || !validFeishuToken(providerMessageID) ||
+		request.OrganizationID == uuid.Nil || request.WorkspaceID == uuid.Nil || request.InstallationID == uuid.Nil {
+		return nil, channelruntime.ErrUnsupportedEvent
+	}
+	body, ok := buildChannelCard(request)
+	if !ok {
+		return nil, channelruntime.ErrUnsupportedEvent
+	}
+	connection, cleanup, err := adapter.resolveDirectConnection(ctx, request.OrganizationID, request.WorkspaceID, request.InstallationID)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	region, err := feishuRegion(connection)
+	if err != nil {
+		return nil, err
+	}
+	token, tokenMeta, err := adapter.provider.tenantAccessToken(ctx, connection, region)
+	if err != nil {
+		return nil, err
+	}
+	meta, err := adapter.provider.client.patchMessage(ctx, region, token, providerMessageID, map[string]string{"content": body.Content})
+	if err != nil {
+		return nil, err
+	}
+	return &channelruntime.DeliveryReceipt{
+		ProviderMessageID: providerMessageID, ProviderRequestID: firstNonEmpty(meta.RequestID, tokenMeta.RequestID),
+	}, nil
 }
 
 func (*ChannelAdapter) Retract(context.Context, channelruntime.DeliveryRequest, string) error {
