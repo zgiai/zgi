@@ -245,7 +245,9 @@ function DigitalHumanCard({
         </Card>
       </Link>
 
-      {canUpdate ? (
+      {/* Deleting has its own permission, so a role that may delete but not
+          edit still gets the menu with only that action. */}
+      {canUpdate || canDeleteDigitalHuman ? (
         <div className="absolute bottom-2 right-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -258,22 +260,26 @@ function DigitalHumanCard({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
-                <Pencil className="size-4" />
-                {t('basicInfo.edit')}
-              </DropdownMenuItem>
-              <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
-                <MoveRight className="size-4" />
-                {tCommon('assetMove.title')}
-              </DropdownMenuItem>
-              {isPublished ? (
-                <DropdownMenuItem
-                  inset
-                  onSelect={() => setConfirm(isOffline ? 'online' : 'offline')}
-                >
-                  {isOffline ? <Power className="size-4" /> : <PowerOff className="size-4" />}
-                  {isOffline ? t('list.bringOnline') : t('list.takeOffline')}
-                </DropdownMenuItem>
+              {canUpdate ? (
+                <>
+                  <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
+                    <Pencil className="size-4" />
+                    {t('basicInfo.edit')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
+                    <MoveRight className="size-4" />
+                    {tCommon('assetMove.title')}
+                  </DropdownMenuItem>
+                  {isPublished ? (
+                    <DropdownMenuItem
+                      inset
+                      onSelect={() => setConfirm(isOffline ? 'online' : 'offline')}
+                    >
+                      {isOffline ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                      {isOffline ? t('list.bringOnline') : t('list.takeOffline')}
+                    </DropdownMenuItem>
+                  ) : null}
+                </>
               ) : null}
               {canDeleteDigitalHuman ? (
                 <DropdownMenuItem

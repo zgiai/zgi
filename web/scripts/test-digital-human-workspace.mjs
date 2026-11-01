@@ -29,6 +29,16 @@ assert.match(
   'deleting needs the delete permission'
 );
 assert.match(list, /\{canDeleteDigitalHuman \? \(\s*<DropdownMenuItem/);
+assert.match(
+  list,
+  /\{canUpdate \|\| canDeleteDigitalHuman \? \(/,
+  'a role that may delete but not edit still gets the menu'
+);
+assert.match(
+  list,
+  /\{canUpdate \? \(\s*<>\s*<DropdownMenuItem inset onSelect=\{\(\) => setEditOpen\(true\)\}>/,
+  'editing, moving and taking offline stay behind the update permission'
+);
 
 const sidebar = read('components/digital-human/digital-human-sidebar.tsx');
 assert.match(
