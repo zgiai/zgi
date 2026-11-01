@@ -153,6 +153,7 @@
     "test:native-process-commentary": "node scripts/test-native-process-commentary.mjs",
     "test:workspace-role-templates": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-workspace-role-templates.mjs",
     "test:digital-human-console": "node scripts/test-digital-human-console.mjs",
+    "test:digital-human-workspace": "node scripts/test-digital-human-workspace.mjs",
     "test:digital-human-run-status": "node scripts/test-digital-human-run-status.mjs",
     "test:digital-human-create-flow": "node --experimental-strip-types --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-digital-human-create-flow.mjs",
     "test:digital-human-connector-candidates": "node scripts/test-digital-human-connector-candidates.mjs",

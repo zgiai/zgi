@@ -51,6 +51,7 @@ export function DigitalHumanList() {
   const items = list.data?.data?.items ?? [];
   const canCreate = permissions.hasPermission('digital_human.create');
   const canUpdate = permissions.hasPermission('digital_human.update');
+  const canDeleteDigitalHuman = permissions.hasPermission('digital_human.delete');
 
   return (
     <div className="flex h-full flex-col space-y-6 overflow-y-auto p-4 md:p-6 xl:p-8">
@@ -91,7 +92,12 @@ export function DigitalHumanList() {
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
           {items.map(item => (
-            <DigitalHumanCard key={item.id} item={item} canUpdate={canUpdate} />
+            <DigitalHumanCard
+              key={item.id}
+              item={item}
+              canUpdate={canUpdate}
+              canDeleteDigitalHuman={canDeleteDigitalHuman}
+            />
           ))}
         </div>
       )}
@@ -102,9 +108,11 @@ export function DigitalHumanList() {
 function DigitalHumanCard({
   item,
   canUpdate,
+  canDeleteDigitalHuman,
 }: {
   item: DigitalHumanDefinition;
   canUpdate: boolean;
+  canDeleteDigitalHuman: boolean;
 }) {
   const t = useT('digitalHumans');
   const tCommon = useT('common');
@@ -267,23 +275,25 @@ function DigitalHumanCard({
                   {isOffline ? t('list.bringOnline') : t('list.takeOffline')}
                 </DropdownMenuItem>
               ) : null}
-              <DropdownMenuItem
-                inset
-                disabled={!canDelete}
-                onSelect={() => {
-                  if (canDelete) setConfirm('delete');
-                }}
-              >
-                <Trash2 className="size-4" />
-                <span className="flex min-w-0 flex-col">
-                  <span>{t('list.delete')}</span>
-                  {!canDelete ? (
-                    <span className="text-[11px] text-muted-foreground">
-                      {t('list.deleteBlocked')}
-                    </span>
-                  ) : null}
-                </span>
-              </DropdownMenuItem>
+              {canDeleteDigitalHuman ? (
+                <DropdownMenuItem
+                  inset
+                  disabled={!canDelete}
+                  onSelect={() => {
+                    if (canDelete) setConfirm('delete');
+                  }}
+                >
+                  <Trash2 className="size-4" />
+                  <span className="flex min-w-0 flex-col">
+                    <span>{t('list.delete')}</span>
+                    {!canDelete ? (
+                      <span className="text-[11px] text-muted-foreground">
+                        {t('list.deleteBlocked')}
+                      </span>
+                    ) : null}
+                  </span>
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

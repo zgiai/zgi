@@ -9,6 +9,7 @@ const RESOURCE_DETAIL_ROUTES: Array<{ pattern: RegExp; target: string }> = [
   { pattern: /^\/console\/db\/[^/]+(?:\/.*)?$/, target: '/console/db' },
   { pattern: /^\/console\/prompts\/[^/]+(?:\/.*)?$/, target: '/console/prompts' },
   { pattern: /^\/console\/work\/app\/[^/]+(?:\/.*)?$/, target: '/console/work/app' },
+  { pattern: /^\/console\/digital-humans\/[^/]+(?:\/.*)?$/, target: '/console/digital-humans' },
 ];
 
 function buildPath(pathname: string, searchParams: URLSearchParams) {

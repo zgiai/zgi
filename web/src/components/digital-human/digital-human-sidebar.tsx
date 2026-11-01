@@ -95,11 +95,16 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
           icon: AppWindow,
           isActive: currentPathname => currentPathname === externalHref,
         },
-        {
-          title: t('digitalHumans.tabs.apiKeys'),
-          href: `${externalHref}/keys`,
-          icon: KeyRound,
-        },
+        // API keys are managed with the publish permission.
+        ...(permissions.hasPermission('digital_human.publish')
+          ? [
+              {
+                title: t('digitalHumans.tabs.apiKeys'),
+                href: `${externalHref}/keys`,
+                icon: KeyRound,
+              },
+            ]
+          : []),
         {
           title: t('digitalHumans.tabs.apiDocs'),
           href: `${externalHref}/docs`,
@@ -117,7 +122,16 @@ export function DigitalHumanSidebar({ id, onNavigate }: DigitalHumanSidebarProps
           },
         ]
       : []),
-    { title: t('digitalHumans.tabs.runs'), href: `/console/digital-humans/${id}/runs`, icon: History, group: operations },
+    ...(permissions.hasPermission('digital_human.logs.view')
+      ? [
+          {
+            title: t('digitalHumans.tabs.runs'),
+            href: `/console/digital-humans/${id}/runs`,
+            icon: History,
+            group: operations,
+          },
+        ]
+      : []),
   ];
   const navItems = restrictToConfiguration ? [configurationItem] : publishedNavItems;
 

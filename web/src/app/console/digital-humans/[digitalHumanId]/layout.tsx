@@ -15,7 +15,9 @@ import {
   RadioTower,
   Server,
   Settings2,
+  ShieldAlert,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { DigitalHumanFeatureGate } from '@/components/digital-human/feature-gate';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import { DigitalHumanHeader } from '@/components/digital-human/digital-human-header';
@@ -143,15 +145,42 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
           },
         ]
       : []),
-    {
-      href: `/console/digital-humans/${id}/runs`,
-      label: t('tabs.runs'),
-      icon: History,
-      active: pathname.startsWith(`/console/digital-humans/${id}/runs`),
-    },
+    ...(permissions.hasPermission('digital_human.logs.view')
+      ? [
+          {
+            href: `/console/digital-humans/${id}/runs`,
+            label: t('tabs.runs'),
+            icon: History,
+            active: pathname.startsWith(`/console/digital-humans/${id}/runs`),
+          },
+        ]
+      : []),
   ];
   const mobileItems = restrictToConfiguration ? [configurationItem] : publishedMobileItems;
   const routeGuardPending = !isConfigurationPage && restrictToConfiguration;
+
+  // The detail is read in the current workspace: one that belongs to another
+  // workspace, was deleted or is out of reach cannot be shown, and its pages
+  // would only fail one request after another.
+  if (detailQuery.isError && !detailQuery.data) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center px-6 text-center">
+        <div className="mb-4 rounded-full bg-muted p-4">
+          <ShieldAlert className="size-7 text-muted-foreground" />
+        </div>
+        <h1 className="text-xl font-semibold">{t('detailUnavailable.title')}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{t('detailUnavailable.description')}</p>
+        <div className="mt-6 flex gap-2">
+          <Button variant="outline" onClick={() => void detailQuery.refetch()}>
+            {t('detailUnavailable.retry')}
+          </Button>
+          <Button asChild>
+            <Link href="/console/digital-humans">{t('detailUnavailable.backToList')}</Link>
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 min-w-0 bg-background">
