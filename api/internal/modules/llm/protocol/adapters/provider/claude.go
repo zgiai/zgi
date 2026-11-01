@@ -694,7 +694,7 @@ func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRe
 	claudeReq := &claudeRequest{
 		Model: request.Model,
 		// The Messages API requires max_tokens. The gateway normally fills it
-		// from the model catalog (zgi-pre#2914); this covers callers that reach
+		// from the model catalog (#2914); this covers callers that reach
 		// the adapter directly. 1024 cut most real answers short.
 		MaxTokens:   claudeDefaultMaxTokens,
 		Temperature: request.Temperature,

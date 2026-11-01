@@ -18,7 +18,7 @@ func TestClaudeAdapterConvertToClaude_DefaultMaxTokens(t *testing.T) {
 		t.Fatalf("convertToClaude() error = %v", err)
 	}
 	if req.MaxTokens != 8192 {
-		t.Fatalf("default max_tokens = %d, want 8192 (zgi-pre#2914)", req.MaxTokens)
+		t.Fatalf("default max_tokens = %d, want 8192 (#2914)", req.MaxTokens)
 	}
 
 	explicit := 300
