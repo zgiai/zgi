@@ -59,6 +59,7 @@ import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { ICON_BG, ICON_TEXT, WORKFLOW_AUTOSAVE_INTERVAL_MS } from '@/lib/config';
 import type { IconType } from '@/utils/icon-helpers';
 import { PublishSettingsDialog } from '@/components/agents/agent-runtime/publish-settings-dialog';
+import { openWebAppLandingPage } from '@/components/webapp/open-landing-page';
 import { getAgentDetailLogsHref } from '@/utils/agent-detail-routes';
 import { EditAgentDialog } from '@/components/agents/agent-dialog/edit-dialog';
 
@@ -337,16 +338,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
       }
     );
   };
-  const openWebAppLandingPage = React.useCallback(() => {
+  const handleOpenWebApp = React.useCallback(() => {
     if (!webAppUrl || isWebAppOffline) return;
-
-    const opened = window.open('', '_blank');
-    if (opened) {
-      opened.opener = null;
-      opened.location.href = webAppUrl;
-    } else {
-      window.location.href = webAppUrl;
-    }
+    openWebAppLandingPage(webAppUrl);
   }, [isWebAppOffline, webAppUrl]);
 
   return (
@@ -701,7 +695,7 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                         disabled={isWebAppOffline || !webAppUrl}
                         onSelect={event => {
                           event.preventDefault();
-                          openWebAppLandingPage();
+                          handleOpenWebApp();
                         }}
                       >
                         <AppWindowIcon className="text-highlight" />
