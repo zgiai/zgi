@@ -159,7 +159,7 @@ func (a *MoonshotAIAdapter) ChatCompletionStream(ctx context.Context, request *a
 // extras when serialized (AdditionalParameters is json:"-"), so a request with
 // extras such as reasoning_effort is sent as the serialized request plus the
 // extras, mapped like the other OpenAI-compatible adapters (Kimi gets
-// thinking.type, zgi-pre#2913). A request without extras is sent exactly as
+// thinking.type, #2913). A request without extras is sent exactly as
 // before.
 func moonshotChatBody(request *adapter.ChatRequest) (interface{}, error) {
 	if request == nil || len(request.AdditionalParameters) == 0 {
