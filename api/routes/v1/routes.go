@@ -424,7 +424,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 			chatAndAgent: chatService,
 			workflow:     workflowService,
 		},
-		AccountService: accountService,
+		AccountService:          accountService,
+		ApplicationErrorCatalog: applicationErrorCatalog,
 	}
 	if digitalHumanRuntime != nil && digitalHumanRuntime.Runtime != nil {
 		confirmationDeps.DigitalHuman = digitalHumanRuntime.Runtime
