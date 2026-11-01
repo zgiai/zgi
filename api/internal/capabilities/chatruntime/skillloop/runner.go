@@ -1544,6 +1544,7 @@ func (r *Runner) runModelToolRoundAttempt(ctx context.Context, prepared *Prepare
 		TerminatedBy:       "response",
 		Error:              errorString(terminationErr),
 	})
+	r.emitReasoningChunk(prepared, message.ReasoningContent)
 	if terminationErr != nil {
 		result, observeErr := r.finishContextRequest(ctx, planningReq, planningResult{
 			message:           message,
@@ -1723,6 +1724,21 @@ func (r *Runner) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, te
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"answer":          text,
+	})
+}
+
+// emitReasoningChunk streams the model's reasoning to the client as a message
+// event with an empty answer, the same contract as the direct chat stream. The
+// reasoning is display-only: it is never replayed into the model context.
+func (r *Runner) emitReasoningChunk(prepared *PreparedChat, reasoning string) {
+	if reasoning == "" || prepared == nil || prepared.Conversation == nil || prepared.Message == nil {
+		return
+	}
+	r.emitEvent(prepared, EventMessage, map[string]interface{}{
+		"conversation_id":   prepared.Conversation.ID.String(),
+		"message_id":        prepared.Message.ID.String(),
+		"answer":            "",
+		"reasoning_content": reasoning,
 	})
 }
 

@@ -704,6 +704,9 @@ type PreparedChat struct {
 	usageExecutionBaseline *adapter.Usage
 	usageContinuation      bool
 	taskTokenBudget        *taskTokenBudgetState
+
+	// reasoning times the visible "thinking" of this turn (ZGI-13).
+	reasoning reasoningClock
 }
 
 type ChatResult struct {

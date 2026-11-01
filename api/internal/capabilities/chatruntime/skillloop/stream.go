@@ -162,6 +162,7 @@ func (r *Runner) runModelToolRoundStream(
 				if reasoning := streamChoiceReasoningContent(choice); reasoning != "" {
 					reasoningBuilder.WriteString(reasoning)
 					modelProgress.ObserveReasoningDelta()
+					r.emitReasoningChunk(prepared, reasoning)
 				}
 				hasToolCallDelta := len(choice.Delta.ToolCalls) > 0
 				if text := streamChoiceText(choice); text != "" {
