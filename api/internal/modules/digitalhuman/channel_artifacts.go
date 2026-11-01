@@ -38,6 +38,11 @@ type channelDeliveryPayloadData struct {
 	Mentions  []channelruntime.DeliveryMention `json:"mentions,omitempty"`
 	Artifacts []channelDeliveryArtifact        `json:"artifacts,omitempty"`
 	Actions   []channelruntime.DeliveryAction  `json:"actions,omitempty"`
+	// Card is the structured prompt a provider with cards renders.
+	Card *channelruntime.DeliveryCard `json:"card,omitempty"`
+	// EditOf names the delivered prompt this delivery edits in place: the
+	// card in its new state replaces the one the prompt sent.
+	EditOf *uuid.UUID `json:"edit_of,omitempty"`
 }
 
 type channelArtifactLink struct {

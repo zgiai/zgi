@@ -94,6 +94,12 @@ func (c *client) sendMessage(ctx context.Context, region, accessToken, receiveID
 	return c.doEnvelope(ctx, region, http.MethodPost, "/open-apis/im/v1/messages", query, body, accessToken, false, target)
 }
 
+// patchMessage replaces the content of an interactive card the app sent.
+func (c *client) patchMessage(ctx context.Context, region, accessToken, messageID string, body interface{}) (responseMeta, error) {
+	path := "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
+	return c.doEnvelope(ctx, region, http.MethodPatch, path, nil, body, accessToken, false, nil)
+}
+
 func (c *client) tenantAccessToken(ctx context.Context, region, appID, appSecret string) (string, responseMeta, error) {
 	var response struct {
 		Code              int    `json:"code"`

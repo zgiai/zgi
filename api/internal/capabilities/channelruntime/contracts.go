@@ -420,6 +420,49 @@ type DeliveryRequest struct {
 	// that waits for one. A provider without buttons ignores them: the text
 	// already says what to reply.
 	Actions []DeliveryAction
+	// Card is the structured form of a prompt that waits for a decision. A
+	// provider with cards renders it; any other sends Text, which says the
+	// same. An Edit of a delivered prompt carries the card in its new state.
+	Card *DeliveryCard
+}
+
+// DeliveryCardState is where the decision a card asks for stands.
+type DeliveryCardState string
+
+const (
+	DeliveryCardPending   DeliveryCardState = "pending"
+	DeliveryCardCompleted DeliveryCardState = "completed"
+	DeliveryCardFailed    DeliveryCardState = "failed"
+	DeliveryCardUnknown   DeliveryCardState = "unknown"
+	DeliveryCardCancelled DeliveryCardState = "cancelled"
+)
+
+// DeliveryCard describes an operation that waits for a decision: what it is,
+// the details the decider checks, and, once decided, its outcome. Every value
+// comes from the server's own records, never from a reply.
+type DeliveryCard struct {
+	Title    string              `json:"title"`
+	HighRisk bool                `json:"high_risk,omitempty"`
+	Summary  string              `json:"summary,omitempty"`
+	Fields   []DeliveryCardField `json:"fields,omitempty"`
+	Notice   string              `json:"notice,omitempty"`
+	State    DeliveryCardState   `json:"state,omitempty"`
+	// Outcome says how a decided operation ended; empty while pending.
+	Outcome string `json:"outcome,omitempty"`
+}
+
+// DeliveryCardField is one detail of the operation. Code marks an exact
+// command line; Truncated marks a value the preview shortened.
+type DeliveryCardField struct {
+	Label     string `json:"label"`
+	Value     string `json:"value"`
+	Code      bool   `json:"code,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// Pending reports whether the card still asks for its decision.
+func (card *DeliveryCard) Pending() bool {
+	return card != nil && (card.State == "" || card.State == DeliveryCardPending)
 }
 
 // DeliveryAction is one tap-to-send reply of a waiting prompt. Reply is the

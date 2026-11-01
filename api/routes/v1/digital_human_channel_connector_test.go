@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/connectors/catalog"
 	connectorcore "github.com/zgiai/zgi/api/internal/modules/connectors/core"
 	connectorexecution "github.com/zgiai/zgi/api/internal/modules/connectors/execution"
 	connectorconfirmation "github.com/zgiai/zgi/api/internal/modules/connectors/runtimeconfirmation"
@@ -83,5 +84,52 @@ func TestChannelConnectorConfirmerReportsAContinuedTurnAsConflict(t *testing.T) 
 	service.err = connectorcore.NewError(connectorcore.ErrorCodeConflict, false, nil)
 	if _, err := confirmer.DecideChannelConnectorConfirmation(t.Context(), uuid.New(), uuid.New(), uuid.New(), false); !errors.Is(err, digitalhuman.ErrRunConflict) {
 		t.Fatalf("contradicting decision error = %v, want ErrRunConflict", err)
+	}
+}
+
+type channelPreviewStatusSpy struct {
+	*connectorRuntimeConfirmationServiceSpy
+	status connectorconfirmation.StatusResult
+	query  connectorconfirmation.StatusQuery
+}
+
+func (spy *channelPreviewStatusSpy) ReadStatus(_ context.Context, query connectorconfirmation.StatusQuery) (connectorconfirmation.StatusResult, error) {
+	spy.query = query
+	return spy.status, nil
+}
+
+// The card asking about a confirmation shows the details it was frozen with,
+// read through the console's owner and requester checks.
+func TestChannelConnectorPreviewReadsTheFrozenDetailsOfAPendingConfirmation(t *testing.T) {
+	org, owner, receipt := uuid.New(), uuid.New(), uuid.New()
+	spy := &channelPreviewStatusSpy{
+		connectorRuntimeConfirmationServiceSpy: &connectorRuntimeConfirmationServiceSpy{},
+		status: connectorconfirmation.StatusResult{Resolution: "unresolved", Presentation: &connectorconfirmation.Presentation{
+			Version: 1, Preview: &connectorexecution.ConfirmationPreview{
+				AccountIdentity: "ops@example.com",
+				Fields: []connectorexecution.ConfirmationPreviewField{
+					{Label: "Command", LabelI18n: catalog.LocalizedText{"zh-Hans": "命令"}, Value: "uptime", Format: connectorexecution.ConfirmationPreviewFormatCommand},
+					{Label: "Body", Value: "long", Truncated: true},
+				},
+			},
+		}},
+	}
+	confirmer := digitalHumanChannelConnectorConfirmer{service: spy}
+	fields, err := confirmer.ChannelConnectorConfirmationPreview(t.Context(), org, owner, receipt)
+	if err != nil || len(fields) != 3 {
+		t.Fatalf("fields = %#v, %v", fields, err)
+	}
+	if fields[0].Label != "使用账号" || fields[0].Value != "ops@example.com" ||
+		fields[1].Label != "命令" || !fields[1].Code || fields[2].Label != "Body" || !fields[2].Truncated {
+		t.Fatalf("fields = %#v", fields)
+	}
+	if spy.query.PresentationVersion != 1 || spy.query.OrganizationID != org || spy.query.OwnerAccountID != owner ||
+		string(spy.query.RouteReceipt) != receipt.String() {
+		t.Fatalf("status query = %#v", spy.query)
+	}
+
+	spy.status.Resolution = "resolved"
+	if fields, err := confirmer.ChannelConnectorConfirmationPreview(t.Context(), org, owner, receipt); err != nil || fields != nil {
+		t.Fatalf("a decided confirmation still showed details: %#v, %v", fields, err)
 	}
 }

@@ -1358,6 +1358,10 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 			))
 			continue
 		}
+		if payload.EditOf != nil {
+			combined = errors.Join(combined, service.dispatchPromptEdit(ctx, adapter, delivery, payload))
+			continue
+		}
 		var links []channelArtifactLink
 		var attachments []channelruntime.DeliveryAttachment
 		var linkErr error
@@ -1405,6 +1409,77 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 		}
 	}
 	return combined
+}
+
+type channelDeliveryLookup interface {
+	ChannelDeliveryByID(context.Context, uuid.UUID) (*channelruntime.Delivery, error)
+}
+
+// promptEditRetryDelay is how long an edit waits for its prompt to be sent.
+const promptEditRetryDelay = 10 * time.Second
+
+// dispatchPromptEdit replaces a delivered prompt's card with its new state.
+// An edit only shows the decision: when the provider cannot edit, or the
+// prompt never reached it, the edit fails and the decision is unaffected.
+func (service *ChannelService) dispatchPromptEdit(
+	ctx context.Context,
+	adapter channelruntime.Adapter,
+	delivery *channelruntime.Delivery,
+	payload *channelDeliveryPayloadData,
+) error {
+	fail := func(code, message string) error {
+		return service.store.FailDelivery(ctx, delivery.ID, channelruntime.DeliveryFailed, code, message, service.now())
+	}
+	lookup, ok := service.store.(channelDeliveryLookup)
+	if !ok || payload.Card == nil || !adapter.Capabilities().Edit {
+		return fail("channel.delivery.edit_unsupported", "This channel does not update a delivered prompt.")
+	}
+	prompt, err := lookup.ChannelDeliveryByID(ctx, *payload.EditOf)
+	if err != nil || prompt.RunID != delivery.RunID {
+		return fail("channel.delivery.edit_target_missing", "The prompt to update was not found.")
+	}
+	switch prompt.Status {
+	case channelruntime.DeliveryPending, channelruntime.DeliveryProcessing:
+		if delivery.AttemptCount >= maxDeliveryAttempts {
+			return fail("channel.delivery.edit_target_missing", "The prompt to update was not delivered.")
+		}
+		return service.store.RetryDelivery(ctx, delivery.ID, service.now().Add(promptEditRetryDelay),
+			"channel.delivery.edit_waiting", "The prompt to update is not delivered yet.")
+	case channelruntime.DeliverySucceeded:
+	default:
+		return fail("channel.delivery.edit_target_missing", "The prompt to update was not delivered.")
+	}
+	if strings.TrimSpace(prompt.ProviderMessageID) == "" {
+		return fail("channel.delivery.edit_target_missing", "The prompt to update was not delivered.")
+	}
+	receipt, err := adapter.Edit(ctx, channelruntime.DeliveryRequest{
+		OrganizationID: delivery.OrganizationID, WorkspaceID: delivery.WorkspaceID, ActorID: delivery.ActorID,
+		InstallationID: delivery.InstallationID, ConnectionID: delivery.ConnectionID,
+		Subject: runtimeidentity.SubjectRef{
+			Type: delivery.SubjectType, ID: delivery.SubjectID,
+			OrganizationID: delivery.OrganizationID, WorkspaceID: delivery.WorkspaceID,
+		},
+		RunID: delivery.RunID, DeliveryID: delivery.ID,
+		ExternalConversationID: delivery.ExternalConversationID, ExternalThreadID: delivery.ExternalThreadID,
+		Text: payload.Text, Card: payload.Card,
+	}, prompt.ProviderMessageID)
+	if errors.Is(err, channelruntime.ErrUnsupportedEvent) {
+		return fail("channel.delivery.edit_unsupported", "This prompt cannot be updated in place.")
+	}
+	if err != nil {
+		// Editing is idempotent, so an unknown outcome may be retried too.
+		if errors.Is(err, channelruntime.ErrDeliveryOutcomeUnknown) || channelDeliveryRetryable(err) {
+			if delivery.AttemptCount < maxDeliveryAttempts {
+				return safeDeliveryAttemptError(service.store.RetryDelivery(
+					ctx, delivery.ID, service.now().Add(deliveryBackoff(delivery.AttemptCount)), channelErrorCode(err), safeChannelErrorMessage(err),
+				))
+			}
+		}
+		return safeDeliveryAttemptError(service.store.FailDelivery(
+			ctx, delivery.ID, channelruntime.DeliveryFailed, channelErrorCode(err), safeChannelErrorMessage(err), service.now(),
+		))
+	}
+	return service.store.SucceedDelivery(ctx, delivery.ID, receipt, service.now())
 }
 
 func (service *ChannelService) finishDeliveryFailure(ctx context.Context, delivery *channelruntime.Delivery, deliveryErr error) error {

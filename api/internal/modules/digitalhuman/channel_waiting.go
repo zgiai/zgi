@@ -79,7 +79,15 @@ func (s *RuntimeService) deliverChannelWaitingPrompt(ctx context.Context, run *R
 	var err error
 	if actions := channelWaitActions(run, status, metadata, wait); len(actions) > 0 {
 		if prompts, ok := s.store.(channelPromptDeliveryStore); ok {
-			err = prompts.EnqueueRunChannelPromptDelivery(context.WithoutCancel(ctx), run.ID, key, text, actions, s.now())
+			var card *channelruntime.DeliveryCard
+			if status == runtimemodel.MessageStatusWaitingApproval {
+				// A connector confirmation shows the operation it asks about; the
+				// text says the same for a card the channel rejects.
+				if card = s.channelConnectorCard(ctx, run, answer, metadata); card != nil && len(card.Fields) > 0 {
+					text = strings.TrimSpace(text + "\n\n" + channelCardDetailsText(card))
+				}
+			}
+			err = prompts.EnqueueRunChannelPromptDelivery(context.WithoutCancel(ctx), run.ID, key, text, actions, card, s.now())
 		} else {
 			err = deliveryStore.EnqueueRunChannelFinalDelivery(context.WithoutCancel(ctx), run.ID, key, text, s.now())
 		}
@@ -92,7 +100,7 @@ func (s *RuntimeService) deliverChannelWaitingPrompt(ctx context.Context, run *R
 }
 
 type channelPromptDeliveryStore interface {
-	EnqueueRunChannelPromptDelivery(context.Context, uuid.UUID, string, string, []channelruntime.DeliveryAction, time.Time) error
+	EnqueueRunChannelPromptDelivery(context.Context, uuid.UUID, string, string, []channelruntime.DeliveryAction, *channelruntime.DeliveryCard, time.Time) error
 }
 
 // channelWaitKey names one wait of one message.
