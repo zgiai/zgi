@@ -9,7 +9,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-// zgi-pre#2913: the moonshot adapter used to serialize ChatRequest as is, which
+// #2913: the moonshot adapter used to serialize ChatRequest as is, which
 // drops AdditionalParameters (json:"-"), so no provider extra reached the
 // upstream. Extras now travel like on the other OpenAI-compatible adapters.
 

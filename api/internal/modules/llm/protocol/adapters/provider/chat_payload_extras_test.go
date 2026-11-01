@@ -14,7 +14,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-// zgi-pre#2913 was narrowed to the platform channels: the console translates
+// #2913 was narrowed to the platform channels: the console translates
 // reasoning_effort per selected channel. Private OpenAI-compatible channels do
 // no model-specific mapping: reasoning_effort always becomes reasoning.effort,
 // and every other extra, a native thinking value included, passes through.
