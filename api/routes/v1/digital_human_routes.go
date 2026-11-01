@@ -134,7 +134,17 @@ func RegisterDigitalHumanRoutes(router *gin.RouterGroup, deps DigitalHumanRouteD
 	group.Use(middleware.JWTWithOrganizationAndService(deps.AccountService))
 	group.Use(middleware.CurrentWorkspaceRequired())
 	group.Use(digitalHumanPermissionMiddleware(deps.OrganizationService, errorProjector))
-	digitalhuman.NewHandler(deps.Service, errorProjector).RegisterRoutes(group)
+	handler := digitalhuman.NewHandler(deps.Service, errorProjector)
+	// A DigitalHuman of another workspace the person may view there is read
+	// like a prompt or dataset of another workspace, so the console can offer
+	// to switch to it.
+	if locator, ok := deps.Service.(digitalhuman.DefinitionWorkspaceLocator); ok {
+		organizationService := deps.OrganizationService
+		handler.WithOtherWorkspaceDetail(locator, func(ctx context.Context, organizationID, workspaceID, actorID uuid.UUID) (bool, error) {
+			return organizationService.CheckWorkspacePermission(ctx, organizationID.String(), workspaceID.String(), actorID.String(), workspacemodel.WorkspacePermissionDigitalHumanView)
+		})
+	}
+	handler.RegisterRoutes(group)
 	digitalhuman.NewAccessHandler(deps.Access, errorProjector).RegisterRoutes(group)
 	digitalhuman.NewRuntimeHandler(deps.Runtime, errorProjector, deps.Service).RegisterRoutes(group)
 	// The runtime serves the files a task report carries when it can.

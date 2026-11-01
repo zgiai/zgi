@@ -51,13 +51,6 @@ const messages: DigitalHumansMessages = {
   subtitle: '拥有独立身份、人设、工具与运行历史的长期团队成员。',
   loading: '正在加载数字人',
   forbidden: { title: '需要权限', description: '当前工作空间角色无权执行此数字人操作。' },
-  detailUnavailable: {
-    title: '无法打开这个数字人',
-    description:
-      '它可能已被删除、不属于当前工作空间，或你没有访问权限。可以切换到它所在的工作空间后再打开。',
-    backToList: '返回数字人列表',
-    retry: '重试',
-  },
   list: {
     search: '搜索数字人',
     empty: '还没有数字人，可以先创建第一个长期团队身份。',

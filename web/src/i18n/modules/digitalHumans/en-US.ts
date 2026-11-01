@@ -54,13 +54,6 @@ const messages = {
     title: 'Permission required',
     description: 'Your workspace role does not allow this Digital Human action.',
   },
-  detailUnavailable: {
-    title: 'This digital human can’t be opened',
-    description:
-      'It may have been deleted, belong to another workspace, or be outside your access. Switch to its workspace to open it.',
-    backToList: 'Back to digital humans',
-    retry: 'Try again',
-  },
   list: {
     search: 'Search digital humans',
     empty: 'No digital humans yet. Create the first persistent team identity.',

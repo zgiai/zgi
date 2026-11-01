@@ -375,6 +375,25 @@ func (r *GormRepository) SoftDeleteCAS(ctx context.Context, scope Scope, id uuid
 	return nil
 }
 
+// DefinitionWorkspace returns the workspace a DigitalHuman of the organization
+// belongs to. It reads nothing else, so callers can check access there first.
+func (r *GormRepository) DefinitionWorkspace(ctx context.Context, organizationID, id uuid.UUID) (uuid.UUID, error) {
+	if organizationID == uuid.Nil || id == uuid.Nil {
+		return uuid.Nil, ErrInvalidRequest
+	}
+	var definition Definition
+	err := r.db.WithContext(ctx).Model(&Definition{}).Select("workspace_id").
+		Where("organization_id = ? AND id = ? AND deleted_at IS NULL", organizationID, id).
+		Take(&definition).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return definition.WorkspaceID, nil
+}
+
 func (r *GormRepository) scopedDefinitions(ctx context.Context, scope Scope) *gorm.DB {
 	return r.db.WithContext(ctx).Model(&Definition{}).
 		Where("organization_id = ? AND workspace_id = ? AND deleted_at IS NULL", scope.OrganizationID, scope.WorkspaceID)

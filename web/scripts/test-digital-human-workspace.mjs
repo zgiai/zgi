@@ -43,15 +43,15 @@ assert.match(
 );
 
 const layout = read('app/console/digital-humans/[digitalHumanId]/layout.tsx');
-assert.match(layout, /detailQuery\.isError && !detailQuery\.data/);
-assert.match(layout, /detailUnavailable\.backToList/);
+// Another workspace's DigitalHuman is handled by the guard every workspace
+// resource uses.
+assert.match(
+  layout,
+  /<WorkspaceMismatchGuard[\s\S]{0,200}targetWorkspaceId=\{definition\?\.workspace_id/
+);
 assert.match(
   read('app/console/digital-humans/[digitalHumanId]/external/keys/page.tsx'),
   /permission="digital_human\.publish"/
 );
-
-for (const locale of ['zh-Hans', 'en-US']) {
-  assert.match(read(`i18n/modules/digitalHumans/${locale}.ts`), /detailUnavailable: \{/, locale);
-}
 
 console.log('DigitalHuman workspace switching and permissions: ok');

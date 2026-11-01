@@ -15,9 +15,8 @@ import {
   RadioTower,
   Server,
   Settings2,
-  ShieldAlert,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { DigitalHumanFeatureGate } from '@/components/digital-human/feature-gate';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import { DigitalHumanHeader } from '@/components/digital-human/digital-human-header';
@@ -31,8 +30,25 @@ export default function DigitalHumanLayout({ children }: { children: ReactNode }
   const params = useParams<{ digitalHumanId: string }>();
   return (
     <DigitalHumanFeatureGate>
-      <DigitalHumanShell id={params.digitalHumanId}>{children}</DigitalHumanShell>
+      <DigitalHumanWorkspaceGuard id={params.digitalHumanId}>
+        <DigitalHumanShell id={params.digitalHumanId}>{children}</DigitalHumanShell>
+      </DigitalHumanWorkspaceGuard>
     </DigitalHumanFeatureGate>
+  );
+}
+
+// A DigitalHuman of another workspace is handled as other workspace
+// resources are: the guard offers to switch to its workspace.
+function DigitalHumanWorkspaceGuard({ id, children }: { id: string; children: ReactNode }) {
+  const detailQuery = useDigitalHuman(id);
+  const definition = detailQuery.data?.data?.definition;
+  return (
+    <WorkspaceMismatchGuard
+      isLoading={detailQuery.isLoading}
+      targetWorkspaceId={definition?.workspace_id ?? ''}
+    >
+      {children}
+    </WorkspaceMismatchGuard>
   );
 }
 
@@ -158,29 +174,6 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
   ];
   const mobileItems = restrictToConfiguration ? [configurationItem] : publishedMobileItems;
   const routeGuardPending = !isConfigurationPage && restrictToConfiguration;
-
-  // The detail is read in the current workspace: one that belongs to another
-  // workspace, was deleted or is out of reach cannot be shown, and its pages
-  // would only fail one request after another.
-  if (detailQuery.isError && !detailQuery.data) {
-    return (
-      <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center px-6 text-center">
-        <div className="mb-4 rounded-full bg-muted p-4">
-          <ShieldAlert className="size-7 text-muted-foreground" />
-        </div>
-        <h1 className="text-xl font-semibold">{t('detailUnavailable.title')}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{t('detailUnavailable.description')}</p>
-        <div className="mt-6 flex gap-2">
-          <Button variant="outline" onClick={() => void detailQuery.refetch()}>
-            {t('detailUnavailable.retry')}
-          </Button>
-          <Button asChild>
-            <Link href="/console/digital-humans">{t('detailUnavailable.backToList')}</Link>
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex h-full min-h-0 min-w-0 bg-background">
