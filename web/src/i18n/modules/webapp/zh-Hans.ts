@@ -414,6 +414,17 @@ const messages: WebappMessages = {
     },
   },
   consoleChat: {
+    reasoning: {
+      toggle: '思考',
+      toggleOnHint: '已开启思考：模型会先思考再回答。点击关闭。',
+      toggleOffHint: '已关闭思考。点击开启，让模型先思考再回答。',
+      toggleDefaultHint: '思考跟随模型默认设置。点击开启。',
+      thinking: '思考中…',
+      thought: '已思考 {seconds} 秒',
+      thoughtBriefly: '思考过程',
+      expand: '展开思考过程',
+      collapse: '收起思考过程',
+    },
     memory: {
       open: '记忆',
       hint: '查看和设置 AI 对话记住的关于你的内容',

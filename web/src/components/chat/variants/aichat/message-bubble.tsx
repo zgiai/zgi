@@ -25,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
 import { useT } from '@/i18n/translations';
+import { AIChatReasoningBlock } from '@/components/chat/variants/aichat/reasoning-block';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
@@ -128,6 +129,10 @@ interface AIChatMessageBubbleProps {
   enableToolGovernanceApprovals?: boolean;
   suppressPendingToolGovernanceApprovals?: boolean;
   speechPlayback?: AIChatSpeechPlaybackController;
+  /** Shows the model's reasoning in a collapsible thinking block (ZGI-13). */
+  showReasoning?: boolean;
+  /** The latest model output for this message is still reasoning. */
+  reasoningActive?: boolean;
 }
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
@@ -1272,6 +1277,8 @@ export function AIChatMessageBubble({
   enableToolGovernanceApprovals = false,
   suppressPendingToolGovernanceApprovals = false,
   speechPlayback,
+  showReasoning = false,
+  reasoningActive = false,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const connectorEvents = connectorChatEvents(
@@ -1710,6 +1717,14 @@ export function AIChatMessageBubble({
             </span>
           ) : null}
         </div>
+
+        {showReasoning && message.metadata?.reasoning_content ? (
+          <AIChatReasoningBlock
+            content={message.metadata.reasoning_content}
+            durationMs={message.metadata.reasoning_duration_ms}
+            isThinking={isStreaming && reasoningActive}
+          />
+        ) : null}
 
         {hasTimeline ? (
           <AIChatAgenticTimeline

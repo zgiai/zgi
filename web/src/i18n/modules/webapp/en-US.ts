@@ -445,6 +445,17 @@ const messages = {
     },
   },
   consoleChat: {
+    reasoning: {
+      toggle: 'Thinking',
+      toggleOnHint: 'Thinking is on. The model reasons before it answers. Click to turn it off.',
+      toggleOffHint: 'Thinking is off. Click to let the model reason before it answers.',
+      toggleDefaultHint: 'Thinking follows the model default. Click to turn it on.',
+      thinking: 'Thinking…',
+      thought: 'Thought for {seconds}s',
+      thoughtBriefly: 'Thought process',
+      expand: 'Show thought process',
+      collapse: 'Hide thought process',
+    },
     memory: {
       open: 'Memory',
       hint: 'See and change what AI chat remembers about you',

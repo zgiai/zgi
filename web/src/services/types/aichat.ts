@@ -440,6 +440,10 @@ export interface AIChatGeneratedFile {
 }
 
 export interface AIChatMessageMetadata {
+  /** Model reasoning shown in the collapsible thinking block (ZGI-13). */
+  reasoning_content?: string;
+  /** Time the model spent thinking, summed over the turn's model rounds. */
+  reasoning_duration_ms?: number;
   usage?: AIChatUsage;
   task_token_budget?: AIChatTaskTokenBudget;
   task_token_budget_request?: AIChatTokenBudgetRequestedEventData;
@@ -742,6 +746,9 @@ export interface AIChatMessageChunkEventData extends AIChatPresentationPosition 
   conversation_id: string;
   message_id: string;
   answer?: string;
+  /** A reasoning delta; such events carry an empty answer (ZGI-13). */
+  reasoning_content?: string;
+  reasoning_duration_ms?: number;
   segment_id?: string;
   segment_content?: string;
   content_phase?: AIChatPresentationContentPhase;

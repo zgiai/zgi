@@ -954,6 +954,12 @@ func normalizeModelParameters(input map[string]interface{}) (map[string]interfac
 				return nil, fmt.Errorf("%w: stop must be a string array", ErrInvalidModelParam)
 			}
 			output[key] = v
+		case modelParamReasoningEffort:
+			v, ok := reasoningEffortValue(value)
+			if !ok {
+				return nil, fmt.Errorf("%w: reasoning_effort must be one of none, minimal, low, medium, high", ErrInvalidModelParam)
+			}
+			output[key] = v
 		default:
 			return nil, fmt.Errorf("%w: unsupported parameter %s", ErrInvalidModelParam, key)
 		}
@@ -982,5 +988,29 @@ func applyModelParameters(req *adapter.ChatRequest, params map[string]interface{
 	}
 	if value, ok := params["stop"].([]string); ok {
 		req.Stop = value
+	}
+	// ZGI-13: the unified reasoning switch travels as a provider extra. The
+	// console translates it into the selected channel's own spelling.
+	if value, ok := reasoningEffortValue(params[modelParamReasoningEffort]); ok {
+		if req.AdditionalParameters == nil {
+			req.AdditionalParameters = map[string]interface{}{}
+		}
+		req.AdditionalParameters[modelParamReasoningEffort] = value
+	}
+}
+
+const modelParamReasoningEffort = "reasoning_effort"
+
+// reasoningEffortValue accepts the unified levels none/minimal/low/medium/high.
+func reasoningEffortValue(value interface{}) (string, bool) {
+	raw, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	switch level := strings.ToLower(strings.TrimSpace(raw)); level {
+	case "none", "minimal", "low", "medium", "high":
+		return level, true
+	default:
+		return "", false
 	}
 }

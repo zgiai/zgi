@@ -71,6 +71,16 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
+	if isReasoningOnlyMessageEvent(eventType, payload) {
+		// Reasoning is shown in its own thinking block, not as a
+		// presentation text segment.
+		appendPreparedReasoningContent(r.prepared, stringFromAny(payload[reasoningContentMetadataKey]))
+		if r.prepared != nil && r.prepared.Message != nil {
+			payload[reasoningDurationMetadataKey] = r.prepared.Message.Metadata[reasoningDurationMetadataKey]
+		}
+		return r.Emit(eventType, payload)
+	}
+	closePreparedReasoningSpan(r.prepared)
 	if eventType == streamEventMessage {
 		r.recordPresentationTextChunk(payload)
 		return r.Emit(eventType, payload)

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useCallback, useEffect, useRef } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Chat, { useAIChatController } from '@/components/chat';
@@ -15,6 +15,17 @@ import { AIChatModelPrecheckWarning } from '@/components/aichat/model-precheck-w
 import { AIChatMemoryOpenerProvider } from '@/components/memory/ai-chat-memory-opener';
 import { useAIChatModelPrecheck } from '@/hooks/aichat/use-aichat-model-precheck';
 import { toast } from 'sonner';
+import {
+  carryReasoningPreference,
+  reasoningModelKey,
+  reasoningPreferenceForModel,
+  withReasoningEffortParam,
+  type AIChatReasoningChoice,
+  type AIChatReasoningToggle,
+} from '@/components/chat/variants/aichat/reasoning';
+
+// Key for the thinking choice of a conversation that has not been sent yet.
+const DRAFT_REASONING_KEY = '__draft__';
 
 interface ModelUnavailableRecoveryProps {
   message: string;
@@ -99,6 +110,67 @@ function ChatPageContent() {
     }
     previousIsSendingRef.current = controller.isSending;
   }, [controller.isSending, refetchModelPrecheck]);
+
+  // ZGI-13: the thinking switch is remembered per conversation and reset when
+  // the model changes. Untouched, nothing is sent and the model default applies.
+  const [reasoningChoices, setReasoningChoices] = useState<Record<string, AIChatReasoningChoice>>(
+    {}
+  );
+  const reasoningKey =
+    activeConversationId && !isDraftAIChatConversationId(activeConversationId)
+      ? activeConversationId
+      : DRAFT_REASONING_KEY;
+  const currentModelKey = reasoningModelKey(modelSelectorValue.provider, modelSelectorValue.model);
+  const previousReasoningKeyRef = useRef(reasoningKey);
+  const previousModelKeyRef = useRef(currentModelKey);
+
+  useEffect(() => {
+    const previousKey = previousReasoningKeyRef.current;
+    previousReasoningKeyRef.current = reasoningKey;
+    if (previousKey !== DRAFT_REASONING_KEY || reasoningKey === DRAFT_REASONING_KEY) return;
+    // The draft just became a real conversation: keep the choice it was sent with.
+    setReasoningChoices(current => {
+      const carried = carryReasoningPreference(current, DRAFT_REASONING_KEY, reasoningKey);
+      if (!(DRAFT_REASONING_KEY in carried)) return carried;
+      const next = { ...carried };
+      delete next[DRAFT_REASONING_KEY];
+      return next;
+    });
+  }, [reasoningKey]);
+
+  useEffect(() => {
+    if (previousModelKeyRef.current === currentModelKey) return;
+    previousModelKeyRef.current = currentModelKey;
+    setReasoningChoices(current => {
+      if (!(reasoningKey in current)) return current;
+      const next = { ...current };
+      delete next[reasoningKey];
+      return next;
+    });
+  }, [currentModelKey, reasoningKey]);
+
+  const reasoningPreference = reasoningPreferenceForModel(
+    reasoningChoices[reasoningKey],
+    currentModelKey
+  );
+  const chatModelSelectorValue = useMemo(
+    () => ({
+      ...modelSelectorValue,
+      params: withReasoningEffortParam(modelSelectorValue.params, reasoningPreference),
+    }),
+    [modelSelectorValue, reasoningPreference]
+  );
+  const reasoningToggle = useMemo<AIChatReasoningToggle>(
+    () => ({
+      value: reasoningPreference,
+      onChange: enabled =>
+        setReasoningChoices(current => ({
+          ...current,
+          [reasoningKey]: { enabled, modelKey: currentModelKey },
+        })),
+    }),
+    [currentModelKey, reasoningKey, reasoningPreference]
+  );
 
   const handleBeforeSend = useCallback(() => {
     if (!isSelectedModelUnavailable) return true;
@@ -231,7 +303,8 @@ function ChatPageContent() {
                 runtimeSurface="work_chat"
                 modelUseCase="text-chat"
                 preferredModelUseCase="agent"
-                modelSelectorValue={modelSelectorValue}
+                modelSelectorValue={chatModelSelectorValue}
+                reasoningToggle={reasoningToggle}
                 modelSelectorWarning={modelPrecheckWarnings.length > 0}
                 isModelInitializing={isModelInitializing}
                 onModelChange={handleModelChange}
