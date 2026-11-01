@@ -129,6 +129,13 @@ export const LOGO_REDIRECT_URL: string = withBasePathIfInternal(
 export const WEBAPP_BACK_TARGET: string = (readPublicEnvRaw('NEXT_PUBLIC_WEBAPP_BACK_URL') || '').trim();
 
 /**
+ * The button on agent and workflow drafts that opens their WebApp landing
+ * page opens it in the same tab when "true"; a new tab otherwise.
+ */
+export const WEBAPP_LINK_SAME_TAB: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_WEBAPP_LINK_SAME_TAB') === 'true';
+
+/**
  * Redirect URL after logout completes.
  * Supports internal paths and full external URLs.
  */

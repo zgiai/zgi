@@ -44,6 +44,7 @@ import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
 import { PublishSettingsDialog } from './publish-settings-dialog';
 import { getAgentTextIconDisplay } from './utils';
+import { openWebAppLandingPage } from '@/components/webapp/open-landing-page';
 import { EditAgentDialog } from '@/components/agents/agent-dialog/edit-dialog';
 
 const WEB_APP_OFFLINE_REASON_MAX_LENGTH = 500;
@@ -123,14 +124,7 @@ export function AgentRuntimeHeader({
 
   const handleOpenWebApp = () => {
     if (!webAppUrl || isWebAppOffline) return;
-
-    const opened = window.open('', '_blank');
-    if (opened) {
-      opened.opener = null;
-      opened.location.href = webAppUrl;
-    } else {
-      window.location.href = webAppUrl;
-    }
+    openWebAppLandingPage(webAppUrl);
   };
 
   const handleWebAppStatusConfirm = () => {
