@@ -129,7 +129,16 @@ func (s *RemoteBilling) FinalizePlatformProxySettlement(
 		}
 		return fmt.Errorf("apply platform settlement currency snapshot: %w", err)
 	}
-	recordSettlementOverageSnapshot(bc, queriedReservedCredits, settlement.OfficialPoints)
+	overageReservedCredits := queriedReservedCredits
+	if overageReservedCredits <= 0 && !bc.ToolPostpaid {
+		// The settlement on the proxied response carries no reservation; the
+		// org_funds entry holds the one Console booked for this attempt.
+		if err := s.localService.restoreConsoleReservedCredits(ctx, s.localService.db, bc); err != nil {
+			return err
+		}
+		overageReservedCredits = fundReservedCredits(bc)
+	}
+	recordSettlementOverageSnapshot(bc, overageReservedCredits, settlement.OfficialPoints)
 	s.localService.applyRouteAttributionWithLookup(ctx, bc)
 	finalizeMediaTimingSnapshot(bc)
 	bc.SettledAt = time.Now().UTC()

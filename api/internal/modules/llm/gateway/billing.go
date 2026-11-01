@@ -98,6 +98,11 @@ type BillingContext struct {
 	// serialize unknown-cost requests without over-reserving organization funds.
 	// It is runtime-only; the subject ledger entry persists the reservation.
 	SubjectReservedCredits int64
+	// ConsoleReservedCredits is the org-funds hold Console booked when it is
+	// not EstimatedCredits: a metered pre-deduct prices its own reservation
+	// from the declared quantity. Nil means the hold is EstimatedCredits. It is
+	// runtime-only; the org_funds entry's reserved_amount persists it.
+	ConsoleReservedCredits *int64
 	// GrantAuthorizationVersion snapshots the developer grant period used for
 	// pre-deduction. Settlement must not mutate a renewed or re-authorized grant.
 	GrantAuthorizationVersion *int64
@@ -138,6 +143,17 @@ type BillingContext struct {
 	ErrorMessage        string
 	IPAddress           string
 	UserAgent           string
+}
+
+// fundReservedCredits is the org-funds hold a settlement refunds against.
+func fundReservedCredits(bc *BillingContext) int64 {
+	if bc == nil {
+		return 0
+	}
+	if bc.ConsoleReservedCredits != nil {
+		return *bc.ConsoleReservedCredits
+	}
+	return bc.EstimatedCredits
 }
 
 func subjectReservedCredits(bc *BillingContext) int64 {

@@ -13,18 +13,27 @@ import (
 	appconfig "github.com/zgiai/zgi/api/config"
 	accessmodel "github.com/zgiai/zgi/api/internal/modules/llm/developeraccess/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/millipoints"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
 
 // countingSettleQuotaClient pre-deducts successfully and counts settle calls,
 // so a test can prove the stale recovery never re-settled a hold on Console.
-type countingSettleQuotaClient struct{ settleCalls int }
+// A positive meteredReserved makes the metered pre-deduct succeed with that
+// Console hold, as Console prices it from the declared quantity.
+type countingSettleQuotaClient struct {
+	settleCalls     int
+	meteredReserved int64
+}
 
 func (c *countingSettleQuotaClient) PreDeductQuota(context.Context, *PreDeductQuotaRequest) (*PreDeductQuotaResponse, error) {
 	return &PreDeductQuotaResponse{Success: true, DeductionID: uuid.NewString()}, nil
 }
 
 func (c *countingSettleQuotaClient) PreDeductMeteredUsage(context.Context, *PreDeductMeteredUsageRequest) (*PreDeductMeteredUsageResponse, error) {
+	if c.meteredReserved > 0 {
+		return &PreDeductMeteredUsageResponse{Success: true, DeductionID: uuid.NewString(), EstimatedCredits: c.meteredReserved, ReservedCredits: c.meteredReserved}, nil
+	}
 	return nil, errors.New("unexpected metered pre-deduct")
 }
 
@@ -89,7 +98,11 @@ func seedStaleRemotePrededuct(t *testing.T, db *gorm.DB, client *countingSettleQ
 	}
 	seedRemoteBillingPersonalKey(t, db, &grant, bc, "active")
 	remote := &RemoteBilling{localService: &BillingService{db: db}, grpcClient: client, consoleAPIBaseURL: consoleURL}
-	if err := remote.preDeductViaGRPC(context.Background(), bc); err != nil {
+	predeductCtx := context.Background()
+	if client.meteredReserved > 0 {
+		predeductCtx = context.WithValue(predeductCtx, shared.ContextKeyMeteredUsage, &shared.MeteredUsageFact{Operation: "video_generation", Meter: "video", BaseUnit: "second", Quantity: 5})
+	}
+	if err := remote.preDeductViaGRPC(predeductCtx, bc); err != nil {
 		t.Fatalf("pre-deduct: %v", err)
 	}
 	staleAt := time.Now().Add(-defaultRemotePredeductTimeout - time.Minute)
