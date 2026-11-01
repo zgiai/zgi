@@ -10,10 +10,11 @@ import (
 )
 
 // zgi-pre#2913: the moonshot adapter used to serialize ChatRequest as is, which
-// drops AdditionalParameters (json:"-"), so reasoning_effort never reached Kimi.
+// drops AdditionalParameters (json:"-"), so no provider extra reached the
+// upstream. Extras now travel like on the other OpenAI-compatible adapters.
 
-func TestMoonshotAIAdapter_KimiReasoningEffortReachesUpstreamAsThinking(t *testing.T) {
-	assertKimiThinkingThroughAdapter(t, func(baseURL string) kimiChatAdapter {
+func TestMoonshotAIAdapter_ExtrasReachUpstream(t *testing.T) {
+	assertExtrasThroughAdapter(t, func(baseURL string) extrasChatAdapter {
 		client, err := NewMoonshotAIAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: baseURL})
 		if err != nil {
 			t.Fatalf("NewMoonshotAIAdapter() error = %v", err)
@@ -59,8 +60,8 @@ func TestMoonshotAIAdapter_RequestWithoutExtrasIsSentAsBefore(t *testing.T) {
 	}
 }
 
-func TestMoonshotAICNAdapter_KimiReasoningEffortReachesUpstreamAsThinking(t *testing.T) {
-	assertKimiThinkingThroughAdapter(t, func(baseURL string) kimiChatAdapter {
+func TestMoonshotAICNAdapter_ExtrasReachUpstream(t *testing.T) {
+	assertExtrasThroughAdapter(t, func(baseURL string) extrasChatAdapter {
 		client, err := NewMoonshotAICNAdapter(&adapter.AdapterConfig{APIKey: "test-key", BaseURL: baseURL})
 		if err != nil {
 			t.Fatalf("NewMoonshotAICNAdapter() error = %v", err)
