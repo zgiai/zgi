@@ -82,6 +82,7 @@ import {
 import type { AIChatVoiceTranscriber } from '@/components/chat/variants/aichat/voice/pcm-audio';
 import { useAgentVoiceInput } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
 import { getVoiceInputErrorKey } from '@/components/chat/variants/aichat/voice/voice-input-errors';
+import type { AIChatReasoningToggle } from '@/components/chat/variants/aichat/reasoning';
 
 export type AIChatUploadScope =
   | { type: 'console' }
@@ -271,6 +272,7 @@ interface AIChatInputAreaProps {
     enabled: boolean;
     onEnabledChange: (enabled: boolean) => void;
   };
+  reasoningToggle?: AIChatReasoningToggle;
 }
 
 function ToolGovernancePendingApprovalBridge({
@@ -369,6 +371,7 @@ export function AIChatInputArea({
   activeToolGovernanceApprovalFallback = null,
   voiceTranscriber,
   speechAutoPlay,
+  reasoningToggle,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1798,6 +1801,7 @@ export function AIChatInputArea({
                 onStop={onStop}
                 voiceInput={voiceTranscriber ? voiceInput : undefined}
                 speechAutoPlay={speechAutoPlay}
+                reasoningToggle={reasoningToggle}
               />
             ) : null}
           </div>

@@ -1521,3 +1521,31 @@ func TestZGICloudAdapterRejectsStillUnsupportedCapabilities(t *testing.T) {
 func intPtrZGICloudTest(v int) *int {
 	return &v
 }
+
+func TestZGICloudAdapterChatCompletionDoesNotRetryConsoleTimeout(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = fmt.Fprint(w, `{"code":"llm.provider.timeout","error_code":"llm.provider.timeout","retryable":true,"error":{"code":"upstream_timeout","type":"api_error","message":"The model service took too long to respond."}}`)
+	}))
+	defer server.Close()
+
+	a, err := NewZGICloudAdapter(&adapter.AdapterConfig{
+		BaseURL:    server.URL + "/v1/internal",
+		AuthHook:   func(*http.Request) {},
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewZGICloudAdapter() error = %v", err)
+	}
+
+	_, err = a.ChatCompletion(context.Background(), &adapter.ChatRequest{Model: "deepseek-v4-flash"})
+	if !errors.Is(err, adapter.ErrTimeout) {
+		t.Fatalf("ChatCompletion() error = %v, want ErrTimeout", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("console calls = %d, want 1", got)
+	}
+}

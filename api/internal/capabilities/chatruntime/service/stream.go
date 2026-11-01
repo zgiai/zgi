@@ -1431,18 +1431,6 @@ func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage)
 	return metadata
 }
 
-func appendPreparedReasoningContent(prepared *PreparedChat, reasoning string) {
-	if prepared == nil || prepared.Message == nil || reasoning == "" {
-		return
-	}
-	metadata := copyStringAnyMap(prepared.Message.Metadata)
-	if metadata == nil {
-		metadata = map[string]interface{}{}
-	}
-	metadata["reasoning_content"] = stringFromAny(metadata["reasoning_content"]) + reasoning
-	prepared.Message.Metadata = metadata
-}
-
 func (s *service) appendStreamReasoningEvent(ctx context.Context, prepared *PreparedChat, reasoning string) (*StreamEvent, error) {
 	if s == nil || prepared == nil || prepared.Message == nil || prepared.Conversation == nil || reasoning == "" {
 		return nil, nil
@@ -1452,6 +1440,9 @@ func (s *service) appendStreamReasoningEvent(ctx context.Context, prepared *Prep
 		"message_id":        prepared.Message.ID.String(),
 		"answer":            "",
 		"reasoning_content": reasoning,
+	}
+	if durationMS, ok := prepared.Message.Metadata[reasoningDurationMetadataKey]; ok {
+		payload[reasoningDurationMetadataKey] = durationMS
 	}
 	if !s.events.available() {
 		return &StreamEvent{EventType: streamEventMessage, Payload: payload, CreatedAt: time.Now().Unix()}, nil

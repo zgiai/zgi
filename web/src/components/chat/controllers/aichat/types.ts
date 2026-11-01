@@ -73,6 +73,10 @@ export interface AIChatStreamingMessageState {
   sensitiveOutputBlocked?: boolean;
   modelProcessing?: AIChatModelProcessingState;
   tokenUsage?: AIChatTokenUsageUpdatedEventData;
+  /** Reasoning streamed so far for this run (ZGI-13). */
+  reasoning?: string;
+  /** True while the latest model output is still reasoning. */
+  reasoning_active?: boolean;
 }
 
 export type AIChatAgenticTimelineItem =

@@ -112,6 +112,18 @@ func OutboundDialContext(config *AdapterConfig) func(context.Context, string, st
 	})
 }
 
+// minStreamResponseHeaderTimeout is how long a streaming call may wait for
+// response headers. A caller that allows a longer request (the Console platform
+// proxy forwards X-ZGI-Request-Timeout) raises it to that request's budget.
+const minStreamResponseHeaderTimeout = 600 * time.Second
+
+func streamResponseHeaderTimeout(timeout time.Duration) time.Duration {
+	if timeout > minStreamResponseHeaderTimeout {
+		return timeout
+	}
+	return minStreamResponseHeaderTimeout
+}
+
 func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPClientOptions) *HTTPClient {
 	if timeout == 0 {
 		timeout = 60 * time.Second
@@ -168,7 +180,7 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     true, // IMPORTANT: Disable keep-alives for streaming to avoid stale data issues
-		ResponseHeaderTimeout: 600 * time.Second,
+		ResponseHeaderTimeout: streamResponseHeaderTimeout(timeout),
 		DialContext:           dialContext,
 	}
 
@@ -256,8 +268,12 @@ func (c *HTTPClient) DoRequest(ctx context.Context, method, url string, headers 
 }
 
 // DoRequestDetailed executes HTTP request with retry support and exposes response headers.
-// Retries on: network errors, 5xx status, body-read failures,
-// and proxy HTML error responses (nginx 400/502/etc).
+// Retries on: non-timeout network errors, non-timeout 5xx status, body-read
+// failures, and proxy HTML error responses (nginx 400/502/etc).
+// Timeouts (a local client/context deadline, an upstream 504, or Console's
+// llm.provider.timeout) are returned at once: replaying a call that already
+// ran out of time only multiplies the wait. A retry is also skipped when the
+// request context cannot fit another backoff plus a full attempt.
 func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, headers map[string]string, body interface{}) (*HTTPResponse, error) {
 	var jsonData []byte
 	if body != nil {
@@ -272,9 +288,14 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 	var lastStatusCode int
 	var lastBody []byte
 	var lastHeader http.Header
+	retries := 0
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
+			if isTimeoutFailure(lastStatusCode, lastErr) || !c.hasTimeForRetry(ctx, attempt) {
+				break
+			}
+			retries = attempt
 			// Exponential backoff
 			backoff := time.Duration(attempt) * time.Second
 			select {
@@ -377,9 +398,35 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			lastErr = fmt.Errorf("%w: %w", ErrTimeout, lastErr)
 		}
 		lastErr = NormalizeTransportError(lastErr)
-		return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
+		return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries: %w", retries, lastErr)
 	}
-	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", c.maxRetries)
+	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", retries)
+}
+
+// isTimeoutFailure reports whether the previous attempt failed because it ran
+// out of time. lastErr is the raw attempt error, so a local client or context
+// deadline is recognised through NormalizeTransportError, and Console's
+// llm.provider.timeout through the ErrTimeout sentinel it maps to.
+func isTimeoutFailure(statusCode int, lastErr error) bool {
+	if statusCode == http.StatusGatewayTimeout {
+		return true
+	}
+	return lastErr != nil && errors.Is(NormalizeTransportError(lastErr), ErrTimeout)
+}
+
+// hasTimeForRetry reports whether the request context can still fit the
+// backoff before attempt plus one full attempt bounded by the client timeout.
+// Without a context deadline there is no total budget to protect.
+func (c *HTTPClient) hasTimeForRetry(ctx context.Context, attempt int) bool {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return true
+	}
+	need := time.Duration(attempt) * time.Second
+	if c.client != nil {
+		need += c.client.Timeout
+	}
+	return time.Until(deadline) > need
 }
 
 // DoRawRequestDetailed sends one non-replayable request without retrying.

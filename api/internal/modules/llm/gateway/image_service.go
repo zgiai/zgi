@@ -205,7 +205,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
 	// 8. Create adapter config
-	config := s.createAdapterConfig(selection, billingOrganizationID)
+	config := s.createAdapterConfig(ctx, selection, billingOrganizationID)
 
 	// 9. Get adapter instance
 	providerAdapter, err := s.adapterFactory.CreateAdapter(config)

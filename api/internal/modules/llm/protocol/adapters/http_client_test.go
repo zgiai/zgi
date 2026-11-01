@@ -380,3 +380,125 @@ func TestHTTPClientHonoursConsoleRetryableFalse(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPClientDoesNotRetryTimeout(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"upstream 504", http.StatusGatewayTimeout, `{"error":{"message":"upstream timed out","type":"server_error"}}`},
+		{"proxy HTML 504", http.StatusGatewayTimeout, `<html><body>504 Gateway Time-out</body></html>`},
+		{"console llm.provider.timeout", http.StatusGatewayTimeout, `{"code":"llm.provider.timeout","error_code":"llm.provider.timeout","retryable":true,"error":{"code":"upstream_timeout","type":"api_error","message":"x"}}`},
+		{"console llm.provider.timeout on 502", http.StatusBadGateway, `{"code":"llm.provider.timeout","error_code":"llm.provider.timeout","retryable":true,"error":{"code":"upstream_timeout","type":"api_error","message":"x"}}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			requestCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requestCount++
+				w.WriteHeader(testCase.status)
+				_, _ = w.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+
+			client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+			_, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+			if !errors.Is(err, ErrTimeout) {
+				t.Fatalf("DoRequestDetailed() error = %v, want ErrTimeout", err)
+			}
+			if requestCount != 1 {
+				t.Fatalf("request count = %d, want 1", requestCount)
+			}
+		})
+	}
+}
+
+func TestHTTPClientDoesNotRetryClientTimeout(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewHTTPClientWithOptions(20*time.Millisecond, 3, HTTPClientOptions{})
+	_, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("DoRequestDetailed() error = %v, want ErrTimeout", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1", requestCount)
+	}
+}
+
+func TestHTTPClientStillRetriesNonTimeoutServerError(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			requestCount := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requestCount++
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":{"message":"x","type":"server_error"}}`))
+			}))
+			defer server.Close()
+
+			client := NewHTTPClientWithOptions(time.Second, 1, HTTPClientOptions{})
+			_, err := client.DoRequestDetailed(context.Background(), http.MethodPost, server.URL, nil, map[string]interface{}{})
+			if err == nil || errors.Is(err, ErrTimeout) {
+				t.Fatalf("DoRequestDetailed() error = %v, want non-timeout failure", err)
+			}
+			if requestCount != 2 {
+				t.Fatalf("request count = %d, want 2", requestCount)
+			}
+		})
+	}
+}
+
+func TestHTTPClientStillRetriesConnectionRefused(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+
+	dials := 0
+	client := NewHTTPClientWithOptions(time.Second, 1, HTTPClientOptions{})
+	client.client.Transport = &http.Transport{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dials++
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+	}
+	_, err = client.DoRequestDetailed(context.Background(), http.MethodPost, "http://"+addr, nil, map[string]interface{}{})
+	if err == nil || errors.Is(err, ErrTimeout) {
+		t.Fatalf("DoRequestDetailed() error = %v, want connection failure", err)
+	}
+	if dials != 2 {
+		t.Fatalf("dial count = %d, want 2", dials)
+	}
+}
+
+func TestHTTPClientSkipsRetryWithoutTimeForAnotherAttempt(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"x","type":"server_error"}}`))
+	}))
+	defer server.Close()
+
+	// One retry needs 1s backoff plus a 1s attempt; 1.5s left cannot fit it.
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	client := NewHTTPClientWithOptions(time.Second, 3, HTTPClientOptions{})
+	_, err := client.DoRequestDetailed(ctx, http.MethodPost, server.URL, nil, map[string]interface{}{})
+	if err == nil || !strings.Contains(err.Error(), "after 0 retries") {
+		t.Fatalf("DoRequestDetailed() error = %v, want the first failure without retries", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("request count = %d, want 1", requestCount)
+	}
+}

@@ -211,11 +211,12 @@ func (b *BillingService) upsertAttemptBaseEntries(
 	switch lane {
 	case billingAttemptLaneRemote:
 		fundEntry := &BillingAttemptEntry{
-			AttemptID:      attemptID,
-			EntryType:      billingEntryTypeFund,
-			LedgerType:     billingLedgerTypeOrgFunds,
-			LedgerRefID:    bc.OrganizationID,
-			ReservedAmount: millipoints.MilliPoints(estimated),
+			AttemptID:   attemptID,
+			EntryType:   billingEntryTypeFund,
+			LedgerType:  billingLedgerTypeOrgFunds,
+			LedgerRefID: bc.OrganizationID,
+			// A settle re-runs this upsert; keep Console's metered hold.
+			ReservedAmount: millipoints.MilliPoints(fundReservedCredits(bc)),
 			Status:         billingEntryStatusPending,
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -264,8 +265,14 @@ func (b *BillingService) upsertAttemptEntry(
 				{Name: "ledger_type"},
 			},
 			DoUpdates: clause.Assignments(map[string]interface{}{
-				"ledger_ref_id":   entry.LedgerRefID,
-				"reserved_amount": entry.ReservedAmount,
+				"ledger_ref_id": entry.LedgerRefID,
+				// Console never changes a hold it booked: once the org_funds
+				// entry is bound to a deduction, a re-run keeps its reservation
+				// (a metered hold differs from the estimate a caller rebuilt).
+				"reserved_amount": gorm.Expr(
+					"CASE WHEN billing_attempt_entries.ledger_type = ? AND billing_attempt_entries.idempotency_key IS NOT NULL THEN billing_attempt_entries.reserved_amount ELSE ? END",
+					billingLedgerTypeOrgFunds, entry.ReservedAmount,
+				),
 				// A later settle/failure path also calls upsertAttemptInit to
 				// tolerate interrupted initialization. Preserve the recorded
 				// settlement state and remote deduction binding in that case.
@@ -355,6 +362,11 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 			strings.TrimSpace(bc.RequestID),
 		)
 	}
+	if fundLedgerType == billingLedgerTypeOrgFunds {
+		if err := b.restoreConsoleReservedCredits(ctx, tx, bc); err != nil {
+			return err
+		}
+	}
 
 	subjectActual := millipoints.MilliPoints(bc.ActualCredits)
 	if bc.QuotaChargedCredits != nil {
@@ -364,7 +376,7 @@ func (b *BillingService) updateAttemptEntriesAfterSettle(
 	if subjectRefunded < 0 {
 		subjectRefunded = 0
 	}
-	fundRefunded := millipoints.MilliPoints(bc.EstimatedCredits) - millipoints.MilliPoints(bc.ActualCredits)
+	fundRefunded := millipoints.MilliPoints(fundReservedCredits(bc)) - millipoints.MilliPoints(bc.ActualCredits)
 	if fundRefunded < 0 {
 		fundRefunded = 0
 	}
@@ -416,12 +428,15 @@ func (b *BillingService) recordAttemptSettleInput(
 	if err != nil {
 		return err
 	}
+	if err := b.restoreConsoleReservedCredits(ctx, tx, bc); err != nil {
+		return err
+	}
 
 	subjectRefunded := millipoints.MilliPoints(subjectReservedCredits(bc)) - millipoints.MilliPoints(bc.ActualCredits)
 	if subjectRefunded < 0 {
 		subjectRefunded = 0
 	}
-	fundRefunded := millipoints.MilliPoints(bc.EstimatedCredits) - millipoints.MilliPoints(bc.ActualCredits)
+	fundRefunded := millipoints.MilliPoints(fundReservedCredits(bc)) - millipoints.MilliPoints(bc.ActualCredits)
 	if fundRefunded < 0 {
 		fundRefunded = 0
 	}
@@ -478,10 +493,7 @@ func (b *BillingService) bindRemoteDeductionID(
 	res := tx.WithContext(ctx).
 		Model(&BillingAttemptEntry{}).
 		Where("attempt_id = ? AND entry_type = ? AND ledger_type = ?", attemptID, billingEntryTypeFund, billingLedgerTypeOrgFunds).
-		Updates(map[string]interface{}{
-			"idempotency_key": deductionID,
-			"updated_at":      time.Now(),
-		})
+		Updates(remoteDeductionBindingUpdates(bc, deductionID))
 	if res.Error != nil {
 		return res.Error
 	}
@@ -489,6 +501,44 @@ func (b *BillingService) bindRemoteDeductionID(
 		return fmt.Errorf("bind remote deduction id affected %d rows (attempt_id=%s)", res.RowsAffected, attemptID)
 	}
 	return nil
+}
+
+// restoreConsoleReservedCredits puts the org_funds hold back on bc when it is
+// not the estimate, the case of a metered pre-deduct, so a context rebuilt from
+// the local estimate (a video retrieve, a recovery) refunds and measures
+// overage against what Console reserved. Tool-postpaid holds are left alone.
+func (b *BillingService) restoreConsoleReservedCredits(ctx context.Context, db *gorm.DB, bc *BillingContext) error {
+	if bc == nil || bc.ToolPostpaid || bc.ConsoleReservedCredits != nil || strings.TrimSpace(bc.AttemptID) == "" {
+		return nil
+	}
+	var funds []BillingAttemptEntry
+	if err := db.WithContext(ctx).
+		Select("reserved_amount").
+		Where("attempt_id = ? AND entry_type = ? AND ledger_type = ?", bc.AttemptID, billingEntryTypeFund, billingLedgerTypeOrgFunds).
+		Limit(1).
+		Find(&funds).Error; err != nil {
+		return fmt.Errorf("load org funds reservation: %w", err)
+	}
+	if len(funds) == 1 {
+		if reserved := funds[0].ReservedAmount.Int64(); reserved != bc.EstimatedCredits {
+			bc.ConsoleReservedCredits = &reserved
+		}
+	}
+	return nil
+}
+
+// remoteDeductionBindingUpdates binds the Console deduction to the org_funds
+// entry and, when Console booked a hold other than the local estimate, records
+// that hold so recovery and settlement measure refunds and overage against it.
+func remoteDeductionBindingUpdates(bc *BillingContext, deductionID string) map[string]interface{} {
+	updates := map[string]interface{}{
+		"idempotency_key": deductionID,
+		"updated_at":      time.Now(),
+	}
+	if bc.ConsoleReservedCredits != nil {
+		updates["reserved_amount"] = millipoints.MilliPoints(*bc.ConsoleReservedCredits)
+	}
+	return updates
 }
 
 func (b *BillingService) preDeductPrivateChannelWallet(

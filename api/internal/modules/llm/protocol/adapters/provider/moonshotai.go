@@ -73,7 +73,11 @@ func (a *MoonshotAIAdapter) ChatCompletion(ctx context.Context, request *adapter
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
 	headers := a.buildHeaders()
 
-	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, request)
+	body, err := moonshotChatBody(request)
+	if err != nil {
+		return nil, err
+	}
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -96,7 +100,11 @@ func (a *MoonshotAIAdapter) ChatCompletionStream(ctx context.Context, request *a
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
 	headers := a.buildHeaders()
 
-	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, headers, request)
+	body, err := moonshotChatBody(request)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, headers, body)
 	if err != nil {
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
@@ -145,6 +153,28 @@ func (a *MoonshotAIAdapter) ChatCompletionStream(ctx context.Context, request *a
 	}()
 
 	return respChan, nil
+}
+
+// moonshotChatBody is the chat request body. ChatRequest drops its provider
+// extras when serialized (AdditionalParameters is json:"-"), so a request with
+// extras such as reasoning_effort is sent as the serialized request plus the
+// extras, mapped like the other OpenAI-compatible adapters (Kimi gets
+// thinking.type, zgi-pre#2913). A request without extras is sent exactly as
+// before.
+func moonshotChatBody(request *adapter.ChatRequest) (interface{}, error) {
+	if request == nil || len(request.AdditionalParameters) == 0 {
+		return request, nil
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	payload := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("failed to build request payload: %w", err)
+	}
+	applyChatAdditionalParameters(payload, request)
+	return payload, nil
 }
 
 // CreateResponse executes response creation request

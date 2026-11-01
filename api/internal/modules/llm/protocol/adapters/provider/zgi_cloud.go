@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/requesttimeout"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -87,7 +88,7 @@ func NewZGICloudAdapter(config *adapter.AdapterConfig) (*ZGICloudAdapter, error)
 
 	timeout := config.Timeout
 	if timeout == 0 {
-		timeout = 120 * time.Second
+		timeout = requesttimeout.Default()
 	}
 
 	maxRetries := config.MaxRetries
@@ -119,9 +120,21 @@ func (a *ZGICloudAdapter) Name() string {
 	return zgiCloudAdapterName
 }
 
+// buildZGICloudChatPayload forwards provider-specific extras verbatim. The
+// console selects the real upstream channel and owns any provider-specific
+// mapping, so reasoning_effort is not rewritten here.
+func buildZGICloudChatPayload(request *adapter.ChatRequest) map[string]interface{} {
+	payload := buildOpenAICompatibleChatCorePayload(request)
+	for k, v := range request.AdditionalParameters {
+		setChatExtra(payload, k, v)
+	}
+	applyCompatibleChatToolChoice(payload)
+	return payload
+}
+
 func (a *ZGICloudAdapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
 	url := fmt.Sprintf("%s/chat/completions", a.baseURL)
-	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", url, a.buildHeaders(), buildCompatibleProviderChatPayload(request))
+	httpResp, err := a.httpClient.DoRequestDetailed(ctx, "POST", url, a.buildHeaders(), buildZGICloudChatPayload(request))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -148,7 +161,7 @@ func (a *ZGICloudAdapter) ChatCompletionStream(ctx context.Context, request *ada
 		}
 	})
 
-	resp, err := a.httpClient.DoStreamRequest(transportCtx, "POST", url, a.buildHeaders(), buildCompatibleProviderChatPayload(request))
+	resp, err := a.httpClient.DoStreamRequest(transportCtx, "POST", url, a.buildHeaders(), buildZGICloudChatPayload(request))
 	if err != nil {
 		stopTransportCancellation()
 		cancelTransport()

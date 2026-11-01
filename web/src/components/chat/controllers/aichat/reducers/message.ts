@@ -503,11 +503,87 @@ function resolveReplayChunk(
   };
 }
 
+/**
+ * A message event that carries only model reasoning (ZGI-13). It feeds the
+ * thinking block and never touches the answer or its presentation segments.
+ */
+export function isReasoningOnlyMessageChunk(payload: AIChatMessageChunkEventData): boolean {
+  return Boolean(payload.reasoning_content) && !payload.answer && !payload.segment_content;
+}
+
+function applyReasoningChunkState(
+  current: AIChatControllerState,
+  payload: AIChatMessageChunkEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  const existingMessage = messages.find(message => message.id === payload.message_id);
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
+  // The streaming state is rebuilt by other reducers without this field; the
+  // message metadata then holds the same accumulated text. A replay from the
+  // first event starts from an explicit empty string instead.
+  const reasoning = `${
+    previousStreaming?.reasoning ?? existingMessage?.metadata?.reasoning_content ?? ''
+  }${payload.reasoning_content ?? ''}`;
+  const durationMs =
+    typeof payload.reasoning_duration_ms === 'number'
+      ? payload.reasoning_duration_ms
+      : existingMessage?.metadata?.reasoning_duration_ms;
+  const now = Math.floor(Date.now() / 1000);
+  const baseMessage =
+    existingMessage ??
+    createStreamingAIChatMessage({
+      id: payload.message_id,
+      conversationId: payload.conversation_id,
+      query: '',
+      modelName: 'unknown',
+      createdAt: now,
+    });
+  const nextMessage = {
+    ...baseMessage,
+    status: 'streaming' as const,
+    metadata: {
+      ...baseMessage.metadata,
+      reasoning_content: reasoning,
+      ...(typeof durationMs === 'number' ? { reasoning_duration_ms: durationMs } : {}),
+    },
+    updated_at: now,
+  };
+
+  return {
+    ...current,
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: upsertAIChatMessage(messages, nextMessage),
+    },
+    streamingByMessageId: {
+      ...current.streamingByMessageId,
+      [payload.message_id]: {
+        ...previousStreaming,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        answer: previousStreaming?.answer ?? baseMessage.answer ?? '',
+        status: 'streaming',
+        modelProcessing: undefined,
+        last_event_id: eventId ?? previousStreaming?.last_event_id,
+        reasoning,
+        reasoning_active: true,
+      },
+    },
+  };
+}
+
 export function applyMessageChunkState(
   current: AIChatControllerState,
   payload: AIChatMessageChunkEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  if (isReasoningOnlyMessageChunk(payload)) {
+    return applyReasoningChunkState(current, payload, eventId);
+  }
   const isSensitiveBlocked =
     isSensitiveOutputBlockedValue(payload.answer) ||
     (payload as unknown as Record<string, unknown>)[SENSITIVE_OUTPUT_BLOCKED_FLAG] === true;
@@ -647,6 +723,8 @@ export function applyMessageChunkState(
         replace: previousStreaming?.replace,
         sensitiveOutputBlocked: isSensitiveBlocked || previousStreaming?.sensitiveOutputBlocked,
         tokenUsage: previousStreaming?.tokenUsage,
+        reasoning: previousStreaming?.reasoning,
+        reasoning_active: false,
       },
     },
   };

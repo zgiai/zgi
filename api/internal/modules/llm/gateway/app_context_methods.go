@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -123,7 +124,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.responses")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
-		adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+		adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 		providerAdapter, err := s.adapterFactory.CreateAdapter(adapterConfig)
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
@@ -278,7 +279,7 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.embeddings")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
-		adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+		adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 		providerAdapter, err := s.adapterFactory.CreateAdapter(adapterConfig)
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
@@ -339,6 +340,9 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 	req *adapter.RerankRequest,
 ) (*adapter.RerankResponse, error) {
 	startTime := time.Now()
+	// One invocation ID for every provider attempt, published to the HTTP
+	// caller as X-ZGI-Request-ID and recorded as the billing request ID.
+	requestID := types.NewInvocationID(ctx)
 
 	// 1. Validate request
 	if err := s.validateRerankRequest(req); err != nil {
@@ -377,7 +381,6 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 	// 5. Try each provider selection
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		requestID := uuid.New().String()
 		modelRef := pricingModelRefFromSelection(providerSelection)
 		modelRef.Operation = PricingOperationRerank
 		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, modelRef, promptTokens, 0)
@@ -413,7 +416,7 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.rerank")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
-		adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+		adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 		providerAdapter, err := s.adapterFactory.CreateAdapter(adapterConfig)
 		if err != nil {
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {

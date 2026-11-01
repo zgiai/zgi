@@ -219,7 +219,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		"attempt", attemptIdx+1,
 	)
 
-	adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+	adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 	providerAdapter, adapterErr := s.adapterFactory.CreateAdapter(adapterConfig)
 	if adapterErr != nil {
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
@@ -230,7 +230,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		return nil, fmt.Errorf("failed to create adapter: %w", adapterErr)
 	}
 
-	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection, false)
 
 	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
 		return nil, err
@@ -459,7 +459,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 
 	// Unified adapter path: both official and private channels go through the same adapter flow.
 	// Official channels have APIBaseURL pointing to console-api (which returns OpenAI-compatible SSE).
-	adapterConfig := s.createAdapterConfig(providerSelection, organizationID)
+	adapterConfig := s.createAdapterConfig(ctx, providerSelection, organizationID)
 	providerAdapter, err := s.adapterFactory.CreateAdapter(adapterConfig)
 	if err != nil {
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
@@ -470,7 +470,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		return nil, fmt.Errorf("failed to create adapter: %w", err)
 	}
 
-	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection)
+	normalizedReq := shapeChatRequestForUpstream(cloneChatRequestWithNormalizedModel(req), providerSelection, true)
 
 	if normalizedReq.StreamOptions == nil {
 		normalizedReq.StreamOptions = &adapter.StreamOptions{IncludeUsage: true}

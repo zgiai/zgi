@@ -163,6 +163,7 @@ import {
   removeQueuedChatTurn,
   type AIChatQueuedTurn,
 } from '@/components/chat/utils/queued-turns';
+import type { AIChatReasoningToggle } from '@/components/chat/variants/aichat/reasoning';
 import { type AIChatShellSurface, resolveChatSurfaceProfile } from './chat-surface-profile';
 import { selectPendingInteraction } from '@/components/chat/controllers/aichat/pending-interaction';
 
@@ -217,6 +218,8 @@ interface AIChatShellProps {
   defaultSidebarOpen?: boolean;
   showAssistantModelMeta?: boolean;
   showSkillEventDetails?: boolean;
+  /** Unified thinking switch and thinking blocks; set only by the AIChat workbench (ZGI-13). */
+  reasoningToggle?: AIChatReasoningToggle;
   enableMessageReplay?: boolean;
   messageDensity?: 'default' | 'compact';
   surface?: AIChatShellSurface;
@@ -366,6 +369,7 @@ export function AIChatShell({
   defaultSidebarOpen = true,
   showAssistantModelMeta = true,
   showSkillEventDetails = true,
+  reasoningToggle,
   enableMessageReplay = true,
   messageDensity = 'default',
   surface = 'aichat',
@@ -1962,6 +1966,7 @@ export function AIChatShell({
             showPlanningPlaceholder={showPlanningPlaceholder}
             pendingUserMessage={visiblePendingUserMessage}
             speechPlayback={speechPlayback}
+            showReasoning={Boolean(reasoningToggle)}
           />
 
           <AIChatHomeView
@@ -2103,6 +2108,7 @@ export function AIChatShell({
                   }
                 : undefined
             }
+            reasoningToggle={reasoningToggle}
           />
         </main>
       </ToolGovernancePendingApprovalScopeProvider>

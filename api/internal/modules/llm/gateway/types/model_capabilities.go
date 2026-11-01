@@ -16,4 +16,9 @@ type ModelCapabilities struct {
 	JSONMode         bool
 	ToolCall         bool
 	Vision           bool
+	// Rerank is read from use_cases. UseCasesDeclared is false when every live
+	// row left use_cases empty, which is legacy metadata rather than a
+	// declaration that the model cannot rerank, so callers must fail open.
+	Rerank           bool
+	UseCasesDeclared bool
 }

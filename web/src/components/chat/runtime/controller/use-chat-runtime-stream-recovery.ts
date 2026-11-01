@@ -262,6 +262,9 @@ export function useChatRuntimeStreamRecovery({
                   : previousStreaming?.replay_base_answer,
                 replay_offset: shouldDedupeReplay ? 0 : previousStreaming?.replay_offset,
                 replace: previousStreaming?.replace,
+                // A replay from the first event rebuilds the reasoning; a
+                // resumed stream appends to what the message already shows.
+                reasoning: afterId ? previousStreaming?.reasoning : '',
               },
             },
           };

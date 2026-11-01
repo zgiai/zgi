@@ -8,6 +8,7 @@ import {
   FolderOpen,
   ImageIcon,
   Info,
+  Lightbulb,
   Maximize2,
   Minimize2,
   Paperclip,
@@ -25,6 +26,7 @@ import {
   type ModelSelectorValue,
 } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +53,10 @@ import {
 import { AIChatVoiceInputControl } from '@/components/chat/variants/aichat/voice/voice-input-control';
 import type { AIChatVoiceInputController } from '@/components/chat/variants/aichat/voice/use-agent-voice-input';
 import { AIChatSpeechAutoPlayControl } from '@/components/chat/variants/aichat/voice/speech-auto-play-control';
+import {
+  modelSupportsReasoningToggle,
+  type AIChatReasoningToggle,
+} from '@/components/chat/variants/aichat/reasoning';
 
 interface AIChatInputToolbarProps {
   modelSelectorValue: AIChatModelValue;
@@ -113,6 +119,8 @@ interface AIChatInputToolbarProps {
     enabled: boolean;
     onEnabledChange: (enabled: boolean) => void;
   };
+  /** Unified thinking switch, shown only for models that can reason (ZGI-13). */
+  reasoningToggle?: AIChatReasoningToggle;
 }
 
 const TOOL_GOVERNANCE_PERMISSION_TIERS: AIChatToolGovernancePermissionTier[] = [
@@ -171,6 +179,7 @@ function getToolGovernanceTierDisplay(
  */
 export function AIChatInputToolbar({
   modelSelectorValue,
+  modelProps,
   modelSelectorWarning = false,
   isModelInitializing = false,
   modelMissing,
@@ -225,6 +234,7 @@ export function AIChatInputToolbar({
   onStop,
   voiceInput,
   speechAutoPlay,
+  reasoningToggle,
 }: AIChatInputToolbarProps) {
   const t = useT('webapp');
   const showStopButton = (canStop ?? isSending) && !hasInput;
@@ -342,6 +352,35 @@ export function AIChatInputToolbar({
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs">
               {t('consoleChat.attachments.imageFileHint')}
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
+        {reasoningToggle && modelSupportsReasoningToggle(modelProps) ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <label
+                className={cn(
+                  'flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 text-xs text-muted-foreground',
+                  reasoningToggle.value === true && 'text-foreground',
+                  isModelInitializing && 'cursor-not-allowed opacity-50'
+                )}
+              >
+                <Lightbulb className="size-3.5" aria-hidden="true" />
+                <span>{t('consoleChat.reasoning.toggle')}</span>
+                <Switch
+                  checked={reasoningToggle.value === true}
+                  disabled={isModelInitializing}
+                  onCheckedChange={reasoningToggle.onChange}
+                  aria-label={t('consoleChat.reasoning.toggle')}
+                />
+              </label>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {reasoningToggle.value === true
+                ? t('consoleChat.reasoning.toggleOnHint')
+                : reasoningToggle.value === false
+                  ? t('consoleChat.reasoning.toggleOffHint')
+                  : t('consoleChat.reasoning.toggleDefaultHint')}
             </TooltipContent>
           </Tooltip>
         ) : null}

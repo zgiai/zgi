@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,4 +129,106 @@ func assertGatewayShellEnvelope(t *testing.T, recorder *httptest.ResponseRecorde
 	if body["code"] != code || body["error_code"] != code || body["retryable"] != false {
 		t.Fatalf("envelope = %v, want code %s retryable=false", body, code)
 	}
+}
+
+func TestGatewayRequestBodyLimitDefaultsTo100MiB(t *testing.T) {
+	if defaultGatewayRequestBodyLimit != 100<<20 {
+		t.Fatalf("default limit = %d, want %d", defaultGatewayRequestBodyLimit, 100<<20)
+	}
+	if got := resolveGatewayRequestBodyLimit("", failOnWarn(t)); got != 100<<20 {
+		t.Fatalf("empty setting = %d, want %d", got, 100<<20)
+	}
+}
+
+func TestGatewayRequestBodyLimitUsesConfiguredMiB(t *testing.T) {
+	cases := map[string]int64{"1": 1 << 20, "64": 64 << 20, " 200 ": 200 << 20}
+	for raw, want := range cases {
+		if got := resolveGatewayRequestBodyLimit(raw, failOnWarn(t)); got != want {
+			t.Fatalf("setting %q = %d, want %d", raw, got, want)
+		}
+	}
+}
+
+func TestGatewayRequestBodyLimitInvalidFallsBackToDefaultAndWarns(t *testing.T) {
+	for _, raw := range []string{"abc", "0", "-5", "1.5", "100MB", "9223372036854775807"} {
+		t.Run(raw, func(t *testing.T) {
+			var warnings []string
+			warn := func(msg string, args ...interface{}) {
+				warnings = append(warnings, msg)
+				if !containsArg(args, GatewayRequestBodyLimitEnv) || !containsArg(args, raw) {
+					t.Fatalf("warning args %v do not name env/value", args)
+				}
+			}
+			if got := resolveGatewayRequestBodyLimit(raw, warn); got != defaultGatewayRequestBodyLimit {
+				t.Fatalf("setting %q = %d, want default %d", raw, got, defaultGatewayRequestBodyLimit)
+			}
+			if len(warnings) != 1 {
+				t.Fatalf("warnings = %v, want exactly one", warnings)
+			}
+		})
+	}
+}
+
+// TestGatewayBodyLimitDefaultAcceptsAboveOld10MiB pins the ZGI-07 fix: a body
+// just above the former 10 MiB ceiling reaches the next handler intact, and a
+// declared length above the new default is still rejected before it is read.
+func TestGatewayBodyLimitDefaultAcceptsAboveOld10MiB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var received int
+	router := gin.New()
+	router.Use(GatewayBodyLimit(0))
+	router.POST("/*path", func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		received = len(body)
+		c.Status(http.StatusNoContent)
+	})
+
+	size := 11 << 20
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(make([]byte, size))))
+	if recorder.Code != http.StatusNoContent || received != size {
+		t.Fatalf("status=%d received=%d want=%d", recorder.Code, received, size)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader("{}"))
+	request.ContentLength = defaultGatewayRequestBodyLimit + 1
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("over-default status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestGatewayBodyLimitConfiguredLimitKeepsCatalogEnvelope checks that a limit
+// resolved from the setting rejects with the same 413 contract as before.
+func TestGatewayBodyLimitConfiguredLimitKeepsCatalogEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	limit := resolveGatewayRequestBodyLimit("1", failOnWarn(t))
+	nextCalled := false
+	router := gin.New()
+	router.Use(withTestRequestID, GatewayBodyLimit(limit))
+	router.POST("/*path", func(c *gin.Context) { nextCalled = true })
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(make([]byte, (1<<20)+1)))
+	request.ContentLength = -1
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if nextCalled {
+		t.Fatal("next handler ran for an over-limit body")
+	}
+	assertGatewayShellEnvelope(t, recorder, http.StatusRequestEntityTooLarge, "llm.request.too_large")
+}
+
+func failOnWarn(t *testing.T) func(string, ...interface{}) {
+	t.Helper()
+	return func(msg string, args ...interface{}) { t.Fatalf("unexpected warning %q %v", msg, args) }
+}
+
+func containsArg(args []interface{}, want interface{}) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
