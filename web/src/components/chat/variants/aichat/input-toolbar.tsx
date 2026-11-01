@@ -26,6 +26,7 @@ import {
   type ModelSelectorValue,
 } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -357,22 +358,22 @@ export function AIChatInputToolbar({
         {reasoningToggle && modelSupportsReasoningToggle(modelProps) ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                aria-pressed={reasoningToggle.value === true}
-                disabled={isModelInitializing}
+              <label
                 className={cn(
-                  'h-8 shrink-0 gap-1 rounded-full border px-3 text-xs',
-                  reasoningToggle.value === true
-                    ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/15'
-                    : 'border-border/70 text-muted-foreground'
+                  'flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 text-xs text-muted-foreground',
+                  reasoningToggle.value === true && 'text-foreground',
+                  isModelInitializing && 'cursor-not-allowed opacity-50'
                 )}
-                onClick={() => reasoningToggle.onChange(reasoningToggle.value !== true)}
               >
-                <Lightbulb className="size-3.5" />
+                <Lightbulb className="size-3.5" aria-hidden="true" />
                 <span>{t('consoleChat.reasoning.toggle')}</span>
-              </Button>
+                <Switch
+                  checked={reasoningToggle.value === true}
+                  disabled={isModelInitializing}
+                  onCheckedChange={reasoningToggle.onChange}
+                  aria-label={t('consoleChat.reasoning.toggle')}
+                />
+              </label>
             </TooltipTrigger>
             <TooltipContent side="top">
               {reasoningToggle.value === true
