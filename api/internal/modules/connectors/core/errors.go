@@ -29,6 +29,11 @@ const (
 	// ErrorCodeCommandForbidden is a server command the organization's rules
 	// forbid (ADR 0029).
 	ErrorCodeCommandForbidden ErrorCode = "connector_command_forbidden"
+	// ErrorCodeSessionGrantUnsupported is a confirmation that asked to be
+	// remembered for the session on a surface that confirms each operation
+	// once. It is returned before anything is routed, so the same receipt can
+	// be confirmed again without the preference.
+	ErrorCodeSessionGrantUnsupported ErrorCode = "connector_session_grant_unsupported"
 
 	// Word-order aliases keep call sites readable without changing the stable
 	// wire values.
@@ -54,6 +59,7 @@ func (code ErrorCode) Valid() bool {
 		ErrorCodeWeixinRegionUnsupported,
 		ErrorCodeInternal, ErrorCodeInvalidAppCredentials, ErrorCodePermissionMissing,
 		ErrorCodeResourceAccessDenied, ErrorCodeApplicationNotReady, ErrorCodeRateLimited, ErrorCodeFlowExpired, ErrorCodeCommandForbidden,
+		ErrorCodeSessionGrantUnsupported,
 		ErrorCodeVerificationWaiting, ErrorCodeProviderResponseUnrecognized, ErrorCodeVerificationUncertain,
 		ErrorCodeMailAuthenticationRejected, ErrorCodeMailAppPasswordRequired, ErrorCodeMailTLSRequired,
 		ErrorCodeMailPolicyRestricted, ErrorCodeMailReferenceExpired, ErrorCodeMailSizeExceeded, ErrorCodeMailRecipientRejected, ErrorCodeMailSubmissionRejected,

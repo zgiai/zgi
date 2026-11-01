@@ -1035,6 +1035,8 @@ const messages = {
       previewTruncated: 'This content preview is shortened.',
       previewUnavailable:
         'This record lacks a verifiable account or operation preview. Cancel it and start a new operation after the connection service is updated.',
+      sessionGrantUnsupported:
+        'This approval applies to this operation only and cannot be remembered for the session. Nothing was run; confirm it again.',
       sendMail: 'Send email',
 
       transportUnconfirmed: 'Result unconfirmed',

@@ -934,6 +934,8 @@ const messages: ConnectorMessages = {
       previewTruncated: '内容较长，已截断预览。',
       previewUnavailable:
         '此记录缺少可核对的账号或操作内容。请取消本次操作，更新连接服务后重新发起。',
+      sessionGrantUnsupported:
+        '这次审批只对本次操作有效，不能在本会话中记住。操作尚未执行，请重新确认。',
       sendMail: '发送邮件',
 
       transportUnconfirmed: '结果待核实',
