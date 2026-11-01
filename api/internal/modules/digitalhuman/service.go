@@ -167,6 +167,12 @@ func (s *Service) Create(ctx context.Context, scope Scope, request CreateRequest
 }
 
 // Get returns scoped aggregate metadata with draft and current publication.
+// DefinitionWorkspace returns the workspace a DigitalHuman of the organization
+// belongs to.
+func (s *Service) DefinitionWorkspace(ctx context.Context, organizationID, id uuid.UUID) (uuid.UUID, error) {
+	return s.repo.DefinitionWorkspace(ctx, organizationID, id)
+}
+
 func (s *Service) Get(ctx context.Context, scope Scope, id uuid.UUID) (*Detail, error) {
 	if !validScope(scope) || id == uuid.Nil {
 		return nil, applicationError(ErrInvalidRequest, "digital_human.get")

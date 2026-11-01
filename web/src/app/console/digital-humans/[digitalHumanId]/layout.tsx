@@ -16,6 +16,7 @@ import {
   Server,
   Settings2,
 } from 'lucide-react';
+import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { DigitalHumanFeatureGate } from '@/components/digital-human/feature-gate';
 import { useDigitalHumanDraftStore } from '@/components/digital-human/digital-human-draft-store';
 import { DigitalHumanHeader } from '@/components/digital-human/digital-human-header';
@@ -29,8 +30,25 @@ export default function DigitalHumanLayout({ children }: { children: ReactNode }
   const params = useParams<{ digitalHumanId: string }>();
   return (
     <DigitalHumanFeatureGate>
-      <DigitalHumanShell id={params.digitalHumanId}>{children}</DigitalHumanShell>
+      <DigitalHumanWorkspaceGuard id={params.digitalHumanId}>
+        <DigitalHumanShell id={params.digitalHumanId}>{children}</DigitalHumanShell>
+      </DigitalHumanWorkspaceGuard>
     </DigitalHumanFeatureGate>
+  );
+}
+
+// A DigitalHuman of another workspace is handled as other workspace
+// resources are: the guard offers to switch to its workspace.
+function DigitalHumanWorkspaceGuard({ id, children }: { id: string; children: ReactNode }) {
+  const detailQuery = useDigitalHuman(id);
+  const definition = detailQuery.data?.data?.definition;
+  return (
+    <WorkspaceMismatchGuard
+      isLoading={detailQuery.isLoading}
+      targetWorkspaceId={definition?.workspace_id ?? ''}
+    >
+      {children}
+    </WorkspaceMismatchGuard>
   );
 }
 
@@ -143,12 +161,16 @@ function DigitalHumanShell({ id, children }: { id: string; children: ReactNode }
           },
         ]
       : []),
-    {
-      href: `/console/digital-humans/${id}/runs`,
-      label: t('tabs.runs'),
-      icon: History,
-      active: pathname.startsWith(`/console/digital-humans/${id}/runs`),
-    },
+    ...(permissions.hasPermission('digital_human.logs.view')
+      ? [
+          {
+            href: `/console/digital-humans/${id}/runs`,
+            label: t('tabs.runs'),
+            icon: History,
+            active: pathname.startsWith(`/console/digital-humans/${id}/runs`),
+          },
+        ]
+      : []),
   ];
   const mobileItems = restrictToConfiguration ? [configurationItem] : publishedMobileItems;
   const routeGuardPending = !isConfigurationPage && restrictToConfiguration;

@@ -58,6 +58,32 @@ type Handler struct {
 	service            HandlerService
 	projector          *apptransport.Projector
 	executionApprovals executionruntime.Approvals
+	otherWorkspaces    *otherWorkspaceAccess
+}
+
+// DefinitionWorkspaceLocator finds the workspace a DigitalHuman belongs to.
+type DefinitionWorkspaceLocator interface {
+	DefinitionWorkspace(ctx context.Context, organizationID, id uuid.UUID) (uuid.UUID, error)
+}
+
+// CanViewInWorkspace reports whether the actor may view DigitalHumans in a
+// workspace.
+type CanViewInWorkspace func(ctx context.Context, organizationID, workspaceID, actorID uuid.UUID) (bool, error)
+
+type otherWorkspaceAccess struct {
+	locator DefinitionWorkspaceLocator
+	canView CanViewInWorkspace
+}
+
+// WithOtherWorkspaceDetail lets the detail of a DigitalHuman in another
+// workspace of the organization be read by someone who may view it there, as
+// prompts, datasets and databases are: the console then offers to switch to
+// that workspace instead of reporting it missing.
+func (h *Handler) WithOtherWorkspaceDetail(locator DefinitionWorkspaceLocator, canView CanViewInWorkspace) *Handler {
+	if locator != nil && canView != nil {
+		h.otherWorkspaces = &otherWorkspaceAccess{locator: locator, canView: canView}
+	}
+	return h
 }
 
 // NewHandler constructs a DigitalHuman HTTP handler.
@@ -309,8 +335,34 @@ func (h *Handler) List(c *gin.Context) {
 func (h *Handler) Get(c *gin.Context) {
 	h.withDetail(c, func(ctx context.Context, scope Scope, id uuid.UUID) (any, error) {
 		result, err := h.service.Get(ctx, scope, id)
+		if errors.Is(err, ErrNotFound) {
+			if other, ok := h.otherWorkspaceScope(ctx, scope, id); ok {
+				scope = other
+				result, err = h.service.Get(ctx, scope, id)
+			}
+		}
 		return h.decorateExecutionRuntimeCapability(scope, result), err
 	})
+}
+
+// otherWorkspaceScope returns the scope of the workspace a DigitalHuman
+// belongs to when it is another workspace the actor may view it in. Anything
+// else leaves the request as not found, so nothing is revealed.
+func (h *Handler) otherWorkspaceScope(ctx context.Context, scope Scope, id uuid.UUID) (Scope, bool) {
+	if h.otherWorkspaces == nil {
+		return Scope{}, false
+	}
+	workspaceID, err := h.otherWorkspaces.locator.DefinitionWorkspace(ctx, scope.OrganizationID, id)
+	if err != nil || workspaceID == uuid.Nil || workspaceID == scope.WorkspaceID {
+		return Scope{}, false
+	}
+	allowed, err := h.otherWorkspaces.canView(ctx, scope.OrganizationID, workspaceID, scope.ActorID)
+	if err != nil || !allowed {
+		return Scope{}, false
+	}
+	other := scope
+	other.WorkspaceID = workspaceID
+	return other, true
 }
 
 // GetDraft returns only the mutable draft.

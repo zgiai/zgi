@@ -8,6 +8,7 @@ import {
   AGENT_KEYS,
   DATASET_KEYS,
   DB_KEYS,
+  DIGITAL_HUMAN_KEYS,
   PROFILE_KEYS,
   PROMPT_KEYS,
   WORKSPACE_KEYS,
@@ -51,6 +52,7 @@ export function useUpdateCurrentWorkspace() {
       queryClient.removeQueries({ queryKey: DATASET_KEYS.details() });
       queryClient.removeQueries({ queryKey: DB_KEYS.details() });
       queryClient.removeQueries({ queryKey: PROMPT_KEYS.details() });
+      queryClient.removeQueries({ queryKey: DIGITAL_HUMAN_KEYS.details() });
       // Refresh workspace-scoped resources so views don't keep showing data from the previous workspace.
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: PROFILE_KEYS.capabilities() }),
@@ -59,6 +61,7 @@ export function useUpdateCurrentWorkspace() {
         queryClient.invalidateQueries({ queryKey: DATASET_KEYS.all }),
         queryClient.invalidateQueries({ queryKey: DB_KEYS.all }),
         queryClient.invalidateQueries({ queryKey: PROMPT_KEYS.all }),
+        queryClient.invalidateQueries({ queryKey: DIGITAL_HUMAN_KEYS.all }),
       ]);
       sessionManager.broadcastContextChanged({
         currentWorkspaceId: workspace.id,
