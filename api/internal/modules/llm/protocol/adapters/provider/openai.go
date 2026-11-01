@@ -1223,11 +1223,23 @@ func setChatExtra(payload map[string]interface{}, key string, value interface{})
 
 func buildOpenAICompatibleChatPayload(request *adapter.ChatRequest) map[string]interface{} {
 	payload := buildOpenAICompatibleChatCorePayload(request)
+	applyChatAdditionalParameters(payload, request)
+	return payload
+}
+
+// applyChatAdditionalParameters merges the request's provider extras into an
+// OpenAI-compatible chat payload.
+func applyChatAdditionalParameters(payload map[string]interface{}, request *adapter.ChatRequest) {
+	kimiThinking, translateForKimi := kimiThinkingForRequest(request)
 
 	// Process AdditionalParameters (Dynamic Mapping)
 	for k, v := range request.AdditionalParameters {
 		switch k {
 		case "reasoning_effort":
+			if translateForKimi {
+				setChatExtra(payload, "thinking", kimiThinking)
+				continue
+			}
 			// Map to OpenAI o1 structure: "reasoning": {"effort": "..."}
 			setChatExtra(payload, "reasoning", map[string]interface{}{"effort": v})
 			// o1 doesn't support temperature/top_p, but we usually let the user omit them
@@ -1237,8 +1249,43 @@ func buildOpenAICompatibleChatPayload(request *adapter.ChatRequest) map[string]i
 			setChatExtra(payload, k, v)
 		}
 	}
+}
 
-	return payload
+// kimiThinkingForRequest translates the unified reasoning_effort for Kimi
+// models, which only reason with thinking.type and ignore reasoning.effort
+// (zgi-pre#2913). It follows the console's thinking_type dialect: any level
+// enables thinking and none disables it. A request that already carries a
+// native thinking value, or a level outside none/minimal/low/medium/high, is
+// left to the existing mapping.
+func kimiThinkingForRequest(request *adapter.ChatRequest) (map[string]interface{}, bool) {
+	if request == nil || !isKimiModel(request.Model) {
+		return nil, false
+	}
+	if _, native := request.AdditionalParameters["thinking"]; native {
+		return nil, false
+	}
+	level, ok := request.AdditionalParameters["reasoning_effort"].(string)
+	if !ok {
+		return nil, false
+	}
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "none":
+		return map[string]interface{}{"type": "disabled"}, true
+	case "minimal", "low", "medium", "high":
+		return map[string]interface{}{"type": "enabled"}, true
+	default:
+		return nil, false
+	}
+}
+
+// isKimiModel matches the Kimi family by model name, not by channel: one
+// aggregator channel also serves qwen, deepseek and others.
+func isKimiModel(model string) bool {
+	name := strings.ToLower(strings.TrimSpace(model))
+	if index := strings.LastIndex(name, "/"); index >= 0 {
+		name = name[index+1:]
+	}
+	return strings.HasPrefix(name, "kimi-")
 }
 
 // buildOpenAICompatibleChatCorePayload maps the typed ChatRequest fields only.
