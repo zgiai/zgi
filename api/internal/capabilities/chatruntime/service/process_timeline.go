@@ -111,7 +111,7 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		}
 		return r.Emit(eventType, payload)
 	}
-	if eventType == streamEventAgentProgress {
+	if eventType == streamEventAgentProgress || eventType == streamEventPlanUpdated {
 		return r.Emit(eventType, payload)
 	}
 	if !r.activePresentationSegmentIsFinalOutput() {
@@ -122,6 +122,9 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		r.service.persistWorkflowRunEventBestEffort(r.persistCtx, r.prepared, eventType, payload)
 	}
 	invocation := r.invocationFromEvent(eventType, payload)
+	if visibility := invocationPresentationVisibility(invocation); len(invocation) > 0 && visibility != "" {
+		invocation["presentation_visibility"] = visibility
+	}
 	internalTaskGovernance := r.isInternalDigitalHumanTaskGovernanceEvent(eventType, payload)
 	if internalTaskGovernance && len(invocation) > 0 {
 		// Keep the governance invocation in durable metadata for audit and
@@ -1121,7 +1124,7 @@ func copyInvocationRuntimeFields(payload map[string]interface{}, invocation map[
 	if len(payload) == 0 || len(invocation) == 0 {
 		return
 	}
-	for _, key := range []string{"kind", "invocation_id", "runtime_id", "path", "answer_id", "created_at", "created_at_ms"} {
+	for _, key := range []string{"kind", "invocation_id", "runtime_id", "path", "answer_id", "created_at", "created_at_ms", "presentation_visibility"} {
 		if value, ok := invocation[key]; ok && value != nil {
 			payload[key] = value
 		}

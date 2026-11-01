@@ -1,11 +1,9 @@
 package service
 
 import (
-	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
@@ -14,6 +12,9 @@ import (
 
 const (
 	operationPlanVersion = "operation_plan.v2"
+	// operationPlanChecklistVersion marks a plan whose steps are the model's own
+	// checklist (ADR 0049); older plans carry runtime phases.
+	operationPlanChecklistVersion = "operation_plan.v3"
 
 	operationPlanStatusRunning   = "running"
 	operationPlanStatusCompleted = "completed"
@@ -35,93 +36,6 @@ const (
 	operationPlanPhaseSourceServerOutcome  = "server_outcome"
 	operationPlanPhaseSourceModelAdvisory  = "model_advisory"
 )
-
-func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strategy *AIChatTurnStrategy) map[string]interface{} {
-	if parts == nil || strategy == nil {
-		return nil
-	}
-	originalGoal := truncateRunes(strings.TrimSpace(parts.Query), 500)
-	outcomes := operationPlanOutcomesFromTurnStrategy(strategy)
-	phases := operationPlanPhasesFromTurnStrategy(strategy)
-	if len(phases) == 0 && originalGoal != "" {
-		phases = []map[string]interface{}{{
-			"id":                        "phase-1",
-			"step":                      originalGoal,
-			"title":                     originalGoal,
-			"status":                    operationPlanStepStatusPending,
-			"verification_mode":         "model_reconciliation",
-			operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
-		}}
-	}
-	if len(phases) == 0 {
-		return nil
-	}
-	plan := map[string]interface{}{
-		"version":                          operationPlanVersion,
-		"task_id":                          strings.TrimSpace(taskID),
-		"original_user_goal":               originalGoal,
-		"surface":                          normalizeAIChatSurface(parts.Surface),
-		"intent":                           strings.TrimSpace(strategy.Intent),
-		"status":                           operationPlanStatusRunning,
-		"phases":                           mapsToInterfaceSlice(phases),
-		"risk_level":                       operationPlanRiskLevel(strategy),
-		"approval":                         operationPlanApprovalPolicy(strategy),
-		"tool_choice_mode":                 aiChatTurnToolChoiceModelDecides,
-		"planning_mode":                    "phase_only_model_decides",
-		"success_criteria":                 operationPlanSuccessCriteriaFromTurnStrategy(strategy),
-		"plan_sync_status":                 "current",
-		"evidence_revision":                0,
-		"evidence_revision_at_plan_update": 0,
-		"evidence_sequence_at_plan_update": 0,
-		"evidence_after_last_plan_update":  0,
-		"derived_from":                     "turn_strategy",
-	}
-	if len(outcomes) > 0 {
-		plan[operationPlanOutcomesKey] = mapsToInterfaceSlice(outcomes)
-		plan["planning_mode"] = "outcome_contract_model_decides"
-	}
-	if contract := operationPlanTaskContractFromTurnStrategy(strategy); len(contract) > 0 {
-		plan["task_contract"] = contract
-	}
-	if taskType := strings.TrimSpace(strategy.TaskType); taskType != "" {
-		plan["task_type"] = taskType
-	}
-	if len(strategy.PhaseGoals) > 0 {
-		plan["phase_goals"] = compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180)
-	}
-	if len(strategy.EvidenceRequired) > 0 {
-		plan["evidence_required"] = compactStringSliceForPrompt(strategy.EvidenceRequired, 10, 180)
-	}
-	if len(strategy.RecommendedCapabilities) > 0 {
-		plan["recommended_capabilities"] = compactStringSliceForPrompt(strategy.RecommendedCapabilities, 10, 160)
-	}
-	if goals := agentCapabilityGoalsToMaps(strategy.CapabilityGoals); len(goals) > 0 {
-		plan["capability_goals"] = mapsToInterfaceSlice(goals)
-	}
-	if strategy.NeedsExactAgentRuntime {
-		plan["needs_exact_agent_runtime"] = true
-	}
-	if strategy.CurrentContextMaySummary {
-		plan["current_context_may_be_summary"] = true
-	}
-	if strategy.OpenCreatedAgentDetail {
-		plan["open_created_agent_detail"] = true
-	}
-	if source := strings.TrimSpace(strategy.Source); source != "" {
-		plan["strategy_source"] = source
-	}
-	if reason := strings.TrimSpace(strategy.SourceReason); reason != "" {
-		plan["strategy_source_reason"] = reason
-	}
-	if strings.TrimSpace(strategy.CurrentPage) != "" {
-		plan["current_page"] = strings.TrimSpace(strategy.CurrentPage)
-	}
-	if pageEvidence := operationPlanCompactPageEvidence(skillLoopCompletionPageContextEvidence(parts)); len(pageEvidence) > 0 {
-		plan["page_evidence"] = pageEvidence
-		plan["current_page_evidence"] = pageEvidence
-	}
-	return plan
-}
 
 func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map[string]interface{} {
 	if strategy == nil {
@@ -189,153 +103,6 @@ func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map
 	return contract
 }
 
-func operationPlanSuccessCriteriaFromTurnStrategy(strategy *AIChatTurnStrategy) []string {
-	if strategy == nil {
-		return nil
-	}
-	criteria := append([]string(nil), strategy.SuccessCriteria...)
-	if !aiChatTurnStrategyModelDecidesTools(strategy) {
-		return criteria
-	}
-	out := make([]string, 0, len(criteria)+3)
-	for _, value := range criteria {
-		value = strings.TrimSpace(value)
-		if value == "" || strings.HasPrefix(strings.ToLower(value), "complete pending plan step:") {
-			continue
-		}
-		out = appendUniqueStrings(out, value)
-	}
-	if len(out) == 0 {
-		out = append(out,
-			"continue the user goal from current tool, page, and client-action evidence",
-			"choose enabled tools from latest evidence instead of replaying a fixed tool script",
-			"verify the final answer against actual tool results or refreshed page context",
-		)
-	}
-	return out
-}
-
-func operationPlanRiskLevel(strategy *AIChatTurnStrategy) string {
-	if strategy == nil {
-		return ""
-	}
-	return strings.TrimSpace(strategy.AssetRisk)
-}
-
-func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[string]interface{} {
-	if strategy == nil {
-		return nil
-	}
-	if len(strategy.Outcomes) > 0 {
-		phases := make([]map[string]interface{}, 0, len(strategy.Outcomes))
-		for index, outcome := range strategy.Outcomes {
-			goal := strings.TrimSpace(outcome.Goal)
-			if goal == "" {
-				continue
-			}
-			outcomeID := strings.TrimSpace(outcome.ID)
-			if outcomeID == "" {
-				outcomeID = fmt.Sprintf("outcome-%d", index+1)
-			}
-			phases = append(phases, map[string]interface{}{
-				"id":                        fmt.Sprintf("phase-%d", len(phases)+1),
-				"outcome_id":                outcomeID,
-				"step":                      goal,
-				"title":                     goal,
-				"status":                    operationPlanStepStatusPending,
-				"completion_source":         "runtime_effect_reconciliation",
-				"required":                  outcome.Required == nil || *outcome.Required,
-				operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
-			})
-		}
-		return phases
-	}
-	if len(strategy.PhaseGoals) > 0 {
-		phases := make([]map[string]interface{}, 0, len(strategy.PhaseGoals))
-		for idx, goal := range compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180) {
-			phase := map[string]interface{}{
-				"id":                        fmt.Sprintf("phase-%d", idx+1),
-				"step":                      goal,
-				"title":                     goal,
-				"status":                    operationPlanStepStatusPending,
-				"verification_mode":         "model_reconciliation",
-				operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
-			}
-			phases = append(phases, phase)
-		}
-		return phases
-	}
-	return nil
-}
-
-func operationPlanOutcomesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[string]interface{} {
-	if strategy == nil || len(strategy.Outcomes) == 0 {
-		return nil
-	}
-	out := make([]map[string]interface{}, 0, len(strategy.Outcomes))
-	for index, outcome := range strategy.Outcomes {
-		goal := strings.TrimSpace(outcome.Goal)
-		if goal == "" {
-			continue
-		}
-		id := strings.TrimSpace(outcome.ID)
-		if id == "" {
-			id = fmt.Sprintf("outcome-%d", index+1)
-		}
-		required := true
-		if outcome.Required != nil {
-			required = *outcome.Required
-		}
-		effectiveOutcome := outcome
-		if len(effectiveOutcome.Capabilities) == 0 && len(strategy.Outcomes) == 1 {
-			effectiveOutcome.Capabilities = append([]string(nil), strategy.RecommendedCapabilities...)
-		}
-		acceptance := operationPlanOutcomeAcceptance(strategy, effectiveOutcome)
-		verificationMode := "runtime_unverified"
-		if len(mapSliceFromAny(acceptance["effects"])) > 0 {
-			verificationMode = "runtime_effects"
-		} else if len(effectiveOutcome.Capabilities) == 0 && operationPlanOutcomeCanCompleteWithFinalAnswer(strategy) {
-			verificationMode = "final_answer"
-		}
-		item := map[string]interface{}{
-			"id":                id,
-			"goal":              goal,
-			"title":             goal,
-			"status":            operationPlanStepStatusPending,
-			"required":          required,
-			"verification_mode": verificationMode,
-		}
-		if targetType := strings.TrimSpace(outcome.TargetResourceType); targetType != "" {
-			item["target_resource_type"] = targetType
-		}
-		if targetID := strings.TrimSpace(outcome.TargetResourceID); targetID != "" {
-			item["target_resource_id"] = targetID
-		}
-		if len(outcome.DependsOn) > 0 {
-			item["depends_on"] = append([]string(nil), outcome.DependsOn...)
-		}
-		if len(effectiveOutcome.Capabilities) > 0 {
-			item["capabilities"] = append([]string(nil), effectiveOutcome.Capabilities...)
-		}
-		if len(outcome.Constraints) > 0 {
-			item["constraints"] = append([]string(nil), outcome.Constraints...)
-		}
-		if len(acceptance) > 0 {
-			item["acceptance"] = acceptance
-		}
-		out = append(out, item)
-	}
-	return out
-}
-
-func operationPlanOutcomeCanCompleteWithFinalAnswer(strategy *AIChatTurnStrategy) bool {
-	if strategy == nil {
-		return false
-	}
-	intent := strings.TrimSpace(firstNonEmptyString(strategy.CompatibilityIntent, strategy.Intent))
-	return strings.EqualFold(intent, "answer_or_explain_console_context")
-}
-
 func operationPlanTurnOutcomesToMaps(outcomes []AIChatTurnOutcome) []map[string]interface{} {
 	if len(outcomes) == 0 {
 		return nil
@@ -367,95 +134,6 @@ func operationPlanTurnOutcomesToMaps(outcomes []AIChatTurnOutcome) []map[string]
 		out = append(out, item)
 	}
 	return out
-}
-
-func operationPlanOutcomeAcceptance(strategy *AIChatTurnStrategy, outcome AIChatTurnOutcome) map[string]interface{} {
-	effects := make([]map[string]interface{}, 0, len(outcome.Capabilities)+1)
-	add := func(effectType, resourceType string, fields ...string) {
-		if effectType == "" {
-			return
-		}
-		for _, existing := range effects {
-			if stringFromAny(existing["type"]) == effectType && reflect.DeepEqual(stringSliceFromAny(existing["fields"]), fields) {
-				return
-			}
-		}
-		effect := map[string]interface{}{"type": effectType}
-		if resourceType != "" {
-			effect["resource_type"] = resourceType
-		}
-		if len(fields) > 0 {
-			effect["fields"] = fields
-		}
-		effects = append(effects, effect)
-	}
-	for _, capability := range outcome.Capabilities {
-		capability = strings.ToLower(strings.TrimSpace(capability))
-		switch {
-		case capability == "visible_file_content":
-			add("file.content.read", "file")
-		case capability == "generated_artifact", capability == "chart_artifact", capability == "file_artifact":
-			add("artifact.generated", "artifact")
-		case capability == "managed_file", capability == "file_management", capability == "managed_file_persistence":
-			add("file.persisted", "file")
-		case capability == "page_navigation":
-			add("page.observed", "page")
-		case capability == "exact_agent_runtime":
-			add("agent.config.read", "agent")
-		case capability == agentCapabilitySystemPrompt:
-			add("agent.config.updated", "agent", "system_prompt")
-		case capability == agentCapabilityModelSelection:
-			add("agent.config.updated", "agent", "model")
-		case capability == agentCapabilityAcceptUploaded:
-			add("agent.config.updated", "agent", "file_upload_enabled")
-		case capability == agentCapabilityMemory:
-			add("agent.config.updated", "agent", "agent_memory_enabled")
-		case capability == agentCapabilitySuggestedQuestion:
-			add("agent.config.updated", "agent", "suggested_questions")
-		case strings.HasPrefix(capability, agentCapabilitySkillBacked):
-			add("agent.config.updated", "agent", "enabled_skill_ids")
-		case strings.HasPrefix(capability, agentCapabilityKnowledgeBinding):
-			add("agent.config.updated", "agent", "knowledge_dataset_ids")
-		case strings.HasPrefix(capability, agentCapabilityDatabaseBinding):
-			add("agent.config.updated", "agent", "database_bindings")
-		case strings.HasPrefix(capability, agentCapabilityWorkflowBinding):
-			add("agent.config.updated", "agent", "workflow_bindings")
-		}
-	}
-	if len(effects) == 1 && stringFromAny(effects[0]["type"]) == "artifact.generated" && strategy != nil &&
-		strings.EqualFold(strings.TrimSpace(firstNonEmptyString(strategy.CompatibilityIntent, strategy.Intent)), "save_generated_file_to_file_management") {
-		add("file.persisted", "file")
-	}
-	if len(effects) == 0 {
-		return nil
-	}
-	for _, effect := range effects {
-		targetType := strings.TrimSpace(outcome.TargetResourceType)
-		effectType := strings.TrimSpace(stringFromAny(effect["resource_type"]))
-		if targetType != "" && effectType == "" {
-			effect["resource_type"] = targetType
-			effectType = targetType
-		}
-		if resourceID := strings.TrimSpace(outcome.TargetResourceID); resourceID != "" &&
-			(targetType == "" || strings.EqualFold(targetType, effectType)) {
-			effect["resource_id"] = resourceID
-		} else if strategy != nil && strings.EqualFold(strings.TrimSpace(stringFromAny(effect["type"])), "page.observed") {
-			if targetPage := normalizeConsoleNavigationGuardHref(strategy.TargetPage); targetPage != "" {
-				effect["resource_id"] = targetPage
-			}
-		}
-	}
-	return map[string]interface{}{
-		"mode":    "all",
-		"effects": mapsToInterfaceSlice(effects),
-	}
-}
-
-func operationPlanApprovalPolicy(strategy *AIChatTurnStrategy) string {
-	if strategy == nil {
-		return ""
-	}
-	return strings.TrimSpace(strategy.Approval)
 }
 
 func applyRecentOperationPlansFromBranch(parts *chatRequestParts, branch []*runtimemodel.Message) {
@@ -985,19 +663,20 @@ func withOperationPlanTaskID(metadata map[string]interface{}, taskID string) map
 	return next
 }
 
+// applyOperationPlanInvocationState records a run's tool calls in the plan's
+// ledgers, the authoritative facts later continuations reuse. The calls do not
+// advance plan steps: the model owns its checklist (ADR 0049).
 func applyOperationPlanInvocationState(metadata map[string]interface{}, invocations []map[string]interface{}) {
 	plan := mapFromOperationContext(metadata["operation_plan"])
-	if len(plan) == 0 {
-		return
-	}
 	var lastActionable map[string]interface{}
-	hadActionableInvocation := false
 	for _, invocation := range invocations {
 		if !operationPlanInvocationIsActionable(invocation) {
 			continue
 		}
+		if plan == nil {
+			plan = map[string]interface{}{"version": operationPlanVersion}
+		}
 		invocation = operationPlanInvocationExecutionEvidenceView(invocation)
-		hadActionableInvocation = true
 		status := operationPlanStatusFromInvocation(invocation)
 		lastActionable = invocation
 		if operationPlanInvocationShouldUpdateCurrentPage(invocation, status) {
@@ -1008,107 +687,17 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 		operationPlanRecordInvocationEvidence(plan, invocation, status)
 		operationPlanRecordActionAttempt(plan, invocation, status)
 		operationPlanRecordInvocationEffects(plan, invocation, status)
-		operationPlanBindReferencedPhaseActions(plan)
-		if operationPlanHasStructuredOutcomes(plan) {
-			operationPlanReconcileOutcomes(plan)
-		} else {
-			operationPlanCompleteInvocationPhase(plan, invocation, status)
-		}
 	}
-
+	if len(plan) == 0 {
+		return
+	}
 	if lastActionable != nil {
 		plan["tool_result"] = operationPlanToolResult(lastActionable)
-	}
-	if hadActionableInvocation {
-		// New execution evidence does not change the outcome-level plan shape.
-		// Keep the persisted plan current even when a prerequisite call is not
-		// associated with a phase or an earlier attempt failed; the live runner
-		// separately exposes update_plan for the current failure segment. This
-		// avoids replaying historical failures as permanent plan invalidation on
-		// every continuation.
 		operationPlanMarkEvidenceCurrent(plan)
 	}
 	operationPlanSyncStrategyState(plan)
 	metadata["operation_plan"] = plan
 	applySkillLoopExecutionDiagnostics(metadata, invocations)
-}
-
-func operationPlanCompleteInvocationPhase(plan map[string]interface{}, invocation map[string]interface{}, status string) bool {
-	if invocation["runtime_source"] == "connector" {
-		return connectorCompleteInvocationPhase(plan, invocation)
-	}
-	if len(plan) == 0 || status != operationPlanStepStatusCompleted ||
-		!operationPlanInvocationIsExecutionEvidence(invocation) ||
-		operationPlanInvocationIsConsoleRouteNavigation(invocation) {
-		return false
-	}
-	arguments := mapFromOperationContext(invocation["arguments"])
-	phaseID := strings.TrimSpace(stringFromAny(arguments["plan_phase_id"]))
-	phases := mapSliceFromAny(plan["phases"])
-	match := -1
-	if phaseID != "" {
-		for index, phase := range phases {
-			if strings.TrimSpace(stringFromAny(phase["id"])) != phaseID || !operationPlanPhaseOpen(phase) {
-				continue
-			}
-			match = index
-			break
-		}
-	} else {
-		skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
-		toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
-		actualTarget := operationPlanInvocationExpectedActionTarget(invocation)
-		for index, phase := range phases {
-			expected := mapFromOperationContext(phase["expected_action"])
-			if !operationPlanPhaseOpen(phase) ||
-				!operationPlanExpectedActionMatches(expected, skillID, toolName, actualTarget) {
-				continue
-			}
-			if match >= 0 {
-				return false
-			}
-			match = index
-		}
-	}
-	if match < 0 {
-		return false
-	}
-
-	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
-	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
-	actualTarget := operationPlanInvocationExpectedActionTarget(invocation)
-	expected := mapFromOperationContext(phases[match]["expected_action"])
-	if len(expected) > 0 {
-		if !operationPlanExpectedActionMatches(expected, skillID, toolName, actualTarget) {
-			return false
-		}
-	} else {
-		// A model-provided phase ID is correlation metadata, not proof that an
-		// arbitrary successful call satisfied a coarse result. Structured
-		// outcomes are completed by effect reconciliation above.
-		return false
-	}
-
-	phases[match]["status"] = operationPlanStepStatusCompleted
-	phases[match]["completed_at"] = time.Now().UTC().Format(time.RFC3339)
-	refs := stringSliceFromAny(phases[match]["evidence_refs"])
-	if ref := operationPlanToolEvidenceKey(skillID, toolName); ref != "" {
-		refs = appendUniqueStrings(refs, ref)
-	}
-	if invocationID := operationPlanInvocationPlanID(invocation); invocationID != "" {
-		refs = appendUniqueStrings(refs, invocationID)
-	}
-	phases[match]["evidence_refs"] = refs
-	operationPlanAdvanceNextPendingPhase(phases)
-	plan["phases"] = mapsToInterfaceSlice(phases)
-	if operationPlanPhasesTerminal(plan, phases) {
-		plan["status"] = operationPlanStatusCompleted
-		plan["pending_next_action"] = "none"
-	} else {
-		plan["status"] = operationPlanStatusRunning
-		plan["pending_next_action"] = "continue_next_plan_phase"
-	}
-	return true
 }
 
 func operationPlanPhaseOpen(phase map[string]interface{}) bool {
@@ -1470,9 +1059,6 @@ func applyOperationPlanTerminalCompletionResultWithSource(metadata map[string]in
 	if source = strings.TrimSpace(source); source != "" {
 		verification["source"] = truncateRunes(source, 120)
 	}
-	if operationPlanCompletionVerificationPassStatus(status) && operationPlanCompletionVerificationReasonLooksStaleFailure(reason) {
-		reason = "latest evidence satisfies requested operation"
-	}
 	if reason = strings.TrimSpace(reason); reason != "" {
 		verification["reason"] = truncateRunes(reason, 500)
 	}
@@ -1488,23 +1074,14 @@ func applyOperationPlanTerminalCompletionResultWithSource(metadata map[string]in
 	plan["completion_verification"] = verification
 	switch {
 	case operationPlanCompletionVerificationPassStatus(status):
-		operationPlanReconcileOutcomes(plan)
-		if operationPlanFinalizeFailedBindings(plan) {
-			break
-		}
-		operationPlanCompleteFinalAnswerOutcomes(plan)
-		if outcomes := mapSliceFromAny(plan[operationPlanOutcomesKey]); len(outcomes) > 0 && !operationPlanOutcomesTerminal(outcomes) {
+		// The turn's answer is in. Steps the model left open keep the plan
+		// running, so the next turn sees the task as unfinished (ADR 0049).
+		if open := operationPlanOpenSteps(plan); len(open) > 0 {
 			verification["status"] = "incomplete"
-			verification["reason"] = "one or more required outcomes lack matching runtime effects"
-			verification["next_action_hint"] = "complete_unsatisfied_outcomes"
+			verification["reason"] = "the turn ended with plan steps still open"
+			verification["missing_steps"] = compactCompletionVerificationStringList(open, 12, 160)
 			plan["status"] = operationPlanStatusRunning
-			plan["pending_next_action"] = "complete_unsatisfied_outcomes"
-		} else if operationPlanCompleteModelReconciliationPhases(plan, source); phasesRemainIncomplete(plan) {
-			verification["status"] = "incomplete"
-			verification["reason"] = "one or more operation plan phases remain incomplete"
-			verification["next_action_hint"] = "complete_remaining_plan_phases"
-			plan["status"] = operationPlanStatusRunning
-			plan["pending_next_action"] = "complete_remaining_plan_phases"
+			plan["pending_next_action"] = "complete_remaining_plan_steps"
 		} else {
 			plan["status"] = operationPlanStatusCompleted
 			plan["pending_next_action"] = "none"
@@ -1521,38 +1098,6 @@ func applyOperationPlanTerminalCompletionResultWithSource(metadata map[string]in
 	operationPlanSyncStrategyState(plan)
 	metadata["operation_plan"] = plan
 	syncOperationPlanCompletionMetadata(metadata)
-}
-
-func operationPlanCompleteModelReconciliationPhases(plan map[string]interface{}, source string) bool {
-	phases := mapSliceFromAny(plan["phases"])
-	if len(phases) == 0 {
-		return false
-	}
-	completedAt := time.Now().UTC().Format(time.RFC3339)
-	evidenceRevision := operationPlanCurrentEvidenceRevision(plan)
-	changed := false
-	for _, phase := range phases {
-		if !operationPlanPhaseOpen(phase) ||
-			!operationPlanPhaseCanCompleteWithFinalAnswer(phase) {
-			continue
-		}
-		phase["status"] = operationPlanStepStatusCompleted
-		phase["completed_at"] = completedAt
-		phase["completion_source"] = firstNonEmptyString(source, "main_model_final")
-		phase["evidence_refs"] = appendUniqueStrings(
-			stringSliceFromAny(phase["evidence_refs"]),
-			"final_answer:"+firstNonEmptyString(source, "main_model_final"),
-		)
-		if evidenceRevision > 0 {
-			phase["evidence_revision"] = evidenceRevision
-		}
-		changed = true
-	}
-	if changed {
-		plan["phases"] = mapsToInterfaceSlice(phases)
-		operationPlanAdvanceNextPendingPhase(phases)
-	}
-	return changed
 }
 
 func operationPlanPhaseCanCompleteWithFinalAnswer(phase map[string]interface{}) bool {
@@ -1574,11 +1119,6 @@ func operationPlanPhaseCanCompleteWithFinalAnswer(phase map[string]interface{}) 
 	default:
 		return verification == "model_reconciliation"
 	}
-}
-
-func phasesRemainIncomplete(plan map[string]interface{}) bool {
-	phases := mapSliceFromAny(plan["phases"])
-	return len(phases) > 0 && !operationPlanPhasesTerminal(plan, phases)
 }
 
 func syncOperationPlanCompletionMetadata(metadata map[string]interface{}) {
@@ -1624,30 +1164,6 @@ func operationPlanCompletionVerificationTerminalFailure(status string) bool {
 	default:
 		return false
 	}
-}
-
-func operationPlanCompletionVerificationReasonLooksStaleFailure(reason string) bool {
-	reason = strings.ToLower(strings.TrimSpace(reason))
-	if reason == "" {
-		return false
-	}
-	for _, marker := range []string{
-		"缺少工具结果支持",
-		"不能可靠确认",
-		"不能确认",
-		"后校验发现",
-		"failed",
-		"failure",
-		"unsupported",
-		"missing tool",
-		"missing evidence",
-		"not verified",
-	} {
-		if strings.Contains(reason, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func compactCompletionVerificationStringList(values []string, limit int, runeLimit int) []string {

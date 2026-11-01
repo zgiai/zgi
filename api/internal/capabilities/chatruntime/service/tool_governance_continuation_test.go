@@ -3,11 +3,9 @@ package service
 import (
 	"strings"
 	"testing"
-	"time"
 
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
-	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 )
@@ -58,36 +56,6 @@ func TestPlatformRejectionDoesNotNegateOriginalShellExecution(t *testing.T) {
 	}
 }
 
-func TestApprovedOrdinaryGovernedSuccessDoesNotWriteExternalProviderSummary(t *testing.T) {
-	frozen := toolgovernance.NewFrozenInvocation(toolgovernance.FrozenInvocationRequest{
-		CorrelationID: "calculator-correlation", SkillID: skills.SkillCalculator, ToolName: "calculate",
-		Arguments: map[string]interface{}{"operation": "add", "left": 1, "right": 2}, Now: time.Now(),
-	})
-	metadata := map[string]interface{}{"operation_plan": map[string]interface{}{
-		"status": operationPlanStatusRunning,
-		"phases": []interface{}{map[string]interface{}{
-			"id": "phase-calculate", "step": "calculate", "status": "in_progress",
-			"expected_action": map[string]interface{}{"skill_id": skills.SkillCalculator, "tool_name": "calculate"},
-		}},
-	}}
-	bound := bindPendingGovernedInvocationToOperationPlan(metadata, map[string]interface{}{
-		"frozen_invocation": frozen, "plan_phase_id": "phase-calculate",
-	})
-	completed, terminal := completeApprovedFrozenInvocationSuccess(bound, frozen, &skills.ToolInvocationResult{Trace: skills.SkillTrace{
-		Status: "success", Result: map[string]interface{}{"value": 3},
-	}})
-	if !terminal {
-		t.Fatal("ordinary exact governed invocation did not complete its only phase")
-	}
-	phase := mapSliceFromAny(mapFromOperationContext(completed["operation_plan"])["phases"])[0]
-	if stringFromAny(phase["status"]) != operationPlanStepStatusCompleted {
-		t.Fatalf("ordinary governed phase = %#v", phase)
-	}
-	if summary := mapFromOperationContext(completed["operation_result_summary"]); summary["provider_success_confirmed"] != nil || summary["operation_status"] != nil {
-		t.Fatalf("ordinary governed invocation received external provider summary: %#v", summary)
-	}
-}
-
 func TestEnsureFrozenInvocationSkillIDAddsRuntimeManagedSkill(t *testing.T) {
 	got := ensureFrozenInvocationSkillID([]string{skills.SkillCalculator}, skills.SkillAgentManagement)
 	if !skillIDEnabled(got, skills.SkillAgentManagement) {
@@ -130,7 +98,7 @@ func TestToolGovernanceFrozenContinuationMessageIncludesTurnState(t *testing.T) 
 		"agent_theme",
 		"water fee confirmation",
 		"authoritative same-turn memory",
-		"first model response after this continuation",
+		"Continue with the next necessary tool call",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message missing %q in:\n%s", want, content)

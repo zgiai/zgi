@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/connectortools"
+
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/contextmgr"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -247,7 +249,9 @@ func (r *Runner) completeSkillLoopSafetyTermination(
 	round int,
 ) (string, *adapter.Usage, error) {
 	runtimeState := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
-	if connectorRequiredOutcomesSatisfied(runtimeState) {
+	// Connector calls that all succeeded show the work that ran, not that the
+	// task is done: a checklist with open steps says more was planned.
+	if connectorExecutedOutcomesSatisfied(runtimeState) && len(planOpenSteps(r.planSteps)) == 0 {
 		return r.completeConnectorOutcomeSuccess(
 			ctx,
 			req,
@@ -356,13 +360,9 @@ func (r *Runner) completeConnectorOutcomeSuccess(
 }
 
 // guardSkillToolCall stops a skill tool call before it runs, with a
-// recoverable result the model can act on: the plan must be revised after a
-// clarification first, the skill is not authorized, or the same call already
-// failed. It returns an empty step when the call may run.
+// recoverable result the model can act on: the skill is not authorized, or
+// the same call already failed. It returns an empty step when the call may run.
 func guardSkillToolCall(ctx context.Context, req RunRequest, resolved *skills.ResolvedSkills, callID string, skillID string, toolName string, args map[string]interface{}, failedCallKey string, failedReasons map[string]string, failedAttempts map[string]int) skillStepResult {
-	if userInputPlanRevisionRequiredForTool(req, skillID, toolName) {
-		return pendingUserInputPlanRevisionStep(callID, skillID, toolName, args, resolved)
-	}
 	if req.AuthorizeSkillStep != nil && strings.TrimSpace(skillID) != "" {
 		if allowed, policyErr := req.AuthorizeSkillStep(ctx, skillID); policyErr != nil || !allowed {
 			return unavailableSkillPolicyStep(callID, skillID, toolName, args, policyErr, resolved)
@@ -427,17 +427,14 @@ func nativeInitialMessages(req RunRequest, resolved *skills.ResolvedSkills, nati
 }
 
 // planningToolsForRound is the tool list of one round before positions are
-// kept, narrowed by the run's state.
-func (r *Runner) planningToolsForRound(req RunRequest, resolved *skills.ResolvedSkills, nativeToolSet *skills.NativeToolSet, connectorOutcomesComplete bool, roundRuntimeState map[string]interface{}) []adapter.Tool {
+// kept. It stays the same through the run: a finished connector call does not
+// take update_plan away, because the checklist is the model's (ADR 0049).
+func (r *Runner) planningToolsForRound(req RunRequest, resolved *skills.ResolvedSkills, nativeToolSet *skills.NativeToolSet) []adapter.Tool {
 	tools := nativeAgentToolsForRun(resolved, nativeToolSet, req.NativeSkillSession, req.RuntimeTools, req.OmitPlanningTools, req.UnifiedSkillDispatch)
 	// Oversized tool results reach the model projected, with the rest
 	// readable through this tool (ADR 0037). It is always offered, so
 	// the tool list does not change when a projection first appears.
-	tools = appendContextArtifactTool(tools, r.ContextManager != nil)
-	if connectorOutcomesComplete {
-		tools = controlToolsForRound(tools, false, !fileDeliveryRequiresArtifactOnly(req, roundRuntimeState))
-	}
-	return updatePlanToolsForRuntimeState(tools, roundRuntimeState)
+	return appendContextArtifactTool(tools, r.ContextManager != nil)
 }
 
 // runPlanningRound makes the model call of one round, with the native loop's
@@ -447,32 +444,24 @@ func (r *Runner) runPlanningRound(ctx context.Context, req RunRequest, prepared 
 	return result, nativeAgentOutputError(err)
 }
 
-func connectorRequiredOutcomesSatisfied(runtimeState map[string]interface{}) bool {
+// connectorExecutedOutcomesSatisfied reports that the turn ran connector
+// operations and every one reached a successful native outcome, with nothing
+// left awaiting the user (ADR 0049: acceptance follows the operations that
+// ran, not operations a plan declared).
+func connectorExecutedOutcomesSatisfied(runtimeState map[string]interface{}) bool {
 	if terminalStateGuardPendingProtocolBlocker(runtimeState) != "" || connectorTerminalStateDecision(runtimeState, "") != nil {
 		return false
 	}
-	plan := evidenceMapFromAny(runtimeState["operation_plan"])
 	native := false
-	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
-		if len(connectorPhaseOperation(phase)) > 0 {
-			proof, ok := connectorPhaseEvidence(phase, runtimeState)
-			if !ok || proof.Status != "successful" {
-				return false
-			}
-			native = true
+	for _, invocation := range terminalStateGuardInvocations(runtimeState) {
+		evidence, ok := connectortools.Evidence(invocation)
+		if !ok || !evidence.Operation.Valid() {
 			continue
 		}
-		if operationPlanPhaseRequiredByServer(phase, runtimeState) && phase["status"] != "completed" && !operationPlanPhaseServerClassifiedNonTool(phase, runtimeState) {
+		if evidence.Status != "successful" {
 			return false
 		}
-	}
-	for _, outcome := range evidenceMapsFromAny(plan["outcomes"]) {
-		if required, exists := outcome["required"].(bool); exists && !required {
-			continue
-		}
-		if outcome["status"] != "completed" && outcome["verification_mode"] != "final_answer" {
-			return false
-		}
+		native = true
 	}
 	return native
 }
@@ -555,21 +544,6 @@ func keepToolPositions(tools []adapter.Tool, positions map[string]int) []adapter
 	return ordered
 }
 
-func controlToolsForRound(input []adapter.Tool, allowPlanUpdate bool, allowIntermediateAnswer bool) []adapter.Tool {
-	filtered := make([]adapter.Tool, 0, len(input))
-	for _, tool := range input {
-		name := strings.TrimSpace(tool.Function.Name)
-		if !allowPlanUpdate && strings.EqualFold(name, skills.MetaToolUpdatePlan) {
-			continue
-		}
-		if !allowIntermediateAnswer && strings.EqualFold(name, skills.MetaToolIntermediateAnswer) {
-			continue
-		}
-		filtered = append(filtered, tool)
-	}
-	return filtered
-}
-
 func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usage, error) {
 	prepared := req.Prepared
 	resolved := req.Resolved
@@ -611,7 +585,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		maxSkillSteps:                maxSkillStepsForTurn(resolved),
 		terminalStateGuardConfigured: req.RuntimeStateSnapshot != nil,
 		nativeCommentary:             newNativeCommentaryState(prepared.LLMRequest.Model, currentMetadataForRun(req)),
+		planSteps:                    planChecklistFromMetadata(currentMetadataForRun(req)),
 	}
+	r.planSteps = s.planSteps
 	if req.NativeSkillSession != nil {
 		for _, skillID := range req.NativeSkillSession.ActiveSkillIDs() {
 			s.loadedSkills[strings.ToLower(strings.TrimSpace(skillID))] = struct{}{}
@@ -664,11 +640,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, s.successfulToolCalls)
 			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
-		connectorOutcomesComplete := connectorRequiredOutcomesSatisfied(roundRuntimeState)
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = s.messages
 		planningReq.Stream = false
-		planningReq.Tools = r.planningToolsForRound(req, resolved, s.nativeToolSet, connectorOutcomesComplete, roundRuntimeState)
+		planningReq.Tools = r.planningToolsForRound(req, resolved, s.nativeToolSet)
 		planningReq.Tools = keepToolPositions(planningReq.Tools, s.toolPositions)
 		if req.TerminalOnly {
 			planningReq.Tools = nil
@@ -767,6 +742,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return s.stop(fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)).result()
 			}
 			s.emptyFinalAnswerRetryCount = 0
+			if r.remindOpenPlanSteps(ctx, s, text, planningResult.answerStreamed) {
+				continue
+			}
 			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
@@ -784,6 +762,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		s.emptyFinalAnswerRetryCount = 0
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !s.skillUsed {
 			return s.stop(fmt.Errorf("%w: required skill was not used", ErrInvalidInput)).result()
+		}
+		if text != "" && len(toolCalls) == 0 && r.remindOpenPlanSteps(ctx, s, text, planningResult.answerStreamed) {
+			continue
 		}
 		if text != "" && len(toolCalls) == 0 {
 			appendAnswerText(&s.answerBuilder, text)
@@ -840,22 +821,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 	}
 	return r.planningRoundsExhausted(ctx, s).result()
-}
-
-func fileDeliveryRequiresArtifactOnly(req RunRequest, runtimeState map[string]interface{}) bool {
-	plan := evidenceMapFromAny(runtimeState["operation_plan"])
-	for _, phase := range evidenceMapsFromAny(plan["phases"]) {
-		if !operationPlanPhaseOpenForToolCall(phase) {
-			continue
-		}
-		expected := evidenceMapFromAny(phase["expected_action"])
-		skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(expected["skill_id"])))
-		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(expected["tool_name"])))
-		if skillID == skills.SkillFileGenerator || toolName == "generate_file" {
-			return true
-		}
-	}
-	return false
 }
 
 func skillInstructionDigest(instructions string) string {
@@ -957,39 +922,6 @@ func skillToolCallIdentityForCall(resolved *skills.ResolvedSkills, loadedSkills 
 		toolArgs = rawSkillToolArgumentsFingerprint(args["arguments"])
 	}
 	return skillID, toolName, toolArgs, failedToolCallKey(skillID, toolName, toolArgs)
-}
-
-func userInputPlanRevisionPending(req RunRequest) bool {
-	metadata := currentMetadataForRun(req)
-	continuation := evidenceMapFromAny(metadata["user_input_continuation"])
-	if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["status"])), userInputContinuationAnswered) ||
-		!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["next_action"])), userInputContinuationReplan) {
-		return false
-	}
-	// Only planned phases can be out of date after the user's answer. A
-	// question asked before any plan leaves nothing to revise, and requiring
-	// update_plan then cost the turn a blocked call and two extra rounds.
-	return len(evidenceMapsFromAny(evidenceMapFromAny(metadata["operation_plan"])["phases"])) > 0
-}
-
-func userInputPlanRevisionRequiredForTool(req RunRequest, skillID string, toolName string) bool {
-	return userInputPlanRevisionPending(req) && planRevisionRequiredForTool(skillID, toolName)
-}
-
-func planRevisionRequiredForTool(skillID string, toolName string) bool {
-	if strings.TrimSpace(skillID) == "" || strings.TrimSpace(toolName) == "" {
-		return false
-	}
-	return !isSkillMetaToolName(toolName)
-}
-
-func pendingUserInputPlanRevisionStep(callID string, skillID string, toolName string, args map[string]interface{}, resolved ...*skills.ResolvedSkills) skillStepResult {
-	err := fmt.Errorf("%w: update the current plan before calling a business tool after user clarification", ErrInvalidInput)
-	trace := plannerFeedbackTrace(skillID, toolName, err)
-	trace.Arguments = summarizeSkillToolArgumentsForResolved(firstResolvedSkills(resolved), skillID, toolName, args)
-	trace.Arguments["next_step"] = skills.MetaToolUpdatePlan
-	nextAction := "Revise the pending plan phases from the user's clarification with update_plan, then choose the next business tool from the revised plan. Do not repeat this business call before the plan update succeeds."
-	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName, resolved...)), false, false)
 }
 
 func unavailableSkillPolicyStep(callID string, skillID string, toolName string, args map[string]interface{}, policyErr error, resolved ...*skills.ResolvedSkills) skillStepResult {
@@ -1565,7 +1497,10 @@ func (r *Runner) runModelToolRoundAttempt(ctx context.Context, prepared *Prepare
 
 func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatRequest, error) {
 	request = cloneChatRequest(request)
-	sourceMessages := cloneMessagesForProvider(request.Messages)
+	// A restored checklist belongs to the request it was sent with; one a
+	// retried or continued request still carries is dropped and restored
+	// again below if the request still lacks the update_plan result.
+	sourceMessages := withoutChecklistReminders(cloneMessagesForProvider(request.Messages))
 	// The context manager places system messages for the provider; without
 	// one, place them here (ADR 0032).
 	request.Messages = sourceMessages
@@ -1573,13 +1508,33 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 	r.contextDecision = nil
 	// Reasoning from this turn's tool-call rounds goes back only to models
 	// that expect it; other APIs may reject the field.
+	restored := checklistMissingFromRequest(sourceMessages, r.planSteps)
 	if r.ContextManager == nil {
-		request.Messages = adapter.MessagesForModel(request.Model, adapter.PlaceSystemMessages(sourceMessages))
+		messages := sourceMessages
+		if restored != nil {
+			messages = append(messages, *restored)
+		}
+		request.Messages = adapter.MessagesForModel(request.Model, adapter.PlaceSystemMessages(messages))
 		return request, r.applyFinalPlanningRequestBudget(request, sourceMessages)
+	}
+	// The checklist goes in before the context manager fits the request, so
+	// it counts against the same budget as the rest (ADR 0049).
+	if restored != nil {
+		request.Messages = append(cloneMessagesForProvider(sourceMessages), *restored)
 	}
 	prepared, decision, err := r.ContextManager.PrepareBeforeModelCall(ctx, request)
 	if err != nil {
 		return request, err
+	}
+	if restored == nil {
+		// The update_plan result was in the request, and fitting it may
+		// have compacted the result away: fit again with the checklist.
+		if restored = checklistMissingFromRequest(prepared.Messages, r.planSteps); restored != nil {
+			request.Messages = append(cloneMessagesForProvider(sourceMessages), *restored)
+			if prepared, decision, err = r.ContextManager.PrepareBeforeModelCall(ctx, request); err != nil {
+				return request, err
+			}
+		}
 	}
 	prepared.Messages = adapter.MessagesForModel(prepared.Model, prepared.Messages)
 	r.contextDecision = &decision
@@ -1594,7 +1549,7 @@ func (r *Runner) prepareContextRequest(ctx context.Context, request *adapter.Cha
 }
 
 func (r *Runner) finishContextRequest(ctx context.Context, request *adapter.ChatRequest, result planningResult) (planningResult, error) {
-	result.contextMessages = cloneMessagesForProvider(request.Messages)
+	result.contextMessages = withoutChecklistReminders(cloneMessagesForProvider(request.Messages))
 	if r.ContextManager == nil {
 		return result, nil
 	}
@@ -1610,7 +1565,7 @@ func (r *Runner) finishContextRequest(ctx context.Context, request *adapter.Chat
 }
 
 func (r *Runner) finishFailedContextRequest(request *adapter.ChatRequest, result planningResult) planningResult {
-	result.contextMessages = cloneMessagesForProvider(request.Messages)
+	result.contextMessages = withoutChecklistReminders(cloneMessagesForProvider(request.Messages))
 	if r != nil && r.ContextManager != nil {
 		result.usage = mergeUsage(r.ContextManager.ConsumeCompactionUsage(), result.usage)
 	}
@@ -1774,4 +1729,114 @@ func terminalOnlySystemMessage() adapter.Message {
 		"No tools are available in this terminal response. Do not call or invent tools, load skills, update the plan, repeat completed work, or request more execution.",
 		"Reply directly with one concise, self-contained completion message in the user's language. Mention only outcomes supported by the supplied evidence.",
 	}, "\n")}
+}
+
+// checklistMissingFromRequest returns the run's checklist as a system message
+// when the request no longer holds the update_plan result that carries it,
+// as after a compaction (ADR 0049).
+func checklistMissingFromRequest(messages []adapter.Message, steps []map[string]interface{}) *adapter.Message {
+	if len(steps) == 0 {
+		return nil
+	}
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "tool") && toolResultHoldsChecklist(assistantMessageText(message), steps) {
+			return nil
+		}
+	}
+	var builder strings.Builder
+	builder.WriteString(checklistReminderHeading)
+	for _, step := range steps {
+		builder.WriteString("\n- [" + evidenceStringFromAny(step["status"]) + "] " + evidenceStringFromAny(step["step"]))
+	}
+	return &adapter.Message{Role: "system", Content: builder.String()}
+}
+
+// checklistReminderHeading starts every restored checklist.
+const checklistReminderHeading = "Your current checklist:"
+
+// withoutChecklistReminders removes restored checklists, of any version, from
+// messages. A restored checklist belongs to one request: the next round, or a
+// retry of the same request, restores it again if it is still missing, so no
+// request carries two copies and a newer checklist replaces an older one.
+func withoutChecklistReminders(messages []adapter.Message) []adapter.Message {
+	kept := messages[:0]
+	for _, message := range messages {
+		switch content := message.Content.(type) {
+		case string:
+			if strings.EqualFold(strings.TrimSpace(message.Role), "system") && strings.HasPrefix(strings.TrimSpace(content), checklistReminderHeading) {
+				continue
+			}
+			// A system notice reaches the provider as a reminder in a user
+			// message (ADR 0032).
+			text := withoutChecklistReminderText(content)
+			if text != content && strings.TrimSpace(text) == "" {
+				continue
+			}
+			message.Content = text
+		case []adapter.MessageContentPart:
+			// Next to an image the reminder is a text part of its own.
+			parts := make([]adapter.MessageContentPart, 0, len(content))
+			for _, part := range content {
+				if part.Type == "text" {
+					text := withoutChecklistReminderText(part.Text)
+					if text != part.Text && strings.TrimSpace(text) == "" {
+						continue
+					}
+					part.Text = text
+				}
+				parts = append(parts, part)
+			}
+			if len(parts) == 0 {
+				continue
+			}
+			message.Content = parts
+		}
+		kept = append(kept, message)
+	}
+	return kept
+}
+
+func withoutChecklistReminderText(text string) string {
+	const opening = "<system-reminder>\n" + checklistReminderHeading
+	const closing = "\n</system-reminder>"
+	for {
+		start := strings.Index(text, opening)
+		if start < 0 {
+			return text
+		}
+		length := strings.Index(text[start:], closing)
+		if length < 0 {
+			return text
+		}
+		before, after := text[:start], text[start+length+len(closing):]
+		// Reminders merged into one message are separated by a blank line.
+		if strings.HasSuffix(before, "\n\n") {
+			before = strings.TrimSuffix(before, "\n\n")
+		} else {
+			after = strings.TrimPrefix(after, "\n\n")
+		}
+		text = before + after
+	}
+}
+
+// toolResultHoldsChecklist reports that a tool result is the update_plan
+// result for exactly these steps; an earlier version of the checklist does
+// not count.
+func toolResultHoldsChecklist(content string, steps []map[string]interface{}) bool {
+	var result struct {
+		Status string `json:"status"`
+		Plan   []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"plan"`
+	}
+	if json.Unmarshal([]byte(content), &result) != nil || result.Status != "recorded" || len(result.Plan) != len(steps) {
+		return false
+	}
+	for index, step := range result.Plan {
+		if step.Step != evidenceStringFromAny(steps[index]["step"]) || step.Status != evidenceStringFromAny(steps[index]["status"]) {
+			return false
+		}
+	}
+	return true
 }

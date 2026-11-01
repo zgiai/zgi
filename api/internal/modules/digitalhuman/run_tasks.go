@@ -72,6 +72,15 @@ func (d *AsynqRunDispatcher) CancelRun(_ context.Context, runID uuid.UUID) error
 	return d.tasks.CancelTask(runQueueName, digitalHumanRunTaskID(runID))
 }
 
+// RunDeliveryArchived reports whether the run's queue delivery was archived,
+// so it will never be handed to a worker again.
+func (d *AsynqRunDispatcher) RunDeliveryArchived(_ context.Context, runID uuid.UUID) (bool, error) {
+	if runID == uuid.Nil {
+		return false, ErrInvalidRequest
+	}
+	return d.tasks.TaskArchived(runQueueName, digitalHumanRunTaskID(runID))
+}
+
 func digitalHumanRunTaskID(runID uuid.UUID) string { return "digital-human-run-" + runID.String() }
 
 func RegisterRunTaskHandler(registry RunTaskRegistry, prefixer interface{ GetTaskTypeWithPrefix(string) string }, runtime *RuntimeService) {

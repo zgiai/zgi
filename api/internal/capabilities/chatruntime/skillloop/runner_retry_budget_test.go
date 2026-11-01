@@ -246,31 +246,6 @@ func TestRunnerAlternatingSchemaAndArgumentValidationFailuresDoNotShareLimit(t *
 	}
 }
 
-func TestProviderConfirmedRequiredOutcomesSatisfiedFailsClosed(t *testing.T) {
-	base := nativeRunnerTestState("successful")
-	if !connectorRequiredOutcomesSatisfied(base) {
-		t.Fatal("exact provider-confirmed required phase was not recognized")
-	}
-
-	for _, status := range []string{"partially_succeeded", "outcome_unknown", "executing"} {
-		t.Run(status, func(t *testing.T) {
-			state := nativeRunnerTestState(status)
-			if connectorRequiredOutcomesSatisfied(state) {
-				t.Fatalf("operation_status=%q was treated as completed", status)
-			}
-		})
-	}
-
-	state := nativeRunnerTestState("successful")
-	phases := evidenceMapsFromAny(evidenceMapFromAny(state["operation_plan"])["phases"])
-	second := nativeRunnerPhase("phase-second", "pending")
-	phases = append(phases, second)
-	state["operation_plan"] = map[string]interface{}{"phases": mapsToInterfacesForRunnerRetryTest(phases)}
-	if connectorRequiredOutcomesSatisfied(state) {
-		t.Fatal("one confirmed phase hid another required pending phase")
-	}
-}
-
 func TestCompleteSkillLoopSafetyTerminationSummarizesProviderConfirmedSuccess(t *testing.T) {
 	state := nativeRunnerTestState("successful")
 	toolSet := &skills.NativeToolSet{ToolBindings: map[string]skills.NativeToolBinding{
@@ -324,6 +299,26 @@ func TestCompleteSkillLoopSafetyTerminationSummarizesProviderConfirmedSuccess(t 
 	if strings.Contains(content, "The requested operation could not be completed") ||
 		!strings.Contains(content, "native Connector execution") {
 		t.Fatalf("success summary request used the wrong terminal path:\n%s", content)
+	}
+
+	// The same successful call is not the whole task while the model's
+	// checklist still has steps open (ADR 0049).
+	fakeLLM = &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "消息已发送，日程尚未创建。"}}},
+	}}}
+	runner = &Runner{LLMClient: fakeLLM, AppContext: &llmclient.AppContext{}, planSteps: []map[string]interface{}{
+		{"step": "发送消息", "status": "completed"},
+		{"step": "创建日程", "status": "pending"},
+	}}
+	completion = TerminalCompletionResult{}
+	_, _, _ = runner.completeSkillLoopSafetyTermination(context.Background(), req, prepared, prepared.LLMRequest.Messages, nil, failure, nil, "planner feedback limit reached", 6)
+	if completion.CompletionReason == connectorOutcomeRecoveryReason {
+		t.Fatalf("completion = %#v, want no connector success while a step is open", completion)
+	}
+	for _, request := range fakeLLM.appChatRequests {
+		if strings.Contains(runnerTestMessageText(request.Messages), "native Connector execution") {
+			t.Fatal("an unfinished checklist took the connector success path")
+		}
 	}
 }
 

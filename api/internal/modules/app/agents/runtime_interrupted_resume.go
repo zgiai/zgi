@@ -63,7 +63,7 @@ func (h *AgentsHandler) resumeRuntimeInterruptedTurn(c *gin.Context, runtimeCtx 
 		return
 	}
 
-	setupAgentSSE(c)
+	defer setupAgentSSE(c).Close()
 	_, err := h.chatRuntimeService.RunConfiguredInterruptedTurnResume(
 		c.Request.Context(),
 		runtimeCtx.Scope,

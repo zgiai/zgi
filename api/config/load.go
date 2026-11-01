@@ -575,6 +575,12 @@ func loadTaskQueueConfig(cfg *Config, source *envSource) error {
 	if err != nil {
 		return err
 	}
+	// Zero does not disable the workers: Asynq replaces a non-positive
+	// concurrency with the CPU count, and the scheduler worker used to fall
+	// back to the default queue with it.
+	if concurrency < 1 {
+		return fmt.Errorf("%s must be at least 1", envTaskQueueConcurrency)
+	}
 	graphFlowConcurrency, err := source.int(4, envGraphFlowTaskQueueConcurrency)
 	if err != nil {
 		return err

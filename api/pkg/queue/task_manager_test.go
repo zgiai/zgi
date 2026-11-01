@@ -117,3 +117,48 @@ func TestGetTaskTypeWithPrefix(t *testing.T) {
 	taskType := "my_task"
 	assert.Equal(t, taskType, tm.GetTaskTypeWithPrefix(taskType))
 }
+
+func TestNewTaskManagerRejectsNonPositiveConcurrency(t *testing.T) {
+	for _, concurrency := range []int{0, -1} {
+		_, err := NewTaskManager(&config.Config{TaskQueue: config.TaskQueueConfig{
+			Concurrency:          concurrency,
+			GraphFlowConcurrency: 4,
+		}})
+		require.Error(t, err, "concurrency %d", concurrency)
+	}
+}
+
+func TestWorkersReportFailedDeliveries(t *testing.T) {
+	cfg := &config.Config{TaskQueue: config.TaskQueueConfig{Concurrency: 8, GraphFlowConcurrency: 4}}
+	assert.NotNil(t, mainWorkerConfig(cfg).ErrorHandler)
+	assert.NotNil(t, graphFlowWorkerConfig(cfg).ErrorHandler)
+}
+
+func TestTaskArchivedReportsOnlyArchivedDeliveries(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	host, portText, err := net.SplitHostPort(redisServer.Addr())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	tm, err := NewTaskManager(&config.Config{
+		Redis:     config.RedisConfig{Host: host, Port: port},
+		TaskQueue: config.TaskQueueConfig{Concurrency: 1, GraphFlowConcurrency: 1},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tm.Close() })
+
+	archived, err := tm.TaskArchived("default", "missing-task")
+	require.NoError(t, err)
+	assert.False(t, archived)
+
+	_, err = tm.EnqueueTask(asynq.NewTask("test:run", nil, asynq.TaskID("run-task"), asynq.Queue("default")))
+	require.NoError(t, err)
+	archived, err = tm.TaskArchived("default", "run-task")
+	require.NoError(t, err)
+	assert.False(t, archived)
+
+	require.NoError(t, tm.inspector.ArchiveTask("default", "run-task"))
+	archived, err = tm.TaskArchived("default", "run-task")
+	require.NoError(t, err)
+	assert.True(t, archived)
+}

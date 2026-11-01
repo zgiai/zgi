@@ -67,10 +67,7 @@ import type {
   AIChatAgenticTimelineItem,
   AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat';
-import {
-  sanitizeTimelineForMessage,
-  timelineFromAIChatMessage,
-} from '@/components/chat/controllers/aichat/selectors';
+import { messageDisplayTimeline } from '@/components/chat/controllers/aichat/selectors';
 import {
   debugAIChatTimeline,
   summarizeAIChatTimeline,
@@ -91,6 +88,8 @@ import {
 } from '@/components/connectors/runtime/connector-runtime-source';
 import { useConnectorRuntimeReceipt } from '@/components/connectors/runtime/use-runtime-receipt';
 import { ProtectedGeneratedFileCard } from './protected-generated-file-card';
+import { AIChatPlanChecklist } from './plan-checklist';
+import { messagePlanChecklist } from '@/components/chat/controllers/aichat/reducers/plan';
 
 interface AIChatMessageBubbleProps {
   readExecutionFile?: ExecutionFileReader;
@@ -1344,6 +1343,7 @@ export function AIChatMessageBubble({
   const deliveredTaskResult = Boolean((message.metadata as Record<string, unknown> | undefined)?.digital_human_task_result);
   const hasUserQuery = !deliveredTaskResult && Boolean(message.query.trim() || files.length > 0);
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
+  const planSteps = useMemo(() => messagePlanChecklist(message.metadata?.operation_plan), [message.metadata?.operation_plan]);
   const visibleGeneratedFiles = generatedFiles;
   const generatedImagePreviewFilesForDisplay = useMemo(
     () => generatedImagePreviewFiles(displayAnswer, visibleGeneratedFiles, !isSensitiveBlocked),
@@ -1364,21 +1364,15 @@ export function AIChatMessageBubble({
             : t('consoleChat.waitingQuestionMessage')
           : message.status === 'waiting_client_action'
             ? t('consoleChat.waitingClientActionMessage')
-            : null;
+            : message.status === 'waiting_budget'
+              ? t('consoleChat.waitingBudgetMessage')
+              : null;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
-  const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
-    () => timelineFromAIChatMessage(message),
-    [message]
-  );
   const runtimeTimeline = timeline;
   const displayTimeline = useMemo(
-    () =>
-      sanitizeTimelineForMessage(
-        message,
-        runtimeTimeline.length > 0 ? runtimeTimeline : historicalTimeline
-      ),
-    [historicalTimeline, message, runtimeTimeline]
+    () => messageDisplayTimeline(message, runtimeTimeline),
+    [message, runtimeTimeline]
   );
   useEffect(() => {
     debugAIChatTimeline('render:message_bubble', {
@@ -1386,17 +1380,14 @@ export function AIChatMessageBubble({
       conversation_id: message.conversation_id,
       status: message.status,
       answer_len: displayAnswer.length,
-      historical_count: historicalTimeline.length,
       runtime_count: runtimeTimeline.length,
       display_count: displayTimeline.length,
-      historical: summarizeAIChatTimeline(historicalTimeline),
       runtime: summarizeAIChatTimeline(runtimeTimeline),
       display: summarizeAIChatTimeline(displayTimeline),
     });
   }, [
     displayAnswer.length,
     displayTimeline,
-    historicalTimeline,
     message.conversation_id,
     message.id,
     message.status,
@@ -1725,6 +1716,8 @@ export function AIChatMessageBubble({
             isThinking={isStreaming && reasoningActive}
           />
         ) : null}
+
+        <AIChatPlanChecklist steps={planSteps} active={isStreaming} />
 
         {hasTimeline ? (
           <AIChatAgenticTimeline

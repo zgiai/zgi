@@ -27,7 +27,11 @@ import {
   governanceCorrelationIdFromInvocation,
   isPendingToolGovernanceInvocation,
 } from './governance';
-import { preferCompleteIntermediateAnswerContent } from './reducers/shared';
+import {
+  hasToolGovernanceDecision,
+  isRecordedSkillInvocation,
+  preferCompleteIntermediateAnswerContent,
+} from './reducers/shared';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 
 const EMPTY_AICHAT_MESSAGES: AIChatMessage[] = [];
@@ -57,61 +61,19 @@ function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkil
   return normalized;
 }
 
+// A pending question and planner feedback are shown by their own cards.
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
-  const status = String(invocation.status ?? '').toLowerCase();
-  if (invocation.presentation_visibility?.toLowerCase() === 'internal') {
-    return false;
-  }
-  const record = invocation as unknown as Record<string, unknown>;
-  const result =
-    invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
-      ? (invocation.result as Record<string, unknown>)
-      : {};
-  const actionType =
-    invocation.action_type ||
-    (typeof result.action_type === 'string' ? result.action_type : undefined);
-  if (invocation.kind === 'guardrail') {
-    return false;
-  }
-  if (
-    invocation.kind === 'tool_call' &&
-    (status === 'approved' || status === 'allowed') &&
-    Object.keys(result).length === 0
-  ) {
-    return false;
-  }
-  if (invocation.kind === 'skill_load' && invocation.skill_id === 'console-navigator') {
-    return false;
-  }
-  if (
-    invocation.kind === 'client_action' &&
-    actionType === 'route_navigation' &&
-    (status === 'success' || status === 'succeeded' || status === 'completed')
-  ) {
-    return false;
-  }
-  if (invocation.kind === 'client_action') {
-    const actionId = String(record.action_id ?? result.action_id ?? '').toLowerCase();
-    const runtimeId = String(record.runtime_id ?? '').toLowerCase();
-    if (
-      actionType === 'asset_observation' ||
-      actionId.startsWith('asset_observation:') ||
-      runtimeId.startsWith('client_action:asset_observation:')
-    ) {
-      return false;
-    }
-  }
   return (
-    invocation.kind !== 'metadata_exposed' &&
-    invocation.kind !== 'memory_planner' &&
+    isRecordedSkillInvocation(invocation) &&
     invocation.kind !== 'planner_feedback' &&
-    invocation.kind !== 'final_answer' &&
     invocation.kind !== 'user_input_request'
   );
 }
 
 function isTerminalGovernedSkillInvocation(invocation: AIChatSkillInvocation): boolean {
-  if (!invocation.governance || invocation.kind === 'tool_governance') return false;
+  if (!hasToolGovernanceDecision(invocation.governance) || invocation.kind === 'tool_governance') {
+    return false;
+  }
   const status = String(invocation.status ?? '').toLowerCase();
   return (
     status === 'success' ||
@@ -244,9 +206,7 @@ function isGenericDigitalHumanTaskGovernanceEvent(event: unknown): boolean {
   const governance = timelineRecord(root.governance);
   const approvalEvent = firstTimelineRecord(root.approval_event, governance.approval_event);
   const records = [root, governance, approvalEvent];
-  const skill = records
-    .map(record => timelineString(record.skill_id).toLowerCase())
-    .find(Boolean);
+  const skill = records.map(record => timelineString(record.skill_id).toLowerCase()).find(Boolean);
   const tool = records
     .map(record => timelineString(record.tool_name || record.tool_id).toLowerCase())
     .find(Boolean);
@@ -865,7 +825,7 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     .filter(invocation => invocation.kind !== 'memory_mutation')
     .map((invocation, index): AIChatAgenticTimelineItem => {
       const correlationId = governanceCorrelationIdFromInvocation(invocation) ?? String(index);
-      const hasGovernance = Boolean(invocation.governance);
+      const hasGovernance = hasToolGovernanceDecision(invocation.governance);
       const shouldRenderAsGovernanceDecision =
         (!isDigitalHumanTaskMutationInvocation(invocation) &&
           invocation.kind === 'tool_governance') ||
@@ -1679,6 +1639,26 @@ export function mergeRuntimeTimelineWithMessageTimeline(
   });
 
   return sortTimelineItems(dedupeTimelineItems(merged));
+}
+
+/**
+ * The one timeline a message shows (ADR 0050). Live, it is the event order the
+ * person watched, with the records only the stored message has (a decision
+ * reloaded after a reconnect, for example) after it; with no live events, it
+ * is the stored message alone. The message bubble and the approval card both
+ * read it, so the card never offers a decision the bubble does not show.
+ */
+export function messageDisplayTimeline(
+  message: AIChatMessage,
+  runtimeTimeline?: AIChatAgenticTimelineItem[]
+): AIChatAgenticTimelineItem[] {
+  const messageTimeline = timelineFromAIChatMessage(message);
+  if (!runtimeTimeline?.length) return sanitizeTimelineForMessage(message, messageTimeline);
+  const runtimeIdentities = new Set(runtimeTimeline.flatMap(timelineItemAliasIdentities));
+  const messageOnly = messageTimeline.filter(
+    item => !timelineItemAliasIdentities(item).some(identity => runtimeIdentities.has(identity))
+  );
+  return sanitizeTimelineForMessage(message, [...runtimeTimeline, ...messageOnly]);
 }
 
 export function seedStreamingTimelineFromMessages(

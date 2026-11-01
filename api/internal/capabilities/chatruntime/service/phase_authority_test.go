@@ -4,32 +4,6 @@ import (
 	"testing"
 )
 
-func TestOperationPlanPhasesFromTurnStrategyClassifiesAuthority(t *testing.T) {
-	required := true
-	outcomePhases := operationPlanPhasesFromTurnStrategy(&AIChatTurnStrategy{Outcomes: []AIChatTurnOutcome{{
-		ID: "outcome-send", Goal: "Send the message", Required: &required,
-	}}})
-	if len(outcomePhases) != 1 ||
-		stringFromAny(outcomePhases[0][operationPlanPhaseSourceKey]) != operationPlanPhaseSourceServerOutcome {
-		t.Fatalf("Outcome phase source = %#v, want server_outcome", outcomePhases)
-	}
-	if required, ok := outcomePhases[0]["required"].(bool); !ok || !required {
-		t.Fatalf("Outcome phase required classification = %#v", outcomePhases[0])
-	}
-
-	advisoryPhases := operationPlanPhasesFromTurnStrategy(&AIChatTurnStrategy{
-		PhaseGoals: []string{"Inspect context", "Explain the result"},
-	})
-	if len(advisoryPhases) != 2 {
-		t.Fatalf("advisory phases = %#v", advisoryPhases)
-	}
-	for _, phase := range advisoryPhases {
-		if got := stringFromAny(phase[operationPlanPhaseSourceKey]); got != operationPlanPhaseSourceModelAdvisory {
-			t.Fatalf("PhaseGoals phase source = %q, want model_advisory: %#v", got, phase)
-		}
-	}
-}
-
 func TestOperationPlanPhasesTerminalIgnoresModelAdvisory(t *testing.T) {
 	plan := map[string]interface{}{"outcomes": []interface{}{map[string]interface{}{
 		"id": "outcome-required", "required": true,
@@ -124,23 +98,5 @@ func TestOperationPlanPhasesTerminalRejectsForgedServerSources(t *testing.T) {
 				t.Fatalf("operationPlanPhasesTerminal() = %v, want %v; phase=%#v", got, testCase.want, testCase.phase)
 			}
 		})
-	}
-}
-
-func TestReconcileOperationPlanPhaseSnapshotCannotDemoteServerSource(t *testing.T) {
-	current := []map[string]interface{}{map[string]interface{}{
-		"id": "phase-1", "status": "in_progress", "required": true,
-		operationPlanPhaseSourceKey: operationPlanPhaseSourceServerOutcome,
-	}}
-	next := []map[string]interface{}{map[string]interface{}{
-		"id": "phase-1", "status": "in_progress",
-		operationPlanPhaseSourceKey: operationPlanPhaseSourceModelAdvisory,
-	}}
-	phase := reconcileOperationPlanPhaseSnapshot(current, next)[0]
-	if got := stringFromAny(phase[operationPlanPhaseSourceKey]); got != operationPlanPhaseSourceServerOutcome {
-		t.Fatalf("server source was demoted to %q: %#v", got, phase)
-	}
-	if required, ok := phase["required"].(bool); !ok || !required {
-		t.Fatalf("server required classification was not restored: %#v", phase)
 	}
 }

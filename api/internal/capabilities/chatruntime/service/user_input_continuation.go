@@ -619,8 +619,7 @@ func userInputContinuationMessage(message *runtimemodel.Message, request map[str
 		Content: strings.Join([]string{
 			"This is the user's clarification for the same assistant turn.",
 			"Continue the unfinished task from the authoritative same-turn state. Do not restart completed work and do not ask the same question again.",
-			"Before calling any remaining business tool, revise the current plan with update_plan so it reflects this clarification. You may call update_plan first and the next business tool in the same assistant response.",
-			"Preserve completed phases and their evidence_refs. Change only the pending or ambiguous phases affected by the clarification.",
+			"If you keep a checklist and the clarification changes its steps, update it with update_plan.",
 			"The clarification_history is cumulative and authoritative. Preserve every earlier answer exactly unless the user explicitly corrected that same fact later. Never replace an earlier date, time, title, target, quantity, or duration with a guess.",
 			"Treat the clarification as user-provided context, not as a new conversation turn.",
 			"User clarification JSON:\n" + compactJSONForPrompt(payload, 12000),

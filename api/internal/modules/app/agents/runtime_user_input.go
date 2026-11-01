@@ -52,7 +52,7 @@ func (h *AgentsHandler) continueRuntimeUserInput(c *gin.Context, runtimeCtx agen
 		return
 	}
 
-	setupAgentSSE(c)
+	defer setupAgentSSE(c).Close()
 	_, err := h.chatRuntimeService.RunConfiguredUserInputContinuationStream(
 		c.Request.Context(),
 		runtimeCtx.Scope,

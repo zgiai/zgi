@@ -465,7 +465,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 		taskTokenBudget:                taskTokenBudgetFromMetadata(message.Metadata),
 	}
 	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
-	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req, message.Metadata)
+	prepared.PreferredRestoredSkillID = preferredRestoredSkillAfterClientAction(parts, continuation.Event, req)
 	parts.TurnStartedAt = message.CreatedAt
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts, message.ConversationID)
 	if err != nil {
@@ -480,7 +480,7 @@ func (s *service) prepareConfiguredClientActionContinuationChat(
 	return prepared, nil
 }
 
-func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) string {
+func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest) string {
 	eventSkillID := strings.TrimSpace(stringFromAny(event["skill_id"]))
 	if !strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusSucceeded) ||
 		(!strings.EqualFold(strings.TrimSpace(stringFromAny(event["action_type"])), "route_navigation") &&
@@ -499,83 +499,26 @@ func preferredRestoredSkillAfterClientAction(parts *chatRequestParts, event map[
 		result["href"],
 		event["href"],
 	))
-	phaseText := firstOpenOperationPlanPhaseText(metadata)
-	for _, skillID := range preferredBusinessSkillsForRoute(route, phaseText) {
+	// The page's usual skills; plan steps are the model's checklist and name
+	// no skill (ADR 0049).
+	for _, skillID := range preferredBusinessSkillsForRoute(route) {
 		if skillIDEnabled(parts.SkillIDs, skillID) {
 			return skillID
 		}
 	}
-	if skillID := operationPlanPreferredBusinessSkillID(metadata); skillID != "" && skillIDEnabled(parts.SkillIDs, skillID) {
-		return skillID
-	}
 	return ""
 }
 
-func preferredBusinessSkillsForRoute(route string, phaseText string) []string {
+func preferredBusinessSkillsForRoute(route string) []string {
 	route = strings.ToLower(strings.TrimSpace(route))
-	phaseText = strings.ToLower(strings.TrimSpace(phaseText))
 	switch {
 	case strings.HasPrefix(route, "/console/agents"):
 		return []string{skills.SkillAgentManagement}
 	case strings.HasPrefix(route, "/console/files"):
-		switch {
-		case containsAnyFold(phaseText, "续写", "生成", "创建", "撰写", "generate", "write", "create"):
-			return []string{skills.SkillFileGenerator, skills.SkillFileReader, skills.SkillFileManager}
-		case containsAnyFold(phaseText, "保存", "删除", "移动", "导入", "save", "delete", "move", "import"):
-			return []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator}
-		default:
-			return []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator}
-		}
+		return []string{skills.SkillFileReader, skills.SkillFileManager, skills.SkillFileGenerator}
 	default:
 		return nil
 	}
-}
-
-func firstOpenOperationPlanPhaseText(metadata map[string]interface{}) string {
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	for _, phase := range mapSliceFromAny(plan["phases"]) {
-		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
-		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
-			continue
-		}
-		return strings.TrimSpace(firstNonEmptyString(phase["step"], phase["title"], phase["note"]))
-	}
-	return ""
-}
-
-func operationPlanPreferredBusinessSkillID(metadata map[string]interface{}) string {
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	for _, phase := range mapSliceFromAny(plan["phases"]) {
-		switch strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"]))) {
-		case operationPlanStepStatusCompleted, "skipped", operationPlanStepStatusFailed:
-			continue
-		}
-		binding := mapFromOperationContext(phase[operationPlanRuntimeBindingKey])
-		if skillID := strings.TrimSpace(stringFromAny(binding["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
-			return skillID
-		}
-		if expectedAction := mapFromOperationContext(phase["expected_action"]); len(expectedAction) > 0 {
-			if skillID := strings.TrimSpace(stringFromAny(expectedAction["skill_id"])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
-				return skillID
-			}
-		}
-		for _, key := range []string{"skill_id", "recommended_skill_id", "target_skill_id"} {
-			if skillID := strings.TrimSpace(stringFromAny(phase[key])); skillID != "" && !strings.EqualFold(skillID, skills.SkillConsoleNavigator) {
-				return skillID
-			}
-		}
-	}
-	return ""
-}
-
-func containsAnyFold(value string, candidates ...string) bool {
-	value = strings.ToLower(value)
-	for _, candidate := range candidates {
-		if strings.Contains(value, strings.ToLower(strings.TrimSpace(candidate))) {
-			return true
-		}
-	}
-	return false
 }
 
 func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) {
@@ -775,7 +718,7 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	system := strings.Join([]string{
 		"You are continuing the same assistant turn after a frontend client action.",
 		"The user already saw progress emitted before this client action. Do not acknowledge or restate the original request, the latest correction, or completed progress. If you emit progress, begin directly with the newly reached evidence or next concrete action.",
-		"In the first model response after this continuation, do not emit ordinary assistant content before a tool call. Call update_plan and/or the next necessary tool directly; if the task is terminal and submit_final_answer is available, call it directly.",
+		"Continue with the next necessary tool call, or answer if nothing is left. If you keep a checklist and its steps changed, update it with update_plan.",
 		"Use the updated transient console page context already included in this request.",
 		"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions, especially after route changes or approvals. Do not replace recorded exact values with placeholders.",
 		"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",

@@ -24,6 +24,9 @@ type TaskManager struct {
 
 // NewTaskManager creates a new task manager
 func NewTaskManager(cfg *config.Config) (*TaskManager, error) {
+	if err := validateWorkerConcurrency(cfg); err != nil {
+		return nil, err
+	}
 	redisOpt := taskQueueRedisOpt(cfg)
 	client := asynq.NewClient(redisOpt)
 	inspector := asynq.NewInspector(redisOpt)
@@ -61,6 +64,23 @@ func (tm *TaskManager) ResetArchivedTask(queueName, taskID string) (bool, error)
 	default:
 		return false, fmt.Errorf("task %s in queue %s cannot be reset from state %s", taskID, queueName, info.State)
 	}
+}
+
+// TaskArchived reports whether a delivery sits in the archive: it exhausted
+// its retries, skipped them, or found no handler. A task that is not in the
+// queue is not archived.
+func (tm *TaskManager) TaskArchived(queueName, taskID string) (bool, error) {
+	if tm == nil || tm.inspector == nil {
+		return false, fmt.Errorf("task inspector is not configured")
+	}
+	info, err := tm.inspector.GetTaskInfo(queueName, taskID)
+	if err != nil {
+		if errors.Is(err, asynq.ErrTaskNotFound) || errors.Is(err, asynq.ErrQueueNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect task %s in queue %s: %w", taskID, queueName, err)
+	}
+	return info.State == asynq.TaskStateArchived, nil
 }
 
 // CancelTask best-effort accelerates cancellation of a durable domain run.

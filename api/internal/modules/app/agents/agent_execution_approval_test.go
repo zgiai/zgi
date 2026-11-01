@@ -14,6 +14,24 @@ import (
 	appcatalog "github.com/zgiai/zgi/api/pkg/apperror/catalog"
 )
 
+// A handler without its own error projector falls back to the bootstrap
+// catalog; an end user over quota still gets 429 with the quota code.
+func TestEndUserQuotaErrorUsesTheBootstrapCatalog(t *testing.T) {
+	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, append(appcatalog.DefaultDefinitions(), CatalogDefinitions()...)...)
+	if err != nil {
+		t.Fatalf("construct product catalog: %v", err)
+	}
+	runtimeservice.SetApplicationErrorCatalog(catalog)
+	t.Cleanup(func() { runtimeservice.SetApplicationErrorCatalog(nil) })
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/connect/v1/apps/app/chat", nil)
+	(&AgentsHandler{}).failRuntime(c, apperror.New(appcatalog.CodeQuotaExceeded, apperror.WithOperation("runtime_workspace.end_user_quota")))
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), appcatalog.CodeQuotaExceeded.String()) {
+		t.Fatalf("quota error: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestAgentExecutionApprovalFailsClosed(t *testing.T) {
 	valid := agentExecutionApprovals{
 		Enabled:      true,
@@ -211,23 +229,5 @@ func TestAgentExecutionErrorHTTPDoesNotExposeOperation(t *testing.T) {
 	handler.failRuntime(c, apperror.New(AppCodeAgentExecutionRuntimeUnavailable, apperror.WithOperation("agent_execution.private_reason")))
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), AppCodeAgentExecutionRuntimeUnavailable.String()) || strings.Contains(w.Body.String(), "private_reason") {
 		t.Fatalf("unsafe HTTP error: status=%d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func ptrAgentExecutionString(value string) *string { return &value }
-
-func TestEndUserQuotaErrorUsesTheBootstrapCatalog(t *testing.T) {
-	catalog, err := appcatalog.New(appcatalog.LocaleEnglishUS, appcatalog.CodeInternal, append(appcatalog.DefaultDefinitions(), CatalogDefinitions()...)...)
-	if err != nil {
-		t.Fatalf("construct product catalog: %v", err)
-	}
-	runtimeservice.SetApplicationErrorCatalog(catalog)
-	t.Cleanup(func() { runtimeservice.SetApplicationErrorCatalog(nil) })
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/connect/v1/apps/app/chat", nil)
-	(&AgentsHandler{}).failRuntime(c, apperror.New(appcatalog.CodeQuotaExceeded, apperror.WithOperation("runtime_workspace.end_user_quota")))
-	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), appcatalog.CodeQuotaExceeded.String()) {
-		t.Fatalf("quota error: status=%d body=%s", w.Code, w.Body.String())
 	}
 }

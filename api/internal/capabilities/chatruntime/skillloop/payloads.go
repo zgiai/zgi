@@ -315,8 +315,11 @@ func assetObservationClientActionRequiredPayload(prepared *PreparedChat, trace s
 		"asset_type":            assetType,
 		"asset_operation_audit": copyStringAnyMap(audit),
 		"observation_requested": true,
-		"refresh_before_resume": false,
-		"created_at":            time.Now().Unix(),
+		// The call that changed the asset is the row; the observation only
+		// refreshes it (ADR 0050).
+		"presentation_visibility": "internal",
+		"refresh_before_resume":   false,
+		"created_at":              time.Now().Unix(),
 	}
 	if correlationID := strings.TrimSpace(payloadText(audit["correlation_id"])); correlationID != "" {
 		payload["correlation_id"] = correlationID

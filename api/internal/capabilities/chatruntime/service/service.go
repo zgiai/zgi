@@ -69,6 +69,7 @@ const (
 	streamEventSkillLoadEnd                = "skill_load_end"
 	streamEventSkillReferenceRead          = "skill_reference_read"
 	streamEventSkillArtifactCreated        = "skill_artifact_created"
+	streamEventPlanUpdated                 = "plan_updated"
 	streamEventRuntimeInputAccepted        = "runtime_input_accepted"
 	streamEventRuntimeInputApplied         = "runtime_input_applied"
 	streamEventRuntimeInputFollowUpStarted = "runtime_input_follow_up_started"
@@ -785,7 +786,7 @@ type chatRequestParts struct {
 	TurnReminders []string
 	// CurrentTimeContext is the current time the runtime adds to the turn
 	// context when the caller provides none (ADR 0043).
-	CurrentTimeContext  string
+	CurrentTimeContext string
 	// UserLanguageContext names the user's interface language when the run
 	// knows it; it follows the user's request (ADR 0048).
 	UserLanguageContext string

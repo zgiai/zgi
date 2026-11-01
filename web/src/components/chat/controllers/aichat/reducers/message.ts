@@ -9,6 +9,7 @@ import type {
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatUsage,
+  AIChatTokenBudgetRequestedEventData,
   AIChatTokenUsageUpdatedEventData,
   AIChatSkillInvocation,
   AIChatUserInputRequestedEventData,
@@ -1109,6 +1110,54 @@ export function applyTokenUsageUpdatedState(
         last_event_id: eventId ?? previousStreaming?.last_event_id,
       },
     },
+  };
+}
+
+/**
+ * A task that used up its token budget pauses until its caller adds budget or
+ * stops it. The message keeps the request and reads as waiting, not running.
+ */
+export function applyTokenBudgetRequestedState(
+  current: AIChatControllerState,
+  payload: AIChatTokenBudgetRequestedEventData,
+  eventId?: string | null
+): AIChatControllerState {
+  const previousStreaming = current.streamingByMessageId[payload.message_id];
+  if (isStaleAIChatStreamEvent(eventId, previousStreaming?.last_event_id)) {
+    return current;
+  }
+  const messages = current.messagesByConversation[payload.conversation_id] ?? [];
+  if (!messages.some(message => message.id === payload.message_id)) return current;
+  const nextMessages = messages.map(message =>
+    message.id === payload.message_id
+      ? {
+          ...message,
+          status: 'waiting_budget' as const,
+          metadata: {
+            ...(message.metadata ?? {}),
+            task_token_budget: payload.token_budget,
+            task_token_budget_request: payload,
+          },
+          updated_at: Math.floor(Date.now() / 1000),
+        }
+      : message
+  );
+  return {
+    ...current,
+    messagesByConversation: {
+      ...current.messagesByConversation,
+      [payload.conversation_id]: nextMessages,
+    },
+    streamingByMessageId: previousStreaming
+      ? {
+          ...current.streamingByMessageId,
+          [payload.message_id]: {
+            ...previousStreaming,
+            status: 'waiting_budget',
+            last_event_id: eventId ?? previousStreaming.last_event_id,
+          },
+        }
+      : current.streamingByMessageId,
   };
 }
 

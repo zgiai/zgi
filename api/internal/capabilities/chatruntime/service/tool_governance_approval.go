@@ -49,7 +49,6 @@ func (s *service) persistToolGovernanceApprovalPendingResult(ctx context.Context
 
 	metadata := mergeToolGovernanceDecisionMetadata(prepared.Message.Metadata, pendingPayload)
 	metadata = preparedResultMetadataForPrepared(prepared, metadata, usage)
-	metadata = bindPendingGovernedInvocationToOperationPlan(metadata, pendingPayload)
 	metadata["tool_governance_continuation"] = compactSkillInvocation(map[string]interface{}{
 		"status":         "waiting_approval",
 		"correlation_id": toolGovernanceCorrelationID(pendingPayload),

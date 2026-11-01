@@ -41,7 +41,7 @@ func (h *AgentsHandler) ContinueAPIKeyAgentRuntimeTokenBudget(c *gin.Context) {
 		return
 	}
 	req.Surface = "external_api"
-	setupAgentSSE(c)
+	defer setupAgentSSE(c).Close()
 	_, err := h.chatRuntimeService.RunConfiguredTaskTokenBudgetContinuationStream(
 		c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, runtimeCtx.RunConfig,
 		conversationID, messageID, requestID, req,

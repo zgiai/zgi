@@ -92,6 +92,7 @@ export type AIChatAgenticTimelineItem =
       tool_name?: string;
       action_id?: string;
       action_type?: string;
+      presentation_visibility?: string;
       continuation_policy?: string;
       blocking?: boolean;
       status?: string;
@@ -310,6 +311,8 @@ export interface AIChatController {
   isStopping: boolean;
   isSending: boolean;
   supportsRuntimeInput: boolean;
+  /** The transport can continue a turn after the person decides a tool approval. */
+  supportsToolGovernanceApproval: boolean;
   canSubmitRuntimeInput: boolean;
   connectionState: AIChatConnectionState;
   error: string | null;

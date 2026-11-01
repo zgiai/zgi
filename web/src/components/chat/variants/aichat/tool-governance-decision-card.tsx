@@ -51,60 +51,95 @@ export interface ToolGovernancePendingApproval {
 interface PendingApprovalEntry {
   approval: ToolGovernancePendingApproval;
   sequence: number;
-  scopeId: string;
 }
 
-type PendingApprovalSubscriber = () => void;
-
-const pendingApprovalEntries = new Map<string, PendingApprovalEntry>();
-const pendingApprovalSubscribers = new Set<PendingApprovalSubscriber>();
-let pendingApprovalSequence = 0;
-const pendingApprovalSnapshots = new Map<string, ToolGovernancePendingApproval | null>();
-const dismissedPendingApprovalKeys = new Set<string>();
-const DEFAULT_PENDING_APPROVAL_SCOPE_ID = 'default';
-const ToolGovernancePendingApprovalScopeContext = createContext(
-  DEFAULT_PENDING_APPROVAL_SCOPE_ID
-);
-
-function pendingApprovalEntryKey(scopeId: string, approvalId: string) {
-  return `${scopeId}:${approvalId}`;
+/**
+ * The approvals waiting in one chat shell. Each shell creates its own and it
+ * goes away with the shell, so approvals, dismissals and subscribers never
+ * leak between chats, conversations or mounts (ADR 0050).
+ */
+export interface ToolGovernancePendingApprovalScope {
+  publish: (approval: ToolGovernancePendingApproval) => () => void;
+  dismiss: (approval: ToolGovernancePendingApproval) => () => void;
+  isDismissed: (approvalId: string) => boolean;
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => ToolGovernancePendingApproval | null;
+  /**
+   * Changes when a dismissal is made or undone, for readers of isDismissed.
+   * Publishing does not change it: the timeline publishes on every render, and
+   * a reader that re-rendered on each publish would loop.
+   */
+  getVersion: () => number;
 }
 
-function resolvePendingApprovalSnapshot(scopeId: string): ToolGovernancePendingApproval | null {
-  const entries = Array.from(pendingApprovalEntries.values()).filter(
-    entry => entry.scopeId === scopeId
-  );
-  if (entries.length === 0) return null;
-  entries.sort((left, right) => {
-    const leftTime = left.approval.createdAt ?? 0;
-    const rightTime = right.approval.createdAt ?? 0;
-    if (leftTime !== rightTime) return rightTime - leftTime;
-    return right.sequence - left.sequence;
-  });
-  return entries[0].approval;
-}
+export function createToolGovernancePendingApprovalScope(): ToolGovernancePendingApprovalScope {
+  const entries = new Map<string, PendingApprovalEntry>();
+  const dismissed = new Set<string>();
+  const listeners = new Set<() => void>();
+  let sequence = 0;
+  let version = 0;
+  let snapshot: ToolGovernancePendingApproval | null = null;
 
-function emitPendingApprovalChange(scopeId: string) {
-  pendingApprovalSnapshots.set(scopeId, resolvePendingApprovalSnapshot(scopeId));
-  pendingApprovalSubscribers.forEach(listener => listener());
-}
-
-function subscribePendingApproval(listener: PendingApprovalSubscriber) {
-  pendingApprovalSubscribers.add(listener);
-  return () => {
-    pendingApprovalSubscribers.delete(listener);
+  const emit = () => {
+    const latest = Array.from(entries.values()).sort((left, right) => {
+      const leftTime = left.approval.createdAt ?? 0;
+      const rightTime = right.approval.createdAt ?? 0;
+      if (leftTime !== rightTime) return rightTime - leftTime;
+      return right.sequence - left.sequence;
+    })[0];
+    snapshot = latest?.approval ?? null;
+    listeners.forEach(listener => listener());
   };
+
+  const scope: ToolGovernancePendingApprovalScope = {
+    publish: approval => {
+      if (dismissed.has(approval.id)) return () => undefined;
+      const entrySequence = (sequence += 1);
+      entries.set(approval.id, { approval, sequence: entrySequence });
+      emit();
+      return () => {
+        if (entries.get(approval.id)?.sequence !== entrySequence) return;
+        entries.delete(approval.id);
+        emit();
+      };
+    },
+    dismiss: approval => {
+      dismissed.add(approval.id);
+      entries.delete(approval.id);
+      version += 1;
+      emit();
+      return () => {
+        dismissed.delete(approval.id);
+        version += 1;
+        scope.publish(approval);
+      };
+    },
+    isDismissed: approvalId => dismissed.has(approvalId),
+    subscribe: listener => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getSnapshot: () => snapshot,
+    getVersion: () => version,
+  };
+  return scope;
 }
+
+// Components rendered outside a chat shell share this one.
+const defaultPendingApprovalScope = createToolGovernancePendingApprovalScope();
+const ToolGovernancePendingApprovalScopeContext = createContext(defaultPendingApprovalScope);
 
 export function ToolGovernancePendingApprovalScopeProvider({
   children,
-  scopeId,
+  scope,
 }: {
   children: ReactNode;
-  scopeId: string;
+  scope: ToolGovernancePendingApprovalScope;
 }) {
   return (
-    <ToolGovernancePendingApprovalScopeContext.Provider value={scopeId}>
+    <ToolGovernancePendingApprovalScopeContext.Provider value={scope}>
       {children}
     </ToolGovernancePendingApprovalScopeContext.Provider>
   );
@@ -116,50 +151,33 @@ export function useToolGovernancePendingApprovalScope() {
 
 export function publishToolGovernancePendingApproval(
   approval: ToolGovernancePendingApproval,
-  scopeId = DEFAULT_PENDING_APPROVAL_SCOPE_ID
+  scope: ToolGovernancePendingApprovalScope = defaultPendingApprovalScope
 ) {
-  const entryKey = pendingApprovalEntryKey(scopeId, approval.id);
-  if (dismissedPendingApprovalKeys.has(entryKey)) {
-    return () => undefined;
-  }
-  const sequence = (pendingApprovalSequence += 1);
-  pendingApprovalEntries.set(entryKey, { approval, sequence, scopeId });
-  emitPendingApprovalChange(scopeId);
-  return () => {
-    if (pendingApprovalEntries.get(entryKey)?.sequence !== sequence) return;
-    pendingApprovalEntries.delete(entryKey);
-    emitPendingApprovalChange(scopeId);
-  };
+  return scope.publish(approval);
 }
 
 export function dismissToolGovernancePendingApproval(
   approval: ToolGovernancePendingApproval,
-  scopeId = DEFAULT_PENDING_APPROVAL_SCOPE_ID
+  scope: ToolGovernancePendingApprovalScope = defaultPendingApprovalScope
 ) {
-  const entryKey = pendingApprovalEntryKey(scopeId, approval.id);
-  dismissedPendingApprovalKeys.add(entryKey);
-  pendingApprovalEntries.delete(entryKey);
-  emitPendingApprovalChange(scopeId);
-  return () => {
-    dismissedPendingApprovalKeys.delete(entryKey);
-    publishToolGovernancePendingApproval(approval, scopeId);
-  };
+  return scope.dismiss(approval);
 }
 
 export function isToolGovernancePendingApprovalDismissed(
   approvalId: string,
-  scopeId = DEFAULT_PENDING_APPROVAL_SCOPE_ID
+  scope: ToolGovernancePendingApprovalScope = defaultPendingApprovalScope
 ) {
-  return dismissedPendingApprovalKeys.has(pendingApprovalEntryKey(scopeId, approvalId));
+  return scope.isDismissed(approvalId);
 }
 
 export function useActiveToolGovernancePendingApproval() {
-  const scopeId = useToolGovernancePendingApprovalScope();
-  return useSyncExternalStore(
-    subscribePendingApproval,
-    () => pendingApprovalSnapshots.get(scopeId) ?? null,
-    () => null
-  );
+  const scope = useToolGovernancePendingApprovalScope();
+  return useSyncExternalStore(scope.subscribe, scope.getSnapshot, () => null);
+}
+
+/** Re-renders when the scope's approvals or dismissals change. */
+export function useToolGovernancePendingApprovalVersion(scope: ToolGovernancePendingApprovalScope) {
+  return useSyncExternalStore(scope.subscribe, scope.getVersion, () => 0);
 }
 
 interface ToolGovernanceDecisionCardProps {
@@ -475,7 +493,7 @@ export function ToolGovernanceApprovalPanel({
   approval: ToolGovernancePendingApproval;
 }) {
   const t = useT('webapp');
-  const pendingApprovalScopeId = useToolGovernancePendingApprovalScope();
+  const pendingApprovalScope = useToolGovernancePendingApprovalScope();
   const [rememberForSession, setRememberForSession] = useState(false);
   const [submittingAction, setSubmittingAction] = useState<ToolGovernanceDecisionAction | null>(
     null
@@ -525,7 +543,7 @@ export function ToolGovernanceApprovalPanel({
       setResolvedAction(action);
       restoreDismissedApproval = dismissToolGovernancePendingApproval(
         approval,
-        pendingApprovalScopeId
+        pendingApprovalScope
       );
       await approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false);
     } catch (error) {

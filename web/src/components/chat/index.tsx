@@ -421,7 +421,6 @@ export type { UseChatApi } from '@/components/chat/hooks/use-chat-api';
 export { default as ChatWithController } from '@/components/chat/chat-with-controller';
 export { SingleChatController } from '@/components/chat/controllers/single-chat-controller';
 export { WebappConversationTransport } from '@/components/chat/transports/webapp-transport';
-export { AgentAdvancedChatTransport } from '@/components/chat/transports/agent-advanced-chat-transport';
 export { AIChatTransport } from '@/components/chat/transports/aichat-transport';
 export {
   AgentRuntimeTransport,

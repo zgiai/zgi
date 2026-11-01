@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import type { MutableRefObject } from 'react';
 import type {
   AIChatAgentProgressEventData,
+  AIChatPlanUpdatedEventData,
   AIChatClientActionRequiredEventData,
   AIChatClientActionResultEventData,
   AIChatErrorEventData,
@@ -13,6 +14,7 @@ import type {
   AIChatMessageEndEventData,
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
+  AIChatTokenBudgetRequestedEventData,
   AIChatTokenUsageUpdatedEventData,
   AIChatMemoryMutationEventData,
   AIChatRuntimeInputAppliedEventData,
@@ -38,6 +40,7 @@ import type {
 } from '@/components/chat/controllers/aichat';
 import {
   applyAgentProgressState,
+  applyPlanUpdatedState,
   applyFileParseEndState,
   applyFileParseErrorState,
   applyFileParseStartState,
@@ -49,6 +52,7 @@ import {
   applyRuntimeInputAppliedState,
   applyMessageRetractState,
   applyMessageStartState,
+  applyTokenBudgetRequestedState,
   applyTokenUsageUpdatedState,
   applySkillArtifactCreatedState,
   applySkillCallEndState,
@@ -120,7 +124,7 @@ function shouldRefreshConversationAfterMessageEnd(
   return false;
 }
 
-function clientActionProgressPayload(
+export function clientActionProgressPayload(
   payload: AIChatClientActionRequiredEventData | AIChatClientActionResultEventData,
   phase: AIChatAgentProgressEventData['phase']
 ): AIChatAgentProgressEventData | null {
@@ -135,6 +139,7 @@ function clientActionProgressPayload(
     tool_name: payload.tool_name,
     action_id: payload.action_id,
     action_type: payload.action_type,
+    presentation_visibility: payload.presentation_visibility,
     continuation_policy: payload.continuation_policy,
     blocking: payload.blocking,
     status: payload.status,
@@ -264,6 +269,14 @@ export function useChatRuntimeEventAppliers({
     (payload: AIChatTokenUsageUpdatedEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
       setControllerState(current => applyTokenUsageUpdatedState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyTokenBudgetRequested = useCallback(
+    (payload: AIChatTokenBudgetRequestedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyTokenBudgetRequestedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -435,6 +448,14 @@ export function useChatRuntimeEventAppliers({
         created_at_ms: payloadRecord.created_at_ms,
       });
       setControllerState(current => applyAgentProgressState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyPlanUpdated = useCallback(
+    (payload: AIChatPlanUpdatedEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      setControllerState(current => applyPlanUpdatedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -685,14 +706,17 @@ export function useChatRuntimeEventAppliers({
       applyWorkflowFinished,
       applyWorkflowFailed,
       applyAgentProgress,
+      applyPlanUpdated,
       applyIntermediateAnswer,
       applyUserInputRequested,
       applyMessageEnd,
       applyTokenUsageUpdated,
+      applyTokenBudgetRequested,
       applyStreamError,
     }),
     [
       applyAgentProgress,
+      applyPlanUpdated,
       applyClientActionRequired,
       applyClientActionResult,
       applyFileParseEnd,
@@ -712,6 +736,7 @@ export function useChatRuntimeEventAppliers({
       applyMessageChunk,
       applyMessageEnd,
       applyTokenUsageUpdated,
+      applyTokenBudgetRequested,
       applyMessageRetract,
       applyMessageStart,
       applySkillArtifactCreated,

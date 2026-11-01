@@ -44,6 +44,20 @@ type runWaitingStore interface {
 	CancelWaitingRun(context.Context, uuid.UUID, time.Time) error
 }
 
+// undeliveredRunStore is an optional persistence extension for settling
+// queued runs whose queue delivery was archived before a worker claimed them.
+type undeliveredRunStore interface {
+	ListQueuedRuns(context.Context, time.Time, *queuedRunCursor, int) ([]*Run, error)
+	FailQueuedRun(context.Context, uuid.UUID, string, string, time.Time) (bool, error)
+}
+
+// queuedRunCursor is the keyset position of the last queued run a sweep
+// inspected, in (updated_at, id) order.
+type queuedRunCursor struct {
+	UpdatedAt time.Time
+	ID        uuid.UUID
+}
+
 // runtimeInputFollowUpStore is an optional persistence extension used by the
 // durable runtime-input continuation path. Keeping it separate avoids widening
 // the core run-store contract implemented by focused tests and alternative stores.
@@ -346,6 +360,32 @@ func (r *GormRepository) FailRun(ctx context.Context, runID uuid.UUID, code, mes
 			"status": status, "error_code": code, "error_message": message, "waiting_reason": "", "waiting_receipt": nil, "waiting_approval_origin": "", "completed_at": now, "updated_at": now,
 		}).Error
 	})
+}
+
+// ListQueuedRuns returns runs no worker has claimed since before updatedBefore,
+// in (updated_at, id) order and after the cursor when one is given.
+func (r *GormRepository) ListQueuedRuns(ctx context.Context, updatedBefore time.Time, after *queuedRunCursor, limit int) ([]*Run, error) {
+	runs := make([]*Run, 0, limit)
+	query := r.db.WithContext(ctx).Where("status = ? AND updated_at < ?", RunStatusQueued, updatedBefore)
+	if after != nil {
+		query = query.Where("(updated_at > ? OR (updated_at = ? AND id > ?))", after.UpdatedAt, after.UpdatedAt, after.ID)
+	}
+	if err := query.Order("updated_at ASC, id ASC").Limit(limit).Find(&runs).Error; err != nil {
+		return nil, fmt.Errorf("list queued DigitalHuman runs: %w", err)
+	}
+	return runs, nil
+}
+
+// FailQueuedRun fails a run only while it is still queued, so a worker that
+// claimed it in the meantime keeps it. It reports whether the run was failed.
+func (r *GormRepository) FailQueuedRun(ctx context.Context, runID uuid.UUID, code, message string, now time.Time) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&Run{}).Where("id = ? AND status = ?", runID, RunStatusQueued).Updates(map[string]any{
+		"status": RunStatusFailed, "error_code": code, "error_message": message, "completed_at": now, "updated_at": now,
+	})
+	if result.Error != nil {
+		return false, fmt.Errorf("fail queued DigitalHuman run: %w", result.Error)
+	}
+	return result.RowsAffected == 1, nil
 }
 
 func (r *GormRepository) RequestRunCancel(ctx context.Context, scope Scope, digitalHumanID, runID uuid.UUID, now time.Time) (*Run, error) {

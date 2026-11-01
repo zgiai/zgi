@@ -44,8 +44,10 @@ An operation that needs no confirmation already gives its result to the model as
 - **The external API** keeps its synchronous decision endpoint and ends the run.
 - **Chat and Agent confirmations** are not changed.
 
+Amended 2026-10-31: channel replies and the external API now continue the turn the same way. A channel run ended `succeeded` with an empty answer after its operation ran, so the operation was taken for the task. A channel receives the continued turn's answer or its next confirmation prompt; a repeated reply to a decided confirmation runs and delivers nothing. The API endpoint still answers synchronously with the decision, and the run then ends with the turn.
+
 ## Consequences
 
 - A confirmed operation reads like any other tool call: the specialist reports the service state, explains a failure, or asks for the next confirmation.
 - The continuation runs outside the request. If the process stops mid-turn, the message's runtime lease expires and the message ends in error; the operation itself already ran exactly once and is not repeated.
-- Bringing channel replies into the same continuation is a follow-up; a channel would then receive the model's answer instead of the fixed outcome text.
+- Channel replies were brought into the same continuation (see the amendment above); a channel receives the model's answer instead of the fixed outcome text.

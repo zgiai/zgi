@@ -22,39 +22,6 @@ import (
 	workflowbuiltin "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 )
 
-func TestControlToolsForRoundHidesUnneededPlanAndFileIntermediateTools(t *testing.T) {
-	input := []adapter.Tool{
-		{Type: "function", Function: adapter.Function{Name: skills.MetaToolUpdatePlan}},
-		{Type: "function", Function: adapter.Function{Name: skills.MetaToolIntermediateAnswer}},
-		{Type: "function", Function: adapter.Function{Name: skills.MetaToolCallSkillTool}},
-	}
-	filtered := controlToolsForRound(input, false, false)
-	if len(filtered) != 1 || filtered[0].Function.Name != skills.MetaToolCallSkillTool {
-		t.Fatalf("filtered tools = %#v, want only call_skill_tool", filtered)
-	}
-}
-
-func TestFileDeliveryRequiresArtifactOnlyWhileFileStepIsOpen(t *testing.T) {
-	state := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"phases": []interface{}{map[string]interface{}{
-				"id": "phase-file", "status": "in_progress",
-				"expected_action": map[string]interface{}{"skill_id": skills.SkillFileGenerator, "tool_name": "generate_file"},
-			}},
-		},
-	}
-	// The request's wording does not change this (ADR 0047); the final answer
-	// may still carry the file's text when the user asked for it.
-	for _, query := range []string{"生成 Markdown 文件并保存", "生成 Markdown 文件，同时在聊天中展示全文"} {
-		if !fileDeliveryRequiresArtifactOnly(RunRequest{Prepared: &PreparedChat{Query: query}}, state) {
-			t.Fatalf("fileDeliveryRequiresArtifactOnly(%q) = false, want true while the file step is open", query)
-		}
-	}
-	if fileDeliveryRequiresArtifactOnly(RunRequest{Prepared: &PreparedChat{Query: "生成 Markdown 文件"}}, map[string]interface{}{}) {
-		t.Fatal("fileDeliveryRequiresArtifactOnly() = true without an open file step")
-	}
-}
-
 func TestRunnerInjectsRuntimeInputBeforeModelRoundInOrder(t *testing.T) {
 	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
 		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "updated answer"}}},
@@ -3818,37 +3785,6 @@ func runnerTestRequestContains(req *adapter.ChatRequest, text string) bool {
 		}
 	}
 	return false
-}
-
-func runnerTestRequestHasTool(req *adapter.ChatRequest, toolName string) bool {
-	if req == nil {
-		return false
-	}
-	for _, tool := range req.Tools {
-		if strings.EqualFold(strings.TrimSpace(tool.Function.Name), toolName) {
-			return true
-		}
-	}
-	return false
-}
-
-func runnerTestRequestToolChoiceName(req *adapter.ChatRequest) string {
-	if req == nil || req.ToolChoice == nil {
-		return ""
-	}
-	return functionToolChoiceName(req.ToolChoice)
-}
-
-func functionToolChoiceName(choice interface{}) string {
-	root, ok := choice.(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	fn, ok := root["function"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(fn["name"]))
 }
 
 func (f *runnerTestLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {

@@ -94,29 +94,6 @@ func TestConnectorTerminalIgnoresProviderJSONAndPreservesPending(t *testing.T) {
 	}
 }
 
-func TestConnectorPlanMissingPhaseAndForgedCompletion(t *testing.T) {
-	phase := func(id string) map[string]any {
-		return map[string]any{"id": id, "status": "pending", "expected_action": map[string]any{"connector_operation": map[string]any{"connector_id": "github", "operation_id": "github.issue.create"}}}
-	}
-	phases := []map[string]any{phase("first"), phase("second")}
-	ref := connectortools.OperationRef{ConnectorID: "github", OperationID: "github.issue.create", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: uuid.NewString(), ActionStepID: uuid.NewString(), PlanPhaseID: "first"}
-	evidence := map[string]any{"operation_plan": map[string]any{"phases": phases}, "skill_invocations": []map[string]any{nativeOutcomeRecord(ref, "completed", "successful")}}
-	if decision := connectorTerminalStateDecision(evidence, "All done"); decision == nil || decision.Path != terminalStateGuardBlocked {
-		t.Fatal("unexecuted required phase disappeared")
-	}
-	phases[1]["status"] = "completed"
-	if err := validateConnectorPlanSnapshot(phases, evidence); err == nil {
-		t.Fatal("model invented phase success")
-	}
-	if err := validateConnectorPlanSnapshot(phases[:1], evidence); err == nil {
-		t.Fatal("model dropped executed plan shape")
-	}
-	phases[1]["status"] = "pending"
-	if err := validateConnectorPlanSnapshot(phases, evidence); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestConnectorTerminalAnswerNamesTheFailedOperationAndReason(t *testing.T) {
 	ref := connectortools.OperationRef{ConnectorID: "serverops_ssh", OperationID: "server.service.restart", BindingID: uuid.New(), ConnectionID: uuid.New(), Target: core.TargetRef{Type: core.TargetTypeChat, ID: uuid.NewString()}, LogicalOperationID: "restart-1"}
 	failed := nativeOutcomeRecord(ref, "completed", "failed")

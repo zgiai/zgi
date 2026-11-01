@@ -551,7 +551,7 @@ func (h *Handler) StreamConversationEvents(c *gin.Context) {
 		return
 	}
 
-	setupSSE(c)
+	defer setupSSE(c).Close()
 	err = h.service.StreamConversationEvents(c.Request.Context(), scope, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
 		return writeStreamEvent(c, event)
 	})
@@ -619,7 +619,7 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 		return
 	}
 
-	setupSSE(c)
+	defer setupSSE(c).Close()
 	writeChatStart(c, prepared)
 	client := newSSEClientWriter(c)
 
@@ -677,7 +677,7 @@ func (h *Handler) chatForSurface(c *gin.Context, surface string) {
 		return
 	}
 
-	setupSSE(c)
+	defer setupSSE(c).Close()
 	writeChatStart(c, prepared)
 	client := newSSEClientWriter(c)
 
@@ -904,7 +904,7 @@ func (h *Handler) failConnectorDefaults(c *gin.Context, err error) bool {
 	return true
 }
 
-func setupSSE(c *gin.Context) {
+func setupSSE(c *gin.Context) *runtimeSSEWriter {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
@@ -914,6 +914,7 @@ func setupSSE(c *gin.Context) {
 	writer := newRuntimeSSEWriter(c)
 	c.Set(runtimeSSEWriterContextKey, writer)
 	writer.StartHeartbeat(c.Request.Context())
+	return writer
 }
 
 func writeSSE(c *gin.Context, event string, data interface{}) error {

@@ -10,6 +10,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
 )
 
 // Scheduler is a generic scheduled task scheduler
@@ -24,10 +25,33 @@ type Scheduler struct {
 	running   bool
 }
 
+// schedulerQueue is the only queue the scheduler worker consumes. Its weight
+// is fixed: Asynq drops a queue with a non-positive weight and an empty queue
+// map falls back to "default", where this worker has none of the handlers.
+const (
+	schedulerQueue       = "scheduler"
+	schedulerQueueWeight = 1
+)
+
+func schedulerWorkerConfig(cfg *config.Config) (asynq.Config, error) {
+	if cfg.TaskQueue.Concurrency < 1 {
+		return asynq.Config{}, fmt.Errorf("task queue concurrency must be at least 1, got %d", cfg.TaskQueue.Concurrency)
+	}
+	return asynq.Config{
+		Concurrency:  cfg.TaskQueue.Concurrency,
+		Queues:       map[string]int{schedulerQueue: schedulerQueueWeight},
+		ErrorHandler: queue.NewTaskFailureHandler("scheduler"),
+	}, nil
+}
+
 // NewScheduler creates a new scheduler
 func NewScheduler(cfg *config.Config) (*Scheduler, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config cannot be nil")
+	}
+	workerConfig, err := schedulerWorkerConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	redisOpt := asynq.RedisClientOpt{
@@ -76,12 +100,7 @@ func NewScheduler(cfg *config.Config) (*Scheduler, error) {
 		},
 	})
 
-	server := asynq.NewServer(redisOpt, asynq.Config{
-		Concurrency: cfg.TaskQueue.Concurrency,
-		Queues: map[string]int{
-			"scheduler": cfg.TaskQueue.Concurrency,
-		},
-	})
+	server := asynq.NewServer(redisOpt, workerConfig)
 
 	return &Scheduler{
 		scheduler: scheduler,
@@ -116,7 +135,7 @@ func (s *Scheduler) RegisterTask(task ScheduledTask, handler TaskHandler) error 
 	var err error
 
 	options := append([]asynq.Option{}, task.Options()...)
-	options = append(options, asynq.Queue("scheduler"))
+	options = append(options, asynq.Queue(schedulerQueue))
 
 	if task.CronSpec() != "" {
 		// Use cron expression

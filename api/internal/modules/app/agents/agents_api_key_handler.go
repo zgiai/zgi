@@ -196,7 +196,7 @@ func (h *AgentsHandler) ChatAPIKeyAgent(c *gin.Context) {
 		return
 	}
 
-	setupPreparedAgentSSE(c, prepared)
+	defer setupPreparedAgentSSE(c, prepared).Close()
 	_ = writeAgentSSE(c, "message_start", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
@@ -266,7 +266,7 @@ func (h *AgentsHandler) StreamAPIKeyAgentRuntimeEvents(c *gin.Context) {
 		return
 	}
 
-	setupAgentSSE(c)
+	defer setupAgentSSE(c).Close()
 	err = h.chatRuntimeService.StreamConversationEventsForCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})

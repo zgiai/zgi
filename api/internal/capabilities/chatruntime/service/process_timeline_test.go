@@ -200,20 +200,24 @@ func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuati
 	if projection.Version != presentationVersionV2 {
 		t.Fatalf("presentation version = %d, want %d", projection.Version, presentationVersionV2)
 	}
-	if projection.LastSequence != 5 || len(projection.Items) != 3 {
-		t.Fatalf("presentation = %#v, want durable events and final text through sequence 5", projection)
+	if projection.LastSequence != 5 || len(projection.Items) != 5 {
+		t.Fatalf("presentation = %#v, want narration, events and final text through sequence 5", projection)
 	}
 	wantKinds := []string{
+		presentationKindText,
 		presentationKindEvent,
+		presentationKindText,
 		presentationKindEvent,
 		presentationKindText,
 	}
 	wantPhases := []string{
+		presentationPhaseProcess,
 		"",
+		presentationPhaseProcess,
 		"",
 		presentationPhaseFinal,
 	}
-	wantSequences := []int64{2, 4, 5}
+	wantSequences := []int64{1, 2, 3, 4, 5}
 	for index, item := range projection.Items {
 		sequence, ok := int64FromPresentationValue(item["presentation_sequence"])
 		if !ok || sequence != wantSequences[index] {
@@ -241,7 +245,7 @@ func TestProcessTimelineRecorderKeepsPresentationOrderAcrossActionsAndContinuati
 		t.Fatalf("finalize continuation presentation: %v", err)
 	}
 	continuedProjection := presentationProjectionFromMetadata(message.Metadata)
-	if continuedProjection.LastSequence != 6 || len(continuedProjection.Items) != 4 {
+	if continuedProjection.LastSequence != 6 || len(continuedProjection.Items) != 6 {
 		t.Fatalf("continued presentation = %#v, want durable sequence 6 without renumbering", continuedProjection)
 	}
 }
@@ -342,7 +346,9 @@ func TestProcessTimelineRecorderDiscardsRetractedControlNarration(t *testing.T) 
 	}
 }
 
-func TestProcessTimelineRecorderKeepsProcessRetractionRuntimeOnly(t *testing.T) {
+// A model's text retracted before a tool call stays as process narration, both
+// in the live event and in stored history, so a reload shows the same rows.
+func TestProcessTimelineRecorderPersistsRetractedTextAsProcessNarration(t *testing.T) {
 	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
 	prepared := &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
@@ -360,29 +366,55 @@ func TestProcessTimelineRecorderKeepsProcessRetractionRuntimeOnly(t *testing.T) 
 		},
 	)
 
-	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": "The evidence is ready; the report comes next."}); err != nil {
+	narration := "I will load the agent management skill first."
+	if err := recorder.RecordEvent(streamEventMessage, map[string]interface{}{"answer": narration}); err != nil {
 		t.Fatalf("record provisional text: %v", err)
 	}
-	if err := recorder.RecordEvent(streamEventMessageRetract, map[string]interface{}{
-		"content":                  "The evidence is ready; the report comes next.",
-		"presentation_disposition": presentationDispositionProcess,
+	if projection := presentationProjectionFromMetadata(message.Metadata); len(projection.Items) != 0 {
+		t.Fatalf("presentation = %#v, want provisional text kept out of durable metadata", projection)
+	}
+	// The runner retracts streamed text before a tool call without naming a
+	// disposition; the recorder decides and says so on the event.
+	if err := recorder.RecordEvent(streamEventMessageRetract, map[string]interface{}{"content": narration}); err != nil {
+		t.Fatalf("retract text before the tool call: %v", err)
+	}
+	if err := recorder.RecordEvent(streamEventSkillCallStart, map[string]interface{}{
+		"skill_id":  skills.SkillCalculator,
+		"tool_name": "calculate",
+		"arguments": map[string]interface{}{"expression": "1+1"},
 	}); err != nil {
-		t.Fatalf("convert provisional text to process: %v", err)
+		t.Fatalf("record tool event: %v", err)
 	}
 
 	projection := presentationProjectionFromMetadata(message.Metadata)
-	if projection.LastSequence != 1 || len(projection.Items) != 0 {
-		t.Fatalf("presentation = %#v, want process segment omitted from durable metadata", projection)
+	if projection.LastSequence != 2 || len(projection.Items) != 2 {
+		t.Fatalf("presentation = %#v, want narration and tool call through sequence 2", projection)
 	}
-	if len(events) != 2 {
-		t.Fatalf("events = %#v, want message and retract", events)
+	text := projection.Items[0]
+	if stringFromAny(text["kind"]) != presentationKindText ||
+		stringFromAny(text["content_phase"]) != presentationPhaseProcess ||
+		stringFromAny(text["content"]) != narration {
+		t.Fatalf("first item = %#v, want the retracted text as process narration", text)
+	}
+	if sequence, _ := int64FromPresentationValue(text["presentation_sequence"]); sequence != 1 {
+		t.Fatalf("narration sequence = %#v, want 1", text["presentation_sequence"])
+	}
+	if got := stringFromAny(projection.Items[1]["kind"]); got != presentationKindEvent {
+		t.Fatalf("second item = %#v, want the tool call event", projection.Items[1])
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("events = %#v, want message, retract and tool call", events)
 	}
 	retract := events[1].Payload
 	if got := stringFromAny(retract["presentation_disposition"]); got != presentationDispositionProcess {
 		t.Fatalf("retract disposition = %q, want process", got)
 	}
-	if strings.TrimSpace(stringFromAny(retract["presentation_id"])) == "" {
-		t.Fatalf("retract = %#v, want presentation position", retract)
+	if got := stringFromAny(retract["presentation_id"]); got != stringFromAny(text["presentation_id"]) {
+		t.Fatalf("retract presentation id = %q, want the stored narration %q", got, text["presentation_id"])
+	}
+	if got := stringFromAny(retract["content_phase"]); got != presentationPhaseProcess {
+		t.Fatalf("retract content phase = %q, want process", got)
 	}
 }
 
@@ -793,101 +825,6 @@ func TestProcessTimelineRecorderPersistsTurnStateTraceWithoutVisibleInvocation(t
 	}
 	if invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"]); len(invocations) != 0 {
 		t.Fatalf("skill_invocations = %#v, want turn_state hidden from visible timeline", invocations)
-	}
-}
-
-func TestProcessTimelineRecorderPersistsFinalAnswerPlanWithoutVisibleInvocation(t *testing.T) {
-	message := &runtimemodel.Message{
-		ID: uuid.New(),
-		Metadata: map[string]interface{}{
-			"operation_plan": map[string]interface{}{
-				"phases": []interface{}{map[string]interface{}{
-					"id":     "phase-1",
-					"status": "in_progress",
-				}},
-			},
-		},
-	}
-	prepared := &PreparedChat{
-		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
-		Message:      message,
-	}
-	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
-
-	recorder.RecordTrace([]skills.SkillTrace{{
-		Kind:   "final_answer",
-		Status: "success",
-		Result: map[string]interface{}{
-			"plan": []interface{}{map[string]interface{}{
-				"id":            "phase-1",
-				"step":          "Complete the requested operation",
-				"status":        "completed",
-				"evidence_refs": []interface{}{"runtime_id:tool-1"},
-			}},
-		},
-	}}, skills.SkillTrace{
-		Kind:   "final_answer",
-		Status: "success",
-		Result: map[string]interface{}{
-			"plan": []interface{}{map[string]interface{}{
-				"id":            "phase-1",
-				"step":          "Complete the requested operation",
-				"status":        "completed",
-				"evidence_refs": []interface{}{"runtime_id:tool-1"},
-			}},
-		},
-	})
-
-	phases := mapSliceFromAny(mapFromOperationContext(message.Metadata["operation_plan"])["phases"])
-	if len(phases) != 1 || stringFromAny(phases[0]["status"]) != "completed" {
-		t.Fatalf("operation_plan.phases = %#v, want completed final answer plan snapshot", phases)
-	}
-	plan := mapFromOperationContext(message.Metadata["operation_plan"])
-	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
-		t.Fatalf("plan_sync_status = %q, want current", got)
-	}
-	if invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"]); len(invocations) != 0 {
-		t.Fatalf("skill_invocations = %#v, want final_answer hidden from visible timeline", invocations)
-	}
-}
-
-func TestProcessTimelineRecorderPersistsMissingFinalPlanWarningWithoutClosingStalePlan(t *testing.T) {
-	message := &runtimemodel.Message{
-		ID: uuid.New(),
-		Metadata: map[string]interface{}{
-			"operation_plan": map[string]interface{}{
-				"plan_sync_status": "stale",
-				"phases": []interface{}{map[string]interface{}{
-					"id":     "phase-1",
-					"status": "in_progress",
-				}},
-			},
-		},
-	}
-	prepared := &PreparedChat{
-		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
-		Message:      message,
-	}
-	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
-	warning := "missing_or_invalid_final_plan_snapshot: plan is required when operation_plan.phases is non-empty"
-
-	recorder.RecordTrace([]skills.SkillTrace{{
-		Kind:   "final_answer",
-		Status: "success",
-		Result: map[string]interface{}{"plan_warning": warning},
-	}}, skills.SkillTrace{
-		Kind:   "final_answer",
-		Status: "success",
-		Result: map[string]interface{}{"plan_warning": warning},
-	})
-
-	plan := mapFromOperationContext(message.Metadata["operation_plan"])
-	if got := stringFromAny(plan["plan_sync_status"]); got != "stale" {
-		t.Fatalf("plan_sync_status = %q, want stale", got)
-	}
-	warnings := stringSliceFromAny(plan["final_plan_warnings"])
-	if len(warnings) != 1 || warnings[0] != warning {
-		t.Fatalf("final_plan_warnings = %#v, want missing plan warning", warnings)
 	}
 }
 

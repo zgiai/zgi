@@ -18,12 +18,18 @@ import {
 } from '@/components/chat/controllers/aichat/types';
 import type { AIChatPresentationPosition } from '@/services/types/aichat';
 import {
+  findMatchingInvocationIndex,
+  hasToolGovernanceDecision,
+  invocationIdsConflict,
+  isRecordedSkillInvocation,
   isStaleAIChatStreamEvent,
   mergeSkillInvocationByStatus,
   preferCompleteIntermediateAnswerContent,
   removeTransientProgressItems,
   skillInvocationSemanticIdentity,
+  upsertMatchingInvocation,
 } from './shared';
+import { governanceDecisionStatus } from '../status';
 import {
   captureAnswerTimelineBoundary,
   presentationPositionFromPayload,
@@ -52,60 +58,11 @@ function upsertSkillInvocation(
   invocations: AIChatSkillInvocation[],
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation[] {
-  if (incoming.invocation_id) {
-    const index = invocations.findIndex(
-      invocation => invocation.invocation_id === incoming.invocation_id
-    );
-    if (index >= 0) {
-      const next = invocations.slice();
-      next[index] = mergeSkillInvocationByStatus(next[index], incoming);
-      return next;
-    }
-  }
-
-  const semanticIdentity = skillInvocationSemanticIdentity(incoming);
-  if (semanticIdentity) {
-    const index = invocations.findIndex(
-      invocation =>
-        (!incoming.invocation_id ||
-          !invocation.invocation_id ||
-          invocation.invocation_id === incoming.invocation_id) &&
-        skillInvocationSemanticIdentity(invocation) === semanticIdentity
-    );
-    if (index >= 0) {
-      const next = invocations.slice();
-      next[index] = mergeSkillInvocationByStatus(next[index], incoming);
-      return next;
-    }
-  }
-
-  if (incoming.runtime_id) {
-    const index = invocations.findIndex(
-      invocation =>
-        (!incoming.invocation_id ||
-          !invocation.invocation_id ||
-          invocation.invocation_id === incoming.invocation_id) &&
-        invocation.runtime_id === incoming.runtime_id
-    );
-    if (index >= 0) {
-      const next = invocations.slice();
-      next[index] = mergeSkillInvocationByStatus(next[index], incoming);
-      return next;
-    }
-  }
+  const matched = upsertMatchingInvocation(invocations, incoming);
+  if (matched) return matched;
 
   if (incoming.kind === 'intermediate_answer' && incoming.answer_id) {
-    const index = invocations.findIndex(
-      invocation =>
-        invocation.kind === 'intermediate_answer' && invocation.answer_id === incoming.answer_id
-    );
-    if (index < 0) {
-      return [...invocations, incoming];
-    }
-
-    const next = invocations.slice();
-    next[index] = mergeSkillInvocationByStatus(next[index], incoming);
-    return next;
+    return [...invocations, incoming];
   }
 
   if (incoming.kind === 'guardrail') {
@@ -132,11 +89,7 @@ function upsertSkillInvocation(
   const incomingToolName = incoming.tool_name ?? '';
   const incomingPath = incoming.path ?? '';
   const index = [...next].reverse().findIndex(invocation => {
-    if (
-      incoming.invocation_id &&
-      invocation.invocation_id &&
-      invocation.invocation_id !== incoming.invocation_id
-    ) {
+    if (invocationIdsConflict(invocation, incoming)) {
       return false;
     }
     const invocationKind = invocation.kind ?? 'tool_call';
@@ -161,58 +114,23 @@ function upsertSkillInvocation(
   return next;
 }
 
-function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
-  if (invocation.invocation_id) {
-    return `invocation:${invocation.invocation_id}`;
-  }
-  const semanticIdentity = skillInvocationSemanticIdentity(invocation);
-  if (semanticIdentity) {
-    return semanticIdentity;
-  }
-  if (invocation.runtime_id) {
-    return invocation.runtime_id;
-  }
-  return [
-    invocation.kind ?? 'tool_call',
-    invocation.skill_id ?? '',
-    invocation.tool_name ?? '',
-    invocation.path ?? '',
-  ].join(':');
-}
-
-function skillInvocationRuntimeIdentity(invocation: AIChatSkillInvocation): string {
-  return invocation.runtime_id ? `runtime:${invocation.runtime_id}` : '';
+function hasSkillInvocationIdentity(invocation: AIChatSkillInvocation): boolean {
+  return Boolean(
+    invocation.invocation_id || invocation.runtime_id || skillInvocationSemanticIdentity(invocation)
+  );
 }
 
 function skillInvocationsMatch(
   existing: AIChatSkillInvocation,
   incoming: AIChatSkillInvocation
 ): boolean {
-  if (existing.invocation_id && incoming.invocation_id) {
-    return existing.invocation_id === incoming.invocation_id;
-  }
-
-  const existingRuntimeIdentity = skillInvocationRuntimeIdentity(existing);
-  const incomingRuntimeIdentity = skillInvocationRuntimeIdentity(incoming);
-  if (
-    existingRuntimeIdentity &&
-    incomingRuntimeIdentity &&
-    existingRuntimeIdentity === incomingRuntimeIdentity
-  ) {
-    return true;
-  }
-
-  const existingSemanticIdentity = skillInvocationSemanticIdentity(existing);
-  const incomingSemanticIdentity = skillInvocationSemanticIdentity(incoming);
-  if (
-    existingSemanticIdentity &&
-    incomingSemanticIdentity &&
-    existingSemanticIdentity === incomingSemanticIdentity
-  ) {
-    return true;
-  }
-
-  return getSkillInvocationIdentity(existing) === getSkillInvocationIdentity(incoming);
+  if (findMatchingInvocationIndex([existing], incoming) === 0) return true;
+  // Records that name no call match by the tool they ran.
+  return (
+    !hasSkillInvocationIdentity(existing) &&
+    !hasSkillInvocationIdentity(incoming) &&
+    getSkillInvocationBaseIdentity(existing) === getSkillInvocationBaseIdentity(incoming)
+  );
 }
 
 function getSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation): string {
@@ -222,54 +140,6 @@ function getSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation): stri
     invocation.tool_name ?? '',
     invocation.path ?? '',
   ].join(':');
-}
-
-function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
-  const status = String(invocation.status ?? '').toLowerCase();
-  const record = invocation as unknown as Record<string, unknown>;
-  const result =
-    invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
-      ? (invocation.result as Record<string, unknown>)
-      : {};
-  const actionType =
-    invocation.action_type ||
-    (typeof result.action_type === 'string' ? result.action_type : undefined);
-  if (invocation.kind === 'guardrail') {
-    return false;
-  }
-  if (
-    invocation.kind === 'tool_call' &&
-    (status === 'approved' || status === 'allowed') &&
-    Object.keys(result).length === 0
-  ) {
-    return false;
-  }
-  if (invocation.kind === 'skill_load' && invocation.skill_id === 'console-navigator') {
-    return false;
-  }
-  if (
-    invocation.kind === 'client_action' &&
-    actionType === 'route_navigation' &&
-    (status === 'success' || status === 'succeeded' || status === 'completed')
-  ) {
-    return false;
-  }
-  if (invocation.kind === 'client_action') {
-    const actionId = String(record.action_id ?? result.action_id ?? '').toLowerCase();
-    const runtimeId = String(record.runtime_id ?? '').toLowerCase();
-    if (
-      actionType === 'asset_observation' ||
-      actionId.startsWith('asset_observation:') ||
-      runtimeId.startsWith('client_action:asset_observation:')
-    ) {
-      return false;
-    }
-  }
-  return (
-    invocation.kind !== 'metadata_exposed' &&
-    invocation.kind !== 'memory_planner' &&
-    invocation.kind !== 'final_answer'
-  );
 }
 
 function upsertMemoryTimelineItem(
@@ -466,21 +336,14 @@ function upsertToolGovernanceTimelineItem(
 function toolGovernanceInvocationStatus(
   payload: AIChatToolGovernanceDecisionEventData
 ): AIChatSkillActivityStatus {
-  const approvalStatus = String(payload.approval_status ?? '').toLowerCase();
-  if (approvalStatus === 'approved') return 'allowed';
-  if (approvalStatus === 'rejected') return 'denied';
-  const status = String(payload.decision ?? payload.status ?? '').toLowerCase();
-  switch (status) {
-    case 'allowed':
-    case 'needs_approval':
-    case 'denied':
-    case 'needs_resolution':
-    case 'blocked':
-    case 'error':
-      return status;
-    default:
-      return 'needs_approval';
-  }
+  const decision = governanceDecisionStatus(
+    payload.decision ?? payload.status,
+    payload.approval_status
+  );
+  if (decision) return decision;
+  // A decision word the client does not know asks nothing of the person
+  // unless the event itself says approval is required (ADR 0050).
+  return payload.requires_approval === true ? 'needs_approval' : 'advisory';
 }
 
 function skillInvocationFromToolGovernanceDecision(
@@ -499,6 +362,10 @@ function skillInvocationFromToolGovernanceDecision(
 
   return {
     kind: 'tool_governance',
+    // The decision names its call; without the id the stored copy of the
+    // same decision would become a second row.
+    ...(normalizedPayload.runtime_id ? { runtime_id: normalizedPayload.runtime_id } : {}),
+    ...(normalizedPayload.invocation_id ? { invocation_id: normalizedPayload.invocation_id } : {}),
     skill_id: skillId,
     tool_name: toolName,
     status: toolGovernanceInvocationStatus(normalizedPayload),
@@ -592,7 +459,6 @@ function upsertSkillTimelineItem(
   }
 
   const next = baseTimeline.slice();
-  const incomingIdentity = getSkillInvocationIdentity(incoming);
   const incomingBaseIdentity = getSkillInvocationBaseIdentity(incoming);
   const existingStableIndex = next.findIndex(
     item => item.type === 'skill_event' && skillInvocationsMatch(item.invocation, incoming)
@@ -619,7 +485,7 @@ function upsertSkillTimelineItem(
       status === 'running' ||
       status === 'needs_approval' ||
       status === 'waiting_client_action';
-    if (!isPending) return false;
+    if (!isPending || invocationIdsConflict(invocation, incoming)) return false;
     return (
       skillInvocationsMatch(invocation, incoming) ||
       getSkillInvocationBaseIdentity(invocation) === incomingBaseIdentity
@@ -632,7 +498,7 @@ function upsertSkillTimelineItem(
       {
         id:
           eventId ??
-          `skill-${incomingIdentity}-${incoming.created_at ?? Date.now()}-${next.length}`,
+          `skill-${incoming.invocation_id || incoming.runtime_id || incomingBaseIdentity}-${incoming.created_at ?? Date.now()}-${next.length}`,
         type: 'skill_event',
         invocation: incoming,
         created_at: incoming.created_at,
@@ -668,7 +534,7 @@ export function updateSkillInvocationMetadata(
   presentationPosition?: AIChatPresentationPosition,
   clearModelProcessing = false
 ): AIChatControllerState {
-  if (!isVisibleSkillInvocation(invocation)) {
+  if (!isRecordedSkillInvocation(invocation)) {
     return current;
   }
   const previousStreaming = current.streamingByMessageId[messageId];
@@ -696,7 +562,7 @@ export function updateSkillInvocationMetadata(
         selected_skill_ids: Array.from(
           new Set(
             skillInvocations
-              .filter(isVisibleSkillInvocation)
+              .filter(isRecordedSkillInvocation)
               .map(item => item.skill_id)
               .filter(Boolean)
           )
@@ -709,12 +575,12 @@ export function updateSkillInvocationMetadata(
               .filter(Boolean)
           )
         ),
-        skill_step_count: skillInvocations.filter(isVisibleSkillInvocation).length,
-        skill_call_count: skillInvocations.filter(isVisibleSkillInvocation).length,
+        skill_step_count: skillInvocations.filter(isRecordedSkillInvocation).length,
+        skill_call_count: skillInvocations.filter(isRecordedSkillInvocation).length,
         skill_names: Array.from(
           new Set(
             skillInvocations
-              .filter(isVisibleSkillInvocation)
+              .filter(isRecordedSkillInvocation)
               .map(item => item.skill_id)
               .filter(Boolean)
           )
@@ -954,6 +820,7 @@ export function applyAgentProgressState(
       tool_name: payload.tool_name,
       action_id: payload.action_id,
       action_type: payload.action_type,
+      presentation_visibility: payload.presentation_visibility,
       continuation_policy: payload.continuation_policy,
       blocking: payload.blocking,
       status: payload.status,
@@ -1158,7 +1025,7 @@ export function applyToolGovernanceDecisionState(
         selected_skill_ids: Array.from(
           new Set(
             skillInvocations
-              .filter(isVisibleSkillInvocation)
+              .filter(isRecordedSkillInvocation)
               .map(item => item.skill_id)
               .filter(Boolean)
           )
@@ -1171,12 +1038,12 @@ export function applyToolGovernanceDecisionState(
               .filter(Boolean)
           )
         ),
-        skill_step_count: skillInvocations.filter(isVisibleSkillInvocation).length,
-        skill_call_count: skillInvocations.filter(isVisibleSkillInvocation).length,
+        skill_step_count: skillInvocations.filter(isRecordedSkillInvocation).length,
+        skill_call_count: skillInvocations.filter(isRecordedSkillInvocation).length,
         skill_names: Array.from(
           new Set(
             skillInvocations
-              .filter(isVisibleSkillInvocation)
+              .filter(isRecordedSkillInvocation)
               .map(item => item.skill_id)
               .filter(Boolean)
           )
@@ -1302,6 +1169,14 @@ export function applySkillCallEndState(
   payload: AIChatSkillCallEndEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  if (
+    isStaleAIChatStreamEvent(
+      eventId,
+      current.streamingByMessageId[payload.message_id]?.last_event_id
+    )
+  ) {
+    return current;
+  }
   const next = updateSkillInvocationMetadata(
     current,
     payload.conversation_id,
@@ -1333,14 +1208,13 @@ export function applySkillCallEndState(
     presentationPositionFromPayload(payload),
     true
   );
-  if (!payload.governance) {
+  if (!hasToolGovernanceDecision(payload.governance)) {
     return next;
   }
-  return applyToolGovernanceDecisionState(
-    next,
-    toolGovernanceDecisionEventFromSkillCall(payload),
-    eventId ? `${eventId}:governance` : undefined
-  );
+  // The decision is part of this same event, so it applies with it, not as a
+  // second event: an id derived from this one compares equal to it and would
+  // be dropped as stale.
+  return applyToolGovernanceDecisionState(next, toolGovernanceDecisionEventFromSkillCall(payload));
 }
 
 export function applySkillCallErrorState(
@@ -1348,6 +1222,14 @@ export function applySkillCallErrorState(
   payload: AIChatSkillCallErrorEventData,
   eventId?: string | null
 ): AIChatControllerState {
+  if (
+    isStaleAIChatStreamEvent(
+      eventId,
+      current.streamingByMessageId[payload.message_id]?.last_event_id
+    )
+  ) {
+    return current;
+  }
   const next = updateSkillInvocationMetadata(
     current,
     payload.conversation_id,
@@ -1380,14 +1262,13 @@ export function applySkillCallErrorState(
     presentationPositionFromPayload(payload),
     true
   );
-  if (!payload.governance) {
+  if (!hasToolGovernanceDecision(payload.governance)) {
     return next;
   }
-  return applyToolGovernanceDecisionState(
-    next,
-    toolGovernanceDecisionEventFromSkillCall(payload),
-    eventId ? `${eventId}:governance` : undefined
-  );
+  // The decision is part of this same event, so it applies with it, not as a
+  // second event: an id derived from this one compares equal to it and would
+  // be dropped as stale.
+  return applyToolGovernanceDecisionState(next, toolGovernanceDecisionEventFromSkillCall(payload));
 }
 
 export function applySkillLoadStartState(

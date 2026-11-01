@@ -35,7 +35,7 @@ type prefetchedCall struct {
 // result instead of running then. A call is started here only if the
 // sequential pass would run it as it stands: an active skill, a tool that
 // changes nothing, allowed by the organization's policy, and not held back
-// for a plan update or an earlier failure. A started call that the pass then
+// for an earlier failure. A started call that the pass then
 // does not reach, because an earlier call paused the turn, is a read whose
 // result is dropped.
 func (r *Runner) prefetchReadOnlyCalls(
@@ -81,7 +81,7 @@ func (r *Runner) prefetchReadOnlyCalls(
 			break
 		}
 		doc, ok := resolved.Get(skillID)
-		if !ok || doc == nil || !skills.ToolIsReadOnly(*doc, toolName) || userInputPlanRevisionRequiredForTool(req, skillID, toolName) {
+		if !ok || doc == nil || !skills.ToolIsReadOnly(*doc, toolName) {
 			break
 		}
 		toolArgs := mapArg(args, "arguments")

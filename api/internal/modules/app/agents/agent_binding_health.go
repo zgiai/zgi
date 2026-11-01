@@ -396,32 +396,6 @@ func (s *agentsService) validateConnectorBinding(ctx context.Context, organizati
 	return nil
 }
 
-func (s *agentsService) resolveConnectorBindingHealth(ctx context.Context, row agentbindings.Binding, accountID string) (string, string) {
-	ownerID, ownerErr := uuid.Parse(strings.TrimSpace(accountID))
-	connectionID, connectionErr := uuid.Parse(strings.TrimSpace(row.ResourceID))
-	connectorID, connectorErr := connectorcore.NormalizeIdentifier(row.ParentResourceID)
-	if ownerErr != nil || connectionErr != nil || connectorErr != nil || ownerID == uuid.Nil || connectionID == uuid.Nil {
-		return agentBindingStatusUnavailable, agentBindingReasonAuthorizationRevoked
-	}
-	state, err := s.loadOwnedAgentConnectorConnection(ctx, row.OrganizationID, ownerID, connectionID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return agentBindingStatusUnavailable, agentBindingReasonResourceDeletedOrMissing
-	}
-	if err != nil {
-		return agentBindingStatusUnavailable, agentBindingReasonResolutionFailed
-	}
-	if state.ConnectorID != connectorID.String() || state.OrganizationID != row.OrganizationID || state.OwnerAccountID != ownerID {
-		return agentBindingStatusUnavailable, agentBindingReasonAuthorizationRevoked
-	}
-	if state.DefinitionStatus != string(connectorcore.DefinitionStatusActive) {
-		return agentBindingStatusSuspended, agentBindingReasonConnectorConnectionDisabled
-	}
-	if state.State != string(connectorcore.ReadinessReady) {
-		return agentBindingStatusUnavailable, agentBindingReasonConnectorConnectionUnavailable
-	}
-	return agentBindingStatusActive, ""
-}
-
 func (s *agentsService) resolveSkillBindingHealth(ctx context.Context, row agentbindings.Binding, accountID string) (string, string) {
 	resourceID := strings.ToLower(strings.TrimSpace(row.ResourceID))
 	if s.db != nil {
@@ -720,23 +694,6 @@ func workflowBindingsByID(bindings []dto.AgentWorkflowBinding) map[string]dto.Ag
 		result[binding.BindingID] = binding
 	}
 	return result
-}
-
-func filterAgentBindingRowsByHealth(rows []agentbindings.Binding, health dto.AgentBindingHealth) []agentbindings.Binding {
-	active := make(map[string]struct{}, health.ActiveCount)
-	for _, item := range health.Items {
-		if item.Status != agentBindingStatusActive {
-			continue
-		}
-		active[agentBindingItemKey(item.BindingType, item.ParentResourceID, item.ResourceID, item.AccessMode)] = struct{}{}
-	}
-	filtered := make([]agentbindings.Binding, 0, len(rows))
-	for _, row := range rows {
-		if _, ok := active[agentBindingItemKey(agentBindingPresentationType(row), row.ParentResourceID, row.ResourceID, row.AccessMode)]; ok {
-			filtered = append(filtered, row)
-		}
-	}
-	return filtered
 }
 
 func publishedAgentBindingRows(rows []agentbindings.Binding) []agentbindings.Binding {
