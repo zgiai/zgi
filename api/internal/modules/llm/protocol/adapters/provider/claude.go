@@ -682,6 +682,9 @@ func (a *ClaudeAdapter) handleError(statusCode int, body []byte) error {
 	}
 }
 
+// claudeDefaultMaxTokens is accepted by every supported Claude model.
+const claudeDefaultMaxTokens = 8192
+
 // convertToClaude converts standard request to Claude format
 func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRequest, error) {
 	if request == nil {
@@ -689,8 +692,11 @@ func (a *ClaudeAdapter) convertToClaude(request *adapter.ChatRequest) (*claudeRe
 	}
 
 	claudeReq := &claudeRequest{
-		Model:       request.Model,
-		MaxTokens:   1024, // Default value
+		Model: request.Model,
+		// The Messages API requires max_tokens. The gateway normally fills it
+		// from the model catalog (zgi-pre#2914); this covers callers that reach
+		// the adapter directly. 1024 cut most real answers short.
+		MaxTokens:   claudeDefaultMaxTokens,
 		Temperature: request.Temperature,
 		TopP:        request.TopP,
 	}
