@@ -1298,11 +1298,14 @@ export function AIChatMessageBubble({
     (message.status === 'waiting_approval' && !connectorWaitingResolved) ||
     message.status === 'waiting_question';
   const isWaitingForClientAction = message.status === 'waiting_client_action';
+  // A decided confirmation on a message still waiting for approval is a state
+  // only this client sees: the host either resumes the turn (DigitalHuman) or
+  // completes the message, and the refresh that follows the decision brings
+  // that status. Until then the turn reads as running, so the header and the
+  // open timeline do not flicker to an idle state between the two.
+  const isContinuingAfterDecision = Boolean(connectorWaitingResolved);
   const isActiveMessage =
-    isStreaming ||
-    isWaitingForUser ||
-    isWaitingForClientAction ||
-    Boolean(connectorWaitingResolved && connectorPhase === 'submitting');
+    isStreaming || isWaitingForUser || isWaitingForClientAction || isContinuingAfterDecision;
   const isError = message.status === 'error';
   const isStopped = message.status === 'stopped';
   const isSensitiveBlocked =
@@ -1670,7 +1673,7 @@ export function AIChatMessageBubble({
               {formatAIChatTime(message.created_at)}
             </span>
           ) : null}
-          {isStreaming ? (
+          {isStreaming || isContinuingAfterDecision ? (
             <span className="inline-flex items-center gap-1">
               <Loader2 className="size-3 animate-spin" />
               {t('consoleChat.streaming')}

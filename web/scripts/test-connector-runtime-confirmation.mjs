@@ -491,4 +491,18 @@ assert.doesNotMatch(
   'a failed read must not fabricate an unknown decision state'
 );
 
+// After a decision the message stays waiting_approval until the host's status
+// arrives. That gap must read as running: the header keeps its running label
+// and the timeline keeps its active (open) identity instead of collapsing.
+const messageBubbleSource = source('src/components/chat/variants/aichat/message-bubble.tsx');
+assert.match(
+  messageBubbleSource,
+  /const isContinuingAfterDecision = Boolean\(connectorWaitingResolved\);/
+);
+assert.match(
+  messageBubbleSource,
+  /isStreaming \|\| isWaitingForUser \|\| isWaitingForClientAction \|\| isContinuingAfterDecision/
+);
+assert.match(messageBubbleSource, /\{isStreaming \|\| isContinuingAfterDecision \? \(/);
+
 console.log('Connector runtime one-shot confirmation contract checks passed.');
