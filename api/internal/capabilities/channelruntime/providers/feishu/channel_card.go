@@ -18,18 +18,17 @@ import (
 // card.action.trigger callback; without it the buttons do nothing, and the
 // card still says what to reply.
 //
-// A prompt that carries a structured card shows the operation it asks about.
-// A tap replaces it at once with a card that says the decision was received,
-// and the outcome later replaces that one (ChannelAdapter.Edit). The card is
-// shared (update_multi), so everyone in a group sees the same state.
+// A prompt that carries a structured card shows the operation it asks about,
+// and once the decision is recorded its outcome replaces it
+// (ChannelAdapter.Edit). A tap only reports that the reply was received: the
+// reply may still be refused (another member of a group) or not yet decided,
+// so the card and its buttons stay until the decision itself updates them.
+// The card is shared (update_multi), so everyone in a group sees one state.
 
 const (
 	feishuCardReplyKey = "zgi_reply"
 	feishuCardWaitKey  = "zgi_wait"
 	feishuCardTypeKey  = "zgi_conversation_type"
-	// feishuCardTitleKey carries a structured card's title, so the card a
-	// tap returns still names the operation.
-	feishuCardTitleKey = "zgi_title"
 	// A card larger than this goes as rich text without buttons.
 	maxChannelCardBytes = 28 * 1024
 	// Field values beyond this are shortened on the card; the full value
@@ -123,7 +122,6 @@ func channelCardButtons(actions []channelruntime.DeliveryAction, card *channelru
 			"value": value,
 		}
 		if card != nil {
-			value[feishuCardTitleKey] = bounded(card.Title, maxChannelCardTitleRunes)
 			if card.HighRisk && action.Primary {
 				kind = "danger"
 				button["type"] = kind
@@ -224,24 +222,6 @@ func channelCardHeader(state channelruntime.DeliveryCardState, highRisk bool, ti
 	}
 }
 
-// submittedChannelCard is the card a tap returns at once: the decision was
-// received, the buttons are gone, and the outcome replaces it when known.
-func submittedChannelCard(title, reply string) map[string]any {
-	approved := reply == "确认" || reply == "同意"
-	prefix, template, text := "已确认", "blue", "已确认，正在执行。结果会更新在这张卡片上。"
-	if !approved {
-		prefix, template, text = "已取消", "grey", "已取消，这个操作不会执行。"
-	}
-	return map[string]any{
-		"config": map[string]any{"wide_screen_mode": true, "update_multi": true},
-		"header": map[string]any{
-			"template": template,
-			"title":    map[string]string{"tag": "plain_text", "content": prefix + "｜" + bounded(title, maxChannelCardTitleRunes)},
-		},
-		"elements": []map[string]any{{"tag": "div", "text": map[string]string{"tag": "plain_text", "content": text}}},
-	}
-}
-
 // cardActionMessage turns a tapped button into the reply it sends, from the
 // tapping user, in the card's conversation.
 func cardActionMessage(identity channelruntime.InstallationIdentity, appID string, event *callback.CardActionTriggerEvent, now time.Time) (*channelruntime.InboundMessage, bool) {
@@ -286,11 +266,7 @@ func (receiver *WebSocketReceiver) handleCardAction(ctx context.Context, identit
 	if err := handle(messageCtx, message); err != nil {
 		return &callback.CardActionTriggerResponse{Toast: &callback.Toast{Type: "error", Content: "没有提交成功，请直接回复「" + message.Text + "」。"}}, nil
 	}
-	response := &callback.CardActionTriggerResponse{Toast: &callback.Toast{Type: "success", Content: "已提交「" + message.Text + "」"}}
-	// Only a structured card is followed by its outcome, so only it is
-	// replaced; any other keeps its text, which says what was asked.
-	if title, _ := event.Event.Action.Value[feishuCardTitleKey].(string); strings.TrimSpace(title) != "" {
-		response.Card = &callback.Card{Type: "raw", Data: submittedChannelCard(title, message.Text)}
-	}
-	return response, nil
+	// Received is not decided: the card changes only when the decision is
+	// recorded, so a refused or pending reply never shows as an outcome.
+	return &callback.CardActionTriggerResponse{Toast: &callback.Toast{Type: "success", Content: "已提交「" + message.Text + "」"}}, nil
 }

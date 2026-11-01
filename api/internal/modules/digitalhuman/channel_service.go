@@ -1394,7 +1394,7 @@ func (service *ChannelService) DispatchDeliveries(ctx context.Context, limit int
 			RunID: delivery.RunID, DeliveryID: delivery.ID,
 			ExternalConversationID: delivery.ExternalConversationID, ExternalThreadID: delivery.ExternalThreadID,
 			Text: text, Mentions: append([]channelruntime.DeliveryMention(nil), payload.Mentions...), Attachments: attachments,
-			Actions: append([]channelruntime.DeliveryAction(nil), payload.Actions...),
+			Actions: append([]channelruntime.DeliveryAction(nil), payload.Actions...), Card: payload.Card,
 		})
 		if deliveryErr != nil {
 			combined = errors.Join(combined, service.finishDeliveryFailure(ctx, delivery, deliveryErr))

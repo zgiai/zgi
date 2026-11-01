@@ -174,3 +174,30 @@ func TestChannelConnectorCardStateNamesTheOutcome(t *testing.T) {
 		}
 	}
 }
+
+// The prompt's first send carries its card, so the channel renders the
+// operation, not the text form.
+func TestChannelDispatchSendsThePromptWithItsCard(t *testing.T) {
+	service, store, _, adapter, scope, application := newChannelTestService(t)
+	installation, route := createChannelTestRoute(t, service, scope, application, channelruntime.ConversationTypeDirect)
+	now := time.Now().UTC()
+	prompt := newChannelTestDelivery(t, scope, application, installation, route, now)
+	var err error
+	prompt.Payload, prompt.PayloadDigest, err = channelDeliveryPayloadData{
+		Kind: channelruntime.DeliveryKindFinal, Text: "需要你确认。",
+		Actions: []channelruntime.DeliveryAction{{Label: "确认", Reply: "确认", Wait: "wait-1", Primary: true}},
+		Card:    &channelruntime.DeliveryCard{Title: "飞书 · 发送文本消息", State: channelruntime.DeliveryCardPending},
+	}.encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.deliveries[prompt.ID] = prompt
+	service.now = func() time.Time { return now }
+	adapter.receipt = &channelruntime.DeliveryReceipt{ProviderMessageID: "om_card"}
+	if err := service.DispatchDeliveries(t.Context(), 10); err != nil {
+		t.Fatal(err)
+	}
+	if adapter.lastDelivery.Card == nil || adapter.lastDelivery.Card.Title != "飞书 · 发送文本消息" || len(adapter.lastDelivery.Actions) != 1 {
+		t.Fatalf("sent prompt = %#v", adapter.lastDelivery)
+	}
+}

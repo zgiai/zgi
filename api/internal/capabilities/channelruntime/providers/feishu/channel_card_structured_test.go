@@ -94,9 +94,6 @@ func TestStructuredApprovalCardShowsTheOperationAndAsksOnceMoreWhenHighRisk(t *t
 		}
 		for _, action := range element.Actions {
 			buttons++
-			if action.Value[feishuCardTitleKey] != "飞书 / Lark · 发送文本消息" {
-				t.Fatalf("button value = %#v", action.Value)
-			}
 			if action.Value[feishuCardReplyKey] == "确认" && (action.Type != "danger" || len(action.Confirm) == 0) {
 				t.Fatalf("high-risk confirm button = %#v", action)
 			}
@@ -136,39 +133,27 @@ func TestDecidedApprovalCardShowsItsOutcomeWithoutButtons(t *testing.T) {
 	}
 }
 
-func TestTappingAStructuredCardReplacesItAtOnce(t *testing.T) {
+// A tap is a received reply, not a decision: another member of a group may
+// be refused, and the decision may still be pending. The card and its buttons
+// stay until the recorded decision edits them.
+func TestTappingACardKeepsItUntilTheDecisionIsRecorded(t *testing.T) {
 	identity := channelruntime.InstallationIdentity{ExternalTenantID: "tenant-1"}
-	event := func(title string) *callback.CardActionTriggerEvent {
-		value := map[string]interface{}{feishuCardReplyKey: "确认", feishuCardWaitKey: "wait-1"}
-		if title != "" {
-			value[feishuCardTitleKey] = title
-		}
-		return &callback.CardActionTriggerEvent{
-			EventV2Base: &larkevent.EventV2Base{Header: &larkevent.EventHeader{EventID: "evt-1", AppID: "cli_app", TenantKey: "tenant-1"}},
-			Event: &callback.CardActionTriggerRequest{
-				Operator: &callback.Operator{OpenID: "ou_asker"},
-				Action:   &callback.CallBackAction{Value: value},
-				Context:  &callback.Context{OpenChatID: "oc_chat", OpenMessageID: "om_card"},
-			},
-		}
+	event := &callback.CardActionTriggerEvent{
+		EventV2Base: &larkevent.EventV2Base{Header: &larkevent.EventHeader{EventID: "evt-1", AppID: "cli_app", TenantKey: "tenant-1"}},
+		Event: &callback.CardActionTriggerRequest{
+			Operator: &callback.Operator{OpenID: "ou_member"},
+			Action:   &callback.CallBackAction{Value: map[string]interface{}{feishuCardReplyKey: "取消", feishuCardWaitKey: "wait-1", feishuCardTypeKey: "group"}},
+			Context:  &callback.Context{OpenChatID: "oc_chat", OpenMessageID: "om_card"},
+		},
 	}
 	receiver := &WebSocketReceiver{}
 	accept := func(_ context.Context, _ *channelruntime.InboundMessage) error { return nil }
-	response, err := receiver.handleCardAction(t.Context(), identity, "cli_app", event("飞书 / Lark · 发送文本消息"), accept)
-	if err != nil || response.Card == nil || response.Card.Type != "raw" {
-		t.Fatalf("response = %#v, %v", response, err)
-	}
-	data, _ := json.Marshal(response.Card.Data)
-	card := decodeCard(t, string(data))
-	if card.Header.Title.Content != "已确认｜飞书 / Lark · 发送文本消息" || len(card.Elements) != 1 || len(card.Elements[0].Actions) != 0 {
-		t.Fatalf("submitted card = %s", data)
-	}
-	legacy, err := receiver.handleCardAction(t.Context(), identity, "cli_app", event(""), accept)
-	if err != nil || legacy.Card != nil || legacy.Toast == nil {
-		t.Fatalf("a text prompt's card was replaced: %#v, %v", legacy, err)
+	response, err := receiver.handleCardAction(t.Context(), identity, "cli_app", event, accept)
+	if err != nil || response.Card != nil || response.Toast == nil || response.Toast.Type != "success" {
+		t.Fatalf("a received tap replaced the card: %#v, %v", response, err)
 	}
 	failing := func(_ context.Context, _ *channelruntime.InboundMessage) error { return io.ErrUnexpectedEOF }
-	failed, _ := receiver.handleCardAction(t.Context(), identity, "cli_app", event("x"), failing)
+	failed, _ := receiver.handleCardAction(t.Context(), identity, "cli_app", event, failing)
 	if failed.Card != nil || failed.Toast == nil || failed.Toast.Type != "error" {
 		t.Fatalf("a failed submit replaced the card: %#v", failed)
 	}
