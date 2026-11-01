@@ -606,6 +606,7 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, calle
 	}
 	parts.ModelSupportsVision = spec.SupportsVision()
 	parts.ModelSupportsAgent = spec.SupportsAgent()
+	parts.CatalogProvider = spec.Provider
 	parts.FunctionCallingKnown = true
 	parts.ModelSupportsFunctionCalling = spec.SupportsFunctionCalling()
 	parts.FunctionCallingAssumed = false

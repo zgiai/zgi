@@ -573,4 +573,45 @@ assert.doesNotMatch(
   'a failed read must not fabricate an unknown decision state'
 );
 
+// After a decision the message stays waiting_approval until the host's status
+// arrives. That gap must read as running: the header keeps its running label
+// and the timeline keeps its active (open) identity instead of collapsing.
+const messageBubbleSource = source('src/components/chat/variants/aichat/message-bubble.tsx');
+assert.match(
+  messageBubbleSource,
+  /const isContinuingAfterDecision = Boolean\(\s*connectorWaitingResolved &&\s*connectorPhase !== 'transport_unconfirmed' &&\s*connectorPhase !== 'unknown'\s*\);/
+);
+assert.match(
+  messageBubbleSource,
+  /isStreaming \|\| isWaitingForUser \|\| isWaitingForClientAction \|\| isContinuingAfterDecision/
+);
+assert.match(messageBubbleSource, /\{isStreaming \|\| isContinuingAfterDecision \? \(/);
+
+// A confirmation POST that never returned a legal response (403, offline,
+// timeout) leaves transport_unconfirmed while the host still waits for
+// approval, and an unresolved status read does not clear it. Nothing is running
+// then, so the turn must not read as continuing.
+const unconfirmedTransport = new ConnectorRuntimeDecisionTransport(async () => {
+  throw Object.assign(new Error('forbidden'), { response: { status: 403 } });
+});
+const unconfirmedReceipt = 'connector-route-receipt-unconfirmed';
+await unconfirmedTransport.submit({ route_receipt: unconfirmedReceipt, decision: 'confirmed' });
+assert.equal(
+  unconfirmedTransport.acceptStatus(unconfirmedReceipt, { resolution: 'unresolved' }),
+  false
+);
+const unconfirmedPhase = unconfirmedTransport.getPhase(unconfirmedReceipt);
+assert.equal(unconfirmedPhase, 'transport_unconfirmed');
+const continuingAfterDecision = phase =>
+  Boolean(
+    phase &&
+      phase !== 'requires_confirmation' &&
+      phase !== 'transport_unconfirmed' &&
+      phase !== 'unknown'
+  );
+assert.equal(continuingAfterDecision(unconfirmedPhase), false);
+assert.equal(continuingAfterDecision('unknown'), false);
+assert.equal(continuingAfterDecision('completed'), true);
+assert.equal(continuingAfterDecision('submitting'), true);
+
 console.log('Connector runtime one-shot confirmation contract checks passed.');

@@ -12,6 +12,9 @@ import (
 )
 
 type ModelSpec struct {
+	// Provider is the catalog provider of the model that was found. A request
+	// that names only a model learns its provider here.
+	Provider         string
 	ContextWindow    int
 	MaxInputTokens   int
 	MaxOutputTokens  int
@@ -80,6 +83,7 @@ func (r *databaseModelSpecResolver) resolveCustom(ctx context.Context, organizat
 		return ModelSpec{}, false, nil
 	}
 	return ModelSpec{
+		Provider:         strings.TrimSpace(custom.Provider),
 		ContextWindow:    custom.ContextWindow,
 		MaxInputTokens:   custom.MaxInputTokens,
 		MaxOutputTokens:  custom.MaxOutputTokens,
@@ -104,6 +108,7 @@ func (r *databaseModelSpecResolver) resolveGlobal(ctx context.Context, provider 
 		return ModelSpec{}, false, err
 	}
 	return ModelSpec{
+		Provider:         strings.TrimSpace(global.Provider),
 		ContextWindow:    global.ContextWindow,
 		MaxInputTokens:   global.MaxInputTokens,
 		MaxOutputTokens:  global.MaxOutputTokens,
